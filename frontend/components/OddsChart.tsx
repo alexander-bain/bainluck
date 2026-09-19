@@ -510,36 +510,115 @@ export default function OddsChart({
     return null;
   }, [isClosed, completedAt, espnHistory, winProbHistory, history]);
 
-  // Filter history based on time range
+  /**
+   * #6987 — THE END CUTOFF IS NOT A PROPERTY OF THE RANGE.
+   *
+   * `smartEndTime` answers "when did this game actually end". Only the START of
+   * the window is a range choice — "All" opens before kick-off, "Since Start"
+   * opens at it — because a game ends once, whichever tab you are looking at.
+   *
+   * It used to be applied inside the `timeRange !== "all"` arm of all five
+   * filters below, so "All" drew every point the venues kept quoting after the
+   * whistle. Measured on production 2026-09-19 on /events/14638896 (Chiefs
+   * 31-10 Broncos, FINAL): ESPN, the stat model and the sportsbooks all stop at
+   * 03:16Z with the home side on an exact `1.0`, while Kalshi (`0.99`) and
+   * Polymarket (`0.9995`) poll for ten more minutes — which the backend blends
+   * into ten trailing `aggregate_line` minutes at `0.999`. So the callout, which
+   * reads the last drawn point of `primarySeriesKey`, ended on `1.0` in "Since
+   * Start" and printed `100%`, and ended on `0.999` in "All" and printed
+   * `>99%`. Not one point served two ways — two different points ten minutes
+   * apart, with the tab a reader happened to land on deciding whether the chart
+   * was willing to say the Chiefs had won.
+   *
+   * `GAME_END_SOURCES` above already encodes the reason: prediction markets
+   * quote past the final whistle, which is exactly why they are excluded from
+   * deriving the end. And `computeSharedChartDomain` already ends a completed
+   * game's X-AXIS there in BOTH ranges, so this is the ink catching up with the
+   * axis it is drawn on, not a new policy. The flat post-final tail is the one
+   * L2-131 / gotcha #22 removed from the other end ("no trailing buffer — the
+   * old +5 min pad forward-filled a flat tail that read like the game kept
+   * going after it ended"); "All" simply never reached that code.
+   *
+   * 🔴 THE FLOOR IS LOAD-BEARING, AND IT IS WHY THIS IS A MEMO AND NOT A `&&`.
+   * "All" is the window the chart RESETS TO when the live one draws nothing
+   * (#6349, `nothingToDrawInLiveWindow`) — nothing rescues an empty "All". The
+   * `completedAt` last-resort branch above is a backend processing timestamp
+   * that can precede the data entirely (on /events/15300276 the same class of
+   * field is a ticker-derived midnight 15h56m before the first point), and the
+   * sportsbook-tail branch can too on a game whose only in-play series is a
+   * prediction market. A cutoff with no point at or before it would not trim a
+   * tail, it would delete the journey — so it is discarded, the same remedy and
+   * the same reasoning as `computeSharedChartDomain`'s own FLOOR.
+   */
+  const rangeEndTime = useMemo(() => {
+    if (!smartEndTime) return null;
+    const endMs = smartEndTime.getTime();
+    const survives = (points?: { timestamp: string }[] | null): boolean =>
+      !!points?.some((point) => parseISO(point.timestamp).getTime() <= endMs);
+    if (survives(history)) return smartEndTime;
+    if (survives(espnHistory)) return smartEndTime;
+    if (survives(aggregateLine)) return smartEndTime;
+    for (const points of Object.values(winProbHistory ?? {})) {
+      if (survives(points)) return smartEndTime;
+    }
+    for (const points of Object.values(bookmakerHistory ?? {})) {
+      if (survives(points)) return smartEndTime;
+    }
+    return null;
+  }, [
+    smartEndTime,
+    history,
+    espnHistory,
+    aggregateLine,
+    winProbHistory,
+    bookmakerHistory,
+  ]);
+
+  /**
+   * The one window every series is cut to, or `null` when there is nothing to
+   * cut. Five filters used to spell this rule out for themselves and the end
+   * half had already drifted out of one of them (#6987) — a rule written at
+   * five call sites is a rule that can be wrong at one of them and right at the
+   * other four, which is precisely how two tabs came to disagree about the same
+   * finished game.
+   */
+  const inChartRange = useMemo(() => {
+    const startMs =
+      timeRange === "all"
+        ? null
+        : commenceTime
+          ? parseISO(commenceTime).getTime()
+          : Date.now();
+    const endMs = rangeEndTime ? rangeEndTime.getTime() : null;
+    if (startMs === null && endMs === null) return null;
+    return (timestamp: string): boolean => {
+      const t = parseISO(timestamp).getTime();
+      if (startMs !== null && t < startMs) return false;
+      if (endMs !== null && t > endMs) return false;
+      return true;
+    };
+  }, [timeRange, commenceTime, rangeEndTime]);
+
+  // Filter history to the chart window
   const filteredHistory = useMemo(() => {
     if (!history || history.length === 0) return [];
-    if (timeRange === "all") return history;
-    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
-    let filtered = history.filter((point) => parseISO(point.timestamp) >= cutoffTime);
-    if (smartEndTime) {
-      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
-    }
-    return filtered;
-  }, [history, timeRange, commenceTime, smartEndTime]);
+    if (!inChartRange) return history;
+    return history.filter((point) => inChartRange(point.timestamp));
+  }, [history, inChartRange]);
 
-  // Filter bookmaker history
+  // Filter bookmaker history to the chart window
   const filteredBookmakerHistory = useMemo(() => {
     if (!bookmakerHistory || Object.keys(bookmakerHistory).length === 0)
       return {};
-    if (timeRange === "all") return bookmakerHistory;
-    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
+    if (!inChartRange) return bookmakerHistory;
     const filtered: Record<string, BookmakerHistoryPoint[]> = {};
     for (const [bookmaker, points] of Object.entries(bookmakerHistory)) {
-      let pts = points.filter(
-        (point) => parseISO(point.timestamp) >= cutoffTime
+      filtered[bookmaker] = points.filter((point) =>
+        inChartRange(point.timestamp)
       );
-      if (smartEndTime) {
-        pts = pts.filter((point) => parseISO(point.timestamp) <= smartEndTime);
-      }
-      filtered[bookmaker] = pts;
     }
     return filtered;
-  }, [bookmakerHistory, timeRange, commenceTime, smartEndTime]);
+  }, [bookmakerHistory, inChartRange]);
 
   // Build the list of all sources to display (betting + model sources)
   const resolvedSources = useMemo((): ResolvedSource[] => {
@@ -612,53 +691,34 @@ export default function OddsChart({
   // Multi-source mode: when we have at least 1 non-betting source with data
   const isMultiSource = nonBettingSources.length > 0;
 
-  // Filter win prob history based on time range
+  // Filter win prob history to the chart window
   const filteredWinProbHistory = useMemo(() => {
     if (!winProbHistory || Object.keys(winProbHistory).length === 0) return {};
-    if (timeRange === "all") return winProbHistory;
-    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
+    if (!inChartRange) return winProbHistory;
     const filtered: Record<string, WinProbHistoryPoint[]> = {};
     for (const [source, points] of Object.entries(winProbHistory)) {
-      let pts = points.filter(
-        (point) => parseISO(point.timestamp) >= cutoffTime
+      filtered[source] = points.filter((point) =>
+        inChartRange(point.timestamp)
       );
-      if (smartEndTime) {
-        pts = pts.filter((point) => parseISO(point.timestamp) <= smartEndTime);
-      }
-      filtered[source] = pts;
     }
     return filtered;
-  }, [winProbHistory, timeRange, commenceTime, smartEndTime]);
+  }, [winProbHistory, inChartRange]);
 
-  // Filter ESPN history (legacy fallback)
+  // Filter ESPN history (legacy fallback) to the chart window
   const filteredEspnHistory = useMemo(() => {
     if (!espnHistory || espnHistory.length === 0) return [];
-    if (timeRange === "all") return espnHistory;
-    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
-    let filtered = espnHistory.filter(
-      (point) => parseISO(point.timestamp) >= cutoffTime
-    );
-    if (smartEndTime) {
-      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
-    }
-    return filtered;
-  }, [espnHistory, timeRange, commenceTime, smartEndTime]);
+    if (!inChartRange) return espnHistory;
+    return espnHistory.filter((point) => inChartRange(point.timestamp));
+  }, [espnHistory, inChartRange]);
 
   // Filter aggregate line — use commenceTime (not smartStartTime) because the
   // aggregate line is already a clean backend-computed weighted median without
   // the noisy flat pre-game data that smartStartTime is designed to skip.
   const filteredAggregateLine = useMemo(() => {
     if (!aggregateLine || aggregateLine.length === 0) return [];
-    if (timeRange === "all") return aggregateLine;
-    const cutoffTime = commenceTime ? parseISO(commenceTime) : new Date();
-    let filtered = aggregateLine.filter(
-      (point) => parseISO(point.timestamp) >= cutoffTime
-    );
-    if (smartEndTime) {
-      filtered = filtered.filter((point) => parseISO(point.timestamp) <= smartEndTime);
-    }
-    return filtered;
-  }, [aggregateLine, timeRange, commenceTime, smartEndTime]);
+    if (!inChartRange) return aggregateLine;
+    return aggregateLine.filter((point) => inChartRange(point.timestamp));
+  }, [aggregateLine, inChartRange]);
 
   // ── #1003: the blend line is the BACKEND blend, or it is nothing ──
   // `bainLuckDelta` used to fall back to an unweighted frontend mean of whatever
@@ -1319,6 +1379,13 @@ export default function OddsChart({
         }
         return {
           time: chartData[i].time,
+          // #6987 — the minute this callout is anchored to, in UTC. `time` above
+          // is the CATEGORY, a locally formatted clock string, so it answers
+          // "which tick" and not "which instant" — and it moves with the reader's
+          // timezone, which a guard cannot pin. The defect this carries evidence
+          // of was two tabs labelling two points ten minutes apart, so the
+          // instant is the thing worth exporting.
+          timestamp: chartData[i].timestamp,
           delta,
           homeProb: percents.home,
           awayProb: percents.away,
@@ -1616,6 +1683,25 @@ export default function OddsChart({
          server render (no viewport), so the stagger is unobservable in the
          markup; this is the same channel CERT-1984 opened for the count. */
       data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
+      /* #6987: the end-callout's printed string, on the wrapper, for the same
+         reason as the two above — the label is drawn inside a recharts `shape`,
+         which renders nothing without a viewport, so a guard reading the markup
+         for "100%" would find nothing on either arm. This is the exact text a
+         reader sees beside the dot, not a re-derivation of it: the empty string
+         means no callout is drawn at all. */
+      data-callout-label={currentCallout?.homeLabel ?? ""}
+      /* #6987: the timestamp the callout is anchored to. The defect was never a
+         rounding rule — "Since Start" and "All" were labelling two points ten
+         minutes apart — so a guard needs to see WHICH point, not only what it
+         printed. */
+      data-callout-at={currentCallout?.timestamp ?? ""}
+      /* #6987: the first and last instant this chart puts INK on, in epoch ms —
+         `drawnExtent`, the same bound the period chips and the Start flag are
+         judged against, not `chartData`'s extent. The callout above is one
+         reader of the window; the trailing flat tail was the whole of the
+         defect, and only this says where the line actually stops. Empty when
+         nothing is drawn. */
+      data-drawn-extent={drawnExtent ? `${drawnExtent.startMs},${drawnExtent.endMs}` : ""}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
@@ -1625,6 +1711,11 @@ export default function OddsChart({
           <button
             key={option.value}
             disabled={isDisabled}
+            /* #6987: which range is ON, said out loud. These two buttons are a
+               toggle group, and the only thing that distinguished the selected
+               one was its fill — invisible to a screen reader, and readable by a
+               probe only as a Tailwind class it would then be pinned to. */
+            aria-pressed={timeRange === option.value}
             onClick={() => {
               if (isDisabled) return;
               const previousRange = timeRange;
