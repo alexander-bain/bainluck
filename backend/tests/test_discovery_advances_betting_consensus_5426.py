@@ -175,8 +175,16 @@ class TestDiscoveryAdvancesTheConsensus:
         )
 
         stamp = session.sources_writes[0]["betting"]["updated_at"]
-        assert stamp.startswith("20")
-        assert "2020" not in stamp
+        # The claim is about the YEAR FIELD, so ask the year field. Asking the
+        # whole ISO string was a substring test that any six-digit microsecond
+        # can answer for: this reddened master as
+        # `assert '2020' not in '2026-09-19T...202062+00:00'` (run 35456442160),
+        # a clock coincidence rather than a regression. Parsing is also strictly
+        # STRONGER than the `startswith("20")` it replaces — it proves the value
+        # is a real timestamp, which a prefix check only gestured at.
+        written = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        assert written.year != 2020
+        assert stamp != "2020-01-01T00:00:00Z"
 
 
 # ---------------------------------------------------------------------------
