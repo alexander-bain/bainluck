@@ -1201,9 +1201,15 @@ export default function EventPage({ params }: EventPageProps) {
   // once so the pair can never read "IPS vs Liverpool" or "FC vs FC" — see
   // `lib/teamShortName.ts`. Before this, the hero applied `split(" ").pop()`
   // per side and named Ipswich Town "Town" three times on one page.
+  //
+  // #7163: the sport is passed because it is the only thing that can tell a
+  // person from a club, and without it the hero shortened "Alex de Minaur" to
+  // "Minaur" — the object of the particle rather than the name. A caller that
+  // does not know its sport keeps the last-word rule untouched.
   const heroShortNames = teamShortNames(
     { name: event.home_team, abbreviation: event.home_team_data?.abbreviation },
     { name: event.away_team, abbreviation: event.away_team_data?.abbreviation },
+    event.sport,
   );
 
   // L2-112 Item 1: settled events get a winner treatment (final score + winner
