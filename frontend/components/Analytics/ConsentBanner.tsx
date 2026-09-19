@@ -52,13 +52,13 @@ export function ConsentBanner() {
             <div className="flex flex-row gap-2 sm:gap-3 flex-shrink-0">
               <button
                 onClick={() => setConsent('none')}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-secondary bg-slate/10 hover:bg-slate/20 rounded-lg transition-colors"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-secondary bg-charcoal/10 hover:bg-charcoal/20 rounded-lg transition-colors"
               >
                 Decline
               </button>
               <button
                 onClick={() => setConsent('analytics')}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-primary bg-surface-border hover:bg-slate/20 rounded-lg transition-colors hidden sm:block"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-text-primary bg-surface-border hover:bg-charcoal/20 rounded-lg transition-colors hidden sm:block"
               >
                 Analytics only
               </button>
@@ -76,7 +76,7 @@ export function ConsentBanner() {
             <div className="mt-4 pt-4 border-t border-surface-border">
               <div className="grid gap-4 sm:grid-cols-2">
                 {/* Essential */}
-                <div className="p-3 bg-slate/5 rounded-lg">
+                <div className="p-3 bg-charcoal/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                     <span className="text-sm font-medium text-text-primary">Essential</span>
@@ -92,7 +92,7 @@ export function ConsentBanner() {
                 </div>
 
                 {/* Analytics */}
-                <div className="p-3 bg-slate/5 rounded-lg">
+                <div className="p-3 bg-charcoal/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-blue-500"></span>
                     <span className="text-sm font-medium text-text-primary">Analytics</span>
@@ -105,7 +105,7 @@ export function ConsentBanner() {
                 </div>
 
                 {/* Marketing (future) */}
-                <div className="p-3 bg-slate/5 rounded-lg opacity-50">
+                <div className="p-3 bg-charcoal/5 rounded-lg opacity-50">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-purple-500/150"></span>
                     <span className="text-sm font-medium text-text-primary">Marketing</span>
@@ -118,7 +118,7 @@ export function ConsentBanner() {
                 </div>
 
                 {/* Cross-platform */}
-                <div className="p-3 bg-slate/5 rounded-lg">
+                <div className="p-3 bg-charcoal/5 rounded-lg">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                     <span className="text-sm font-medium text-text-primary">Cross-platform</span>

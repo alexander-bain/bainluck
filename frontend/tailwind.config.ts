@@ -43,9 +43,16 @@ const config: Config = {
   				DEFAULT: 'hsl(var(--accent))',
   				foreground: 'hsl(var(--accent-foreground))'
   			},
+  			/* Named in-house colours. NONE of these may collide with a default
+  			 * Tailwind palette name: declaring a family as a flat string REPLACES
+  			 * the whole {50…950} scale, so every `bg-<fam>-500` in the tree silently
+  			 * emits no CSS while still type-checking, linting and rendering. That is
+  			 * #4040 / #7056 — `slate`, `emerald` and `amber` lived here and killed
+  			 * 207 class literals across Discover, the event page, calibration and
+  			 * futures. `tailwindNoFlatPaletteShadow7056.test.ts` now fails the build
+  			 * if one comes back. */
   			snow: '#F5F5F7',
   			graphite: '#111827',
-  			slate: '#6B7280',
   			silver: '#9CA3AF',
   			mist: '#E5E7EB',
   			ink: '#111827',
@@ -53,8 +60,6 @@ const config: Config = {
   			fog: '#F0F0F2',
   			forest: '#22C55E',
   			rust: '#EF4444',
-  			emerald: '#10B981',
-  			amber: '#F59E0B',
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

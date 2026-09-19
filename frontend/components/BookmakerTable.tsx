@@ -51,7 +51,7 @@ export default function BookmakerTable({
   // If no bookmakers have probability data, show a message
   if (oddsWithProbability.length === 0) {
     return (
-      <div className="text-center py-4 text-sm text-slate">
+      <div className="text-center py-4 text-sm text-charcoal">
         No win probability data available from sportsbooks for this event.
       </div>
     );
@@ -152,18 +152,18 @@ export default function BookmakerTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-mist">
-            <th className="text-left py-3 px-2 sm:px-4 font-semibold text-slate">
+            <th className="text-left py-3 px-2 sm:px-4 font-semibold text-charcoal">
               Sportsbook
             </th>
-            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-slate">
+            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-charcoal">
               <div>{shortHomeTeam}</div>
               {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
-            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-slate">
+            <th className="text-center py-3 px-2 sm:px-4 font-semibold text-charcoal">
               <div>{shortAwayTeam}</div>
               {hasAnyProjectedScores && <div className="text-xs font-normal text-text-muted">(proj. score)</div>}
             </th>
-            <th className="text-right py-3 px-2 sm:px-4 font-semibold text-slate">
+            <th className="text-right py-3 px-2 sm:px-4 font-semibold text-charcoal">
               Status
             </th>
           </tr>
@@ -237,11 +237,11 @@ export default function BookmakerTable({
         </tbody>
         {avgHomeProb !== null && (
           <tfoot>
-            <tr className="bg-slate/5 font-semibold">
+            <tr className="bg-charcoal/5 font-semibold">
               <td className="py-3 px-2 sm:px-4 text-graphite">
                 Average (Consensus)
                 {staleCount > 0 && (
-                  <span className="ml-2 text-xs font-normal text-slate">
+                  <span className="ml-2 text-xs font-normal text-charcoal">
                     ({activeCount} of {oddsWithProbability.length} open)
                   </span>
                 )}

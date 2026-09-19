@@ -128,7 +128,7 @@ export function TelemetryPreferences() {
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
             hydrated && isOn
               ? 'bg-graphite text-white'
-              : 'bg-surface-border text-text-primary hover:bg-slate/20'
+              : 'bg-surface-border text-text-primary hover:bg-charcoal/20'
           }`}
         >
           Allow analytics
@@ -141,7 +141,7 @@ export function TelemetryPreferences() {
           className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${
             hydrated && !isOn
               ? 'bg-graphite text-white'
-              : 'bg-slate/10 text-text-secondary hover:bg-slate/20'
+              : 'bg-charcoal/10 text-text-secondary hover:bg-charcoal/20'
           }`}
         >
           Turn analytics off

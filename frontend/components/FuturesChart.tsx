@@ -443,7 +443,7 @@ export function FuturesChart({
                       y={yScale(maxProb * pct)}
                       textAnchor="end"
                       dominantBaseline="middle"
-                      className="text-xs fill-slate"
+                      className="text-xs fill-charcoal"
                     >
                       {Math.round(maxProb * pct * 100)}%
                     </text>
@@ -514,7 +514,7 @@ export function FuturesChart({
                       x={xScale(t)}
                       y={padding.top + innerHeight + 16}
                       textAnchor={i === 0 ? "start" : i === lastTick ? "end" : "middle"}
-                      className="text-xs fill-slate"
+                      className="text-xs fill-charcoal"
                       style={{ fontSize: "9px" }}
                     >
                       {formatTime(t)}
@@ -544,7 +544,7 @@ export function FuturesChart({
                       x={xScale(m.time) + 3}
                       y={padding.top + 10}
                       textAnchor="start"
-                      className="fill-slate"
+                      className="fill-charcoal"
                       style={{ fontSize: "9px", fontWeight: 600 }}
                     >
                       {m.label}

@@ -131,9 +131,21 @@ function flatOverriddenFamilies(): string[] {
 
 describe("#7015 the sport directory's tints are classes Tailwind can actually emit", () => {
   it("finds the known flat overrides (anti-vacuity)", () => {
+    // CARRIER, NOT SUBJECT (#7056, ux/1350). This assertion proves
+    // `flatOverriddenFamilies()` parses something rather than silently
+    // returning [] and passing the real check below by vacuity. It used to
+    // name `emerald` and `amber` because they were the flat overrides in the
+    // config at the time — they were the example, never the requirement.
+    //
+    // #7056 DELETED those two keys (and `slate`) precisely because they
+    // shadowed default Tailwind palettes and killed 207 class literals. The
+    // carrier therefore moves to families that do not collide with any default
+    // palette name and so are here to stay. `forest` and `rust` are the point
+    // of the mechanism, not its casualties.
     const flat = flatOverriddenFamilies();
-    expect(flat).toContain("emerald");
-    expect(flat).toContain("amber");
+    expect(flat).toContain("forest");
+    expect(flat).toContain("rust");
+    expect(flat.length).toBeGreaterThanOrEqual(5);
   });
 
   it("uses no colour family whose scale the config has destroyed", () => {
