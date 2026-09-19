@@ -421,16 +421,48 @@ GRID_WARM_PASS_BUDGET_S = 180.0
 #: — 24,465 ms -> 984 ms on the identical row set), which is what moves it from
 #: "straddles the wall" to "warmable".
 #:
-#: 🔴 Its position — LAST — is the one thing here that is NOT measured, and it is
-#: last BECAUSE it is not measured. Predicted ~6.4 s (21.6 s observed, minus the
-#: 16.2 s `maxq` this ship removes, plus ~1.0 s for the replacement scan), but a
-#: prediction is not a measurement and the ordering's only job is to give the
-#: tail slack. An unmeasured league in the position with the most slack is the
-#: cheapest place to be wrong. Re-derive from the run report's per-league
+#: ✅ ITS POSITION IS NOW MEASURED, AND THE MEASUREMENT MOVED IT (LAT-P331, #7124).
+#: P132 placed `ncaa-basketball` last as an admitted PREDICTION (~6.4 s) and left
+#: a standing instruction: "Re-derive from the run report's per-league
 #: `duration_s` after deploy and move it — that is the instrument, not this
-#: comment. The 120 s per-league ceiling and the pass budget below bound the
-#: damage either way, and `_grid_payload_usable` stops a bad build overwriting
-#: the good `:stale` mirror.
+#: comment." The run at 2026-09-19T05:25:00Z is that instrument, on `92e360a1`:
+#:
+#:   epl 0.3 · la-liga 0.4 · bundesliga 1.5 · nhl 2.0 · mls 2.2 · wnba 2.8 ·
+#:   nfl 2.9 · champions-league 3.2 · nba 4.0 · ncaa-women-basketball 4.5 ·
+#:   ncaa-football 6.5 · **ncaa-basketball 8.6** · golf 18.2 · **mlb 37.5**
+#:
+#: The prediction was the right order of magnitude and the wrong SEAT: at 8.6 s
+#: `ncaa-basketball` is the eleventh-cheapest league, and it was sitting behind
+#: the most expensive one. Only that one seat moves here. A full re-sort on a
+#: single pass would be over-fitting — `nfl` is recorded above as "8.6-25.3
+#: (variable)" and one sample is not a distribution — and the ordering is an
+#: optimisation, so it earns nothing by being precise about leagues that are all
+#: comfortably inside their share.
+#:
+#: 🔴 **WHY THE SEAT WAS LOAD-BEARING: a cheap league queued behind an expensive
+#: one HALVES the expensive one's deadline.** `_prewarm_target_deadline` divides
+#: what is LEFT by what is LEFT TO DO, so `mlb` at index 12 of 14 was offered
+#: `budget_left / 2` — 65.75 s on the numbers above — because the allocator
+#: reserves an EQUAL share for everything behind it, and what was behind it
+#: needed 8.6 s. ~57 s of the 180 s pass budget was reserved for a league that
+#: could not spend it and was then thrown away (`grid_budget_left_s` 85.4),
+#: while `mlb` was killed at the 66 s line. #7124 recorded exactly that: an
+#: `mlb` warm that reached 89.4 s against a 66.1 s deadline and published
+#: nothing, on an hour when the same build cost 37.5 s two hours later. Last,
+#: `mlb` is offered `budget_left / 1` and takes the 120 s per-league ceiling —
+#: the 89.4 s case fits with room, and the pass's worst case is unchanged
+#: (57.1 s of tail + 120 s + 44.8 s of non-grid sections = 222 s against a
+#: 300 s soft limit).
+#:
+#: 🔴 This is the failure mode the `_prewarm_target_deadline` note below calls
+#: out in the general: *"a per-item deadline multiplied by an item count is a
+#: budget that silently tightens every time someone adds an item, and it fails
+#: at the moment of the addition rather than at the moment of the mistake."*
+#: Appending `ncaa-basketball` in P132 cut `mlb`'s deadline from ~102 s to
+#: ~66 s; it cost nothing until `mlb`'s cost crossed 66 s, three weeks later.
+#: **So: nothing is appended AFTER `mlb`.** A new league goes in at its measured
+#: seat, and `test_the_most_expensive_league_is_not_throttled_by_a_cheap_tail`
+#: fails if one lands behind it.
 GRID_WARM_LEAGUES = [
     "la-liga",
     "champions-league",
@@ -444,8 +476,8 @@ GRID_WARM_LEAGUES = [
     "nfl",
     "ncaa-football",
     "golf",
-    "mlb",
     "ncaa-basketball",
+    "mlb",
 ]
 
 # Where the run report lands for the read-only admin rail. One key, overwritten

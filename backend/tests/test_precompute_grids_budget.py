@@ -458,3 +458,83 @@ def test_the_warm_build_matches_the_cache_eligible_request():
         assert call.kwargs["hours"] is None, call
         assert call.kwargs["top"] == 10, call
         assert call.kwargs["debug"] is False, call
+
+
+# --------------------------------------------------------------------------
+# 6. LAT-P331 (#7124): the expensive league's seat in the order is load-bearing.
+# --------------------------------------------------------------------------
+
+#: The run report's own per-league `duration_s`, production 2026-09-19T05:25:00Z
+#: on `92e360a1` — the instrument `GRID_WARM_LEAGUES`' docstring names for
+#: re-deriving the order, captured rather than re-read from that comment.
+MEASURED_BUILD_S_20260919 = {
+    "la-liga": 0.4,
+    "champions-league": 3.2,
+    "bundesliga": 1.5,
+    "epl": 0.3,
+    "nhl": 2.0,
+    "mls": 2.2,
+    "ncaa-women-basketball": 4.5,
+    "wnba": 2.8,
+    "nba": 4.0,
+    "nfl": 2.9,
+    "ncaa-football": 6.5,
+    "golf": 18.2,
+    "ncaa-basketball": 8.6,
+    "mlb": 37.5,
+}
+
+#: What `mlb` actually reached on the hour #7124 was filed from: a warm that ran
+#: 89.4 s against a 66.1 s deadline and published nothing, two hours before the
+#: same build cost 37.5 s. The deadline has to clear the observed cost, not the
+#: median one — a deadline inside the spread is a coin flip every hour.
+OBSERVED_WORST_GRID_BUILD_S = 89.4
+
+
+def _replay_offered_deadlines(costs):
+    """Replay the real allocator over the real list; return what each is OFFERED.
+
+    Deliberately calls `pcp._prewarm_target_deadline` and re-applies the same
+    `min(ceiling, share)` the loop applies, rather than restating the
+    arithmetic: a test that recomputes the formula it is guarding passes when
+    the formula changes underneath it.
+    """
+    n = len(pcp.GRID_WARM_LEAGUES)
+    left = float(pcp.GRID_WARM_PASS_BUDGET_S)
+    offered = {}
+    for index, slug in enumerate(pcp.GRID_WARM_LEAGUES):
+        share = pcp._prewarm_target_deadline(left, n - index)
+        offered[slug] = min(float(pcp.GRID_WARM_TIMEOUT_S), share)
+        # A league the profile does not know is charged nothing, which leaves
+        # MORE budget for the tail — so an unknown league can only make this
+        # guard more forgiving, never falsely red.
+        left = max(0.0, left - min(offered[slug], costs.get(slug, 0.0)))
+    return offered
+
+
+def test_the_most_expensive_league_is_not_throttled_by_a_cheap_tail():
+    """🔴 #7124. A cheap league queued behind an expensive one HALVES its deadline.
+
+    `_prewarm_target_deadline` reserves an EQUAL share for everything still to
+    come, so with one 8.6 s league sitting behind it `mlb` was offered
+    `budget_left / 2` = 65.75 s — and ~57 s of the pass budget was reserved for
+    a league that could not spend it, then thrown away. `mlb` reached 89.4 s and
+    published nothing.
+
+    The guard is the property, not the ordering: whichever league costs the most
+    must be offered a deadline that clears the worst build actually observed.
+    Appending any league after it fails this, which is the regression class —
+    P132's append cost nothing until `mlb`'s cost crossed 66 s, three weeks later.
+    """
+    costs = MEASURED_BUILD_S_20260919
+    dearest = max(costs, key=costs.get)
+    offered = _replay_offered_deadlines(costs)
+
+    behind = pcp.GRID_WARM_LEAGUES[pcp.GRID_WARM_LEAGUES.index(dearest) + 1:]
+    assert offered[dearest] >= OBSERVED_WORST_GRID_BUILD_S, (
+        f"{dearest} is the most expensive league at {costs[dearest]}s and is "
+        f"offered only {offered[dearest]:.1f}s — under the {OBSERVED_WORST_GRID_BUILD_S}s "
+        f"it has actually been measured at (#7124), so it publishes nothing on a "
+        f"slow hour. {len(behind)} league(s) queued behind it take an equal "
+        f"share of the remaining budget they do not need: {behind}"
+    )
