@@ -3188,25 +3188,41 @@ def _schedule_grid_refresh(league_slug: str) -> bool:
     """Kick a rebuild onto the loop behind a last-good serve. Never raises.
 
     Returns True when a rebuild is running or already in flight. False means the
-    lapse was NOT repaired this time — no running loop, or the dispatch itself
-    failed — in which case the caller still serves last-good exactly as it did
-    before #7109, and the next read tries again.
+    lapse was NOT repaired this time — an unrecognised league, no running loop,
+    or a dispatch that failed — in which case the caller still serves last-good
+    exactly as it did before #7109, and the next read tries again.
+
+    🔴 **The slug is resolved against the league registry before it is used for
+    anything, and the RESOLVED value is what travels on.** ``league_slug`` is a
+    path parameter, so it is a user-controlled string: interpolating it into a
+    log line is log injection (CodeQL ``py/log-injection``, medium — caught on
+    this change), and dispatching background work keyed on it would let an
+    arbitrary string name a task and a cache key. Resolving through
+    ``get_all_league_slugs()`` answers both at once, and it is the honest guard
+    rather than a sanitiser: a slug we have no config for has no grid to
+    rebuild, so there is nothing here to do for it.
     """
     from functools import partial
+
+    # Deliberately the value from OUR registry, not the caller's string — that
+    # is what makes everything downstream (task name, log line) untainted.
+    slug = next((s for s in get_all_league_slugs() if s == league_slug), None)
+    if slug is None:
+        return False
 
     try:
         from app.routes.events import _serve_stale_and_refresh
 
         return _serve_stale_and_refresh(
-            f"playoff_grid:{league_slug}",
-            partial(_rebuild_playoff_grid, league_slug),
+            f"playoff_grid:{slug}",
+            partial(_rebuild_playoff_grid, slug),
         )
     except Exception:  # noqa: BLE001
         # A refresh that cannot even be dispatched must not turn a working
         # last-good serve into a 500. The reader's payload is already in hand.
         logger.warning(
             "Playoff grid refresh-behind could not be scheduled for %s (#7109)",
-            league_slug,
+            slug,
             exc_info=True,
         )
         return False

@@ -216,6 +216,19 @@ class TestTheRefreshStaysInItsLane:
         assert result["teams"] == GOOD["teams"]
         assert "stale" not in result
 
+    async def test_an_unrecognised_slug_schedules_nothing(self):
+        """`league_slug` is a path parameter, so it is a user-controlled string.
+
+        Dispatching background work keyed on it would let an arbitrary string
+        name a task and a cache key, and logging it raw is log injection
+        (CodeQL `py/log-injection`, medium, caught on this change). The slug is
+        resolved against the league registry first and the RESOLVED value is
+        what travels on.
+        """
+        assert pg._schedule_grid_refresh("mlb\nFAKE LOG LINE") is False
+        assert pg._schedule_grid_refresh("../../etc/passwd") is False
+        assert "playoff_grid:mlb\nFAKE LOG LINE" not in ev._STALE_REFRESH_INFLIGHT
+
     async def test_a_failed_dispatch_still_serves_last_good(self):
         """The reader's payload is already in hand. A refresh that cannot even
         start must not turn a working serve into a 500."""
