@@ -234,6 +234,11 @@ class TestFuturesMarketDetail:
             # probe must be able to tell "nothing was withheld" from "this build
             # cannot withhold".
             "prices_withheld",
+            # #7274: how many ladder rungs were dropped because their own
+            # deadline has passed — the same rule and the same helper the
+            # Discover card applies, so the card and this page divide by one
+            # set. Present for the same reason as the two lines above.
+            "expired_rungs_dropped",
             "bookmakers",
             "category_tags",
             "created_at",
