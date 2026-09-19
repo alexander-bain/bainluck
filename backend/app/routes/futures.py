@@ -4931,6 +4931,66 @@ async def get_cross_source_timeline(
     }
 
 
+def _measure_history_coverage(outcome_history: dict) -> dict:
+    """Measure the span the served points ACTUALLY cover (#7077 live half).
+
+    `actual_hours` is the window this route SEARCHED, not the window the data
+    covers, and nothing in the payload has ever said the difference. Measured on
+    production 2026-09-19 against the three markets Alex's build-15 phone walk
+    named:
+
+    | market | requested | served `actual_hours` | points actually span |
+    |---|---|---|---|
+    | 58321581 Game Awards | 168 h | **168** | **19.3 h**, all on Sep 18 |
+    | 61122553 Meta training pause | 168 h | **168** | 75.4 h, 2 points/outcome |
+    | 59530987 US bank failure | 168 h | **720** (auto-extended) | 598.6 h |
+
+    So the field named "actual" echoes either the request or an internal
+    `_EXTEND_TIERS` constant, and never the observations. A client that draws its
+    domain from it draws a week and plots one day into it — which is exactly the
+    Game Awards screenshot, six x-axis ticks all reading "Sep 18".
+
+    `total_data_points` cannot stand in for this either: it is summed ACROSS
+    outcomes, so Game Awards reports 80 from 8 distinct observation times, and a
+    24-outcome field would clear the `sparse` threshold on one observation each.
+    `observation_times` below is that count un-multiplied.
+
+    Measured AFTER `_apply_settled_winner_freeze`, deliberately: the span
+    reported is the span the chart DRAWS, injected settlement point included,
+    because a domain label that disagreed with the plotted line would be a second
+    error covering the first.
+
+    Returns nulls rather than zeros on an empty history — gotcha #53: "no
+    observations" and "an instant of observation" must not share a shape.
+    """
+    stamps: list[datetime] = []
+    for entry in outcome_history.values():
+        for point in entry.get("history") or []:
+            raw = point.get("timestamp")
+            if not raw:
+                continue
+            try:
+                stamps.append(datetime.fromisoformat(raw))
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                continue
+
+    if not stamps:
+        return {
+            "coverage_start": None,
+            "coverage_end": None,
+            "coverage_hours": None,
+            "observation_times": 0,
+        }
+
+    first, last = min(stamps), max(stamps)
+    return {
+        "coverage_start": first.isoformat(),
+        "coverage_end": last.isoformat(),
+        "coverage_hours": round((last - first).total_seconds() / 3600, 2),
+        "observation_times": len({s.isoformat() for s in stamps}),
+    }
+
+
 @router.get("/{market_id}/history")
 async def get_futures_history(
     market_id: int,
@@ -5224,6 +5284,11 @@ async def get_futures_history(
         "round_boundaries": round_boundaries,
         "leaderboard": (market.market_metadata or {}).get("leaderboard"),
         "total_data_points": total_data_points,
+        # #7077 live half: what the points COVER, beside what we SEARCHED.
+        # `actual_hours` above stays exactly as it was — it is the search window
+        # and `auto_extended`'s caption is correct about it. These four are the
+        # separate, measured claim, so no existing reader's meaning moves.
+        **_measure_history_coverage(outcome_history),
     }
 
     # Signal to the frontend when data is sparse so it can show appropriate UI
