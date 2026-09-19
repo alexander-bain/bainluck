@@ -2481,6 +2481,33 @@ private enum NativeDiscoverPreviewFactory {
 
 // MARK: - Guess Card
 
+/// #7036 — the guess card's home-team text colour, floored against the white card.
+///
+/// **Internal, and a separate type, on purpose.** `NativeGuessCardContent` below
+/// is file-private, so a test cannot reach `thresholdColor` to prove the floor is
+/// actually wired in; and widening that whole enum to expose one colour would be
+/// a large visibility change for a small guarantee. This holds the decision and
+/// the default in one place both call sites delegate to, so a test can drive the
+/// exact expression the card renders.
+enum GuessCardTeamTextColour {
+
+    /// The colour the card already used for an event whose home team has no
+    /// stored colour. Measured 5.17:1 against the white card, so falling back to
+    /// it can never itself be the invisible case.
+    static let fallbackHex = "#2563eb"
+
+    /// The home team's colour when it is readable, otherwise the card's own
+    /// existing default.
+    ///
+    /// Takes the event rather than the hex so that the *choice of which side* the
+    /// card paints is covered too: this card prints the HOME team's colour, and a
+    /// silent change to `awayTeamData` here would be a different card with the
+    /// same tests passing.
+    static func homeHex(_ event: FeedEventData) -> String {
+        TeamTextContrast.textHexOnCard(event.homeTeamData?.primaryColor, fallback: fallbackHex)
+    }
+}
+
 private enum NativeGuessCardContent {
     case futures(FeedFuturesData)
     case event(FeedEventData)
@@ -2577,7 +2604,7 @@ private enum NativeGuessCardContent {
         case .futures:
             return .primary
         case .event(let event):
-            return Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+            return Color(hex: GuessCardTeamTextColour.homeHex(event))
         }
     }
 
@@ -2586,7 +2613,7 @@ private enum NativeGuessCardContent {
         case .futures:
             return nil
         case .event(let event):
-            return Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
+            return Color(hex: GuessCardTeamTextColour.homeHex(event))
         }
     }
 

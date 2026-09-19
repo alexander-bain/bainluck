@@ -671,6 +671,27 @@ private let sourceColors: [String: Color] = [
     "kalshi": Color.green,
     "odds_api": Color(white: 0.6),
 ]
+/// #7036 — the merged-future rows print their probability in the matched team's
+/// colour, on a white card.
+///
+/// **Internal, and keyed on the hex rather than the row.** `TeamFuturesSection`
+/// and `MergedTeamFuture` are both file-private, and `MergedTeamFuture` cannot be
+/// widened without dragging `TeamFutureItem` with it — so a test can reach
+/// neither the row nor the view that builds it. Taking the stored hex keeps the
+/// decision drivable by a test while leaving those types alone.
+enum MyStuffTeamTextColour {
+
+    /// The grey these rows already used for a team with no stored colour.
+    /// Measured 4.83:1 against the white card, so the fallback clears the floor
+    /// it is standing in for.
+    static let fallbackHex = "#6b7280"
+
+    /// The team's colour when it is readable, otherwise the row's own default.
+    static func probabilityHex(_ primaryColor: String?) -> String {
+        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    }
+}
+
 /// Merged view of the same outcome across sources.
 private struct MergedTeamFuture: Identifiable {
     var primary: TeamFutureItem
@@ -1190,7 +1211,7 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))
+                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             } else if let prob = displayProb {
@@ -1198,7 +1219,7 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))
+                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             }
