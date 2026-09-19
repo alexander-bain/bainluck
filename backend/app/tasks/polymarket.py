@@ -4465,7 +4465,8 @@ def _parent_outcome_data(event) -> list[dict]:
       gates. #1578 recorded that as the least-guarded of the five write paths and
       deliberately added only the phantom-midpoint test to it; that judgement is
       preserved here rather than quietly tightened.
-    * **single-market** — one "Yes" leg, priced through the gated resolver.
+    * **single-market** — one leg, priced through the gated resolver, and named
+      "Yes" unless the venue named a side (#6739; see the branch's own note).
 
     Returns the rows unsorted and unranked; the caller sorts, ranks and writes.
     """
@@ -4527,9 +4528,26 @@ def _parent_outcome_data(event) -> list[dict]:
         prob = _resolve_market_probability(market)
         if prob is None or prob <= 0:
             continue
+        # #6739: the THIRD writer of the pair #6050 fixed on the other two, and
+        # the only one that never asked. A Polymarket event carrying ONE market
+        # is not always a Yes/No question — a game whose venue listing holds just
+        # the moneyline arrives here too, with `question` set to the matchup and
+        # the two sides in `outcomes`. Hardcoding "Yes" threw that away: measured
+        # 2026-09-19 over 240 stored single-leg rows, 223 of them sit under a
+        # matchup whose venue payload reads `outcomes: ["Jukurit Mikkeli",
+        # "Vaasan Sport"]`, so the page printed "Yes 62%" and, once the match
+        # settled, a bare "Settled" chip with no winner (32 such events).
+        #
+        # `outcomes[0]` is the array parallel to `outcome_prices`, which is the
+        # field `_resolve_market_probability` prices this leg from — so the label
+        # is definitionally the side this number belongs to and there is no
+        # orientation guess here. The remaining 17 are genuine Yes/No questions:
+        # the helper returns the fallback for them and they stay byte-identical.
         outcome_data.append({
             "external_id": market.condition_id,
-            "name": "Yes",
+            "name": _sub_market_side_label(
+                market, 0, market.question or event.title, "Yes"
+            ),
             "prob": prob,
             "yes_bid": market.best_bid,
             "yes_ask": market.best_ask,
