@@ -18,18 +18,28 @@ inside the loaded schedule") refuses a CORRECT placement. What separates NPB
 from the World Cup is not whether this fixture is known, it is whether the
 competition is running at all.
 
-THE RIG HONOURS THE PREDICATE. `_FakeSession` below renders the statement and
-serves only the rows the query actually ASKED for — the league, the time floor
-and the source exclusion are all read back out of the compiled SQL, never from
-re-importing the module's constants, which would make the fake agree with the
-code by construction. Deleting any one of the three WHERE clauses turns the
-refusal tests red rather than leaving them green on a fake that ignores them.
-That is the #6377 lesson (its fake ignored the predicate, so reverting the ship
-failed 2 tests of 25 instead of 15).
+THE RIG HONOURS THE PREDICATE, AND IT HAD TO BE REPLACED TO GO ON DOING SO.
+This file used to serve rows by regex-parsing the compiled SQL — the league, the
+time floor and the source exclusion read back out of the string, never from
+re-importing the module's constants, so that deleting a WHERE clause turned
+these tests red instead of leaving them green (the #6377 lesson).
+
+#7086 gave the guard two more questions to ask, one of them a BAND
+(`>= A AND <= B`) and one an OR of two bands. The regexes could not read either:
+they found the first `>=`, took it for a floor and ignored every ceiling. The
+whole file still passed — measured, not feared: at a kickoff 29 days past NPB's
+only fixture the old fake answered True while the query itself excludes that row,
+so `test_the_floor_is_measured_from_the_kickoff_not_the_clock` was asserting a
+behaviour the code no longer had. A rig that mis-reads a predicate does not
+weaken a test, it inverts one.
+
+So the fake now lives in `tests/lib_placement_predicate.py` and EVALUATES the
+statement's expression tree against each row, in SQL's three-valued logic. It
+honours any predicate the code emits and raises on any clause it cannot read,
+rather than skipping it.
 """
 import ast
 import inspect
-import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -39,101 +49,14 @@ from app.tasks.prediction_market_matching import (
     _PLACEMENT_SEASON_WINDOW_DAYS,
     league_is_running_at,
 )
+from tests.lib_placement_predicate import (
+    PredicateSession as _FakeSession,
+    ScheduleRow as _EventRow,
+)
 
 
 def _utc(text: str) -> datetime:
     return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
-
-
-class _EventRow:
-    """One `events`-joined-`sports` row the season anchor query could return."""
-
-    def __init__(self, league, commence_time, source):
-        self.league = league
-        self.commence_time = commence_time
-        self.source = source
-
-
-class _Result:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def first(self):
-        return self._rows[0] if self._rows else None
-
-
-class _FakeSession:
-    """Serves only the rows the compiled statement actually asks for.
-
-    Three predicates are read back out of the SQL rather than assumed:
-
-      * ``sports.key = '<league>'`` — the league being vouched for;
-      * ``events.commence_time >= '<floor>'`` — the season window;
-      * the ``commence_time_source NOT IN (...)`` list, plus whether NULL is
-        admitted alongside it.
-
-    A clause the code stops emitting stops filtering here, which is exactly the
-    sensitivity these tests need: the fake cannot pass a test the SUT no longer
-    earns. It deliberately does NOT re-import
-    ``MARKET_BORN_COMMENCE_SOURCES`` to build the filter — that would make the
-    exclusion agree with itself one level down.
-    """
-
-    def __init__(self, rows):
-        self._rows = rows
-        self.compiled = []
-
-    async def execute(self, statement):
-        sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
-        self.compiled.append(sql)
-
-        league = None
-        found = re.search(r"sports\.key\s*=\s*'([^']*)'", sql)
-        if found:
-            league = found.group(1)
-
-        floor = None
-        found = re.search(
-            r"events\.commence_time\s*>=\s*'([^']*)'", sql
-        )
-        if found:
-            floor = datetime.fromisoformat(found.group(1))
-            if floor.tzinfo is None:
-                floor = floor.replace(tzinfo=timezone.utc)
-
-        excluded = ()
-        found = re.search(
-            r"events\.commence_time_source\s+NOT\s+IN\s*\(([^)]*)\)", sql,
-            re.IGNORECASE,
-        )
-        if found:
-            excluded = tuple(
-                part.strip().strip("'") for part in found.group(1).split(",")
-            )
-        admits_null = bool(
-            re.search(
-                r"events\.commence_time_source\s+IS\s+NULL", sql, re.IGNORECASE
-            )
-        )
-
-        served = []
-        for row in self._rows:
-            if league is not None and row.league != league:
-                continue
-            if floor is not None and row.commence_time < floor:
-                continue
-            if excluded:
-                if row.source is None:
-                    if not admits_null:
-                        continue
-                elif row.source in excluded:
-                    continue
-            served.append(row)
-
-        limit = re.search(r"\bLIMIT\s+(\d+)", sql, re.IGNORECASE)
-        if limit:
-            served = served[: int(limit.group(1))]
-        return _Result(served)
 
 
 # ── The production population, 2026-09-15 ────────────────────────────────────
@@ -149,15 +72,68 @@ NATIONS_LEAGUE_LAST_REAL = _utc("2026-09-29 18:45:00")
 SUDAMERICANA_LAST_REAL = _utc("2026-09-18 00:30:00")
 SWISS_LAST_REAL = _utc("2026-09-20 14:30:00")
 
+#: Each season competition's run of play, added for #7086 and widened for
+#: CERT-3120. Read by db-query on 2026-09-19.
+#:
+#: WHY THE LAST FIXTURE ALONE STOPPED BEING ENOUGH. #6392's guard asked one
+#: question — is anything scheduled since the floor — and the last fixture is a
+#: complete answer to it. #7086's asks a second: is this a season or a
+#: tournament. That was first written as "was it playing a month or two BEFORE
+#: the kickoff", which one shoulder row can express; CERT-3120 showed the
+#: shoulder is the wrong question (it lands in the off-season of a league whose
+#: new season has just started) and the right one is how long the competition's
+#: longest continuous BLOCK of play is. A block is a property of density, so a
+#: one-or-two-row-per-league population cannot express it at all — it would make
+#: these controls assert the wrong mechanism rather than a wrong verdict.
+#: Production carries 666 NPB fixtures from 03-27, and 75 of them in
+#: 07-25..08-20 alone.
+#:
+#: `basketball_nbl` and `soccer_uefa_nations_league` still get one row each,
+#: because that is what production has for them here — NBL opened its season on
+#: 09-19 and the Nations League plays in windows. Their placements below are
+#: admitted by the arms that exist for exactly that, and
+#: ``test_placement_tournament_guard_7086.py`` carries their full shape.
+def _every(start: datetime, end: datetime, days: float) -> list[datetime]:
+    """Fixtures every ``days`` from ``start`` through ``end``, inclusive."""
+    fixtures, when = [], start
+    while when <= end:
+        fixtures.append(when)
+        when += timedelta(days=days)
+    return fixtures
+
+
+#: Each ends on the league's real last fixture. The cadence alone would stop up
+#: to one step short of it, which quietly moves every control keyed on
+#: ``*_LAST_REAL`` — the floor control below reads a kickoff 29 days past NPB's
+#: last fixture and would have been measuring a kickoff 30 days past a fixture
+#: the population no longer contained.
+NPB_SEASON = _every(_utc("2026-03-27 09:00:00"), NPB_LAST_REAL, 3) + [NPB_LAST_REAL]
+SUDAMERICANA_SEASON = _every(
+    _utc("2026-03-03 15:00:00"), SUDAMERICANA_LAST_REAL, 7
+) + [SUDAMERICANA_LAST_REAL]
+LIBERTADORES_SEASON = _every(
+    _utc("2026-02-04 00:31:00"), SUDAMERICANA_LAST_REAL, 7
+) + [SUDAMERICANA_LAST_REAL]
+SWISS_SEASON = _every(_utc("2026-02-07 17:00:00"), SWISS_LAST_REAL, 7) + [
+    SWISS_LAST_REAL
+]
+
 SCHEDULE_ROWS = [
     _EventRow("soccer_fifa_world_cup", WORLD_CUP_LAST_REAL, "odds_api"),
     _EventRow("tennis_atp_french_open", FRENCH_OPEN_LAST_REAL, "odds_api"),
-    _EventRow("baseball_npb", NPB_LAST_REAL, "statpal"),
     _EventRow("basketball_nbl", NBL_LAST_REAL, "odds_api"),
     _EventRow("soccer_uefa_nations_league", NATIONS_LEAGUE_LAST_REAL, "odds_api"),
-    _EventRow("soccer_conmebol_copa_sudamericana", SUDAMERICANA_LAST_REAL, "odds_api"),
-    _EventRow("soccer_conmebol_copa_libertadores", SUDAMERICANA_LAST_REAL, "odds_api"),
-    _EventRow("soccer_switzerland_superleague", SWISS_LAST_REAL, "espn"),
+] + [
+    _EventRow("baseball_npb", when, "statpal") for when in NPB_SEASON
+] + [
+    _EventRow("soccer_conmebol_copa_sudamericana", when, "odds_api")
+    for when in SUDAMERICANA_SEASON
+] + [
+    _EventRow("soccer_conmebol_copa_libertadores", when, "odds_api")
+    for when in LIBERTADORES_SEASON
+] + [
+    _EventRow("soccer_switzerland_superleague", when, "espn")
+    for when in SWISS_SEASON
 ]
 
 # The 3 rows the four refusals let through, each with its own kickoff.
@@ -356,11 +332,20 @@ class TestPhantomsMayNotVouchForEachOther:
 class TestAnotherLeaguesSeasonIsNotThisOnes:
     @pytest.mark.asyncio
     async def test_a_running_sibling_does_not_vouch_for_a_finished_league(self):
-        """`soccer_uefa_nations_league` is live all September; the World Cup is
-        not. If the league predicate stops being emitted the sibling's row
-        answers for it."""
+        """The Nations League is playing this week; the World Cup is not. If the
+        league predicate stops being emitted the sibling's row answers for it.
+
+        The kickoff is one of the 21 measured correct placements (Armenia v
+        Montenegro) rather than the bare 09-17 it used to be. #7086 refuses
+        09-17 for the Nations League and is right to: its September window is
+        09-27 to 09-29 and we hold no fixture within twelve days of the 17th, so
+        the old date asserted a verdict this guard no longer gives — and the
+        contrast it exists to draw survives the move intact. Dropping the league
+        clause still turns this red, because the World Cup read then finds NPB's
+        August fixture and reports a season.
+        """
         session = _FakeSession(SCHEDULE_ROWS)
-        kickoff = _utc("2026-09-17 13:00:00")
+        kickoff = _utc("2026-09-28 16:00:00")
         assert await league_is_running_at(
             session, "soccer_uefa_nations_league", kickoff
         ) is True
