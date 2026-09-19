@@ -272,7 +272,23 @@ describe("#7192 arm B — the component wires the alignment and marks the hidden
     expect(claim).toBeGreaterThan(-1);
     expect(assign).toBeGreaterThan(claim); // claimed BEFORE the move, or the event beats it
     expect(CODE).toContain("if (selfScroll.current) selfScroll.current = false;");
-    expect(CODE).toContain("else readerScrolled.current = true;");
+    // SCOPE NARROWED BY #7268, intent unchanged. This was the whole one-liner
+    // `else readerScrolled.current = true;` — a claim about the BRANCH written
+    // as a claim about its formatting, safe only while the branch had exactly
+    // one statement in it. #7268 gave it a second (the straddle cover exists
+    // only while the grid rests where the alignment put it, so a reader-driven
+    // scroll has to clear that too) and the branch became a block. The claim
+    // being made here has always been "a scroll that is not ours records the
+    // reader taking over", so it is now asked of the else branch itself.
+    const elseBranch = CODE.slice(
+      CODE.indexOf("if (selfScroll.current) selfScroll.current = false;"),
+      CODE.indexOf(
+        "syncScrollAffordance();",
+        CODE.indexOf("if (selfScroll.current) selfScroll.current = false;"),
+      ),
+    );
+    expect(elseBranch).toContain("else");
+    expect(elseBranch).toContain("readerScrolled.current = true;");
   });
 
   test("the header row is observed, not only the scroller", () => {
