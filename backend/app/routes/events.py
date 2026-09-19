@@ -24728,6 +24728,26 @@ class TeamNameLookup(dict):
             {k: v for k, v in self.by_league.items() if k in names},
         )
 
+    def __eq__(self, other):
+        """Equal only when the per-league map agrees too.
+
+        Inherited `dict.__eq__` ignores `by_league`, and the one comparison this
+        class invites is the LAT-P115 parity check — "does the refresh-behind
+        build produce what the blocking build produced?". That guard reads `==`,
+        so without this the whole new field is invisible to precisely the test
+        written to catch it drifting. A bare `dict` carries no per-league map and
+        is therefore NOT equal to a lookup that has one, which is the answer that
+        keeps such a guard honest.
+        """
+        base = dict.__eq__(self, other)
+        if base is NotImplemented or base is False:
+            return base
+        return self.by_league == getattr(other, "by_league", {})
+
+    def __ne__(self, other):
+        result = self.__eq__(other)
+        return result if result is NotImplemented else not result
+
 
 def _as_lookup(mapping) -> TeamNameLookup:
     """`mapping` as a `TeamNameLookup`, without copying one that already is.

@@ -413,6 +413,23 @@ def test_subset_drops_the_map_for_names_nobody_asked_for():
     assert _team_for_event(served, "Syracuse Orange", NCAAF) is None
 
 
+def test_equality_sees_the_per_league_map():
+    """Otherwise a warm/cold parity guard (LAT-P115) is vacuous about the new field.
+
+    `dict.__eq__` compares only the name→row pairs, so two lookups that disagree
+    about every per-league row would compare EQUAL — and the one test this class
+    invites is exactly "does the refresh-behind build match the blocking one?".
+    """
+    a = _dedupe_team_name_lookup(list(SYRACUSE_ROWS))
+    b = _dedupe_team_name_lookup(list(reversed(SYRACUSE_ROWS)))
+    assert a == b, "the two build orders must agree, map included"
+
+    stripped = TeamNameLookup(dict(a))
+    assert dict(stripped) == dict(a), "precondition: the name→row pairs are identical"
+    assert stripped != a, "a lookup that lost its per-league map is not the same value"
+    assert a != dict(a), "and neither is a bare dict with the same pairs"
+
+
 def test_a_plain_dict_degrades_to_todays_answer():
     """The no-`by_league` branch. Noted as the path NO production caller takes:
     every one of them passes a `TeamNameLookup`, so a suite that exercised only
