@@ -267,11 +267,21 @@ struct DiscoverView: View {
     /// it can only move if the closure ran. Invisible to a reader.
     @State private var rigRefreshCount = 0
 
-    /// What the end card's Refresh control tells the reader it is doing (#1472).
+    /// What a refresh tells the reader it is doing (#1472, #7074).
     ///
     /// Unlike `rigRefreshCount` above, this one IS for the reader, and it exists
     /// because none of the three signals a refresh normally produces reaches the
     /// bottom of the feed — see `NativeFeedRefreshPhase` for which three and why.
+    ///
+    /// **TWO READERS NOW, AND THE NAME IS OLDER THAN THE SECOND ONE.** #1472 gave
+    /// this to the end card. #7074 found the pull reader had the identical defect
+    /// at the opposite end of the same scroll view — every outcome of a pull
+    /// rendering exactly like no pull — and the repair is the top-of-feed
+    /// `DiscoverPullRefreshNoticeRow`, reading THIS value. One refresh, one phase,
+    /// two places a reader may be standing; no second state to keep in step.
+    /// Deliberately not renamed to `refreshPhase`: #1472's call-site scan pins the
+    /// literal `phase: footerRefreshPhase` at three end-card sites, and editing
+    /// another issue's guard to improve a name is a poor trade.
     @State private var footerRefreshPhase: NativeFeedRefreshPhase = .idle
 
     /// Which refresh owns `footerRefreshPhase`.
@@ -1381,6 +1391,29 @@ struct DiscoverView: View {
                     .frame(height: 0)
                     .id(Self.feedTopAnchor)
                     .accessibilityHidden(true)
+                // #7074, the pull arm. THE READER WHO PULLED IS STANDING HERE,
+                // and until this row existed every outcome of their gesture
+                // rendered byte-identically to not having pulled: the three
+                // readers of `footerRefreshPhase` are all in the footer region,
+                // a screen-and-a-half below, and both of this body's error
+                // surfaces are gated on `vm.items.isEmpty` — so a pull that
+                // FAILS on a full feed says nothing and a pull that SUCCEEDS
+                // says nothing. Alex, build 15: "Pull gesture briefly shows
+                // activity with no apparent change."
+                //
+                // This is #1472's repair given its second reader. Nothing new is
+                // decided here and no new state is introduced: the same phase
+                // the end card reads, through a rule that borrows the end card's
+                // own words. `.refreshing` is deliberately silent — it is the
+                // one phase this reader can already see, under their finger.
+                if let notice = DiscoverPullRefreshNotice.forPhase(footerRefreshPhase) {
+                    DiscoverPullRefreshNoticeRow(notice: notice) {
+                        Task { await refreshFeed() }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                    .transition(.opacity)
+                }
                 // Compute the eligible, grouped feed once per body pass — reused
                 // by the card grid, pagination trigger, and the empty-eligible
                 // end state below (L2-191).

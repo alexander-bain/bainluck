@@ -243,16 +243,7 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
             "PULLS moved from \(before) to \(afterQuietWindow) with NO pull. The counter is not counting pulls, so this test cannot say anything about the gesture."
         )
 
-        let scrollView = app.scrollViews.firstMatch
-        XCTAssertTrue(scrollView.exists, "Discover has no scroll view to pull.")
-
-        // A bare `swipeDown()` is a flick: too short and too fast to hold an
-        // overscroll open. The press-drag-hold form is what a reader's pull
-        // actually is, and it starts at dy 0.30 — below the 62-168pt navigation
-        // bar, which dy 0.15 lands on and which swallowed the first draft's pull.
-        let top = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30))
-        let bottom = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
-        top.press(forDuration: 0.2, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 1.0)
+        try pullToRefresh(in: app)
 
         var after = before
         let deadline = Date().addingTimeInterval(UITestLaunch.contentTimeout)
@@ -271,6 +262,158 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
             JourneyPrecondition.cards(in: app).firstMatch
                 .waitForExistence(timeout: UITestLaunch.contentTimeout),
             "The feed had no event card after the refresh. A refresh emptied the page."
+        )
+    }
+
+    /// A reader's pull, as a gesture and not as a flick.
+    ///
+    /// Hoisted at its SECOND caller rather than copied (native/243): a bare
+    /// `swipeDown()` is too short and too fast to hold an overscroll open, and the
+    /// dy 0.30 start is load-bearing — dy 0.15 lands on the 62-168pt navigation bar
+    /// and swallowed the first draft's pull entirely. Two copies of a recipe with
+    /// two magic numbers in it is one copy that gets tuned and one that silently
+    /// stops arming the thing it is named for.
+    private func pullToRefresh(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let scrollView = app.scrollViews.firstMatch
+        guard scrollView.exists else {
+            XCTFail("Discover has no scroll view to pull.", file: file, line: line)
+            throw XCTSkip("no scroll view")
+        }
+        let top = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30))
+        let bottom = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+        top.press(forDuration: 0.2, thenDragTo: bottom, withVelocity: .slow, thenHoldForDuration: 1.0)
+    }
+
+    /// #7074: **a completed pull says so where the reader who pulled is standing.**
+    ///
+    /// The sibling above proves the gesture reaches the closure. It deliberately
+    /// does NOT assert the cards changed — a refresh returning the same markets is
+    /// a correct refresh — and that is exactly why Alex's report was ruled
+    /// inconclusive: on build 15 a pull that succeeded, a pull that succeeded with
+    /// identical cards, and a pull that FAILED all rendered byte-identically to not
+    /// having pulled. The three readers of the refresh phase were all in the footer,
+    /// a screen-and-a-half below, and both of Discover's error surfaces are gated on
+    /// an empty feed.
+    ///
+    /// This is the assertion no unit test in the world can make: the row is built
+    /// inside a SwiftUI builder returning an opaque type, so
+    /// `APullOnDiscoverCompletesAndSaysSo7074Tests` can prove every word of the rule
+    /// and prove nothing about whether a finger ever produces it. Here a finger does.
+    ///
+    /// ⏱ THE SUCCESS NOTICE HAS A BOUNDED LIFE — `refreshConfirmationWindow`, 4
+    /// seconds — and that is the point of it (a confirmation that never expires
+    /// becomes a lie by sitting still). The window opens when the load COMPLETES, not
+    /// when the finger lifts, so a slow network delays the notice rather than
+    /// shortening it. If this ever goes flaky, the thing to check is whether that
+    /// constant moved, not whether the wait is long enough.
+    func testACompletedPullSaysSoAtTheTopOfTheFeed() throws {
+        let app = UITestLaunch.launchApp()
+        JourneyPrecondition.tabBar(of: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
+
+        let notice = app.descendants(matching: .any)
+            .matching(identifier: "discover-refresh-notice").firstMatch
+
+        // THE CONTROL. A row that is always on screen would make this test pass
+        // forever while proving nothing about the gesture — and it would also be a
+        // defect of its own, a permanent fixture at the top of the feed announcing
+        // an event that has not happened.
+        JourneyPrecondition.settle(JourneyPrecondition.cards(in: app))
+        XCTAssertFalse(
+            notice.exists,
+            "Discover is announcing a refresh outcome before anyone refreshed anything."
+        )
+
+        try pullToRefresh(in: app)
+
+        // 🪤 `waitForExistence` MEASURED FALSE ON AN ELEMENT A PLAIN `.exists` LOOP
+        // SAW 59 MILLISECONDS LATER — SAME BUILD, SAME GESTURE, SAME QUERY.
+        //
+        // Measured twice, 2026-09-19 (native/243). Run 1 called
+        // `notice.waitForExistence(timeout: 30)` at exactly this point and got
+        // `false` after the full thirty seconds. Run 2 replaced it with the loop
+        // below and recorded `firstSeen = 0.059s`, `trueSamples = 6 of 129` across
+        // 25s: the notice was ALREADY on screen when the gesture returned, stayed for
+        // its ~4-second confirmation window, and went. The refresh completes while
+        // the finger is still holding the overscroll open, so nearly the whole life
+        // of the notice is spent before any assertion can run.
+        //
+        // Whatever the mechanism inside `waitForExistence` — it is predicate-driven
+        // and notification-backed rather than a plain poll — the lesson is the flat
+        // one: **on a state with a deliberately bounded life, a waiter reporting
+        // absence is not evidence of absence.** The sibling test above reached the
+        // same place from the other side and polls `PULLS` by hand for it.
+        //
+        // So everything the assertions need is captured INSIDE the window, in one
+        // pass, cheapest query first. By the time the last assertion runs the row may
+        // legitimately be gone, and re-querying a decayed notice would red this test
+        // on the confirmation working exactly as designed.
+        var appeared = false
+        var seenLabel = ""
+        var seenFrame = CGRect.zero
+        var seenCardFrame = CGRect.zero
+        var capturedFrame: XCUIScreenshot? = nil
+        let cards = JourneyPrecondition.cards(in: app)
+        let deadline = Date().addingTimeInterval(UITestLaunch.contentTimeout)
+        while Date() < deadline {
+            guard notice.exists else { continue }
+            appeared = true
+            seenLabel = notice.label
+            seenFrame = notice.frame
+            seenCardFrame = cards.firstMatch.frame
+            capturedFrame = app.screenshot()
+            break
+        }
+
+        // 📷 SHOT WHATEVER HAPPENED, AND THAT ORDERING IS DELIBERATE. A frame taken
+        // only on the happy path exists only in the world where the ship already
+        // landed — so the BEFORE half of a BEFORE/AFTER pair is unbuildable and the
+        // first thing anyone asks for cannot be produced (D48).
+        let shot = XCTAttachment(screenshot: capturedFrame ?? app.screenshot())
+        shot.name = "7074-pull-notice"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        XCTAssertTrue(
+            appeared,
+            "A pull completed and the top of the feed said nothing about it. This is Alex's build-15 "
+            + "report verbatim: 'Pull gesture briefly shows activity with no apparent change.' The "
+            + "outcome is known to the page — the end card reads it — and the reader who pulled cannot "
+            + "see the end card."
+        )
+
+        XCTAssertEqual(
+            seenLabel, "Feed refreshed. Checked just now.",
+            "The notice drew, and announces something other than the outcome it was given. Its label is "
+            + "what a VoiceOver reader gets INSTEAD of the row's contents, not in addition to them."
+        )
+        // EXISTS IS NOT ON SCREEN. A row with a zero height, or one drawn above the
+        // window's top edge, is in the accessibility tree and invisible — the same
+        // gap `testDiscoverOpensOnRealCards` closes with `isHittable`. Hittability is
+        // not the test here (the success notice carries no control, so a decorative
+        // combined element's hittability is not a property worth reddening a gate
+        // over); a real rectangle inside the window is.
+        let window = app.windows.firstMatch.frame
+        XCTAssertFalse(
+            seenFrame.isEmpty,
+            "The notice is in the accessibility tree with an empty frame — present to a query, invisible "
+            + "to a reader."
+        )
+        XCTAssertTrue(
+            window.contains(seenFrame.origin),
+            "The notice drew outside the window (notice at \(seenFrame), window \(window))."
+        )
+
+        // It is ABOVE the cards, not merely present. A confirmation the reader has
+        // to scroll to is a confirmation for a reader who no longer needs one.
+        XCTAssertLessThan(
+            seenFrame.minY, seenCardFrame.minY,
+            "The refresh notice drew BELOW the first card (notice at \(seenFrame), card at "
+            + "\(seenCardFrame)), so the reader must scroll past the feed to learn they do not need to."
         )
     }
 
