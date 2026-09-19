@@ -575,6 +575,79 @@ export default function OddsChart({
   ]);
 
   /**
+   * #7161 — THE CAP REACHED THE AXIS AND NEVER REACHED THE INK.
+   *
+   * The start of the window is the one the PARENT computed, in both tabs, and
+   * only falls back to `commenceTime` when no parent supplied one.
+   *
+   * `computeSharedChartDomain` caps a completed game's "All" start to two hours
+   * before kick-off, and builds `sharedTicks` and the `h:mm a` label format on
+   * THAT window — deliberately, because a sub-12h window does not need a
+   * date-qualified label (L2-163 Item 2c). But the "All" arm here passed `null`
+   * for the start, so `chartData` kept every point the payload served while the
+   * axis described five hours of it.
+   *
+   * Measured on production 2026-09-19, /events/14638896 (Chiefs 31-10 Broncos,
+   * FINAL, 390px): the served series open 2026-05-12 and 4,017 of 4,607
+   * `aggregate_line` points — 87% — fall before the day of the game. So the
+   * categorical XAxis carried four MONTHS of categories under a format unique
+   * only inside twelve hours, every tick string matched the FIRST category
+   * bearing it, and the axis rendered `7:00 PM` at x=21 with `3:15 PM` at
+   * x=257. A reader is told the game ran backwards. The ink agreed: 96% of the
+   * drawn line's width was flat pre-season drift and the game itself was one
+   * spike at the right edge, inside a y-axis (60–80%) scaled by the months, not
+   * by the match.
+   *
+   * 🔴 THE CONTROL WAS ALREADY ON THE PAGE. `ScoreDifferentialChart` prunes its
+   * points to `chartStartTime`/`chartEndTime` and, in the same frame, on the same
+   * window, drew `3:15 PM · 5:00 PM · 7:00 PM · 8:16 PM` in order. Two charts,
+   * one domain, one clipping and one not — which is why this is the ink catching
+   * up with the axis it is drawn on, not a new policy.
+   *
+   * 🔴 THE FLOOR IS LOAD-BEARING, for the same reason `rangeEndTime`'s is. A
+   * start cutoff with no point at or after it would not trim a pre-window slab,
+   * it would delete the journey — and "All" is the window the chart RESETS TO
+   * when the live one draws nothing (#6349), so nothing rescues an empty "All".
+   * `computeSharedChartDomain` already declines to cap when nothing survives the
+   * cap, and already widens an inverted window back to the full extent; this is
+   * the same test applied where the ink is cut, so a domain arriving from
+   * anywhere cannot blank the chart.
+   */
+  const rangeStartTime = useMemo(() => {
+    const parentStart = chartStartTime ? parseISO(chartStartTime) : null;
+    const fallback =
+      timeRange === "all"
+        ? null
+        : commenceTime
+          ? parseISO(commenceTime)
+          : new Date();
+    const candidate = parentStart ?? fallback;
+    if (!candidate || isNaN(candidate.getTime())) return null;
+    const startMs = candidate.getTime();
+    const survives = (points?: { timestamp: string }[] | null): boolean =>
+      !!points?.some((point) => parseISO(point.timestamp).getTime() >= startMs);
+    if (survives(history)) return candidate;
+    if (survives(espnHistory)) return candidate;
+    if (survives(aggregateLine)) return candidate;
+    for (const points of Object.values(winProbHistory ?? {})) {
+      if (survives(points)) return candidate;
+    }
+    for (const points of Object.values(bookmakerHistory ?? {})) {
+      if (survives(points)) return candidate;
+    }
+    return null;
+  }, [
+    chartStartTime,
+    timeRange,
+    commenceTime,
+    history,
+    espnHistory,
+    aggregateLine,
+    winProbHistory,
+    bookmakerHistory,
+  ]);
+
+  /**
    * The one window every series is cut to, or `null` when there is nothing to
    * cut. Five filters used to spell this rule out for themselves and the end
    * half had already drifted out of one of them (#6987) — a rule written at
@@ -583,12 +656,7 @@ export default function OddsChart({
    * finished game.
    */
   const inChartRange = useMemo(() => {
-    const startMs =
-      timeRange === "all"
-        ? null
-        : commenceTime
-          ? parseISO(commenceTime).getTime()
-          : Date.now();
+    const startMs = rangeStartTime ? rangeStartTime.getTime() : null;
     const endMs = rangeEndTime ? rangeEndTime.getTime() : null;
     if (startMs === null && endMs === null) return null;
     return (timestamp: string): boolean => {
@@ -597,7 +665,7 @@ export default function OddsChart({
       if (endMs !== null && t > endMs) return false;
       return true;
     };
-  }, [timeRange, commenceTime, rangeEndTime]);
+  }, [rangeStartTime, rangeEndTime]);
 
   // Filter history to the chart window
   const filteredHistory = useMemo(() => {
@@ -1702,6 +1770,17 @@ export default function OddsChart({
          defect, and only this says where the line actually stops. Empty when
          nothing is drawn. */
       data-drawn-extent={drawnExtent ? `${drawnExtent.startMs},${drawnExtent.endMs}` : ""}
+      /* #7161: the first and last CATEGORY, in epoch ms, and how many there are.
+         Deliberately not `data-drawn-extent`: a categorical XAxis places a tick
+         by matching its string against the category list, so a category outside
+         the parent's window mis-places a tick whether or not it carries ink —
+         which is how `7:00 PM` came to sit left of `3:15 PM`. The ink and the
+         categories are two different facts and the guard needs both. */
+      data-category-span={
+        chartData.length > 0
+          ? `${parseISO(chartData[0].timestamp).getTime()},${parseISO(chartData[chartData.length - 1].timestamp).getTime()},${chartData.length}`
+          : ""
+      }
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
