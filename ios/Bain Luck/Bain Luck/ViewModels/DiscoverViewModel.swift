@@ -527,7 +527,26 @@ final class DiscoverViewModel: ObservableObject {
                     return
                 }
 
-                let renderable = Self.renderable(response.items)
+                // #7074: the rig's controlled changed response, and NOTHING in a
+                // shipping build. `rigDrop` is a compile-time `nil` in Release —
+                // not a flag that happens to be off — so `rigStagedRefresh` is a
+                // pass-through the optimiser can see through and a TestFlight
+                // reader cannot reach by passing the argument. Placed here, at the
+                // one point where the decoded payload becomes the thing we render,
+                // so the gesture, the network, the reconcile decision and the
+                // screen downstream of it are all the real ones.
+                #if DEBUG
+                let rigDrop = LaunchRig.changedRefreshDrop()
+                #else
+                let rigDrop: Int? = nil
+                #endif
+                let staged = Self.rigStagedRefresh(
+                    items: Self.renderable(response.items),
+                    edition: response.edition,
+                    hasPaintedFeed: !items.isEmpty,
+                    drop: rigDrop
+                )
+                let renderable = staged.items
                 // L2-215 Item 1 (#1486): count the empty predictive envelopes this
                 // page dropped, identity-free, on the network path only.
                 reportSuppressedEnvelopes(response.items)
@@ -541,7 +560,7 @@ final class DiscoverViewModel: ObservableObject {
                 switch DiscoverFeedReconcile.decision(
                     paintedCount: items.count,
                     paintedEdition: paintedEdition,
-                    incomingEdition: response.edition
+                    incomingEdition: staged.edition
                 ) {
                 case .repaint:
                     items = Self.interleave(renderable)
@@ -549,7 +568,11 @@ final class DiscoverViewModel: ObservableObject {
                     items = DiscoverFeedReconcile.merge(
                         painted: items, incoming: renderable, key: Self.itemKey)
                 }
-                paintedEdition = response.edition
+                // Both reads come from `staged` so the token recorded as painted
+                // describes the list actually painted. Taking the decision from
+                // the staged edition and the record from the raw one would leave
+                // the NEXT refresh comparing against a token no list ever had.
+                paintedEdition = staged.edition
                 // First paint provenance: only stamp network when the cache seed
                 // did NOT already produce first paint this load — a background
                 // revalidation behind a served cache must not relabel the render
@@ -880,6 +903,48 @@ final class DiscoverViewModel: ObservableObject {
 
     static func isRenderable(_ item: FeedItem) -> Bool {
         suppressionReason(item) == nil
+    }
+
+    /// #7074 — the payload the RIG asked us to pretend the server sent, so a
+    /// journey with a real finger can perform a **controlled** changed-response
+    /// experiment. See `LaunchRig.changedRefreshKey` for why the arm needs one
+    /// and why its only call site is `#if DEBUG`.
+    ///
+    /// Generic over the element, and taking `drop` as an argument rather than
+    /// reading `LaunchRig` itself, so the whole rule is decidable in a unit test
+    /// without a `FeedItem` graph, a `UserDefaults` suite or a build
+    /// configuration. The call site supplies `nil` in Release.
+    ///
+    /// Three refusals, and each is a state the journey must not be able to
+    /// mistake for its own success:
+    ///
+    /// - **no drop asked for** ⇒ unchanged. This is every reader, and it is the
+    ///   assertion that makes the affordance an affordance rather than a defect.
+    /// - **nothing painted yet** ⇒ unchanged. The first paint is payload A, the
+    ///   thing the change will be measured *against*. Shortening it too would
+    ///   leave the journey comparing two shortened lists and calling the
+    ///   difference between them evidence.
+    /// - **the drop would empty the feed** ⇒ keep one card. An empty payload is
+    ///   not a smaller payload: it is `mayReplaceRendered`'s refusal terminal and
+    ///   Discover's empty state, so the rig would manufacture a different defect
+    ///   and the journey would photograph that instead.
+    ///
+    /// The edition is restamped because withholding cards changes ordered
+    /// MEMBERSHIP, and `DiscoverFeedReconcile` is entitled to assume the server's
+    /// token moves when membership does. Handing back the original token would
+    /// assert the opposite of what the rig just did — the list would reconcile in
+    /// place as "same cards, same order", which is the branch a changed response
+    /// does NOT take. Restamping keeps the rig honest with the contract instead
+    /// of quietly testing the wrong branch.
+    static func rigStagedRefresh<Item>(
+        items: [Item], edition: String?, hasPaintedFeed: Bool, drop: Int?
+    ) -> (items: [Item], edition: String?) {
+        guard let drop, drop > 0, hasPaintedFeed, !items.isEmpty else {
+            return (items, edition)
+        }
+        let withheld = Swift.min(drop, items.count - 1)
+        guard withheld > 0 else { return (items, edition) }
+        return (Array(items.dropFirst(withheld)), "\(edition ?? "none")+rig-withheld-\(withheld)")
     }
 
     /// L2-215 Item 1 (#1486) — fail-closed empty-envelope classifier. Returns an
