@@ -2875,12 +2875,17 @@ jobs:
         # pytest's exit code is read for its VALUE (gotcha #54): 1 is a result,
         # anything else is a story about the harness.
         run: |
-          set -o pipefail
+          # `set +e` around the pipeline on purpose: the step runs under `bash -e`,
+          # so a red suite would abort HERE and the count/skip refusals below —
+          # the half of this gate that cannot be faked — would never execute. The
+          # exit code is captured and handed to them instead.
+          set +e
           python -m pytest \
             tests/integration/test_numeric_movement_fields_4079_amended_real_postgres.py \
             -p no:cacheprovider -rA --tb=short \
             --junitxml=/tmp/mvacc-junit.xml 2>&1 | tee /tmp/mvacc.txt
           RC=${PIPESTATUS[0]}
+          set -e
           echo "PYTEST EXIT CODE: $RC"
           python - "$RC" <<'PY'
           import sys, xml.etree.ElementTree as ET
