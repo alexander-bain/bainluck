@@ -417,6 +417,34 @@ _BOOK_PRICE_DECIMALS = 4
 _MIDPOINT_DISTANCE_DECIMALS = 6
 
 
+def book_bounds_nothing(
+    yes_bid: "float | None",
+    yes_ask: "float | None",
+) -> bool:
+    """True when a two-sided quote is so wide that no price inside it is constrained.
+
+    Conditions 1 and 2 of :func:`is_empty_book_midpoint`, factored out for #7059
+    so the second caller cannot restate them. This is the BOOK question only —
+    "does this quote locate anything" — with no view on where the served price
+    sits inside it. That judgement is condition 3, and it is the only part of the
+    rule that differs between a standalone leg and a member of a broken
+    single-winner field. The same split :func:`_is_ask_only_book` made for #6846,
+    for the same reason.
+
+    Behaviour is unchanged by the factoring: the rounding comment below moved here
+    with the compare it explains, and :func:`is_empty_book_midpoint` now delegates.
+    """
+    if yes_bid is None or yes_ask is None:
+        return False
+    # Rounded so the compare does not depend on how the bound was spelled: against a
+    # literal 0.90 an unrounded `>=` refuses 234 genuine 90c books including the
+    # exact-threshold 0.05/0.95. 4dp is exact for these Numeric(5,4) columns.
+    return (
+        round(float(yes_ask) - float(yes_bid), _BOOK_PRICE_DECIMALS)
+        >= EMPTY_BOOK_MIN_SPREAD
+    )
+
+
 def is_empty_book_midpoint(
     probability: "float | None",
     yes_bid: "float | None",
@@ -528,15 +556,12 @@ def is_empty_book_midpoint(
     is measuring the wrong thing. The read side is what a person sees change, and it
     changes the moment the release is live.
     """
-    if probability is None or yes_bid is None or yes_ask is None:
+    if probability is None:
+        return False
+    if not book_bounds_nothing(yes_bid, yes_ask):
         return False
     bid = float(yes_bid)
     ask = float(yes_ask)
-    # Rounded so the compare does not depend on how the bound was spelled: against a
-    # literal 0.90 an unrounded `>=` refuses 234 genuine 90c books including the
-    # exact-threshold 0.05/0.95. 4dp is exact for these Numeric(5,4) columns.
-    if round(ask - bid, _BOOK_PRICE_DECIMALS) < EMPTY_BOOK_MIN_SPREAD:
-        return False
     # Rounded for the same reason the spread compare above is, and at a precision that
     # is exact for BOTH operand columns rather than just the book's — see
     # `_MIDPOINT_DISTANCE_DECIMALS`. Unrounded, a distance of exactly one cent is
