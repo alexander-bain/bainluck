@@ -1199,6 +1199,10 @@ def test_7b_display_normalized_sports_twin_serves_no_number():
     Same fixture shape as `test_7` (0.60/0.50/0.30 = 1.40) on a sports market, so
     the card is normalized: the `mode=sports` movement must be null.
 
+    Both of the twin's printed sites are pinned — `top_outcomes` AND the sports
+    scorer's own `discover_card.distribution_outcomes`, which is a separate copy
+    of the movement expression, not a view of the first.
+
     Its discriminating control is the artifact's own
     `test_adjacent_sports_mode_twin_serializer_same_counterexample`, which is
     UNCHANGED and requires the same twin to serve +0.10 on an UNNORMALIZED card.
@@ -1222,11 +1226,38 @@ def test_7b_display_normalized_sports_twin_serves_no_number():
         f"PRECONDITION: the mode=sports card was expected to be normalized by 1.40, "
         f"got {scale:.4f} — this fixture is not exercising the normalized branch")
 
+    failures = []
     v = row.get(FEED_FIELD)
-    assert v is None, (
-        _SCALE_RULING + f"\n  - mode=sports feed.top_outcomes[Harbor Gulls].{FEED_FIELD}: "
-        f"served {v!r} beside a percent printed at {row['probability']:.4f}; must be null. "
-        f"(raw dated +0.1000, display-display +0.0714, mixed -0.0714, per-write +0.05.)")
+    if v is not None:
+        failures.append(
+            f"mode=sports feed.top_outcomes[Harbor Gulls].{FEED_FIELD}: served {v!r} beside a "
+            f"percent printed at {row['probability']:.4f}; must be null. "
+            f"(raw dated +0.1000, display-display +0.0714, mixed -0.0714, per-write +0.05.)")
+
+    # The sports scorer builds its OWN `discover_card.distribution_outcomes`, a
+    # fourth printed site with its own copy of the movement expression. A rule
+    # wired into three of the four leaves this one shipping the number, so it is
+    # pinned here rather than assumed to follow its twin.
+    dist = (card.get("discover_card") or {}).get("distribution_outcomes") or []
+    drow = next((r for r in dist if (r.get("label") or r.get("name")) == "Harbor Gulls"), None)
+    if drow is None:
+        # Not a pass by omission: say so, so nobody reads silence as coverage.
+        print(
+            "NOTE: the mode=sports card served no distribution row for Harbor Gulls "
+            f"(archetype served {[r.get('label') or r.get('name') for r in dist]!r}); "
+            "the distribution site of the sports scorer was NOT exercised by this run.")
+    elif FEED_FIELD not in drow:
+        failures.append(
+            f"mode=sports feed.distribution_outcomes[Harbor Gulls]: field {FEED_FIELD!r} absent "
+            f"from the wire row {sorted(drow)}")
+    elif drow[FEED_FIELD] is not None:
+        failures.append(
+            f"mode=sports feed.distribution_outcomes[Harbor Gulls].{FEED_FIELD}: served "
+            f"{drow[FEED_FIELD]!r} beside a percent printed at {drow.get('probability')!r}; "
+            f"must be null. Its twin one line up is already silent, so this is the site a "
+            f"rule wired into three of the four printed sites leaves behind.")
+
+    assert not failures, _SCALE_RULING + "\n  - " + "\n  - ".join(failures)
 
 
 # ---------------------------------------------------------------------------
