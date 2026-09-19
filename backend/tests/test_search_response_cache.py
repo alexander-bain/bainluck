@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import textwrap
 
 import pytest
 
@@ -975,6 +976,128 @@ def test_a_degraded_answer_is_never_written_to_the_cache():
     assert "if not degraded and not debug_timing:" in src, (
         "the cache write is not jointly guarded on `degraded` and `debug_timing`"
     )
+
+
+def test_a_shed_headline_contender_lane_marks_the_answer_degraded():
+    """#7243's residual tail: the one shed path that never joined `degraded`.
+
+    The headline-contender lane is bounded at `_SEARCH_HEADLINE_ARM_TIMEOUT_MS`
+    and a shed ships the page WITHOUT the championship card it exists to
+    promote. Every other shed path in the handler appends to `degraded`, so
+    LAT-P007's rule above keeps the thin body out of the cache; this one did
+    not, and a single 2,000 ms excursion therefore pinned a `red sox` page with
+    no `MLB World Series Champion 2026` card in front of every reader for the
+    full 180 s TTL.
+
+    Measured on production 2026-09-19 after `bfd08691`, `?debug_timing=1` so
+    every probe is a real miss-path build: `red` shed 1/5 and `red sox` 1/45,
+    and nothing shed 5/5. That non-determinism is the whole justification —
+    LAT-P241/#3399 let the TYPEAHEAD outcome-name arm out from under this rule
+    precisely BECAUSE its shed was 5/5-or-0/5, so no fuller answer existed to
+    displace. Here one does, on 44 reads out of 45.
+
+    POSITIONAL, NOT A SUBSTRING. The claim is that the append happens ON THE
+    SHED PATH — a call sitting anywhere else in a 3,000-line handler satisfies
+    `"degraded.append" in src` while changing nothing, and the mutant that
+    hoists it out of the handler is the one this guard exists to kill. So the
+    assertion walks to the `except` block that carries the lane's own timeout
+    warning and looks for the append inside THAT branch.
+    """
+    import ast
+
+    from app.routes import events
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(events.search_events)))
+
+    def _is_lane_timeout_handler(handler: ast.ExceptHandler) -> bool:
+        """The handler that logs THIS lane's shed, identified by its own text."""
+        for node in ast.walk(handler):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if "headline-contender lane timed out" in node.value:
+                    return True
+        return False
+
+    def _appends_degraded(node: ast.AST, label: str) -> bool:
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            fn = sub.func
+            if (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "append"
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id == "degraded"
+                and len(sub.args) == 1
+                and isinstance(sub.args[0], ast.Constant)
+                and sub.args[0].value == label
+            ):
+                return True
+        return False
+
+    handlers = [
+        h
+        for h in ast.walk(tree)
+        if isinstance(h, ast.ExceptHandler) and _is_lane_timeout_handler(h)
+    ]
+    assert handlers, (
+        "no except-handler in search_events logs the headline-contender lane's "
+        "timeout — the shed path this guard is aimed at has moved or gone"
+    )
+    assert len(handlers) == 1, (
+        f"expected exactly one headline-contender shed path, found {len(handlers)}"
+    )
+    assert _appends_degraded(handlers[0], "headline_contenders"), (
+        "the headline-contender shed path does not append "
+        '`"headline_contenders"` to `degraded`, so the thin page it ships is '
+        "written to the response cache and served for the full "
+        "SEARCH_RESPONSE_TTL_SECONDS (#7243)"
+    )
+
+
+def test_the_typeahead_headline_twin_is_deliberately_not_marked():
+    """The other half of #3394's lesson: the twin was CHECKED, not copied into.
+
+    `/typeahead` runs the identical headline lane, and the reflex after fixing
+    `/search` is to mirror the append onto `_ta_degraded`. That would be wrong
+    twice over: LAT-P241/#3399 narrowed `_ta_degraded` ON PURPOSE to mean "the
+    FUTURES STAGE itself was lost", and the typeahead headline lane shed 0/25
+    over five terms measured the same minute — `red`, the worst `/search` term,
+    does not even arm it there.
+
+    So this pins the DECISION, not an accident. If a later session measures
+    typeahead sheds and wants to mark them, it must introduce its own flag the
+    way `_ta_outcome_arm_shed` was introduced, rather than widening
+    `_ta_degraded` back to the meaning #3399 removed.
+    """
+    import ast
+
+    from app.routes import events
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(events.typeahead_search)))
+    for handler in ast.walk(tree):
+        if not isinstance(handler, ast.ExceptHandler):
+            continue
+        texts = [
+            n.value
+            for n in ast.walk(handler)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        ]
+        if not any("headline-contender lane timed out" in t for t in texts):
+            continue
+        for sub in ast.walk(handler):
+            if (
+                isinstance(sub, ast.Assign)
+                and any(
+                    isinstance(t, ast.Name) and t.id == "_ta_degraded"
+                    for t in sub.targets
+                )
+            ):
+                raise AssertionError(
+                    "the typeahead headline shed now sets `_ta_degraded`, which "
+                    "LAT-P241/#3399 narrowed to 'the futures stage was lost'. "
+                    "Widening it back makes head terms uncacheable again — add a "
+                    "separate flag and measure the shed rate first."
+                )
 
 
 def test_the_ttl_is_declared_once_and_is_the_whole_invalidation_contract():
