@@ -142,6 +142,28 @@ body {
   background-attachment: local, local, scroll, scroll;
 }
 
+/* One shared column geometry for the Division Race table (#7023).
+   Every line of the table (header + each team row) is its own grid box, because a
+   row carries its own background and accent. Declaring the template on each line
+   made `max-content` resolve PER LINE, so rows with long team names pushed their
+   number columns right of rows with short ones — measured 18px apart at 390px and
+   50px at 1280px on production. Subgridding every line onto the table's own tracks
+   is what makes a column a column.
+   The fallback is deliberate and is exactly the behaviour that shipped before:
+   where `subgrid` is unsupported each line falls back to `--divrace-cols`, the same
+   template the component used to set inline, so the table still renders. */
+.divrace-line {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: var(--divrace-cols);
+}
+
+@supports (grid-template-columns: subgrid) {
+  .divrace-line {
+    grid-template-columns: subgrid;
+  }
+}
+
 /* Live pulse animation */
 @keyframes pulse-live {
   0%, 100% {

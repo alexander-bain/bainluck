@@ -5,6 +5,8 @@
 //  - and neither crashes on the empty/degenerate inputs the page can pass.
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 jest.mock("next/link", () => ({
   __esModule: true,
@@ -160,7 +162,76 @@ describe("TeamDivisionRace across leagues", () => {
     ];
     const race = buildDivisionRace(gridOf(teams), 1, "A")!;
     const html = renderToStaticMarkup(<TeamDivisionRace race={race} teamColor={null} />);
-    expect(html).not.toContain("Division ↓");
-    expect(html).toContain("Playoffs");
+    // This used to look for "Division ↓" — the sort marker. #7023 removed the "↓"
+    // (it only ever pointed down, and its 15px wrapped the header onto two lines),
+    // so that string can no longer appear whatever the component does, and the
+    // assertion would pass on a table that DID render a Division column. The
+    // subject is the sort header itself: the h2 above also says "Division Race",
+    // so match the button, not the word.
+    expect(html).not.toMatch(/<button[^>]*>Division<\/button>/);
+    expect(html).toMatch(/<button[^>]*>Playoffs<\/button>/);
+  });
+
+  // #7023 — the defect class: the table's column template is declared ONCE and
+  // every line inherits it. When each line declared its own, `max-content` was
+  // resolved per line, so a row with a long team name pushed its numbers right of
+  // a row with a short one (measured on production: 18px apart at 390px, 50px at
+  // 1280px) and the header labels sat left of the numbers they label.
+  describe("#7023 one shared column geometry", () => {
+    function markup() {
+      const teams = [
+        gTeam({ name: "Buffalo Bills", short_name: "BUF", team_id: 1, division: "AFC East",
+          primary_color: "#00338D",
+          cells: { division: cell(0.69), make_playoffs: cell(0.84), championship: cell(0.13) } }),
+        // The long name is the specimen: it is what used to widen this row's name
+        // track and shift this row's numbers away from every other row's.
+        gTeam({ name: "New England Patriots", short_name: "NE", team_id: 2, division: "AFC East",
+          cells: { division: cell(0.25), make_playoffs: cell(0.57), championship: cell(0.04) } }),
+        gTeam({ name: "New York Jets", short_name: "NYJ", team_id: 3, division: "AFC East",
+          cells: { division: cell(0.06), make_playoffs: cell(0.18), championship: cell(0.0) } }),
+      ];
+      const race = buildDivisionRace(gridOf(teams), 1, "Buffalo Bills")!;
+      return renderToStaticMarkup(<TeamDivisionRace race={race} teamColor="#00338D" />);
+    }
+
+    test("the column template is declared exactly once, and every line is a subgrid line", () => {
+      const html = markup();
+      // One declaration, on the table itself.
+      expect(html.match(/grid-template-columns:/g) ?? []).toHaveLength(1);
+      expect(html).toMatch(/data-divrace-table/);
+      // Header + one line per team, each carrying the shared-geometry class and
+      // the variable the CSS falls back to where `subgrid` is unsupported.
+      expect(html.match(/divrace-line/g) ?? []).toHaveLength(4);
+      expect(html.match(/--divrace-cols:/g) ?? []).toHaveLength(4);
+    });
+
+    test("the highlighted row's accent takes no layout, so it cannot shift one row's columns", () => {
+      const html = markup();
+      // A `border-left` on a subgrid line insets that line's tracks by its width.
+      expect(html).not.toMatch(/border-left:/);
+      expect(html).toMatch(/box-shadow:\s*inset 3px 0 0 0 #00338D/);
+    });
+
+    test("globals.css is what makes a line share the table's tracks, with a fallback", () => {
+      // The markup above is inert without this rule, and no jest DOM can compute
+      // grid geometry — so the rule is asserted from source, the way #7056's dead
+      // palettes had to be. The `@supports` fallback is deliberate: where subgrid
+      // is unsupported a line falls back to `--divrace-cols`, the same template
+      // the component used to set inline, and the table still renders.
+      const css = readFileSync(join(__dirname, "../../app/globals.css"), "utf8");
+      expect(css).toMatch(/\.divrace-line\s*\{[^}]*grid-template-columns:\s*var\(--divrace-cols\)/);
+      expect(css).toMatch(
+        /@supports \(grid-template-columns:\s*subgrid\)\s*\{\s*\.divrace-line\s*\{\s*grid-template-columns:\s*subgrid/,
+      );
+    });
+
+    test("a sort header never wraps and its active marker takes no horizontal space", () => {
+      const html = markup();
+      expect(html).toContain("whitespace-nowrap");
+      // "Champion ↓" needed 71px in a 56px column and wrapped onto a second line,
+      // which also made the header row change height when a reader re-sorted.
+      expect(html).not.toContain("↓");
+      expect(html).toMatch(/aria-pressed="true"[^>]*>Champion<\/button>/);
+    });
   });
 });
