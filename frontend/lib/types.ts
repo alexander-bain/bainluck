@@ -225,6 +225,40 @@ export interface Event {
   bookmaker_odds?: BookmakerOddsDetail[];
   highlight?: Highlight;
   opening_odds?: OpeningOdds;
+  /**
+   * THE ONE BLEND (standing ruling #1) — the single probability every surface
+   * shows for this event. The backend computes it with
+   * `compute_aggregate_probability(event)`, the exact same call that produces
+   * the Discover card's `current_odds.home_probability` (routes/feed.py:4592)
+   * and, on a live game, the pinned right edge of `aggregate_line`. Bind the
+   * hero to THIS rather than re-deriving a number per surface: that is what
+   * card == hero == chart means in practice (UX-P003).
+   *
+   * #4797 — DECLARED ON `Event`, NOT ONLY ON `EventDetailResponse`. The hero
+   * pair is emitted by BOTH hero arms of `routes/events.py` — the detail route
+   * and the list/search formatter — and `/api/events/search` has always served
+   * it on its rows. Sitting on the detail interface alone, the type said the
+   * opposite, so `EventCard` (which takes an `Event`) could not read a number
+   * its own payload was carrying and printed "No price yet" over it. The type
+   * was the defect's last line of defence and it was pointing the wrong way.
+   * `hero_probability_source` / `hero_settled_result` stay on the detail
+   * interface: no `Event` consumer reads them, and moving a key nobody needs is
+   * how a type grows claims nothing checks.
+   *
+   * ⚠️ NOT EVERY LIST ROUTE SERVES THEM: `/api/leagues/{sport_key}` does not
+   * (measured 2026-09-19 across eight leagues — the rows carry `current_odds`
+   * and no hero), which is why these are optional and why a reader must treat
+   * absence as "this route does not say", never as "there is no blend".
+   */
+  hero_probability?: number;
+  /**
+   * The away half — or ABSENT because the server withheld it. On a draw-priced
+   * sport `routes/events.py` runs the hero through `printable_away` (#6238), so
+   * a missing value here means "this figure would be `1 − home`, which on a
+   * three-way market is *the home team does not win* wearing the away team's
+   * name". A client may not reconstruct it. See `lib/drawPricedWinner.ts`.
+   */
+  hero_probability_away?: number;
   event_tags?: string[];
   ei?: EIData;
   /** @deprecated Use `ei` instead */
@@ -374,17 +408,6 @@ export interface LeagueContextData {
 
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
-  /**
-   * THE ONE BLEND (standing ruling #1) — the single probability every surface
-   * shows for this event. The backend computes it with
-   * `compute_aggregate_probability(event)`, the exact same call that produces
-   * the Discover card's `current_odds.home_probability` (routes/feed.py:4592)
-   * and, on a live game, the pinned right edge of `aggregate_line`. Bind the
-   * hero to THIS rather than re-deriving a number per surface: that is what
-   * card == hero == chart means in practice (UX-P003).
-   */
-  hero_probability?: number;
-  hero_probability_away?: number;
   /**
    * "blend" when the aggregate exists, "opening" when only the opening line does,
    * "settled" when the game is over and the hero is the RESULT (Q441/#1495).
