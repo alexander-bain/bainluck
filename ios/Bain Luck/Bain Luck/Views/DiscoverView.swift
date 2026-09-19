@@ -267,6 +267,28 @@ struct DiscoverView: View {
     /// it can only move if the closure ran. Invisible to a reader.
     @State private var rigRefreshCount = 0
 
+    /// Which terminal the last refresh's `load()` actually reached (#7170).
+    ///
+    /// Drawn ONLY in the rig badge, beside `PULLS`, and it is the witness that was
+    /// missing when #7170 was filed: the issue could prove the feed was not
+    /// republished (`FEED` sat still) but had to REASON about which of `load()`'s
+    /// nine silent terminals did it, and named supersession. That was a hypothesis
+    /// about a function with nine exits, and codex was right to refuse it — "the
+    /// exact overlapping caller in the observed run is still a diagnosis to
+    /// establish".
+    ///
+    /// So the build says instead of the reader guessing. `nil` until a refresh
+    /// completes, which is itself informative: a pull whose load never returns
+    /// leaves this empty rather than showing a stale verdict from the pull before.
+    ///
+    /// Written by every refresh that RETURNS, including a superseded one — that is
+    /// the terminal most worth seeing, so it is deliberately not filtered out by
+    /// the footer-generation guard below it. The consequence, stated rather than
+    /// discovered: with two refreshes overlapping, the last to RETURN wins the
+    /// field, which need not be the one that published. `FEED` next to it settles
+    /// that case, and a one-pull journey cannot produce it.
+    @State private var rigLastLoadOutcome: DiscoverLoadOutcome? = nil
+
     /// What a refresh tells the reader it is doing (#1472, #7074).
     ///
     /// Unlike `rigRefreshCount` above, this one IS for the reader, and it exists
@@ -1189,7 +1211,11 @@ struct DiscoverView: View {
             //
             // All four are drawn from one render, so a reader of the photograph
             // cannot pair one refresh's version with another's count.
-            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count) · FEED \(vm.itemsVersion) · PULLS \(rigRefreshCount)")
+            // OUTCOME is the last refresh's `load()` verdict (#7170) — the field
+            // that turns "FEED did not move" from a symptom into a named terminal.
+            // Read by its own token like every other field, so its position here
+            // is not load-bearing.
+            Text("SERVED \(vm.items.count) · DRAWN \(groupedItems.count) · FEED \(vm.itemsVersion) · PULLS \(rigRefreshCount) · OUTCOME \(Self.rigOutcomeWord(rigLastLoadOutcome))")
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
@@ -1197,6 +1223,25 @@ struct DiscoverView: View {
                 .background(Capsule().fill(Color.black.opacity(0.82)))
                 .padding(.bottom, 10)
                 .accessibilityIdentifier("discover-debug-counts")
+        }
+    }
+
+    /// One badge-safe word per `load()` terminal (#7170).
+    ///
+    /// Pure and `static` so the badge's vocabulary can be pinned by a unit test
+    /// rather than by reading a `@ViewBuilder` — and separate from the enum's own
+    /// `description` on purpose: the badge is parsed field-by-field on a `·`
+    /// separator, so a word here may never contain one. `none` (rather than an
+    /// empty string) keeps the field present before the first refresh, because a
+    /// field that disappears reads to a parser exactly like a build that never had
+    /// it.
+    static func rigOutcomeWord(_ outcome: DiscoverLoadOutcome?) -> String {
+        switch outcome {
+        case .none: return "none"
+        case .published: return "published"
+        case .failed: return "failed"
+        case .superseded: return "superseded"
+        case .cancelled: return "cancelled"
         }
     }
 
@@ -1886,6 +1931,43 @@ struct DiscoverView: View {
         phase == .refreshing || phase == .failed
     }
 
+    /// 🔴 #7170: what a refresh may TELL THE READER, given what its load actually
+    /// did. Pure, so the rule is pinned by a test rather than inferred from a
+    /// photograph of a notice.
+    ///
+    /// This replaced `if vm.error == nil { .refreshed } else { .failed }`. That
+    /// read rested on "`load()` sets error to nil on success and to a sentence on
+    /// failure, and leaves it alone on cancellation" — the first two clauses true,
+    /// the third the whole defect. `load()` has NINE terminals that publish nothing
+    /// AND leave `error` untouched, and on an already-healthy feed `error` was
+    /// ALREADY nil, so every one of them rendered **"Feed refreshed. Checked just
+    /// now."** over a feed that was never republished. The absence of an error is
+    /// not the presence of a refresh.
+    ///
+    /// Exhaustive over the enum on purpose: a terminal added later cannot quietly
+    /// inherit the success branch, which is exactly how nine of them did.
+    static func refreshPhase(for outcome: DiscoverLoadOutcome) -> NativeFeedRefreshPhase {
+        switch outcome {
+        case .published:
+            // The ONLY success. Note what is deliberately NOT required: that the
+            // cards differ. A valid response carrying identical content is a
+            // completed refresh and may honestly say "checked".
+            return .refreshed
+        case .failed:
+            return .failed
+        case .superseded, .cancelled:
+            // Silence, not a verdict — and `.idle` is chosen over `.failed` after
+            // considering it. `.refreshed` here is the #7170 lie; but `.failed`
+            // would be its mirror image. A superseded refresh was overtaken by a
+            // newer load that is in flight and about to publish, so announcing a
+            // failure would strand a "couldn't refresh" banner over content that is
+            // about to be replaced — and the newer load reports its own outcome
+            // through its own path. A refresh that cannot speak for the screen
+            // withdraws rather than guessing in either direction.
+            return .idle
+        }
+    }
+
     /// One refresh path, with one caller-supplied difference: where the reader
     /// ends up.
     ///
@@ -1922,49 +2004,82 @@ struct DiscoverView: View {
         dismissedAt = Self.dismissStoreAfterRefresh(dismissedAt)
         dismissVersion &+= 1
         seenImpressions.removeAll()
-        await vm.load()
+        // 🔴 #7170 — THE LOAD IS UNSTRUCTURED ON PURPOSE, AND THIS IS THE LINE THAT
+        // MAKES A PULL PUBLISH.
+        //
+        // MEASURED on `D2DA47A0`, badge reading `OUTCOME cancelled · FEED 1 → 1 ·
+        // PULLS 0 → 1`: the pull's load ended at `load()`'s CANCELLATION terminal.
+        // Not a superseded generation — #7170 named supersession and the
+        // measurement refutes it; there is no competing load. `.refreshable`'s task
+        // is torn down while the reader is still standing on Discover, which
+        // cancels the URLSession request under it, and `load()` correctly abandons
+        // quietly (L2-214 Item 2) — keeping content, showing no error.
+        //
+        // A structured child inherits that cancellation; an unstructured `Task`
+        // does not. So the reader's request survives the teardown of the gesture
+        // that started it, which is the only reading of "refresh" that makes sense:
+        // they asked for fresh content, not for a request contingent on a spinner.
+        //
+        // `.value` is still awaited here, so nothing about the reader's experience
+        // changes: `.refreshable` holds its spinner until this function returns,
+        // exactly as before. And the generation guards inside `load()` are
+        // untouched — a detached load that comes back into a newer generation still
+        // discards its response rather than painting it.
+        let outcome = await Task { @MainActor in await vm.load() }.value
+        rigLastLoadOutcome = outcome
 
         // A later refresh claimed the control while this one was on the wire, so
         // this one no longer speaks for it — including its own outcome.
         guard generation == footerRefreshGeneration else { return }
 
-        // `load()` sets `error` to nil on success and to a sentence on failure,
-        // and leaves it alone on cancellation. Read it rather than catching,
-        // because the retry the model performs internally is part of "did the
-        // refresh succeed" and a throw never reaches here.
-        if vm.error == nil {
-            footerRefreshPhase = .refreshed
+        // #7170: the load's own verdict decides what the reader is told. The rule
+        // is pure and lives in `refreshPhase(for:)` so it can be pinned by a test
+        // instead of inferred from a screenshot.
+        footerRefreshPhase = Self.refreshPhase(for: outcome)
+
+        if footerRefreshPhase == .refreshed {
             // The fresh feed starts at its top. Only on SUCCESS: a failed
             // refresh leaves the reader's own content untouched, and yanking
             // them away from it would destroy their place to report a failure.
             //
-            // 🪤 #7074 — AND IT DOES NOT ARRIVE. This line has been here since
-            // `5b961bda5`, and Alex still reported on build 15: "Hitting the
-            // refresh button at the bottom of the feed took me instantly about
-            // halfway up the page. Confusingly I could see that I was in the
-            // middle of the feed, not the top, but the content was new."
+            // 🪤 #7074's END-CARD ARM — STILL OPEN, AND ITS EVIDENCE NEEDS REDOING.
+            // Alex, build 15: "Hitting the refresh button at the bottom of the feed
+            // took me instantly about halfway up the page. Confusingly I could see
+            // that I was in the middle of the feed, not the top, but the content was
+            // new."
             //
-            // MEASURED with a finger, three times, native/239 on master
-            // `78c4cbc5f`: after the press the navigation bar reads **54pt** —
-            // exactly what it was at the BOTTOM of the feed — against **108pt**
-            // at the top of Discover. The reader does not arrive. The assertion
-            // that catches it is written and is NOT in the suite, because a red
-            // journey is not a finding, it is a broken gate; it is quoted in
-            // full on #7074 with these numbers so the next attempt starts here.
+            // Two corrections to what used to be written here, neither of them a
+            // finding about `scrollTo`:
             //
-            // THREE HYPOTHESES ARE FALSIFIED, each by its own run — do not
-            // re-spend them (#7074 carries the logs):
+            //   1. THE WITNESS WAS BAD. The prior note reported the navigation bar
+            //      measuring 54pt after the press against 108pt at the top of
+            //      Discover, and read that as "the reader does not arrive". That
+            //      witness is refuted (native/240) — a collapsed navigation bar is
+            //      not a scroll offset. Measure the arrival from the actual frames
+            //      of the first card and the swipe hint, which are the things a
+            //      reader's eye is on.
+            //   2. EVERY RUN BEHIND IT WAS RUN ON A CANCELLED LOAD. #7170, measured
+            //      this session: until the line above was made unstructured, the
+            //      load under this branch ended at `load()`'s cancellation terminal
+            //      and NEVER REPUBLISHED (`OUTCOME cancelled`, `FEED 1 → 1`). So all
+            //      three hypotheses below were falsified against a page that had
+            //      just collapsed from ~150 cards to 20 STALE ones and then received
+            //      nothing — which is not the experiment any of them meant to run.
+            //
+            // The three, kept because the mechanics are still worth not re-spending
+            // (#7074 carries the logs), but now UNSOUND as falsifications:
             //   1. the animation interpolating against unmounted `LazyVStack`
             //      geometry — removing `withAnimation` changed nothing;
             //   2. the scroll racing the new content's layout — moving it to
-            //      `DispatchQueue.main.async`, a full runloop turn after
-            //      `vm.load()` returns, changed nothing;
+            //      `DispatchQueue.main.async` changed nothing;
             //   3. the target having no area to resolve an anchor against —
             //      `frame(height: 0)` to `frame(height: 1)` changed nothing.
-            // All three read 54.0pt. Whatever is wrong, it is not any of those,
-            // and the most likely remaining reading is that the offset is simply
-            // CLAMPED when `visibleCount = 20` collapses a ~150-card page — in
-            // which case the repair is not a better `scrollTo` at all.
+            //
+            // n240's best remaining reading — the offset is simply CLAMPED when
+            // `visibleCount = 20` collapses the page — is now MORE likely, not less:
+            // a collapse with no republication is precisely a short page. Whoever
+            // takes the arm re-measures here first, on a build that publishes.
+            // NOT re-measured this session: #7170 is the pull, this is the end card.
             if let proxy {
                 withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
             }
@@ -1977,8 +2092,6 @@ struct DiscoverView: View {
                 guard generation == footerRefreshGeneration, footerRefreshPhase == .refreshed else { return }
                 footerRefreshPhase = .idle
             }
-        } else {
-            footerRefreshPhase = .failed
         }
 
         // #1472, the other half of "pull refresh completes". This awaited a
