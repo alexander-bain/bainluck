@@ -1330,6 +1330,20 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
 
     Also handles _NAME_ALIASES reversals: "t finau" merges into
     "anthony finau" because "tony" (starts with 't') aliases to "anthony".
+
+    A `long["probabilities"].extend(short["probabilities"])` line used to sit in
+    the merge body. No golfer entry has ever carried a `probabilities` key —
+    `_aggregate_golfer_outcome` is the only thing that builds one, and it sets
+    `name` / `sources` / `movement_24h` / `movement_is_dated` /
+    `opening_probability` — and nothing reads one, so that line
+    could only ever raise `KeyError`. Its caller `_build_tournament_entry` is
+    unguarded, so the whole golf base rebuild died with it, taking every golf
+    card on Discover and the `/golf` page with it. It has never fired in
+    production (golf serves normally, so `to_merge` is empty on today's field),
+    which is exactly why it survived: the crash lives on the merge path, and the
+    merge path is the rare one. Removing dead code that can only crash is
+    strictly safer than the status quo — there is no behaviour to preserve,
+    because the alternative to the removed line is an exception.
     """
     from collections import defaultdict
 
@@ -1397,10 +1411,14 @@ def _merge_abbreviated_golfers(golfer_data: dict[str, dict]) -> dict[str, dict]:
 
         # Merge sources and probabilities
         long["sources"].update(short["sources"])
-        long["probabilities"].extend(short["probabilities"])
 
         if short["movement_24h"] is not None and long["movement_24h"] is None:
             long["movement_24h"] = short["movement_24h"]
+            # The provenance travels WITH the value (#7179). Moving the number
+            # and leaving the flag behind would publish the merged golfer's move
+            # under the recipient's provenance, which is the one thing this flag
+            # exists to prevent.
+            long["movement_is_dated"] = short.get("movement_is_dated", False)
         if short["opening_probability"] is not None and long["opening_probability"] is None:
             long["opening_probability"] = short["opening_probability"]
 
@@ -1935,6 +1953,29 @@ def _aggregate_golfer_outcome(
     `prob_scale` renormalizes independent-binary winner fields (gotcha #23, #926)
     to sum 1.0; it is applied consistently to the stored probability, the 24h
     delta, and the opening probability so movement isn't distorted.
+
+    ═══ `movement_24h` IS TWO DIFFERENT MEASUREMENTS UNDER ONE NAME (#7179) ═══
+
+    The first arm subtracts a `FuturesOddsSnapshot` captured 23-25h ago, which is
+    a genuinely DATED day's move. The second arm falls back to
+    `probability_change_24h`, which every writer stores as `new - previous` for a
+    previous write of unknown age — the #4079 defect. Both land in the same
+    field, so a reader of that field cannot tell a dated move from a per-write
+    delta, and the tournament card spends it on the word "today".
+
+    So each write records WHICH arm produced it in `movement_is_dated`. Nothing
+    about the VALUE changes: ranking (`_score_tournament`), liveness
+    (`_tournament_is_live`) and the golf page read `movement_24h` exactly as
+    before. This flag only lets a caller that wants to say "today" find out
+    whether it may — the A8 rule that a fix here narrows what may be SAID, never
+    what is SHOWN.
+
+    Measured on production 2026-09-19 over all 4,319 open golf outcomes: 2,766
+    dated, 1,553 with no movement at all, and **0 on the fallback** — so this is
+    a latent defect, not a live one. It is reachable, not dead: 66 Kalshi golf
+    outcomes carry a meaningful `probability_change_24h`, and each would take the
+    fallback the moment its snapshot lapsed (a market younger than 23h has no
+    in-window snapshot and can already have a per-write delta).
     """
     prob = float(outcome.current_probability) * prob_scale
     raw_name = outcome.name.strip()
@@ -1954,6 +1995,10 @@ def _aggregate_golfer_outcome(
             "name": display_name,
             "sources": {},
             "movement_24h": None,
+            # False until an arm sets `movement_24h`, so "no movement" and "an
+            # undated movement" are the same answer to "may this be called
+            # today's?" — which is the only question this field is asked.
+            "movement_is_dated": False,
             "opening_probability": None,
         }
 
@@ -1965,11 +2010,20 @@ def _aggregate_golfer_outcome(
             existing = golfer_data[key]["movement_24h"]
             if existing is None or abs(delta) > abs(existing):
                 golfer_data[key]["movement_24h"] = round(delta, 4)
+                golfer_data[key]["movement_is_dated"] = True
 
     if golfer_data[key]["movement_24h"] is None and outcome.probability_change_24h is not None:
         change = float(outcome.probability_change_24h) * prob_scale
         if abs(change) >= 0.001:
             golfer_data[key]["movement_24h"] = round(change, 4)
+            # Redundant today — the `is None` guard above means no dated value
+            # can be sitting here to be overwritten — and written anyway so the
+            # invariant is LOCAL: every line that assigns `movement_24h` also
+            # states that value's provenance. A later edit that relaxes the
+            # guard then cannot leave the two fields describing different
+            # numbers, which is the exact way the one field came to mean two
+            # measurements in the first place.
+            golfer_data[key]["movement_is_dated"] = False
 
     if outcome.opening_probability is not None and golfer_data[key]["opening_probability"] is None:
         golfer_data[key]["opening_probability"] = round(
@@ -2004,6 +2058,13 @@ def _build_tournament_entry(
             "name": data["name"],
             "probability": avg_prob,
             "movement_24h": data["movement_24h"],
+            # #7179 — whether `movement_24h` is a DATED day's move (a 23-25h
+            # snapshot subtraction) or a per-write delta of unknown age. Carried
+            # onto the published golfer so the tournament card can ask before it
+            # says "today"; `.get()` rather than `[]` is not defensiveness here,
+            # it is the merge above being allowed to produce entries this loop
+            # does not own.
+            "movement_is_dated": bool(data.get("movement_is_dated")),
             "sources": data["sources"],
             "opening_probability": data["opening_probability"],
         })
