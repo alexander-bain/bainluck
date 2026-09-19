@@ -5,7 +5,7 @@ import {
   providerKpiDetail,
   withoutGroupQualifier,
 } from "@/lib/calibrationProviderPanels";
-import { groupSourcesByProvider } from "@/lib/calibrationProviders";
+import { groupSourcesByProvider, sourceLabel } from "@/lib/calibrationProviders";
 import { ece } from "@/lib/calibrationMath";
 
 // The five source keys the live 2026-08-13 payload publishes, with their real
@@ -304,20 +304,16 @@ describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
         sources: ["odds_api", "odds_api_bookmaker", "odds_api_totals", "odds_api_spreads"],
       },
     ];
-    const realLabel = (s: string) =>
-      ({
-        kalshi: "Kalshi",
-        odds_api: "Odds API",
-        odds_api_bookmaker: "Per-sportsbook (Odds API)",
-        odds_api_totals: "Totals (Odds API)",
-        odds_api_spreads: "Spreads (Odds API)",
-      })[s] ?? s;
+    // #7213: the page's own labeller, not five strings restated here. A copy
+    // cannot fail when the page's map moves, which is the one thing a test
+    // calling itself "the real production labels" has to be able to do.
+    const realLabel = sourceLabel;
 
     const out = providerKpiDetail(REAL_GROUPS, realLabel);
 
     test("says the provider qualifier once, not once per member", () => {
       expect(out).toBe(
-        "Kalshi · Sportsbooks (Odds API: Odds API, Per-sportsbook, Totals, Spreads)",
+        "Kalshi · Sportsbooks (Odds API: Moneylines, Per-sportsbook, Totals, Spreads)",
       );
     });
 
@@ -335,14 +331,24 @@ describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
     });
 
     test("still names every source key — UX-P080 collapses the count, not the information", () => {
-      // The one label that legitimately survives as "Odds API" is the moneyline
-      // key, which has no shape name of its own. That is a server vocabulary
-      // question (`source_labels`, CAL-P1025 / #3357) and is recorded on #4214,
-      // not guessed at in the client — so the assertion is that each key is
-      // REACHABLE, not that it reads a particular way.
       for (const src of REAL_GROUPS[1].sources) {
         const shape = realLabel(src).replace(" (Odds API)", "");
         expect(out).toContain(shape);
+      }
+    });
+
+    test("and the supplier's name is not one of the shapes (#7213)", () => {
+      // The loop above asserts each key is REACHABLE, not that it reads a
+      // particular way — so it stayed green for months while the moneyline key
+      // reached the tile as "Odds API", the supplier's name sitting in a list
+      // of market shapes inside a parenthetical that had already said it.
+      // #4214 recorded that as a residual; this is the assertion it was owed.
+      const inside = /\(Odds API: ([^)]*)\)/.exec(out);
+      expect(inside).not.toBeNull();
+      const members = inside![1].split(", ");
+      expect(members).toHaveLength(4);
+      for (const member of members) {
+        expect(member.toLowerCase()).not.toBe("odds api");
       }
     });
 

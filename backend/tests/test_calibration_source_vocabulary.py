@@ -196,7 +196,11 @@ def test_the_declared_map_is_not_carrying_dead_entries(produced):
     "raw,expected",
     [
         ("datagolf", "DataGolf"),          # curated: the brand, not "Datagolf"
-        ("odds_api", "Odds API"),
+        # #7213: the market shape, not the supplier. The generated name for this
+        # key really would have been "Odds API" — which is how it read on the
+        # page for months, sitting in a "Sportsbooks (Odds API)" row beside
+        # Spreads and Totals, the only member that did not say what it measures.
+        ("odds_api", "Moneylines (Odds API)"),
         # Notice 33 / D92 = B (Alex, 2026-09-08): "bookmaker" is banned from
         # everything a reader sees, so the curated name for this key moved to the
         # approved word. The KEY is untouched — `odds_api_bookmaker` is what the
@@ -212,6 +216,41 @@ def test_curated_names_are_opinions_not_generated(raw, expected):
     # curated entry exists at all.
     if raw == "datagolf":
         assert prettify_source_key(raw) == "Datagolf"
+    if raw == "odds_api":
+        assert prettify_source_key(raw) == "Odds API"
+
+
+def test_no_sportsbook_shape_is_named_after_its_supplier():
+    """#7213 — the class, not the one key that was in it.
+
+    The ``odds_api*`` keys render as MEMBERS of one "Sportsbooks (Odds API)"
+    family row, so the page strips the trailing qualifier every one of them
+    carries (``withoutGroupQualifier``) and prints what is left. A member whose
+    name is only the supplier therefore reaches the reader as the supplier's
+    name repeated under a heading that had already said it — which is what
+    ``odds_api`` did, between four siblings that each named a market shape.
+
+    The assertion is on what SURVIVES the strip, because that is the string a
+    reader sees; a label that reads fine standalone can still be empty of shape
+    once the family has claimed its qualifier.
+    """
+    family = {
+        key: label
+        for key, label in CALIBRATION_SOURCE_LABELS.items()
+        if key == "odds_api" or key.startswith("odds_api_")
+    }
+    # Never vacuous: the family is the reason this test exists, and a rename of
+    # the KEYS must redden it rather than empty it.
+    assert len(family) >= 4, f"the odds_api family shrank to {sorted(family)}"
+
+    for key, label in family.items():
+        shape = re.sub(r"\s*\([^()]*\)\s*$", "", label).strip()
+        assert shape, f"{key}: {label!r} is nothing but its supplier qualifier"
+        assert shape.casefold() not in {"odds api", "oddsapi", "the odds api"}, (
+            f"{key} is named {label!r} — inside the Sportsbooks (Odds API) row "
+            f"that strips to {shape!r}, the supplier's name where the market "
+            f"shape belongs. Name the shape it measures (#7213 / #4214)."
+        )
 
 
 @pytest.mark.parametrize(

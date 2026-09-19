@@ -20,6 +20,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import SourceComparisonRow from "../../components/SourceComparisonRow";
 import { orderSourceRows, type SourceRowInput } from "../../lib/calibrationSourceRows";
+import { sourceLabel } from "../../lib/calibrationProviders";
 
 const TOGGLE = "Include never-moved outcomes";
 const label = (s: string) => s;
@@ -179,13 +180,11 @@ describe("SourceComparisonRow — a measured source is unchanged", () => {
   // now share `withoutGroupQualifier`. Found by photographing the deployed
   // page, not by reading the diff.
   describe("with the REAL labels a reader sees, not the identity fixture", () => {
-    const realLabel = (s: string) =>
-      ({
-        odds_api: "Odds API",
-        odds_api_bookmaker: "Per-sportsbook (Odds API)",
-        odds_api_spreads: "Spreads (Odds API)",
-        odds_api_totals: "Totals (Odds API)",
-      })[s] ?? s;
+    // #7213: the page's own labeller, not a copy of it. This block used to
+    // restate the four strings inline, which is the fixture-copies-the-specimen
+    // trap one rung up — it would have stayed green through a rename that the
+    // page had not actually made, and read as if it had proved otherwise.
+    const realLabel = sourceLabel;
 
     const realHtml = renderToStaticMarkup(
       <table><tbody>
@@ -198,17 +197,24 @@ describe("SourceComparisonRow — a measured source is unchanged", () => {
 
     test("says the provider qualifier once, in the row heading, not once per member", () => {
       expect(realText).toContain("Sportsbooks (Odds API)");
-      expect(realText).toContain("Odds API · Per-sportsbook · Spreads · Totals");
+      expect(realText).toContain("Moneylines · Per-sportsbook · Spreads · Totals");
     });
 
     test("the qualifier appears exactly once in the whole cell", () => {
       // The reader-visible symptom, counted rather than phrased: four repeats
       // was the bug and one is the fix, so this fails in both directions.
-      expect(realText.split("Odds API").length - 1).toBe(2); // the heading, and the un-shaped moneyline key
+      //
+      // #7213 took it from two to one. The survivor was the moneyline key,
+      // named "Odds API" — the supplier, in the one slot where its three
+      // siblings name a market shape, under a heading that had already said it.
+      expect(realText.split("Odds API").length - 1).toBe(1); // the heading, and nothing else
     });
 
-    test("still names every pooled key — the strip drops a word, never a source", () => {
-      for (const shape of ["Per-sportsbook", "Odds API", "Totals", "Spreads"]) {
+    test("every pooled member names the SHAPE it measures, never the supplier", () => {
+      // Two claims in one loop, because the second is what #7213 was: the strip
+      // drops a word and never a source (each key still reachable), AND what it
+      // leaves behind says what the row measures.
+      for (const shape of ["Per-sportsbook", "Moneylines", "Totals", "Spreads"]) {
         expect(realText).toContain(shape);
       }
     });
@@ -222,7 +228,7 @@ describe("SourceComparisonRow — a measured source is unchanged", () => {
         </tbody></table>
       );
       expect(textOf(html)).toContain(
-        "Odds API · Per-sportsbook (Odds API) · Spreads (Odds API) · Totals (Odds API)"
+        "Moneylines (Odds API) · Per-sportsbook (Odds API) · Spreads (Odds API) · Totals (Odds API)"
       );
     });
   });
