@@ -18,6 +18,7 @@ import re
 
 from app.utils.league_classification import is_power_4_team
 from app.utils.lifecycle import live_start_satisfied
+from app.utils.odds_math import favorite_from_pair
 
 
 # League tier definitions — the most important ranking signal for anonymous users.
@@ -491,6 +492,7 @@ def underdog_leads(
     opening_home_prob: Optional[float],
     home_score: Optional[int],
     away_score: Optional[int],
+    opening_away_prob: Optional[float] = None,
 ) -> Optional[bool]:
     """Is the pre-game underdog ahead on the scoreboard right now?
 
@@ -512,15 +514,46 @@ def underdog_leads(
 
     A price-derived favourite switch is NOT an answer to this question, which is
     the whole defect: it was standing in for one.
+
+    🪤 **"Which side was the underdog" needs BOTH legs (#7055).** This read
+    ``opening_home_prob < 0.5``, which is the two-way assumption
+    :func:`~app.utils.odds_math.h2h_pair_on_the_full_board` spent #1011
+    removing: on a draw-priced board the pair sums to ~0.74, so the FAVOURITE
+    sits under 0.5 too and was called the underdog. That is not a separate bug
+    from the ``opening_favorite`` band — it is the same one, and it is why the
+    #6279 gate below did not catch that band. Brentford opened 0.3725 against
+    Chelsea's 0.3648, so this returned ``True`` for "the underdog is ahead"
+    about the favourite winning 3-0, and the gate built to suppress exactly
+    that chip passed it through.
+
+    ``opening_away_prob`` is keyword-optional so that a caller which genuinely
+    holds one leg keeps the old behaviour rather than going silent; every
+    in-tree caller passes both.
+
+    ⚠️ ``margin=0`` is not a detail. This question has always split on a HARD
+    0.5 — *any* edge names an underdog — while the ``opening_favorite`` band
+    ignored edges under two points. Comparing the legs with no margin is
+    therefore the exact generalization of ``opening_home_prob < 0.5``: on a
+    pair summing to 1, ``home > away`` ⇔ ``home > 0.5``. Borrowing
+    :data:`~app.utils.odds_math.FAVORITE_MARGIN` here would silence a
+    genuinely 0.52/0.48 two-way board that answers today.
     """
     if opening_home_prob is None or home_score is None or away_score is None:
         return None
-    if opening_home_prob == 0.5:
+
+    if opening_away_prob is not None:
+        side = favorite_from_pair(opening_home_prob, opening_away_prob, margin=0.0)
+    else:
+        side = "even" if opening_home_prob == 0.5 else (
+            "away" if opening_home_prob < 0.5 else "home"
+        )
+    if side == "even":
         # No underdog for anyone to be.
         return None
+
     if home_score == away_score:
         return False
-    home_is_underdog = opening_home_prob < 0.5
+    home_is_underdog = side == "away"
     home_is_ahead = home_score > away_score
     return home_is_ahead == home_is_underdog
 
@@ -602,6 +635,7 @@ def select_live_claim(
     current_home_prob: Optional[float],
     home_score: Optional[int],
     away_score: Optional[int],
+    opening_away_prob: Optional[float] = None,
 ) -> Optional[LiveClaimType]:
     """Which claim does a live card's evidence actually support? (T10-1, #5439)
 
@@ -642,7 +676,13 @@ def select_live_claim(
     """
     if (status or "").lower() != "live":
         return None
-    if underdog_leads(opening_home_prob, home_score, away_score) is True:
+    # #7055 — the away leg travels with the home one, or this selector and
+    # `flags.underdog_is_leading` answer the same question differently on a
+    # draw-priced board, which is the exact drift #4580 created this function
+    # to prevent.
+    if underdog_leads(
+        opening_home_prob, home_score, away_score, opening_away_prob
+    ) is True:
         return "underdog_lead"
     if opening_home_prob is not None and current_home_prob is not None:
         if abs(current_home_prob - opening_home_prob) >= MAJOR_PROB_SWING:
@@ -899,7 +939,9 @@ def compute_highlight(
 
     # #4580 — read the scoreboard ONCE, here, so the capsule and the footer
     # badge describe the same card.
-    flags.underdog_is_leading = underdog_leads(opening_home_prob, home_score, away_score)
+    flags.underdog_is_leading = underdog_leads(
+        opening_home_prob, home_score, away_score, opening_away_prob
+    )
     flags.someone_is_leading = score_is_decided(home_score, away_score)
     # #5047 — and read the price ONCE too, for the same no-drift reason.
     flags.upset_is_no_longer_in_doubt = upset_is_no_longer_in_doubt(
@@ -1088,9 +1130,28 @@ def compute_highlight(
 
         # Favorite switched - only meaningful for live/completed games
         # Pre-game line movement is just market noise, not an "upset brewing"
-        if opening_favorite and (flags.is_live or status in ("completed", "closed")):
+        #
+        # #7055 — THE STORED STRING IS ADVISORY; THE TWO STORED NUMBERS DECIDE.
+        # `opening_favorite` was minted by a band that read the home leg alone
+        # against 0.48/0.52, so on every draw-priced board — where the pair
+        # deliberately sums to ~0.74 and both sides sit under 0.48 — it reads
+        # `away` whichever side was actually shorter. 124 of the 2,724 events
+        # carrying an opening pair in the 14 days to 2026-09-18 contradict
+        # their own two numbers, all in that one direction; 0 two-way rows do.
+        # `odds_polling` now mints it from both legs, but that only fixes rows
+        # ingested after the release AND the 103 still-scheduled rows it keeps
+        # rewriting until kickoff — the 20 already FINISHED are frozen, and
+        # they are the ones wearing the chip. Deriving here repairs them on
+        # read, so the fix costs zero stored writes.
+        #
+        # The fallback keeps a row whose legs we were not handed behaving
+        # exactly as before, rather than losing its chip to the repair.
+        opening_side = (
+            favorite_from_pair(opening_home_prob, opening_away_prob) or opening_favorite
+        )
+        if opening_side and (flags.is_live or status in ("completed", "closed")):
             current_favorite = "home" if current_home_prob > 0.5 else "away" if current_home_prob < 0.5 else "even"
-            if opening_favorite != current_favorite and opening_favorite != "even" and current_favorite != "even":
+            if opening_side != current_favorite and opening_side != "even" and current_favorite != "even":
                 flags.favorite_switched = True
                 result.score += WEIGHTS["favorite_switched"]
                 result.reasons.append("favorite_switched")

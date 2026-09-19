@@ -317,6 +317,93 @@ def h2h_pair_on_the_full_board(
     return normalized[0], normalized[1]
 
 
+#: How far apart the two named sides must be before either is called the
+#: favourite. On a board whose pair sums to 1.0 this is exactly the 0.48/0.52
+#: band it replaces: ``home - away > 0.04`` ⇔ ``2*home - 1 > 0.04`` ⇔
+#: ``home > 0.52``. See :func:`favorite_from_pair`.
+FAVORITE_MARGIN = 0.04
+
+#: Binary floating point does not hold 0.04, and the equivalence above is
+#: claimed AT the boundary, not near it: ``0.52 - (1 - 0.52)`` evaluates to
+#: 0.040000000000000036, which is greater than ``FAVORITE_MARGIN`` while
+#: ``0.52 > 0.52`` is false — so the exact edge of the old band, a value a
+#: ``Numeric(5, 4)`` column can hold exactly, would be the one place the two
+#: forms disagreed. Nine decimal places is five below anything the column can
+#: store, so this admits the representation error and nothing else.
+_MARGIN_EPSILON = 1e-9
+
+
+def favorite_from_pair(
+    home_prob: Optional[float],
+    away_prob: Optional[float],
+    margin: float = FAVORITE_MARGIN,
+) -> Optional[str]:
+    """``'home'`` / ``'away'`` / ``'even'`` from BOTH legs, or None. (#7055)
+
+    Which of the two named sides is the shorter price, asked by comparing them
+    to EACH OTHER rather than either of them to 0.5.
+
+    🪤 **The pair does not sum to 1, by design, and the old rule assumed it
+    did.** :func:`h2h_pair_on_the_full_board` de-vigs home and away over every
+    outcome the book quotes, so on a draw-priced board the two named sides
+    share only about three quarters of the mass and the draw keeps the rest —
+    that fragment is the honest number and #1011 exists to stop anyone scaling
+    it back to 1.0. The favourite determination never got the memo. It read the
+    home leg alone against a two-way band::
+
+        if home_prob > 0.52:   "home"
+        elif home_prob < 0.48: "away"
+        else:                  "even"
+
+    On a three-way board BOTH sides usually sit under 0.48, so every such row
+    was recorded ``away`` whichever side was actually shorter. Measured on
+    production over the 14 days to 2026-09-18: **124 of 2,724** events carrying
+    an opening pair contradict their own two stored numbers, every one of them
+    in that single direction, and **0** of the two-way sports do — the mirror
+    case cannot exist, because the band can only write ``home`` when the home
+    leg alone clears 0.52. Brentford opened 0.3725 against Chelsea's 0.3648,
+    was stored ``away``, won 3-0, and was chipped "Recent upset" above the two
+    numbers saying it was not one.
+
+    **A strict generalization, not a new rule.** Where the pair sums to 1.0 the
+    two forms are algebraically the same band (see :data:`FAVORITE_MARGIN`), so
+    every two-way sport takes the identical answer it takes today — which is
+    why the production separation is perfect rather than merely large.
+
+    **Deliberately NOT ``home/(home+away)`` against the old band.** Re-scaling
+    the pair to 1.0 and reusing 0.48/0.52 agrees with this on almost every real
+    board, but it is the exact operation :func:`h2h_pair_on_the_full_board`
+    refuses, and a reader who found it here would be right to ask which rule
+    this module actually holds. Comparing the legs needs no such scaling. The
+    two differ only on a compressed board with a hairline gap — home 0.38 /
+    away 0.35 is ``even`` here and ``home`` there — and on a card whose job is
+    to claim an upset, ``even`` is both the more honest answer and the one that
+    cannot manufacture the claim.
+
+    **No sport lookup, for :func:`h2h_pair_on_the_full_board`'s reason:** shape
+    is decided by the numbers in hand, not by the sport, because a sport is not
+    a reliable witness to its own board (that function's cricket trap). So a
+    row whose stored away leg is really ``1 - home`` wearing an away name —
+    :func:`~app.utils.draw_priced_winner.away_is_the_complement`'s case, which
+    the #6238 census found on 2 of 13 soccer cards — is not detected here and
+    does not need to be: comparing a home leg against its own complement
+    reproduces the old band exactly, so such a row keeps today's answer while
+    every genuinely-quoted pair gets the right one. The change is monotone; it
+    cannot make a row worse than it is now.
+
+    Returns ``None`` — unanswerable, never a guess — when either leg is
+    missing. There is no home-only fallback and that is deliberate: it would be
+    the defect above, rebuilt as an error path. Nothing is lost by refusing,
+    measured rather than assumed: of the 2,724 events above, **0** carry one
+    leg without the other, so the legs are written as a pair or not at all.
+    """
+    if home_prob is None or away_prob is None:
+        return None
+    if abs(home_prob - away_prob) <= margin + _MARGIN_EPSILON:
+        return "even"
+    return "home" if home_prob > away_prob else "away"
+
+
 def project_scores(
     spread: float,
     over_under: float,

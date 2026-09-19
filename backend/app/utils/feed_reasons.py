@@ -1222,6 +1222,7 @@ def compose_live_claim(
         current_home_prob=home_probability,
         home_score=home_score,
         away_score=away_score,
+        opening_away_prob=opening_away_prob,
     )
     if claim is None:
         return None
