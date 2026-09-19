@@ -46,6 +46,73 @@ export interface AdvancementStage {
   change: number | null;
   /** Already secured — printed as `✓ clinched` rather than as 100%. */
   resolved: boolean;
+  /**
+   * The grid column this rung came from — `relegation`, `top_4`, `championship`
+   * — when the caller has one. Structured, from `league_configs.py` by way of
+   * `league_context.columns[].key`, NOT parsed back out of `label`: the label
+   * is a display string that translates and re-words, and a classifier keyed on
+   * it would misfile every rung whose wording moved. Absent where the caller
+   * has no structured key (the raw-futures fallback, the tennis register), and
+   * absence is read as "unknown", never as "fine".
+   */
+  columnKey?: string;
+}
+
+/**
+ * Grid columns that are NOT a rung on the way to a title (#7206).
+ *
+ * `relegation` is the only one in the whole vocabulary — 26 distinct key/label
+ * pairs across every config in `league_configs.py`, and every other key
+ * (`top_4`, `make_playoffs`, `conference`, `final_four`, `make_cut`, …) is a
+ * step toward something good. It appears in exactly three configs: `epl`,
+ * `la-liga`, `bundesliga`.
+ */
+export const NON_ADVANCEMENT_STAGE_KEYS: ReadonlySet<string> = new Set(["relegation"]);
+
+/** The heading a ladder of rungs toward a title gets. */
+export const CHAMPIONSHIP_PATH_HEADING = "CHAMPIONSHIP PATH";
+
+/**
+ * The heading a ladder gets once it holds a rung that is not one.
+ *
+ * "Relegated 78.5% / Top 4 4% / Champion 1%" is a true and useful list. What it
+ * is not is a *path to a championship*, and a heading that says so is reading
+ * the reader a different block from the one under it.
+ */
+export const SEASON_OUTCOMES_HEADING = "SEASON OUTCOMES";
+
+/**
+ * The heading these rungs can honestly carry.
+ *
+ * ═══ WHY THIS LIVES IN THE COMPONENT AND NOT AT THE CALL SITE (#7206) ═══
+ *
+ * The defect was one caller passing a ladder whose first and largest rung was
+ * `Relegated` under the default heading `CHAMPIONSHIP PATH` — on production,
+ * `/events/15305209` at 390px, Coventry City's card read **CHAMPIONSHIP PATH /
+ * Relegated 78.5%**. Fixing it where that caller builds its rows would have
+ * worked and would have been undefended: the relationship "this heading is only
+ * true of these rungs" would have lived in the distance between two files, and
+ * the next caller to pass a season-outcomes ladder would print the same
+ * sentence again with nothing going red.
+ *
+ * So the component refuses to print the claim instead. A block holding a
+ * non-advancement rung IS a season-outcomes block whatever its caller wanted to
+ * call it, so the downgrade is unconditional rather than a rewrite of headings
+ * that happen to contain the word "championship" — there is no string test here
+ * and nothing to keep in step with a re-wording.
+ *
+ * Callers with no structured key are untouched: `TournamentExtensions`' tennis
+ * rounds carry no `columnKey`, so `CHANCE OF REACHING` survives, and so does
+ * every league whose columns are all rungs.
+ */
+export function advancementHeading(
+  stages: AdvancementStage[],
+  requested: string,
+): string {
+  const holdsNonAdvancement = stages.some(
+    (s) => s.columnKey != null && NON_ADVANCEMENT_STAGE_KEYS.has(s.columnKey),
+  );
+  return holdsNonAdvancement ? SEASON_OUTCOMES_HEADING : requested;
 }
 
 /**
@@ -59,7 +126,7 @@ export const MOVE_DEAD_BAND = 0.005;
 
 export default function AdvancementPath({
   stages,
-  heading = "CHAMPIONSHIP PATH",
+  heading = CHAMPIONSHIP_PATH_HEADING,
   testId,
 }: {
   stages: AdvancementStage[];
@@ -69,10 +136,16 @@ export default function AdvancementPath({
 }) {
   if (stages.length === 0) return null;
 
+  // #7206. The rungs get the last word on what the block may call itself.
+  const effectiveHeading = advancementHeading(stages, heading);
+
   return (
     <>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2">
-        {heading}
+      <div
+        className="text-[10px] font-semibold uppercase tracking-wide text-text-muted mb-2"
+        data-testid={testId ? `${testId}-heading` : undefined}
+      >
+        {effectiveHeading}
       </div>
       <div className="space-y-0.5 mb-5" data-testid={testId}>
         {stages.map((p) => (
