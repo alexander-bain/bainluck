@@ -43,12 +43,49 @@
 // is in the FUTURE, so the page said "Resolved 9/25/2026" on a market settled
 // today (authority/479 has the screenshot: `/futures/60755454`).
 //
-// The true field is `settled_at`, and `GET /api/futures/{id}` does not serve it
-// (checked by key on 61317401: absent). So this module states no date. It does
-// NOT carry a `settled_at` branch waiting for the backend half — an unreachable
-// branch is a guess about a field's shape that no test can kill, and the honest
-// render with no evidence is silence (notice 34). #7058 stays open for the
-// backend field plus the branch that prints it.
+// #7058 asked for the repair in two parts: serve `settled_at` on the detail
+// payload, then print it here. THE SECOND PART IS WRONG, AND THIS IS THE
+// MEASUREMENT THAT SAYS SO — written down because the issue, the route and this
+// file all read as if the only thing missing were the field.
+//
+// `settled_at` is documented in `models.py` as "WHEN status became 'resolved'".
+// It records when WE SAW the transition, not when the market resolved, and the
+// sweeps that write it stamp their own clock. Measured on production
+// 2026-09-19 over the exact population the issue names — resolved markets whose
+// `resolution_date` is in the future and whose `settled_at` is set (9,347 rows,
+// 9,345 of them carrying a `commence_time`):
+//
+//     settled_at more than 24h after the game started   4,765  (51%)
+//     … more than 7 days after                          1,611  (17%)
+//     … more than 30 days after                         1,256  (13%)
+//
+// Second method, independent of `commence_time` and of any assumption about
+// when a game ends: the stamps are SHARED. One `settled_at` value, identical to
+// the microsecond, is carried by 137 different markets; the next four cover 118,
+// 99, 95 and 91. A timestamp that 137 unrelated games share to the microsecond
+// is a sweep's clock and cannot be an observation of any one of them.
+//
+// The issue's own five specimens are the case in miniature: `60755454` and its
+// four siblings are baseball games that started 2026-09-11 13:00Z, and all five
+// carry `settled_at = 2026-09-18 22:55:08.995192Z` — the #6919 drain's clock,
+// seven days after the games were played. Printing that field would have
+// answered "Resolved 9/25/2026" with "Resolved 9/18/2026" on a game finished on
+// the 11th: a second false date, on half the population, in the reader's first
+// line. `app/utils/settlement_stamp.py` reached the same verdict from the chart
+// side (#6360) and ranks `settled_at` LAST of four witnesses for this reason.
+//
+// So this module states no date, and serving the field would not change that.
+// It does NOT carry a `settled_at` branch: the honest render with no trustworthy
+// evidence is silence (notice 34), and an unreachable branch is a guess about a
+// field's shape that no test can kill.
+//
+// IF A DATE IS EVER WANTED HERE, the witness is the one the chart already
+// trusts — `settlement_stamp.py`'s arm 1 (a PAST `resolution_date`) or arm 2
+// (the market's last real observation, where the journey ends) — never arm 3.
+// That needs a server-side decision on the detail route, because the page's
+// history fetch is window-scoped and would make the date appear and disappear
+// with a chart toggle. Nobody has asked for it; the banner is complete without
+// one.
 //
 // ── SCOPE: THE OTHER PAST-DATE DERIVATION IN THAT FILE IS LEFT ALONE ─────────
 //

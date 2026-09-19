@@ -93,11 +93,41 @@ describe("#7060 the settled banner reads settlement, not the calendar", () => {
   it("never states a date on a settled market — #7058's half", () => {
     // The banner used to append " Resolved <resolution_date>.", and on 9,993
     // resolved markets that date is in the FUTURE ("Resolved 9/25/2026" on a
-    // market settled today). The true field, `settled_at`, is not served, so
-    // the honest render states no date at all.
+    // market settled today).
     const text = settlementBannerText({
       status: "resolved",
       // @ts-expect-error — a date must not be able to influence the words.
+      resolution_date: "2026-09-25T00:00:00+00:00",
+    });
+    expect(text).toBe("This market has been settled.");
+    expect(text).not.toMatch(PRINTS_A_DATE);
+  });
+
+  it("stays silent even once `settled_at` is served — #7058's second half", () => {
+    // NOT the same arm as above, and not a spare. #7058 asked for `settled_at`
+    // on the detail payload and for this module to print it; the day some lane
+    // serves the field, the ONLY thing standing between it and the banner is
+    // that `SettlementBannerSubject` refuses it. This pins that refusal.
+    //
+    // Printing it would install a second false date rather than remove one:
+    // measured on production 2026-09-19 over the issue's own population (9,347
+    // resolved markets with a future `resolution_date` and a `settled_at`),
+    // 4,765 carry a stamp more than 24h after their game started and 1,256 more
+    // than 30 days after — because `settled_at` is when a SWEEP saw the row, not
+    // when the market resolved. 137 unrelated markets share one such stamp to
+    // the microsecond. The five specimens in the issue are games played
+    // 2026-09-11 that all carry 2026-09-18 22:55:08.995192Z.
+    //
+    // Full measurement, both methods, and the witness to use if a date is ever
+    // actually wanted: the header of `lib/settlementBanner.ts`.
+    const text = settlementBannerText({
+      status: "resolved",
+      // @ts-expect-error — the lagged stamp must not reach the words, nor the
+      // schedule sitting beside it as it does on every one of the 9,347 rows.
+      // ONE directive covers both: TS reports an excess-property literal once,
+      // at its first offending key, and a second directive here reads as unused
+      // (TS2578) and fails the typecheck gate.
+      settled_at: "2026-09-18T22:55:08.995192+00:00",
       resolution_date: "2026-09-25T00:00:00+00:00",
     });
     expect(text).toBe("This market has been settled.");
