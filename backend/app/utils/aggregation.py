@@ -1203,10 +1203,54 @@ def _gate_population(
     )
 
 
+#: The three tiers ``compute_aggregate_probability_tiered`` can answer from, in
+#: the order it tries them. The names are a caller-visible vocabulary, not a
+#: debug string: ``TIER_OPENING`` is the one that says "this number is not a
+#: blend of anything — it is the line as it was posted, and nobody has quoted it
+#: since". See ``compute_aggregate_probability_tiered`` for why that is worth a
+#: return value.
+TIER_SOURCES = "sources"
+TIER_ESPN = "espn"
+TIER_OPENING = "opening"
+
+
 def compute_aggregate_probability(
     event, event_status: Optional[str] = None
 ) -> Optional[float]:
     """Compute aggregate home win probability from all available sources.
+
+    A thin wrapper over ``compute_aggregate_probability_tiered`` that drops the
+    tier. Every existing caller reads only the number and is unchanged by the
+    split — the value this returns is computed by exactly the same code that
+    produced it before, because it IS that code.
+    """
+    return compute_aggregate_probability_tiered(event, event_status)[0]
+
+
+def compute_aggregate_probability_tiered(
+    event, event_status: Optional[str] = None
+) -> tuple[Optional[float], Optional[str]]:
+    """``(probability, tier)`` — the number AND which tier answered.
+
+    WHY THE TIER IS A RETURN VALUE (#6694). The three tiers are not three ways
+    of computing one thing; they are three different CLAIMS, and only the first
+    is a blend. Tier 3 returns ``opening_home_probability`` — a record of where
+    the line opened, which is a perfectly good last resort and a very bad thing
+    to describe as a live consensus.
+
+    Because the number alone cannot say which tier produced it, every caller
+    that wanted to distinguish them had to re-derive the ordering from the same
+    attributes this function reads — and the one caller that needed it most
+    (``resolve_hero``) instead had a whole arm rendered unreachable by it: its
+    ``opening`` arm sits BELOW a blend arm that Tier 3 already answers, so on
+    2026-09-19 all 486 opening-only events in a two-day window were served as
+    ``hero_probability_source: "blend"``, one of them (15314578, live) printing
+    64% captioned as a live blend over a chart drawing 78%.
+
+    The fix is not to copy the cascade into the caller. It is for the cascade to
+    say what it did. Returning the tier keeps ONE implementation of the ordering
+    and makes "was this actually a blend?" answerable without asking the
+    attributes a second time and hoping the two walks agree.
 
     Uses SOURCE_WEIGHTS to produce a weighted average of all available
     probability readings on the event model.  Falls back through three
@@ -1264,19 +1308,19 @@ def compute_aggregate_probability(
             *_gate_population(keys, values, weights, floored)
         )
         if divergence is not None:
-            return round(divergence.primary_value, 6)
+            return round(divergence.primary_value, 6), TIER_SOURCES
 
         if any(w > 0 for w in weights):
-            return round(_weighted_median(values, weights), 6)
+            return round(_weighted_median(values, weights), 6), TIER_SOURCES
 
     # Tier 2: ESPN win probability (live games, single source)
     espn_prob = getattr(event, "espn_win_prob_home", None)
     if espn_prob is not None:
-        return round(float(espn_prob), 6)
+        return round(float(espn_prob), 6), TIER_ESPN
 
     # Tier 3: Opening probability (Odds API sportsbook consensus)
     opening_prob = getattr(event, "opening_home_probability", None)
     if opening_prob is not None:
-        return round(float(opening_prob), 6)
+        return round(float(opening_prob), 6), TIER_OPENING
 
-    return None
+    return None, None
