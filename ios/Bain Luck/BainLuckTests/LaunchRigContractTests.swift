@@ -38,6 +38,52 @@ final class LaunchRigContractTests: XCTestCase {
         XCTAssertFalse(LaunchRig.showsDebugCounts(defaults: defaults))
         XCTAssertNil(LaunchRig.scrollOffset(defaults: defaults))
         XCTAssertFalse(LaunchRig.expandsCollapsedSections(defaults: defaults))
+        XCTAssertNil(
+            LaunchRig.changedRefreshDrop(defaults: defaults),
+            "a reader passes no launch arguments, and this is the one affordance that would "
+            + "otherwise shorten their feed"
+        )
+    }
+
+    // MARK: - #7074: the controlled changed response
+
+    /// `simctl` passes every launch argument as a string, so the integer form is
+    /// the one the rig actually hands over. Asserting it here makes this a test
+    /// of the command in the journey rather than of a Swift literal.
+    func testChangedRefreshReadsTheLaunchArgumentStringForm() {
+        defaults.set("5", forKey: LaunchRig.changedRefreshKey)
+        XCTAssertEqual(LaunchRig.changedRefreshDrop(defaults: defaults), 5)
+    }
+
+    /// 🪤 THE ARGUMENT DOMAIN TYPE-COERCES, AND A STRING-ONLY READ MEASURED
+    /// NOTHING. `-launch_changed_refresh 12` can land as an `NSNumber`; the first
+    /// draft read `string(forKey:)`, answered nil, withheld no cards, and the
+    /// journey downstream reported that the feed had not changed — the product
+    /// verdict this whole arm exists to reach, manufactured by the instrument.
+    /// Caught only because that journey carries its own control (`SERVED` before
+    /// and after) and the control said the experiment never ran.
+    func testChangedRefreshReadsTheNumberFormTheArgumentDomainMayStore() {
+        defaults.set(12, forKey: LaunchRig.changedRefreshKey)
+        XCTAssertEqual(
+            LaunchRig.changedRefreshDrop(defaults: defaults), 12,
+            "a number-typed launch argument must read the same as its string form, or the rig is "
+            + "silently inert in exactly the runs that pass it"
+        )
+    }
+
+    /// Every value here would produce an UNCHANGED response, which is precisely
+    /// the state the journey exists to tell apart from a changed one. Clamping
+    /// any of them to a working number would hand the test a green run of an
+    /// experiment it never performed.
+    func testChangedRefreshRefusesEveryValueThatWouldWithholdNothing() {
+        for refused in ["0", "-1", "", "   ", "some", "2.5"] {
+            defaults.set(refused, forKey: LaunchRig.changedRefreshKey)
+            XCTAssertNil(
+                LaunchRig.changedRefreshDrop(defaults: defaults),
+                "\(refused) withholds no cards, so answering it would stage an unchanged refresh "
+                + "and let the journey report a difference it never created"
+            )
+        }
     }
 
     func testEmptyAndWhitespaceRouteOpensNothing() {

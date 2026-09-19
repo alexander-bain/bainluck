@@ -164,6 +164,91 @@ enum LaunchRig {
         defaults.bool(forKey: suppressInteractionUploadKey)
     }
 
+    // MARK: - Making a refresh's response genuinely, controllably DIFFERENT
+
+    /// Launch-argument key that withholds the first N cards from every refresh
+    /// AFTER the first paint, so a pull's response differs from the painted one
+    /// by construction.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_changed_refresh 5`.
+    ///
+    /// 🔴 THE GAP THIS EXISTS FOR, IN #7074'S OWN WORDS. Alex, physical phone,
+    /// build 15: *"Pull gesture briefly shows activity with no apparent change."*
+    /// The issue ruled that INCONCLUSIVE and set the bar: *"Prove
+    /// gesture→request→completion and useful stable position on a controlled
+    /// changed-response test"*, and — one line later — *"Test actual gestures and
+    /// read frames, not state-machine tests alone."*
+    ///
+    /// Those two sentences pull in opposite directions against the live API, and
+    /// that is the whole difficulty. A journey with a finger cannot CONTROL what
+    /// production serves, and the server may legitimately serve the same cards
+    /// twice — so a live-API journey asserting "the cards changed" would red on a
+    /// working app. native/243 resolved the contradiction by moving the controlled
+    /// half onto the `DiscoverFeedProviding` seam, and said plainly what that
+    /// costs: a seam test proves the publication rule and proves nothing about
+    /// whether a finger ever produces it. Both halves were honest; neither was the
+    /// arm.
+    ///
+    /// This closes it from the other side: keep the real network, the real
+    /// gesture and the real screen, and make the *difference* the controlled
+    /// variable.
+    ///
+    /// ⚠️ AND IT IS THE FIRST RIG AFFORDANCE THAT CHANGES WHAT THE READER IS
+    /// SHOWN. Every other key here is read-only with respect to the feed — a
+    /// counter drawn over it, a chevron opened, a scroll offset, one POST
+    /// withheld. This one withholds CARDS, so a build that shipped with it live
+    /// would quietly serve a shortened feed: the failure would look like a
+    /// backend defect and nothing on the screen would say otherwise.
+    ///
+    /// So, unlike its siblings, **its one call site is `#if DEBUG`**
+    /// (`DiscoverViewModel.load()`), and the shipping configuration is Release.
+    /// Not a convention — a compile-time absence. The reader of a TestFlight
+    /// build cannot reach this behaviour by passing the argument, because the
+    /// code that honours it is not in their binary. The key is still read
+    /// unconditionally, and still contract-tested beside its siblings, precisely
+    /// so the thing under test is the same function the rig calls.
+    /// 📎 ONE KNOWN SIDE EFFECT, WRITTEN DOWN RATHER THAN DISCOVERED. Withholding
+    /// cards restamps the painted edition, and `loadMoreIfNeeded` discards a page
+    /// whose token does not match the list it would splice into (#4110). So while
+    /// this flag is set, infinite scroll stops yielding new pages — through the
+    /// existing bounded duplicate-path, not a crash or a blank. That is correct
+    /// behaviour for a list the server never sent, and it is fine for a journey
+    /// that pulls at the top; it would quietly ruin a pagination journey, so do
+    /// not combine the two.
+    static let changedRefreshKey = "launch_changed_refresh"
+
+    /// How many cards the rig asked a refresh to withhold, or `nil` for none.
+    ///
+    /// Refuses zero, negatives and non-numbers rather than clamping them, for
+    /// ``scrollOffset``'s reason and a sharper one: every refused value here
+    /// would produce an UNCHANGED response, which is exactly the state the
+    /// journey exists to distinguish from a changed one. A clamp would hand the
+    /// test a passing-looking run of the experiment it did not perform.
+    /// 🪤 READ THROUGH `object(forKey:)`, NOT `string(forKey:)`. The argument
+    /// domain type-coerces: `-launch_changed_refresh 12` can arrive as an
+    /// `NSNumber` rather than the `"12"` the command line appears to pass. A
+    /// string-only read then answers `nil`, the rig withholds nothing, and the
+    /// journey downstream measures an unchanged refresh and reports **that the
+    /// feed did not change** — the product verdict, produced by the instrument.
+    /// Both forms are accepted here and both are asserted in the contract test.
+    ///
+    /// Refuses zero, negatives and non-integers rather than clamping them, for
+    /// ``scrollOffset``'s reason and a sharper one: every refused value would
+    /// produce an UNCHANGED response, which is exactly the state the journey
+    /// exists to distinguish from a changed one. A clamp would hand the test a
+    /// passing-looking run of the experiment it did not perform.
+    static func changedRefreshDrop(defaults: UserDefaults = .standard) -> Int? {
+        let text: String
+        switch defaults.object(forKey: changedRefreshKey) {
+        case let value as String: text = value
+        case let value as NSNumber: text = value.stringValue
+        default: return nil
+        }
+        guard let count = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)), count > 0
+        else { return nil }
+        return count
+    }
+
     /// How long to wait AFTER the route before scrolling.
     ///
     /// Longer than ``routeDelay`` and additional to it, because the two waits
