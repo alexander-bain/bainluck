@@ -276,13 +276,38 @@ def test_a_scheduled_event_is_pregame_all_the_way_to_now():
     assert pregame_boundary("scheduled", KICK, now) == now
 
 
-def test_an_unknown_status_takes_the_pregame_exemption_and_that_is_deliberate():
-    """`_relative_decay_applies(None)` is True — #1999's monotone default keeps
-    decaying an event whose status we cannot read. This function gives it the
-    started branch instead: "this bucket is earlier than the listed start" is a
-    fact about the clock and does not need the status to be legible. Asserted so
-    the divergence is a decision on the record, not a discovery."""
+def test_an_unknown_status_that_has_started_is_pregame_before_its_listed_kickoff():
+    """An unreadable status on an event whose start HAS passed keeps the started
+    branch: the buckets after kickoff decay, so the edge the hero renders is on
+    the in-play rule and the two agree. This is the half of the old
+    "deliberate divergence" that survived CERT-3112."""
     assert pregame_boundary(None, KICK, KICK + timedelta(hours=3)) == KICK
+
+
+@pytest.mark.parametrize("status", [None, "", "   ", "postponed", "wat"])
+def test_a_status_the_hero_decays_takes_NO_exemption_before_its_listed_start(status):
+    """🔴 CERT-3112, and the reason this ship was blocked.
+
+    The hero decays every status outside `_PREGAME_STATUSES`. While the listed
+    start is still ahead of `now`, EVERY bucket drawn so far is "before the
+    listed start" — so the started branch would exempt the newest bucket too and
+    the chart's right edge would stop agreeing with the big number above it.
+    `None` keeps the whole line on the in-play rule, which is what the hero is
+    doing. The route-level proof that this is one number and not two lives in
+    `test_pregame_hero_chart_lockstep_4976.py`.
+    """
+    now = KICK - timedelta(hours=1)  # kickoff has NOT arrived
+    assert pregame_boundary(status, KICK, now) is None
+
+
+def test_a_scheduled_event_before_its_start_still_exempts_everything():
+    """The refusal above is keyed on the HERO's gate, not on the clock alone: a
+    `scheduled` event is equally un-started, and there the hero is not decaying
+    either, so the exemption is parity rather than a divergence."""
+    now = KICK - timedelta(hours=1)
+    # `max(commence_time, now)` — the boundary is kickoff, which is already
+    # later than every bucket that exists, so the whole line is exempt.
+    assert pregame_boundary("scheduled", KICK, now) == KICK
 
 
 def test_no_commence_time_means_no_boundary():

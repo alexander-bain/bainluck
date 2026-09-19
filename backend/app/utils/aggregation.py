@@ -517,14 +517,29 @@ def pregame_boundary(
        by the evidenced-actual-start work (#6158 / #5140 / #1833). When an
        observed start lands, this helper takes it and the inconsistency closes.
 
-    3. AN UNKNOWN STATUS TAKES THE PRE-GAME EXEMPTION HERE, WHERE THE HERO
-       REFUSES IT. ``_relative_decay_applies(None)`` is ``True`` — #1999's
-       monotone default keeps decaying an event whose status we cannot read.
-       This function gives an unknown status the second branch instead, so its
-       pre-kickoff buckets are exempt. That is deliberate: "this bucket is
-       earlier than the listed start" is a fact about the clock and does not
-       need the status to be legible. It is NOT the monotone default, and
-       earlier drafts of this docstring claimed it was.
+    3. THE EXEMPTION NEVER REACHES THE BUCKET THE HERO IS RENDERING (CERT-3112).
+       An earlier draft gave an unknown status the started branch and argued the
+       divergence was deliberate: "this bucket is earlier than the listed start"
+       is a fact about the clock and does not need the status to be legible.
+       That argument is sound for an event that HAS started and wrong for one
+       that has not. When the listed start is still ahead of ``now`` and the
+       hero is decaying — an unknown or unreadable status, ``postponed``,
+       anything outside ``_PREGAME_STATUSES`` — EVERY bucket drawn so far is
+       "before the listed start", so the exemption covers the newest one too,
+       and the chart's right edge stops agreeing with the big number above it.
+       Executed on the graded sha: betting 0.62 quoted hours ago against a fresh
+       kalshi 0.36, status unknown, kickoff in an hour — hero 0.36, chart edge
+       0.62, one screen, two answers. Before this helper existed both paths said
+       0.36. So a started event still exempts its pre-kickoff segment (that is
+       point 1, and it is the ship), and an event whose start has not arrived
+       takes no chart-only exemption at all: ``None``, the in-play rule
+       everywhere, bit-for-bit #1999's monotone default. The blend is the
+       product — one number per question.
+
+       Refusing outright rather than clamping to ``now`` is deliberate: a
+       boundary of ``now`` would exempt the whole history and decay only the
+       final bucket, which manufactures a step at the right edge — the very
+       shape this ship exists to remove.
     """
     if commence_time is None:
         return None
@@ -532,6 +547,12 @@ def pregame_boundary(
         return max(commence_time, now) if now is not None else datetime.max.replace(
             tzinfo=commence_time.tzinfo
         )
+    # The hero decays this event. If its listed start has not arrived, every
+    # bucket is pre-kickoff and the exemption would cover the edge the hero
+    # renders — see point 3. `now is None` cannot tell upcoming from started,
+    # and the only caller passes it.
+    if now is not None and commence_time > now:
+        return None
     return commence_time
 
 
