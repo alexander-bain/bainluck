@@ -1461,18 +1461,16 @@ def test_a_stale_rank_claim_is_retired_even_though_its_delta_is_already_gone() -
     the card goes on saying "New favorite" with no movement behind it, which is
     the entire defect.
     """
-
-    async def _go():
-        ids = await _reset_and_seed(
+    ids = asyncio.run(
+        _reset_and_seed(
             [
                 ("stale_leader", "open", 48, None, None, None, 0.40, (), 3, 1),
                 ("fresh_leader", "open", 1, 0.10, 0.10, None, 0.40, (), 2, 1),
             ]
         )
-        result = _run_task()
-        return result, await _read_rank(ids)
-
-    result, ranks = asyncio.run(_go())
+    )
+    result = _run_task()
+    ranks = asyncio.run(_read_rank(ids))
 
     assert ranks["stale_leader"] is None, (
         "a row nothing has written in 48 hours kept its `rank_change_24h` after "
@@ -1495,18 +1493,16 @@ def test_a_graded_rank_claim_is_retired_even_with_a_brand_new_stamp() -> None:
     sites every six hours, so a settled board looks fresh to A5 forever and its
     rank arrows are RE-ARMED twice a day. All four repairs in this ship's own
     before/after were this statement's."""
-
-    async def _go():
-        ids = await _reset_and_seed(
+    ids = asyncio.run(
+        _reset_and_seed(
             [
                 ("graded_fresh", "open", 0, None, None, "kalshi", 0.55, (), 1, 1),
                 ("open_fresh", "open", 0, None, None, None, 0.55, (), 1, 1),
             ]
         )
-        result = _run_task()
-        return result, await _read_rank(ids)
-
-    result, ranks = asyncio.run(_go())
+    )
+    result = _run_task()
+    ranks = asyncio.run(_read_rank(ids))
 
     assert ranks["graded_fresh"] is None, (
         "a GRADED outcome stamped this second kept its rank claim. A5 gates on "
@@ -1531,15 +1527,12 @@ def test_a_self_refuting_row_loses_the_rank_claim_with_the_delta() -> None:
     does. Price 0.08 against a delta of 0.80 implies a previous price of -0.72,
     which no venue ever quoted (#6536).
     """
-
-    async def _go():
-        ids = await _reset_and_seed(
-            [("liar", "open", 0, 0.80, 0.80, None, 0.08, (), 4, 1)]
-        )
-        result = _run_task()
-        return result, await _read(ids), await _read_rank(ids)
-
-    result, read, ranks = asyncio.run(_go())
+    ids = asyncio.run(
+        _reset_and_seed([("liar", "open", 0, 0.80, 0.80, None, 0.08, (), 4, 1)])
+    )
+    result = _run_task()
+    read = asyncio.run(_read(ids))
+    ranks = asyncio.run(_read_rank(ids))
 
     assert read["liar"][0] is None, f"A3 did not retire the delta: {read}"
     assert result["impossible_retired"] == 1, result
@@ -1562,9 +1555,8 @@ def test_an_unobserved_move_loses_the_rank_claim_with_the_delta() -> None:
     only the observed series refutes it. A5/A6 cannot reach it either, so A4 is
     the only statement that can take its rank claim.
     """
-
-    async def _go():
-        ids = await _reset_and_seed(
+    ids = asyncio.run(
+        _reset_and_seed(
             [
                 (
                     "overstated", "open", 0, 0.40, 0.40, None, 0.60,
@@ -1572,13 +1564,13 @@ def test_an_unobserved_move_loses_the_rank_claim_with_the_delta() -> None:
                 )
             ]
         )
-        result = _run_task()
-        return result, await _read(ids), await _read_rank(ids)
-
-    result, read, ranks = asyncio.run(_go())
+    )
+    result = _run_task()
+    read = asyncio.run(_read(ids))
+    ranks = asyncio.run(_read_rank(ids))
 
     assert result["unobserved_retired"] == 1, (
-        f"A4 did not select the overstated row, so this case proves nothing "
+        "A4 did not select the overstated row, so this case proves nothing "
         f"about it: {result}"
     )
     assert read["overstated"][0] is None, f"A4 did not retire the delta: {read}"
@@ -1588,8 +1580,7 @@ def test_an_unobserved_move_loses_the_rank_claim_with_the_delta() -> None:
         f"instant: {ranks}"
     )
     assert result["rank_expired"] == 0 and result["rank_graded_retired"] == 0, (
-        f"A5 or A6 claimed this row, so it is not A4-only as the case says: "
-        f"{result}"
+        f"A5 or A6 claimed this row, so it is not A4-only as the case says: {result}"
     )
 
 
@@ -1604,18 +1595,16 @@ def test_a_stored_zero_rank_change_is_left_alone() -> None:
     (`rankChange != 0`). Sweeping zeros would rewrite millions of rows on
     production and change nothing a reader can see.
     """
-
-    async def _go():
-        ids = await _reset_and_seed(
+    ids = asyncio.run(
+        _reset_and_seed(
             [
                 ("dead_zero", "open", 72, None, None, "kalshi", 0.30, (), 0, 2),
                 ("dead_live", "open", 72, None, None, "kalshi", 0.30, (), 5, 1),
             ]
         )
-        _run_task()
-        return await _read_rank(ids)
-
-    ranks = asyncio.run(_go())
+    )
+    _run_task()
+    ranks = asyncio.run(_read_rank(ids))
 
     assert ranks["dead_zero"] == 0, (
         "a stored zero was rewritten to NULL. No reader can tell the two apart, "
@@ -1632,9 +1621,8 @@ def test_the_rank_sweeps_are_bounded_by_their_own_batches() -> None:
     """Bounded for A's reason: 373,272 rows were retirable when this shipped,
     and one unbounded UPDATE over them blows the task's 120 s soft limit and
     holds locks against four live pollers."""
-
-    async def _go():
-        ids = await _reset_and_seed(
+    ids = asyncio.run(
+        _reset_and_seed(
             [
                 ("s1", "open", 48, None, None, None, 0.40, (), 3, 1),
                 ("s2", "open", 48, None, None, None, 0.40, (), 2, 1),
@@ -1642,10 +1630,9 @@ def test_the_rank_sweeps_are_bounded_by_their_own_batches() -> None:
                 ("g2", "open", 0, None, None, "kalshi", 0.40, (), 1, 1),
             ]
         )
-        result = _run_task(stale_rank_batch=1, graded_rank_batch=1)
-        return result, await _read_rank(ids)
-
-    result, ranks = asyncio.run(_go())
+    )
+    result = _run_task(stale_rank_batch=1, graded_rank_batch=1)
+    ranks = asyncio.run(_read_rank(ids))
 
     assert result["rank_expired"] == 1, (
         f"the stale rank sweep ignored its batch: {result}"
@@ -1673,19 +1660,17 @@ def test_the_superset_identity_survives_the_rank_sweeps() -> None:
     `max_movement_24h == MAX(ABS(probability_change_24h))` holds. A rank sweep
     has no business moving it; this is the assertion that says so on rows.
     """
-
-    async def _go():
-        await _reset_and_seed(
+    asyncio.run(
+        _reset_and_seed(
             [
                 ("mover", "open", 1, 0.30, 0.30, None, 0.60, (), 7, 1),
                 ("dead_rank", "open", 90, None, 0.30, None, 0.60, (), 7, 1),
                 ("graded_rank", "open", 0, None, None, "kalshi", 0.20, (), 3, 2),
             ]
         )
-        _run_task()
-        return await _identity_holds()
-
-    violations = asyncio.run(_go())
+    )
+    _run_task()
+    violations = asyncio.run(_identity_holds())
 
     assert violations == [], (
         "the rank sweeps moved the market maximum, which breaks the bound "
