@@ -937,9 +937,16 @@ export default function CalibrationPage() {
             precision sits one click away rather than in front of it. The value
             is read from the payload, never transcribed, so it stays true when
             the hourly rebuild moves it. */}
+        {/* #7202 — the scope comes from the partition, never from this file.
+            This sentence hard-coded "Across every market we track" over
+            `cohortECE`, one line under a heroClause that had just named the
+            298,001 outcomes it set aside. The figure is right and stays; the
+            claim over it was the defect (same shape as #7195). The cohort
+            count travels as a data attribute beside the ECE so a probe reads
+            which population the number came from, not the prose (notice 34). */}
         <p className="text-text-primary max-w-2xl mx-auto" data-testid="calibration-plain-headline"
-          data-plain-ece={cohortECE}>
-          Across every market we track, prices land{" "}
+          data-plain-ece={cohortECE} data-plain-ece-n={cohortN}>
+          {cohort.plainHeadlineScope}, prices land{" "}
           <strong>within about {cohortECE.toFixed(1)} percentage points</strong> of what actually
           happened.
         </p>

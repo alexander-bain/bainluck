@@ -107,6 +107,7 @@ const copyOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.statDetail,
   c.heroClause,
   c.shortLabel,
+  c.plainHeadlineScope,
   c.partitionNote ?? "",
 ];
 
@@ -118,6 +119,7 @@ const labelsOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.statDetail,
   c.heroClause,
   c.shortLabel,
+  c.plainHeadlineScope,
 ];
 
 // ===========================================================================
@@ -306,6 +308,7 @@ describe("every cohort label names the predicate it actually selects", () => {
     // copy reds here, not only in the one sentence changed today.
     for (const label of [dflt.headline, dflt.detail, dflt.shortLabel,
                          dflt.statDetail, dflt.heroClause, dflt.partitionNote ?? "",
+                         dflt.plainHeadlineScope, all.plainHeadlineScope,
                          all.headline, all.detail]) {
       expect(label).not.toContain("doesn't apply");
       expect(label).not.toContain("not applicable");
@@ -392,6 +395,30 @@ describe("every cohort label names the predicate it actually selects", () => {
   test("the cohort publishes a machine-readable key, not just prose", () => {
     expect(dflt.key).toBe("excluding_never_moved");
     expect(all.key).toBe("all");
+  });
+
+  // #7202 — the scope phrase over the ECE figure.
+  //
+  // "every market we track" is a claim about the DENOMINATOR, so it is true in
+  // exactly the states where the cohort is the whole population and false in
+  // the one where it is not. Asserted as emitted strings in all three states,
+  // not as a branch: the default cohort dropped 298,001 of 747,028 outcomes in
+  // production while saying "every".
+  test("the default cohort says traded, because it is not every market", () => {
+    expect(dflt.plainHeadlineScope).toBe("Across every traded market we track");
+    expect(dflt.cohortN).toBeLessThan(dflt.fullN);
+  });
+
+  test("with the untraded rows toggled in, the unqualified claim is restored", () => {
+    expect(all.plainHeadlineScope).toBe("Across every market we track");
+    expect(all.cohortN).toBe(all.fullN);
+  });
+
+  test("a payload that excludes nothing earns no qualifier", () => {
+    // Nothing is set aside, so "traded" would narrow a sentence that is
+    // already true of the whole population — the rule `excluded` follows.
+    const c = describeCohort({ movedN: 300, unchangedN: 0, notApplicableN: 0 }, 300, false);
+    expect(c.plainHeadlineScope).toBe("Across every market we track");
   });
 });
 
@@ -545,6 +572,30 @@ describe("the calibration page renders these strings and not its own", () => {
 
   test("the activity partition note reaches the DOM under its own hook", () => {
     expect(SOURCE).toContain('data-testid="calibration-activity-partition"');
+  });
+
+  // #7202 — THE PLAIN HEADLINE'S SCOPE.
+  //
+  // The sentence that prints the cohort's ECE hard-coded "Across every market
+  // we track" while drawing from 449,027 of 747,028 outcomes. The number was
+  // right (0.91pp → "0.9"); the population named over it was not (the whole
+  // set reads 0.68pp → "0.7"). Guarded here, on the page's rendered source,
+  // because the defect was a literal in this file and nothing in the module
+  // could see it.
+  test("the page does not write its own scope claim over the cohort figure", () => {
+    expect(RENDERED).not.toContain("Across every market we track");
+    expect(RENDERED).not.toContain("Across every traded market we track");
+    expect(RENDERED).toContain("plainHeadlineScope");
+  });
+
+  test("the headline publishes the population its figure came from", () => {
+    const i = SOURCE.indexOf('data-testid="calibration-plain-headline"');
+    expect(i).toBeGreaterThan(-1);
+    const block = SOURCE.slice(i, i + 400);
+    expect(block).toContain("data-plain-ece=");
+    // Without the n beside it, a probe reads an error figure and cannot tell
+    // which of the two populations produced it — the ambiguity this fixes.
+    expect(block).toContain("data-plain-ece-n=");
   });
 
   test("the toggle publishes the partition as data, not only as prose", () => {

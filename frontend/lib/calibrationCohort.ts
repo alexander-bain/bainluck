@@ -143,6 +143,23 @@ export interface CohortCopy {
   /** The hero's population clause. */
   heroClause: string;
   /**
+   * The plain headline's scope phrase — the subject of the one sentence a
+   * casual reader actually reads, which prints the cohort's ECE.
+   *
+   * #7202: that sentence was the hard-coded "Across every market we track",
+   * one line under a `heroClause` that had just disclosed setting aside
+   * 298,001 of 747,028 outcomes. It was not loose wording: the figure beside
+   * it is the cohort's (0.91pp → "0.9"), while the population it named reads
+   * 0.68pp → "0.7". It also said "every" over a set excluding 70% of
+   * Polymarket and all of DataGolf.
+   *
+   * So the scope travels with the predicate, like every other string here. It
+   * says "every market" only where that is TRUE — the reader has toggled the
+   * untraded rows back in, or the payload excluded none — and never asks the
+   * call site to decide which case it is in.
+   */
+  plainHeadlineScope: string;
+  /**
    * Reconciles the activity section's two cards to the page population. Null
    * when there are no not-applicable rows, so the note never appears as
    * boilerplate on a payload it does not describe.
@@ -242,6 +259,8 @@ export function describeCohort(
       toggleLabel: unchangedN > 0 ? "Exclude untraded" : "Show every outcome",
       statDetail: `all outcomes · ${fmt(fullN)} total`,
       heroClause: `${fmt(fullN)} resolved predictions`,
+      // The cohort IS the population here, so the unqualified claim is true.
+      plainHeadlineScope: "Across every market we track",
       partitionNote,
       reconciles,
     };
@@ -308,6 +327,13 @@ export function describeCohort(
         `${fmt(unchangedN)} untraded ones, whose price never moved off its ` +
         `opening line (${fmt(fullN)} in total)`
       : `${fmt(defaultCohortN)} resolved predictions`,
+    // "traded" is this module's ratified word for the default cohort, and it
+    // covers the sportsbook rows correctly under D101 rather than apologising
+    // for them. An empty excluded side excludes nothing, so it earns no
+    // qualifier — the same rule `excluded` above follows.
+    plainHeadlineScope: unchangedN > 0
+      ? "Across every traded market we track"
+      : "Across every market we track",
     partitionNote,
     reconciles,
   };
