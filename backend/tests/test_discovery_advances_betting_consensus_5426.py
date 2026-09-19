@@ -175,8 +175,31 @@ class TestDiscoveryAdvancesTheConsensus:
         )
 
         stamp = session.sources_writes[0]["betting"]["updated_at"]
-        assert stamp.startswith("20")
-        assert "2020" not in stamp
+        # THE STALE SEED IS GONE — ASSERTED ON THE VALUE, NEVER A SUBSTRING OF IT.
+        #
+        # This read `assert "2020" not in stamp`, and on 2026-09-19 it failed on
+        # master (CI 35456442160, `backend-tests (3)`) with
+        #
+        #     AssertionError: assert '2020' not in '2026-09-19T...202062+00:00'
+        #
+        # The writer had done its job: the stamp is a fresh 2026 observation. The
+        # `2020` the substring found was in the MICROSECONDS — the fraction spelled
+        # `.202062`. So the assertion was reading the year out of a position where
+        # the year is not, and it reds a deploy-blocking job on roughly three runs
+        # in ten thousand, at a moment that has nothing to do with the code.
+        #
+        # `test_partial_caller_writes_value_and_stamp_when_books_suffice` above
+        # already compares the seeded value directly; this now does the same, and
+        # then says the stronger thing the substring was standing in for — that the
+        # stamp is an observation time from THIS run, which is the whole point of
+        # #4028. A clock-robust assertion, not a loosened one: the old pair would
+        # pass for any string beginning "20" that omits "2020", including a stamp
+        # from 2021 that no observation produced.
+        assert stamp != "2020-01-01T00:00:00Z"
+        observed = datetime.fromisoformat(stamp)
+        assert observed.tzinfo is not None, "an observation time must carry its zone"
+        age_seconds = (datetime.now(timezone.utc) - observed).total_seconds()
+        assert -5 <= age_seconds <= 300, f"stamp is not from this run: {stamp}"
 
 
 # ---------------------------------------------------------------------------
