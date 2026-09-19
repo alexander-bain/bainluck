@@ -712,6 +712,91 @@ class TestComputeMarketTier:
                                    sport_category="entertainment") == 1
 
 
+class TestSingleFixturePropsAreNeverChampionships:
+    """#6471 — a market that names one fixture is that fixture's prop.
+
+    `_TIER_1_PATTERNS` carries a bare ``\\bwinner\\b``, so every one of these
+    names used to return 1 and print "Championship" on the search card. The
+    live population was 398 open Polymarket rows when this was measured
+    (2026-09-18): 243 Inning Winner, 71 esports Map N, 41 Game N, 27 First 5
+    Innings, 16 soccer props that the ``afc``/``pacific``/``central`` tier-2
+    and tier-4 patterns had caught by way of a club's name.
+    """
+
+    # Polymarket writes " - ", Kalshi writes ": ". Both shapes, because the
+    # defect was only ever visible on the first of them.
+    def test_inning_winner_polymarket_dash_form(self):
+        assert compute_market_tier(
+            "Athletics vs. Cleveland Guardians - 4th Inning Winner",
+            sport_category="baseball") == 5
+
+    def test_inning_winner_kalshi_colon_form(self):
+        assert compute_market_tier(
+            "Arizona vs Kansas City: 1st Inning Winner",
+            sport_category="baseball") == 5
+
+    def test_first_five_innings_winner(self):
+        assert compute_market_tier(
+            "Boston Red Sox vs. Tampa Bay Rays - First 5 Innings Winner",
+            sport_category="baseball") == 5
+
+    def test_esports_map_winner(self):
+        assert compute_market_tier(
+            "Counter-Strike: BIG vs fnatic - Map 1 Winner",
+            sport_category="esports") == 5
+
+    def test_series_game_winner(self):
+        assert compute_market_tier(
+            "Los Angeles Dodgers vs. San Diego Padres - Game 3 Winner",
+            sport_category="baseball") == 5
+
+    def test_both_teams_to_score_not_promoted_by_a_club_name(self):
+        # "AFC Bournemouth" matches the tier-2 `afc` pattern; "Pacific FC"
+        # and "CA Central Córdoba" match the tier-4 ones.
+        assert compute_market_tier(
+            "AFC Bournemouth vs. Liverpool FC: Both Teams to Score",
+            "game_prop", sport_category="soccer") == 5
+        assert compute_market_tier(
+            "Pacific FC vs. Vancouver FC: Both Teams to Score",
+            "game_prop", sport_category="soccer") == 5
+
+    # ── The sweep that used to undo this ──────────────────────────────────
+    def test_retier_sweep_cannot_promote_a_game_prop_back_to_tier_1(self):
+        """`_backfill_team_links` re-reads every ``market_tier == 5`` row and
+        rewrites it with whatever this function returns. Before #6471 that
+        handed inning props straight back to tier 1, which is why Kalshi's
+        rows split same-day rather than chronologically — the poller wrote 5
+        and the sweep put it back. Re-running the function on its own output
+        has to be a no-op.
+        """
+        name = "Athletics vs. Cleveland Guardians - 4th Inning Winner"
+        first = compute_market_tier(name, sport_category="baseball")
+        assert first == 5
+        assert compute_market_tier(name, sport_category="baseball") == first
+
+    # ── Controls: what must NOT move ──────────────────────────────────────
+    def test_real_championships_are_untouched(self):
+        assert compute_market_tier("2027 Ryder Cup Winner") == 1
+        assert compute_market_tier("2026 World Chess Championship: Winner") == 1
+        assert compute_market_tier("NBA Championship Winner") == 1
+
+    def test_non_sport_versus_question_stays_top_level(self):
+        # "A vs B: C?" is also how a non-sport duel reads, and those carry no
+        # tier hierarchy — they must not be demoted to a prop.
+        assert compute_market_tier(
+            "OpenAI vs. Anthropic: First to another Millennium Prize?",
+            "tech", sport_category="tech") == 2
+        assert compute_market_tier(
+            "Christie's vs Sotheby's: higher 2026 sales total?",
+            "entertainment", sport_category="entertainment") == 2
+
+    def test_a_fixture_with_no_prop_suffix_is_not_forced_to_five(self):
+        # The guard keys on the shared game-prop predicate, not on the word
+        # "vs" — a season-long question naming two teams keeps its tier.
+        assert compute_market_tier(
+            "Eastern Conference Champion", sport_category="basketball") == 2
+
+
 class TestMarketTierEdgeCases:
     """Edge cases for market tier ordering — division > conference > awards > championship."""
 
