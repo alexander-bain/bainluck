@@ -664,6 +664,23 @@ describe("item 4 — every section names the cohort it draws from", () => {
     "How We Compare",
     "Further Reading",
     "How We Measure This",
+    // #7195. Both of these draw from a payload array with NO cohort dimension
+    // (`small_sample_categories`, `quarantine`), and both carried a tag until
+    // the niche card was caught on production reading "TRADED" over
+    // "Chess 809" — the all-markets number, where the traded count is 292.
+    //
+    // The exemption is the FIX, not a dodge, and the argument is the same for
+    // both: what they report is a property of the BANK, not of the cohort on
+    // screen. The publish bar is applied on the all-cohort count (geopolitics
+    // is published at 1,749 all-cohort while its traded count is 732, under
+    // the 1,000 bar), so filtering the chips would show categories parked
+    // under a 1,000 bar beside a table publishing one at 732. A held-out row
+    // is excluded from every curve in BOTH cohorts.
+    //
+    // Held to exactly that by the inverse rule below, so a later change that
+    // makes either section cohort-dependent cannot keep the exemption quietly.
+    "What About Niche", // "& Long-Shot Markets?" is `&amp;` in the source
+    "Held out, under review",
   ];
 
   // The inner may not itself contain an h2 tag. Without that, a PROSE mention
@@ -705,6 +722,73 @@ describe("item 4 — every section names the cohort it draws from", () => {
     // place the distinction is being explained to the reader.
     expect(SOURCE).toContain('<CohortTag cohort={cohort} scope="comparison" />');
   });
+
+  /**
+   * #7195 — THE INVERSE RULE.
+   *
+   * The rule above is "a cohort-drawing section carries a tag". It is only half
+   * the contract, and the half that cannot catch the defect that prompted this:
+   * the niche card CARRIED a tag and drew from `small_sample_categories`, a
+   * payload array with no cohort dimension, so on production the heading read
+   * "TRADED" over "Chess 809" — the all-markets count, where the traded count
+   * is 292. Every assertion above was green.
+   *
+   * So: a section whose figures come straight off a cohort-free payload array
+   * must NOT carry one. Re-adding a tag to either of these fails here, and the
+   * COHORT_FREE_SECTIONS entry above stops it failing the presence rule
+   * instead — the two halves are written together on purpose.
+   */
+  const COHORT_FREE_BY_CONSTRUCTION = [
+    ["calibration-niche-section", "small_sample_categories"],
+    ["calibration-quarantine", "quarantine"],
+  ] as const;
+
+  /**
+   * From the payload guard that opens the section to the tag that closes it,
+   * with comments removed.
+   *
+   * The strip is not tidiness: the first run of this guard failed on the
+   * comment that explains the fix, because it names `<CohortTag>` in prose.
+   * That is this file's own lesson from the heading regex above — "a guard a
+   * future comment can break is not a guard" — and the same answer applies,
+   * fixed here rather than by rewording the comment.
+   */
+  function sectionSource(payloadKey: string, testId: string): string {
+    const start = SOURCE.indexOf(`{data.${payloadKey} &&`);
+    expect(start).toBeGreaterThan(-1);
+    const idAt = SOURCE.indexOf(`data-testid="${testId}"`, start);
+    expect(idAt).toBeGreaterThan(start);
+    const end = SOURCE.indexOf("</section>", idAt);
+    expect(end).toBeGreaterThan(idAt);
+    return SOURCE.slice(start, end)
+      // `{/* … */}` and `/* … */`. Non-greedy, so two comments never merge
+      // into one match that swallows the code between them.
+      .replace(/\{?\/\*[\s\S]*?\*\/\}?/g, "")
+      // Whole-line `//` only: a bare `//` would eat the tail of any line
+      // holding a URL.
+      .replace(/^\s*\/\/.*$/gm, "");
+  }
+
+  test.each(COHORT_FREE_BY_CONSTRUCTION)(
+    "%s is rendered straight off its payload array, with no cohort predicate",
+    (testId, payloadKey) => {
+      // Anti-vacuity first: a window that missed the section would satisfy the
+      // two absences below without examining anything.
+      const window = sectionSource(payloadKey, testId);
+      expect(window).toContain("<h2");
+      expect(window).toContain(payloadKey);
+      // The premise of the exemption. If a future change filters this section
+      // by the cohort, the exemption stops being true and this fires.
+      expect(window).not.toContain("cohortFilter");
+    },
+  );
+
+  test.each(COHORT_FREE_BY_CONSTRUCTION)(
+    "%s therefore claims no cohort",
+    (testId, payloadKey) => {
+      expect(sectionSource(payloadKey, testId)).not.toContain("<CohortTag");
+    },
+  );
 });
 
 describe("CAL-P1261 — 'How We Compare' only claims what it can support", () => {
