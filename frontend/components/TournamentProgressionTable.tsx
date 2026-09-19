@@ -190,6 +190,72 @@ export function sortColumnScrollLeft({
   return Math.abs(next - scrollLeft) < SUBPIXEL_PX ? null : next;
 }
 
+/**
+ * How much of a half-covered column is showing past the sticky cell (#7268).
+ *
+ * `sortColumnScrollLeft` solves for the sort column and has no term for the
+ * column that lands STRADDLING the sticky cell's right edge. Its reasoning —
+ * the columns to the left going under the sticky block "costs the reader
+ * nothing" — is true of a column that goes WHOLLY under, and the offset it
+ * picks rarely puts one there. Measured on production at 390px, every grid:
+ *
+ *     grid  straddling column  hidden  SHOWING  scroll slack
+ *     nba   Conference             67       26             0
+ *     nfl   Conference             71       22             4
+ *     mlb   AL / NL Champ         101       13             5
+ *     nhl   Conference             72       21             8
+ *     mls   Conference             52       41             8
+ *     epl   Top 4                  38       27             1
+ *
+ * Six of six. A 13-41px strip of a CENTRE-aligned wrapped cell is its right-hand
+ * off-cuts with the numbers gone — `%`, `5.0`, `4h` stacked down all 20 rows,
+ * and `4` (the tail of `Top 4`) floating in the header. It reads as rendering
+ * damage, which is the defect: every value on the page is correct.
+ *
+ * WHY THIS IS NOT FIXED BY SCROLLING, which is the obvious reading and the one
+ * #7268 proposed. The sort column is the RIGHTMOST column, so putting its right
+ * edge on the container's right edge lands at (or within 8px of) the scroller's
+ * own maximum — the `scroll slack` column above is the whole budget. Hiding the
+ * straddler needs 13-41px of further travel that does not exist, and the other
+ * direction — scrolling back until the straddler is whole — re-clips the sort
+ * column by 31-59px, which is exactly the regression #7192 exists to prevent.
+ * There is no offset that leaves every boundary outside the sticky cell. So the
+ * fix is what we PAINT, not where we rest.
+ *
+ * The cue at this seam already understood the failure — its own comment names
+ * the `%` and `24h` fragments — but it is a 32px GRADIENT, so across a 27px
+ * sliver it is 16% opaque at the far end and merely greys the off-cuts. Opaque
+ * across the straddler, then that same fade, and the seam reads as the identity
+ * block being a little wider: the column is wholly hidden instead of half shown.
+ *
+ * Pure arithmetic for the same reason as `sortColumnScrollLeft`: jsdom reports
+ * every rect as 0, so a guard on an effect that read the DOM could never run.
+ * All coordinates are in the scroller's CLIENT box.
+ *
+ * @param cols every stage column's box; only one can cross a single x.
+ * @param stickyRight right edge of the sticky `Team` cell.
+ * @returns px to paint over, or 0 — no straddler, or nothing measured yet.
+ */
+export function stickyStraddleCover({
+  cols,
+  stickyRight,
+}: {
+  cols: { left: number; right: number }[];
+  stickyRight: number;
+}): number {
+  // Both comparisons carry the tolerance, so a column resting exactly ON the
+  // seam — the un-scrolled state of every grid, where the first stage column
+  // begins where the sticky block ends — is not read as straddling it. An
+  // unmeasured box (jsdom: every rect 0) fails the first test and returns 0,
+  // which is the same answer as "nothing to cover".
+  for (const col of cols) {
+    if (col.left < stickyRight - SUBPIXEL_PX && col.right > stickyRight + SUBPIXEL_PX) {
+      return col.right - stickyRight;
+    }
+  }
+  return 0;
+}
+
 
 /**
  * Font weight / opacity class based on probability value.
@@ -443,6 +509,11 @@ export default function TournamentProgressionTable({
   const [headHeight, setHeadHeight] = useState(0);
   const [stickyEdge, setStickyEdge] = useState(0);
   const [leftBleedExposed, setLeftBleedExposed] = useState(false);
+  const [straddleCover, setStraddleCover] = useState(0);
+  // Whether the grid is still sitting where `alignSortColumn` put it (#7268).
+  // True before anything has scrolled it, because nothing has moved it off the
+  // alignment yet.
+  const [restingOnAlignment, setRestingOnAlignment] = useState(true);
 
   const syncScrollAffordance = useCallback(() => {
     const el = scrollRef.current;
@@ -462,8 +533,19 @@ export default function TournamentProgressionTable({
     // would be painted under them and seen by nobody. It belongs at the seam
     // the hidden columns actually disappear behind. The `- 8` is the scroller's
     // own `-mx-2`.
+    const scrollerLeft = el.getBoundingClientRect().left;
     const nameBox = nameThRef.current?.getBoundingClientRect();
-    setStickyEdge(nameBox ? nameBox.right - el.getBoundingClientRect().left - 8 : 0);
+    setStickyEdge(nameBox ? nameBox.right - scrollerLeft - 8 : 0);
+    // And how much of a half-covered column is showing past that seam (#7268).
+    setStraddleCover(
+      stickyStraddleCover({
+        cols: [...stageThRefs.current.values()].map((th) => {
+          const box = th.getBoundingClientRect();
+          return { left: box.left - scrollerLeft, right: box.right - scrollerLeft };
+        }),
+        stickyRight: nameBox ? nameBox.right - scrollerLeft : 0,
+      }),
+    );
   }, []);
 
   // Put the column the ranking comes from on screen (#7192).
@@ -499,6 +581,10 @@ export default function TournamentProgressionTable({
       stickyRight: nameBox ? nameBox.right - scrollerBox.left : 0,
     });
     alignedStageKey.current = key;
+    // Whether or not it moves, the grid is now at the offset the alignment
+    // endorses, which is the only position whose straddler may be covered
+    // (#7268 — the cover's width is discontinuous, see the render).
+    setRestingOnAlignment(true);
     if (next === null) return;
     // Claim the scroll event this assignment is about to fire, so the handler
     // does not read our own move as the reader taking over. It only ever fires
@@ -510,7 +596,10 @@ export default function TournamentProgressionTable({
 
   const handleScroll = useCallback(() => {
     if (selfScroll.current) selfScroll.current = false;
-    else readerScrolled.current = true;
+    else {
+      readerScrolled.current = true;
+      setRestingOnAlignment(false);
+    }
     syncScrollAffordance();
   }, [syncScrollAffordance]);
 
@@ -891,11 +980,45 @@ export default function TournamentProgressionTable({
             sticky block: what it washes is the tail of a column whose head is
             already hidden, which on MLS renders as `%` and `24h` fragments with
             no number attached. Header-only would leave those in the body. */}
+        {/* And the column the cue is not enough for (#7268).
+
+            The fade above is 32px wide and it is a FADE: across the 27px of
+            `Top 4` that /playoffs/epl leaves showing it is 16% opaque at the far
+            end, so the off-cuts are greyed and still legible as damage. Six of
+            six grids land a column straddling this seam and no scroll offset
+            avoids it — the arithmetic and the measured table are on
+            `stickyStraddleCover`. So the seam gets an opaque extension the exact
+            width of what is showing, and the fade moves out beyond it. A
+            straddler is then wholly hidden rather than half shown, and the block
+            reads as being a little wider.
+
+            WIDTH 0 IS THE COMMON CASE and renders nothing: every desktop, and
+            any grid whose columns happen to fall clear of the seam.
+
+            ONLY WHILE THE GRID RESTS WHERE WE PUT IT. The width is discontinuous
+            by nature — drag the straddler left and the cover grows with it, then
+            the instant its left edge clears the seam the column is not straddling
+            anything and the cover is 0, so a reader mid-drag would watch 65px of
+            cover vanish and a whole column appear at once. That is worse than
+            the defect. A reader who takes the scroller over gets an ordinary
+            scroller; the landing state, which is what #7268 photographed and
+            what nobody chose, gets the cover.
+
+            NOT z-10, for the reason the bleed cover gives: the sticky cells are,
+            and this must never paint over them. */}
+        {canScrollLeft && stickyEdge > 0 && restingOnAlignment && straddleCover > 0 && (
+          <div
+            aria-hidden="true"
+            data-testid="progression-straddle-cover"
+            style={{ left: stickyEdge, width: straddleCover }}
+            className="pointer-events-none absolute inset-y-0 bg-surface-card"
+          />
+        )}
         {canScrollLeft && stickyEdge > 0 && (
           <div
             aria-hidden="true"
             data-testid="progression-scroll-affordance-left"
-            style={{ left: stickyEdge }}
+            style={{ left: stickyEdge + (restingOnAlignment ? straddleCover : 0) }}
             className="pointer-events-none absolute inset-y-0 w-8 bg-gradient-to-r from-surface-card to-transparent"
           />
         )}

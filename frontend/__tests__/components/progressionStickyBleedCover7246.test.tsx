@@ -219,6 +219,13 @@ describe("#7246 arm B — the cover is on the page, and only where it does work"
       l.includes("progression-scroll-affordance"),
     );
     expect(cueLines).toHaveLength(2);
-    expect(CODE.match(/pointer-events-none absolute/g)).toHaveLength(3);
+    // MOVED ON BY #7268, for the reason this test moved it off #7192. The
+    // file-wide count was three and the third was this cover; #7268 adds a
+    // fourth (an opaque extension of the sticky block over the column that
+    // lands straddling its edge), so the bare number would have to be bumped
+    // by every fix that adds an overlay and says nothing about what it is.
+    // The count now lives in #7268's guard as an ENUMERATION: four overlays,
+    // each asked for by testid. The two claims above are this fix's own and
+    // stay here.
   });
 });
