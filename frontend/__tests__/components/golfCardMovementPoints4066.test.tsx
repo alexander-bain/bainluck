@@ -95,7 +95,23 @@ function tournamentItem(movement24h: number | null): FeedItem {
       tour_label: "DP World Tour",
       is_major: false,
       golfers: [
-        { name: "Shane Lowry", probability: 0.478, rank: 1, movement_24h: movement24h },
+        // #7226 — `movement_is_dated` was added to this projection after this
+        // suite was written, and the badge is now gated on it. The flag is part
+        // of the specimen, not an accommodation: Lowry's move was a real dated
+        // 23-25h snapshot subtraction (the #7179 population read 2,766 dated
+        // and 0 per-write across all open golf outcomes that week), so `true`
+        // is what the wire carried on 2026-09-12. Without it this fixture is an
+        // undated move, which correctly renders NO badge — and these five arms
+        // are about the badge's UNITS, which only exist to be tested when the
+        // badge is allowed to draw. The gate itself is tested in
+        // `discoverGolfBadgeDatesItsClaim7226.test.tsx`.
+        {
+          name: "Shane Lowry",
+          probability: 0.478,
+          rank: 1,
+          movement_24h: movement24h,
+          movement_is_dated: true,
+        },
         { name: "Rory McIlroy", probability: 0.161, rank: 2, movement_24h: null },
       ],
       market_ids: [60481964],

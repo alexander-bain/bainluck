@@ -86,7 +86,27 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
               <>
                 <AnimatedProbability value={Math.round((leader.probability ?? 0) * 100)} className="text-5xl font-black text-white tabular-nums drop-shadow-lg" />
                 <div className="text-white/70 text-sm mt-1">{leader.name}</div>
-                <MovementBadge m={leader.movement_24h} />
+                {/* #7226 — this badge's own accessible label is "Up N points in
+                    the last 24h", so it may only render when the server says
+                    the move IS a dated 24h move. `movement_24h` is two
+                    different measurements in one field (a 23-25h snapshot
+                    subtraction, or the per-write `probability_change_24h`
+                    fallback); `movement_is_dated` is which one arrived.
+
+                    `=== true` is the gate, not truthiness: a payload built
+                    before the producer shipped carries no key at all, and an
+                    old base cannot be asked what it measured. Absent refuses,
+                    exactly as the server's `reason` gate refuses, so the two
+                    surfaces on this card can no longer disagree. Expect the
+                    badge to go quiet for up to one precompute cadence after a
+                    deploy — that is the fix failing closed, not a regression.
+
+                    Selection and ranking still read `movement_24h` untouched
+                    (#7179): this narrows what the card may SAY, never which
+                    tournaments a reader is shown. */}
+                {leader.movement_is_dated === true && (
+                  <MovementBadge m={leader.movement_24h} />
+                )}
               </>
             )}
           </>
