@@ -26,6 +26,7 @@ from app.routes.events import (
     _build_team_lookup,
     _format_team_data,
     _normalize_futures_dedup_key,
+    _team_for_event,
 )
 from app.routes.futures import _withheld_price_outcome_ids
 from app.services import get_db
@@ -1470,9 +1471,17 @@ def _format_game_brief(
             ),
         }
 
-    if team_lookup:
-        home_team = team_lookup.get(event.home_team_name)
-        away_team = team_lookup.get(event.away_team_name)
+    # `is not None`: a lookup whose keys were all dropped is falsy and still
+    # carries the per-league map (#7262).
+    if team_lookup is not None:
+        # THROUGH THE RAIL'S OWN SPORT (#7262). This is the route that reported
+        # the defect: on 2026-09-19 `/api/leagues/americanfootball_ncaaf` drew
+        # Syracuse Orange from its `lacrosse_ncaa` row ("13-6", above three
+        # football games, in week 4) and North Texas from its women's basketball
+        # row ("19-13"). `sport_key` is the argument this whole payload is built
+        # for, so the rail always knows which league it is rendering.
+        home_team = _team_for_event(team_lookup, event.home_team_name, sport_key)
+        away_team = _team_for_event(team_lookup, event.away_team_name, sport_key)
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             brief["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
