@@ -75,6 +75,21 @@ enum UITestLaunch {
         // standing notice 39 says our own robots are TAGGED, never minted. So
         // this target taps freely and writes nothing.
         "-launch_no_interaction_upload", "YES",
+        // NotificationManager.suppressPromptKey. The permission alert lands over
+        // Discover a few seconds after launch and belongs to SpringBoard, not to
+        // the app, so nothing this target asserts can see it and every gesture
+        // after it arrives is aimed at a dialog. Measured 2026-09-18
+        // (native/240): one run in three of the footer-refresh journey logged
+        // `Default interruption handler attempting to dismiss alert by tapping
+        // "Allow"` at t=30.9s and failed; the two runs without the alert passed
+        // the same assertion on the same sha. XCUITest's interruption monitor
+        // does clear it, but only after it has already eaten a gesture — and it
+        // is the difference between a green journey and a red one.
+        //
+        // `tools/native-walk.sh` has passed this flag since it was written and
+        // says why in its header; this target never did, so every journey in it
+        // has been exposed to a race it did not need to run.
+        "-suppress_notification_prompt", "YES",
     ] }
 
     /// The activity every launch logs, naming which mode the run is in.
