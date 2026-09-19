@@ -146,8 +146,21 @@ d("#4110 — the feed does not reshuffle under the reader", () => {
       // compare against a stale token — which either reconciles two different
       // lists together or repaints one that never changed.
       expect(source).toContain("paintedEdition = cached.response.edition");
-      expect(source).toContain("paintedEdition = response.edition");
       expect(source).toContain("paintedEdition = nil");
+
+      // THE NETWORK PAINT SITE IS PINNED BY ITS INVARIANT, NOT ITS SPELLING
+      // (#7074). It used to read `paintedEdition = response.edition` verbatim
+      // and now reads `staged.edition` — the rig's staged token, which IS
+      // `response.edition` in every configuration a reader can run, because the
+      // staging call site is `#if DEBUG` and Release passes a compile-time nil.
+      //
+      // Pinning the pair is stronger than pinning either literal was: the #4110
+      // defect this guard exists for is a paint whose recorded token is not the
+      // token its own decision consumed, and that is now unrepresentable here.
+      // A rename cannot satisfy it and cannot break it either.
+      const incoming = source.match(/incomingEdition: ([\w.]+)\s*\)/);
+      expect(incoming).not.toBeNull();
+      expect(source).toContain(`paintedEdition = ${incoming![1]}`);
     });
 
     it("the identity rebind clears it, so one account cannot inherit another's ordering", () => {
