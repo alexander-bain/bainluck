@@ -128,6 +128,22 @@ NOW = datetime(2026, 9, 19, 14, 0, tzinfo=UTC)
 #: tests rather than riding on every fixture.
 BASIS_AT = NOW - timedelta(hours=19, minutes=18)
 
+#: The same age, measured from the REAL clock — for the tests that cannot inject
+#: one. `NOW` is frozen on purpose (see the specimen block below) and that is
+#: right for every test here that passes `now=NOW`. Four cannot:
+#: `_format_market_detail` takes no `now` and reads the real clock, correctly,
+#: because production has no clock to inject. A basis pinned to an absolute
+#: instant therefore ages out from under exactly those four, and did — master
+#: went red at 2026-09-19 18:42Z, 24h to the minute after `BASIS_AT`, and stayed
+#: red, because real time only moves forward.
+#:
+#: Gotcha #44, in its "offset FIRST" form: anchor to the clock the code under
+#: test will actually read, then offset. 19h18m sits inside
+#: [`DATED_BASIS_MIN_AGE_HOURS`=12, `DATED_BASIS_WINDOW_HOURS`=24] with hours of
+#: margin on both sides, so this is stable at every hour of every day — proven
+#: by `backend/scripts/clock_sweep.py`, not by argument.
+LIVE_BASIS_AT = datetime.now(UTC) - timedelta(hours=19, minutes=18)
+
 CANONICAL_KEY = "served-movement-dated-4079"
 
 
@@ -224,8 +240,14 @@ def _cell(price, at=BASIS_AT):
 # re-measures this file against the clock and reports a defect.
 
 
-def _game_awards_market(*, bank=True, market_id=58321581):
+def _game_awards_market(*, bank=True, market_id=58321581, basis_at=BASIS_AT):
     """The specimen. `market_id` exists because of a REAL vacuity trap.
+
+    `basis_at` exists because of a second one: a caller that reads the REAL
+    clock (`_format_market_detail`) must be handed `LIVE_BASIS_AT`, or its
+    basis silently ages past the 24h window and every assertion that the ladder
+    SERVES a number fails, while every assertion that it WITHHOLDS one passes
+    for the wrong reason.
 
     `_score_futures` hydrates its rows through the shared `market_load`
     artifact, whose key is a digest of the candidate market IDS and nothing
@@ -247,7 +269,7 @@ def _game_awards_market(*, bank=True, market_id=58321581):
         # an observation only where one qualifies, and the two rungs below have
         # none. A fixture where every row were datable could not tell a served
         # refusal from a served number.
-        bank={str(leader.id): _cell(0.705)} if bank else None,
+        bank={str(leader.id): _cell(0.705, basis_at)} if bank else None,
     )
 
 
@@ -391,7 +413,7 @@ def test_the_detail_ladder_serves_the_dated_move_too():
     `_format_market_detail`, so a fix that lived only in the feed cannot pass
     it, and a withdrawal of it cannot pass it either.
     """
-    market = _game_awards_market()
+    market = _game_awards_market(basis_at=LIVE_BASIS_AT)
     detail = _format_market_detail(market, ["kalshi"], set())
     by_name = {o["name"]: o for o in detail["outcomes"]}
     assert by_name["Grand Theft Auto VI"]["probability_change_24h"] == (
@@ -409,7 +431,9 @@ def test_the_ladder_is_dated_RAW_because_the_ladder_PRINTS_raw():
     that population — and the served price is asserted beside the move, because
     "the amount is raw" is only true while the price beside it is.
     """
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    detail = _format_market_detail(
+        _game_awards_market(basis_at=LIVE_BASIS_AT), ["kalshi"], set()
+    )
     gta = {o["name"]: o for o in detail["outcomes"]}["Grand Theft Auto VI"]
     assert gta["probability"] == pytest.approx(0.66)
     assert gta["probability_change_24h"] == pytest.approx(0.66 - 0.705)
@@ -429,7 +453,7 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     above is the divisor. Its control is that test: blanket-nulling the ladder
     fails there.
     """
-    market = _game_awards_market()
+    market = _game_awards_market(basis_at=LIVE_BASIS_AT)
     market.outcomes[1].current_probability = 0.45
     market.outcomes[2].current_probability = 0.30
     detail = _format_market_detail(market, ["kalshi"], set())
@@ -728,7 +752,9 @@ async def test_the_wire_contract_is_unchanged_so_shipped_CLIENTS_still_read_it()
     assert "movement" in _distribution_row(card, "Grand Theft Auto VI")
     for row in card["discover_card"]["distribution_outcomes"]:
         assert "movement_stored" not in row
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    detail = _format_market_detail(
+        _game_awards_market(basis_at=LIVE_BASIS_AT), ["kalshi"], set()
+    )
     assert "probability_change_24h" in detail["outcomes"][0]
 
 
