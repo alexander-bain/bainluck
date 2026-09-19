@@ -676,21 +676,68 @@ async def _discover_events():
         await service.close()
 
 
-async def _merge_duplicate_events_impl(dry_run: bool = True):
-    """Find and merge duplicate events. Runs as Celery background task."""
-    from sqlalchemy import text as sa_text
-    from app.tasks.base import get_task_session
-    from app.utils.event_absorption_guard import assert_absorbable_now
-    from app.utils.event_merge_invariant import (
-        UnanchoredMergeRefused,
-        assert_mergeable,
-        shared_provider_id_sql,
-    )
+def _duplicate_name_match_sql(a: str = "a", b: str = "b") -> str:
+    """SQL predicate: aliases ``a`` and ``b`` name the same two participants.
 
-    async with get_task_session() as session:
-        # Find duplicate pairs — limited to 200 per run to avoid timeouts.
-        # The task runs every 10 minutes so it drains the backlog over time.
-        result = await session.execute(sa_text("""
+    The three arms are unchanged in meaning — normal orientation, swapped
+    home/away, and the ``*_normalized`` pair that handles "NY Knicks" vs
+    "New York Knicks". What changed for #7021 is that each side is compared
+    FOLDED (:func:`folded_name_sql`) rather than merely lowercased, so a
+    provider's punctuation typo no longer hides a twin from the drain:
+    ``St.Louis Cardinals`` and ``St. Louis Cardinals`` are one club.
+
+    This is the candidate half only. It selects what to LOOK at and licenses
+    nothing — ``shared_provider_id_sql`` still has to hold on the same join, and
+    ``assert_mergeable`` plus ``assert_absorbable_now`` still have to pass on the
+    row in hand and on the locked row before anything is deleted. Widening this
+    without widening ``matchup_agrees`` to match would have shipped a drain that
+    finds 11 more pairs every 30 minutes and refuses every one of them.
+
+    ``<> ''`` is load-bearing, not tidiness: a name with no ASCII alphanumerics
+    folds to the empty string, and without this two unrelated clubs written in a
+    non-Latin script satisfy every arm at once.
+    """
+    from app.utils.event_merge_invariant import folded_name_sql
+
+    def fold(alias: str, col: str, fallback: str | None = None) -> str:
+        expr = f"{alias}.{col}" if fallback is None else \
+            f"COALESCE({alias}.{col}, {alias}.{fallback})"
+        return folded_name_sql(expr)
+
+    home_a, away_a = fold(a, "home_team_name"), fold(a, "away_team_name")
+    home_b, away_b = fold(b, "home_team_name"), fold(b, "away_team_name")
+    norm_home_a = fold(a, "home_team_normalized", "home_team_name")
+    norm_away_a = fold(a, "away_team_normalized", "away_team_name")
+    norm_home_b = fold(b, "home_team_normalized", "home_team_name")
+    norm_away_b = fold(b, "away_team_normalized", "away_team_name")
+
+    return f"""(
+                        {home_a} <> '' AND {away_a} <> ''
+                        AND (
+                            -- Normal orientation
+                            ({home_a} = {home_b} AND {away_a} = {away_b})
+                            OR
+                            -- Swapped home/away
+                            ({home_a} = {away_b} AND {away_a} = {home_b})
+                            OR
+                            -- Normalized names ("NY Knicks" vs "New York Knicks")
+                            ({norm_home_a} = {norm_home_b}
+                             AND {norm_away_a} = {norm_away_b})
+                        )
+                    )"""
+
+
+def duplicate_pairs_sql() -> str:
+    """The drain's candidate SELECT, composed.
+
+    A function and not an inline string so the real-Postgres gate can EXECUTE
+    the shipped statement instead of a retyped copy — a retyped copy proves the
+    typist agreed with themselves, and this query is 40 lines of composed SQL
+    whose legality no mock session can check.
+    """
+    from app.utils.event_merge_invariant import shared_provider_id_sql
+
+    return """
             WITH dupes AS (
                 SELECT a.id AS id_a, b.id AS id_b
                 FROM events a
@@ -698,21 +745,7 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                     a.sport_id = b.sport_id
                     AND a.id < b.id
                     AND ABS(EXTRACT(EPOCH FROM (a.commence_time - b.commence_time))) < 21600
-                    AND (
-                        -- Normal orientation
-                        (LOWER(a.home_team_name) = LOWER(b.home_team_name)
-                         AND LOWER(a.away_team_name) = LOWER(b.away_team_name))
-                        OR
-                        -- Swapped home/away
-                        (LOWER(a.home_team_name) = LOWER(b.away_team_name)
-                         AND LOWER(a.away_team_name) = LOWER(b.home_team_name))
-                        OR
-                        -- Normalized names (handles "NY Knicks" vs "New York Knicks")
-                        (LOWER(COALESCE(a.home_team_normalized, a.home_team_name)) =
-                         LOWER(COALESCE(b.home_team_normalized, b.home_team_name))
-                         AND LOWER(COALESCE(a.away_team_normalized, a.away_team_name)) =
-                             LOWER(COALESCE(b.away_team_normalized, b.away_team_name)))
-                    )
+                    AND """ + _duplicate_name_match_sql("a", "b") + """
                     -- ── RULING 048 APPLIES TO THE DRAIN, NOT ONLY THE INGEST ──
                     -- Everything above this line is name + a 6h window and NO id:
                     -- the exact predicate 048 forbids, and this task DELETEs the
@@ -749,13 +782,34 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             FROM dupes d
             JOIN events a ON a.id = d.id_a
             JOIN events b ON b.id = d.id_b
-        """))
+        """
+
+
+async def _merge_duplicate_events_impl(dry_run: bool = True):
+    """Find and merge duplicate events. Runs as Celery background task."""
+    from sqlalchemy import text as sa_text
+    from app.tasks.base import get_task_session
+    from app.utils.event_absorption_guard import assert_absorbable_now
+    from app.utils.event_merge_invariant import (
+        UnanchoredMergeRefused,
+        assert_mergeable,
+    )
+
+    async with get_task_session() as session:
+        # Find duplicate pairs — limited to 200 per run to avoid timeouts.
+        # The task runs every 30 min so it drains the backlog over time.
+        result = await session.execute(sa_text(duplicate_pairs_sql()))
         pairs = result.all()
 
         merged_count = 0
         skipped_count = 0
         refused_count = 0
         uncorroborated_count = 0
+        # #7191. A THIRD counter, separate from the two refusal counters on
+        # purpose. Those two mean "the rule said no". This one means "the rule
+        # said yes and the write did not land", which is the only shape that was
+        # ever able to stop the whole rail, and it read as silence for a week.
+        write_failed_count = 0
         delete_ids = []
         child_moves: dict[str, dict[str, int]] = {
             "repointed": {}, "dropped_as_duplicate": {}
@@ -876,35 +930,79 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
                     )
                     continue
 
-                # Absorb metadata (only fill NULLs)
-                non_null = {k: v for k, v in absorb.items() if v is not None}
-                if non_null:
-                    set_clauses = []
-                    params = {"kid": keep_id}
-                    for i, (field, value) in enumerate(non_null.items()):
-                        set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
-                        params[f"v{i}"] = value
-                    await session.execute(
-                        sa_text(f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"),
-                        params,
+                # #7191: ONE BAD PAIR MUST NOT WIPE THE PASS (gotcha #42).
+                #
+                # The two refusal checks above are already per-pair. The
+                # DESTRUCTIVE half was not, and that is how this rail died: an
+                # IntegrityError raised here propagates out of the whole task,
+                # so every candidate behind the offender is skipped too. The
+                # offender is head-of-line in a deterministic candidate set, so
+                # "skipped this run" means "skipped for a week" — 327 runs died
+                # on one Lazio pair between 09-12 and 09-19 and the drain merged
+                # nothing at all in that time, while looking exactly like a
+                # healthy rail with nothing to do.
+                #
+                # A pair can still be genuinely unmergeable — a THIRD row
+                # holding the orphan's espn_id is not something this rail can
+                # resolve. That must be COUNTED and stepped over, never fatal.
+                try:
+                    # Reassign ALL FK references from orphan → keep BEFORE the
+                    # delete. R4: this used to be an inline eight-tuple literal
+                    # — a SECOND hand-written copy of the list, free to drift
+                    # from the module-level one the other rail used AND from the
+                    # schema, which it did. Both are one derived call now
+                    # (app/utils/event_child_repoint.py). The ordering is
+                    # load-bearing in its own right: `game_moments` is
+                    # ON DELETE CASCADE and is destroyed if the parent goes
+                    # first.
+                    moved = await repoint_event_children(
+                        session, keep_id=keep_id, orphan_id=orphan_id
                     )
-                # Reassign ALL FK references from orphan → keep before delete.
-                # R4: this used to be an inline eight-tuple literal — a SECOND
-                # hand-written copy of the list, free to drift from the module-level
-                # one the other rail used AND from the schema, which it did. Both are
-                # one derived call now (app/utils/event_child_repoint.py).
-                moved = await repoint_event_children(
-                    session, keep_id=keep_id, orphan_id=orphan_id
-                )
-                # Popped before folding: `markets` is a list of rows, not a
-                # per-table count, and _merge_child_moves takes counts.
-                moved_markets = moved.pop("markets", [])
+                    # Popped before folding: `markets` is a list of rows, not a
+                    # per-table count, and _merge_child_moves takes counts.
+                    moved_markets = moved.pop("markets", [])
+                    await session.execute(
+                        sa_text("DELETE FROM events WHERE id = :orphan"),
+                        {"orphan": orphan_id},
+                    )
+                    # #7191: absorb AFTER the orphan row is gone.
+                    #
+                    # `espn_id`, `external_id` and `statpal_fixture_id` are
+                    # UNIQUE. Copying one onto the keeper while the orphan still
+                    # holds it violates the index using nothing but the merge's
+                    # own two rows — `uq_events_espn_id`, every single run. The
+                    # values are plain scalars read from the candidate SELECT,
+                    # so they outlive the row they came from and the whole thing
+                    # is one transaction: there is no instant at which a
+                    # committed keeper is missing what it absorbed.
+                    non_null = {k: v for k, v in absorb.items() if v is not None}
+                    if non_null:
+                        set_clauses = []
+                        params = {"kid": keep_id}
+                        for i, (field, value) in enumerate(non_null.items()):
+                            set_clauses.append(f"{field} = COALESCE({field}, :v{i})")
+                            params[f"v{i}"] = value
+                        await session.execute(
+                            sa_text(
+                                f"UPDATE events SET {', '.join(set_clauses)} WHERE id = :kid"
+                            ),
+                            params,
+                        )
+                    await session.commit()
+                except Exception as exc:
+                    # Rollback first: the session is poisoned after an
+                    # IntegrityError and every later statement in this pass
+                    # would fail with InFailedSQLTransaction, which would
+                    # reproduce the outage one layer down.
+                    await session.rollback()
+                    write_failed_count += 1
+                    logger.warning(
+                        "merge_duplicate_events could not merge %s into %s: %s",
+                        orphan_id, keep_id, str(exc)[:300],
+                    )
+                    continue
+
                 _merge_child_moves(child_moves, moved)
-                await session.execute(
-                    sa_text("DELETE FROM events WHERE id = :orphan"),
-                    {"orphan": orphan_id},
-                )
-                await session.commit()
                 # AFTER the commit, on the receipts' own session (LINKLOSS-02).
                 # Each claim is re-read against the committed row before it is
                 # published, and the write can never fail the merge.
@@ -932,6 +1030,11 @@ async def _merge_duplicate_events_impl(dry_run: bool = True):
             # count here is a pair the pre-guard drain would have DELETED —
             # worth an eye, not an alarm, since the invariant refused it.
             "refused_uncorroborated": uncorroborated_count,
+            # #7191: the pairs whose WRITE failed. Non-zero is a real alarm and
+            # not a curiosity — before this counter existed the same condition
+            # was an uncaught exception that ended the pass, and the only trace
+            # it left was in Sentry.
+            "write_failed": write_failed_count,
             "deleted": len(delete_ids) if not dry_run else 0,
             # R4's silent half, made loud. Every child row this rail moved, per
             # table — including the two the old hand-list never named, one of

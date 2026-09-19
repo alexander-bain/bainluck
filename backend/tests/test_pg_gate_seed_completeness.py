@@ -110,6 +110,28 @@ COVERED = (
     # after, and the seed names it.
     "test_backup_round_trip_jsonb_6215_pg.py",
     "test_polymarket_resolved_candidate_sql_pg.py",
+    # #7021. Seeds ten `events` rows by raw INSERT into a PRIVATE schema to run
+    # the twin drain's own candidate SELECT. The gate builds a narrow `events`
+    # rather than `Base.metadata.create_all`, because the question it asks is
+    # whether PostgreSQL joins two rows by a folded name — but the seed still
+    # carries the MODEL's NOT NULL set, not merely the columns the query reads.
+    # `events.status` was the one this check caught, and enrolling with an
+    # exemption ("the narrow DDL cannot violate it") would have been the wrong
+    # answer twice over: the reasoning expires the moment anyone repoints the
+    # fixture at `create_all`, and the column turned out to be worth seeding on
+    # its own merits — the two Cardinals rows disagree about it (`suspended` vs
+    # `completed`), which is the reader-visible half of the defect.
+    #
+    # It must never leak that impostor into `public`, where `create_all`'s
+    # callers would silently keep it; hence the schema.
+    #
+    # The second hazard is vacuity, and it is the one to watch: every row is
+    # dated `now() - interval`, from the SERVER's clock, because the shipped
+    # query carries `commence_time > NOW() - INTERVAL '30 days'`. A literal
+    # timestamp would be a correct seed today and an empty candidate set within
+    # the month — at which point all five "is/is not a candidate" arms pass
+    # against nothing at all.
+    "test_twin_fold_candidate_sql_7021_pg.py",
     # #6390. Enrolled with the gate itself, and this check earned its keep
     # immediately: the seed's first run died on
     # `NotNullViolation: null value in column "reading_count"` — `OddsSnapshot`
