@@ -5901,6 +5901,57 @@ def _format_market_detail(
             # `OutcomeRow.outcomeRowVerdict`: NULL source ⇒ ungraded ⇒ no verdict.
             "resolution_source": o.resolution_source,
             "last_updated": o.last_updated.isoformat() if o.last_updated else None,
+            # #4079 — THE STAMP THAT DATES A MOVEMENT CLAIM, BECAUSE
+            # `last_updated` CANNOT. #2024 settled the distinction at the writer
+            # (`futures_price_refresh.py`: "`last_updated` records that a poll
+            # RAN; this records that the price MOVED. Both matter and they are
+            # not the same") and `price_changed_at_value` only advances the stamp
+            # when the written price `IS DISTINCT FROM` the stored one. Until now
+            # that column reached no reader on any route, so every surface dating
+            # a move had to date it by the poll instead.
+            #
+            # WHAT THAT COSTS, MEASURED ON PRODUCTION 2026-09-19 over a 300-market
+            # slice of the markets that actually make a movement claim: 1,054 of
+            # 3,467 ladder rows carry a `price_changed_at` on a DIFFERENT DAY from
+            # their `last_updated`, and of the 300 leader rows — the row the web
+            # hero pill dates by — 52 name the wrong day and 26 have no stamp at
+            # all. Market 58321581 (*Game of the Year*, one of #4079's three named
+            # specimens) is the shape: all 24 rows stamped `last_updated`
+            # 2026-09-19 10:38:51 by one sweep write, while thirteen of them last
+            # actually moved on 09-18 04:31:29, thirty hours earlier.
+            #
+            # ADDITIVE AND READ-ONLY, and deliberately NOT a second movement
+            # NUMBER: `probability_change_24h` keeps its meaning, its writers and
+            # every ranking that reads it (`/api/futures/movers`, the sweep,
+            # `max_movement_24h`), exactly as the dated-basis bank was careful to
+            # leave them. This is the instant, not the delta.
+            #
+            # NOT in `WITHHELD_PRICE_FIELDS`, and that is a decision rather than an
+            # omission: every member of that tuple is a value a reader could use to
+            # reconstruct a price we refused to publish, and an instant is not one.
+            # `last_updated` is served on withheld rows today for the same reason.
+            #
+            # NULL means "we have never observed this price move" — which is a
+            # refusal, not a zero, and the reader owes it the same
+            # honest-unavailable path the bank gets: say nothing about when it
+            # moved. 79.35% of rows in that slice carry a stamp; the rest are rows
+            # nothing has rewritten since the column shipped.
+            #
+            # `getattr` WITH A DEFAULT, not `o.price_changed_at`, and the reason is
+            # the one `dated_movement_basis` writes out at length for its own
+            # column: a carrier that does not hold this attribute must degrade to
+            # EXCLUSION, never to an exception. The one caller loads full ORM rows
+            # (`selectinload(FuturesMarket.outcomes)`), so the attribute is always
+            # there today; a future projection that stopped loading it would
+            # otherwise raise inside the per-item serializer and empty the whole
+            # ladder rather than drop one claim (gotcha #42). Absent ⇒ None ⇒ the
+            # reader says nothing about when the price moved, which is exactly the
+            # answer a payload that cannot see the column should give.
+            "price_changed_at": (
+                stamp.isoformat()
+                if (stamp := getattr(o, "price_changed_at", None))
+                else None
+            ),
         }
         for o in sorted_outcomes
     ]
