@@ -91,9 +91,12 @@ Two properties make that a hole and not a number to re-tune:
 So the clause is a COUNT, not a threshold move: more than
 :data:`MAX_CERTAIN_LEGS` legs at or above :data:`CERTAIN_LEG_PROBABILITY` is
 refused whatever the field sums to. The house already runs exactly this
-predicate for the two-leg case — ``app/tasks/repair_winner_field.py:299``
-(``COUNT(*) = 2 AND SUM(opening_probability >= 0.999) = 2``) — so this is the
-missing generalisation to ``n``, not a new idea about prices.
+predicate for the two-leg case — ``_null_impossible_both_sides_openings`` in
+``app/tasks/backfill_winners.py``, which runs
+``COUNT(*) = 2 AND SUM(opening_probability >= 0.999) = 2`` twice — and
+``app/tasks/repair_winner_field.py`` sets the same bar as
+``IMPOSSIBLE_PRICE = 0.999``. So this is the missing generalisation to ``n``,
+not a new idea about prices.
 
 It is deliberately NOT the value rule this module rejected above: that one keyed
 on legs SHARING an opening and took ~19,000 honest longshots; this one keys on a
