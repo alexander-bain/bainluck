@@ -46,6 +46,7 @@ from decimal import Decimal
 import pytest
 
 from app.tasks import (
+    DATED_BASIS_MIN_AGE_HOURS,
     GRADED_DELTA_BATCH,
     GRADED_RANK_BATCH,
     IMPOSSIBLE_PRIOR_BATCH,
@@ -145,6 +146,23 @@ def _phase_a(session: _RecordingSession) -> tuple[str, dict]:
 
 def _markets_statements(session: _RecordingSession) -> list[str]:
     return [s for s in _statements(session) if "UPDATE futures_markets" in s]
+
+
+def _max_movement_statements(session: _RecordingSession) -> list[str]:
+    """B and C — the two statements that OWN `max_movement_24h`.
+
+    Named by what they write rather than by which table they write, because
+    "UPDATE futures_markets" stopped identifying them: #4079's A8/A9 publish the
+    dated-basis bank into `market_metadata` on the same table and are not part
+    of the recompute/clear pair. The pair below is a complement over one
+    population and the tests about it mean exactly these two.
+    """
+    return [s for s in _markets_statements(session) if "max_movement_24h" in s]
+
+
+def _dated_basis_statements(session: _RecordingSession) -> list[str]:
+    """A8 and A9 — the statements that publish and retire the dated bank."""
+    return [s for s in _markets_statements(session) if "market_metadata" in s]
 
 
 def _phase_a2(session: _RecordingSession) -> tuple[str, dict]:
@@ -273,7 +291,7 @@ def test_a_market_with_no_surviving_delta_is_cleared(run_task) -> None:
     is today — the fix would have looked done and changed nothing on the strip.
     """
     _, session = run_task()
-    markets = _markets_statements(session)
+    markets = _max_movement_statements(session)
 
     assert len(markets) == 2, (
         "expected BOTH market statements — the recompute and the clear. "
@@ -308,7 +326,7 @@ def test_the_two_market_statements_are_complements(run_task) -> None:
     partitioning the same population and `max_movement_24h == MAX(ABS(change))`
     — the identity `/movers`' pool bound rests on — silently stops holding.
     """
-    recompute, clear = _markets_statements(run_task()[1])
+    recompute, clear = _max_movement_statements(run_task()[1])
 
     for name, sql in (("recompute", recompute), ("clear", clear)):
         assert re.search(r"status\s+IN\s*\(\s*'open'\s*,\s*'active'\s*\)", sql), (
@@ -374,19 +392,22 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 
     The list is consumed in EXECUTION order, so every statement added to the
     task shifts everything after it. Seven outcome sweeps now — A, A2, A3, A4,
-    the two RANK sweeps A5/A6, and A7, the dated-direction sweep — which puts
-    the two market statements at positions 8 and 9. Each retirement counter is
+    the two RANK sweeps A5/A6, and A7, the dated-direction sweep — then #4079's
+    A8/A9, which publish and retire the dated-basis bank, which puts the two
+    `max_movement_24h` statements at positions 10 and 11. Each counter is
     asserted against a DISTINCT value so a statement that read its sibling's
     rowcount could not pass — which is the whole reason this fixture is a
     sequence rather than a repeated number.
     """
-    result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 4, 2])
+    result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 7, 3, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
     assert result["impossible_retired"] == 9
     assert result["unobserved_retired"] == 8
     assert result["contradicted_retired"] == 5
+    assert result["dated_basis_banked"] == 7
+    assert result["dated_basis_unbanked"] == 3
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
         f"a short run did not report the backlog drained: {result}"
@@ -396,10 +417,11 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed.
 
-    Positions 5 and 6 are #4079's rank sweeps A5/A6 and position 7 is its
-    dated-direction sweep A7, so the recompute is 8th.
+    Positions 5 and 6 are #4079's rank sweeps A5/A6, position 7 is its
+    dated-direction sweep A7 and positions 8 and 9 are its dated-basis bank
+    (A8) and unbank (A9), so the recompute is 10th.
     """
-    result, _ = run_task([5, 3, 7, 2, 0, 0, 6, 9, 1])
+    result, _ = run_task([5, 3, 7, 2, 0, 0, 6, 4, 8, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -1230,3 +1252,243 @@ def test_a_short_rank_batch_reports_the_rank_backlog_drained(run_task) -> None:
     result, _ = run_task([2, 3, 4, 5, 6, 7, 8, 1])
 
     assert result["rank_backlog_drained"] is True, result
+
+
+# ---------------------------------------------------------------------------
+# #4079 / A8 + A9 — the sweep PUBLISHES the dated evidence, it does not only
+# delete.
+#
+# Every statement above this point retires a delta. None of them can make the
+# AMOUNT a card prints right, and none can cover the ten minutes between a price
+# write and the next run. A8 banks one observed price per in-scope outcome with
+# the instant it was observed; the copy layer subtracts it at serve time
+# (`feed._dated_movement_change`, graded in
+# `test_a_today_claim_rests_on_dated_evidence_4079.py`).
+#
+# These tests pin the WIRING, which is this file's whole job: the right key, the
+# same evidentiary bar as A7, the untouched per-write column, and both halves
+# inside the one transaction. The row-level semantics need real Postgres and
+# live in `tests/integration/test_movement_window_pg.py`.
+# ---------------------------------------------------------------------------
+
+
+def _phase_a8(session: _RecordingSession) -> tuple[str, dict]:
+    """The BANK: the statement that writes the dated basis into metadata."""
+    for sql, params in session.calls:
+        if "UPDATE futures_markets" in sql and "jsonb_object_agg" in sql:
+            return sql, params
+    raise AssertionError(
+        "no statement banks a dated basis, so the copy layer has no evidence "
+        "and every movement caption on the site is back to spending a per-write "
+        "delta on the word 'today'. Statements seen: " + repr(_statements(session))
+    )
+
+
+def test_the_sweep_banks_a_dated_basis_under_the_key_the_reader_reads(
+    run_task,
+) -> None:
+    """The producer and the consumer must spell the carrier key one way.
+
+    A mismatch here is silent in the worst direction: nothing errors, the bank
+    is simply never found, and every card goes quiet about movement with no red
+    anywhere. Asserted against the RENDERED statement because the key is
+    interpolated rather than bound — `jsonb_build_object` is `VARIADIC "any"`
+    and asyncpg cannot infer a bare parameter's type for it.
+    """
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    sql, _ = _phase_a8(run_task()[1])
+
+    assert f"jsonb_build_object('{DATED_BASIS_METADATA_KEY}'" in sql, (
+        "the bank is not written under the key `dated_movement_basis` that "
+        f"`futures_market_snapshot.dated_movement_basis` reads: {sql}"
+    )
+    assert "coalesce(fm.market_metadata, '{}'::jsonb)" in sql, (
+        "the bank must MERGE into the existing metadata; assigning it would "
+        f"destroy every other key on the market: {sql}"
+    )
+
+
+def test_the_bank_stores_an_OBSERVATION_and_never_a_computed_change(
+    run_task,
+) -> None:
+    """A price and an instant, never a delta — this is the between-sweeps fix.
+
+    Bank a computed change and a poll landing thirty seconds later makes it a
+    lie until the next run. Bank the basis and the same poll simply makes the
+    card's own subtraction come out at the new correct number. A statement that
+    banked `current_probability - basis` would pass every other test here.
+    """
+    sql, _ = _phase_a8(run_task()[1])
+
+    assert "jsonb_build_array( round(q.basis, 6), to_char(" in sql, (
+        "the bank cell must be [observed price, observed instant]. A computed "
+        f"change here reopens the write-between-sweeps hole: {sql}"
+    )
+    assert "current_probability -" not in sql and "- obs.basis" not in sql, (
+        f"the bank is storing a subtraction rather than an observation: {sql}"
+    )
+
+
+def test_the_bank_applies_A7s_evidentiary_bar_and_not_a_weaker_one(
+    run_task,
+) -> None:
+    """A basis good enough to REFUTE a claim is the bar to STATE one.
+
+    Same window, same minimum age, same single-source rule, same scale guard.
+    Two bars here would be two answers to "what did this cost yesterday", and
+    the weaker one would always be the one printing.
+    """
+    sql, params = _phase_a8(run_task()[1])
+
+    assert "obs.sources = 1" in sql, (
+        "the bank accepts a multi-source observation. A7 refuses one because it "
+        "subtracts a blend from a single constituent's row and a systematic "
+        f"offset between two sources would manufacture a move: {sql}"
+    )
+    assert "obs.foreign_scale IS FALSE" in sql, (
+        f"the bank does not refuse a foreign probability scale: {sql}"
+    )
+    assert "obs.basis IS NOT NULL" in sql, (
+        f"the bank does not require that an observation exists at all: {sql}"
+    )
+    assert params["window_hours"] == MOVEMENT_WINDOW_HOURS
+    assert params["basis_age_hours"] == DATED_BASIS_MIN_AGE_HOURS, (
+        "the bank accepted a basis younger than half the window — a twenty-"
+        "minute-old price cannot date a claim about the day"
+    )
+    assert isinstance(params["floor"], Decimal), (
+        "the floor must be bound as an exact Decimal; a float is strictly "
+        "greater than the stored numeric and rows sitting exactly on the floor "
+        "would be banked or skipped inconsistently with every sibling statement"
+    )
+    assert params["floor"] == Decimal(str(MODERATE_MOVEMENT_THRESHOLD))
+
+
+def test_the_bank_is_scoped_to_rows_a_reader_can_actually_see(run_task) -> None:
+    """Only rows that MAKE a claim get evidence banked for them.
+
+    Open market, non-null delta at or above the card floor. Widening this would
+    bank the whole book into a size-capped shared load artifact for markets
+    whose cards say nothing.
+    """
+    sql, _ = _phase_a8(run_task()[1])
+
+    assert "m.status = 'open'" in sql, f"the bank is not scoped to open markets: {sql}"
+    assert "abs(fo.probability_change_24h) >= :floor" in sql, (
+        f"the bank is not scoped to rows at or above the card floor: {sql}"
+    )
+    assert "LIMIT :batch" in sql, (
+        f"the bank is unbounded and can blow the task's soft_time_limit: {sql}"
+    )
+    assert "ORDER BY max(abs(q.delta)) DESC" in sql, (
+        "if the batch ever binds, the markets that go unbanked must be the ones "
+        f"whispering, not the ones shouting a number at page one: {sql}"
+    )
+
+
+def test_the_bank_never_writes_the_per_write_column(run_task) -> None:
+    """🔴 The column keeps its meaning and every one of its other readers.
+
+    `max_movement_24h`, `/api/futures/movers`' ranking and
+    `compute_futures_highlight`'s CHOICE of which outcome a card names all key
+    on `probability_change_24h`. Writing the windowed number into it — which is
+    the obvious shortcut and the one A4 and A7 both refused — would silently
+    convert a per-write column into a windowed one for the whole served book.
+    """
+    sql, _ = _phase_a8(run_task()[1])
+
+    assert "SET probability_change_24h" not in sql, (
+        f"the bank rewrote the per-write column instead of publishing beside it: {sql}"
+    )
+    assert "UPDATE futures_outcomes" not in sql
+
+
+def test_an_unchanged_bank_is_not_rewritten(run_task) -> None:
+    """`IS DISTINCT FROM` is a bloat guard, not an optimisation.
+
+    A basis moves only when an observation ages out of the window — roughly
+    seven times a day per outcome — while this task runs every ten minutes.
+    Without the guard, 144 runs a day would rewrite ~1,495 JSONB cells apiece
+    for no change.
+    """
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    sql, _ = _phase_a8(run_task()[1])
+
+    assert (
+        f"(fm.market_metadata -> '{DATED_BASIS_METADATA_KEY}') IS DISTINCT FROM "
+        "bank.payload" in sql
+    ), f"every run rewrites every banked market: {sql}"
+
+
+def test_a_market_out_of_claim_scope_loses_its_bank(run_task) -> None:
+    """A9. The reader already fails closed on a stale bank — this is the carrier.
+
+    A basis only ever gets older, so a bank nobody refreshes ages out of the
+    window and the card stops saying "today" by itself. A9 is therefore about
+    cost, not truth: without it every market that ever made a movement claim
+    keeps a dead cell riding the size-capped shared load artifact for good.
+    """
+    from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+    statements = _dated_basis_statements(run_task()[1])
+    assert len(statements) == 2, (
+        "expected BOTH dated-basis statements — the bank and the unbank. "
+        f"got {len(statements)}: {statements}"
+    )
+
+    unbank = [s for s in statements if "jsonb_object_agg" not in s]
+    assert unbank, f"nothing ever removes a dead bank: {statements}"
+    sql = unbank[0]
+
+    assert f"fm.market_metadata - CAST('{DATED_BASIS_METADATA_KEY}' AS text)" in sql, (
+        f"the unbank must delete only its own key, never the metadata: {sql}"
+    )
+    assert f"jsonb_exists(fm.market_metadata, '{DATED_BASIS_METADATA_KEY}')" in sql, (
+        f"the unbank is not scoped to markets that actually carry a bank: {sql}"
+    )
+    assert "NOT EXISTS" in sql and "abs(fo.probability_change_24h) >= :floor" in sql, (
+        "the unbank must fire exactly when the market has left claim scope, on "
+        f"the same predicate the bank selects with: {sql}"
+    )
+
+
+def test_the_bank_lands_inside_the_one_transaction(run_task) -> None:
+    """A reader must never see a bank against un-swept deltas, or the reverse.
+
+    Between A7's retirements and the bank there is a state where a card's
+    evidence and its selection disagree; the single commit is what makes that
+    state unobservable, exactly as it is for A/A2/A3/A4/A7 and B/C.
+    """
+    _, session = run_task()
+    events = session.events
+
+    assert events.count("COMMIT") == 1, (
+        f"the sweep no longer commits exactly once: {events}"
+    )
+    commit = events.index("COMMIT")
+    banked = [i for i, s in enumerate(events) if "jsonb_object_agg" in s]
+    assert banked and max(banked) < commit, (
+        f"the dated-basis bank landed outside the single transaction: {events}"
+    )
+
+
+def test_the_bank_runs_after_every_retirement_and_before_the_recompute(
+    run_task,
+) -> None:
+    """Order is load-bearing in both directions.
+
+    AFTER the retirements, so a delta A7 is about to retire never gets evidence
+    banked for it. BEFORE B and C, so the run's arithmetic on the column reads
+    one settled state rather than two.
+    """
+    events = _statements(run_task()[1])
+    sweeps = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
+    bank = next(i for i, s in enumerate(events) if "jsonb_object_agg" in s)
+    recompute = next(i for i, s in enumerate(events) if "max_movement_24h = sub.max_mv" in s)
+
+    assert max(sweeps) < bank < recompute, (
+        f"the bank is out of order — sweeps={sweeps} bank={bank} "
+        f"recompute={recompute}: {events}"
+    )

@@ -3369,6 +3369,21 @@ DATED_BASIS_MIN_AGE_HOURS = MOVEMENT_WINDOW_HOURS // 2
 #: production is quoted at the statement.
 CONTRADICTED_DIRECTION_BATCH = 10_000
 
+#: Markets whose dated basis statement A8 publishes per run, loudest claim first.
+#:
+#: Sized off the population it serves rather than a round number: **1,495 open
+#: markets** carry at least one outcome making a movement claim at the reader-
+#: visible floor (production, 2026-09-19 09:2xZ), so one run banks the whole
+#: standing book six times over and this ceiling exists only to keep a
+#: regressing writer from blowing the task's 120 s `soft_time_limit`.
+#:
+#: Ordered by the market's LOUDEST surviving claim rather than by id, for the
+#: reason every other statement here is magnitude-ordered: if the bound ever
+#: binds, the markets that go unbanked should be the ones whose cards are
+#: whispering, not the ones shouting a number at page one. An id order would
+#: starve the high end of the table permanently.
+DATED_BASIS_BANK_BATCH = 10_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -3477,6 +3492,13 @@ def update_max_movement(self):
         # restated as a number here, so the sweep and the copy layer cannot
         # drift into disagreeing about which deltas a reader can ever see.
         from app.utils.futures_highlights import MODERATE_MOVEMENT_THRESHOLD
+
+        # A8's carrier key, imported from the module the READER resolves it
+        # with, for exactly the reason the floor above is imported rather than
+        # retyped: a producer and a consumer that spell a key two ways is a
+        # bank nobody can find, and the failure is silent — the card simply
+        # never says "today" again.
+        from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
 
         # 🔴 A4's two thresholds are bound as `Decimal`, and a `float` here is a
         # REAL BUG, not a style preference. Both columns A4 compares are
@@ -4052,6 +4074,191 @@ def update_max_movement(self):
                 },
             )
 
+            # A8. PUBLISH THE DATED EVIDENCE A "TODAY" CLAIM NEEDS.
+            #
+            #     Every statement above this one DELETES. A4 deletes a delta
+            #     that claims to have travelled further than the window saw; A7
+            #     deletes one that claims to have travelled the wrong way. What
+            #     neither can do — what no amount of deleting can do — is make
+            #     the AMOUNT right, and the amount is what the card prints.
+            #
+            #     MEASURED on production 2026-09-19 09:2xZ, over exactly the
+            #     rows that make the claim (open market, non-null delta at or
+            #     above the card floor), n = 2,445:
+            #
+            #       * 1,932 (79%) have a dated basis that qualifies at all;
+            #       *   927 (38% of all) carry an amount a dated comparison
+            #         AGREES with to within a point — the honest ones, and the
+            #         control this statement must not disturb;
+            #       *   797 (33%) carry the right SIGN and an amount that is
+            #         wrong by a point or more. 260 of those name a move the
+            #         dated comparison puts BELOW the card floor: the card says
+            #         "down 2.5 points today" about a day that moved 1.35. A4
+            #         keeps them (they sit inside the extrema) and A7 keeps them
+            #         (the sign is right). They are the residual, and they are
+            #         the largest wrong class left;
+            #       *   513 (21%) have NO qualifying basis. Nothing can date
+            #         their claim, so nothing may.
+            #
+            #     THE THREE PHONE SPECIMENS, and what each one is:
+            #       * `The Game Awards: Game of the Year` / Phantom Blade Zero
+            #         (outcome 216388327) — per-write delta -2.50 points, dated
+            #         move -1.35 over 19.3 h. Same sign, wrong amount, and the
+            #         truth is under the floor. This is the class above.
+            #       * `US bank failure by December 31, 2026?` (221539112) — a
+            #         real, well-evidenced -9.0 point dated move whose per-write
+            #         delta is NULL. Silent today and silent after this: the
+            #         bank does not SELECT what a card talks about, which would
+            #         be a new ranking policy. It only decides what may be said
+            #         about what was already selected.
+            #       * `Meta announces a training pause by October 31?`
+            #         (229745131) — one observation in the whole window, twenty
+            #         hours stale. The missing-evidence class, and the reason
+            #         the reader's upper age bound exists.
+            #
+            #     WHAT IS BANKED IS AN OBSERVATION, NEVER AN ANSWER: the oldest
+            #     price we actually saw inside the window, and the instant we
+            #     saw it. The subtraction happens at serve time against the
+            #     price the card is already holding. That is not a stylistic
+            #     choice — it is the only shape that survives a WRITE BETWEEN
+            #     SWEEPS. Bank a computed change and a poll landing thirty
+            #     seconds later makes it a lie for ten minutes; bank the basis
+            #     and the same poll simply makes the card's own subtraction come
+            #     out at the new, correct dated number.
+            #
+            #     THE QUALIFYING PREDICATE IS A7'S, VERBATIM AND FOR A7'S
+            #     REASONS — same window, same `sources = 1`, same
+            #     `SCALE_IDENTICAL_SNAPSHOT_SOURCES` guard, same minimum basis
+            #     age. Deliberately the same: a basis good enough to REFUTE a
+            #     claim and a basis good enough to STATE one are the same
+            #     evidentiary bar, and two bars here would be two answers to
+            #     "what did this cost yesterday".
+            #
+            #     🔴 IT DOES NOT TOUCH `probability_change_24h`, AND THAT IS THE
+            #     POINT. The column keeps its per-write meaning and every
+            #     reader it has — B and C below, `/api/futures/movers`' ranking,
+            #     and `compute_futures_highlight`'s choice of which outcome a
+            #     card names. Writing the windowed number into it would silently
+            #     convert a per-write column into a windowed one for the whole
+            #     served book, which A4 and A7 both refused for the same reason.
+            #     The bank is a differently-named value answering a different
+            #     question, so no existing reader is reinterpreted.
+            #
+            #     The key is interpolated rather than bound: it is a module
+            #     constant, and `jsonb_build_object` is `VARIADIC "any"`, which
+            #     asyncpg cannot infer a bare parameter's type for. The constant
+            #     and the reader's constant are held equal by a guard test.
+            #
+            #     `IS DISTINCT FROM` is not an optimisation. A basis changes
+            #     only when an observation ages out of the window — roughly
+            #     seven times a day per outcome at the current poll cadence —
+            #     while this task runs every ten minutes, so without it 144 runs
+            #     a day would rewrite 1,495 JSONB cells apiece for no change.
+            bank_key = DATED_BASIS_METADATA_KEY
+            banked = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata =
+                            coalesce(fm.market_metadata, '{{}}'::jsonb)
+                            || jsonb_build_object('{bank_key}', bank.payload)
+                    FROM (
+                        SELECT q.market_id,
+                               jsonb_object_agg(
+                                   q.outcome_id::text,
+                                   jsonb_build_array(
+                                       round(q.basis, 6),
+                                       to_char(
+                                           q.basis_at AT TIME ZONE 'UTC',
+                                           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                                       )
+                                   )
+                               ) AS payload
+                        FROM (
+                            SELECT fo.market_id,
+                                   fo.id AS outcome_id,
+                                   fo.probability_change_24h AS delta,
+                                   obs.basis::numeric AS basis,
+                                   obs.basis_at AS basis_at
+                            FROM futures_outcomes fo
+                            JOIN futures_markets m ON m.id = fo.market_id
+                            CROSS JOIN LATERAL (
+                                SELECT (array_agg(
+                                            s.probability ORDER BY s.captured_at
+                                        ))[1] AS basis,
+                                       min(s.captured_at) AS basis_at,
+                                       count(DISTINCT s.bookmaker) AS sources,
+                                       bool_or(
+                                           s.bookmaker <> ALL(:scale_identical)
+                                       ) AS foreign_scale
+                                FROM futures_odds_snapshots s
+                                WHERE s.outcome_id = fo.id
+                                  AND s.captured_at
+                                      > now() - (:window_hours * interval '1 hour')
+                            ) obs
+                            WHERE fo.probability_change_24h IS NOT NULL
+                              AND fo.current_probability IS NOT NULL
+                              AND abs(fo.probability_change_24h) >= :floor
+                              AND m.status = 'open'
+                              AND obs.basis IS NOT NULL
+                              -- `IS FALSE` for A4's reason: NULL and TRUE must
+                              -- both fail, so the fail-closed intent is
+                              -- readable.
+                              AND obs.foreign_scale IS FALSE
+                              AND obs.sources = 1
+                              AND obs.basis_at
+                                  <= now()
+                                     - (:basis_age_hours * interval '1 hour')
+                        ) q
+                        GROUP BY q.market_id
+                        ORDER BY max(abs(q.delta)) DESC
+                        LIMIT :batch
+                    ) bank
+                    WHERE fm.id = bank.market_id
+                      AND (fm.market_metadata -> '{bank_key}')
+                          IS DISTINCT FROM bank.payload
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                    # Decimal, never the float — A4's note above explains why.
+                    "floor": floor,
+                    "batch": DATED_BASIS_BANK_BATCH,
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                },
+            )
+
+            # A9. A market that has left claim scope loses its bank.
+            #
+            #     The reader already fails closed on a bank nobody refreshes —
+            #     a basis only ever gets older, so it leaves the window on its
+            #     own and the card stops saying "today" without anything having
+            #     to notice. This statement is therefore about the CARRIER, not
+            #     about truth: without it every market that ever made a movement
+            #     claim would keep a dead cell in `market_metadata` for good,
+            #     and that cell rides the size-capped shared load artifact.
+            #
+            #     Scoped by the same cheap `NOT EXISTS` as statement C rather
+            #     than by re-running A8's lateral: a market with no surviving
+            #     delta at the floor cannot produce a claim for the bank to
+            #     authorise, whatever the snapshots say, so the snapshot scan
+            #     would buy nothing and cost a third pass.
+            unbanked = await session.execute(
+                text(f"""
+                    UPDATE futures_markets fm
+                    SET market_metadata =
+                            fm.market_metadata - CAST('{bank_key}' AS text)
+                    WHERE jsonb_exists(fm.market_metadata, '{bank_key}')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM futures_outcomes fo
+                          WHERE fo.market_id = fm.id
+                            AND fo.probability_change_24h IS NOT NULL
+                            AND abs(fo.probability_change_24h) >= :floor
+                      )
+                """),
+                {"floor": floor},
+            )
+
             # B. Recompute the per-market maximum over what survived A, A2, A3,
             #    A4 and A7.
             result = await session.execute(text("""
@@ -4100,6 +4307,8 @@ def update_max_movement(self):
             impossible_rows = impossible.rowcount
             unobserved_rows = unobserved.rowcount
             contradicted_rows = contradicted.rowcount
+            banked_markets = banked.rowcount
+            unbanked_markets = unbanked.rowcount
             rank_expired_rows = rank_expired.rowcount
             rank_graded_rows = rank_graded.rowcount
             cleared_markets = cleared.rowcount
@@ -4149,6 +4358,21 @@ def update_max_movement(self):
                 # under them. Same writers, opposite failures, and only
                 # separate counters can tell an operator which one is running.
                 "contradicted_retired": contradicted_rows,
+                # #4079 / A8 + A9. The only counters in this result that report
+                # a PUBLICATION rather than a retirement, which is why they are
+                # not folded into any of the four above: a run that retires
+                # nothing and banks nothing is healthy, but a run that retires
+                # nothing while `dated_basis_banked` sits at 0 for hours means
+                # the copy layer has no evidence and every movement caption on
+                # the site has gone quiet. Those two states are
+                # indistinguishable without this number.
+                #
+                # `dated_basis_banked` counts MARKETS WRITTEN, not markets in
+                # scope: `IS DISTINCT FROM` skips the unchanged ones, so a small
+                # number here on a large book is the steady state and not a
+                # stall (a basis only moves when an observation ages out).
+                "dated_basis_banked": banked_markets,
+                "dated_basis_unbanked": unbanked_markets,
                 "cleared_markets": cleared_markets,
                 # Both backlogs have to be empty before the strip is honest, so
                 # `backlog_drained` reports the AND. Reporting only A's would go

@@ -140,6 +140,12 @@ from app.utils.participant_images import participant_images_for_event
 from app.utils.futures_highlights import (
     compute_futures_highlight,
     CATEGORY_BASE_SCORES,
+    # #4079: the threshold that decides whether a movement chip is drawn at
+    # all. Imported from the module that OWNS that decision rather than
+    # restated, for the reason the sweep imports it too — the producer, the
+    # sweep and the copy layer must not drift into three answers about which
+    # moves a reader may be told about.
+    MODERATE_MOVEMENT_THRESHOLD,
     MOVER_MIN_PROBABILITY,
     SPORTS_CATEGORY_BASE,
 )
@@ -6233,6 +6239,10 @@ from app.utils.market_staleness import (
 # same analyser: no market escapes into it.
 from app.utils.futures_market_snapshot import (
     CARD_PRICE_AGE_LEG_COUNT,
+    DATED_BASIS_MIN_AGE_HOURS,
+    DATED_BASIS_WINDOW_HOURS,
+    dated_movement_basis,
+    read_dated_basis_entry,
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
@@ -6738,6 +6748,11 @@ def _top_outcomes_for_trace(
     for outcome in sorted_outcomes[:10]:
         outcomes_data.append(
             {
+                # #4079: the key the dated-movement bank is stored under. This
+                # dict is the SCORING row and never reaches the wire (the card's
+                # rows are `top_outcomes_data`), so the id costs nothing a
+                # reader pays for.
+                "id": outcome.id,
                 "name": outcome.name,
                 # #4700: the leader's subject-verb agreement is decided on THIS,
                 # not on the spelling of the name. See `_leader_outcome_is_team`.
@@ -6841,6 +6856,106 @@ def _biggest_move_from_opening(
             name = outcome.get("name")
             change = move
     return name, change, opened_at
+
+
+def _dated_movement_change(
+    market: Any,
+    outcomes_data: list[dict],
+    top_mover_name: str | None,
+    now: datetime | None = None,
+) -> float | None:
+    """The move a card may state as TODAY'S, or None (#4079).
+
+    Three serving paths computed this inline, in three identical loops, and all
+    three computed the wrong thing: they handed the copy layer
+    `probability_change_24h`, which is `new - previous` at write time for a
+    previous write of unknown age, and the copy layer spent it on the word
+    "today". Measured over every row that made that claim on production
+    2026-09-19: **927 of 2,445 (38%) were supported by a dated comparison.** Of
+    the rest, 797 had the right sign and a materially wrong amount — 260 of them
+    naming a move the day did not make at all — and 513 had no dated basis of
+    any kind.
+
+    ═══ WHAT THIS RETURNS IS A SUBTRACTION, NOT A LOOKUP ═══
+
+    The sweep banks ONE observed price per in-scope outcome with the instant it
+    was observed (`dated_movement_basis`, statement A8), and this subtracts it
+    from the price the card is already holding. That is what makes the answer
+    survive a WRITE BETWEEN SWEEPS: a poll landing thirty seconds after the bank
+    changes `probability` and therefore changes this result — to the new,
+    correct dated move — where a banked *change* would have gone stale and a
+    per-write delta simply is stale. The ten-minute gap between sweeps is not a
+    window of wrong numbers here; it is a window of numbers recomputed against a
+    slightly older basis, which is the honest thing a dated claim can be.
+
+    ═══ IT NARROWS WHAT MAY BE SAID, NEVER WHAT IS SHOWN ═══
+
+    🔴 The SELECTION is untouched and that is deliberate. `top_mover_name` is
+    still `compute_futures_highlight`'s pick off `probability_change_24h`, the
+    reasons it raised are still in `highlight_result.reasons`, and the market's
+    score and rank are exactly what they were. This function only decides
+    whether the card may put a NUMBER next to the word "today", and what that
+    number is. Letting the bank promote an outcome the highlight did not pick —
+    the `US bank failure` specimen, a real -9.0 point dated move whose per-write
+    delta is NULL and whose card is silent — would be a new ranking policy, and
+    is not done here.
+
+    ═══ EVERY REFUSAL IS THE SAME REFUSAL ═══
+
+    `None` for: no mover, no bank, an unparseable cell, a basis outside the
+    window, or a dated move below the card floor. Every caller of
+    `top_mover_change` already treats `None` as "no movement sentence" —
+    `compose_binary_card_copy`, `generate_futures_headline` and
+    `generate_futures_reason` each gate on `is not None` — so the honest-
+    unavailable path is the one that already ships, and a card that cannot date
+    its move loses a word rather than gaining a wrong one.
+
+    The upper age bound is what makes a STOPPED SWEEP fail closed: a bank nobody
+    refreshes only gets older, so it ages out of the window by itself and the
+    captions go quiet without anything having to detect the outage.
+    """
+    if not top_mover_name:
+        return None
+
+    # The per-write delta is still the gate on whether there is a mover at all
+    # — truthiness, not `is not None`, exactly as the three loops this replaces
+    # did, so a stored 0.0 stays a non-mover.
+    row = None
+    for outcome in outcomes_data:
+        if outcome.get("name") == top_mover_name and outcome.get(
+            "probability_change_24h"
+        ):
+            row = outcome
+            break
+    if row is None:
+        return None
+
+    current = row.get("probability")
+    outcome_id = row.get("id")
+    if current is None or outcome_id is None:
+        return None
+
+    basis, observed_at = read_dated_basis_entry(
+        dated_movement_basis(market).get(str(outcome_id))
+    )
+    if basis is None or observed_at is None:
+        return None
+
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    age_hours = (reference - observed_at).total_seconds() / 3600.0
+    if not DATED_BASIS_MIN_AGE_HOURS <= age_hours <= DATED_BASIS_WINDOW_HOURS:
+        return None
+
+    move = float(current) - basis
+    # The card floor decides whether a movement chip is drawn at all, so a dated
+    # move below it is not a smaller claim — it is no claim. This is the arm
+    # that silences the `Phantom Blade Zero` specimen, whose stored delta says
+    # 2.5 points and whose day moved 1.35.
+    if abs(move) < MODERATE_MOVEMENT_THRESHOLD:
+        return None
+    return move
 
 
 # #6219 — THE CARD DRAWS FOUR ROWS AND COLLAPSES THE REST.
@@ -7311,14 +7426,12 @@ def _score_market_trace(
     )
 
     top_mover_name = highlight_result.top_mover_name
-    top_mover_change = None
-    if top_mover_name:
-        for outcome in outcomes_data:
-            if outcome["name"] == top_mover_name and outcome.get(
-                "probability_change_24h"
-            ):
-                top_mover_change = outcome["probability_change_24h"]
-                break
+    # #4079 — the DATED move, not the per-write delta this loop used to lift off
+    # the row. The trace composes its copy from the same string the card prints,
+    # so it must ask the same question the card asks.
+    top_mover_change = _dated_movement_change(
+        market, outcomes_data, top_mover_name, now=now
+    )
 
     (
         top_surprise_name,
@@ -9972,6 +10085,8 @@ async def _score_sports_mode_futures(
             )
             outcomes_data.append(
                 {
+                    # #4079 — see the twin in `_top_outcomes_for_trace`.
+                    "id": o.id,
                     "name": o.name,
                     # #4700 — see `_leader_outcome_is_team`.
                     "team_id": getattr(o, "team_id", None),
@@ -10180,12 +10295,13 @@ async def _score_sports_mode_futures(
         )
 
         top_mover_name = highlight_result.top_mover_name
-        top_mover_change = None
-        if top_mover_name:
-            for o in outcomes_data:
-                if o["name"] == top_mover_name and o.get("probability_change_24h"):
-                    top_mover_change = o["probability_change_24h"]
-                    break
+        # #4079 — the DATED move. See `_dated_movement_change`: the per-write
+        # delta this loop used to read is still the SELECTION input above and is
+        # still what `max_movement_24h` ranks on; it is simply not the number a
+        # card may print beside the word "today".
+        top_mover_change = _dated_movement_change(
+            market, outcomes_data, top_mover_name, now=now
+        )
 
         (
             top_surprise_name,
@@ -11454,6 +11570,8 @@ async def _score_futures(
                 )
                 outcomes_data.append(
                     {
+                        # #4079 — see the twin in `_top_outcomes_for_trace`.
+                        "id": o.id,
                         "name": o.name,
                         # #4700 — see `_leader_outcome_is_team`.
                         "team_id": getattr(o, "team_id", None),
@@ -11590,12 +11708,13 @@ async def _score_futures(
             )
 
             top_mover_name = highlight_result.top_mover_name
-            top_mover_change = None
-            if top_mover_name:
-                for o in outcomes_data:
-                    if o["name"] == top_mover_name and o.get("probability_change_24h"):
-                        top_mover_change = o["probability_change_24h"]
-                        break
+            # #4079 — the DATED move. This is the Discover path: the three
+            # movement chips Alex photographed (`The Game Awards`, `Meta`,
+            # `US bank failure`) were composed here, off the per-write delta
+            # this loop used to read. See `_dated_movement_change`.
+            top_mover_change = _dated_movement_change(
+                market, outcomes_data, top_mover_name, now=now
+            )
 
             (
                 top_surprise_name,
