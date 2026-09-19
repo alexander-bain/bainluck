@@ -430,10 +430,33 @@ class _RecordingSession:
         self.banked = []
         self.stamped = []
         self.commits = 0
+        #: The snapshot half (#7147). Empty by default: these apply tests are
+        #: about the event-row classes, and a fixture that silently grew a
+        #: snapshot defect would change what every one of them is measuring.
+        #: `test_repair_7147_post_final_snapshots.py` drives the populated case.
+        self.post_final_rows = []
+        self.snap_banked = []
+        self.snap_deletes = []
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         self.calls.append((sql, params or {}))
+
+        # THE SNAPSHOT HALF (#7147), DISPATCHED FIRST AND DELIBERATELY SO. Its
+        # table is `bak_7147_post_final_score_snapshots`, so every pattern below
+        # that matches on the `bak_7147` PREFIX — the create, the insert, the
+        # reconciliation — also matches these statements. Taught after them, the
+        # snapshot bank's INSERT would be recorded as an event-row bank and
+        # `self.banked` would carry rows no event-row write ever backed.
+        if "bak_7147_post_final" in sql:
+            if sql.lstrip().upper().startswith("INSERT"):
+                self.snap_banked.append(params)
+            return _Result([], scalar=0)
+        if "DELETE FROM score_snapshots" in sql:
+            self.snap_deletes.append(params)
+            return _Result([])
+        if "FROM score_snapshots s" in sql and "JOIN events e" in sql:
+            return _Result(list(self.post_final_rows))
 
         # #7147 — the D51(b) backup. Answered HERE rather than by loosening the
         # `unexpected SQL` guard below, because that guard is what makes this
