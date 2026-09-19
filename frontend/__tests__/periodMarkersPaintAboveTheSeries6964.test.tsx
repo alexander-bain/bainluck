@@ -180,10 +180,19 @@ function labelledReferenceLines(markup: string): Array<{ label: string; at: numb
     const end = nextIdx === -1 ? markup.length : groupRe.lastIndex + nextIdx;
     const body = markup.slice(start, end);
     // recharts' `Text` wraps the caption in a `<tspan>`, so the glyphs are one
-    // element deeper than the labelled `<text>`. Take the element's whole text
-    // content rather than its first text node, or every label reads as "".
-    const text = body.match(/<text[^>]*class="[^"]*recharts-label[^"]*"[^>]*>([\s\S]*?)<\/text>/);
-    const label = text ? text[1].replace(/<[^>]*>/g, "").trim() : "";
+    // element deeper than the labelled `<text>` and reading that element's first
+    // text node gives "" for every label.
+    //
+    // Reach for the `<tspan>` rather than stripping tags out of the `<text>`.
+    // `.replace(/<[^>]*>/g, "")` is the obvious version and CodeQL rejects it by
+    // name (js/bad-tag-filter, high) — rightly, since a regex that removes
+    // anything tag-shaped is an incomplete HTML filter, and the one thing a test
+    // helper must not do is teach the pattern. Capturing the content we want is
+    // both narrower and safer than deleting the content we don't.
+    const textEl = body.match(/<text[^>]*class="[^"]*recharts-label[^"]*"[^>]*>([\s\S]*?)<\/text>/);
+    const inner = textEl ? textEl[1] : "";
+    const tspan = inner.match(/<tspan[^>]*>([^<]*)<\/tspan>/);
+    const label = (tspan ? tspan[1] : inner).trim();
     if (label) out.push({ label, at: start });
   }
   return out;
