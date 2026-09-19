@@ -94,6 +94,35 @@ class TestCardNumberAndLabel:
         assert label == "UFC 329: McGregor vs. Holloway 2"
         assert is_major is True
 
+    def test_bare_number_in_subtitle_is_not_printed_twice(self):
+        # #7304: Kalshi names every fight on a numbered card WITHOUT the promotion
+        # label ("331: Van vs Pantoja"), so `strip_re` (anchored on "UFC …") leaves
+        # it and the old containment test — which looked for "UFC 331" — missed it.
+        # Served on Discover page one as "UFC 331: 331: Van vs Pantoja".
+        assert ufc_card_label("331: Van vs Pantoja", ("UFC 331",)) == (
+            "UFC 331: Van vs Pantoja",
+            True,
+        )
+        # The already-doubled venue title collapses to one number too.
+        assert ufc_card_label("UFC 331: 331: Van vs Pantoja") == (
+            "UFC 331: Van vs Pantoja",
+            True,
+        )
+        assert ufc_card_label("#331: Van vs Pantoja", ("UFC 331",)) == (
+            "UFC 331: Van vs Pantoja",
+            True,
+        )
+
+    def test_bare_number_strip_is_keyed_on_this_cards_digits(self):
+        # A subtitle carrying a DIFFERENT number is not this card's prefix — keep it.
+        assert ufc_card_label("330: Wells vs Uulu", ("UFC 331",)) == (
+            "UFC 331: 330: Wells vs Uulu",
+            True,
+        )
+        # And a strip that would leave nothing falls back to the unstripped subtitle
+        # rather than serving a bare "UFC 331".
+        assert ufc_card_label("331:", ("UFC 331",)) == ("UFC 331: 331:", True)
+
     def test_fight_night_fallback(self):
         label, is_major = ufc_card_label("Fight Night: Yakhyaev vs Walker")
         assert label == "Fight Night: Yakhyaev vs Walker"

@@ -1006,6 +1006,23 @@ def _strip_card_prefix(cfg: CombatSportConfig, name: str | None) -> str:
     return cfg.strip_re.sub("", name).strip()
 
 
+def _strip_bare_number(number: str, subtitle: str) -> str:
+    """Drop a leading BARE card number ("331: Vera vs Jourdain") that repeats the
+    number we are about to prefix.
+
+    `strip_re` cannot do this: it is anchored on the promotion label ("UFC 331:"),
+    and Kalshi names every fight on a numbered card without one (#7304 — all 13
+    fights of `26SEP19`, all 13 of `26AUG15`, 14 of 15 of `26JUL11`; i.e. every
+    numbered card we hold). Keyed on the card's OWN digits, so a fight named after
+    a different card's number is left alone. Returns "" if nothing survives — the
+    caller keeps the unstripped subtitle in that case.
+    """
+    digits = number.rsplit(" ", 1)[-1]
+    if not digits.isdigit():
+        return subtitle
+    return re.sub(rf"^\s*#?\s*{digits}\s*:\s*", "", subtitle).strip()
+
+
 def card_label(
     cfg: CombatSportConfig, main_event_name: str | None, extra_titles=()
 ) -> tuple[str, bool]:
@@ -1023,7 +1040,9 @@ def card_label(
     )
 
     if number:
-        # Avoid "UFC 329: UFC 329: …" if the subtitle still carried the number.
+        # Avoid "UFC 329: UFC 329: …" if the subtitle still carried the number —
+        # labelled (caught by the containment test below) or bare (#7304).
+        subtitle = _strip_bare_number(number, subtitle) or subtitle
         if subtitle and number.lower() not in subtitle.lower():
             return f"{number}: {subtitle}", True
         return (main_event_name or number), True
