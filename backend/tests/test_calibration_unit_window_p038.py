@@ -133,6 +133,19 @@ class _FakeLedger:
         """
         return None
 
+    def unit_bound_source(self, _name: str):
+        """The same honest ``None``, for CAL-P1305's third reading.
+
+        The loop now asks which of the three terms set the bound a unit was
+        armed with, so that ``cancellation_is_conclusive`` stops inferring it
+        from headroom. This fake arms its units itself (see
+        ``_FakeRunner.apply_unit_statement_timeout``) and records nothing, so
+        ``None`` is the truth — and ``None`` is precisely the input that leaves
+        the predicate on the inference it used before CAL-P1305, which is what
+        keeps every assertion in this file about the within-beat window fence.
+        """
+        return None
+
 
 class _FakeRunner:
     """Only the surface ``_run_staged_futures`` actually touches.
