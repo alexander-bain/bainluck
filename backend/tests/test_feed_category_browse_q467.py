@@ -986,3 +986,144 @@ def test_the_canonical_filter_holds_for_a_source_whose_label_is_not_an_alias():
         ecp.CONCEPT_SOURCES = original
 
     assert ecp.CONCEPT_SOURCES is original, "the registry was not restored"
+
+
+# ---------------------------------------------------------------------------
+# #7007 — the raw-browse guard omitted `category`, so the browse DELETED its
+# games
+# ---------------------------------------------------------------------------
+#
+# `/categories/<slug>` sends no `event_pct`, no `sport` and no `tags`, so it
+# fell through the guard at the top of `get_feed` and was served as Discover.
+# `event_pct=0.15` opens the branch in `_rank_and_compose`:
+# `_demote_non_exceptional_discover_events` caps every ordinary game at 35 and
+# `_filter_discover_event_noise` then deletes everything under 45. The cap is
+# strictly below the floor, so the wipe is arithmetic, not marginal — no game
+# can outrank any market on a category page. Measured on production
+# 2026-09-18: 67 of 73 games dropped, 5 of 7 categories emptied to zero,
+# `/categories/football` serving 0 of 8 on an NFL Friday.
+#
+# THE TWO TESTS BELOW ARE EACH OTHER'S CONTROL. The presence assertion alone
+# would pass on a tree that had simply disabled the demotion everywhere; the
+# absence assertion alone would pass on a route that served nothing at all.
+# Only the pair says "this game is deletable, Discover still deletes it, and
+# the browse no longer does" — which is the whole claim.
+
+
+GAME_STUB_ID = 70071
+GAME_STUB_SCORE = 53.0
+
+
+def _ordinary_game_stub() -> dict:
+    """One SCHEDULED football game with team media, scored 53.
+
+    Deliberately ordinary — no marquee final, no imminent kickoff, no demotion
+    exception. 53 is the median of the eight games #7007 measured, and it is
+    the number that matters: comfortably over the noise filter's 45 floor on
+    its own, and doomed the moment the demotion caps it to 35. A stub scored
+    above 45 that is NOT capped would survive both trees and prove nothing.
+    """
+    return {
+        "type": "event",
+        "score": GAME_STUB_SCORE,
+        "_rank_score": GAME_STUB_SCORE,
+        "_admission_score": GAME_STUB_SCORE,
+        "_sort_time": NOW.timestamp(),
+        "reason": "#7007 probe",
+        "data": {
+            "id": GAME_STUB_ID,
+            "status": "scheduled",
+            "sport_key": "americanfootball_nfl",
+            "sport_category": "football",
+            "home_team": "Q7007 Probe Home",
+            "away_team": "Q7007 Probe Away",
+            "commence_time": NOW.isoformat(),
+            # `_filter_discover_event_noise` reads these as `has_team_media`,
+            # so without them the game is dropped by the media arm and the
+            # test would be green for the wrong reason.
+            "home_team_data": {"name": "Q7007 Probe Home", "logo_url": "h.png"},
+            "away_team_data": {"name": "Q7007 Probe Away", "logo_url": "a.png"},
+        },
+    }
+
+
+@pytest.fixture
+def ordinary_game_probe(monkeypatch):
+    """Stub the events tier with one ordinary game; silence the two adjacent
+    tiers so nothing else can be mistaken for it."""
+
+    async def _events(*a, **kw):
+        return [_ordinary_game_stub()]
+
+    async def _none(*a, **kw):
+        return []
+
+    monkeypatch.setattr(feed_mod, "_score_events", _events)
+    monkeypatch.setattr(feed_mod, "_score_golf_tournaments", _none)
+    monkeypatch.setattr(feed_mod, "_score_event_concepts", _none)
+
+
+async def _served_game(client, **params) -> dict | None:
+    """The probe game as the READER receives it, or None if it never arrived.
+
+    `include_futures` is left TRUE on purpose: it is a clause of the guard
+    under test, so the existing `_feed_names` helper (which sends
+    `include_futures=false`) bypasses the very branch these tests exercise.
+    """
+    resp = await client.get("/api/feed", params={"limit": 50, **params})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    items = body["items"] if isinstance(body, dict) else body
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "event":
+            continue
+        if (item.get("data") or {}).get("id") == GAME_STUB_ID:
+            return item
+    return None
+
+
+@pytest.mark.asyncio
+async def test_a_category_browse_serves_its_games(feed_client, ordinary_game_probe):
+    """#7007's ship: a reader who taps Browse -> Football sees football."""
+    game = await _served_game(feed_client, category="football")
+    assert game is not None, (
+        "/categories/football served none of its games — #7007: the raw-browse "
+        "guard omitted `category`, so the page was ranked as Discover and the "
+        "demotion capped every ordinary game below the noise filter's floor"
+    )
+    assert game["score"] == GAME_STUB_SCORE, (
+        f"the game survived but was demoted to {game['score']} — the cap still "
+        "reaches a browse surface, so it still cannot outrank any market on it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_discover_itself_is_unchanged__the_control_for_the_test_above(
+    feed_client, ordinary_game_probe
+):
+    """MUST-NOT-REGRESS, and the control that makes the ship claim real.
+
+    The same stub, one query parameter different. Discover is still not the
+    scoreboard: an ordinary game is still capped and still deleted there. If
+    this ever goes green alongside its neighbour by serving the game, the fix
+    has leaked out of the browse and into the flagship feed.
+    """
+    game = await _served_game(feed_client)
+    assert game is None, (
+        "an ordinary game reached Discover — the #7007 fix widened past the "
+        "category browse and disabled the demotion on the flagship feed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_two_browse_spellings_now_agree(feed_client, ordinary_game_probe):
+    """`sport=` was in the guard and `category=` was not, so two spellings of
+    one claim disagreed on identical rows. That disagreement was the clearest
+    evidence the omission was never intended; this is what keeps them level."""
+    by_sport = await _served_game(feed_client, sport="football")
+    by_category = await _served_game(feed_client, category="football")
+    assert (by_sport is not None) == (by_category is not None), (
+        f"sport=football served the game: {by_sport is not None}; "
+        f"category=football served it: {by_category is not None} — the two "
+        "browse scopes disagree on identical rows again"
+    )
