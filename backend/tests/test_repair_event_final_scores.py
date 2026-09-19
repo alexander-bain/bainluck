@@ -397,14 +397,18 @@ _BOARDS = {
 
 
 class _Result:
-    def __init__(self, rows):
+    def __init__(self, rows, scalar=None):
         self._rows = rows
+        self._scalar = scalar
 
     def all(self):
         return self._rows
 
     def one(self):
         return self._rows[0]
+
+    def scalar_one(self):
+        return self._scalar
 
     def scalar_one_or_none(self):
         return self._rows[0] if self._rows else None
@@ -423,11 +427,38 @@ class _RecordingSession:
         self.score_writes = []
         self.completed_at_writes = []
         self.blend_writes = 0
+        self.banked = []
+        self.stamped = []
         self.commits = 0
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         self.calls.append((sql, params or {}))
+
+        # #7147 — the D51(b) backup. Answered HERE rather than by loosening the
+        # `unexpected SQL` guard below, because that guard is what makes this
+        # fake a statement contract instead of a blanket stub: a repair that
+        # starts issuing a statement nobody taught this session about should
+        # still stop the suite. The bank succeeds and the reconciliation comes
+        # back exact, which is the healthy path these apply tests are about;
+        # the REFUSAL path is covered in test_repair_7147_final_score_backup.py.
+        if "CREATE TABLE IF NOT EXISTS bak_7147" in sql:
+            return _Result([])
+        if "ALTER TABLE bak_7147" in sql:
+            return _Result([])
+        if "INSERT INTO bak_7147" in sql:
+            self.banked.append(params)
+            return _Result([])
+        # CERT-3141 — the write manifest, stamped off the row after its writes.
+        # Recorded rather than waved through: "every applied row got one" is an
+        # assertable property and the apply tests are where the applied rows are.
+        if "UPDATE bak_7147" in sql:
+            self.stamped.append(params)
+            return _Result([])
+        if "to_regclass" in sql:
+            return _Result([], scalar=True)
+        if "NOT EXISTS (SELECT 1 FROM bak_7147" in sql:
+            return _Result([], scalar=0)
 
         if "GROUP BY 1, 2" in sql:
             return _Result(list(_GROUPS))
