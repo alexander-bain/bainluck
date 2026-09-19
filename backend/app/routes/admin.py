@@ -1144,6 +1144,7 @@ async def get_category_precompute_last(
 
     from app.tasks.precompute_category_pages import (
         PRECOMPUTE_STATUS_KEY,
+        PRECOMPUTE_STATUS_STALE_AFTER_S,
         PRECOMPUTE_STATUS_TTL,
     )
 
@@ -1195,12 +1196,20 @@ async def get_category_precompute_last(
     age_s = health_reads.age_seconds(
         report.get("generated_at") or report.get("completed_at") or report.get("started_at")
     )
+    # LAT-P330 (#7109). Graded against the beat's CADENCE, not the key's
+    # retention. `age_s > PRECOMPUTE_STATUS_TTL` could hardly ever be true — the
+    # key is SETEX'd for exactly that TTL, so Redis drops the report before it is
+    # old enough to be called stale and this returns `unknown` from the `missing`
+    # branch instead. It read `stale: false` over an `age_seconds` of 8124.4
+    # through a two-hour-dark beat. `stale_after_s` is published so the verdict
+    # can be audited without reading this file.
     return {
         "status": "ok" if not missing_fields else "incomplete_schema",
         "key": PRECOMPUTE_STATUS_KEY,
         "missing_fields": missing_fields,
         "age_seconds": age_s,
-        "stale": (age_s is not None and age_s > PRECOMPUTE_STATUS_TTL),
+        "stale_after_s": PRECOMPUTE_STATUS_STALE_AFTER_S,
+        "stale": (age_s is not None and age_s > PRECOMPUTE_STATUS_STALE_AFTER_S),
         "report": report,
     }
 

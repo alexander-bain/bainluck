@@ -242,6 +242,104 @@ class TestCategoryPrecomputeRail:
                 await get_category_precompute_last(MagicMock(), None)
 
 
+class TestCategoryPrecomputeStaleness:
+    """LAT-P330 (#7109) — the rail's freshness verdict is graded against the
+    beat's CADENCE, not against the retention of the key it just read.
+
+    ``stale = age_s > PRECOMPUTE_STATUS_TTL`` was close to unfalsifiable: the
+    report is SETEX'd for exactly that TTL, so Redis drops it before it is old
+    enough to be called stale and the endpoint answers ``unknown`` from the
+    ``missing`` branch instead. Through a two-hour-dark beat on 2026-09-19 it
+    served ``status: ok``, ``stale: false``, ``age_seconds: 8124.4``.
+    """
+
+    @staticmethod
+    def _report_aged(seconds: float) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        started = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+        return json.dumps({
+            "sections": {"grids": {"outcome": "ok"}},
+            "started_at": started.isoformat(),
+        })
+
+    async def _read(self, aged_s: float) -> dict:
+        from app.routes.admin import get_category_precompute_last
+
+        r = MagicMock()
+        r.get.return_value = self._report_aged(aged_s)
+        with patch("app.routes.admin._check_admin_secret", return_value=True), \
+             patch("app.tasks.redis_state.get_redis_client", return_value=r):
+            return await get_category_precompute_last(MagicMock(), "s")
+
+    @pytest.mark.asyncio
+    async def test_the_photographed_outage_reads_stale(self):
+        """The specimen, to the tenth of a second. This is the whole ship: under
+        the old TTL comparison it answered False and the outage was invisible."""
+        out = await self._read(8124.4)
+
+        assert out["stale"] is True
+        assert out["age_seconds"] >= 8124.0
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_report_is_not_stale(self):
+        """The did-not-go-too-far arm. A pass that ran ten minutes ago is fine."""
+        out = await self._read(600)
+
+        assert out["stale"] is False
+
+    @pytest.mark.asyncio
+    async def test_one_missed_pass_is_not_a_dead_rail(self):
+        """Deliberate tolerance, matching the sibling live-feed rail: a single
+        skipped fire must not raise the flag. Two consecutive ones must."""
+        pcp = importlib.import_module("app.tasks.precompute_category_pages")
+
+        assert (await self._read(pcp.PRECOMPUTE_PERIOD_S + 300))["stale"] is False
+        assert (await self._read(2 * pcp.PRECOMPUTE_PERIOD_S + 300))["stale"] is True
+
+    @pytest.mark.asyncio
+    async def test_the_threshold_is_published_with_the_verdict(self):
+        """So an operator can audit the grading without reading the source."""
+        pcp = importlib.import_module("app.tasks.precompute_category_pages")
+        out = await self._read(600)
+
+        assert out["stale_after_s"] == pcp.PRECOMPUTE_STATUS_STALE_AFTER_S
+
+    def test_the_threshold_sits_strictly_inside_the_keys_retention(self):
+        """🔴 The CLASS guard, and the one that would have caught the original.
+
+        A staleness threshold at or past the key's TTL can never fire: the key is
+        written with that TTL, so the report is gone — and the endpoint answers
+        ``unknown`` — before any age past it can be observed. Any future widening
+        of the threshold, or shortening of the retention, that re-crosses this
+        line silently restores an unfalsifiable monitor.
+        """
+        pcp = importlib.import_module("app.tasks.precompute_category_pages")
+
+        assert pcp.PRECOMPUTE_STATUS_STALE_AFTER_S < pcp.PRECOMPUTE_STATUS_TTL
+
+    def test_the_threshold_tracks_the_real_beat_schedule(self):
+        """LAT-P182's lesson, applied to this rail: the grader and the schedule
+        live in two files, and nothing compared them. If the beat moves off
+        hourly, ``PRECOMPUTE_PERIOD_S`` is now wrong and this fails rather than
+        the rail quietly grading against a cadence that no longer exists."""
+        from app.tasks import celery_app
+
+        pcp = importlib.import_module("app.tasks.precompute_category_pages")
+        entries = [
+            e for e in celery_app.conf.beat_schedule.values()
+            if e["task"] == "app.tasks.precompute_category_pages"
+        ]
+        assert len(entries) == 1, "the beat entry moved or was duplicated"
+
+        schedule = entries[0]["schedule"]
+        # `crontab(minute=25)` — every hour, on one minute. Both halves matter:
+        # an hour restriction or a second minute changes the real period.
+        assert len(schedule.minute) == 1, f"expected one fire per hour, got {schedule.minute}"
+        assert len(schedule.hour) == 24, f"expected every hour, got {schedule.hour}"
+        assert pcp.PRECOMPUTE_PERIOD_S == 3600
+
+
 class TestPrecomputeObservability:
     @pytest.mark.asyncio
     async def test_grid_timeout_is_recorded_not_swallowed(self):
