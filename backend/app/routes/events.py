@@ -14367,6 +14367,115 @@ def _withhold_partial_field_markets(other_rows: list, markets: list) -> list:
     ]
 
 
+def _futures_row_market_ids(row: dict) -> set:
+    """Every market that stood behind a rendered row (#7068).
+
+    A row that has been through `dedup_by_merge_group` or
+    `merge_relabel_collisions` carries `contributor_market_ids`; one that has
+    not carries only its own `market_id`. Both are the same question — which
+    markets does this row speak for — and a caller that reads only
+    `market_id` gets the wrong answer on every merged row.
+    """
+    ids = set(row.get("contributor_market_ids") or [])
+    if row.get("market_id") is not None:
+        ids.add(row["market_id"])
+    return ids
+
+
+def _withhold_partial_field_futures(
+    home_futures: list,
+    away_futures: list,
+    row_markets: dict,
+    pre_merge_rows: list | None = None,
+) -> tuple[list, list]:
+    """The same rule as :func:`_withhold_partial_field_markets`, second door.
+
+    🔴 THE EVENT PAGE HAS TWO PAYLOADS AND THE READER CANNOT TELL. `/game-markets`
+    feeds the props sections; `/related-futures` feeds Bigger Picture. #3721
+    shipped the withholding on the first and the fragment kept arriving through
+    the second — measured on production 2026-09-18 with the first half already
+    live at `6044e4b47`: `/events/15195325` served `other = 0` from
+    `/game-markets` while the page still drew `Germany 3 - 2` at 50% and
+    `Germany 2 - 1` at 49%, two stored legs of a seventeen-leg exact-score
+    field, under an `OTHER (3)` heading that claims to be the whole question.
+
+    WHY THE COUNT SPANS BOTH LISTS. A 3-way soccer result puts Germany in
+    `home_team_futures` and Greece in `away_team_futures`. Counting per list
+    would read a COMPLETE 3-leg field as 1-of-3 on each side and withhold it —
+    the over-reach is not hypothetical, it is what every draw-carrying market
+    would hit.
+
+    WHY THE RENDERED COUNT AND NOT THE STORED ONE. Identical to the first door:
+    the completeness claim is made by the rows the reader sees. The two differ
+    only when our own passes drop a leg from a field the venue served whole, and
+    there the rendered count is the honest one.
+
+    🔴 BUT THE COUNT IS TAKEN BEFORE THE MERGES, AND THAT IS THE WHOLE REPAIR OF
+    CERT-3099. `dedup_by_merge_group` keeps ONE winner per
+    `(merge_group, outcome_name)`, and the winner carries its own `market_id` —
+    so a field carried by two sources has its legs RE-ATTRIBUTED: Germany's
+    winner comes from market A, Greece's and Draw's from market B, and two
+    COMPLETE three-leg fields read as 1-of-3 and 2-of-3. Counted after the
+    merges, this filter erased the entire field. Reproduced exactly:
+    `after_dedup=[('Germany',1),('Greece',2),('Draw',2)]` → `after_filter=[]`.
+
+    The first door never had to learn this because its rows are not cross-source
+    deduped; it is the same failure its `_row_market_ids` guard was written for.
+
+    Two halves, and BOTH are needed:
+
+    * ``pre_merge_rows`` — the rows as they stood before dedup, where every leg
+      still carries its own market's id. That is the only place a per-market leg
+      count is a fact rather than an artefact of who won a merge.
+    * :func:`_futures_row_market_ids` — a surviving row is removed only when
+      EVERY market behind it is short. Without this, a short market whose row
+      happens to WIN a merge against a complete sibling would take the complete
+      field's leg down with it, turning a 3-of-3 into a 2-of-3 on the page.
+
+    Returns the two lists, each with the rows of every short field removed.
+    """
+    from app.utils.market_shape import venue_leg_count
+
+    # Counted on the PRE-MERGE rows when the caller has them (the route always
+    # does); the post-merge lists are the fallback for a direct caller and are
+    # correct whenever nothing merged.
+    counted = (
+        list(pre_merge_rows)
+        if pre_merge_rows is not None
+        else list(home_futures) + list(away_futures)
+    )
+    held: dict = {}
+    for row in counted:
+        for market_id in _futures_row_market_ids(row):
+            held[market_id] = held.get(market_id, 0) + 1
+    if not held:
+        return home_futures, away_futures
+
+    withheld: set = set()
+    for market_id, rendered in held.items():
+        market = row_markets.get(market_id)
+        if market is None:
+            continue
+        meta = market.market_metadata if isinstance(market.market_metadata, dict) else {}
+        declared = venue_leg_count(meta, market.name, market.mutually_exclusive)
+        if declared is not None and rendered < declared:
+            withheld.add(market_id)
+
+    if not withheld:
+        return home_futures, away_futures
+
+    # A row goes only when EVERY market behind it is short — the first door's
+    # rule verbatim. A row with no attributable market is never removed.
+    def _keep(row: dict) -> bool:
+        ids = _futures_row_market_ids(row)
+        return not (ids and ids <= withheld)
+
+    return (
+        [r for r in home_futures if _keep(r)],
+        [r for r in away_futures if _keep(r)],
+    )
+
+
 def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     """Classify a game-level market name into a type.
 
@@ -19898,6 +20007,11 @@ async def _build_related_futures(
     home_futures = []
     away_futures = []
     seen_ids = set()
+    # #3721 second door — the markets that actually produced a row, kept so the
+    # partial-field test below can ask the SAME question the `/game-markets`
+    # door asks. Only markets that reach the payload are collected; a market
+    # filtered out upstream has no card to withhold.
+    row_markets: dict = {}
 
     # ── Game-specific market filtering ────────────────────────────
     # Game-specific markets (stat props AND matchup markets) are tied to a
@@ -20154,6 +20268,7 @@ async def _build_related_futures(
         if matched:
             entry["matched_player"] = matched
 
+        row_markets[market.id] = market
         if side == "home":
             home_futures.append(entry)
         else:
@@ -20172,6 +20287,15 @@ async def _build_related_futures(
     # Division winners use dynamic keys like "atlantic_division" —
     # match with suffix check.
     from app.utils.related_futures import dedup_by_merge_group
+
+    # #7068 / CERT-3099 — the rows as they stand BEFORE any merge, where every
+    # leg still carries its own market's id. The partial-field test below needs
+    # a per-market leg count, and after the two merge passes that count is an
+    # artefact of which source won each outcome, not a fact about the field.
+    # Snapshotted here rather than recomputed later because this is the last
+    # moment it is true.
+    pre_merge_rows = list(home_futures) + list(away_futures)
+
     home_futures = dedup_by_merge_group(home_futures)
     away_futures = dedup_by_merge_group(away_futures)
 
@@ -20237,6 +20361,35 @@ async def _build_related_futures(
 
     home_futures = merge_relabel_collisions(home_futures, team_index)
     away_futures = merge_relabel_collisions(away_futures, team_index)
+
+    # ── #3721, THE SECOND DOOR — a slice is not shown as the field ──────────
+    #
+    # `_build_game_markets` withholds a short field from `/game-markets`. The
+    # event page draws Bigger Picture from THIS payload, so until this ran the
+    # same fragment reached the same reader on the same page through the other
+    # door. Measured on production 2026-09-18, after the first half was live at
+    # `6044e4b47`: `/events/15195325` (Germany v Greece, Sep 27) served
+    # `other = 0` rows from `/game-markets` and still rendered "OTHER (3)" —
+    # `Germany 3 - 2` at 50% and `Germany 2 - 1` at 49%, two stored legs of a
+    # SEVENTEEN-leg exact-score field, beside a 3-way match result showing only
+    # Germany. A fix that stops at one door has not reached the reader.
+    #
+    # THE TEST IS DELIBERATELY THE SAME ONE, not a second opinion: the rendered
+    # leg count against `venue_leg_count`, which refuses unless the row IS the
+    # venue's ladder. Two doors with two ideas of "complete" would be worse than
+    # the bug — a market would appear on one surface and vanish from the other.
+    #
+    # COUNTED ACROSS BOTH SIDES, which is the one thing this door needs that the
+    # other does not: a 3-way result splits its legs between `home_team_futures`
+    # (Germany) and `away_team_futures` (Greece), so a per-list count would read
+    # every such market as short by construction and withhold the complete ones
+    # too.
+    # COUNTED ON `pre_merge_rows`, not on the lists being filtered — see
+    # CERT-3099 in the function's docstring: after dedup a complete field
+    # carried by two sources reads as 1-of-3 plus 2-of-3 and was erased whole.
+    home_futures, away_futures = _withhold_partial_field_futures(
+        home_futures, away_futures, row_markets, pre_merge_rows=pre_merge_rows
+    )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
     # For "matchup" outcomes (e.g., "Los Angeles Lakers" in a Finals matchup
