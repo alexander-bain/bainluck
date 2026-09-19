@@ -527,13 +527,113 @@ const UNSHIPPABLE_BADGES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Onomastic particles: the little words that are part of a PERSON's surname
+ * rather than a word in front of it. "Alex de Minaur" shortened to "Minaur"
+ * named nobody (#7163) — the event hero printed it against Kasnikowski while
+ * the payload served the name correctly.
+ *
+ * MEASURED, not assembled from particles that sound right, which is what the
+ * issue asked for and what every entry in `CLUB_TYPE_SUFFIXES` above already
+ * does. Sweep over every DISTINCT multi-word `events` team name, both sides,
+ * whole population, 2026-09-19, grouping the token BEFORE the last one:
+ *
+ *     tennis  de 32 · van 13 · la 9 · der 4 · del 2 · von 2 · le 2 · da 1
+ *     mma     de 10 · van 3 · dos 2
+ *
+ * and every one of those 80 names is a person: "Alex de Minaur",
+ * "Van de Zandschulp", "von der Schulenburg", "Meyer auf der Heide",
+ * "Santiago De la Fuente", "Huertas del Pino", "Junior dos Santos", "le Roux".
+ *
+ * THE RULE IS GATED ON THE SPORT, AND THAT IS THE WHOLE DESIGN. The same sweep
+ * over the CLUB sports is what rejects the ungated form the issue proposed:
+ *
+ *     "Sport Lisboa e Benfica"  -> "Benfica" today, "e Benfica" ungated
+ *     "Defensa y Justicia"      -> "Justicia"       "y Justicia"
+ *     "Tigres de la UANL"       -> "UANL"           "la UANL"
+ *     "Heart of Midlothian"     -> "Midlothian"     "of Midlothian"
+ *     "Trinidad and Tobago"     -> "Tobago"         "and Tobago"
+ *
+ * Every one of those is correct today and wrong ungated, so a particle rule
+ * that does not know whether it is looking at a person makes the site worse on
+ * more names than it fixes. `namesAPerson` is the discriminator #4624 already
+ * established for exactly this fork, and it can only ever be opened by a caller
+ * that positively knows its sport — so every caller that does not keeps today's
+ * output to the character.
+ *
+ * Deliberately absent: "e", "y", "of", "and", "the", "en", "in", "at", "nad",
+ * "los" — conjunctions, prepositions and articles that are measured on CLUB
+ * names and name nobody. The second block is not measured as a penultimate
+ * token in a person sport today; each is an unambiguous particle in a language
+ * the measured block already carries, they cost nothing when they never fire,
+ * and they are what lets the walk below cross "auf der" and "van den".
+ */
+const NAME_PARTICLES: ReadonlySet<string> = new Set([
+  "de", // 42  de Minaur, de Sousa
+  "van", // 16  van Rooij, van Zijl
+  "la", // 9   De la Fuente
+  "der", // 4   von der Schulenburg
+  "del", // 2   Huertas del Pino
+  "von", // 2   von Deichmann
+  "le", // 2   le Roux
+  "dos", // 2   dos Santos
+  "da", // 1   Dutra da Silva
+  // Unmeasured as a penultimate token in a person sport; same languages.
+  "auf", // German, and "Meyer auf der Heide" needs it to cross "der"
+  "den", // Dutch, "van den Broek"
+  "das", // Portuguese
+  "do", // Portuguese
+  "di", // Italian
+  "della",
+  "dello",
+  "degli",
+  "du", // French
+  "las", // Spanish, "de las Casas"
+  "ter", // Dutch, "ter Stegen"
+  "ten", // Dutch, "ten Hag"
+  "af", // Scandinavian
+  "av",
+  "zu", // German
+  "el", // Arabic
+  "bin",
+  "abu",
+]);
+
+/**
+ * Index of the first token of a particled surname, walking LEFT from the last
+ * word for as long as the token in front is a particle.
+ *
+ * A loop rather than one step because the particles stack — "van de
+ * Zandschulp", "von der Schulenburg", "Meyer auf der Heide" — and stopping at
+ * one would hand back "de Zandschulp", which is the same defect one token
+ * along. Matching is case-insensitive because the stored spelling varies on
+ * production ("Van de Zandschulp", "Santiago De la Fuente"); the cost of that
+ * is a first name like "Van Johnson" returning the whole name instead of
+ * "Johnson", which is less short and still a string the person is called —
+ * the only direction this module is allowed to move in.
+ */
+function particledSurnameStart(words: string[]): number {
+  let start = words.length - 1;
+  while (
+    start > 0 &&
+    NAME_PARTICLES.has(alphanumeric(words[start - 1]).toLowerCase())
+  ) {
+    start -= 1;
+  }
+  return start;
+}
+
+/**
  * One side's compact name. Prefer this only where the other side is genuinely
  * unavailable — `teamShortNames` below can additionally catch the case where
  * two teams shorten to the SAME word, which one side alone cannot see.
+ *
+ * `sportKey` is optional and opens the particle rule above; omitting it keeps
+ * the shipped last-word behaviour exactly (#7163).
  */
 export function teamShortName(
   name: string | null | undefined,
   abbreviation?: string | null,
+  sportKey?: string | null,
 ): string {
   const full = (name ?? "").trim();
   if (!full) return "";
@@ -547,6 +647,13 @@ export function teamShortName(
   const words = full.split(/\s+/);
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
+  // #7163 — a person's surname carries its particles with it. Gated on the
+  // sport, so a club can never reach this: see `NAME_PARTICLES` for the club
+  // names the ungated form would have broken.
+  if (namesAPerson(sportKey)) {
+    const start = particledSurnameStart(words);
+    if (start < words.length - 1) return words.slice(start).join(" ");
+  }
   return words[words.length - 1];
 }
 
@@ -588,12 +695,13 @@ export interface TeamShortNamePair {
 export function teamShortNames(
   home: TeamNameInput,
   away: TeamNameInput,
+  sportKey?: string | null,
 ): TeamShortNamePair {
   const homeFull = (home.name ?? "").trim();
   const awayFull = (away.name ?? "").trim();
 
-  const homeShort = teamShortName(homeFull);
-  const awayShort = teamShortName(awayFull);
+  const homeShort = teamShortName(homeFull, null, sportKey);
+  const awayShort = teamShortName(awayFull, null, sportKey);
 
   // Did the last-word rule have to give up on this side? (A single-word name
   // has nothing to shorten and has not "given up" — it is already compact.)
