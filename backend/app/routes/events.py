@@ -4177,6 +4177,90 @@ def _headline_contender_outcome_clause(pattern):
     )
 
 
+def _headline_contender_statement(patterns, open_now, *, limit, options=()):
+    """The headline-contender lane's SELECT, for BOTH call sites.
+
+    ONE builder for the same reason `_headline_contender_outcome_clause` is one
+    helper: `/search` and `/typeahead` run the identical lane, #3394 is the
+    standing evidence of what a textual copy costs, and the clause ORDER below is
+    now load-bearing — a copy that drifts on it drifts back into #7243.
+
+    🔴 THE CONTENDER CLAUSES COME BEFORE `open_now`, AND THAT ORDER IS THE FIX
+    (#7243). Both are `WHERE` conjuncts and the result set is identical either
+    way; what changes is which side the planner drives from.
+
+    MEASURED, production `EXPLAIN (ANALYZE)` 2026-09-19, eight ALTERNATING runs
+    per form so a warm/cold confound cannot produce the gap, and on the
+    FULL-ENTITY statement with both loaders — i.e. the statement this builder
+    actually returns, not an `id`-only stand-in, which reads 3-5x cheaper and
+    would have flattered both columns:
+
+        term       open_now first (before)        contenders first (this)
+        dodgers    median 528 ms  max 1,239 ms    median 49 ms  max   100 ms
+        red sox    median 785 ms  max 2,899 ms    median 90 ms  max 2,785 ms
+        yankees    median 764 ms  max 1,657 ms    median 54 ms  max   113 ms
+        chiefs     median 513 ms  max 1,289 ms    median 47 ms  max    65 ms
+
+    Read the `red sox` row before believing the medians: the AFTER column has a
+    2,785 ms sample of its own, one that would still shed. `\\mred\\M` is the
+    pattern `_SEARCH_HEADLINE_ARM_TIMEOUT_MS` measured at 11,660 ms over a
+    million candidate rows, and no clause order rescues a term whose own index
+    scan exceeds the bound. What the reorder moves is the MEDIAN — out of the
+    half-second-to-two-second band where a cold read loses the coin flip, down to
+    a twentieth of the budget.
+
+    THE PLAN SAYS WHY, and the number to keep is the loop count. With `open_now`
+    first the driving scan is `futures_markets` at **1,133 rows** — the whole
+    tier-1 / volume>=10k open population — and the three `NOT EXISTS` arms of
+    `_futures_game_already_played()` run once per row, `loops=1133`, before the
+    contender semi-join ever narrows anything. With the contender clauses first
+    the driver is the pg_trgm bitmap index on `futures_outcomes.name` (503 index
+    rows -> 303 heap -> 253 distinct markets for `dodgers`) and every anti-join
+    node below it runs at `loops=1`.
+
+    WHAT THAT COSTS A READER, which is why a millisecond table is in this
+    docstring at all. The lane is bounded at `_SEARCH_HEADLINE_ARM_TIMEOUT_MS`
+    and a timeout ships the page unchanged, so those 1,133 loops are the
+    difference between a fan typing `dodgers` getting the World Series market at
+    row 1 and getting ten "… Inning Winner" props. It is a COLD-read
+    defect — warm the query survives its bound, which is exactly why it read as
+    intermittent and why #7243's three deterministic ABSENT reads were one cached
+    response body, not three observations.
+
+    This does not rescue every term and does not pretend to. A pattern whose own
+    trigram scan exceeds the bound still sheds: `\\mwinner\\M` alone matches 836
+    candidate markets at 1,971 ms measured the same minute. The bound exists for
+    those, the selectivity lives in the data and not in the string
+    (`_SEARCH_HEADLINE_ARM_TIMEOUT_MS`'s own note), and this ordering cannot and
+    does not change it.
+
+    `options` is the caller's loader set, not a default: `/search` formats the
+    row through the shared outcome pipeline and needs `sport` + `outcomes`, the
+    dropdown needs `outcomes` alone, and defaulting either way would quietly give
+    one surface a loader it never asked to pay for.
+    """
+    stmt = select(FuturesMarket)
+    for option in options:
+        stmt = stmt.options(option)
+    return (
+        stmt.where(
+            FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
+            FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
+            # SELECTIVE FIRST — see the plan note above.
+            *[_headline_contender_outcome_clause(pattern) for pattern in patterns],
+            *open_now,
+        )
+        # Volume desc is the #993 "real-interest signal" the reranker already
+        # trusts, and `id` after it keeps the order TOTAL for the same LAT-P111
+        # reason the main window needs one.
+        .order_by(
+            FuturesMarket.volume.desc().nulls_last(),
+            FuturesMarket.id.asc(),
+        )
+        .limit(limit)
+    )
+
+
 # LAT-P255/#3731: `/api/events/search`'s headline-contender lane bound, the
 # sibling of `_TYPEAHEAD_HEADLINE_ARM_TIMEOUT_MS` below. #3394 gave the DROPDOWN
 # this bound and a savepoint; the RESULTS endpoint runs the identical lane and
@@ -7462,26 +7546,15 @@ async def search_events(
         _headline_savepoint = await db.begin_nested()
         try:
             _headline_result = await db.execute(
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.sport))
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(
-                    FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
-                    FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
-                    *_futures_open_now,
-                    *[
-                        _headline_contender_outcome_clause(pattern)
-                        for pattern in _headline_patterns
-                    ],
+                _headline_contender_statement(
+                    _headline_patterns,
+                    _futures_open_now,
+                    limit=_SEARCH_FUTURES_PAGE,
+                    options=(
+                        selectinload(FuturesMarket.sport),
+                        selectinload(FuturesMarket.outcomes),
+                    ),
                 )
-                # Volume desc is the #993 "real-interest signal" the reranker
-                # already trusts, and `id` after it keeps the order TOTAL for the
-                # same LAT-P111 reason the main window needs one.
-                .order_by(
-                    FuturesMarket.volume.desc().nulls_last(),
-                    FuturesMarket.id.asc(),
-                )
-                .limit(_SEARCH_FUTURES_PAGE)
             )
             _headline_rows = _headline_result.scalars().unique().all()
         except Exception as exc:  # noqa: BLE001
@@ -9469,22 +9542,12 @@ async def typeahead_search(
         _ta_savepoint = await db.begin_nested()
         try:
             _ta_headline_result = await db.execute(
-                select(FuturesMarket)
-                .options(selectinload(FuturesMarket.outcomes))
-                .where(
-                    FuturesMarket.market_tier == HEADLINE_MARKET_TIER,
-                    FuturesMarket.volume >= MIN_CONTENDER_VOLUME,
-                    *_ta_open_now,
-                    *[
-                        _headline_contender_outcome_clause(pattern)
-                        for pattern in _ta_headline_patterns
-                    ],
+                _headline_contender_statement(
+                    _ta_headline_patterns,
+                    _ta_open_now,
+                    limit=5,
+                    options=(selectinload(FuturesMarket.outcomes),),
                 )
-                .order_by(
-                    FuturesMarket.volume.desc().nulls_last(),
-                    FuturesMarket.id.asc(),
-                )
-                .limit(5)
             )
             _ta_headline_rows = [
                 m

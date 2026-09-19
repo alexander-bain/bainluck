@@ -517,12 +517,17 @@ def _headline_shed_handler_in(try_node: ast.Try):
 
 
 def _mentions_headline_select(node: ast.AST) -> bool:
-    """True when the headline lane's own predicate is inside this block."""
-    wanted = {"HEADLINE_MARKET_TIER", "MIN_CONTENDER_VOLUME"}
-    seen = {
-        child.id for child in ast.walk(node) if isinstance(child, ast.Name)
-    }
-    return wanted <= seen
+    """True when the headline lane's own SELECT is inside this block.
+
+    #7243 moved the statement into `_headline_contender_statement`, so the lane no
+    longer names `HEADLINE_MARKET_TIER`/`MIN_CONTENDER_VOLUME` inline — the two
+    constants this used to look for are now one function call away. The select is
+    still exactly where it was, inside the savepointed try; only the token that
+    identifies it moved, and naming the builder identifies it more precisely than
+    two constants that merely happened to appear in it.
+    """
+    seen = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+    return "_headline_contender_statement" in seen
 
 
 if __name__ == "__main__":  # pragma: no cover
