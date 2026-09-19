@@ -14551,6 +14551,106 @@ def _futures_row_market_ids(row: dict) -> set:
     return ids
 
 
+def _fold_event_match_winner_futures(
+    home_futures: list,
+    away_futures: list,
+    row_markets: dict,
+    event_id: int,
+    home_name: Optional[str],
+    away_name: Optional[str],
+) -> tuple[list, list]:
+    """Bigger Picture does not repeat the fixture's own result (#4646).
+
+    🔴 THE EVENT PAGE HAS TWO PAYLOADS AND BOTH WERE DRAWING THE SAME MARKET.
+    `/game-markets` serves the fixture's winner market in `other`, where it
+    renders as one labelled card under **Additional Markets** with all of its
+    legs together.  `/related-futures` then drew the SAME market again, and
+    Bigger Picture has no card for it: its legs are split by side, so the three
+    legs of one three-way arrive as three unlabelled chips in two different
+    columns under a heading that reads `OTHER`.
+
+    Measured on production 2026-09-19, `/events/15305234` (Brighton v Arsenal,
+    kickoff 11:30Z).  Market `60481697` "Brighton vs Arsenal" was served by BOTH
+    doors — `/game-markets` `other` = Arsenal .575 / Tie .245 / Brighton .195,
+    drawn as the Additional Markets card; `/related-futures` = the same three
+    legs, `Tie` and `Brighton` in `home_team_futures` and `Arsenal` in
+    `away_team_futures`, drawn at 390px as `OTHER (2)` → "Tie 25%",
+    "Brighton 20%" and `OTHER (3)` → "Arsenal 57%".  Same market, same prices,
+    twice on one page, and the second copy names no question.
+
+    The section's own subtitle is **"Season context"**.  A fixture's own result
+    is not season context, it is the page's headline — it is already the hero.
+
+    ═══ THE PREDICATE IS THE ONE DOOR ONE ALREADY USES ═══
+
+    :func:`_market_is_event_match_winner` is #6799's test for "is this market,
+    as served, nothing but who wins the match", and `/game-markets` folds
+    duplicate winner cards with it one door up this file.  Reusing it is the
+    whole point: the two doors cannot drift into disagreeing about what the
+    fixture's own result market IS, which is exactly how this page came to draw
+    one market two ways.  No new name rule is written here.
+
+    🔴 THE TEST SPANS BOTH LISTS, AND EVALUATING PER LIST WOULD HALF-FIX IT.
+    `_market_is_event_match_winner` requires at least two sides.  This door
+    splits a market's legs by side, so Brighton's market reads `{draw, home}` in
+    the home list and `{away}` in the away list: per list it would fold the two
+    home chips and leave "Arsenal 57%" behind alone — a worse page than the one
+    it started from.  The rows are therefore grouped by `market_id` across both
+    lists first, the market is judged once, and every leg of a folding market
+    goes.  Same reason :func:`_withhold_partial_field_futures` counts across
+    both lists, and the same three-way soccer shape that forces it.
+
+    🔴 BOUNDED TO MARKETS DOOR ONE OWNS, SO A FOLD CANNOT BE A DELETION.
+    Only a market LINKED to this event (`event_id == event_id`) is a candidate,
+    which is the population `/game-markets` draws from.  That is what makes this
+    a de-duplication rather than a withholding: the copy that stays is the
+    labelled one.  An unlinked market that merely names both clubs — a series
+    market, another meeting of the same two clubs, a neighbouring fixture — is
+    not this event's result and is never folded, whatever its legs say.
+
+    ⚠️ THIS DOOR RESOLVES BARE YES/NO AND DOOR ONE DOES NOT, SO THE PREDICATE IS
+    STRICTLY LESS CONSERVATIVE HERE — DELIBERATELY.  `_match_winner_side`'s own
+    docstring records that `game-markets` never calls
+    :func:`resolve_binary_matchup_outcome_name`, so a Polymarket moneyline
+    published as bare `Yes`/`No` stays unrecognised there.  These rows carry
+    `resolved_name`, so such a market answers `{home, away}` here and folds.
+    That is the right answer — it IS the fixture's result, published under the
+    venue's own leg names — but it means door one can keep a card this door
+    drops, and that asymmetry is a fact about the two payloads, not a bug in
+    either.  Named here so the next reader does not read it as drift.
+
+    Runs BEFORE the merges, where every leg still carries its own market's id.
+    After `dedup_by_merge_group` a leg can be speaking for a market it did not
+    come from (see :func:`_snapshot_row_market_ids`), and a fold keyed on
+    `market_id` would then take legs belonging to markets it never judged.
+    """
+    if not home_futures and not away_futures:
+        return home_futures, away_futures
+
+    rows_by_market: dict[int, list] = {}
+    for row in list(home_futures) + list(away_futures):
+        market_id = row.get("market_id")
+        if market_id is None:
+            continue
+        rows_by_market.setdefault(market_id, []).append(row)
+
+    folded: set[int] = set()
+    for market_id, rows in rows_by_market.items():
+        market = row_markets.get(market_id)
+        if market is None or market.event_id != event_id:
+            continue
+        if _market_is_event_match_winner(rows, home_name, away_name):
+            folded.add(market_id)
+
+    if not folded:
+        return home_futures, away_futures
+
+    return (
+        [r for r in home_futures if r.get("market_id") not in folded],
+        [r for r in away_futures if r.get("market_id") not in folded],
+    )
+
+
 def _snapshot_row_market_ids(rows: list) -> list:
     """Freeze each row's market attribution as data (#7068 / CERT-3101).
 
@@ -20536,6 +20636,19 @@ async def _build_related_futures(
             home_futures.append(entry)
         else:
             away_futures.append(entry)
+
+    # #4646 — the fixture's own result belongs to `/game-markets`, which draws it
+    # as one labelled card. Drawn again here it becomes unlabelled chips split
+    # across two columns. Folded BEFORE the merges, while every leg still carries
+    # its own market's id.
+    home_futures, away_futures = _fold_event_match_winner_futures(
+        home_futures,
+        away_futures,
+        row_markets,
+        event_id,
+        event.home_team_name,
+        event.away_team_name,
+    )
 
     # ── Cross-source deduplication ──────────────────────────────────
     # Merge entries with the same (merge_group, outcome_name) across sources.
