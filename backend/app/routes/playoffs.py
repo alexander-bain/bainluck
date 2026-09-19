@@ -3779,6 +3779,104 @@ def _external_id_prefix_condition(prefix: str):
     )
 
 
+#: The market tiers a grid COLUMN can be populated from. The resolved backfill
+#: has always used this set (``market_tier.in_([1, 2, 3, 4])``); LAT-P332 gives
+#: it a name so the candidate scan and the backfill cannot drift apart, and so a
+#: future tier is added in one place rather than two.
+GRID_COLUMN_TIERS = (1, 2, 3, 4)
+
+
+def _resolved_tier_bound():
+    """A ``resolved`` ticker row is a candidate only at a tier a column can use.
+
+    ═══ LAT-P332 / #7124 — 57,218 rows an hour, to produce nothing ═══
+
+    The ticker arm admits ``resolved`` because division winners settle and the
+    grid still has to show them. For an OUT-of-season league that costs nothing.
+    For an IN-season one it admits the whole season of per-game Kalshi markets:
+    measured on production 2026-09-19, ``KXMLB*`` carried **232 open rows and
+    42,714 resolved ones**, 39,504 of them ``market_tier = 5`` — innings, first-
+    run, spreads, totals, strikeouts, player props. The phase-1 scan selects
+    FULL ``FuturesMarket`` entities, so at the plan's 1,538-byte row width the
+    MLB grid moved **~66 MB across the wire every hour to build a 30-row grid**,
+    then constructed 43K ORM objects and regex-matched every one of them.
+
+    That is the residual #7124 was actually about. The warm half of that issue
+    (the ``GRID_WARM_LEAGUES`` seat) gave ``mlb`` the full 120 s ceiling instead
+    of 65.75 s; the very first pass on the new code then failed at 24.3 s with
+    ``QueryCanceledError: canceling statement due to statement timeout`` — this
+    route's own ``SET LOCAL statement_timeout = '20s'`` firing on that scan.
+
+    🔴 **The bound is measured lossless, not argued.** ``_match_market_to_column``
+    has three doors — a tier-matched rule, any rule's name pattern, and the
+    ``classify_market_stage`` fallback — so a proof against the config patterns
+    alone would be true and beside the point. Every one of the 57,218 rows this
+    drops across all 14 league configs was paged out of production and run
+    through the REAL ``_market_passes_league_filter`` + ``_match_market_to_column``
+    (``.lat587-lossless-full-matcher.py``, 2026-09-19):
+
+    ===================  ==========  ===================  ================
+    league               dropped     pass league filter   reach a column
+    ===================  ==========  ===================  ================
+    mlb                  39,504      39,504               **0**
+    nba                  7,366       7,366                **0**
+    wnba                 5,474       5,474                **0**
+    nhl                  2,806       2,806                **0**
+    nfl                  2,068       2,068                **0**
+    other 9 leagues      0           0                    0
+    ===================  ==========  ===================  ================
+
+    Every dropped row passes the league filter — the Python side is not what
+    saves us, the column matcher is — and none reaches a column. The instrument
+    is not vacuous: run over the rows this KEEPS, the same code finds 23
+    resolved rows that DO reach a column (nba 8, nhl 5, ncaa-basketball 5,
+    ncaa-women-basketball 3, wnba 2), which is why ``resolved`` is bounded here
+    rather than dropped.
+
+    ``market_tier IS NULL`` is kept deliberately: an untiered row is unclassified,
+    not classified-as-junk, and it must not vanish from a grid silently. Today
+    there are none in any ticker arm, so this costs nothing and fails open.
+
+    ═══ WHAT THIS BUYS, AND WHAT IT DOES NOT ═══
+
+    🔴 **It is not a scan fix, and the query plan says so.** Alternating
+    ``EXPLAIN (ANALYZE, BUFFERS)`` on production, three rounds, MLB:
+
+    ==========  ========  ========  =============  ========
+    variant     ms        rows      heap blocks    returned
+    ==========  ========  ========  =============  ========
+    before      204       43,199    44,000         66.4 MB
+    after       553-1004  3,695     **44,000**     5.7 MB
+    ==========  ========  ========  =============  ========
+
+    ``market_tier`` lives in the heap, so the bitmap is unchanged and every one
+    of those 44,000 blocks is still read; the predicate is evaluated on rows the
+    scan already had to touch, which is why the server-side statement gets a few
+    hundred ms SLOWER. Reported here rather than left for someone to discover:
+    the cold-cache scan of 44,000 blocks is what can still exceed the route's 20 s
+    ``statement_timeout``, and closing THAT needs a partial index (DDL, attended,
+    gotcha #31) which is not in this change.
+
+    What it buys is everything the plan cannot see — 60.7 MB not sent and 39,504
+    ORM entities not built, per league, per hourly pass. That is where the grid's
+    time actually goes. Across the five leagues with a ticker arm, the 06:25Z run
+    report's own durations are linear in candidate count at **r = 0.993**:
+
+        duration_s = 0.395 ms x candidates + 0.94 s
+        nba  9,103 -> 4.2 s   nhl 3,439 -> 2.7 s   nfl 4,744 -> 3.8 s
+        wnba 6,094 -> 2.2 s   mlb 43,199 -> 18.1 s
+
+    — against a DB scan of ~200 ms, so ~0.4 ms per candidate is app-side work on
+    markets that are discarded a moment later. The model predicts the five
+    leagues fall from 31.0 s to 8.4 s a pass, ``mlb`` 18.1 s -> 2.4 s. It is a
+    PREDICTION; the after-check grades the run report, not this docstring.
+    """
+    return or_(
+        FuturesMarket.market_tier.is_(None),
+        FuturesMarket.market_tier.in_(GRID_COLUMN_TIERS),
+    )
+
+
 def _build_grid_market_filters(config: LeagueConfig):
     """Build the grid's candidate-market filters: ``(with_status, bare)``.
 
@@ -3868,7 +3966,9 @@ def _build_grid_market_filters(config: LeagueConfig):
     category_conditions = _build_league_name_conditions(config)
 
     # Ticker-prefixed markets (Kalshi/OddsAPI) can be resolved (e.g. division
-    # winners after the regular season). Category-matched (Polymarket) stay
+    # winners after the regular season) — but only at a tier a column can use,
+    # or an in-season league's whole settled per-game inventory rides along
+    # (LAT-P332, `_resolved_tier_bound`). Category-matched (Polymarket) stay
     # open/closed to avoid loading thousands of resolved markets.
     ticker_filter = or_(*id_space_conditions) if id_space_conditions else None
     category_filter = or_(*category_conditions) if category_conditions else None
@@ -3876,7 +3976,16 @@ def _build_grid_market_filters(config: LeagueConfig):
     status_conditions = []
     if ticker_filter is not None:
         status_conditions.append(
-            and_(ticker_filter, FuturesMarket.status.in_(("open", "closed", "resolved")))
+            and_(
+                ticker_filter,
+                or_(
+                    FuturesMarket.status.in_(("open", "closed")),
+                    and_(
+                        FuturesMarket.status == "resolved",
+                        _resolved_tier_bound(),
+                    ),
+                ),
+            )
         )
     if category_filter is not None:
         status_conditions.append(
@@ -4205,7 +4314,7 @@ async def get_playoff_grid(
                 .where(
                     market_filter,
                     FuturesMarket.status == "resolved",
-                    FuturesMarket.market_tier.in_([1, 2, 3, 4]),
+                    FuturesMarket.market_tier.in_(GRID_COLUMN_TIERS),
                 )
                 .options(selectinload(FuturesMarket.outcomes))
                 .limit(50)
