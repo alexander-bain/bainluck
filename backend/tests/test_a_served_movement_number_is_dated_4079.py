@@ -6,20 +6,35 @@
 only when a banked observation supports the amount, and loses the word
 otherwise. It deliberately touched nothing else, and stated so.
 
-What it could not reach is the NUMBER. Three serving sites hand the clients a
-movement value off `probability_change_24h` — `new - previous` at WRITE time,
-for a previous write of unknown age — and the clients draw it whether or not a
-caption was suppressed:
+What it could not reach is the NUMBER. Serving sites hand the clients a movement
+value off `probability_change_24h` — `new - previous` at WRITE time, for a
+previous write of unknown age — and the clients draw it whether or not a caption
+was suppressed:
 
 * `top_outcomes[].movement` — `MovementBadge(movement: leader.movement)` on the
   Discover card, in every shipped iOS build;
 * `discover_card.distribution_outcomes[].movement` — the per-row arrow;
-* `/api/futures/{id}`'s `probability_change_24h` — `FuturesDetailView`'s
-  `detailMovementBadge(leader.probabilityChange24h)` and every `OutcomeRow`.
+* `matched_outcomes[].movement` — the same badge on My Stuff.
 
-That third one is Alex's phone line 21 verbatim: a green **+30.5** beside a
-plotted line that had barely moved, with **-30 to -41** on the rungs below it.
-The chart was the honest half of that screen.
+Alex's phone line 21 names the green **+30.5** arrow, and that arrow is this
+family of fields.
+
+## THE DETAIL LADDER IS NOT IN THIS FILE, AND THAT IS A DECISION
+
+`/api/futures/{id}`'s `probability_change_24h` — `FuturesDetailView`'s
+`detailMovementBadge` and every `OutcomeRow` — was in the first draft of this
+ship and was taken out when `81083c5cc` landed on master six hours earlier:
+another lane's producer half (`test_detail_dates_its_movement_claim_4079.py`)
+adds `price_changed_at` to that same dict and pins, deliberately, that the delta
+beside it is served exactly as before. Two answers to one field is precisely the
+overlap the directive that commissioned this work told us not to start.
+
+Their measurement is the substantive half of the argument: the bank covers
+**14.22% of ladder rows** (2,286 of 16,074), and the detail page renders the
+WHOLE field, so dating the AMOUNT there would blank most of a column. A card
+badge is one claim about one row and can go quiet; a ladder column cannot. The
+open question — does the ladder eventually take a dated amount where the bank
+has one, beside their instant — is codex's, and is named in the offer.
 
 ## MEASURED, on the 935 outcomes behind page one's 80 futures cards
 
@@ -37,9 +52,9 @@ Eight of a hundred and two. The rest were a number nothing could date.
 
 ## WHAT THIS FILE PINS, AND WHAT IT MUST NOT
 
-Every assertion runs a REAL serializer and reads the served dict — `_score_futures`
-for the card, `_format_market_detail` for the ladder — because a ban on a
-producer is not a ban on a surface (the rule
+Every assertion runs a REAL serializer and reads the served dict —
+`_score_futures` for Discover and My Stuff, `_score_sports_mode_futures` for
+`/sports` — because a ban on a producer is not a ban on a surface (the rule
 `test_score_futures_serves_no_diagnostic_headline_4160` states, and #7226 is the
 same lesson arriving from the client side: a server-side gate on a CAPTION left
 the badge redrawing the raw field).
@@ -68,7 +83,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.routes.feed import _score_futures, _score_sports_mode_futures
-from app.routes.futures import _format_market_detail
 from app.utils.futures_market_snapshot import (
     DATED_BASIS_METADATA_KEY,
     DATED_BASIS_MIN_AGE_HOURS,
@@ -314,23 +328,6 @@ async def test_the_distribution_row_is_dated_by_the_same_subtraction():
         _row(card, "Grand Theft Auto VI")["movement"]
     )
     assert _distribution_row(card, "Resident Evil Requiem")["movement"] is None
-
-
-@pytest.mark.asyncio
-async def test_the_detail_ladder_serves_the_dated_move_too():
-    """`/api/futures/{id}` — the field `FuturesDetailView` draws its badge from.
-
-    The route this file's specimen was READ from, and the surface Alex's line 21
-    is about. Served through the real `_format_market_detail`, so a fix that
-    lived only in the feed cannot pass it.
-    """
-    market = _game_awards_market()
-    detail = _format_market_detail(market, ["kalshi"], set())
-    by_name = {o["name"]: o for o in detail["outcomes"]}
-    assert by_name["Grand Theft Auto VI"]["probability_change_24h"] == (
-        pytest.approx(0.66 - 0.705)
-    )
-    assert by_name["Resident Evil Requiem"]["probability_change_24h"] is None
 
 
 @pytest.mark.asyncio
@@ -612,8 +609,6 @@ async def test_the_wire_contract_is_unchanged_so_shipped_CLIENTS_still_read_it()
     assert "movement" in _distribution_row(card, "Grand Theft Auto VI")
     for row in card["discover_card"]["distribution_outcomes"]:
         assert "movement_stored" not in row
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
-    assert "probability_change_24h" in detail["outcomes"][0]
 
 
 def test_the_number_is_on_the_STORED_scale_not_a_display_scaled_one():

@@ -19,7 +19,6 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
-from app.utils.futures_market_snapshot import dated_movement_points
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     POLYMARKET_BOOKMAKER,
@@ -5886,31 +5885,7 @@ def _format_market_detail(
             # pipeline never reaches still carries something.
             "rank": o.rank,
             "rank_change_24h": o.rank_change_24h,
-            # #4079 NUMERIC HALF — THE LADDER'S 24h COLUMN IS DATED OR ABSENT.
-            #
-            # This is the field behind Alex's phone line 21: `FuturesDetailView`
-            # reads it as the hero's 24h change (`detailMovementBadge(leader.
-            # probabilityChange24h)`) and `OutcomeRow` prints it on every rung —
-            # a green `+30.5` above a plotted line that had barely moved, and
-            # `-30` to `-41` on the rungs below it. The stored column is
-            # `new - previous` at WRITE time, for a previous write of unknown
-            # age, so it answers a different question from the one the column's
-            # name and this page both ask.
-            #
-            # `dated_movement_points` subtracts a price the sweep actually
-            # OBSERVED, and returns None wherever it cannot date the day. The
-            # value changes; the field, its name and its shape do not — which is
-            # deliberate, because the clients that draw this badge ship on the
-            # App Store's clock and a new field would reach nobody for weeks
-            # (#7226 is that lesson from the other side).
-            #
-            # 🔴 The COLUMN is untouched, here and everywhere. `/api/futures/
-            # movers` still ranks on it, `compute_futures_highlight` still picks
-            # its subject with it, and a row the writers left NULL is still
-            # silent here even when the bank could date a large move for it.
-            "probability_change_24h": dated_movement_points(
-                market, o.id, o.current_probability, o.probability_change_24h
-            ),
+            "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "opening_american_odds": o.opening_american_odds,
             "is_winner": o.is_winner,
