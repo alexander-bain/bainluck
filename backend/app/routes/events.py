@@ -7509,6 +7509,36 @@ async def search_events(
                 "search futures REFILL timed out for %r — shipping the short "
                 "page rather than nothing", q
             )
+            # AND SAY SO, FOR THE REASON THE HEADLINE LANE BELOW SAYS IT (#7243).
+            #
+            # This lane runs ONLY when the bucket already collapsed — the gate
+            # above is "the window came back saturated AND dedup could not fill
+            # the page" — so by the time this handler runs the page is KNOWN
+            # short and this query was the one thing that could have filled it.
+            # The log line says exactly that ("shipping the short page"). Without
+            # the mark, LAT-P007's rule at the cache write below does not fire and
+            # that short page is written to the response cache and served to every
+            # reader of the term for the full SEARCH_RESPONSE_TTL_SECONDS.
+            #
+            # 🔴 THIS CORRECTS MY OWN CLAIM ON THE SIBLING FIX. `d45510b58`'s
+            # comment below states the headline lane "was the only shed path in
+            # the handler that never joined `degraded`". That was wrong: this
+            # handler is a second one, and it was missed because the census that
+            # produced the claim walked the paths that mark and not the paths that
+            # shed. The two are mutually exclusive and so never co-occur — a
+            # `futures` shed empties `futures_markets_raw`, which fails this
+            # lane's own `>= _SEARCH_FUTURES_WINDOW` gate — which is precisely why
+            # no observation of one could ever reveal the other.
+            #
+            # #3399's LOOP CANNOT FORM HERE, and the reason is structural rather
+            # than measured: unlike the headline lane this arm has NO bound of its
+            # own (see the note above — it is the same query one page further in,
+            # so the request deadline is the right budget). Shedding therefore
+            # requires burning the full 20,000 ms deadline, so it cannot be the
+            # deterministic every-time shed that made four typeahead head terms
+            # permanently uncacheable under LAT-P241. A term that reaches this
+            # handler has a far larger problem than its cache entry.
+            degraded.append("futures_refill")
             # The savepoint rollback restored the transaction; re-arm the
             # statement timeout for the stages that follow and leave the
             # session — and the futures rows it holds — alone.
@@ -7567,6 +7597,28 @@ async def search_events(
     futures_markets = [
         m for m in deduped_futures if not _futures_card_has_no_answer(m)
     ][:_SEARCH_FUTURES_PAGE]  # flat list (unchanged shape)
+    # THE STAGE BOUNDARY, AND IT IS HERE BECAUSE THE OLD ONE MEASURED TWO LANES.
+    #
+    # Until this line, `_mark("futures")` above and `_mark("headline_contenders")`
+    # below bracketed EVERYTHING between them: the re-rank, the dedup, the
+    # unbounded REFILL query, this withdrawal filter, and only then the bounded
+    # headline lane. So `headline_contenders` was never that lane's cost — it was
+    # the sum of two DB lanes with different budgets (the refill runs against the
+    # 20,000 ms request deadline, the headline lane against its own 2,000 ms
+    # bound), and reading it as one is what a stage clock is for.
+    #
+    # MEASURED COST OF NOT HAVING IT, #7243's after-check on release `ea8438fe`:
+    # 35 reads of `q=red&debug_timing=1` came back 7/7 marked on the shed reads
+    # and 28/28 unmarked on the completing ones — clean — EXCEPT one 2,004 ms read
+    # that did not mark. That row reads as a missed shed against a "≥2,000 ms
+    # marks" criterion and cost 20 extra samples to clear by hand. It was not a
+    # miss: a real shed costs the 2,000 ms bound PLUS the savepoint rollback and
+    # the timeout re-arm and therefore lands at 2,018-2,037 ms, while a merely
+    # slow COMPLETING stage can sit just under the bound and is correctly cached.
+    # With the two lanes split, that row is self-explaining instead of an
+    # anomaly, and the honest criterion — every SHED marks, no COMPLETING read
+    # marks — is readable straight off the stage clock.
+    _mark("futures_refill")
 
     # UX-P259/#2579: the tournament a player can win is reachable by their name.
     #
@@ -7699,7 +7751,10 @@ async def search_events(
             # a degraded answer is never cached, because pinning an incomplete
             # body for the full `SEARCH_RESPONSE_TTL_SECONDS` — 180 s by ruling
             # D81 — turns one slow moment into a sticky wrong answer. This lane
-            # was the only shed path in the handler that never joined `degraded`,
+            # was one of two shed paths in the handler that never joined
+            # `degraded` (CORRECTED: `d45510b58` said "the only" — the futures
+            # REFILL lane above is the other, and it is fixed in the same commit
+            # as this note; its handler carries why the census missed it),
             # so a single 2,000 ms excursion published a `red sox` page with no
             # `MLB World Series Champion 2026` card to everyone asking that
             # question for the next three minutes.

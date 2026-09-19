@@ -983,11 +983,18 @@ def test_a_shed_headline_contender_lane_marks_the_answer_degraded():
 
     The headline-contender lane is bounded at `_SEARCH_HEADLINE_ARM_TIMEOUT_MS`
     and a shed ships the page WITHOUT the championship card it exists to
-    promote. Every other shed path in the handler appends to `degraded`, so
-    LAT-P007's rule above keeps the thin body out of the cache; this one did
-    not, and a single 2,000 ms excursion therefore pinned a `red sox` page with
-    no `MLB World Series Champion 2026` card in front of every reader for the
-    full 180 s TTL.
+    promote. LAT-P007's rule above keeps a marked thin body out of the cache;
+    this lane did not mark, and a single 2,000 ms excursion therefore pinned a
+    `red sox` page with no `MLB World Series Champion 2026` card in front of
+    every reader for the full 180 s TTL.
+
+    🔴 CORRECTED. This docstring used to read "Every other shed path in the
+    handler appends to `degraded`". That was false — the futures REFILL lane was
+    a second unmarked shed path, and it is guarded by
+    `test_a_shed_futures_refill_marks_the_answer_degraded` below. The claim is
+    not repeated here in any form: the two guards each assert their own lane and
+    neither asserts anything about the rest of the handler, because that is the
+    claim that was wrong.
 
     Measured on production 2026-09-19 after `bfd08691`, `?debug_timing=1` so
     every probe is a real miss-path build: `red` shed 1/5 and `red sox` 1/45,
@@ -1051,6 +1058,156 @@ def test_a_shed_headline_contender_lane_marks_the_answer_degraded():
         '`"headline_contenders"` to `degraded`, so the thin page it ships is '
         "written to the response cache and served for the full "
         "SEARCH_RESPONSE_TTL_SECONDS (#7243)"
+    )
+
+
+def test_a_shed_futures_refill_marks_the_answer_degraded():
+    """#7243, the SECOND unmarked shed path — the one `d45510b58`'s census missed.
+
+    The refill lane runs only when the futures bucket already COLLAPSED: its gate
+    is "the window came back saturated AND dedup could not fill the page". So
+    when its query sheds, the handler ships a page it KNOWS is short — its own
+    log line says "shipping the short page" — and without a `degraded` mark
+    LAT-P007's rule does not fire and that short page is written to the response
+    cache for the full TTL.
+
+    WHY THE FIRST CENSUS MISSED IT, since that is the reusable part: the claim
+    "every other shed path appends" was produced by walking the paths that MARK,
+    not the paths that SHED. This lane and the `futures` lane are mutually
+    exclusive — a `futures` shed empties `futures_markets_raw`, which fails this
+    lane's own `>= _SEARCH_FUTURES_WINDOW` gate — so no observation of one could
+    ever have revealed the other.
+
+    POSITIONAL, for the reason the headline guard states: `"degraded.append" in
+    src` is satisfied by a call anywhere in a 3,000-line handler, so this walks
+    to the `except` branch carrying THIS lane's own log text and looks inside it.
+    """
+    import ast
+
+    from app.routes import events
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(events.search_events)))
+
+    def _is_refill_timeout_handler(handler: ast.ExceptHandler) -> bool:
+        for node in ast.walk(handler):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if "futures REFILL timed out" in node.value:
+                    return True
+        return False
+
+    def _appends_degraded(node: ast.AST, label: str) -> bool:
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Call):
+                continue
+            fn = sub.func
+            if (
+                isinstance(fn, ast.Attribute)
+                and fn.attr == "append"
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id == "degraded"
+                and len(sub.args) == 1
+                and isinstance(sub.args[0], ast.Constant)
+                and sub.args[0].value == label
+            ):
+                return True
+        return False
+
+    handlers = [
+        h
+        for h in ast.walk(tree)
+        if isinstance(h, ast.ExceptHandler) and _is_refill_timeout_handler(h)
+    ]
+    assert handlers, (
+        "no except-handler in search_events logs the futures REFILL timeout — "
+        "the shed path this guard is aimed at has moved or gone"
+    )
+    assert len(handlers) == 1, (
+        f"expected exactly one futures-refill shed path, found {len(handlers)}"
+    )
+    assert _appends_degraded(handlers[0], "futures_refill"), (
+        'the futures-refill shed path does not append `"futures_refill"` to '
+        "`degraded`, so the short page it knowingly ships is written to the "
+        "response cache and served for the full SEARCH_RESPONSE_TTL_SECONDS "
+        "(#7243)"
+    )
+
+
+def test_the_headline_stage_clock_measures_one_lane_and_not_two():
+    """#7243: `headline_contenders` was the sum of two lanes with two budgets.
+
+    `_mark` records a DELTA and resets, so the label attributes everything since
+    the previous mark. With only `futures` and `headline_contenders` bracketing
+    the span, `headline_contenders` covered the re-rank, the dedup, the UNBOUNDED
+    refill query (request deadline, 20,000 ms), the withdrawal filter and only
+    then the bounded (2,000 ms) headline lane.
+
+    That cost a real measurement: in #7243's after-check on `ea8438fe`, one
+    2,004 ms read that did not mark `degraded` read as a missed shed and took 20
+    extra samples to clear by hand. It was a slow COMPLETING stage, not a shed —
+    a shed pays the bound plus rollback plus re-arm and lands at 2,018-2,037 ms.
+
+    ORDER IS THE ASSERTION, NOT PRESENCE. A mutant that keeps the new mark but
+    hoists it up next to `_mark("futures")` leaves `futures_refill` at ~0 ms and
+    the conflation entirely intact, which is exactly the bug — so presence alone
+    is a vacuous guard here. This pins the mark BETWEEN the refill's own shed
+    handler and the headline lane's savepoint, by source position.
+    """
+    import ast
+
+    from app.routes import events
+
+    src = textwrap.dedent(inspect.getsource(events.search_events))
+    tree = ast.parse(src)
+
+    marks: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_mark"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            marks.setdefault(node.args[0].value, node.lineno)
+
+    for label in ("futures", "futures_refill", "headline_contenders"):
+        assert label in marks, (
+            f"search_events no longer marks a `{label}` stage — the stage clock "
+            "this guard reads has been renamed or removed"
+        )
+
+    # The refill's shed handler and the headline lane's savepoint, by position.
+    refill_shed_line = next(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "futures REFILL timed out" in node.value
+    )
+    headline_shed_line = next(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "headline-contender lane timed out" in node.value
+    )
+
+    assert marks["futures"] < refill_shed_line, (
+        "the `futures` mark no longer precedes the refill lane, so the stage "
+        "boundaries this guard reasons about have moved"
+    )
+    assert refill_shed_line < marks["futures_refill"], (
+        "`_mark(\"futures_refill\")` is ABOVE the refill lane's own shed handler, "
+        "so the refill's cost is still being attributed to the stage after it — "
+        "the split is cosmetic and `headline_contenders` still measures two lanes"
+    )
+    assert marks["futures_refill"] < headline_shed_line, (
+        "`_mark(\"futures_refill\")` sits below the headline lane, so that lane's "
+        "cost is now attributed to the refill stage — the conflation has been "
+        "moved, not removed"
+    )
+    assert headline_shed_line < marks["headline_contenders"], (
+        "the `headline_contenders` mark no longer follows the headline lane"
     )
 
 
