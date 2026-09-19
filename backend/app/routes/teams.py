@@ -638,6 +638,92 @@ def _season_base_year(season: str | None) -> int | None:
     return int(m.group(0)) if m else None
 
 
+# Markets whose question is not the one their tier claims (#1752). `market_tier`
+# is semantic — 1=championship, 2=conference, 3=awards, 4=division — but it is
+# mis-assigned for whole families, and the path prints the TIER as the label
+# ("Win Division 99%"), so a mis-tiered market renders as a title claim the team
+# never made. Measured on production 2026-09-19 over the 892 legs this query
+# selects: 63 single-market cells carried a "Playoff Qualifiers" market at tier 4
+# (Boston is 99.5% to qualify and 1% to win the AL East — the step would have
+# read "Win Division 99%"), award markets ("NL Reliever of the Year Winner?",
+# "Bear Bryant Coach of the Year Winner") sat at tier 1 beside real championship
+# markets, and a "Championship Halftime Show: Headliner" market sat at tier 1.
+#
+# Excluding them is fail-closed and matches withhold-never-rewrite: a step we
+# cannot label truthfully is dropped, never relabelled. The mis-tiering itself is
+# upstream of this route and is filed separately.
+_NOT_A_TITLE_QUESTION: tuple[str, ...] = (
+    "playoff qualifier",  # qualifying for the playoffs is not winning a title
+    "of the year",  # awards are tier 3's question, not a championship
+    "halftime",  # entertainment markets carrying a football tier
+)
+
+
+def _answers_its_tier(market_name: str | None) -> bool:
+    """False when a market's question is not the one its tier would label it with."""
+    lowered = (market_name or "").lower()
+    return not any(fragment in lowered for fragment in _NOT_A_TITLE_QUESTION)
+
+
+# The averaging below assumes every candidate in a tier is the SAME question
+# priced by different sources ("MLB World Series Champion 2026" and "Pro Baseball
+# Champion" agree to 0.4pp). When candidates disagree they are different
+# questions — or, measured on production, different TEAMS sharing one team_id
+# ("New York Y" and "New York M" both resolve to 6610) — and nothing in the row
+# says which one the tier is about, so the step is withheld rather than averaged
+# into a number that describes neither.
+_TIER_AGREEMENT_BAR = 0.05
+
+
+def _tier_candidates_agree(probabilities: list[float]) -> bool:
+    """True when every source priced this tier's question within the bar.
+
+    The spread is rounded to the 6 decimals ``current_probability`` is stored
+    with before it meets the bar: binary floats put ``0.10`` and ``0.15`` a
+    hair's breadth either side of a 0.05 bar depending on which two values
+    produced them, which would make the boundary decide by rounding error.
+    """
+    if not probabilities:
+        return False
+    spread = round(max(probabilities) - min(probabilities), 6)
+    return spread <= _TIER_AGREEMENT_BAR
+
+
+def _championship_path_stmt(team_id: int):
+    """The tier-1/2/4 selection for a team's championship path.
+
+    Hoisted out of :func:`_get_championship_path` so a test can COMPILE it. The
+    caller swallows every exception into an empty path, so a statement that
+    cannot compile is indistinguishable from a team with no markets — which is
+    how #1752 stayed invisible while the section was dark on every team page.
+    """
+    # Markets with a graded winner are settled (gotcha #33: status stays 'open').
+    # `.correlate(FuturesMarket)` is load-bearing (#1752): without it SQLAlchemy
+    # auto-correlates BOTH entities, the subquery is left with no FROM clause and
+    # the whole statement raises InvalidRequestError at compile time.
+    graded = (
+        select(FuturesOutcome.id)
+        .where(
+            FuturesOutcome.market_id == FuturesMarket.id,
+            FuturesOutcome.is_winner.is_(True),
+        )
+        .correlate(FuturesMarket)
+    )
+
+    return (
+        select(FuturesOutcome, FuturesMarket)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            FuturesOutcome.team_id == team_id,
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            FuturesMarket.market_tier.in_([1, 2, 4]),
+            ~graded.exists(),
+        )
+        .order_by(FuturesMarket.market_tier.asc())
+    )
+
+
 async def _get_championship_path(
     team_id: int,
     db: AsyncSession,
@@ -654,33 +740,18 @@ async def _get_championship_path(
       2. Prior-season markets — the market's season is numerically before the
          league's current season.
       3. Future-season markets (e.g. "2027 Champion" when it is 2025-26).
+      4. Markets whose question is not the one their tier labels them with
+         (#1752) — see :data:`_NOT_A_TITLE_QUESTION`.
 
     Averages probabilities when multiple sources provide markets at the same
-    tier, and stamps each entry with the season it describes.
+    tier, and stamps each entry with the season it describes. A tier whose
+    candidates DISAGREE is withheld rather than averaged (#1752): the averaging
+    premise is "one question, several sources", and when it fails the mean
+    describes none of them.
     """
     now = now or datetime.now(timezone.utc)
 
-    # Markets with a graded winner are settled (gotcha #33: status stays 'open').
-    graded = (
-        select(FuturesOutcome.id)
-        .where(
-            FuturesOutcome.market_id == FuturesMarket.id,
-            FuturesOutcome.is_winner.is_(True),
-        )
-    )
-
-    result = await db.execute(
-        select(FuturesOutcome, FuturesMarket)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            FuturesOutcome.team_id == team_id,
-            FuturesMarket.status == "open",
-            FuturesMarket.event_id.is_(None),
-            FuturesMarket.market_tier.in_([1, 2, 4]),
-            ~graded.exists(),
-        )
-        .order_by(FuturesMarket.market_tier.asc())
-    )
+    result = await db.execute(_championship_path_stmt(team_id))
 
     # Current-season cutoff: the maximum year that counts as "this season".
     # For a 2025-26 season the cutoff is 2026; a market referencing 2027 is
@@ -705,6 +776,12 @@ async def _get_championship_path(
         if _is_future_season(market.name or "", max_year):
             continue
 
+        # Skip markets whose question is not the one this tier would label them
+        # with (#1752) — a qualification or award market rendered as "Win
+        # Division" / "Win Championship" is a claim the team never made.
+        if not _answers_its_tier(market.name):
+            continue
+
         # Skip prior-season markets: the market's own season predates the current
         # league season. Markets with no year in their name pass through.
         if current_base is not None:
@@ -723,6 +800,24 @@ async def _get_championship_path(
     path = []
     for tier in sorted(tier_candidates.keys()):
         candidates = tier_candidates[tier]
+
+        # Withhold a step whose sources disagree (#1752). Measured on every
+        # candidate the tier holds, BEFORE the group_id dedupe below, so the
+        # check sees the full disagreement rather than whichever member of a
+        # group survived deduplication.
+        if not _tier_candidates_agree([p for p, _, _ in candidates]):
+            logger.info(
+                "team page: withholding championship-path tier %s for team %s — "
+                "%d candidates disagree beyond %.2f (%s)",
+                tier,
+                team_id,
+                len(candidates),
+                _TIER_AGREEMENT_BAR,
+                ", ".join(
+                    f"{(m.name or '?')[:40]}={p:.3f}" for p, _, m in candidates
+                ),
+            )
+            continue
 
         # Deduplicate by group_id: if multiple outcomes share the same
         # group_id, keep only the one with the highest probability (they
