@@ -117,6 +117,7 @@ import {
 } from "@/lib/eventState";
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
+import { PinIcon } from "@/components/PinButton";
 import { teamShortNames } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { SignalBars } from "@/components/discover/shared";
@@ -2908,26 +2909,7 @@ export default function EventPage({ params }: EventPageProps) {
   );
 }
 
-/**
- * Pin icon - pushpin style
- */
-function PinIcon({ filled, className }: { filled: boolean; className?: string }) {
-  if (filled) {
-    // Filled pushpin
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M16 4c0-.55-.22-1.05-.58-1.41-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-6.01 6.01C5.22 9.95 4 11.59 4 13.5c0 1.1.45 2.1 1.17 2.83L2 19.5l1.41 1.41 3.17-3.17c.73.72 1.73 1.17 2.83 1.17 1.91 0 3.55-1.22 4.91-2.58l6.01-6.01c.36-.36.58-.86.58-1.41s-.22-1.05-.58-1.41c-.37-.37-.86-.59-1.42-.59s-1.05.22-1.41.58l-4.95 4.95-2.12-2.12L16 4z"/>
-      </svg>
-    );
-  }
-
-  // Outline pushpin
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v1H5V5z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 11v6" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17h6" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14l-2 5H7L5 6z" />
-    </svg>
-  );
-}
+/* #7165 — the local `PinIcon` is gone; this page imports the shared one.
+   It was one of three byte-identical copies whose unpinned state drew a goblet,
+   and on THIS page that goblet sat beside "No result reported" on an ungraded
+   match. The copy is what let the affordance be wrong in four places at once. */
