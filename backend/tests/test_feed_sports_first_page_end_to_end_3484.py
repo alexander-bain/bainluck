@@ -56,7 +56,34 @@ def _sport(key="baseball_mlb", name="MLB"):
 
 
 def _base_event(event_id: int):
-    """Production's row shape, with the fields every branch of scoring reads."""
+    """Production's row shape, with the fields every branch of scoring reads.
+
+    🪤 **A `MagicMock` row answers every attribute, so a key production never
+    writes reads as data rather than as an error (#7055).** Two fields in the
+    helpers below were shaped wrongly when this file was written, and because
+    the mock is permissive both defects were silent:
+
+    * ``opening_favorite`` held a TEAM NAME (``f"Home{event_id}"``). Production
+      stores exactly ``"home"`` / ``"away"`` / ``"even"``. The pre-#7055
+      `favorite_switched` compared that string against a side derived from the
+      price, so a name never matched and EVERY card was scored as a favourite
+      switch — a phantom +20.
+    * ``win_probability_sources`` held ``{"betting": {"home_probability": …}}``.
+      Production writes ``{"betting": {"value": …}}``, so the aggregate read
+      nothing and the current probability defaulted to 1.0 — which is why the
+      live cards' reason said "chance rose from 55% to 100%" on a fixture whose
+      price never moved.
+
+    Both are corrected below. The correction is what the arms actually rest on:
+    with the phantom +20 the live cards scored 67 and reached positions 2 and 3;
+    at their true 47 they reach the first five on the freshness decay alone,
+    which is the thing this file exists to prove. Measured on the pre-#7055 tree
+    and on #7055 — 5 passed on both — so the fix moved no bar, it removed a
+    bonus that was never earned.
+
+    Keep every value here in production's own shape; a fixture the mock accepts
+    is not a fixture the code reads.
+    """
     e = MagicMock()
     e.id = event_id
     e.home_team_id = 100 + event_id
@@ -93,8 +120,8 @@ def _completed(event_id: int, hours_since_finish: float):
     e.completed_at = NOW - timedelta(hours=hours_since_finish)
     e.opening_home_probability = 0.20
     e.opening_away_probability = 0.80
-    e.win_probability_sources = {"betting": {"home_probability": 0.95}}
-    e.opening_favorite = f"Away{event_id}"
+    e.win_probability_sources = {"betting": {"value": 0.95}}
+    e.opening_favorite = "away"
     e.raw_ei = 0.95
     e.home_score = 7
     e.away_score = 2
@@ -114,8 +141,8 @@ def _live(event_id: int, *, hours_since_start: float = 1.0):
     e.period = "T7"
     e.opening_home_probability = 0.55
     e.opening_away_probability = 0.45
-    e.win_probability_sources = {"betting": {"home_probability": 0.55}}
-    e.opening_favorite = f"Home{event_id}"
+    e.win_probability_sources = {"betting": {"value": 0.55}}
+    e.opening_favorite = "home"
     e.raw_ei = 70.0
     e.home_score = 4
     e.away_score = 3
@@ -128,8 +155,8 @@ def _scheduled(event_id: int, *, hours_until_start: float = 4.0):
     e.commence_time = NOW + timedelta(hours=hours_until_start)
     e.opening_home_probability = 0.52
     e.opening_away_probability = 0.48
-    e.win_probability_sources = {"betting": {"home_probability": 0.52}}
-    e.opening_favorite = f"Home{event_id}"
+    e.win_probability_sources = {"betting": {"value": 0.52}}
+    e.opening_favorite = "home"
     e.raw_ei = 60.0
     e.home_score = None
     e.away_score = None
