@@ -262,7 +262,14 @@ class TestTheHealthyBoardsThatMustSurvive:
         assert len(_build_search_top_outcomes(m, limit=5)) == 3
 
     def test_a_non_exclusive_family_is_never_this_population(self):
-        """#199's golf make-cut/top-N families sum to multiples of 100%."""
+        """#199's golf make-cut/top-N families sum to multiples of 100%.
+
+        🪤 THIS IS NOT THE GUARD ON PRECONDITION 1, despite its name. The
+        fixture is ONE leg, so precondition 2 returns first and the exclusivity
+        arm is never reached — severing that arm leaves this test green. The
+        verdict is right and the reason is not. `TestPrecondition1Holds…` at the
+        foot of this file is the class that actually kills the mutant.
+        """
         m = _Market(
             [_Outcome(1, "Scheffler to make the cut", 0.31, bid=0.29, ask=0.33)],
             mutually_exclusive=False,
@@ -511,3 +518,158 @@ class TestTheWithdrawalReachesThePage:
         route = inspect.getsource(_events_module.search_events)
         assert "{m.id for m in futures_markets}" in route
         assert "m for m in deduped_futures if not _futures_card_has_no_answer(m)" in route
+
+
+# ---------------------------------------------------------------------------
+# 6. Precondition 1 is load-bearing, and until #7144 measured the population
+#    nothing in this suite could tell.
+# ---------------------------------------------------------------------------
+
+
+class TestPrecondition1HoldsTheHonestNonExclusiveBoards:
+    """An honestly non-exclusive board that sums LOW — the case the docstring
+    did not have and the suite could not see.
+
+    🔴 MEASURED VACUOUS, 2026-09-19: severing `mutually_exclusive` out of
+    `_futures_board_is_mostly_unserved` left **147 tests across 7 files green**,
+    this file's 25 included. The one test that names the precondition,
+    `test_a_non_exclusive_family_is_never_this_population`, hands it a ONE-LEG
+    fixture — so precondition 2 returns first and the exclusivity arm is never
+    reached. It asserts the right verdict for the wrong reason.
+
+    The gap is not academic, because the docstring's stated justification does
+    not survive either: #199's golf make-cut/top-N families sum to *several
+    multiples of 100%*, and precondition 5 (`served < 0.50`) already excludes
+    every one of them. Read together, a later reader is entitled to conclude
+    precondition 1 is redundant and delete it.
+
+    IT IS NOT REDUNDANT. #7144 enumerated all 273 open markets carrying
+    `mutually_exclusive = False` with 2–5 priced legs summing under half, and
+    they are honest cards of four shapes — independent player props, cumulative
+    date and threshold ladders, multi-select boards, and nested boards. Every
+    one sums low *and* is correctly non-exclusive, so precondition 5 cannot
+    save them and precondition 1 is the only thing standing between them and
+    withdrawal. The fixtures below are three of those rows, at their production
+    values, and each one kills the mutant.
+    """
+
+    def test_a_player_props_bundle_is_not_a_board_to_be_incoherent_about(self):
+        """Market 61285020, as production serves it: four props summing 32.5%.
+
+        Independent propositions — several can hit — so the low sum asserts
+        nothing false. #7144 filed this as a specimen of a mis-flagged
+        exclusive board; the measurement showed the flag is correct, and it is
+        one of EIGHT near-identical `- Player Props` bundles in the population.
+        """
+        m = _Market(
+            [
+                _Outcome(1, "Lamine Yamal to score", 0.115, bid=0.10, ask=0.13),
+                _Outcome(2, "Robert Lewandowski to score", 0.09, bid=0.08, ask=0.10),
+                _Outcome(3, "Raphinha to score", 0.07, bid=0.06, ask=0.08),
+                _Outcome(4, "Pedri to score", 0.05, bid=0.04, ask=0.06),
+            ],
+            id=61285020,
+            name="Sevilla FC vs. FC Barcelona - Player Props",
+            mutually_exclusive=False,
+        )
+        legs = _search_surviving_legs(m)
+        assert len(legs) == 4 <= _SEARCH_LADDER_LIMIT
+        assert round(sum(float(o.current_probability) for o in legs), 3) == 0.325
+        assert 0.325 < _BOARD_MIN_SERVED_SUM
+        assert len(legs) >= _BOARD_MIN_SERVED_LEGS
+        # Every other precondition is satisfied. Exclusivity is the only one
+        # refusing it, which is precisely why severing that arm is not safe.
+        assert _futures_board_is_mostly_unserved(m) is False
+        assert _futures_card_has_no_answer(m) is False
+        assert len(_build_search_top_outcomes(m, limit=5)) == 4
+
+    def test_a_nested_board_is_not_a_fragment(self):
+        """Market 60481869 — the leg names are why the flag is right.
+
+        `American man or woman to win US Open` is the UNION of the two legs
+        beside it. #7144 read its shape (3 legs, 3%) and called it an exclusive
+        board serving a fragment; reading its legs shows a deliberately
+        overlapping Kalshi board whose mass is honestly small.
+        """
+        m = _Market(
+            [
+                _Outcome(1, "American man or woman to win US Open", 0.01, bid=0.005, ask=0.02),
+                _Outcome(2, "American woman to win US Open", 0.01, bid=0.005, ask=0.02),
+                _Outcome(3, "American man to win US Open", 0.01, bid=0.005, ask=0.02),
+            ],
+            id=60481869,
+            name="American to win the 2026 US Open?",
+            source="kalshi",
+            mutually_exclusive=False,
+        )
+        assert _futures_board_is_mostly_unserved(m) is False
+        assert _futures_card_has_no_answer(m) is False
+
+    def test_a_cumulative_date_ladder_keeps_its_card(self):
+        """The largest shape in the population: 104 of the 273 are these.
+
+        `When will X…?` rungs are cumulative windows, not alternatives, so a
+        sum under half is the market saying the thing is unlikely — the single
+        most common honest card this guard could have eaten.
+        """
+        m = _Market(
+            [
+                _Outcome(1, "by March 31", 0.02, bid=0.01, ask=0.03),
+                _Outcome(2, "by June 30", 0.012, bid=0.008, ask=0.02),
+                _Outcome(3, "by September 30", 0.012, bid=0.008, ask=0.02),
+            ],
+            id=113017,
+            name="Will Tesla release Optimus by...?",
+            mutually_exclusive=False,
+        )
+        assert _futures_board_is_mostly_unserved(m) is False
+        assert _futures_card_has_no_answer(m) is False
+
+    def test_the_precondition_is_reached_before_any_other_arm_can_answer(self):
+        """The anti-vacuity assertion, and the reason this class exists.
+
+        Each fixture above must fail EVERY other precondition's escape hatch,
+        or it would pass for a reason that has nothing to do with exclusivity
+        and the mutant would survive again. Asserted on the exclusive twin: the
+        same rows with the flag flipped ARE withdrawn, so the flag — and
+        nothing else — is what separates the two verdicts.
+        """
+        rows = [
+            _Outcome(1, "Lamine Yamal to score", 0.115, bid=0.10, ask=0.13),
+            _Outcome(2, "Robert Lewandowski to score", 0.09, bid=0.08, ask=0.10),
+            _Outcome(3, "Raphinha to score", 0.07, bid=0.06, ask=0.08),
+            _Outcome(4, "Pedri to score", 0.05, bid=0.04, ask=0.06),
+        ]
+        served = _Market(list(rows), mutually_exclusive=False)
+        withdrawn = _Market(list(rows), mutually_exclusive=True)
+        assert _futures_board_is_mostly_unserved(served) is False
+        assert _futures_board_is_mostly_unserved(withdrawn) is True
+
+    def test_a_truncated_field_is_why_the_flag_is_not_safe_to_rewrite(self):
+        """Market 61151381, `Green Bay vs New York J: 1st Touchdown`.
+
+        The one row in the 273 that IS exclusive in fact — one player scores
+        first — flagged `False`. It is still not this guard's population: only
+        4 of ~40 possible scorers are stored, so it is precondition 4's honest
+        truncated ladder, and with 4 rows the truncation is INVISIBLE to a
+        `> _SEARCH_LADDER_LIMIT` test.
+
+        So "repair the flag to True" would make this guard withdraw an honest
+        card. Kept as the standing counterexample to that repair.
+        """
+        rows = [
+            _Outcome(1, "GB Packers D/ST", 0.05, bid=0.04, ask=0.06),
+            _Outcome(2, "NY Jets D/ST", 0.05, bid=0.04, ask=0.06),
+            _Outcome(3, "Adonai Mitchell", 0.025, bid=0.02, ask=0.03),
+            _Outcome(4, "No Touchdown", 0.01, bid=0.005, ask=0.02),
+        ]
+        as_stored = _Market(list(rows), id=61151381, source="kalshi",
+                            name="Green Bay vs New York J: 1st Touchdown",
+                            mutually_exclusive=False)
+        assert _futures_board_is_mostly_unserved(as_stored) is False
+        # The harm the counterexample names, made explicit rather than asserted
+        # in prose: flip the flag and the honest truncated field is withdrawn.
+        as_repaired = _Market(list(rows), id=61151381, source="kalshi",
+                              name="Green Bay vs New York J: 1st Touchdown",
+                              mutually_exclusive=True)
+        assert _futures_board_is_mostly_unserved(as_repaired) is True
