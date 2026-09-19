@@ -305,6 +305,86 @@ def _up_leg(market: FuturesMarket):
     return None
 
 
+# A rung label that names ONE price rather than a span: "$755", "7,350",
+# "$6.50". The span forms — "$7,000-$7,500", "7,400 to 7,599.99", "<$6,000" —
+# are deliberately excluded, and that exclusion is the discriminator this whole
+# arm rests on. Measured over the 66 markets that reach the index branch on
+# 2026-09-19, the five with an unpriced up leg and priced non-binary rungs are
+# one threshold ladder (`61381310`) and four PARTITIONS of a closing price
+# (`109484`, `109487`, `114285`, `114287`), and every rung of all four is a
+# span. Printing a partition's rung as "above X" would be a new false claim, so
+# the shape test has to keep them out on its own, before any probability is read.
+_STRIKE_RE = re.compile(r"^\$?\d[\d,]*(?:\.\d+)?$")
+
+# The threshold words this page already recognises (`_CUMULATIVE_PREFIXES`),
+# here in the position they take when the venue puts the threshold in the market
+# NAME and leaves the rungs bare: "S&P 500 (SPY) closes above ___".
+_NAME_THRESHOLD_WORDS = ("above", "over", "at least")
+
+
+def _named_threshold_rungs(market: FuturesMarket) -> tuple[str, list] | None:
+    """The rungs of a ladder whose threshold word lives in the market's NAME.
+
+    ``_is_cumulative_ladder`` cannot see this shape: it asks whether every
+    OUTCOME name starts with a cumulative prefix, and these rungs are bare
+    strikes (``$735`` … ``$785``) with the word "above" sitting up in the
+    question. Both helpers stay, because they answer for different venues'
+    conventions and neither subsumes the other.
+
+    Three conditions, each load-bearing, and the market must fail none:
+
+    1. the question carries a threshold word;
+    2. at least three priced rungs whose labels name a single price
+       (``_STRIKE_RE``) — a span label means a partition, not a ladder;
+    3. the prices are monotone non-increasing as the strike rises, which is
+       what MAKES a set of rungs cumulative. A partition sorted by strike is
+       hump-shaped and fails this on its first rise.
+
+    Strict, with no tolerance for venue tick noise, because the cost of the two
+    errors is not symmetric: refusing a real ladder withholds a row that is
+    already withheld today, while admitting a partition prints a number under a
+    label that misstates what it measures.
+
+    Returns ``(threshold word, rungs ordered by strike)`` or None.
+    """
+    name = (market.name or "").lower()
+    word = next((w for w in _NAME_THRESHOLD_WORDS if f" {w} " in name), None)
+    if word is None:
+        return None
+
+    rungs = [
+        o
+        for o in market.outcomes
+        if o.current_probability is not None
+        and _STRIKE_RE.match((o.name or "").strip())
+    ]
+    if len(rungs) < 3:
+        return None
+
+    def _strike(outcome) -> float:
+        return float((outcome.name or "").strip().lstrip("$").replace(",", ""))
+
+    ordered = sorted(rungs, key=_strike)
+    probs = [float(o.current_probability) for o in ordered]
+    if any(later > earlier for earlier, later in zip(probs, probs[1:])):
+        return None
+    return word, ordered
+
+
+def _index_symbol(market: FuturesMarket, cut: str) -> str:
+    """The index a threshold-ladder row is about, without the question around it.
+
+    ``"S&P 500 (SPY) closes above ___ on September 21?"`` is the whole question;
+    the row's left column wants ``"S&P 500 (SPY)"``. Cut at the threshold word
+    the ladder was detected on, then drop the verb that introduced it, so the
+    symbol does not read ``"S&P 500 (SPY) closes"`` beside a label that already
+    says what it closes above.
+    """
+    head = re.split(rf"\b{re.escape(cut)}\b", market.name or "", maxsplit=1, flags=re.I)[0]
+    head = re.sub(r"\b(?:closes?|finishes|ends?|settles?)\s*$", "", head.strip(), flags=re.I)
+    return head.strip(" ,-—")[:20]
+
+
 def _index_row(market: FuturesMarket) -> dict | None:
     """A TODAY'S CLOSE row, or None when the venue has not priced its leg.
 
@@ -332,10 +412,60 @@ def _index_row(market: FuturesMarket) -> dict | None:
     is `Numeric(7, 6)`, so a genuine priced zero arrives as a FALSY
     `Decimal("0.000000")` and an `or 0` refusal would throw away real data —
     the market saying "no" — alongside the absence.
+
+    #7115 — WITHHOLDING WAS RIGHT AND STILL LEFT A PRICED LADDER OFF THE PAGE.
+    The leg `_up_leg` reads on `61381310` is the Polymarket EVENT stub (its
+    `external_id` is the bare numeric `1042750`, an event id, which is also why
+    the question carries a literal blank: *"S&P 500 (SPY) closes above ___"*).
+    That stub is unpriced — but eleven rungs of the same market are not, and
+    `group_markets_by_group_id` had already merged them onto this very row
+    before it reached this function:
+
+        Yes  NULL  <- the only leg the up-leg scan will look at
+        $735 90.6%   $745 89.5%   $755 83.0%   $765 19.0%   $775 10.5%
+        $740 89.5%   $750 89.5%   $760 47.5%   $770 10.5%   $780 10.5%
+                                                            $785  9.5%
+
+    So the card served ONE row (the SPX sibling at 53%) while a complete,
+    monotone, fully-priced S&P ladder sat one field away. The threshold arm
+    prints its own question instead of the up/down one it does not answer:
+
+        S&P 500 (SPY)            83% above $755
+
+    THE RUNG IS CHOSEN ON THE PRICE, NEVER ON THE LABEL, by this file's own
+    `_pick_rung` — the tightest bound the market still calls more likely than
+    not. The dearest rung is never the answer: "above $735, 91%" is the loosest
+    bound on the ladder and tells a reader nothing.
+
+    IT NAMES THE THRESHOLD IN `dir`, which the card renders verbatim after the
+    percentage, so no layout changes and no field is invented: `sym` and `dir`
+    are the two text slots the row already had. A number this specific may not
+    travel under the word "up" — "83% up" would be a second false claim where
+    #7085 removed the first.
+
+    This DOES put a second S&P row back on a card #7085 reduced to one, and the
+    difference is the whole point: #7085's two rows contradicted each other (0%
+    against 53% for the same index), while these two answer different questions
+    and now say which. The `stocks` card gets no such arm — it renders a bare
+    `{prob}%` with no second slot, so a rung there would print 83% beside real
+    up-probabilities with nothing to mark it apart, which is worse than absence.
     """
     outcome = _up_leg(market)
     if outcome is None or outcome.current_probability is None:
-        return None
+        ladder = _named_threshold_rungs(market)
+        if ladder is None:
+            return None
+        word, rungs = ladder
+        rung = _pick_rung(rungs)
+        if rung is None:  # pragma: no cover - _named_threshold_rungs pre-filters
+            return None
+        return {
+            "sym": _index_symbol(market, word),
+            "prob": round(float(rung.current_probability) * 100, 1),
+            "dir": f"{word} {(rung.name or '').strip()}",
+            "range": "",
+            "src": _source(market),
+        }
     return {
         "sym": (market.name or "").split(" Up ")[0].split(" up ")[0].split("?")[0].strip()[:20],
         "prob": round(float(outcome.current_probability) * 100, 1),
@@ -424,9 +554,19 @@ def _ladder_rung(market: FuturesMarket):
     is the best available statement about a ladder that is long odds all the way
     up. Returns None only when nothing is priced.
     """
-    priced = [
-        o for o in _outcomes_sorted(market) if o.current_probability is not None
-    ]
+    return _pick_rung(
+        [o for o in _outcomes_sorted(market) if o.current_probability is not None]
+    )
+
+
+def _pick_rung(priced: list):
+    """The tightest bound a ladder still calls more likely than not.
+
+    Lifted out of ``_ladder_rung`` unchanged so the two callers — the oil card
+    and the TODAY'S CLOSE threshold arm — cannot drift into two answers for one
+    question. The rule and the reasoning are ``_ladder_rung``'s docstring above;
+    this holds only the arithmetic, over an already-priced list.
+    """
     if not priced:
         return None
     favoured = [o for o in priced if float(o.current_probability) >= 0.5]
