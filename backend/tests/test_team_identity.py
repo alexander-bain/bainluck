@@ -98,7 +98,18 @@ class TestFuzzyScore:
         assert _fuzzy_score("celtics", "boston celtics") == 60
 
     def test_containment_reverse(self):
-        assert _fuzzy_score("boston celtics", "celtics") == 60
+        """The reverse direction matches, but scores below the forward one.
+
+        Was 60, the same as forward containment, until #7188: a target contained
+        in the candidate leaves part of the candidate unexplained, and when that
+        remainder is the letter telling two same-city clubs apart the tie went to
+        whichever row the query returned first. See
+        test_team_identity_fragment_ties_7188.py.
+        """
+        assert _fuzzy_score("boston celtics", "celtics") == 50
+        assert _fuzzy_score("boston celtics", "celtics") < _fuzzy_score(
+            "celtics", "boston celtics"
+        )
 
     def test_containment_rejected_short(self):
         """Short strings should not match via containment."""
