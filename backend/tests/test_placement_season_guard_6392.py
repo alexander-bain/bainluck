@@ -72,43 +72,68 @@ NATIONS_LEAGUE_LAST_REAL = _utc("2026-09-29 18:45:00")
 SUDAMERICANA_LAST_REAL = _utc("2026-09-18 00:30:00")
 SWISS_LAST_REAL = _utc("2026-09-20 14:30:00")
 
-#: One fixture per season competition from the 30-to-60-day shoulder before
-#: these kickoffs, added for #7086 and read by db-query on 2026-09-19.
+#: Each season competition's run of play, added for #7086 and widened for
+#: CERT-3120. Read by db-query on 2026-09-19.
 #:
 #: WHY THE LAST FIXTURE ALONE STOPPED BEING ENOUGH. #6392's guard asked one
 #: question — is anything scheduled since the floor — and the last fixture is a
 #: complete answer to it. #7086's asks a second: is this a season or a
-#: tournament, decided on whether the competition was playing a month or two
-#: BEFORE the kickoff. A one-row-per-league population cannot express that, and
-#: leaving it would have made these controls assert the wrong mechanism rather
-#: than a wrong verdict. Production carries 75 NPB fixtures in 07-25..08-20, 19
-#: Sudamericana, 15 Libertadores and 18 Swiss.
+#: tournament. That was first written as "was it playing a month or two BEFORE
+#: the kickoff", which one shoulder row can express; CERT-3120 showed the
+#: shoulder is the wrong question (it lands in the off-season of a league whose
+#: new season has just started) and the right one is how long the competition's
+#: longest continuous BLOCK of play is. A block is a property of density, so a
+#: one-or-two-row-per-league population cannot express it at all — it would make
+#: these controls assert the wrong mechanism rather than a wrong verdict.
+#: Production carries 666 NPB fixtures from 03-27, and 75 of them in
+#: 07-25..08-20 alone.
 #:
-#: `basketball_nbl` and `soccer_uefa_nations_league` get none because production
-#: has none — NBL opened its season on 09-19 and the Nations League plays in
-#: windows. Their placements below are admitted by the tournament arm instead.
-NPB_SHOULDER = _utc("2026-08-19 09:00:00")
-SUDAMERICANA_SHOULDER = _utc("2026-08-19 22:00:00")
-LIBERTADORES_SHOULDER = _utc("2026-08-19 22:00:00")
-SWISS_SHOULDER = _utc("2026-08-09 14:30:00")
+#: `basketball_nbl` and `soccer_uefa_nations_league` still get one row each,
+#: because that is what production has for them here — NBL opened its season on
+#: 09-19 and the Nations League plays in windows. Their placements below are
+#: admitted by the arms that exist for exactly that, and
+#: ``test_placement_tournament_guard_7086.py`` carries their full shape.
+def _every(start: datetime, end: datetime, days: float) -> list[datetime]:
+    """Fixtures every ``days`` from ``start`` through ``end``, inclusive."""
+    fixtures, when = [], start
+    while when <= end:
+        fixtures.append(when)
+        when += timedelta(days=days)
+    return fixtures
+
+
+#: Each ends on the league's real last fixture. The cadence alone would stop up
+#: to one step short of it, which quietly moves every control keyed on
+#: ``*_LAST_REAL`` — the floor control below reads a kickoff 29 days past NPB's
+#: last fixture and would have been measuring a kickoff 30 days past a fixture
+#: the population no longer contained.
+NPB_SEASON = _every(_utc("2026-03-27 09:00:00"), NPB_LAST_REAL, 3) + [NPB_LAST_REAL]
+SUDAMERICANA_SEASON = _every(
+    _utc("2026-03-03 15:00:00"), SUDAMERICANA_LAST_REAL, 7
+) + [SUDAMERICANA_LAST_REAL]
+LIBERTADORES_SEASON = _every(
+    _utc("2026-02-04 00:31:00"), SUDAMERICANA_LAST_REAL, 7
+) + [SUDAMERICANA_LAST_REAL]
+SWISS_SEASON = _every(_utc("2026-02-07 17:00:00"), SWISS_LAST_REAL, 7) + [
+    SWISS_LAST_REAL
+]
 
 SCHEDULE_ROWS = [
     _EventRow("soccer_fifa_world_cup", WORLD_CUP_LAST_REAL, "odds_api"),
     _EventRow("tennis_atp_french_open", FRENCH_OPEN_LAST_REAL, "odds_api"),
-    _EventRow("baseball_npb", NPB_LAST_REAL, "statpal"),
-    _EventRow("baseball_npb", NPB_SHOULDER, "statpal"),
     _EventRow("basketball_nbl", NBL_LAST_REAL, "odds_api"),
     _EventRow("soccer_uefa_nations_league", NATIONS_LEAGUE_LAST_REAL, "odds_api"),
-    _EventRow("soccer_conmebol_copa_sudamericana", SUDAMERICANA_LAST_REAL, "odds_api"),
-    _EventRow(
-        "soccer_conmebol_copa_sudamericana", SUDAMERICANA_SHOULDER, "odds_api"
-    ),
-    _EventRow("soccer_conmebol_copa_libertadores", SUDAMERICANA_LAST_REAL, "odds_api"),
-    _EventRow(
-        "soccer_conmebol_copa_libertadores", LIBERTADORES_SHOULDER, "odds_api"
-    ),
-    _EventRow("soccer_switzerland_superleague", SWISS_LAST_REAL, "espn"),
-    _EventRow("soccer_switzerland_superleague", SWISS_SHOULDER, "espn"),
+] + [
+    _EventRow("baseball_npb", when, "statpal") for when in NPB_SEASON
+] + [
+    _EventRow("soccer_conmebol_copa_sudamericana", when, "odds_api")
+    for when in SUDAMERICANA_SEASON
+] + [
+    _EventRow("soccer_conmebol_copa_libertadores", when, "odds_api")
+    for when in LIBERTADORES_SEASON
+] + [
+    _EventRow("soccer_switzerland_superleague", when, "espn")
+    for when in SWISS_SEASON
 ]
 
 # The 3 rows the four refusals let through, each with its own kickoff.

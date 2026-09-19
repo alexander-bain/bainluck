@@ -34,10 +34,12 @@ import pytest
 
 from app.tasks.prediction_market_matching import (
     MARKET_BORN_COMMENCE_SOURCES,
-    _PLACEMENT_SEASON_SPREAD_DAYS,
+    _PLACEMENT_BLOCK_GAP_DAYS,
+    _PLACEMENT_SEASON_BLOCK_DAYS,
     _PLACEMENT_SEASON_WINDOW_DAYS,
     _PLACEMENT_TOURNAMENT_WINDOW_DAYS,
     league_is_running_at,
+    longest_block_days,
 )
 from tests.lib_placement_predicate import PredicateSession, ScheduleRow
 
@@ -65,53 +67,96 @@ US_OPEN_DRAW = [
 US_OPEN_FINAL = US_OPEN_DRAW[-1]
 
 # ── The season competitions ──────────────────────────────────────────────────
-# First fixture, a fixture in the 30-to-60-day SHOULDER before the kickoffs
-# these leagues are tested at, and the last fixture. The shoulder row is not
-# decoration: it is the evidence the season arm actually reads, and a
-# first-and-last pair cannot express it — production carries 75 NPB fixtures in
-# 07-25..08-20, 19 Sudamericana, 15 Libertadores and 18 Swiss.
+# A first-and-last pair cannot express what this guard reads (CERT-3120). The
+# season arm asks how long a competition's longest continuous BLOCK of play is,
+# which is a question about density: three points 145 days apart describe a
+# league that plays three times a year, not one that plays all summer. So each
+# competition is carried at the cadence production actually has.
+
+
+def _every(start: datetime, end: datetime, days: float) -> list[datetime]:
+    """Fixtures every ``days`` from ``start`` through ``end``, inclusive."""
+    fixtures, when = [], start
+    while when <= end:
+        fixtures.append(when)
+        when += timedelta(days=days)
+    return fixtures
+
+
+# `basketball_nbl` is the CERT-3120 specimen and is carried by its real days:
+# a 67-day block last season, a 167-day off-season, then a two-day opening.
+# Production holds 46 fixtures on these 30 distinct days (measured 2026-09-19).
+NBL_LAST_SEASON = [
+    _utc(f"2026-{month_day} 08:30:00")
+    for month_day in (
+        "01-28", "01-29", "01-30", "01-31", "02-01",
+        "02-05", "02-06", "02-07", "02-08",
+        "02-12", "02-13", "02-14", "02-15",
+        "02-18", "02-19", "02-20", "02-22",
+        "03-04", "03-05", "03-07", "03-10", "03-11", "03-14", "03-17",
+        "03-21", "03-27", "04-01", "04-05",
+    )
+]
+NBL_THIS_SEASON = [
+    _utc("2026-09-19 09:36:00"), _utc("2026-09-19 11:36:00"),
+    _utc("2026-09-20 05:06:00"), _utc("2026-09-20 07:06:00"),
+]
+
+# The Nations League plays in international WINDOWS — no block of its own is
+# longer than a draw, so it is not season-shaped and never will be. It is here
+# because it is the competition that proves the "still playing" arm carries its
+# own weight: nothing but a fixture AFTER the kickoff rescues it.
 #
-# `basketball_nbl` and `soccer_uefa_nations_league` have NONE, because one
-# opened its season on 09-19 and the other only plays in international windows.
-# They are here with the rows production actually has, and they place on the
-# tournament arm instead — which is the honest reading of a competition whose
-# fixtures really are one short burst.
+# EXACTLY AS PRODUCTION CARRIES IT, which is load-bearing and was got wrong
+# once. A first draft of this fixture invented June and early-September windows
+# and started the last one ON the 09-17 kickoff. That made the tournament arm
+# admit the row — there was a fixture 0 days away — so deleting the
+# still-playing arm altogether left every test green, and the arm that recovers
+# three of CERT-3120's five was untested. Measured 2026-09-19 for a 09-17
+# kickoff: 2 fixtures before it, the nearest 174.88 days back, and 30 after it,
+# the nearest 7.08 days on. Nothing sits within a week either side.
+NATIONS_LEAGUE_WINDOWS = [
+    _utc("2026-03-26 17:00:00"),
+    _utc("2026-03-29 17:00:00"),
+] + _every(_utc("2026-09-24 16:00:00"), _utc("2026-09-29 18:45:00"), 0.2)
+
 SEASONS = {
-    "baseball_npb": (
-        _utc("2026-03-27 09:00:00"),
-        _utc("2026-08-19 09:00:00"),
-        _utc("2026-09-15 09:01:14"),
+    "baseball_npb": _every(
+        _utc("2026-03-27 09:00:00"), _utc("2026-09-15 09:01:14"), 3
     ),
-    "basketball_nbl": (
-        _utc("2026-01-28 08:30:00"), None, _utc("2026-09-20 07:06:00"),
+    "basketball_nbl": NBL_LAST_SEASON + NBL_THIS_SEASON,
+    "soccer_uefa_nations_league": NATIONS_LEAGUE_WINDOWS,
+    "soccer_conmebol_copa_sudamericana": _every(
+        _utc("2026-03-03 15:00:00"), _utc("2026-09-18 00:30:00"), 7
     ),
-    "soccer_uefa_nations_league": (
-        _utc("2026-03-26 17:00:00"), None, _utc("2026-09-29 18:45:00"),
+    "soccer_conmebol_copa_libertadores": _every(
+        _utc("2026-02-04 00:31:00"), _utc("2026-09-18 00:30:00"), 7
     ),
-    "soccer_conmebol_copa_sudamericana": (
-        _utc("2026-03-03 15:00:00"),
-        _utc("2026-08-19 22:00:00"),
-        _utc("2026-09-18 00:30:00"),
+    "soccer_switzerland_superleague": _every(
+        _utc("2026-02-07 17:00:00"), _utc("2026-09-20 14:30:00"), 7
     ),
-    "soccer_conmebol_copa_libertadores": (
-        _utc("2026-02-04 00:31:00"),
-        _utc("2026-08-19 22:00:00"),
-        _utc("2026-09-18 00:30:00"),
-    ),
-    "soccer_switzerland_superleague": (
-        _utc("2026-02-07 17:00:00"),
-        _utc("2026-08-09 14:30:00"),
-        _utc("2026-09-20 14:30:00"),
-    ),
+    # One matchday every three weeks from February, then the next one 13 days
+    # after the Roma v Barcelona kickoff CERT-3120 named. Production holds 964
+    # fixtures before that kickoff and 18 after it.
+    "soccer_uefa_champs_league": _every(
+        _utc("2026-02-17 20:00:00"), _utc("2026-09-10 20:00:00"), 21
+    ) + [_utc("2026-10-13 20:00:00"), _utc("2026-10-14 20:00:00")],
+}
+
+# The competitions whose longest block really is a season. The Nations League is
+# deliberately NOT in here: its windows are shorter than a draw.
+CONTINUOUS_SEASONS = {
+    league: fixtures
+    for league, fixtures in SEASONS.items()
+    if league != "soccer_uefa_nations_league"
 }
 
 SCHEDULE_ROWS = [
     ScheduleRow("tennis_atp_us_open", when, "odds_api") for when in US_OPEN_DRAW
 ] + [
     ScheduleRow(league, when, "odds_api")
-    for league, bounds in SEASONS.items()
-    for when in bounds
-    if when is not None
+    for league, fixtures in SEASONS.items()
+    for when in fixtures
 ]
 
 # The four ties, with the kickoff each actually carries.
@@ -234,16 +279,77 @@ class TestTheMeasuredMargins:
             < smallest_wrong
         )
 
-    def test_the_spread_separates_seasons_from_tournaments(self):
-        """14 days end to end against 176, either side of a 60-day band."""
-        draw_span = (US_OPEN_FINAL - US_OPEN_FIRST).total_seconds() / 86400
-        season_spans = [
-            (bounds[-1] - bounds[0]).total_seconds() / 86400
-            for bounds in SEASONS.values()
+    def test_the_block_separates_seasons_from_tournaments(self):
+        """14 days of play against 176, either side of a 30-day block."""
+        draw_block = longest_block_days(US_OPEN_DRAW, _PLACEMENT_BLOCK_GAP_DAYS)
+        season_blocks = [
+            longest_block_days(fixtures, _PLACEMENT_BLOCK_GAP_DAYS)
+            for fixtures in CONTINUOUS_SEASONS.values()
         ]
-        assert 14 < draw_span < 15
-        assert min(season_spans) > 170  # NPB, the shortest of the six
-        assert draw_span < _PLACEMENT_SEASON_SPREAD_DAYS < min(season_spans)
+        assert 14 < draw_block < 15
+        assert min(season_blocks) > 60  # NBL's 67, the shortest of the six
+        assert draw_block < _PLACEMENT_SEASON_BLOCK_DAYS < min(season_blocks)
+
+    def test_the_block_tolerance_separates_a_lull_from_an_off_season(self):
+        """30 days sits between NBL's longest in-season lull and its off-season.
+
+        The two numbers CERT-3120 turned up, measured 2026-09-19: the largest
+        gap inside ``basketball_nbl``'s season is 10.0 days (02-22 → 03-04) and
+        the break between its seasons is 167 (04-05 → 09-19). A tolerance below
+        the first shatters a season into fragments and the league reads as a
+        tournament — which is the defect. Above the second, two seasons fuse and
+        a finished competition looks eternal. Every value in 11..166 answers the
+        same, so assert the margin rather than the number.
+        """
+        longest_lull = max(
+            (later - earlier).total_seconds() / 86400
+            for earlier, later in zip(NBL_LAST_SEASON, NBL_LAST_SEASON[1:])
+        )
+        off_season = (NBL_THIS_SEASON[0] - NBL_LAST_SEASON[-1]).total_seconds() / 86400
+        assert 9.9 < longest_lull < 10.1
+        assert 166 < off_season < 168
+        assert longest_lull < _PLACEMENT_BLOCK_GAP_DAYS < off_season
+
+
+class TestLongestBlockDays:
+    """The shape arithmetic, tested directly rather than through a fake."""
+
+    def test_a_single_fixture_is_not_a_stretch_of_play(self):
+        assert longest_block_days([_utc("2026-09-19T00:00")], 30) == 0.0
+
+    def test_no_fixtures_is_not_a_stretch_of_play(self):
+        assert longest_block_days([], 30) == 0.0
+
+    def test_it_returns_the_longest_block_not_the_last_or_the_first(self):
+        """The 67-day block is found whether it comes first or last.
+
+        A loop that only closes the block it is standing in when the list ends
+        returns the LAST block (1 day for NBL, which reads as a tournament and
+        reproduces the CERT-3120 defect exactly), and one that returns early
+        gives the first. Both orders are asserted so neither passes.
+        """
+        assert 66 < longest_block_days(NBL_LAST_SEASON + NBL_THIS_SEASON, 30) < 68
+        shifted = [when - timedelta(days=365) for when in NBL_THIS_SEASON]
+        assert 66 < longest_block_days(shifted + NBL_LAST_SEASON, 30) < 68
+
+    def test_it_holds_the_longest_across_three_blocks(self):
+        """Two blocks cannot tell "longest" from "last" — NBL's are 67 and 1, so
+        a reader that simply overwrites still ends on 67 and looks correct.
+
+        Three can: the longest first, then a middle one, then a short last one.
+        Anything that overwrites as it goes returns the middle block's 20 days.
+        """
+        first = _every(_utc("2026-01-01 12:00"), _utc("2026-03-09 12:00"), 2)
+        middle = _every(_utc("2026-06-01 12:00"), _utc("2026-06-21 12:00"), 2)
+        last = [_utc("2026-11-01 12:00"), _utc("2026-11-02 12:00")]
+        assert longest_block_days(middle, 30) == 20.0  # the overwriting answer
+        assert longest_block_days(first + middle + last, 30) == 66.0
+
+    def test_duplicate_and_unsorted_times_do_not_change_the_answer(self):
+        """The query does not promise an order, so the arithmetic may not need one."""
+        ordered = longest_block_days(NBL_LAST_SEASON, 30)
+        assert longest_block_days(list(reversed(NBL_LAST_SEASON)), 30) == ordered
+        assert longest_block_days(NBL_LAST_SEASON * 2, 30) == ordered
 
 
 class TestAPreviousEditionIsNotASeason:
@@ -372,14 +478,19 @@ class TestPhantomsMayNotVouchOnTheTournamentRead:
         ) is False
 
 
-class TestTheStatedCost:
-    """What this ship gives up, asserted rather than left in a PR comment.
+class TestTheFiveRefusalsCert3120Named:
+    """The five valid placements the first draft of this guard refused.
 
-    MEASURED, exactly and per event, over every market-born event on a real
-    league between 09-01 and 10-20, each judged at its OWN kickoff: of the 147
-    the shipped predicate admits today, **5 are newly refused**. (1,729 more sit
-    in leagues carrying no schedule-born fixture at all; step 1 already refuses
-    those and the new steps never run.)
+    CERT-3120 BLOCKed that draft, correctly, and the reason is worth keeping
+    where the tests are. The draft classified these as tournaments and refused
+    them, and its own commit message called the cost harmless because they
+    "self-heal as the schedule loads". They do not.
+    ``_create_event_from_prediction_market`` creates the event under
+    ``<sport>_other`` and LINKS the market to it even when this predicate says
+    no, and every ordinary matching scan selects only
+    ``FuturesMarket.event_id IS NULL``. Nothing revisits a linked catch-all, so
+    a wrong refusal is permanent — a marquee fixture stranded under "Other"
+    forever, which is a worse defect than the one the ship set out to fix.
 
         basketball_nbl              15313951  09-23  Cairns v Tasmania
         basketball_nbl              15314490  09-24  Perth v Adelaide
@@ -387,71 +498,199 @@ class TestTheStatedCost:
         soccer_uefa_nations_league  15314829  09-17  Serbia v Belgium
         soccer_uefa_nations_league  15314830  09-20  Finland v Greece
 
-    ONE MECHANISM, NOT THREE: a competition whose fixtures we hold only in a
-    narrow burst reads as a tournament, because on our own data it IS one. NBL
-    opened its season on 09-19 behind a horizon 1.1 days wide; we hold one
-    Champions League matchday and none of its August qualifiers, so 09-30 is 13
-    days from anything; the Nations League plays in windows. All five keep their
-    `<sport>_other` catch-all instead of being placed.
-
-    That is the fail-closed direction the catch-all exists for — a vague label
-    rather than a wrong one — and every one self-heals as the schedule loads
-    forward. It is still a real cost, and Roma v Barcelona is a marquee fixture,
-    so it is named rather than summarised. The NBL pair is pinned below as the
-    exemplar because its population is small enough to state exactly; widening
-    the window to recover any of the five would have to clear the 5.29-day
-    defect gap, which is what makes this a trade and not an oversight.
+    They are recovered by two arms rather than by widening a window, because
+    they are not one mechanism (the draft said they were). Two of them are a
+    league whose new season sits behind a 1.1-day horizon and whose evidence is
+    LAST season; three are competitions that simply have not finished. Each arm
+    is isolated below, so neither can quietly carry the other.
     """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "league,kickoff,label",
+        [
+            ("basketball_nbl", _utc("2026-09-23 09:30:00"), "Cairns v Tasmania"),
+            ("basketball_nbl", _utc("2026-09-24 11:30:00"), "Perth v Adelaide"),
+            (
+                "soccer_uefa_champs_league",
+                _utc("2026-09-30 16:45:00"),
+                "AS Roma v FC Barcelona",
+            ),
+            (
+                "soccer_uefa_nations_league",
+                _utc("2026-09-17 14:00:00"),
+                "Serbia v Belgium",
+            ),
+            (
+                "soccer_uefa_nations_league",
+                _utc("2026-09-20 14:00:00"),
+                "Finland v Greece",
+            ),
+        ],
+    )
+    async def test_it_places_the_five_it_used_to_strand(self, league, kickoff, label):
+        session = PredicateSession(SCHEDULE_ROWS)
+        assert await league_is_running_at(session, league, kickoff) is True, label
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "kickoff,label",
         [
-            (_utc("2026-09-23 09:30:00"), "Cairns Taipans v Tasmania JackJumpers"),
-            (_utc("2026-09-24 11:30:00"), "Perth Wildcats v Adelaide 36ers"),
+            (_utc("2026-09-23 09:30:00"), "Cairns v Tasmania"),
+            (_utc("2026-09-24 11:30:00"), "Perth v Adelaide"),
         ],
     )
-    async def test_a_season_opening_horizon_reads_as_a_tournament(
-        self, kickoff, label
-    ):
-        season_opening = [
+    async def test_the_nbl_pair_is_carried_by_last_season_alone(self, kickoff, label):
+        """Isolated: NBL has NOTHING after these kickoffs, so only the block arm
+        can rescue it.
+
+        This is the case the ±[30,60] shoulder got wrong. NBL's evidence is 8
+        months back — outside any shoulder, exactly where a tournament's
+        previous edition sits — and the shoulder therefore could not tell a
+        league between seasons from a finished draw. Its LENGTH can: last season
+        is a 67-day block and a previous edition is a 14-day one.
+        """
+        nbl_only = [
             ScheduleRow("basketball_nbl", when, "odds_api")
-            for when in (
-                _utc("2026-09-19 09:36:00"), _utc("2026-09-19 11:36:00"),
-                _utc("2026-09-20 05:06:00"), _utc("2026-09-20 07:06:00"),
-            )
+            for when in NBL_LAST_SEASON + NBL_THIS_SEASON
         ]
-        session = PredicateSession(season_opening)
+        assert not [when for when in NBL_THIS_SEASON if when > kickoff], (
+            "premise: nothing is scheduled after this kickoff, so the still-playing "
+            "arm cannot be what admits it"
+        )
         assert await league_is_running_at(
-            session, "basketball_nbl", kickoff
-        ) is False, f"{label}"
+            PredicateSession(nbl_only), "basketball_nbl", kickoff
+        ) is True, label
 
     @pytest.mark.asyncio
-    async def test_it_is_the_empty_shoulder_and_nothing_else(self):
-        """Name the mechanism, so the cost above is not mistaken for a bug.
+    async def test_without_last_season_the_nbl_pair_is_still_refused(self):
+        """The other half of the same claim: it is LAST SEASON doing the work.
 
-        NBL's real January fixture does NOT rescue these rows — it is 8 months
-        back, far outside the shoulder, exactly like a tournament's previous
-        edition. What would rescue them is the league having played in the 30-to
-        -60 days before the kickoff, which NBL genuinely had not: its season
-        opened four days earlier. The August row below is CONSTRUCTED to show
-        the mechanism; production has no such fixture.
+        Drop the January-to-April block and the league really is a two-day burst
+        with nothing after it — the honest reading is then a refusal, and the
+        test that says so is what stops the block arm being mistaken for a
+        blanket amnesty.
         """
-        kickoff = _utc("2026-09-23 09:30:00")
-        season_opening = [
-            ScheduleRow("basketball_nbl", _utc("2026-09-20 07:06:00"), "odds_api")
+        opening_only = [
+            ScheduleRow("basketball_nbl", when, "odds_api")
+            for when in NBL_THIS_SEASON
         ]
-        january = ScheduleRow(
-            "basketball_nbl", _utc("2026-01-28 08:30:00"), "odds_api"
-        )
-        constructed_shoulder = ScheduleRow(
-            "basketball_nbl", _utc("2026-08-19 09:00:00"), "odds_api"
-        )
         assert await league_is_running_at(
-            PredicateSession(season_opening + [january]), "basketball_nbl", kickoff
-        ) is False
-        assert await league_is_running_at(
-            PredicateSession(season_opening + [constructed_shoulder]),
+            PredicateSession(opening_only),
             "basketball_nbl",
+            _utc("2026-09-23 09:30:00"),
+        ) is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kickoff,label",
+        [
+            (_utc("2026-09-17 14:00:00"), "Serbia v Belgium"),
+            (_utc("2026-09-20 14:00:00"), "Finland v Greece"),
+        ],
+    )
+    async def test_the_nations_league_is_carried_by_still_playing_alone(
+        self, kickoff, label
+    ):
+        """Isolated: a competition that is not season-shaped and never will be.
+
+        Its windows are each shorter than a Slam's draw, so the block arm says
+        tournament and is right to. What makes these placements valid is only
+        that the competition has not finished — there are fixtures after the
+        kickoff — which is the arm the draft was missing entirely.
+        """
+        windows = [
+            ScheduleRow("soccer_uefa_nations_league", when, "odds_api")
+            for when in NATIONS_LEAGUE_WINDOWS
+        ]
+        assert longest_block_days(
+            NATIONS_LEAGUE_WINDOWS, _PLACEMENT_BLOCK_GAP_DAYS
+        ) < _PLACEMENT_SEASON_BLOCK_DAYS, (
+            "premise: not season-shaped, so the block arm cannot be what admits it"
+        )
+        assert not [
+            when
+            for when in NATIONS_LEAGUE_WINDOWS
+            if abs((when - kickoff).total_seconds()) / 86400
+            <= _PLACEMENT_TOURNAMENT_WINDOW_DAYS
+        ], (
+            "premise: nothing within the tournament window either, so the "
+            "near-fixture arm cannot be what admits it — without this the test "
+            "stays green when the still-playing arm is deleted outright"
+        )
+        assert await league_is_running_at(
+            PredicateSession(windows), "soccer_uefa_nations_league", kickoff
+        ) is True, label
+
+    @pytest.mark.asyncio
+    async def test_the_still_playing_arm_is_bounded_at_the_season_window(self):
+        """It may not reach a NEXT edition, which is the mutant that survived.
+
+        Unbounded, "does it play after this kickoff" is satisfied by next year's
+        draw and a finished tournament becomes permanently placeable — the exact
+        failure the block arm exists to prevent, reintroduced by the arm beside
+        it. A fixture 351 days out must not vouch; one 13 days out must.
+        """
+        finished_draw = [
+            ScheduleRow("tennis_atp_us_open", when, "odds_api")
+            for when in US_OPEN_DRAW
+        ]
+        next_edition = ScheduleRow(
+            "tennis_atp_us_open", _utc("2027-08-30 15:00:00"), "odds_api"
+        )
+        kickoff = _utc("2026-09-19 22:10:00")
+        assert await league_is_running_at(
+            PredicateSession(finished_draw + [next_edition]),
+            "tennis_atp_us_open",
+            kickoff,
+        ) is False
+        within_the_window = ScheduleRow(
+            "tennis_atp_us_open", _utc("2026-10-02 15:00:00"), "odds_api"
+        )
+        assert await league_is_running_at(
+            PredicateSession(finished_draw + [within_the_window]),
+            "tennis_atp_us_open",
             kickoff,
         ) is True
+
+    @pytest.mark.asyncio
+    async def test_a_market_born_row_cannot_vouch_on_either_new_arm(self):
+        """The circularity, closed on both arms added here.
+
+        A phantom placement must not become the evidence that admits the next
+        one — neither by looking like a fixture after the kickoff, nor by
+        padding the competition's block into a season.
+        """
+        kickoff = _utc("2026-09-19 22:10:00")
+        for source in MARKET_BORN_COMMENCE_SOURCES:
+            ahead = ScheduleRow(
+                "tennis_atp_us_open", _utc("2026-10-02 15:00:00"), source
+            )
+            assert await league_is_running_at(
+                PredicateSession(
+                    [
+                        ScheduleRow("tennis_atp_us_open", when, "odds_api")
+                        for when in US_OPEN_DRAW
+                    ]
+                    + [ahead]
+                ),
+                "tennis_atp_us_open",
+                kickoff,
+            ) is False, source
+            padding = [
+                ScheduleRow("tennis_atp_us_open", when, source)
+                for when in _every(
+                    _utc("2026-06-01 12:00:00"), _utc("2026-08-29 12:00:00"), 2
+                )
+            ]
+            assert await league_is_running_at(
+                PredicateSession(
+                    [
+                        ScheduleRow("tennis_atp_us_open", when, "odds_api")
+                        for when in US_OPEN_DRAW
+                    ]
+                    + padding
+                ),
+                "tennis_atp_us_open",
+                kickoff,
+            ) is False, source
