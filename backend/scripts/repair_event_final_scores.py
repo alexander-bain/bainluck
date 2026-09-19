@@ -98,9 +98,17 @@ uncallable on the cohorts that hold the defects, for two independent reasons:
   2. It was not resumable. The group predicate is unchanged by the repair, so
      re-invoking returned the same oldest groups forever and ``groups_remaining``
      never fell. Progress now comes from an explicit ``offset`` cursor.
+  3. (#7147, 2026-09-19) It banked no backup, so D51(b)'s "a repair that backs up
+     first and ships a one-command restore may be applied by the owning lane"
+     did not reach it, and its apply stayed attended-only — a walk of ~170
+     groups in ``baseball_mlb`` alone that no attending human ever made. It now
+     banks every row it is about to write, in that row's own transaction, and
+     refuses any write it could not bank. See :data:`BAK_TABLE`.
 
     POST /api/admin/repairs/event-final-scores?apply=false                 # dry-run census
     POST /api/admin/repairs/event-final-scores?apply=true&offset=25        # next batch
+
+    python3 scripts/restore_7147_event_final_scores.py --apply             # the undo
 
     python3 scripts/repair_event_final_scores.py                   # dry-run ledger
     python3 scripts/repair_event_final_scores.py --apply --offset 25
@@ -196,6 +204,95 @@ _FIX_COMPLETED_AT_SQL = """
     UPDATE events SET completed_at = :completed_at WHERE id = :event_id
 """
 
+# ---------------------------------------------------------------------------
+# D51(b) — the backup this rail shipped without, and what that cost (#7147)
+# ---------------------------------------------------------------------------
+#
+# CAL-P002's apply pass was approved in August under ATTENDED capped-batch
+# discipline (``app/tasks/repair_winner_field.py`` names it as the precedent for
+# its own). D51(b) later made a general rule out of the narrower case: a data
+# repair that BANKS A BACKUP FIRST and ships a one-command restore may be
+# applied by the owning lane without waiting for a human. This rail could not
+# take that door, because it banked nothing — so for six weeks the only way to
+# run it was to find an attending human for a walk that is ~170 (sport, date)
+# groups in baseball_mlb ALONE. Nobody ever did.
+#
+# MEASURED what that cost, production 2026-09-19: ``/events/15313231`` renders
+# **St. Louis Cardinals 5 — 5 San Francisco Giants, FINAL**, three days after a
+# game ESPN finalled 5-6. An MLB game cannot end level, and the impossible score
+# propagates: the page's own "Margin: expected vs final" card reads **Tied**. The
+# dry-run ledger for that slate classifies it ``score_drifted`` with the espn_id
+# PROVEN — the remedy has been sitting one parameter away the whole time.
+#
+# So the backup is not a new safety rail bolted onto a trusted repair. It is the
+# missing precondition of the rail's OWN documented door, and it is
+# unconditional on ``apply``: there is no ``backup=false``, for the reason
+# ``repair_winner_field``'s cap is a module constant and not a query param — a
+# gate that can be dialled off mid-run is not a gate.
+BAK_TABLE = "bak_7147_event_final_scores"
+
+#: The one command D51(b) asks for, spelled once and returned in every result.
+#: Detached, because a non-detached ``heroku run`` returns empty stdout that
+#: reads like success (gotcha #48); no ``cd backend``, because PROJECT_PATH puts
+#: scripts at /app.
+UNDO_COMMAND = (
+    'heroku run:detached -a bainluck '
+    '"python3 scripts/restore_7147_event_final_scores.py --apply"'
+)
+
+#: WHAT THE ROW WAS, and WHAT WE WROTE, in one table (the CERT-2439 lesson that
+#: #4923 carries in a second MANIFEST_TABLE). A backup alone can only tell a
+#: restore "the live row differs from its backup" — which is equally true of a
+#: row ESPN has legitimately corrected AGAIN since, and reverting that would be
+#: the undo causing the damage it exists to reverse. The ``new_*`` columns are
+#: the discriminator: the restore puts a score back only where the live row
+#: still holds the exact score this repair wrote.
+#:
+#: ON CONFLICT is deliberately SPLIT across the two halves. The ``old_*`` columns
+#: keep their FIRST banked values — a row repaired, drifted and repaired again
+#: must restore to what production held before we ever touched it, not to our
+#: own previous write. The ``new_*`` columns take the LATEST, because a stale
+#: "what we wrote" would make the restore's compare-and-swap miss.
+_BAK_CREATE_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {BAK_TABLE} (
+      event_id                      bigint PRIMARY KEY,
+      old_home_score                integer,
+      old_away_score                integer,
+      old_completed_at              timestamptz,
+      old_win_probability_sources   jsonb,
+      new_home_score                integer,
+      new_away_score                integer,
+      banked_at                     timestamptz NOT NULL DEFAULT now(),
+      applied_at                    timestamptz NOT NULL DEFAULT now())
+"""
+
+_BAK_COPY_SQL = f"""
+    INSERT INTO {BAK_TABLE} (
+        event_id, old_home_score, old_away_score, old_completed_at,
+        old_win_probability_sources, new_home_score, new_away_score)
+    SELECT e.id, e.home_score, e.away_score, e.completed_at,
+           e.win_probability_sources, :new_home_score, :new_away_score
+      FROM events e
+     WHERE e.id = :event_id
+    ON CONFLICT (event_id) DO UPDATE SET
+        new_home_score = EXCLUDED.new_home_score,
+        new_away_score = EXCLUDED.new_away_score,
+        applied_at     = now()
+"""
+
+#: Asked BEFORE the reconciliation that names the table in a subquery, because
+#: that one raises UndefinedTable on a database that has never been backed up —
+#: which is every database on the documented dry-run-first path (#4669). A
+#: missing table yields an empty reconciliation, and ``backup_is_exact({})`` is
+#: False, so the apply still refuses (gotcha #53).
+_BAK_EXISTS_SQL = f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL"
+
+_BAK_MISSING_SQL = f"""
+    SELECT count(*) FROM events e
+     WHERE e.id = ANY(CAST(:event_ids AS bigint[]))
+       AND NOT EXISTS (SELECT 1 FROM {BAK_TABLE} b WHERE b.event_id = e.id)
+"""
+
 # Default group budget per invocation. Each group is ONE ESPN scoreboard call and
 # the client sleeps 0.5s between requests, so this stays inside the 30s HTTP wall.
 _GROUP_LIMIT = 25
@@ -207,6 +304,71 @@ _GROUP_LIMIT = 25
 # op (one scoreboard fetch) fits in the margin. It does: ~1s against a 6s reserve.
 _DEADLINE_SECONDS = 22.0
 _GROUP_RESERVE_SECONDS = 6.0
+
+
+def backup_is_exact(recon) -> bool:
+    """The D51(b) gate: every row about to be written has a banked row, and
+    something was actually checked.
+
+    ``all()`` over an empty mapping is True, so the emptiness test is not
+    decoration — without it a reconciliation that inspected nothing reads as a
+    clean pass and the apply proceeds with no undo (gotcha #53). Pure, so the
+    gate can be exercised without a database.
+    """
+    return bool(recon) and all(n == 0 for n in recon.values())
+
+
+async def bank_prior_state(session, event_id: int, new_home, new_away) -> None:
+    """Copy this event's pre-repair score, completion time and blend into
+    :data:`BAK_TABLE`, alongside the score we are about to write.
+
+    Called INSIDE the group's transaction and BEFORE the group's writes, so the
+    commit that lands a repair lands its undo with it: there is no window in
+    which a written row has no banked row. ``CREATE TABLE IF NOT EXISTS`` runs
+    once per invocation via :func:`ensure_backup_table`.
+
+    ``old_win_probability_sources`` is banked even though only a winner FLIP
+    rewrites it — a column the repair can write is a column the undo must be
+    able to restore, and which rows flip is not known until ESPN answers.
+    """
+    from sqlalchemy import text
+
+    await session.execute(text(_BAK_COPY_SQL), {
+        "event_id": event_id,
+        "new_home_score": new_home,
+        "new_away_score": new_away,
+    })
+
+
+async def ensure_backup_table(session) -> None:
+    """Runtime DDL, attended invocation only (ruling 47(c)).
+
+    ``CREATE TABLE IF NOT EXISTS bak_*`` inside a repair that runs only when a
+    person invokes it is explicitly NOT migration-class: the invocation is the
+    attended step. Nothing schedules this rail, and nothing may — see the module
+    docstring.
+    """
+    from sqlalchemy import text
+
+    await session.execute(text(_BAK_CREATE_SQL))
+
+
+async def reconcile_backup(session, event_ids: list) -> dict:
+    """How many rows about to be written have NO banked row? Zero, or refuse.
+
+    Returns a mapping so :func:`backup_is_exact` can tell "checked, all present"
+    from "checked nothing" — the distinction gotcha #53 exists for.
+    """
+    from sqlalchemy import text
+
+    if not event_ids:
+        return {}
+    if not bool((await session.execute(text(_BAK_EXISTS_SQL))).scalar_one()):
+        return {}
+    missing = (
+        await session.execute(text(_BAK_MISSING_SQL), {"event_ids": list(event_ids)})
+    ).scalar_one()
+    return {"events": int(missing)}
 
 
 def score_is_stale(our_home, our_away, espn_home, espn_away, espn_is_final: bool) -> bool:
@@ -644,10 +806,20 @@ async def repair(
         "completed_at_repaired": 0,
         "blend_repaired": 0,
         "winner_flips": 0,
+        # D51(b), #7147. Counted and reported even when it is 0, because "no row
+        # was refused" and "the gate never ran" are the two readings of a silent
+        # rail and only one of them is safe.
+        "backup_refused": 0,
     }
     ledger: list[dict] = []
     groups_scanned = 0
     stopped_on_deadline = False
+
+    if apply:
+        # Once per invocation, before any group: the table has to exist before
+        # the first bank, and IF NOT EXISTS makes the second call free.
+        await ensure_backup_table(s)
+        await s.commit()
 
     for sport_key, game_date in selected:
         if time.monotonic() - started > deadline_seconds - _GROUP_RESERVE_SECONDS:
@@ -807,6 +979,26 @@ async def repair(
             if not apply:
                 continue
 
+            # D51(b) — BANK BEFORE WRITE, in this group's own transaction, so
+            # the commit that lands a repair lands its undo with it (#7147).
+            # The reconciliation is not ceremony: it is the only thing that can
+            # tell an INSERT that banked a row from one whose WHERE matched no
+            # event at all, and a write with no banked row has no undo.
+            await bank_prior_state(
+                s, r.event_id,
+                ee.home_score if stale else r.home_score,
+                ee.away_score if stale else r.away_score,
+            )
+            recon = await reconcile_backup(s, [r.event_id])
+            if not backup_is_exact(recon):
+                stats["backup_refused"] += 1
+                entry["action"] = "skip_backup_not_banked"
+                entry["remedy"] = (
+                    "no undo could be banked for this row, so nothing was "
+                    "written — investigate before re-running"
+                )
+                continue
+
             if stale:
                 await s.execute(text(_FIX_SCORE_SQL), {
                     "event_id": r.event_id,
@@ -867,6 +1059,12 @@ async def repair(
         "elapsed_seconds": round(time.monotonic() - started, 2),
         "order": "newest_first" if newest_first else "oldest_first",
         "sport": sport or "all_espn_mapped",
+        # THE UNDO, IN THE RESULT (D51(b), #7147). An undo an operator has to go
+        # and look up is one they will quote from memory at the moment they are
+        # least able to — so the rail hands back the exact command beside the
+        # writes it just made. Stated on a dry run too: the whole point is that
+        # it can be read BEFORE anything is applied.
+        "undo": UNDO_COMMAND,
         **stats,
         "defect_rate_scanned": (
             round(stats["score_defects"] / stats["events_scanned"], 4)

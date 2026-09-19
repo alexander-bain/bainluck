@@ -145,6 +145,10 @@ _REPAIRS = {
     # CAL-P002: settled events frozen on a NON-final score (we held BOS 3-1 where
     # the real final was 6-3). Bounded by (sport, date) GROUPS — re-invoke while
     # ``groups_remaining > 0``. Accepts ?limit=&sport=&newest_first=.
+    # #7147: the apply now BANKS every row it writes into
+    # ``bak_7147_event_final_scores`` first and refuses any write it could not
+    # bank, so it is a D51(b) repair rather than an attended-only one. Every
+    # result — dry run included — carries the one-command ``undo``.
     "event-final-scores": ("scripts.repair_event_final_scores", "repair"),
     # Dry-run-ONLY census of shape drift on resolved markets (#284 Item 2). It
     # never writes — ``apply`` is ignored; a real resolved rewrite is a separate
