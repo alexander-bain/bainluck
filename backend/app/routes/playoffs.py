@@ -40,6 +40,16 @@ from app.utils.odds_math import devig_consensus
 # module-level name is what stops the per-team pass and the post-normalization
 # pass from ever again being two different rules.
 from app.utils.playoff_grid import enforce_monotonicity as _grid_enforce_monotonicity
+# #7109: this tier's key layout, TTLs and refresh-behind. Import-safe at module
+# level — `playoff_grid_cache` reaches back into this module only from inside its
+# functions, precisely so this line cannot become a cycle.
+from app.utils.event_concept_cache import ConceptCacheKeys
+from app.utils.playoff_grid_cache import (
+    MIRROR_TTL,
+    PRIMARY_TTL,
+    grid_cache_keys,
+    schedule_grid_refresh,
+)
 from app.utils.regex_to_ilike import regex_to_ilike
 
 logger = logging.getLogger(__name__)
@@ -3035,7 +3045,7 @@ def _mark_last_good(payload: dict, reason: str, *, degraded: bool) -> dict:
 # operator to different places.
 async def _serve_grid_degraded(
     league_slug: str,
-    cache_key: str,
+    keys: ConceptCacheKeys,
     cache_eligible: bool,
     reason: str,
 ):
@@ -3059,7 +3069,7 @@ async def _serve_grid_degraded(
 
         try:
             rc = get_async_redis_client()
-            raw = await rc.get(f"{cache_key}:stale")
+            raw = await rc.get(keys.stale)
             await rc.aclose()
             if raw:
                 candidate = json.loads(raw)
@@ -3095,31 +3105,48 @@ async def get_playoff_grid_cached(
 
     # Only cache default/simple requests (no debug, default params)
     cache_eligible = not debug and hours is None and top == 10
-    cache_key = f"bainluck:category:playoffs:{league_slug}"
+    keys = grid_cache_keys(league_slug)
 
     if cache_eligible:
         from app.tasks.redis_state import get_async_redis_client
         try:
             rc = get_async_redis_client()
-            cached = await rc.get(cache_key)
-            if cached:
+            try:
+                cached = await rc.get(keys.primary)
+                if cached:
+                    return json.loads(cached)
+                # Stale fallback: serve old data while recomputing. #1484 changes
+                # two things here. (a) It is LABELLED — serving a last-good payload
+                # is right, serving it unlabelled made a stale grid
+                # indistinguishable from a fresh one to every consumer including the
+                # Grid Sentinel. (b) It must be USABLE — an empty grid or a
+                # previously-cached timeout envelope is not a fallback, and serving
+                # one would launder the failure into a 200. An unusable stale
+                # payload falls through to the live rebuild instead.
+                #
+                # 🔴 #7109: "while recomputing" was aspirational — NOTHING
+                # recomputed. This path returned the mirror and stopped, so a
+                # league the hourly warm could not build stayed frozen at its last
+                # successful warm for as long as the mirror survived (measured:
+                # MLB 3h47m, while nba/nhl/nfl warmed inside one 23-second window).
+                # The rebuild is now scheduled BY the request that would otherwise
+                # have paid for it, single-flight across the fleet, so this reader
+                # keeps the fast mirror and the next one gets a fresh grid.
+                #
+                # 🔴 The refresh is a PASSENGER, never a condition. The decision to
+                # serve this mirror is already made, and nothing about scheduling
+                # may change what the reader gets: if the refresh cannot be
+                # scheduled the sync client is down, in which case a synchronous
+                # rebuild could not publish its result either — it would cost the
+                # reader the whole build (7.6 s on MLB) and throw it away.
+                stale = await rc.get(keys.stale)
+                if stale:
+                    candidate = json.loads(stale)
+                    if _grid_payload_usable(candidate):
+                        schedule_grid_refresh(league_slug)
+                        return _mark_last_good(candidate, "cache_miss", degraded=False)
+            finally:
                 await rc.aclose()
-                return json.loads(cached)
-            # Stale fallback: serve old data while recomputing. #1484 changes
-            # two things here. (a) It is LABELLED — serving a last-good payload
-            # is right, serving it unlabelled made a stale grid
-            # indistinguishable from a fresh one to every consumer including the
-            # Grid Sentinel. (b) It must be USABLE — an empty grid or a
-            # previously-cached timeout envelope is not a fallback, and serving
-            # one would launder the failure into a 200. An unusable stale
-            # payload falls through to the live rebuild instead.
-            stale = await rc.get(f"{cache_key}:stale")
-            if stale:
-                candidate = json.loads(stale)
-                if _grid_payload_usable(candidate):
-                    await rc.aclose()
-                    return _mark_last_good(candidate, "cache_miss", degraded=False)
-            await rc.aclose()
         except Exception:
             pass  # Fall through to live query
 
@@ -3145,7 +3172,7 @@ async def get_playoff_grid_cached(
             league_slug,
         )
         return await _serve_grid_degraded(
-            league_slug, cache_key, cache_eligible, GRID_FAILURE_TIMEOUT
+            league_slug, keys, cache_eligible, GRID_FAILURE_TIMEOUT
         )
     except Exception as exc:
         # #2303. A Postgres ``statement_timeout`` fires BELOW this route's 25 s
@@ -3173,7 +3200,7 @@ async def get_playoff_grid_cached(
             exc_info=True,
         )
         return await _serve_grid_degraded(
-            league_slug, cache_key, cache_eligible, GRID_FAILURE_DB_CANCELED
+            league_slug, keys, cache_eligible, GRID_FAILURE_DB_CANCELED
         )
 
     if cache_eligible:
@@ -3184,8 +3211,13 @@ async def get_playoff_grid_cached(
             # hourly precompute warm beat (e.g. immediately post-deploy, before
             # the first warm). 900s expired before the next warm, forcing repeated
             # ~12s cold rebuilds; 3900s bridges to the next warm cycle.
-            await rc.set(cache_key, payload, ex=3900)
-            await rc.set(f"{cache_key}:stale", payload, ex=86400)
+            #
+            # The TTLs are the shared constants and not literals: #7109 gave this
+            # tier a SECOND writer (the refresh-behind, which must use the sync
+            # client), and two writers of one key with two copies of its TTL is
+            # the drift that `publish_grid` exists to prevent.
+            await rc.set(keys.primary, payload, ex=PRIMARY_TTL)
+            await rc.set(keys.stale, payload, ex=MIRROR_TTL)
             await rc.aclose()
         except Exception:
             pass
