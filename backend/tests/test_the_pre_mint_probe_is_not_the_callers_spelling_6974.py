@@ -338,6 +338,54 @@ class TestACrossTownRivalDoesNotAnswerForTheFragment:
         )
         assert session.added == []
 
+    @pytest.mark.parametrize("order", ORDERS)
+    @pytest.mark.asyncio
+    async def test_a_warm_full_sport_cache_selects_the_same_way(self, order):
+        """CERT-3136: the CACHE path is the one that decides in production.
+
+        Both real callers of `upsert_team` pass a full-sport `team_cache`, and
+        its fuzzy loop runs BEFORE either DB scan. Repairing only the scans left
+        the defect fully live on every warm run — `Los Angeles FC` first in the
+        cache still answered for `Los Angeles G`.
+
+        The cache is keyed by the name a caller looked up, which is not always
+        `row.name`, so selection here is made against the KEY.
+        """
+        from app.utils.espn_helpers import upsert_team
+
+        rows = [_Row(100 + i, name, MLS) for i, name in enumerate(order)]
+        cache = {(r.name, MLS): r for r in rows}
+        session = _QueryingSession(rows)
+
+        team = await upsert_team(
+            session, "Los Angeles G", GALAXY, sport_id=MLS, team_cache=cache
+        )
+
+        assert team is not None
+        assert team.name == "LA Galaxy", (
+            f"cache path bound {team.name!r} — a rival answered for the fragment"
+        )
+        assert session.added == []
+
+    @pytest.mark.asyncio
+    async def test_an_exact_cache_hit_is_untouched(self):
+        """The ordinary warm path still short-circuits before any query."""
+        from app.utils.espn_helpers import upsert_team
+
+        galaxy = _Row(2325, "LA Galaxy", MLS)
+        session = _QueryingSession([galaxy])
+
+        team = await upsert_team(
+            session,
+            "LA Galaxy",
+            GALAXY,
+            sport_id=MLS,
+            team_cache={("LA Galaxy", MLS): galaxy},
+        )
+
+        assert team is galaxy
+        assert session.queries == [], "a cache hit should not reach the database"
+
     def test_the_fragment_split_only_fires_on_a_trailing_single_letter(self):
         from app.utils.espn_helpers import _city_plus_initial
 

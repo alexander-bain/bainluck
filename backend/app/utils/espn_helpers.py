@@ -414,8 +414,26 @@ def _sole_candidate_the_payload_names(team_name, candidates, espn_team):
     ambiguous answer is refused rather than guessed (the tie doctrine this lane
     shipped for `resolve_team` in #7230).
     """
+    return _sole_named_candidate(
+        team_name,
+        [(c.name, c) for c in candidates if c is not None],
+        espn_team,
+    )
+
+
+def _sole_named_candidate(team_name, named_candidates, espn_team):
+    """As above, over ``(name, row)`` pairs.
+
+    The in-memory `team_cache` is keyed by the name a caller looked up, which is
+    not always `row.name`, so its selection has to be made against the KEY. Both
+    production callers of `upsert_team` pass a full-sport cache, so this path —
+    not the DB scans — is the one that decides identity on a warm run
+    (CERT-3136).
+    """
     accepted = [
-        c for c in candidates if c is not None and _canonical_names_match(team_name, c.name)
+        (name, row)
+        for name, row in named_candidates
+        if name and _canonical_names_match(team_name, name)
     ]
     if not accepted:
         return None
@@ -432,28 +450,28 @@ def _sole_candidate_the_payload_names(team_name, candidates, espn_team):
         # one club or to none.
         city_tokens = set(_normalize_name(city).split())
         accepted = [
-            c
-            for c in accepted
+            (name, row)
+            for name, row in accepted
             if any(
                 token.startswith(initial)
-                for token in _normalize_name(c.name or "").split()
+                for token in _normalize_name(name or "").split()
                 if token not in city_tokens
             )
         ]
 
     if len(accepted) == 1:
-        return accepted[0]
+        return accepted[0][1]
     if not accepted:
         return None
 
     # Still ambiguous: `names_match` is a RECALL instrument, so the first row the
     # scan happened to return would decide identity by heap order. Refuse.
     named = [
-        c
-        for c in accepted
-        if espn_identity_corresponds(c.name, getattr(c, "alternate_names", None), espn_team)
+        (name, row)
+        for name, row in accepted
+        if espn_identity_corresponds(name, getattr(row, "alternate_names", None), espn_team)
     ]
-    return named[0] if len(named) == 1 else None
+    return named[0][1] if len(named) == 1 else None
 
 
 def _city_plus_initial(team_name):
@@ -584,12 +602,21 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
         )
         team = team_result.scalar_one_or_none()
 
-    # Fuzzy match: "Stanford" should find "Stanford Cardinal" (and vice versa)
+    # Fuzzy match: "Stanford" should find "Stanford Cardinal" (and vice versa).
+    # Selected the same way as the DB scans below — this loop used to take the
+    # first cross-town match, and since both production callers pass a
+    # full-sport cache it is this path, not the scans, that decides identity on
+    # a warm run (CERT-3136).
     if team is None and team_cache is not None:
-        for (cached_name, cached_sport_id), cached_team in team_cache.items():
-            if cached_sport_id == sport_id and _canonical_names_match(team_name, cached_name):
-                team = cached_team
-                break
+        team = _sole_named_candidate(
+            team_name,
+            [
+                (cached_name, cached_team)
+                for (cached_name, cached_sport_id), cached_team in team_cache.items()
+                if cached_sport_id == sport_id
+            ],
+            espn_team,
+        )
 
     if not team:
         # Check DB with fuzzy matching before creating a new record.
