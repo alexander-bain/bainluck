@@ -391,8 +391,15 @@ class _Session:
         # test_repair_7147_final_score_backup.py.
         if "CREATE TABLE IF NOT EXISTS bak_7147" in sql:
             return _Result([])
+        if "ALTER TABLE bak_7147" in sql:
+            return _Result([])
         if "INSERT INTO bak_7147" in sql:
             self.banked.append(params)
+            return _Result([])
+        # CERT-3141's write manifest. This file is about the SPLIT, so it only
+        # needs the statement to be known; whether the manifest is complete is
+        # asserted where the backup lives.
+        if "UPDATE bak_7147" in sql:
             return _Result([])
         if "to_regclass" in sql:
             return _Result([], scalar=True)

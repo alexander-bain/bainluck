@@ -428,6 +428,7 @@ class _RecordingSession:
         self.completed_at_writes = []
         self.blend_writes = 0
         self.banked = []
+        self.stamped = []
         self.commits = 0
 
     async def execute(self, stmt, params=None):
@@ -443,8 +444,16 @@ class _RecordingSession:
         # the REFUSAL path is covered in test_repair_7147_final_score_backup.py.
         if "CREATE TABLE IF NOT EXISTS bak_7147" in sql:
             return _Result([])
+        if "ALTER TABLE bak_7147" in sql:
+            return _Result([])
         if "INSERT INTO bak_7147" in sql:
             self.banked.append(params)
+            return _Result([])
+        # CERT-3141 — the write manifest, stamped off the row after its writes.
+        # Recorded rather than waved through: "every applied row got one" is an
+        # assertable property and the apply tests are where the applied rows are.
+        if "UPDATE bak_7147" in sql:
+            self.stamped.append(params)
             return _Result([])
         if "to_regclass" in sql:
             return _Result([], scalar=True)

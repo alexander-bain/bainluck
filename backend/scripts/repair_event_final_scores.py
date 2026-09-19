@@ -245,8 +245,28 @@ UNDO_COMMAND = (
 #: restore "the live row differs from its backup" — which is equally true of a
 #: row ESPN has legitimately corrected AGAIN since, and reverting that would be
 #: the undo causing the damage it exists to reverse. The ``new_*`` columns are
-#: the discriminator: the restore puts a score back only where the live row
-#: still holds the exact score this repair wrote.
+#: the discriminator: the restore puts a row back only where it still holds
+#: EXACTLY what this repair left on it.
+#:
+#: 🔴 EVERY RESTORED COLUMN IS BANKED ON BOTH SIDES (CERT-3141). The first cut
+#: banked ``new_home_score``/``new_away_score`` and nothing else, so the undo's
+#: compare-and-swap observed the SCORE while restoring four columns. Two ways
+#: that reverts a newer, legitimate value:
+#:
+#: * a ``fix_completed_at_only`` repair never changes the score, so its banked
+#:   ``new_*`` score IS the live score for all time — the CAS can never fail,
+#:   and the undo would put the pre-repair ``completed_at`` (a NULL, on that
+#:   branch) back over whatever production has since derived;
+#: * a blend rewritten after the repair — ``backfill_winners``, a re-resolve,
+#:   any later grade — leaves the score untouched, so the CAS passes and the
+#:   undo overwrites the newer blend with the pre-repair one.
+#:
+#: So the ``new_*`` half is a full write manifest of the four columns, stamped
+#: from the row itself AFTER the writes (:func:`stamp_written_state`), and the
+#: undo compare-and-swaps on all four. A stamp that never ran leaves the two
+#: new columns NULL against a non-NULL live value, so the CAS fails and the
+#: restore refuses — the failure mode is "declines to undo", never "reverts
+#: something it cannot account for".
 #:
 #: ON CONFLICT is deliberately SPLIT across the two halves. The ``old_*`` columns
 #: keep their FIRST banked values — a row repaired, drifted and repaired again
@@ -262,9 +282,23 @@ _BAK_CREATE_SQL = f"""
       old_win_probability_sources   jsonb,
       new_home_score                integer,
       new_away_score                integer,
+      new_completed_at              timestamptz,
+      new_win_probability_sources   jsonb,
       banked_at                     timestamptz NOT NULL DEFAULT now(),
       applied_at                    timestamptz NOT NULL DEFAULT now())
 """
+
+#: The two manifest columns CERT-3141 added, for a table an earlier run of this
+#: script already created. ``IF NOT EXISTS`` on both halves, so this is a no-op
+#: on a fresh table and the only repair a half-old one needs; without it the
+#: stamp raises ``UndefinedColumn`` on exactly the databases that have been
+#: repaired before.
+_BAK_MIGRATE_SQL = [
+    f"ALTER TABLE {BAK_TABLE} ADD COLUMN IF NOT EXISTS "
+    f"new_completed_at timestamptz",
+    f"ALTER TABLE {BAK_TABLE} ADD COLUMN IF NOT EXISTS "
+    f"new_win_probability_sources jsonb",
+]
 
 _BAK_COPY_SQL = f"""
     INSERT INTO {BAK_TABLE} (
@@ -278,6 +312,26 @@ _BAK_COPY_SQL = f"""
         new_home_score = EXCLUDED.new_home_score,
         new_away_score = EXCLUDED.new_away_score,
         applied_at     = now()
+"""
+
+#: THE WRITE MANIFEST (CERT-3141). Read back off the event row after this
+#: event's writes and inside the same transaction, so it records what we
+#: actually left behind on all four restorable columns — including the ones
+#: this branch did not touch, whose "what we wrote" is "what was already
+#: there". Reading the row is what makes the manifest complete without the
+#: apply loop having to predict its own writes: the blend restamp is computed
+#: by ``_apply_final_pm_win_prob`` deep inside the branch, and a manifest
+#: assembled from the loop's local variables would have to be kept in step with
+#: every future write this rail grows.
+_BAK_STAMP_SQL = f"""
+    UPDATE {BAK_TABLE} b
+       SET new_home_score              = e.home_score,
+           new_away_score              = e.away_score,
+           new_completed_at            = e.completed_at,
+           new_win_probability_sources = e.win_probability_sources
+      FROM events e
+     WHERE e.id = b.event_id
+       AND b.event_id = :event_id
 """
 
 #: Asked BEFORE the reconciliation that names the table in a subquery, because
@@ -340,6 +394,18 @@ async def bank_prior_state(session, event_id: int, new_home, new_away) -> None:
     })
 
 
+async def stamp_written_state(session, event_id: int) -> None:
+    """Record what this event's row holds NOW into the backup's manifest half.
+
+    Called AFTER the event's writes and inside the same transaction, so it reads
+    our own uncommitted values. See :data:`_BAK_STAMP_SQL` for why the manifest
+    is read back rather than assembled from the loop's variables.
+    """
+    from sqlalchemy import text
+
+    await session.execute(text(_BAK_STAMP_SQL), {"event_id": event_id})
+
+
 async def ensure_backup_table(session) -> None:
     """Runtime DDL, attended invocation only (ruling 47(c)).
 
@@ -347,10 +413,17 @@ async def ensure_backup_table(session) -> None:
     person invokes it is explicitly NOT migration-class: the invocation is the
     attended step. Nothing schedules this rail, and nothing may — see the module
     docstring.
+
+    The ``ADD COLUMN IF NOT EXISTS`` pair is the same class and is here for the
+    same reason: a database that ran the pre-CERT-3141 version of this script
+    holds the table WITHOUT its manifest columns, and that is the one case where
+    the stamp would raise instead of banking.
     """
     from sqlalchemy import text
 
     await session.execute(text(_BAK_CREATE_SQL))
+    for stmt in _BAK_MIGRATE_SQL:
+        await session.execute(text(stmt))
 
 
 async def reconcile_backup(session, event_ids: list) -> dict:
@@ -1038,6 +1111,13 @@ async def repair(
                 })
                 stats["completed_at_repaired"] += 1
                 group_writes += 1
+
+            # THE MANIFEST, LAST (CERT-3141). Every write this event was going
+            # to get has happened, so the row now IS what the undo must compare
+            # against. Unconditional: a branch that wrote nothing still banks
+            # "nothing changed", which is what makes the undo's CAS able to tell
+            # "still ours" from "moved on" on a completed_at-only repair.
+            await stamp_written_state(s, r.event_id)
 
         if apply and group_writes:
             # Commit per group: a timeout leaves consistent, resumable progress.

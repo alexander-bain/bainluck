@@ -52,6 +52,8 @@ def test_every_new_statement_parses_as_postgres():
         repair._BAK_COPY_SQL,
         repair._BAK_EXISTS_SQL,
         repair._BAK_MISSING_SQL,
+        repair._BAK_STAMP_SQL,
+        *repair._BAK_MIGRATE_SQL,
         restore._PLAN_SQL,
         restore._RESTORE_SQL,
     ):
@@ -59,7 +61,14 @@ def test_every_new_statement_parses_as_postgres():
 
 
 def _set_columns(sql: str) -> set:
-    body = re.findall(r"SET\s+(.*?)\s+WHERE", sql, re.S)[0]
+    """The columns an UPDATE assigns.
+
+    Cut at `FROM` as well as `WHERE`: an `UPDATE ... SET ... FROM t ... WHERE`
+    otherwise carries the join clause into the last assignment's value half,
+    where it happens to be harmless — until the day it is not. Read the SET
+    clause as the SET clause.
+    """
+    body = re.split(r"\s+(?:FROM|WHERE)\s+", sql.split("SET", 1)[1], maxsplit=1)[0]
     return {part.split("=")[0].strip() for part in body.replace("\n", " ").split(",")}
 
 
@@ -93,6 +102,26 @@ def test_the_backup_banks_every_column_the_undo_needs():
         assert column in restore._PLAN_SQL
 
 
+def test_the_manifest_banks_every_column_the_undo_compares():
+    """CERT-3141. The `new_*` half is what licenses the write, so it has to
+    carry every column the write touches — the two the old cut left out are
+    exactly the two whose newer value is score-indistinguishable."""
+    for column in restore.RESTORED_COLUMNS:
+        assert f"new_{column}" in repair._BAK_CREATE_SQL
+        assert f"new_{column}" in repair._BAK_STAMP_SQL
+        assert f"new_{column}" in restore._PLAN_SQL
+        assert f"current_{column}" in restore._PLAN_SQL
+
+
+def test_a_backup_table_from_before_the_manifest_is_migrated_in_place():
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on a table that already exists,
+    so a database repaired by the pre-CERT-3141 script would keep a two-column
+    manifest and the stamp would raise UndefinedColumn on it."""
+    migrations = " ".join(repair._BAK_MIGRATE_SQL)
+    for column in ("new_completed_at", "new_win_probability_sources"):
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in " ".join(migrations.split())
+
+
 def test_the_banked_old_values_are_never_overwritten_by_a_second_run():
     """A row repaired, drifted and repaired again must restore to what
     production held before we EVER touched it — not to our own last write.
@@ -112,8 +141,34 @@ def test_the_undo_compare_and_swaps_on_what_we_wrote_not_on_difference():
     """CERT-2439. On this cohort ESPN correcting itself again is the EXPECTED
     later state, so "differs from the backup" would revert the correction."""
     sql = " ".join(restore._RESTORE_SQL.split())
-    assert "home_score IS NOT DISTINCT FROM :new_home_score" in sql
-    assert "away_score IS NOT DISTINCT FROM :new_away_score" in sql
+    assert "e.home_score IS NOT DISTINCT FROM b.new_home_score" in sql
+    assert "e.away_score IS NOT DISTINCT FROM b.new_away_score" in sql
+
+
+def test_the_compare_and_swap_covers_every_column_the_undo_writes():
+    """CERT-3141, structurally: the SET clause and the WHERE clause are derived
+    from the same list, so a fifth restored column cannot be written without
+    also being compared. A CAS that observes fewer columns than it writes is a
+    blind overwrite for the difference."""
+    sql = " ".join(restore._RESTORE_SQL.split())
+    assert _set_columns(restore._RESTORE_SQL) == set(restore.RESTORED_COLUMNS)
+    for column in restore.RESTORED_COLUMNS:
+        assert f"e.{column} IS NOT DISTINCT FROM b.new_{column}" in sql, (
+            f"{column} is restored but not compared — a newer {column} is "
+            "overwritten with the pre-repair value"
+        )
+
+
+def test_the_undo_binds_nothing_but_the_event_id():
+    """A dict read out of a jsonb column and handed back to an untyped bind
+    reaches asyncpg's `_jsonb_encoder`, which calls `.encode()` on it —
+    CERT-932, on the first row with a banked blend. Keeping the values inside
+    one `UPDATE ... FROM` makes the class unreachable rather than handled."""
+    binds = set(re.findall(r":(\w+)", restore._RESTORE_SQL))
+    assert binds == {"event_id"}, (
+        f"the restore binds {sorted(binds)}; every value but the id should come "
+        "from the joined backup row by column reference"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,14 +198,41 @@ async def test_reconciling_nothing_reports_nothing_rather_than_clean():
     assert repair.backup_is_exact(await repair.reconcile_backup(object(), [])) is False
 
 
+_WROTE_AT = dt.datetime(2026, 9, 16, 20, 34, tzinfo=dt.timezone.utc)
+_LATER = dt.datetime(2026, 9, 16, 21, 10, tzinfo=dt.timezone.utc)
+_PRE_REPAIR_BLEND = {"final_result": {"home_win": 0.5}}
+_WROTE_BLEND = {"final_result": {"home_win": 0.0}}
+
+
 class _PlanRow:
-    def __init__(self, *, new=(5, 6), current=(5, 6)):
+    """One row of the restore's plan: what we banked, and what is live now.
+
+    Defaults are the ordinary score repair immediately after it ran — every
+    manifest column still holding what we wrote — so each test moves exactly
+    one thing and the assertion names the reason for the verdict.
+    """
+
+    def __init__(
+        self,
+        *,
+        new=(5, 6),
+        current=(5, 6),
+        old=(5, 5),
+        new_completed_at=_WROTE_AT,
+        current_completed_at=_WROTE_AT,
+        new_blend=_WROTE_BLEND,
+        current_blend=_WROTE_BLEND,
+    ):
         self.event_id = 15313231
-        self.old_home_score, self.old_away_score = 5, 5
-        self.old_completed_at = dt.datetime(2026, 9, 16, 20, 34, tzinfo=dt.timezone.utc)
-        self.old_win_probability_sources = {"final_result": {"home_win": 0.5}}
+        self.old_home_score, self.old_away_score = old
+        self.old_completed_at = None
+        self.old_win_probability_sources = _PRE_REPAIR_BLEND
         self.new_home_score, self.new_away_score = new
+        self.new_completed_at = new_completed_at
+        self.new_win_probability_sources = new_blend
         self.current_home_score, self.current_away_score = current
+        self.current_completed_at = current_completed_at
+        self.current_win_probability_sources = current_blend
 
 
 def test_a_row_still_holding_our_write_is_restorable():
@@ -166,6 +248,59 @@ def test_a_row_someone_reverted_by_hand_is_not_restorable():
     """Back at the pre-repair 5-5 — there is nothing to undo, and writing the
     banked value again would be indistinguishable from a repair."""
     assert restore.restorable(_PlanRow(new=(5, 6), current=(5, 5))) is False
+
+
+def test_restore_refuses_when_completed_at_or_blend_moved_on():
+    """CERT-3141 — the two newer values a score CAS is structurally blind to.
+
+    Both cases below hold the exact score the repair wrote, so every check the
+    first cut performed passes and the undo proceeds to overwrite a column it
+    never looked at.
+
+    THE COMPLETION-ONLY CASE IS THE SHARP ONE. The repair's
+    `fix_completed_at_only` branch writes no score at all, so its banked `new_*`
+    score is the live score by construction and stays that way for the life of
+    the row: a score-keyed CAS on those rows is not weak, it is inert. The undo
+    would put the pre-repair `completed_at` — a NULL, which is what made the row
+    a candidate — back over a completion time production has since derived.
+    """
+    completion_only = _PlanRow(
+        old=(5, 5), new=(5, 5), current=(5, 5),   # the score never moved: nothing to tell
+        new_completed_at=_WROTE_AT,
+        current_completed_at=_LATER,
+        new_blend=_PRE_REPAIR_BLEND, current_blend=_PRE_REPAIR_BLEND,
+    )
+    assert restore.moved_columns(completion_only) == ["completed_at"]
+    assert restore.restorable(completion_only) is False
+
+    blend_moved = _PlanRow(
+        new=(5, 6), current=(5, 6),               # still our score, to the digit
+        current_blend={"final_result": {"home_win": 1.0}},
+    )
+    assert restore.moved_columns(blend_moved) == ["win_probability_sources"]
+    assert restore.restorable(blend_moved) is False
+
+    # ...and the refusal is not a blanket one: the same completion-only row,
+    # untouched since the repair, still restores. Without this line a
+    # `restorable = False` mutant passes both assertions above.
+    assert restore.restorable(
+        _PlanRow(
+            old=(5, 5), new=(5, 5), current=(5, 5),
+            new_blend=_PRE_REPAIR_BLEND, current_blend=_PRE_REPAIR_BLEND,
+        )
+    ) is True
+
+
+def test_a_blend_that_only_reordered_its_keys_has_not_moved_on():
+    """`jsonb` equality is key-order-insensitive and so is a dict compare, so
+    the preview and the statement agree about the one case where a naive text
+    comparison would refuse every row."""
+    banked = {"kalshi": 0.42, "final_result": {"home_win": 0.0, "graded": True}}
+    reordered = {"final_result": {"graded": True, "home_win": 0.0}, "kalshi": 0.42}
+    assert list(banked) != list(reordered)  # or this proves nothing
+    assert restore.restorable(
+        _PlanRow(new_blend=banked, current_blend=reordered)
+    ) is True
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +394,12 @@ class _FakeSession:
         if "CREATE TABLE IF NOT EXISTS" in sql:
             self.calls.append("bak_create")
             return _Result()
+        if sql.startswith(f"ALTER TABLE {repair.BAK_TABLE}"):
+            self.calls.append("bak_migrate")
+            return _Result()
+        if sql.startswith(f"UPDATE {repair.BAK_TABLE}"):
+            self.calls.append("stamp")
+            return _Result(rowcount=1)
         if sql.startswith(f"INSERT INTO {repair.BAK_TABLE}"):
             self.calls.append("bank")
             return _Result(rowcount=1 if self.bank_succeeds else 0)
@@ -283,6 +424,10 @@ class _FakeSession:
 
     async def commit(self):
         self.commits += 1
+        # Recorded in the same tape as the statements, because "the manifest is
+        # in the same transaction as the write" is a claim about their ORDER
+        # relative to a commit and cannot be checked from a counter.
+        self.calls.append("commit")
 
 
 class _FakeESPN:
@@ -316,6 +461,31 @@ async def test_the_bank_lands_before_the_write_it_covers(stub_espn):
 
 
 @pytest.mark.asyncio
+async def test_the_manifest_is_stamped_after_the_last_write_it_describes(stub_espn):
+    """CERT-3141. The stamp reads the row back, so it is only the truth once
+    every write for that event has happened — a stamp before the blend restamp
+    would bank the pre-repair blend as "what we wrote" and the undo's CAS would
+    then refuse every row it was meant to cover.
+
+    The table is migrated in the same breath as it is created, before the first
+    bank: a manifest column that does not exist yet turns the stamp into an
+    UndefinedColumn on exactly the databases this rail has already touched.
+    """
+    s = _FakeSession()
+    await repair.repair(s, apply=True, sport="baseball_mlb", limit=1)
+
+    assert "stamp" in s.calls, "nothing banked what the repair left behind"
+    assert s.calls.index("bak_create") < s.calls.index("bak_migrate")
+    assert s.calls.index("bak_migrate") < s.calls.index("bank")
+    assert s.calls.index("fix_score") < s.calls.index("stamp")
+    # And still inside the group's transaction — the commit that lands the
+    # repair lands its manifest with it, or a crash between them leaves a
+    # written row whose undo cannot tell it from one production has moved on.
+    tape = s.calls[s.calls.index("bank"):]
+    assert tape.index("fix_score") < tape.index("stamp") < tape.index("commit")
+
+
+@pytest.mark.asyncio
 async def test_a_row_that_could_not_be_banked_is_never_written(stub_espn):
     """The D51(b) gate, doing the only job it has."""
     s = _FakeSession(bank_succeeds=False)
@@ -323,6 +493,9 @@ async def test_a_row_that_could_not_be_banked_is_never_written(stub_espn):
 
     assert "fix_score" not in s.calls
     assert "fix_completed_at" not in s.calls
+    # Nor a manifest: a `new_*` half with no write behind it would licence an
+    # undo of something that never happened.
+    assert "stamp" not in s.calls
     assert result["scores_repaired"] == 0
     assert result["backup_refused"] == 1
     # The defect is still REPORTED — a refused write must not look like a clean
