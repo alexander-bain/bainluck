@@ -3185,16 +3185,53 @@ GRADED_DELTA_BATCH = 100_000
 #: backlog completely.
 IMPOSSIBLE_PRIOR_BATCH = 10_000
 
+#: The snapshot sources whose `probability` is the SAME QUANTITY as
+#: `futures_outcomes.current_probability`, and therefore the only sources
+#: statement A4 may subtract one from the other for (#4079, CERT-3107).
+#:
+#: 🔴 THIS IS A SCALE GUARD, AND WITHOUT IT A4 IS #1844 AGAIN.
+#: `FuturesOddsSnapshot.probability` carries an explicit column contract —
+#: "RAW implied probability for THIS ONE BOOKMAKER — vig-inclusive … Never
+#: compare a raw row to a blend" — written because #1844 shipped an all-red
+#: movers row for months by subtracting exactly these two things. A sportsbook
+#: row is inflated by that book's vig; a de-vigged consensus
+#: `current_probability` sits BELOW every raw row it was built from. So on a
+#: vigged outcome `current - MIN(observed)` understates the supportable rise by
+#: roughly the vig share, and A4 would retire an HONEST rise — the one failure
+#: direction the statement claims it cannot have. The first draft's defence
+#: ("the extremes are taken across every bookmaker, so a blend cannot sit
+#: outside them") is true for same-scale sources and FALSE for vigged ones: it
+#: was the statement's unstated precondition, and this constant is that
+#: precondition made explicit.
+#:
+#: MEASURED on production 2026-09-19, which is why this lands as a guard and not
+#: as a rewrite: the vigged population A4 could damage is EMPTY. Every one of
+#: the 7,317 outcomes in A4's scope — open market, `|delta| >= 0.02`, any
+#: observation in the window — is backed by a SINGLE prediction-market source
+#: (polymarket 6,509, kalshi 808) and no sportsbook row at all; likewise all
+#: 3,108 rows A4 retires (polymarket 2,752, kalshi 356). Scale identity on that
+#: population is measured, not assumed: 7,255 of 7,317 (99.2%) carry a
+#: `current_probability` equal to their latest snapshot to within 5e-7, and the
+#: mean SIGNED gap is -0.000048 (polymarket) / +0.002952 (kalshi) — a vig offset
+#: would be a large one-sided negative, and it is not there.
+#:
+#: FAIL-CLOSED, per outcome, on the presence of ANY foreign-scale row in the
+#: window rather than by filtering those rows out of the extrema. An outcome
+#: priced from both a sportsbook and a prediction market has a
+#: `current_probability` this statement cannot reason about at all, so the
+#: honest move is to leave its delta alone — A, A2 and A3 still cover it.
+SCALE_IDENTICAL_SNAPSHOT_SOURCES = ("kalshi", "polymarket")
+
 #: How far a delta may OVERSTATE what the outcome's own series supports before
 #: statement A4 retires it (#4079).
 #:
-#: One point, and it is an artifact allowance rather than a policy. The two
-#: quantities compared are not the same measurement: `current_probability` on a
-#: multi-source outcome is a BLEND, while `futures_odds_snapshots.probability`
-#: is one bookmaker's raw vig-inclusive row (see that column's comment — a full
-#: column of them sums to 1.16-1.33, never to 1.0). The extremes are taken
-#: across every bookmaker so a blend cannot sit outside them, and this absorbs
-#: the last step between the two representations.
+#: One point, and it is an artifact allowance rather than a policy. Even inside
+#: `SCALE_IDENTICAL_SNAPSHOT_SOURCES` the two quantities are not the same
+#: measurement to the last decimal: `current_probability` on a multi-source
+#: outcome is a BLEND of same-scale sources while each snapshot row is one
+#: source's own read, and the two are written by different passes. This absorbs
+#: that last step. It does NOT absorb a vig — nothing this size could, which is
+#: what the scale guard above is for.
 #:
 #: 🔴 IT IS A PAD ON OVERSTATEMENT, NOT ON PRICE EQUALITY, and the first draft
 #: of this statement got that wrong in a way worth recording. That draft asked
@@ -3555,12 +3592,23 @@ def update_max_movement(self):
             #     `price_changed_at`: Kanye's stamp was one hour old and honest.
             #     The stamp was never the thing that was wrong.
             #
-            #     THE EXTREMES ARE TAKEN ACROSS EVERY BOOKMAKER ON PURPOSE.
-            #     `current_probability` can be a blend while each snapshot row is
-            #     one book's raw vig-inclusive number, so the two are not the same
-            #     quantity. A blend always lies between the min and max of its
-            #     constituents, so widening the range this way can only ever leave
-            #     a lying delta standing — never retire a true one.
+            #     🔴 BOTH SIDES OF THE SUBTRACTION MUST BE THE SAME QUANTITY,
+            #     and that is a PRECONDITION, not a property of the arithmetic.
+            #     `FuturesOddsSnapshot.probability` is one book's RAW
+            #     vig-inclusive number and its column comment forbids comparing
+            #     it to a blend in as many words (#1844 shipped an all-red movers
+            #     row for months on exactly this subtraction). On a vigged
+            #     outcome a de-vigged `current_probability` sits below every raw
+            #     row it came from, so `current - MIN(observed)` understates the
+            #     supportable rise and A4 would retire an HONEST caption. So the
+            #     statement is SCOPED to sources whose snapshot rows are the same
+            #     quantity as `current_probability`
+            #     (`SCALE_IDENTICAL_SNAPSHOT_SOURCES` carries the contract and
+            #     the production measurement), and an outcome carrying any
+            #     foreign-scale row in the window is skipped whole. Within that
+            #     scope the original argument holds: a blend lies between the min
+            #     and max of its same-scale constituents, so taking the extremes
+            #     across sources can only ever leave a lying delta standing.
             #
             #     A ROW WITH NO OBSERVATIONS IN THE WINDOW IS LEFT ALONE, and that
             #     is a refusal to guess rather than an oversight. "We never looked"
@@ -3589,7 +3637,10 @@ def update_max_movement(self):
                         JOIN futures_markets fm ON fm.id = fo.market_id
                         CROSS JOIN LATERAL (
                             SELECT min(s.probability) AS lo,
-                                   max(s.probability) AS hi
+                                   max(s.probability) AS hi,
+                                   bool_or(
+                                       s.bookmaker <> ALL(:scale_identical)
+                                   ) AS foreign_scale
                             FROM futures_odds_snapshots s
                             WHERE s.outcome_id = fo.id
                               AND s.captured_at
@@ -3600,6 +3651,12 @@ def update_max_movement(self):
                           AND abs(fo.probability_change_24h) >= :floor
                           AND fm.status = 'open'
                           AND obs.lo IS NOT NULL
+                          -- `IS FALSE`, never `NOT foreign_scale`: NULL (no
+                          -- rows) and TRUE (a vigged row) must BOTH fail, and
+                          -- `NOT NULL` is NULL, which the planner drops anyway
+                          -- — spelled this way so the fail-closed intent is
+                          -- readable rather than incidental.
+                          AND obs.foreign_scale IS FALSE
                           AND CASE
                                 WHEN fo.probability_change_24h > 0
                                 THEN fo.probability_change_24h
@@ -3624,6 +3681,9 @@ def update_max_movement(self):
                     # Decimal, never the float itself — see the note above.
                     "floor": floor,
                     "batch": UNOBSERVED_PRIOR_BATCH,
+                    # A list, not the tuple: asyncpg binds a Python list to a
+                    # Postgres array, which is what `<> ALL(...)` needs.
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
                 },
             )
 

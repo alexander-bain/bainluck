@@ -79,7 +79,8 @@ async def _reset_and_seed(rows):
     predicate is `current_probability - probability_change_24h` landing outside
     [0, 1], which no fixture with a constant price can express.
 
-    An eighth element, `observations`, is a list of `(hours_ago, probability)`
+    An eighth element, `observations`, is a list of
+    `(hours_ago, probability)` — or `(hours_ago, probability, bookmaker)` —
     written into `futures_odds_snapshots` and defaults to NONE AT ALL (#4079).
     That default is what keeps every pre-A4 case in this file meaning exactly
     what it meant: A4 reads the observed extremes through a lateral aggregate
@@ -165,11 +166,18 @@ async def _reset_and_seed(rows):
             )
             session.add(outcome)
             await session.flush()
-            for hours_ago, probability in observations:
+            for observation in observations:
+                # A third element names the BOOKMAKER, defaulting to the
+                # prediction-market source every pre-CERT-3107 case meant
+                # (#4079). It is optional so those cases read unchanged, and it
+                # exists so a case can seed a vig-inclusive sportsbook row —
+                # the one thing A4 must refuse to subtract from a blend.
+                hours_ago, probability = observation[:2]
+                bookmaker = observation[2] if len(observation) > 2 else "kalshi"
                 session.add(
                     FuturesOddsSnapshot(
                         outcome_id=outcome.id,
-                        bookmaker="kalshi",
+                        bookmaker=bookmaker,
                         probability=probability,
                         captured_at=now - timedelta(hours=hours_ago),
                     )
@@ -932,6 +940,133 @@ def test_a_move_the_series_cannot_support_is_retired() -> None:
         "the run must report what it retired under its own counter: folded into "
         "`impossible_retired` the first big drain would be invisible. "
         f"got {result}"
+    )
+
+
+def test_a_vigged_sportsbook_series_can_never_condemn_a_de_vigged_blend() -> None:
+    """THE scale control (CERT-3107): A4 may not subtract across two scales.
+
+    `FuturesOddsSnapshot.probability` is one book's RAW vig-inclusive number and
+    its column comment says so in as many words — "Never compare a raw row to a
+    blend" — because #1844 published an all-red movers row for months on exactly
+    this subtraction. A de-vigged consensus sits BELOW every raw row it was built
+    from, so on a vigged outcome the observed extremes understate the supportable
+    rise by roughly the vig share.
+
+    `vigged` is that arithmetic with honest inputs. The consensus moved 0.40 ->
+    0.50 today, a true +10 points. Two sportsbooks priced it at 0.44 yesterday
+    and 0.55 now — same journey, each inflated by about a tenth of vig. Read
+    against the raw extremes the supportable rise is 0.50 - 0.44 = 0.06, so the
+    claim clears the one-point tolerance and A4 WITHOUT the scale guard retires
+    a caption that was TRUE. That is the one failure direction the statement
+    claims it cannot have, so the guard is what earns the claim.
+
+    `mixed` is the same refusal one step weaker: a single sportsbook row beside
+    a prediction-market one. On the prediction-market rows alone the claim looks
+    unsupportable, and it may still be — but `current_probability` on an outcome
+    priced from both scales is not a quantity this statement can reason about,
+    so the honest move is to leave the delta to A, A2 and A3.
+
+    Both rows are fresh, ungraded and imply a legal prior (0.40), so nothing
+    else in the task touches them: if they go NULL, A4 did it.
+    """
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    "vigged",
+                    "open",
+                    1,
+                    0.10,
+                    0.10,
+                    None,
+                    0.50,
+                    [
+                        (20, 0.44, "draftkings"),
+                        (20, 0.445, "fanduel"),
+                        (1, 0.55, "draftkings"),
+                        (1, 0.554, "fanduel"),
+                    ],
+                ),
+                (
+                    "mixed",
+                    "open",
+                    1,
+                    0.10,
+                    0.10,
+                    None,
+                    0.50,
+                    [(20, 0.48, "polymarket"), (1, 0.55, "draftkings")],
+                ),
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    assert after["vigged"][0] == pytest.approx(0.10), (
+        "A4 retired a TRUE +10-point consensus move by measuring it against "
+        "vig-inclusive sportsbook rows, which sit above the de-vigged blend and "
+        "therefore understate every rise. This is #1844's subtraction and the "
+        f"column comment forbids it. got {after['vigged'][0]}"
+    )
+    assert after["mixed"][0] == pytest.approx(0.10), (
+        "an outcome carrying one foreign-scale row in the window was swept on "
+        "the strength of its same-scale rows. The guard is per OUTCOME and "
+        "fails closed on purpose: a blend of two scales is not a quantity this "
+        f"statement can reason about. got {after['mixed'][0]}"
+    )
+    assert result["unobserved_retired"] == 0, (
+        "neither row is in A4's scope, so the sweep must report retiring "
+        f"nothing. got {result}"
+    )
+
+
+def test_the_scale_guard_does_not_cost_the_prediction_market_sweep() -> None:
+    """The guard must be a scope, not an off switch — both sources stay live.
+
+    A guard written as "skip anything with a snapshot I don't recognise" would
+    pass the vigged control above and quietly retire nothing at all if a source
+    name were mistyped. So this drives one liar per member of
+    `SCALE_IDENTICAL_SNAPSHOT_SOURCES` and requires BOTH to be swept: polymarket
+    carries 2,752 of the 3,108 rows A4 retires on production and kalshi the
+    other 356, and a typo in either is a silent half-outage of the ship.
+    """
+    from app.tasks import SCALE_IDENTICAL_SNAPSHOT_SOURCES
+
+    assert set(SCALE_IDENTICAL_SNAPSHOT_SOURCES) == {"kalshi", "polymarket"}, (
+        "this case seeds one liar per named source; a new member needs a row "
+        f"here or it ships unproven. got {SCALE_IDENTICAL_SNAPSHOT_SOURCES}"
+    )
+    ids = asyncio.run(
+        _reset_and_seed(
+            [
+                (
+                    source,
+                    "open",
+                    1,
+                    -0.60,
+                    0.60,
+                    None,
+                    0.20,
+                    [(20, 0.22, source), (1, 0.21, source)],
+                )
+                for source in SCALE_IDENTICAL_SNAPSHOT_SOURCES
+            ]
+        )
+    )
+    result = _run_task()
+    after = asyncio.run(_read(ids))
+
+    for source in SCALE_IDENTICAL_SNAPSHOT_SOURCES:
+        assert after[source][0] is None, (
+            f"a {source}-sourced row claiming a 60-point fall survived on a "
+            "series that never left 0.21-0.22. The scale guard is refusing a "
+            f"source it is supposed to admit. got {after[source][0]}"
+        )
+    assert result["unobserved_retired"] == len(SCALE_IDENTICAL_SNAPSHOT_SOURCES), (
+        "every named same-scale source must still be swept; a guard that "
+        f"admits only one of them is half an outage. got {result}"
     )
 
 

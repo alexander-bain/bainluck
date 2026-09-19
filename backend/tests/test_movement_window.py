@@ -832,6 +832,48 @@ def test_the_unobserved_sweep_separates_never_looked_from_never_happened(
     )
 
 
+def test_the_unobserved_sweep_refuses_a_foreign_probability_scale(
+    run_task,
+) -> None:
+    """A4 subtracts two columns, and it may only do so on ONE scale (CERT-3107).
+
+    `FuturesOddsSnapshot.probability` is one book's raw vig-inclusive number;
+    its own column comment ends "Never compare a raw row to a blend", and #1844
+    is the incident behind that sentence. A de-vigged consensus sits below every
+    raw row it came from, so on a vigged outcome the observed extremes understate
+    the supportable rise and A4 retires HONEST movement — the one direction it
+    claims it cannot fail in.
+
+    The clause must be `IS FALSE`. `NOT obs.foreign_scale` is NULL on an outcome
+    with no rows in the window and TRUE-ish reasoning around it is how a
+    fail-open creeps in; `IS FALSE` admits only the proven-clean case. The real
+    behaviour is proved on Postgres (`test_movement_window_pg.py`); this asserts
+    the clause and the bind are actually IN the statement, because a scope guard
+    that is silently dropped leaves every other A4 test green.
+    """
+    from app.tasks import SCALE_IDENTICAL_SNAPSHOT_SOURCES
+
+    sql, params = _phase_a4(run_task()[1])
+    flat = " ".join(sql.split())
+
+    assert "bool_or( s.bookmaker <> ALL(:scale_identical) ) AS foreign_scale" in flat, (
+        "the lateral does not detect a foreign-scale row, so the sweep cannot "
+        f"know whether its two operands are the same quantity: {flat}"
+    )
+    assert "obs.foreign_scale IS FALSE" in flat, (
+        "the scale guard is not applied as `IS FALSE`, so an outcome carrying a "
+        f"vig-inclusive row can still reach the comparison: {flat}"
+    )
+    assert params.get("scale_identical") == list(SCALE_IDENTICAL_SNAPSHOT_SOURCES), (
+        "the admitted sources must be the named constant, bound as a list so "
+        f"asyncpg sends a Postgres array to `ALL(...)`: {params}"
+    )
+    assert isinstance(params.get("scale_identical"), list), (
+        "a tuple binds as a ROW, not an array, and `<> ALL(row)` is a different "
+        f"question: {params}"
+    )
+
+
 def test_the_unobserved_sweep_windows_the_observations(run_task) -> None:
     """The extremes come from MOVEMENT_WINDOW_HOURS of series, nothing wider.
 
