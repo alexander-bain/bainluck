@@ -80,6 +80,7 @@ from app.utils.event_completion import (
     is_retired_event_status,
     started_without_result,
 )
+from app.utils.current_odds_probability import current_odds_probability
 from app.utils.draw_priced_winner import printable_away
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.market_shape import (
@@ -13280,7 +13281,7 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # Use compute_aggregate_probability() as primary probability source,
     # matching the feed endpoint. This blends all sources (sportsbooks, ESPN,
     # Kalshi, Polymarket, stat model) with SOURCE_WEIGHTS for consistency.
-    from app.utils.aggregation import compute_aggregate_probability
+    from app.utils.aggregation import compute_aggregate_probability_tiered
     # `blend_view`, not `event` — the folded sources (#3810 Fold A). The
     # aggregator is passed the merged dict and is otherwise untouched, so the
     # folded readings are weighted, decayed, capped and status-excluded exactly
@@ -13291,7 +13292,11 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     # only market sources blends to the same number it does today. The hero
     # moves on the SCHEDULED and LIVE pairs — which is where a reader is
     # actually asking the page what it thinks will happen.
-    agg_prob = compute_aggregate_probability(blend_view)
+    # #7221 — AND THE TIER TRAVELS WITH IT. `compute_aggregate_probability` is
+    # the same cascade under a thinner signature (#6694); reading the tier here
+    # rather than re-deriving it is the whole reason that function returns one.
+    # `agg_prob` itself is unchanged and every reader of it below is untouched.
+    agg_prob, agg_tier = compute_aggregate_probability_tiered(blend_view)
 
     # #6238: read ONCE for every probability object this route serves, so the
     # hero, the fallback, the opening line and the top-level pair cannot answer
@@ -13328,7 +13333,26 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.
-        hero_home_prob = agg_prob if agg_prob is not None else aggregated["home_probability"]
+        #
+        # ── #7221: EXCEPT THAT A TIER-3 AGGREGATE IS THE OPENING LINE, AND
+        #    THIS OBJECT STAMPS IT `captured_at` FROM THE SNAPSHOT ROWS ───────
+        #
+        # Every other field here — spread, over_under, the projected scores,
+        # `bookmaker_count`, `latest_time` — is the filtered snapshots. The
+        # probability was the one field that was not, so on a live event whose
+        # bag holds no weighted source this object served a three-hour-old
+        # opening under a stamp seconds old. Measured on production
+        # 2026-09-19 14:19:20Z, event 15314578 (Uganda–Kenya, live): this
+        # object said 0.6414 at `captured_at` 14:19:20.574177Z with
+        # `bookmaker_count` 1, while `bookmaker_odds[0]` IN THE SAME RESPONSE
+        # carried fanduel at 0.044, stamped the same microsecond.
+        #
+        # The reasoning, the ruling-051 boundary (the blend is NOT loosened —
+        # a one-book consensus still cannot enter it) and why this fires on
+        # live and on nothing else all live in `current_odds_probability`.
+        hero_home_prob = current_odds_probability(
+            agg_prob, agg_tier, aggregated["home_probability"], event.status
+        )
         hero_away_prob = round(1.0 - hero_home_prob, 6) if hero_home_prob is not None else aggregated["away_probability"]
 
         # ── #6238: AND ON A THREE-OUTCOME WINNER MARKET THAT SECOND NUMBER IS
@@ -25289,8 +25313,10 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # and the per-book table from the sportsbook aggregate (those ARE sportsbook
     # data). compute_aggregate_probability now uses the same weighted median the
     # chart's blend line uses.
-    from app.utils.aggregation import compute_aggregate_probability as _agg_prob
-    _blend = _agg_prob(event)
+    from app.utils.aggregation import (
+        compute_aggregate_probability_tiered as _agg_prob_tiered,
+    )
+    _blend, _blend_tier = _agg_prob_tiered(event)
 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
@@ -25308,13 +25334,47 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         current_spread = aggregated["home_spread"]
         current_ou = aggregated["over_under"]
 
+        # ── #7221 SITE 2 — THE CARD, AND THE ONE WITH NO ESCAPE HATCH ────────
+        #
+        # `get_event` has the same three lines and the same defect (see the
+        # comment there and `current_odds_probability` for the specimen and the
+        # ruling-051 boundary). This arm is the one a reader actually meets: on
+        # the detail page the frontend cross-checks `current_odds` against the
+        # chart's own series and overrides it when they differ by more than
+        # five points, but `EventCard` — `/search`, `/sport/...`, team pages —
+        # has no history to cross-check against and prints this number flat.
+        # Measured 2026-09-19 14:21:55Z, `/search?q=Uganda`: the live card read
+        # `Uganda 64% · Kenya 36%` under a green LIVE badge with `Opened 64/36`
+        # beneath it, the live figure and the pre-match figure being the same
+        # number because they were the same number.
+        #
+        # 🔴 THE RANKING INPUT IS DELIBERATELY NOT MOVED. `current_home_prob`
+        # above feeds `compute_highlight`, and #6960 settled the rule for this
+        # exact shape one ship ago: "withheld at the serving boundary only …
+        # nulling the variable itself would silently move card scores". This is
+        # a truth fix, so only what leaves in the response changes; a card's
+        # score and its position are identical before and after.
+        _served_home = current_odds_probability(
+            _blend, _blend_tier, aggregated["home_probability"], event.status
+        )
+        # Derived exactly as `_hero_away` is, from whichever home number is
+        # being served — one claim per ship. Substituting the books' own away
+        # consensus here would be a second, separate change: on a draw-priced
+        # sport it is not the complement, so `printable_away` would start
+        # printing an away figure the surface withholds today.
+        _served_away = (
+            round(1.0 - _served_home, 6)
+            if _served_home is not None
+            else aggregated["away_probability"]
+        )
+
         response["current_odds"] = {
             "captured_at": captured_at.isoformat() if captured_at else None,
-            "home_probability": _hero_home,
+            "home_probability": _served_home,
             # #6960 site 1. The home leg is NOT the defect and is left exactly
             # as it is; only the invented slot goes.
             "away_probability": printable_away(
-                _hero_away, _hero_home, _event_sport_key
+                _served_away, _served_home, _event_sport_key
             ),
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
