@@ -43,6 +43,52 @@ const CATEGORY_LABEL_EXCEPTIONS: Record<string, string> = {
 };
 
 /**
+ * #5516 (the half #2710 could not see) — CATEGORIES THAT NAME A RUNG, AND THE
+ * RUNG THEY NAME.
+ *
+ * `category` is not one vocabulary, it is two wearing one column. Polymarket's
+ * poller returns the single value `championship` from EVERY arm of its cascade
+ * that lands on a sport (`tasks/polymarket.py` `_tags_to_category` ->
+ * `("championship", None)`, `resolve_event_category` -> `category =
+ * "championship"`), so the column there means "this is sport", spelled with the
+ * wrong word. #2710 then title-cases it faithfully onto the card, and the reader
+ * gets **Championship** in the same purple pill as "MLB World Series Champion
+ * 2026".
+ *
+ * MEASURED on production 2026-09-19: 12,724 open rows carry
+ * `category='championship'` with `market_tier = 5` (11,025 Polymarket, 1,698
+ * Kalshi, 1 Odds API). Specimen from a 390px LOOK at `/search?q=chiefs`: "What
+ * will the announcers say during the Colts vs Chiefs game?" — a novelty prop,
+ * badged Championship, `market_tier: 5`, `market_type_label: "Prop"`.
+ *
+ * THE BACKEND ALREADY DISAGREES WITH ITSELF IN THE SAME PAYLOAD, which is what
+ * makes this decidable without inventing a word. `market_tier` is computed from
+ * the market NAME by `compute_market_tier`, whose own comment says name patterns
+ * are more reliable "(Polymarket uses 'championship' for everything)". So when
+ * the category claims a specific rung and the row landed in the catch-all rung,
+ * the claim is unsupported by the row's own classifier.
+ *
+ * SUPPRESS, DO NOT SUBSTITUTE. The honest replacement is not available: the 5
+ * affected rows on that one card are a moneyline, three season-series markets
+ * and a novelty question, and no single word covers them. `market_type_label`
+ * would read "Prop" beside a sibling reading "Game Props" — a new inconsistency
+ * for an old one. Rendering no chip is already the designed null state (the
+ * function returns `null` so the card can gate on it), so the card loses a false
+ * claim and gains nothing wrong.
+ *
+ * ONLY THE MAXIMAL CONTRADICTION. Tiers 2-4 are adjacent rungs of the same
+ * hierarchy (conference / award / division) where "Championship" is at worst
+ * imprecise; ~750 open rows sit there and are deliberately LEFT, so this ships
+ * the population the LOOK actually found rather than a sweep nobody measured.
+ */
+const CATEGORY_CLAIMS_TIER: Record<string, number> = {
+  championship: 1,
+};
+
+/** `compute_market_tier`'s catch-all: "props / other", and its unclassified default. */
+const UNCLASSIFIED_TIER = 5;
+
+/**
  * Human label for a `FuturesMarket.category`, or `null` when there is nothing
  * to show.
  *
@@ -52,10 +98,21 @@ const CATEGORY_LABEL_EXCEPTIONS: Record<string, string> = {
  */
 export function marketCategoryLabel(
   category: string | null | undefined,
+  marketTier?: number | null,
 ): string | null {
   if (typeof category !== "string") return null;
   const key = category.trim();
   if (!key) return null;
+  // #5516 — the row's own tier contradicts what the category claims, so there is
+  // nothing true to print. Gated on an EXPLICIT 5: `market_tier` is optional on
+  // the payload and absent during a Vercel-ahead-of-Heroku window, and a missing
+  // tier must leave the chip exactly as it is today rather than blank every card.
+  if (
+    CATEGORY_CLAIMS_TIER[key.toLowerCase()] !== undefined &&
+    marketTier === UNCLASSIFIED_TIER
+  ) {
+    return null;
+  }
   const exception = CATEGORY_LABEL_EXCEPTIONS[key.toLowerCase()];
   if (exception) return exception;
   const cased = toTitleCaseAcronymSafe(key);
