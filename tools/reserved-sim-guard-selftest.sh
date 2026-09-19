@@ -34,7 +34,18 @@ fail() { echo "  FAIL — $1" >&2; FAILED=$((FAILED+1)); }
 # what is guarded omitted the caller with the most to lose. Adding a rig tool
 # that takes or resolves a device means adding it here, and the omission is
 # exactly what nothing else can see.
-ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh tools/native-gates.sh"
+#
+# 🔴 `tools/native-firstcard.sh` JOINED ON 2026-09-19 (native/249) — and it is
+# the reason assertions 11 and 12 exist. It terminated the app, deleted its
+# caches and relaunched it six times over, at the literal target `booted`, which
+# for four consecutive sessions was Alex's signed-in `DD0DC456`. Four handoffs
+# named the hazard in prose and none of them could make the repo say it, because
+# the list below is hand-maintained and the file took no device argument — there
+# was nothing that LOOKED like a device to guard. The comment above says adding
+# a tool means adding it here; that instruction had already been missed twice
+# when it was written. A list that must be remembered is the same shape of
+# defect as the convention this whole file replaced, so 11 derives the list.
+ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh tools/native-gates.sh tools/native-firstcard.sh"
 
 echo "1. the guard refuses the reserved device with exit 7"
 ( . tools/reserved-sim-guard.sh; bl_refuse_reserved_sim "$RESERVED" selftest ) >/dev/null 2>&1
@@ -218,6 +229,60 @@ else
   fail "the picker scan cannot detect a bespoke pick — it proves nothing"
 fi
 rm -f /tmp/reserved-sim-picker-strawman.sh
+
+echo "11. every rig tool that drives a simulator is IN the list above"
+# THE ASSERTION THE OTHER TEN CANNOT MAKE. Every one of them iterates
+# $ENTRYPOINTS, so a tool missing from that string is not judged clean — it is
+# not judged at all, and the run prints the same "ok" either way. That is how
+# `native-gates.sh` (2026-09-18) and `native-firstcard.sh` (2026-09-19) both sat
+# unguarded under a green selftest. So the list stops being the authority on who
+# is covered: the filesystem is. A tool that calls `simctl` drives a device, and
+# a tool that drives a device is in scope, whether or not anyone remembered it.
+UNLISTED=0
+for f in tools/native*.sh; do
+  [ -f "$f" ] || continue
+  /usr/bin/grep -q "simctl" "$f" || continue
+  case " $ENTRYPOINTS " in
+    *" $f "*) ;;
+    *) fail "$f drives a simulator and is NOT in ENTRYPOINTS — nothing above judged it"
+       UNLISTED=$((UNLISTED+1)) ;;
+  esac
+done
+[ "$UNLISTED" -eq 0 ] && ok "every simctl-driving tool under tools/ is judged by this file"
+# The control. This scan's failure mode is silence, exactly like the gap it
+# closes, so it has to be shown firing on a tool that is deliberately absent.
+printf '#!/bin/sh\nxcrun simctl boot "$1"\n' > tools/native-zz-strawman.sh
+case " $ENTRYPOINTS " in
+  *" tools/native-zz-strawman.sh "*) fail "the strawman is in the list; the control proves nothing" ;;
+  *) if /usr/bin/grep -q "simctl" tools/native-zz-strawman.sh; then
+       ok "strawman: an unlisted simctl tool is detectable"
+     else
+       fail "the scan cannot see an unlisted simctl tool — it proves nothing"
+     fi ;;
+esac
+rm -f tools/native-zz-strawman.sh
+
+echo "12. no entrypoint aims at the literal target 'booted'"
+# `simctl <verb> booted` is a device selector that resolves to whatever is
+# running, so it reads as "no device argument" while being one. It passes
+# assertions 5, 7 and 10 — it hardcodes no UDID, names no scalar, and takes no
+# `head` of a device list — and it is precisely how native-firstcard.sh came to
+# point at Alex's phone. The shared picker is the only sanctioned resolution.
+BOOTED=0
+for f in $ENTRYPOINTS scripts/ios_native_gate.sh; do
+  if /usr/bin/grep -qE 'simctl +[a-z_]+ +booted' "$f"; then
+    fail "$f targets the literal 'booted' instead of a resolved UDID"
+    BOOTED=$((BOOTED+1))
+  fi
+done
+[ "$BOOTED" -eq 0 ] && ok "$(echo $ENTRYPOINTS | wc -w | tr -d ' ') entrypoints + the gate, 0 aimed at 'booted'"
+printf 'xcrun simctl launch booted com.example\n' > /tmp/reserved-sim-booted-strawman.sh
+if /usr/bin/grep -qE 'simctl +[a-z_]+ +booted' /tmp/reserved-sim-booted-strawman.sh; then
+  ok "strawman: the 'booted' scan does fire"
+else
+  fail "the 'booted' scan cannot detect a literal target — it proves nothing"
+fi
+rm -f /tmp/reserved-sim-booted-strawman.sh
 
 echo
 if [ "$FAILED" -eq 0 ]; then echo "RESERVED-SIM GUARD SELFTEST: CLEAN"; exit 0; fi
