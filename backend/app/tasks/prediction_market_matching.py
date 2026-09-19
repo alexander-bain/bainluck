@@ -425,9 +425,29 @@ async def _register_market_team_identities(session, event_id, matchup, market):
 
     When a prediction market is linked to an event, we know the team names
     from both sources. Register these mappings so future lookups are instant.
+
+    #7188: which SIDE a matchup fragment names is resolved, never assumed.
+    ``MatchupInfo.team_a`` is documented as "first team in market name" — a
+    position in a string, not a side of the fixture — so pairing it with
+    ``home_team_id`` was a coin flip. It lost on every Kalshi abbreviation
+    measured: "New York M" was registered onto the YANKEES (the Mets were the
+    visitors in the 09-11/12/13 Subway Series), and "New York I" and
+    "New York R" both onto the DEVILS, one second apart, from the two games
+    New Jersey hosts on 09-20 and 09-21. Each wrong row then answers every
+    later lookup for that name at score 100, which is how the Mets' NL East
+    and pennant legs came to sit on the Yankees' team page.
+
+    The mapping table is a durable cache, so a guess here is not a guess that
+    fades — it is written down and believed. A fragment that does not name
+    exactly one side is therefore dropped rather than assigned; the next
+    lookup falls through to the fuzzy path exactly as it did before any row
+    existed. Nothing rescans "names we declined to cache", so declining is
+    inert rather than stranding: the next link of the same fixture re-offers
+    the same fragment and, once it is unambiguous, caches it.
     """
     from app.models.models import Event
     from app.services.team_identity import team_identity_service
+    from app.utils.team_side import resolve_team_side
 
     # Must eager-load sport to avoid lazy-load in async context
     event_result = await session.execute(
@@ -442,16 +462,42 @@ async def _register_market_team_identities(session, event_id, matchup, market):
     sport_key = event.sport.key if event.sport else ""
     source = market.source  # "kalshi" or "polymarket"
 
-    # Register the event's team names with the identity service
-    if event.home_team_id and event.home_team_name:
+    team_id_by_side = {"home": event.home_team_id, "away": event.away_team_id}
+
+    # No matchup parsed ⇒ the only names we have ARE the event's own, and each
+    # trivially resolves to its own side. Routing them through the same resolver
+    # keeps one rule rather than two that can drift apart.
+    fragments = (
+        [matchup.team_a, matchup.team_b]
+        if matchup
+        else [event.home_team_name, event.away_team_name]
+    )
+
+    resolved: list[tuple[str, str]] = []
+    for fragment in fragments:
+        side = resolve_team_side(fragment, event.home_team_name, event.away_team_name)
+        if side is None:
+            # Names neither side ("Chicago WS") or both ("New York" on a
+            # Yankees/Mets matchup). Never written down as a fact.
+            continue
+        resolved.append((side, fragment))
+
+    # Two fragments claiming ONE side is the fixture disagreeing with itself —
+    # exactly the state the positional pairing could not see. Drop both rather
+    # than cache whichever the loop happened to reach second.
+    if len({side for side, _ in resolved}) != len(resolved):
+        return
+
+    for side, fragment in resolved:
+        # Subscript, not ``.get``: every entry here resolved to a real side
+        # above, and a lookup that quietly returns None for an unresolved one
+        # would make the drop above incidental rather than load-bearing.
+        team_id = team_id_by_side[side]
+        if not team_id:
+            continue
         await team_identity_service.register_team_identity(
-            session, event.home_team_id, source, sport_key,
-            source_name=matchup.team_a if matchup else event.home_team_name,
-        )
-    if event.away_team_id and event.away_team_name:
-        await team_identity_service.register_team_identity(
-            session, event.away_team_id, source, sport_key,
-            source_name=matchup.team_b if matchup else event.away_team_name,
+            session, team_id, source, sport_key,
+            source_name=fragment,
         )
 
 # ── Duplicate linkage guard ──────────────────────────────────────────────────
