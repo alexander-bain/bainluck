@@ -36,7 +36,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.routes.events import _withhold_partial_field_futures
+from app.routes.events import (
+    _snapshot_row_market_ids,
+    _withhold_partial_field_futures,
+)
 
 
 def _market(market_id, name, *, declared=None, event_title=None, mex=True):
@@ -277,7 +280,7 @@ def test_split_source_complete_field_survives_the_dedup_reattribution():
     2-of-3 and every row goes — reproduced by the grader as
     `after_dedup=[('Germany',1),('Greece',2),('Draw',2)]` → `after_filter=[]`.
 
-    Counted on `pre_merge_rows`, where each market still owns its own three
+    Counted on the pre-merge attribution, where each market still owns its own three
     legs, both are complete and nothing is withheld.
     """
     pre_merge = (
@@ -293,7 +296,7 @@ def test_split_source_complete_field_survives_the_dedup_reattribution():
     }
 
     home_out, away_out = _withhold_partial_field_futures(
-        home, away, markets, pre_merge_rows=pre_merge
+        home, away, markets, pre_merge_market_ids=_snapshot_row_market_ids(pre_merge)
     )
 
     assert _names(home_out) == ["Germany"]
@@ -325,7 +328,7 @@ def test_a_merged_row_survives_when_any_market_behind_it_is_complete():
     }
 
     home_out, _ = _withhold_partial_field_futures(
-        home, [], markets, pre_merge_rows=pre_merge
+        home, [], markets, pre_merge_market_ids=_snapshot_row_market_ids(pre_merge)
     )
 
     assert _names(home_out) == ["Germany", "Greece", "Draw"]
@@ -342,7 +345,7 @@ def test_a_merged_row_goes_when_every_market_behind_it_is_short():
     }
 
     home_out, _ = _withhold_partial_field_futures(
-        [winner], [], markets, pre_merge_rows=pre_merge
+        [winner], [], markets, pre_merge_market_ids=_snapshot_row_market_ids(pre_merge)
     )
 
     assert home_out == []
@@ -357,10 +360,116 @@ def test_the_named_two_of_seventeen_still_goes_after_the_repair():
     markets = {61032702: _market(61032702, EXACT, declared=17, event_title=EXACT)}
 
     home_out, _ = _withhold_partial_field_futures(
-        list(pre_merge), [], markets, pre_merge_rows=pre_merge
+        list(pre_merge), [], markets, pre_merge_market_ids=_snapshot_row_market_ids(pre_merge)
     )
 
     assert home_out == []
+
+
+# ── CERT-3101: the "pre-merge" list holds the rows the merge is about to edit ─
+
+
+def test_overlapping_short_fields_survive_nothing_when_the_real_merge_runs():
+    """🔴 THE SECOND BLOCK, and it needs the REAL merge to reproduce.
+
+    Every test above hands the filter pre-merge rows it built by hand, so the
+    pre-merge list and the filtered lists are different objects. In the route
+    they are the SAME dicts: `pre_merge = list(home) + list(away)` copies the
+    list, and `dedup_by_merge_group` then writes `contributor_market_ids` onto
+    the winners inside it. Reading that list back afterwards counts a market
+    once for its own legs and again through every winner that absorbed one.
+
+    Two sources serving the same 17-leg exact-score field, 9 legs each: true
+    counts are 9 and 9, both short. Through the mutated list one of them
+    computes 18, 18 >= 17 reads as COMPLETE, and the field the filter exists to
+    withhold is served — the grader's reproduction exactly.
+
+    This test drives `dedup_by_merge_group` for real, so it fails against any
+    implementation that keeps row references instead of frozen ids.
+    """
+    from app.utils.related_futures import dedup_by_merge_group
+
+    scorelines = [f"Germany {h} - {a} Greece" for h, a in
+                  ((1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2), (0, 0), (1, 1), (2, 2))]
+
+    def _leg(market_id, name, source, books):
+        return {
+            "market_id": market_id,
+            "outcome_name": name,
+            "merge_group": "exact_score",
+            "source": source,
+            "bookmaker_count": books,
+            "last_updated": None,
+        }
+
+    home = (
+        [_leg(1, n, "kalshi", 3) for n in scorelines]
+        + [_leg(2, n, "polymarket", 1) for n in scorelines]
+    )
+    markets = {
+        1: _market(1, EXACT, declared=17, event_title=EXACT),
+        2: _market(2, EXACT, declared=17, event_title=EXACT),
+    }
+
+    snapshot = _snapshot_row_market_ids(home)
+    merged = dedup_by_merge_group(home)
+
+    # The mutation the snapshot has to be immune to actually happened.
+    assert any(r.get("contributor_market_ids") for r in merged)
+    assert any(r.get("contributor_market_ids") for r in home)
+
+    home_out, _ = _withhold_partial_field_futures(
+        merged, [], markets, pre_merge_market_ids=snapshot
+    )
+
+    assert home_out == []
+
+
+def test_the_snapshot_is_not_a_view_of_the_rows():
+    """Stated on its own so the reason survives a refactor of the test above."""
+    rows = [{"market_id": 7, "outcome_name": "Germany"}]
+    snapshot = _snapshot_row_market_ids(rows)
+
+    rows[0]["contributor_market_ids"] = [7, 8]
+
+    assert snapshot == [frozenset({7})]
+
+
+def test_a_complete_field_still_survives_the_real_merge():
+    """The control in the same shape: two sources, 3 legs each, nothing goes.
+
+    Without it, "withhold everything" would pass the test above.
+    """
+    from app.utils.related_futures import dedup_by_merge_group
+
+    def _leg(market_id, name, source, books):
+        return {
+            "market_id": market_id,
+            "outcome_name": name,
+            "merge_group": "match_result",
+            "source": source,
+            "bookmaker_count": books,
+            "last_updated": None,
+        }
+
+    names = ["Germany", "Greece", "Draw"]
+    home = (
+        [_leg(3, n, "kalshi", 3) for n in names]
+        + [_leg(4, n, "polymarket", 1) for n in names]
+    )
+    markets = {
+        3: _market(3, RESULT, declared=3, event_title=RESULT),
+        4: _market(4, RESULT, declared=3, event_title=RESULT),
+    }
+
+    snapshot = _snapshot_row_market_ids(home)
+    merged = dedup_by_merge_group(home)
+
+    home_out, _ = _withhold_partial_field_futures(
+        merged, [], markets, pre_merge_market_ids=snapshot
+    )
+
+    assert _names(home_out) == names
 
 
 def test_dedup_records_the_markets_behind_its_winner():

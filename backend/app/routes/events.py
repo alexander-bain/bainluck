@@ -14382,11 +14382,31 @@ def _futures_row_market_ids(row: dict) -> set:
     return ids
 
 
+def _snapshot_row_market_ids(rows: list) -> list:
+    """Freeze each row's market attribution as data (#7068 / CERT-3101).
+
+    🔴 A LIST SNAPSHOT OF MUTABLE ROWS IS NOT A SNAPSHOT OF ANYTHING.
+    `list(home_futures) + list(away_futures)` copies the LIST; the dicts inside
+    are the same objects `dedup_by_merge_group` and `merge_relabel_collisions`
+    then mutate in place, writing `contributor_market_ids` onto the winners. By
+    the time the filter reads that "pre-merge" list back, every winner has grown
+    its merged provenance, so a market is counted once for its own legs and
+    again through every winner that absorbed one: two overlapping 9-of-17
+    fields computed `{1: 9, 2: 18}` against a true `{1: 9, 2: 9}`, and 18 >= 17
+    read as COMPLETE — the short field survived the filter written to withhold
+    it.
+
+    So the pre-merge fact is extracted into immutable data at the moment it is
+    true. A `frozenset` per row holds no reference to the row.
+    """
+    return [frozenset(_futures_row_market_ids(row)) for row in rows]
+
+
 def _withhold_partial_field_futures(
     home_futures: list,
     away_futures: list,
     row_markets: dict,
-    pre_merge_rows: list | None = None,
+    pre_merge_market_ids: list | None = None,
 ) -> tuple[list, list]:
     """The same rule as :func:`_withhold_partial_field_markets`, second door.
 
@@ -14424,9 +14444,11 @@ def _withhold_partial_field_futures(
 
     Two halves, and BOTH are needed:
 
-    * ``pre_merge_rows`` — the rows as they stood before dedup, where every leg
-      still carries its own market's id. That is the only place a per-market leg
-      count is a fact rather than an artefact of who won a merge.
+    * ``pre_merge_market_ids`` — :func:`_snapshot_row_market_ids` taken before
+      dedup, where every leg still carries its own market's id. That is the only
+      place a per-market leg count is a fact rather than an artefact of who won
+      a merge — and it is passed as FROZEN DATA, not as rows, because the rows
+      are mutated in place by the merges that follow (CERT-3101).
     * :func:`_futures_row_market_ids` — a surviving row is removed only when
       EVERY market behind it is short. Without this, a short market whose row
       happens to WIN a merge against a complete sibling would take the complete
@@ -14436,17 +14458,17 @@ def _withhold_partial_field_futures(
     """
     from app.utils.market_shape import venue_leg_count
 
-    # Counted on the PRE-MERGE rows when the caller has them (the route always
-    # does); the post-merge lists are the fallback for a direct caller and are
-    # correct whenever nothing merged.
+    # Counted on the PRE-MERGE attribution when the caller has it (the route
+    # always does); the post-merge lists are the fallback for a direct caller
+    # and are correct whenever nothing merged.
     counted = (
-        list(pre_merge_rows)
-        if pre_merge_rows is not None
-        else list(home_futures) + list(away_futures)
+        pre_merge_market_ids
+        if pre_merge_market_ids is not None
+        else _snapshot_row_market_ids(list(home_futures) + list(away_futures))
     )
     held: dict = {}
-    for row in counted:
-        for market_id in _futures_row_market_ids(row):
+    for ids in counted:
+        for market_id in ids:
             held[market_id] = held.get(market_id, 0) + 1
     if not held:
         return home_futures, away_futures
@@ -20288,13 +20310,17 @@ async def _build_related_futures(
     # match with suffix check.
     from app.utils.related_futures import dedup_by_merge_group
 
-    # #7068 / CERT-3099 — the rows as they stand BEFORE any merge, where every
-    # leg still carries its own market's id. The partial-field test below needs
-    # a per-market leg count, and after the two merge passes that count is an
-    # artefact of which source won each outcome, not a fact about the field.
+    # #7068 / CERT-3099 — the attribution as it stands BEFORE any merge, where
+    # every leg still carries its own market's id. The partial-field test below
+    # needs a per-market leg count, and after the two merge passes that count is
+    # an artefact of which source won each outcome, not a fact about the field.
     # Snapshotted here rather than recomputed later because this is the last
-    # moment it is true.
-    pre_merge_rows = list(home_futures) + list(away_futures)
+    # moment it is true — and snapshotted as FROZEN IDS rather than as rows,
+    # because `list(...)` copies the list while the merges below mutate the very
+    # dicts inside it (CERT-3101; see `_snapshot_row_market_ids`).
+    pre_merge_market_ids = _snapshot_row_market_ids(
+        list(home_futures) + list(away_futures)
+    )
 
     home_futures = dedup_by_merge_group(home_futures)
     away_futures = dedup_by_merge_group(away_futures)
@@ -20384,11 +20410,14 @@ async def _build_related_futures(
     # (Germany) and `away_team_futures` (Greece), so a per-list count would read
     # every such market as short by construction and withhold the complete ones
     # too.
-    # COUNTED ON `pre_merge_rows`, not on the lists being filtered — see
-    # CERT-3099 in the function's docstring: after dedup a complete field
+    # COUNTED ON THE PRE-MERGE ATTRIBUTION, not on the lists being filtered —
+    # see CERT-3099 in the function's docstring: after dedup a complete field
     # carried by two sources reads as 1-of-3 plus 2-of-3 and was erased whole.
     home_futures, away_futures = _withhold_partial_field_futures(
-        home_futures, away_futures, row_markets, pre_merge_rows=pre_merge_rows
+        home_futures,
+        away_futures,
+        row_markets,
+        pre_merge_market_ids=pre_merge_market_ids,
     )
 
     # ── Enrich matchup outcomes with team logos ───────────────────
