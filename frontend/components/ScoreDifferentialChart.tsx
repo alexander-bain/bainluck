@@ -1025,24 +1025,6 @@ export default function ScoreDifferentialChart({
                 style: { fontSize: 10, fill: "rgba(0,0,0,0.4)" },
               }}
             />
-            {/* Period boundary markers — rendered in front of data area */}
-            {filteredPeriodBoundaries.map((b) => (
-              <ReferenceLine
-                key={`period-${b.label}-${b.timestamp}`}
-                x={b.time}
-                stroke="rgba(0,0,0,0.25)"
-                strokeWidth={1.5}
-                strokeDasharray="6 4"
-                isFront
-                label={{
-                  value: b.label,
-                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
-                  // #6882 — see the twin in OddsChart. Row 0 passes 0.
-                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
-                  style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
-                }}
-              />
-            ))}
             <Tooltip content={<CustomTooltip />} />
             <Legend
               wrapperStyle={{ fontSize: "12px" }}
@@ -1146,6 +1128,32 @@ export default function ScoreDifferentialChart({
                 connectNulls
               />
             )}
+
+            {/* Period boundary markers — LAST CHILD ON PURPOSE (#6964).
+                See the identical block in OddsChart for the full finding. In
+                short: SVG has no z-index, recharts' `renderByOrder` emits
+                children in JSX order, and `isFront` — which this block used to
+                pass — is a dead prop in recharts 2.15.4, declared and typed and
+                defaulted but never read anywhere in the library. So these
+                markers painted UNDER every series, and the `Actual Score Diff`
+                step line erased the `Q` of `Q3` on Bills–Lions. Their position
+                in this list IS the fix; there is no prop that does it. */}
+            {filteredPeriodBoundaries.map((b) => (
+              <ReferenceLine
+                key={`period-${b.label}-${b.timestamp}`}
+                x={b.time}
+                stroke="rgba(0,0,0,0.25)"
+                strokeWidth={1.5}
+                strokeDasharray="6 4"
+                label={{
+                  value: b.label,
+                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
+                  // #6882 — see the twin in OddsChart. Row 0 passes 0.
+                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
+                  style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
+                }}
+              />
+            ))}
           </ComposedChart>
         </ResponsiveContainer>
         </div>
