@@ -290,6 +290,84 @@ def _market_row(market: FuturesMarket) -> dict | None:
     }
 
 
+def _up_leg(market: FuturesMarket):
+    """The leg a daily up/down card prints, or None if the market has none.
+
+    The FIRST matching leg wins and the scan stops there, exactly as the two
+    inline loops this replaces did. It deliberately does not fall through to a
+    second `Yes` when the first has no price: these markets carry one such leg,
+    and substituting another would quietly change which question the row is
+    answering — a worse fault than the missing number.
+    """
+    for outcome in _outcomes_sorted(market):
+        if (outcome.name or "").lower() in ("up", "yes", ""):
+            return outcome
+    return None
+
+
+def _index_row(market: FuturesMarket) -> dict | None:
+    """A TODAY'S CLOSE row, or None when the venue has not priced its leg.
+
+    #7085 — the old inline body read the price as
+    `float(o.current_probability or 0)` and printed the result unconditionally,
+    so a leg the venue has not priced became a confident `0%`. Measured on the
+    served payload of 2026-09-18 (market `61381310`, *"S&P 500 (SPY) closes
+    above ___ on September 21?"*, `current_probability` NULL behind a live
+    0.55/0.78 book), the card printed:
+
+        S&P 500 (SPY) closes     0%  up
+        S&P 500 (SPX)           53%  up
+
+    — two rows for one index, the first asserting there is no chance the S&P
+    closes up. `0%` is worse than a blank because it is a claim.
+
+    Withheld by DROPPING THE ROW rather than serving a null `prob`. This is a
+    list surface and the web card renders `{prob}% {dir}` with no null arm, so
+    a null would print `% up`; the same reasoning took a card out of the boxing
+    hub under #7016. A list keeps its shape by losing an item, not by keeping a
+    row that says nothing. If every index leg is unpriced the card is absent
+    entirely, which is the honest-empty end state (ruling 027), not a regression.
+
+    `is None`, not `or 0`, for the reason `_market_row` gives above: the column
+    is `Numeric(7, 6)`, so a genuine priced zero arrives as a FALSY
+    `Decimal("0.000000")` and an `or 0` refusal would throw away real data —
+    the market saying "no" — alongside the absence.
+    """
+    outcome = _up_leg(market)
+    if outcome is None or outcome.current_probability is None:
+        return None
+    return {
+        "sym": (market.name or "").split(" Up ")[0].split(" up ")[0].split("?")[0].strip()[:20],
+        "prob": round(float(outcome.current_probability) * 100, 1),
+        "dir": "up",
+        "range": "",
+        "src": _source(market),
+    }
+
+
+def _stock_row(market: FuturesMarket) -> dict | None:
+    """A single-stock row, or None when the venue has not priced its leg.
+
+    The same #7085 coercion, one branch down, on a card that renders a bare
+    `{prob}%` with no direction word at all — so an unpriced leg there reads as
+    a flat `0%` beside real prices with nothing to mark it apart. No specimen on
+    the served payload the day this shipped (`stocks` was empty), but it is the
+    same builder, the same leg scan and the same `or 0`; leaving one of the two
+    would be arbitrary.
+    """
+    outcome = _up_leg(market)
+    if outcome is None or outcome.current_probability is None:
+        return None
+    name = market.name or ""
+    sym = name.split("(")[1].split(")")[0] if "(" in name else name.split(" ")[0]
+    return {
+        "sym": sym[:6],
+        "prob": round(float(outcome.current_probability) * 100, 1),
+        "delta": None,
+        "src": _source(market),
+    }
+
+
 # Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
 # partition into mutually exclusive brackets. Each row of such a ladder is an
 # independent "at or above X" probability (gotcha #17), so the rows are NOT a
@@ -1125,27 +1203,13 @@ async def get_economics(db: AsyncSession):
     for m in markets_markets:
         name_lower = (m.name or "").lower()
         if any(idx in name_lower for idx in ("nasdaq", "s&p", "dow", "vix")) and ("up or down" in name_lower or "close" in name_lower):
-            for o in _outcomes_sorted(m):
-                if (o.name or "").lower() in ("up", "yes", ""):
-                    today_indices.append({
-                        "sym": m.name.split(" Up ")[0].split(" up ")[0].split("?")[0].strip()[:20],
-                        "prob": round(float(o.current_probability or 0) * 100, 1),
-                        "dir": "up",
-                        "range": "",
-                        "src": _source(m),
-                    })
-                    break
+            _row = _index_row(m)
+            if _row:
+                today_indices.append(_row)
         elif any(stock in name_lower for stock in ("meta ", "aapl", "tsla", "nvda", "msft", "googl", "apple", "tesla", "nvidia", "microsoft", "google")):
-            for o in _outcomes_sorted(m):
-                if (o.name or "").lower() in ("up", "yes", ""):
-                    sym = m.name.split("(")[1].split(")")[0] if "(" in m.name else m.name.split(" ")[0]
-                    stocks.append({
-                        "sym": sym[:6],
-                        "prob": round(float(o.current_probability or 0) * 100, 1),
-                        "delta": None,
-                        "src": _source(m),
-                    })
-                    break
+            _row = _stock_row(m)
+            if _row:
+                stocks.append(_row)
         else:
             _row = _market_row(m)
             if _row:
