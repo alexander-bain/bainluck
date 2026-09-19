@@ -76,11 +76,21 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "americanfootball_ncaaf": 4,
     "americanfootball_cfl": 4,
     "americanfootball_ufl": 4,
-    # Basketball — 4 quarters (halves for college, but ESPN reports 2 halves)
+    # Basketball — 4 quarters, EXCEPT the men's college game, which plays two
+    # 20-minute halves and which ESPN reports as halves.
+    #
+    # 🔴 The women's college game is NOT the men's game with a different label.
+    # It has played four 10-minute quarters since 2015-16, and ESPN reports it
+    # that way. Measured on production for #5588: all 55 distinct
+    # `basketball_wncaab` period labels last season (2026-02-08 → 2026-04-04)
+    # are quarters — "End of 4th Quarter", "7:40 - 3rd Quarter" — and not one
+    # of them is a half, against 281 `basketball_ncaab` rows that are halves.
+    # This entry said 2 because the comment it sat under read "halves for
+    # college" and lumped the two competitions together.
     "basketball_nba": 4,
     "basketball_wnba": 4,
     "basketball_ncaab": 2,
-    "basketball_wncaab": 2,
+    "basketball_wncaab": 4,
     # Baseball — 9 innings
     "baseball_mlb": 9,
     "baseball_mlb_preseason": 9,
@@ -95,6 +105,11 @@ EXPECTED_GAME_STATE_INDICATORS: dict[str, int | None] = {
     "soccer_germany_bundesliga": 2,
     "soccer_italy_serie_a": 2,
     "soccer_france_ligue_one": 2,
+    # Present in `highlights.SPORT_TOTAL_PERIODS` but missing here until #5588.
+    # This map is the documented authority, so a sport the other map knows and
+    # this one does not is a hole in the authority, not an extra over there.
+    "soccer_mexico_ligamx": 2,
+    "soccer_fifa_world_cup": 2,
     # Lacrosse — 4 quarters
     "lacrosse_ncaa": 4,
     "lacrosse_pll": 4,
