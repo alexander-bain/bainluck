@@ -523,23 +523,48 @@ GATES_CARRY_STREAK = frozenset({GATE_NO_SCORE, GATE_TOO_FEW, GATE_PENDING})
 #: `MEETS`.
 #:
 #: **This is not the answer to #3071.** Question A — what the minimum denominator
-#: for a flip should actually be — is Alex's and is unruled. This is the floor
-#: that EVERY candidate answer to it contains: a ratio over a single game is
-#: 100% or 0% and nothing else, so it cannot distinguish "we agree about every
-#: game" from "there was one game and we happened to have it". Refusing that one
-#: case commits to nothing Alex has not already implied by asking the question.
+#: a streak may be scored on should actually be — is Alex's and is unruled. This
+#: is the floor that EVERY candidate answer to it contains: a ratio over a single
+#: game is 100% or 0% and nothing else, so it cannot distinguish "we agree about
+#: every game" from "there was one game and we happened to have it". Refusing
+#: that one case commits to nothing Alex has not already implied by asking.
 #:
-#: What it deliberately does NOT do is guess the real floor. NBA reads 41/41 and
-#: NHL 32/32 today; both clear this and both may well be under whatever Alex
-#: rules. So the governing block publishes `minimum_denominator` beside the
-#: numbers AND `minimum_denominator_ruling`, which says the real one is open —
-#: D55's rule that a gap tags loudly rather than passing silently. A reader who
-#: sees `MEETS` on 41 games is told, on the row, that 41 has not been blessed.
+#: What it deliberately does NOT do is guess the real floor. A sport can clear
+#: this one on a denominator far below whatever Alex eventually rules. So the
+#: governing block publishes `minimum_denominator` beside the numbers AND
+#: `minimum_denominator_ruling`, which says the real one is open — D55's rule
+#: that a gap tags loudly rather than passing silently. A reader who sees
+#: `MEETS` on a two-figure denominator is told, on the row, that it has not
+#: been blessed.
 MINIMUM_SCORED_DENOMINATOR = 2
 
 #: Open question the floor above is standing in for, named on every row.
+#:
+#: SCOPE, corrected (#3071, authority/495). This sentence used to open "the
+#: minimum denominator FOR A FLIP is unruled" and was served, unchanged, on all
+#: seven governing blocks — including the three sports whose flip consults no
+#: denominator at all. Since D104 = A4 `flip_permitted` returns `True` for a key
+#: in `authority_by_sport.FLIP_RULED_WITHOUT_STREAK` BEFORE the streak is read,
+#: so for those rows the sentence announced an open safety question governing a
+#: decision that no longer has one.
+#:
+#: That is #5139's rot exactly, ~80 lines below the clause #5139 repaired, and
+#: the guard written there cannot see it: this constant names no sport, so it
+#: over-claims SCOPE rather than naming a stale member.
+#:
+#: The repair is #5139's. The prose still names no member — this module cannot
+#: import `authority_by_sport` to interpolate the ruled set (that module imports
+#: THIS one, so it would be a cycle) and a hand-maintained copy is what rotted
+#: in the first place. Instead the claim is scoped to the thing it actually
+#: binds, the STREAK, and the reader is pointed at `ruled_without_streak`, which
+#: the endpoint derives from the frozenset on every pass. A sentence that names
+#: no member and claims only what is true of every sport cannot go stale as the
+#: ruled set grows — which it did again in #7089.
 MINIMUM_DENOMINATOR_RULING = (
-    "#3071 (Question A) is open: the minimum denominator for a flip is unruled. "
+    "#3071 (Question A) is open: the minimum denominator a STREAK may be scored "
+    "on is unruled. It binds only a sport the streak still gates — for a sport "
+    "served in `ruled_without_streak` the seven days are a monitor (D104 = A4) "
+    "and no denominator decides its flip. "
     f"{MINIMUM_SCORED_DENOMINATOR} is not that answer — it is the floor every "
     "candidate answer contains, because a ratio over one game can only be 100% "
     "or 0%. Read `denominators` before reading a percentage."
