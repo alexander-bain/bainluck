@@ -40,6 +40,18 @@ import pytest
 from app.utils import calibration_scoring as scoring
 from app.utils import calibration_sigma as sigma
 
+
+# #5401 / method m2 (CAL-P1136, 2026-09-12). D62's specimen is `kalshi/golf`,
+# which is now held back from the published score until its prices are
+# repaired. What this file proves — that the MEASURED sigma decides — is
+# independent of which cell it decides about, and the fixtures carry that
+# cell's real measured values, so the flip is exercised with the hold-back set
+# empty rather than re-pinned to invented numbers.
+# Hold-back guard: tests/test_calibration_held_back_cells_5401.py.
+@pytest.fixture(autouse=True)
+def _d62_is_scored_without_the_5401_hold_back(monkeypatch):
+    monkeypatch.setattr(scoring, "HELD_BACK_CELLS", frozenset())
+
 _BACKEND = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPTS = _BACKEND / "scripts"
 

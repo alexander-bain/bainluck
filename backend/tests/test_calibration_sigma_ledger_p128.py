@@ -68,6 +68,29 @@ cs = _load("calibration_scorecard")
 
 
 # --------------------------------------------------------------------------
+# #5401 / method m2 (CAL-P1136, 2026-09-12). This suite's specimen IS
+# `kalshi/golf`, and that cell is now HELD BACK from the published score until
+# the prices underneath it are repaired (`calibration_scoring.HELD_BACK_CELLS`).
+#
+# The subject of this file is the sigma OVERLAY, not the hold-back, and every
+# fixture below is pinned to the real measured sigmas for this exact cell.
+# Re-pointing them at a cell that is still graded would mean inventing numbers,
+# which is the one property that makes these assertions worth having. So the
+# overlay is exercised with the hold-back set empty — deliberately, in one
+# place, rather than by loosening an assertion.
+#
+# The hold-back is not untested by this: its own guard asserts that these very
+# cells leave both halves of the needle —
+# tests/test_calibration_held_back_cells_5401.py.
+# --------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _overlay_is_scored_without_the_5401_hold_back(monkeypatch):
+    from app.utils import calibration_scoring as _scoring
+
+    monkeypatch.setattr(_scoring, "HELD_BACK_CELLS", frozenset())
+
+
+# --------------------------------------------------------------------------
 # Fixtures — the real kalshi/golf measurement, CAL-P127, population q268.
 #
 # Real numbers rather than round ones on purpose: this cell IS the board's
