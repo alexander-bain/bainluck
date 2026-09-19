@@ -935,7 +935,7 @@ struct DiscoverView: View {
                         hideForSession(ids: Self.dismissKeys(forGroupOf: items))
                     }
                 ) {
-                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme)
+                    NativeGroupCard(title: title, items: items, kind: kind, theme: theme, navigationPath: $navigationPath)
                 }
             case .single(let item):
                 if isGuessSlot, item.type == "futures", let f = item.futures,
@@ -1904,6 +1904,34 @@ struct DiscoverView: View {
             // The fresh feed starts at its top. Only on SUCCESS: a failed
             // refresh leaves the reader's own content untouched, and yanking
             // them away from it would destroy their place to report a failure.
+            //
+            // 🪤 #7074 — AND IT DOES NOT ARRIVE. This line has been here since
+            // `5b961bda5`, and Alex still reported on build 15: "Hitting the
+            // refresh button at the bottom of the feed took me instantly about
+            // halfway up the page. Confusingly I could see that I was in the
+            // middle of the feed, not the top, but the content was new."
+            //
+            // MEASURED with a finger, three times, native/239 on master
+            // `78c4cbc5f`: after the press the navigation bar reads **54pt** —
+            // exactly what it was at the BOTTOM of the feed — against **108pt**
+            // at the top of Discover. The reader does not arrive. The assertion
+            // that catches it is written and is NOT in the suite, because a red
+            // journey is not a finding, it is a broken gate; it is quoted in
+            // full on #7074 with these numbers so the next attempt starts here.
+            //
+            // THREE HYPOTHESES ARE FALSIFIED, each by its own run — do not
+            // re-spend them (#7074 carries the logs):
+            //   1. the animation interpolating against unmounted `LazyVStack`
+            //      geometry — removing `withAnimation` changed nothing;
+            //   2. the scroll racing the new content's layout — moving it to
+            //      `DispatchQueue.main.async`, a full runloop turn after
+            //      `vm.load()` returns, changed nothing;
+            //   3. the target having no area to resolve an anchor against —
+            //      `frame(height: 0)` to `frame(height: 1)` changed nothing.
+            // All three read 54.0pt. Whatever is wrong, it is not any of those,
+            // and the most likely remaining reading is that the offset is simply
+            // CLAMPED when `visibleCount = 20` collapses a ~150-card page — in
+            // which case the repair is not a better `scrollTo` at all.
             if let proxy {
                 withAnimation { proxy.scrollTo(Self.feedTopAnchor, anchor: .top) }
             }
@@ -2140,6 +2168,10 @@ private struct NativeGroupCard: View {
     let items: [FeedItem]
     var kind: String? = nil
     var theme: String? = nil
+    /// Threaded through to the rows so they can navigate from a tap gesture
+    /// rather than a `NavigationLink` (#7074) — the same binding the event and
+    /// futures cards already take.
+    @Binding var navigationPath: NavigationPath
     @State private var expanded = false
 
     /// Whether every row is on screen: because the group is small enough to be
@@ -2200,7 +2232,7 @@ private struct NativeGroupCard: View {
                 .padding(.vertical, 9)
             } else {
                 if let primary = items.first, let f = primary.futures {
-                    NativeCompactFuturesRow(data: f)
+                    NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                 }
@@ -2209,7 +2241,7 @@ private struct NativeGroupCard: View {
                     ForEach(items.dropFirst(), id: \.id) { item in
                         if let f = item.futures {
                             Divider().padding(.horizontal, 12)
-                            NativeCompactFuturesRow(data: f)
+                            NativeCompactFuturesRow(data: f, navigationPath: $navigationPath)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                         }
@@ -2365,11 +2397,46 @@ private struct NativeThresholdComparisonRow: View {
     }
 }
 
+/// One market inside a group card.
+///
+/// 🔴 #7074 — THIS ROW WAS A `NavigationLink`, AND THAT IS WHY A SWIPE ON A GROUP
+/// CARD OPENED A PAGE. Alex, build 15: "when I try to swipe left … it starts to
+/// let me swipe left and then it just takes me straight into a UFC futures page."
+///
+/// `SwipeToDismiss` attaches its drag with `.simultaneousGesture` — correctly, it
+/// is what leaves the enclosing `ScrollView` free to pan — so the card's own tap
+/// targets stay live for the whole drag. A `NavigationLink` is a BUTTON, and a
+/// button fires on touch-up anywhere inside its bounds however far the finger
+/// wandered first. Every OTHER Discover card navigates from
+/// `.contentShape(Rectangle()).onTapGesture`, and a tap gesture cancels itself
+/// the moment the finger travels — which is the entire reason those cards have
+/// never had this defect. The group card was the one archetype that did not
+/// follow the idiom.
+///
+/// So this is a transfer, not an invention: the row navigates the way its four
+/// siblings already do. Reproduced with a finger and then re-run green in
+/// `ASwipeOnAGroupRowDoesNotOpenIt7074Tests`.
+///
+/// 🪤 An earlier attempt — `allowsHitTesting(false)` on the card for the duration
+/// of a latched horizontal drag — is NOT in the tree, deliberately. It is the
+/// idiom the internet reaches for, it reads as if it must work, and it was
+/// MEASURED not to: the journey reproduced the navigation again with it applied
+/// (`/tmp/n239-uitest3.log`, 2026-09-18). An in-flight button press is not
+/// cancelled by its view ceasing to accept hits.
 private struct NativeCompactFuturesRow: View {
     let data: FeedFuturesData
+    @Binding var navigationPath: NavigationPath
+
+    /// What a UI test can find a group card's tappable row by (#7074).
+    ///
+    /// Every Discover card already shares `SwipeToDismiss.tapTargetIdentifier`,
+    /// by design — that is how the rig gets a handle on a card of ANY kind. But
+    /// the defect here is specific to the rows a reader's drag begins on, and
+    /// "a card" is not enough to find one with.
+    static var rowIdentifier: String { "discover-group-row" }
 
     var body: some View {
-        NavigationLink(value: Route.futuresDetail(id: data.id)) {
+        Group {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(data.name)
@@ -2392,7 +2459,17 @@ private struct NativeCompactFuturesRow: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        // The whole row, including the gaps between its labels — what the
+        // `NavigationLink`'s button area used to be, so no part of the row stops
+        // being tappable.
+        .contentShape(Rectangle())
+        .onTapGesture { navigationPath.append(Route.futuresDetail(id: data.id)) }
+        // The link trait went with the link. The row is still a control and must
+        // still announce itself as one; `SwipeToDismiss`'s `children: .contain`
+        // keeps it individually reachable inside the card.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier(Self.rowIdentifier)
     }
 }
 
@@ -2483,11 +2560,13 @@ private enum NativeDiscoverPreviewFactory {
 }
 
 #Preview("IPO Bundle") {
+    @Previewable @State var path = NavigationPath()
     NativeGroupCard(
         title: "IPO valuation ranges",
         items: NativeDiscoverPreviewFactory.ipoBundleItems,
         kind: "comparison",
-        theme: "ipo_valuation"
+        theme: "ipo_valuation",
+        navigationPath: $path
     )
     .padding()
     .background(Color.pageBackground)
