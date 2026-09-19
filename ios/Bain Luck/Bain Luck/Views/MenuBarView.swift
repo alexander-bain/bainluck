@@ -174,7 +174,8 @@ struct MenuBarView: View {
                 let menuSides = TeamShortName.shortPair(
                     away: event.awayTeam, home: event.homeTeam,
                     awayServed: event.awayTeamData?.abbreviation,
-                    homeServed: event.homeTeamData?.abbreviation
+                    homeServed: event.homeTeamData?.abbreviation,
+                    sportKey: event.sport
                 )
                 return MenuBarGame(
                     id: event.id,

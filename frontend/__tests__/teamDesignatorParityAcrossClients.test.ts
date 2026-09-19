@@ -714,3 +714,114 @@ describe("#4250 — the names a reader sees", () => {
     expect(isNonDistinctiveTrailingWord("usa")).toBe(false);
   });
 });
+
+/**
+ * #7163 — one particled-surname rule, two clients.
+ *
+ * The browser shipped `NAME_PARTICLES` + `particledSurnameStart` in `dc20ddf8f`
+ * after ux/1356 photographed "de Minaur" rendering as "Minaur" on the event
+ * hero. The iPhone's `short` had the same defect from the same line and got the
+ * same rule; without the comparison below the two lists drift the way every
+ * other list in this file would have.
+ *
+ * The GATE is the half worth guarding hardest. Ungated the walk turns "Tigres
+ * de la UANL" into "de la UANL", and ux measured that 56.3% of 2,797 multi-word
+ * soccer names would move — so both clients reach the walk only through
+ * `namesAPerson`, and both are asserted to.
+ */
+const swiftParticles = tokensInLiteral(
+  swiftSource,
+  /static let nameParticles\s*:\s*Set<String>\s*=/,
+);
+const webParticles = tokensInLiteral(
+  webSource,
+  /const NAME_PARTICLES\s*:\s*ReadonlySet<string>\s*=/,
+);
+
+describe("#7163 — one particled-surname rule, two clients", () => {
+  it("both particle sets were actually found and read", () => {
+    // Reachability: a regex that matches nothing yields [], and every
+    // comparison below would then pass having compared two empty sets.
+    expect(swiftParticles.length).toBeGreaterThanOrEqual(27);
+    expect(webParticles.length).toBeGreaterThanOrEqual(27);
+    expect(swiftParticles).toContain("de");
+    expect(webParticles).toContain("de");
+    // The comment stripper must not have eaten tokens or duplicated them.
+    expect(new Set(swiftParticles).size).toBe(swiftParticles.length);
+    expect(new Set(webParticles).size).toBe(webParticles.length);
+  });
+
+  it("the two particle sets are identical", () => {
+    const swift = new Set(swiftParticles);
+    const web = new Set(webParticles);
+    expect([...web].filter((t) => !swift.has(t))).toEqual([]);
+    expect([...swift].filter((t) => !web.has(t))).toEqual([]);
+  });
+
+  it("both clients gate the walk on a person's sport", () => {
+    // The browser's half is executed; the iPhone's is read out of source, where
+    // the gate being INSIDE the fork is the whole of the claim.
+    expect(teamShortName("Alex de Minaur", null, "tennis_other")).toBe("de Minaur");
+    expect(teamShortName("Alex de Minaur")).toBe("Minaur");
+    expect(teamShortName("Tigres de la UANL", null, "soccer_mexico_ligamx")).toBe("UANL");
+    expect(teamShortName("Tigres de la UANL", null, "tennis_other")).toBe("de la UANL");
+    expect(swiftCode).toMatch(/if namesAPerson\(sportKey: sportKey\) \{/);
+    expect(swiftCode).toMatch(/particledSurnameStart\(parts\)/);
+  });
+
+  it("both clients WALK rather than take one step", () => {
+    // Stacked particles are why this is a loop. A one-step rule hands back "de
+    // Zandschulp", which is the same defect one token along.
+    expect(teamShortName("Botic van de Zandschulp", null, "tennis_other")).toBe(
+      "van de Zandschulp",
+    );
+    expect(swiftCode).toMatch(/while start > 0, nameParticles\.contains\(/);
+  });
+
+  it("the designator refusal still runs FIRST on both clients", () => {
+    // Order, not presence: a person-sport name whose tail names nobody is shown
+    // whole before the walk can see it, so the two rules never compose.
+    //
+    // 🪤 "Juan de la Cruz III" does NOT discriminate the two orders and looks
+    // like it should — the walk reads the token BEFORE the last, which is
+    // "Cruz", so it declines and the refusal answers either way. A mutation
+    // battery on the iPhone's copy caught the vacuity. The shape that IS
+    // observable is a particle sitting directly in front of a tail that names
+    // nobody, the Portuguese "de Sá": whole name shipped, "de Sa" hoisted.
+    expect(teamShortName("Joao de Sa", null, "tennis_other")).toBe("Joao de Sa");
+    expect(teamShortName("Juan de la Cruz III", null, "boxing_boxing")).toBe(
+      "Juan de la Cruz III",
+    );
+    const web = webSource.indexOf("isNonDistinctiveTrailingWord(words[words.length - 1])");
+    const webWalk = webSource.indexOf("particledSurnameStart(words)");
+    expect(web).toBeGreaterThan(-1);
+    expect(webWalk).toBeGreaterThan(web);
+    const swiftRefusal = swiftCode.indexOf("if isNonDistinctiveToken(last)");
+    const swiftWalk = swiftCode.indexOf("particledSurnameStart(parts)");
+    expect(swiftRefusal).toBeGreaterThan(-1);
+    expect(swiftWalk).toBeGreaterThan(swiftRefusal);
+  });
+
+  /**
+   * The control. A particle set that grows without a gate swallows the club
+   * population, so these have to keep their shipped labels on every key.
+   */
+  it("a club keeps its label under every key, including a person's", () => {
+    for (const name of [
+      "Sport Lisboa e Benfica",
+      "Tigres de la UANL",
+      "Deportivo de La Coruna",
+      "Los Angeles Lakers",
+    ]) {
+      const shipped = teamShortName(name);
+      for (const key of [
+        null,
+        undefined,
+        "soccer_spain_la_liga",
+        "americanfootball_nfl",
+      ]) {
+        expect(teamShortName(name, null, key)).toBe(shipped);
+      }
+    }
+  });
+});

@@ -1076,7 +1076,8 @@ struct SearchView: View {
                         // #3430 — the PAIR decides the short name: "Tigers" is
                         // not a name when both sides shorten to it.
                         Text(TeamShortName.shortPair(
-                            away: event.awayTeam, home: event.homeTeam
+                            away: event.awayTeam, home: event.homeTeam,
+                            sportKey: event.sport
                         ).home)
                             .font(.caption2)
                             .fontWeight(.medium)

@@ -366,7 +366,13 @@ d("iOS team short names have exactly one implementation", () => {
       expect(canonical).toMatch(/static func shortPair\(/);
       expect(canonical).toMatch(/static func abbreviationPair\(/);
       // The mechanism: widen leftward until the two differ.
-      expect(canonical).toMatch(/private static func grown\(away: String, home: String\)/);
+      // #7163 threaded `sportKey` through growth — without it growth would
+      // start at one word and NARROW a particled surname back down — so the
+      // signature is now split across lines. The property guarded here is
+      // unchanged: growth exists and takes BOTH sides.
+      expect(canonical).toMatch(
+        /private static func grown\([\s\S]{0,40}away: String,[\s\S]{0,40}home: String/
+      );
       expect(canonical).toMatch(/private static func lastWords\(/);
     });
 

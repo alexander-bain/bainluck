@@ -210,6 +210,85 @@ enum TeamShortName {
         return individualSportPrefixes.contains(sport)
     }
 
+    /// The particles a surname carries with it.
+    ///
+    /// #7163. `short` took the last word, so **"de Minaur" rendered "Minaur"**,
+    /// which is not the player's name and is not a name at all — the object of a
+    /// nobiliary particle, printed without the particle that governs it. ux/1356
+    /// photographed it on the browser's event hero and found this file has the
+    /// same defect, from the same line, because `short` never took a sport.
+    ///
+    /// This is the browser's `NAME_PARTICLES`
+    /// (`frontend/lib/teamShortName.ts`, shipped in `dc20ddf8f`) and the two
+    /// sets are compared out of source by
+    /// `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`, exactly
+    /// as `designators`, `unshippableBadges` and `individualSportPrefixes` are.
+    /// The counts on the first nine are ux's measurement of penultimate tokens
+    /// across the production name population; the rest are unmeasured there and
+    /// are the same languages' remaining particles.
+    ///
+    /// **THE GATE IS THE WHOLE SAFETY ARGUMENT.** Ungated, this rule turns
+    /// "Sport Lisboa e Benfica" into "e Benfica" and "Tigres de la UANL" into
+    /// "la UANL" — so it is reached only when `namesAPerson(sportKey:)` says the
+    /// competitors are people, and a caller that does not know its sport gets
+    /// today's label to the character.
+    static let nameParticles: Set<String> = [
+        "de",    // 42  de Minaur, de Sousa
+        "van",   // 16  van Rooij, van Zijl
+        "la",    // 9   De la Fuente
+        "der",   // 4   von der Schulenburg
+        "del",   // 2   Huertas del Pino
+        "von",   // 2   von Deichmann
+        "le",    // 2   le Roux
+        "dos",   // 2   dos Santos
+        "da",    // 1   Dutra da Silva
+        // Unmeasured as a penultimate token in a person sport; same languages.
+        "auf",   // German, and "Meyer auf der Heide" needs it to cross "der"
+        "den",   // Dutch, "van den Broek"
+        "das",   // Portuguese
+        "do",    // Portuguese
+        "di",    // Italian
+        "della",
+        "dello",
+        "degli",
+        "du",    // French
+        "las",   // Spanish, "de las Casas"
+        "ter",   // Dutch, "ter Stegen"
+        "ten",   // Dutch, "ten Hag"
+        "af",    // Scandinavian
+        "av",
+        "zu",    // German
+        "el",    // Arabic
+        "bin",
+        "abu",
+    ]
+
+    /// Index of the first token of a particled surname, walking LEFT from the
+    /// last word for as long as the token in front of it is a particle.
+    ///
+    /// A loop rather than one step because the particles stack — "van de
+    /// Zandschulp", "von der Schulenburg", "Meyer auf der Heide" — and stopping
+    /// at one hands back "de Zandschulp", the same defect one token along.
+    ///
+    /// Matching is case-insensitive because the stored spelling varies on
+    /// production ("Van de Zandschulp", "Santiago De la Fuente"); the cost is a
+    /// FIRST name like "Van Johnson" returning the whole name instead of
+    /// "Johnson" — less short, still a string the person is called, and the only
+    /// direction this rule is allowed to move in. The browser's
+    /// `particledSurnameStart`, same walk, same tolerance.
+    private static func particledSurnameStart(_ words: [Substring]) -> Int {
+        var start = words.count - 1
+        while start > 0, nameParticles.contains(bareToken(words[start - 1]).lowercased()) {
+            start -= 1
+        }
+        return start
+    }
+
+    /// A token with its punctuation removed — the browser's `alphanumeric`.
+    private static func bareToken<S: StringProtocol>(_ token: S) -> String {
+        String(token.filter { $0.isASCII && ($0.isLetter || $0.isNumber) })
+    }
+
     /// A founding year ("1. FC Heidenheim 1846") names a team no better than
     /// "FC" does, and the shipped rule printed it as the whole label.
     ///
@@ -251,7 +330,11 @@ enum TeamShortName {
     ///
     /// Returns the input unchanged when there is nothing to shorten, so a caller
     /// never has to supply its own fallback for the empty or single-word case.
-    static func short(_ name: String) -> String {
+    ///
+    /// #7163 — `sportKey` is optional and opens the particle rule only; omitting
+    /// it keeps the shipped last-word behaviour exactly, which is what every
+    /// call site that does not know its sport still gets.
+    static func short(_ name: String, sportKey: String? = nil) -> String {
         // #4626 — a pair is returned WHOLE, which is #3110's decision and the
         // browser's behaviour (`teamShortName` line 401). The guard belongs
         // HERE rather than at the badge, because `short` also drives the pair
@@ -299,6 +382,17 @@ enum TeamShortName {
         // remain are Paris Saint-Germain, where #4627's hand-picked entry puts
         // the app deliberately ahead of the browser.
         if isNonDistinctiveToken(last) { return parts.joined(separator: " ") }
+        // #7163 — a person's surname carries its particles with it. This sits
+        // BELOW the designator refusal, which is the browser's order: a club
+        // whose tail is a designator is shown whole before the particle walk can
+        // see it, so the two rules can never compose into a label neither one
+        // would have produced.
+        if namesAPerson(sportKey: sportKey) {
+            let start = particledSurnameStart(parts)
+            if start < parts.count - 1 {
+                return parts[start...].joined(separator: " ")
+            }
+        }
         return String(last)
     }
 
@@ -602,16 +696,24 @@ enum TeamShortName {
     /// OTHER, in which case they are as unreadable as anything we could derive
     /// and the names decide instead. (`teams.abbreviation` is wrong for hundreds
     /// of rows, #3353, so a served pair colliding is not hypothetical.)
+    ///
+    /// #7163 — `sportKey` describes the MATCHUP, exactly as it does for
+    /// `abbreviationPair`: the two competitors of one fixture are both people or
+    /// both clubs. It is threaded into the growth as well, because growth starts
+    /// at the width `short` already returned and a particled surname is two
+    /// words wide — without it, growth would start at one word and NARROW the
+    /// label this fix just widened.
     static func shortPair(
         away: String,
         home: String,
         awayServed: String? = nil,
-        homeServed: String? = nil
+        homeServed: String? = nil,
+        sportKey: String? = nil
     ) -> (away: String, home: String) {
-        let a = served(awayServed) ?? short(away)
-        let h = served(homeServed) ?? short(home)
+        let a = served(awayServed) ?? short(away, sportKey: sportKey)
+        let h = served(homeServed) ?? short(home, sportKey: sportKey)
         guard a == h else { return (a, h) }
-        return grown(away: away, home: home)
+        return grown(away: away, home: home, sportKey: sportKey)
     }
 
     /// Three-glyph badges for the two competitors of one matchup.
@@ -658,6 +760,14 @@ enum TeamShortName {
         // A served pair still wins wherever it discriminates, exactly as before:
         // growth is only ever reached for labels we derived ourselves.
         let derived = awayAbbr == nil && homeAbbr == nil
+        // #7163 — `short` is deliberately asked WITHOUT the sport here, even
+        // though this function has it. This call is not a label a reader sees;
+        // it is the COLLISION PROXY (#4539) that says "these two names share
+        // their distinctive tail". The particle rule separates "de Silva" from
+        // "da Silva" as labels, but their badges are `SIL` and `SIL` either way
+        // — so threading the sport here would stop detecting exactly the
+        // collision the proxy exists to detect, and no badge would be repaired.
+        // The club rule is the wider net, and the net is the point.
         guard a == h || (derived && short(away) == short(home)) else { return (a, h) }
         let widened = grown(away: away, home: home)
         return (glyphs(ofLabel: widened.away), glyphs(ofLabel: widened.home))
@@ -669,14 +779,19 @@ enum TeamShortName {
     }
 
     /// Grow both labels leftward until they differ, or until both are whole.
-    private static func grown(away: String, home: String) -> (away: String, home: String) {
+    private static func grown(
+        away: String,
+        home: String,
+        sportKey: String? = nil
+    ) -> (away: String, home: String) {
         let aWords = away.split(separator: " ").filter { !$0.isEmpty }.count
         let hWords = home.split(separator: " ").filter { !$0.isEmpty }.count
-        // `short` may already be a whole name (a designator-ending club), so
-        // start wide enough that growth never NARROWS what we were showing.
+        // `short` may already be a whole name (a designator-ending club) or a
+        // particled surname (#7163), so start wide enough that growth never
+        // NARROWS what we were showing.
         var k = max(1,
-                    short(away).split(separator: " ").filter { !$0.isEmpty }.count,
-                    short(home).split(separator: " ").filter { !$0.isEmpty }.count)
+                    short(away, sportKey: sportKey).split(separator: " ").filter { !$0.isEmpty }.count,
+                    short(home, sportKey: sportKey).split(separator: " ").filter { !$0.isEmpty }.count)
         let limit = max(aWords, hWords)
         while k <= limit {
             let a = lastWords(away, k)
