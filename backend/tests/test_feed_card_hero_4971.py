@@ -31,7 +31,6 @@ from datetime import datetime, timezone
 from app.utils.feed_scoring import format_event_data
 from app.utils.hero_probability import resolve_hero
 
-
 COMPLETED_AT = datetime(2026, 9, 12, 3, 56, 20, tzinfo=timezone.utc)
 
 
@@ -94,7 +93,9 @@ def test_a_finished_game_serves_the_settled_result_not_the_last_traded_price():
         completed_at=COMPLETED_AT,
         win_probability_sources={"betting": {"value": 0.001}},
     )
-    data = _card(hero=resolve_hero(row), current_home_prob=0.001, current_away_prob=0.999)
+    data = _card(
+        hero=resolve_hero(row), current_home_prob=0.001, current_away_prob=0.999
+    )
 
     assert data["hero_probability"] == 0.0
     assert data["hero_probability_away"] == 1.0
@@ -113,7 +114,9 @@ def test_the_card_stops_naming_the_loser_as_the_favourite():
         completed_at=COMPLETED_AT,
         win_probability_sources={"betting": {"value": 0.707}},
     )
-    data = _card(hero=resolve_hero(row), current_home_prob=0.707, current_away_prob=0.293)
+    data = _card(
+        hero=resolve_hero(row), current_home_prob=0.707, current_away_prob=0.293
+    )
 
     # the market's number is UNCHANGED and still served — this is additive
     assert data["current_odds"]["home_probability"] == 0.707
@@ -130,7 +133,9 @@ def test_a_draw_is_nobody_won_and_not_we_do_not_know():
         completed_at=COMPLETED_AT,
         win_probability_sources={"betting": {"value": 0.525}},
     )
-    data = _card(hero=resolve_hero(row), current_home_prob=0.525, current_away_prob=0.475)
+    data = _card(
+        hero=resolve_hero(row), current_home_prob=0.525, current_away_prob=0.475
+    )
 
     assert data["hero_probability"] == 0.5
     assert data["hero_settled_result"] == "draw"
@@ -152,7 +157,9 @@ def test_a_live_game_serves_the_blend_and_it_agrees_with_current_odds():
         win_probability_sources={"betting": {"value": 0.62}},
     )
     hero = resolve_hero(row)
-    data = _card(status="live", hero=hero, current_home_prob=0.62, current_away_prob=0.38)
+    data = _card(
+        status="live", hero=hero, current_home_prob=0.62, current_away_prob=0.38
+    )
 
     assert data["hero_probability_source"] == "blend"
     assert data["hero_probability"] == data["current_odds"]["home_probability"]
@@ -172,7 +179,9 @@ def test_a_finished_row_with_no_completed_at_does_not_resolve_as_settled():
         completed_at=None,
         win_probability_sources={"betting": {"value": 0.001}},
     )
-    data = _card(hero=resolve_hero(row), current_home_prob=0.001, current_away_prob=0.999)
+    data = _card(
+        hero=resolve_hero(row), current_home_prob=0.001, current_away_prob=0.999
+    )
 
     # `final_unresolved`, not `blend`: the game IS over, we just cannot name the
     # winner. The number is unchanged; only the claim about it is (CERT-1938).
@@ -180,24 +189,32 @@ def test_a_finished_row_with_no_completed_at_does_not_resolve_as_settled():
     assert "hero_settled_result" not in data
 
 
-def test_an_opening_only_row_is_labelled_blend_today_which_is_wrong_see_issue():
-    """CHARACTERIZATION, NOT AN ENDORSEMENT — this asserts today's WRONG label.
+def test_an_opening_only_row_is_labelled_opening():
+    """THE PIN THIS TEST USED TO BE HAS BEEN PAID (#6694).
 
-    `resolve_hero`'s third arm is supposed to say `opening` for a row nobody has
-    quoted since the line was posted. It is UNREACHABLE: `compute_aggregate_probability`
-    Tier 3 (`aggregation.py:902`) returns `opening_home_probability` itself, so the
-    blend arm answers first and calls a bare opening line "blend". The arm below it
-    reads the same attribute, so it can only ever be reached when that attribute is
-    `None` — in which case it also returns `None`. Dead by construction.
+    It was a characterization of a WRONG label, and its own closing line said so:
+    "When the label is fixed, this test fails and is updated to assert `opening`
+    — which is the point of pinning it here." That is what happened; the
+    assertion below is the same test with the fix applied to it.
 
-    This is not cosmetic: `routes/events.py::_PINNABLE_HERO_SOURCE` is `"blend"`, so
-    an opening line wearing that label is PINNED to the chart as the curve's live
-    edge — precisely the "a number no aggregator produced" outcome that constant's
-    own comment says it exists to prevent.
+    What was wrong. `resolve_hero`'s third arm is supposed to say `opening` for a
+    row nobody has quoted since the line was posted, and it was UNREACHABLE:
+    `compute_aggregate_probability` Tier 3 returns `opening_home_probability`
+    itself, so the blend arm answered first and called a bare opening line
+    "blend". `resolve_hero` now asks the aggregator WHICH TIER answered
+    (`compute_aggregate_probability_tiered`) and stands aside for the opening arm
+    when the answer was Tier 3, so the arm is reachable and says its own name.
 
-    Filed separately; this ship does not change the vocabulary, it only stops the
-    card from having to guess at it. When the label is fixed, this test fails and
-    is updated to assert `opening` — which is the point of pinning it here.
+    This was never cosmetic, and the old docstring named the reason:
+    `routes/events.py::_PINNABLE_HERO_SOURCE` is `"blend"`, so an opening line
+    wearing that label was PINNED to the chart as the curve's live edge —
+    precisely the "a number no aggregator produced" outcome that constant's own
+    comment says it exists to prevent. With the label honest, that guard works as
+    written for the first time.
+
+    🔴 The NUMBER is unchanged and is asserted first, deliberately. The fix moved
+    the claim, not the value — see `test_hero_opening_not_blend_6694.py` for why
+    reaching for the fresher single-book price instead would rebuild #1841.
     """
     row = _Row(
         status="scheduled",
@@ -205,10 +222,12 @@ def test_an_opening_only_row_is_labelled_blend_today_which_is_wrong_see_issue():
         win_probability_sources=None,
         opening_home_probability=0.5865,
     )
-    data = _card(status="scheduled", home_score=None, away_score=None, hero=resolve_hero(row))
+    data = _card(
+        status="scheduled", home_score=None, away_score=None, hero=resolve_hero(row)
+    )
 
     assert data["hero_probability"] == 0.5865
-    assert data["hero_probability_source"] == "blend"  # should be "opening"
+    assert data["hero_probability_source"] == "opening"
 
 
 def test_no_hero_means_no_keys_and_never_a_zero():
@@ -233,7 +252,9 @@ def test_the_hero_is_additive_and_leaves_the_market_number_alone():
         win_probability_sources={"betting": {"value": 0.61}},
     )
     without = _card(current_home_prob=0.61, current_away_prob=0.39)
-    with_hero = _card(hero=resolve_hero(row), current_home_prob=0.61, current_away_prob=0.39)
+    with_hero = _card(
+        hero=resolve_hero(row), current_home_prob=0.61, current_away_prob=0.39
+    )
 
     for key, value in without.items():
         assert with_hero[key] == value, f"{key} moved when the hero was added"

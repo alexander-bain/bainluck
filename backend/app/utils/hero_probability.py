@@ -53,7 +53,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 from app.utils.aggregation import (
-    compute_aggregate_probability,
+    TIER_OPENING,
+    compute_aggregate_probability_tiered,
     effective_source_weights,
 )
 from app.utils.settled_hero import (
@@ -125,16 +126,44 @@ def resolve_hero(event: Any) -> Optional[HeroReading]:
             settled_result=settled.result,
         )
 
-    blend = compute_aggregate_probability(event)
-    if blend is not None:
+    # ── #6694: A TIER-3 ANSWER IS NOT A BLEND AND MUST NOT BE CALLED ONE ─────
+    #
+    # `compute_aggregate_probability` falls back through three tiers and its
+    # third one RETURNS `opening_home_probability`. So on any event that has an
+    # opening price it is never `None`, which made arm 3 below structurally
+    # unreachable: the `opening` source this module documents as load-bearing
+    # vocabulary — "nobody has quoted this since the line was posted" — could
+    # not be reached to say it.
+    #
+    # Measured on production 2026-09-19 12:00–12:40Z: 486 events in a two-day
+    # window carry the Tier-3 signature (no weighted source in the bag, no ESPN
+    # reading, an opening on file), 8 of them live at that minute, and every one
+    # was served `hero_probability_source: "blend"`. Specimen 15314578
+    # (Uganda–Kenya, live) printed a 64% hero captioned as a live blend above a
+    # chart whose own series ended at 78% — its opening and its market, on one
+    # screen, with nothing to tell the reader which was which.
+    #
+    # 🔴 THE NUMBER IS NOT THE DEFECT AND DOES NOT MOVE. 64% is the honest
+    # figure here: the bag holds `betting_book_count: 1` and no `betting`
+    # reading, because RULING 051 DROPS the sportsbook consensus below
+    # `BETTING_BOOK_FLOOR` (3) — "a consensus of one is not a consensus". The
+    # live single-book price sitting in `odds_snapshots` is exactly what that
+    # ruling exists to refuse, so reaching for it here would rebuild #1841's
+    # 87-13-for-a-team-trailing-5-0. This change moves the CLAIM, not the value,
+    # which is the same move CERT-1938 made one arm up: "The number is
+    # unchanged; only the claim about it is."
+    #
+    # The finished-game exemption is not an edge case being tidied away.
+    # `final_unresolved` says "this game is over and we cannot name a winner",
+    # which is a strictly more urgent thing for a reader to know than where the
+    # line opened, so on a finished status it keeps the arm it has today.
+    blend, blend_tier = compute_aggregate_probability_tiered(event)
+    _finished = is_finished_status(getattr(event, "status", None))
+    if blend is not None and not (blend_tier == TIER_OPENING and not _finished):
         return HeroReading(
             home_probability=blend,
             away_probability=round(1.0 - blend, 6),
-            source=(
-                FINAL_UNRESOLVED_SOURCE
-                if is_finished_status(getattr(event, "status", None))
-                else "blend"
-            ),
+            source=FINAL_UNRESOLVED_SOURCE if _finished else "blend",
         )
 
     opening = getattr(event, "opening_home_probability", None)
