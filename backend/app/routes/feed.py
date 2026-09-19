@@ -6752,7 +6752,17 @@ def _top_outcomes_for_trace(
                 # dict is the SCORING row and never reaches the wire (the card's
                 # rows are `top_outcomes_data`), so the id costs nothing a
                 # reader pays for.
-                "id": outcome.id,
+                #
+                # `getattr` with a default, like `team_id` below and for the
+                # same rule — a reduced fixture that does not carry the
+                # attribute must mean UNKNOWN, not raise
+                # (`test_an_outcome_object_without_the_attribute_is_unknown_not_a_crash`).
+                # It cannot lazy-load: `id` is the primary key and is the first
+                # entry in `OUTCOME_COLUMNS`, so it is always loaded and gotcha
+                # #42 has nothing to fire on. Unknown degrades to no bank cell,
+                # i.e. no dated sentence — the same honest-unavailable path as
+                # every other refusal.
+                "id": getattr(outcome, "id", None),
                 "name": outcome.name,
                 # #4700: the leader's subject-verb agreement is decided on THIS,
                 # not on the spelling of the name. See `_leader_outcome_is_team`.
@@ -10085,8 +10095,9 @@ async def _score_sports_mode_futures(
             )
             outcomes_data.append(
                 {
-                    # #4079 — see the twin in `_top_outcomes_for_trace`.
-                    "id": o.id,
+                    # #4079 — see the twin in `_top_outcomes_for_trace`,
+                    # including why the read is tolerant.
+                    "id": getattr(o, "id", None),
                     "name": o.name,
                     # #4700 — see `_leader_outcome_is_team`.
                     "team_id": getattr(o, "team_id", None),
@@ -11570,8 +11581,9 @@ async def _score_futures(
                 )
                 outcomes_data.append(
                     {
-                        # #4079 — see the twin in `_top_outcomes_for_trace`.
-                        "id": o.id,
+                        # #4079 — see the twin in `_top_outcomes_for_trace`,
+                        # including why the read is tolerant.
+                        "id": getattr(o, "id", None),
                         "name": o.name,
                         # #4700 — see `_leader_outcome_is_team`.
                         "team_id": getattr(o, "team_id", None),

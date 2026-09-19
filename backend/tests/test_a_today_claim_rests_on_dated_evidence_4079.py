@@ -244,6 +244,23 @@ def test_a_market_with_no_metadata_column_at_all_is_excluded_not_crashed():
     assert _dated_movement_change(market, outcomes, "Phantom Blade Zero", now=NOW) is None
 
 
+def test_a_scoring_row_with_no_id_is_unknown_not_a_crash():
+    """A reduced outcome object means UNKNOWN, never an exception.
+
+    The three builders read the id with `getattr(..., None)`, the same tolerant
+    read `team_id` has carried since #4700: a served ORM row always has the
+    primary key, and a fixture that does not carry it must fold to "no dated
+    evidence" rather than raise inside the per-item serializer. CI caught the
+    intolerant first draft on
+    `test_an_outcome_object_without_the_attribute_is_unknown_not_a_crash`.
+    """
+    market = _Market({"216388327": [0.40, _stamp(20)]})
+    row = _outcome(216388327, "Phantom Blade Zero", 0.50, 0.05)
+    row["id"] = None
+
+    assert _dated_movement_change(market, [row], "Phantom Blade Zero", now=NOW) is None
+
+
 def test_an_upper_age_bound_makes_a_STOPPED_SWEEP_fail_closed():
     """The sweep dying must silence the captions, not freeze a stale claim.
 
