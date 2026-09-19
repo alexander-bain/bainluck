@@ -38,7 +38,7 @@ ever collapses back onto `actual_hours`, which is the defect reverting.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -331,3 +331,136 @@ async def test_a_market_with_no_snapshots_serves_nulls_through_the_handler():
     assert payload["coverage_hours"] is None
     assert payload["observation_times"] == 0
     assert payload["total_data_points"] == 0
+
+
+# ---------------------------------------------------------------------------
+# /probability-timeline — THE DOOR THE PHONE ACTUALLY READS
+#
+# `ios/.../Services/APIClient.swift:929` fetches `/probability-timeline`.
+# NOTHING native calls `/futures/{id}/history`, so the door above serves the web
+# and this one served Alex's screenshot. Production 01:05Z, market 58321581:
+# `actual_hours` **168**, **nine buckets spanning 20.0 hours**.
+#
+# Coverage here is measured off the BUCKET stamps rather than the raw rows: the
+# buckets are the x-positions drawn, and a claim taken from the rows would
+# disagree with the plotted line by up to one `bucket_seconds`. That is why this
+# door reports 04:30 where /history reports the raw 04:31.
+# ---------------------------------------------------------------------------
+
+
+from app.routes.futures import _measure_timeline_coverage, get_probability_timeline  # noqa: E402
+
+
+def _tl_outcome(oid, name, prob, market_id=1):
+    o = MagicMock()
+    o.id = oid
+    o.name = name
+    o.current_probability = prob
+    o.market_id = market_id
+    o.probability_change_24h = None
+    o.opening_probability = None
+    o.rank = None
+    o.team_id = None
+    o.team = None
+    return o
+
+
+def _tl_market(outcomes, commence_time=None):
+    m = MagicMock()
+    m.id = 58321581
+    m.name = "The Game Awards: Game of the Year"
+    m.outcomes = outcomes
+    m.commence_time = commence_time
+    m.market_metadata = None
+    m.llm_sport_category = "entertainment"
+    m.source = "polymarket"
+    m.status = "open"
+    m.mutually_exclusive = True
+    return m
+
+
+async def _timeline(stamps, hours=168, top=3):
+    outcomes = [
+        _tl_outcome(216388319, "Grand Theft Auto VI", 0.65),
+        _tl_outcome(216388320, "Resident Evil Requiem", 0.1044),
+        _tl_outcome(216388337, "Slay the Spire 2", 0.015),
+    ]
+    market = _tl_market(outcomes)
+    snaps = [
+        _snapshot(o.id, "consensus", o.current_probability, stamp)
+        for stamp in stamps
+        for o in outcomes
+    ]
+    # `_Session` rather than a two-entry `side_effect`: the handler's call count
+    # is not this test's subject, and a list that runs out raises
+    # StopAsyncIteration — a harness story wearing the shape of a failure.
+    db = _Session(_Result(scalar=market), _Result(snaps))
+
+    return await get_probability_timeline(market_id=58321581, top=top, hours=hours, db=db)
+
+
+class TestTheTimelineDoor:
+    def test_the_measurement_reads_bucket_stamps(self):
+        got = _measure_timeline_coverage([
+            {"timestamp": FIRST.isoformat(), "outcomes": {}},
+            {"timestamp": LAST.isoformat(), "outcomes": {}},
+        ])
+
+        assert got["coverage_hours"] == pytest.approx(19.31, abs=0.01)
+        assert got["observation_times"] == 2
+
+    def test_an_empty_timeline_is_null_and_not_zero(self):
+        for empty in ([], None):
+            got = _measure_timeline_coverage(empty)
+            assert got["coverage_hours"] is None
+            assert got["observation_times"] == 0
+
+    def test_a_bucket_without_a_stamp_is_skipped_not_fatal(self):
+        got = _measure_timeline_coverage(
+            [{"outcomes": {}}, None, {"timestamp": LAST.isoformat()}]
+        )
+
+        assert got["observation_times"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_before_control_on_the_phones_own_door(self):
+        """THE STRAWMAN GUARD for the door the screenshot came from.
+
+        Twenty hours of buckets served under a 168-hour window, and until this
+        fix the payload carried no way to tell them apart.
+        """
+        stamps = [LAST - timedelta(hours=h) for h in (20, 15, 10, 5, 0)]
+
+        payload = await _timeline(stamps)
+
+        assert payload["actual_hours"] == 168, "the search window is not the subject"
+        assert payload["coverage_hours"] == pytest.approx(20.0, abs=0.3)
+        assert payload["coverage_hours"] < payload["actual_hours"] / 8
+
+    @pytest.mark.asyncio
+    async def test_the_timeline_dates_its_own_coverage(self):
+        stamps = [LAST - timedelta(hours=h) for h in (20, 10, 0)]
+
+        payload = await _timeline(stamps)
+
+        assert payload["coverage_start"] is not None
+        assert payload["coverage_end"] is not None
+        assert payload["coverage_start"] < payload["coverage_end"]
+        assert payload["observation_times"] == len(payload["timeline"])
+
+    @pytest.mark.asyncio
+    async def test_no_existing_timeline_key_moved(self):
+        """The control. `bucket_seconds` is NON-OPTIONAL in shipped iOS."""
+        stamps = [LAST - timedelta(hours=h) for h in (20, 10, 0)]
+
+        payload = await _timeline(stamps)
+
+        assert payload["hours"] == 168
+        assert payload["actual_hours"] == 168
+        assert payload["top"] == 3
+        assert isinstance(payload["bucket_seconds"], int)
+        assert payload["market_id"] == 58321581
+        assert payload["source"] == "polymarket"
+        assert payload["sport_category"] == "entertainment"
+        assert payload["timeline"], "the chart lost its series"
+        assert payload["outcomes"], "the chart lost its legend"
