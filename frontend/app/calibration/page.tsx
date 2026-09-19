@@ -2012,8 +2012,16 @@ export default function CalibrationPage() {
             data-testid="calibration-quarantine"
             data-quarantine-total={total}
           >
+            {/* #7195: no <CohortTag>. A held-out row is excluded from EVERY
+                curve on this page, in both cohorts — `data.quarantine` has no
+                cohort dimension and the toggle does not move a number in this
+                section. Tagging it "TRADED" would be the exact claim the tag
+                was built to prevent (UX-P080 item 4: "no section can claim a
+                cohort it is not drawing from"). Declared cohort-free in
+                `calibrationAuditHooks.test.tsx`, which is what keeps this an
+                argued exemption rather than a forgotten label. */}
             <h2 className="text-title-3 text-text-primary mb-1">
-              Held out, under review<CohortTag cohort={cohort} />
+              Held out, under review
             </h2>
             <p className="text-xs text-text-muted mb-4">
               {total.toLocaleString()} resolved {total === 1 ? "outcome is" : "outcomes are"}{" "}
@@ -2072,7 +2080,24 @@ export default function CalibrationPage() {
         return (
           <section className="bg-surface-card rounded-xl p-5 border border-surface-border"
             data-testid="calibration-niche-section" data-parked-count={thin.length}>
-            <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?<CohortTag cohort={cohort} /></h2>
+            {/* #7195: this heading carried a <CohortTag>, and on production in
+                the default view it read "TRADED" above chips printing the
+                ALL-MARKETS count — "Chess 809" where the traded count is 292.
+                `small_sample_categories` has no cohort dimension, so the tag
+                was a stated falsehood, not an implicit one.
+
+                THE TAG WAS THE DEFECT, NOT THE NUMBERS. The publish bar is
+                applied by the backend on the all-cohort count — geopolitics is
+                published at 1,749 all-cohort while its traded count is 732,
+                below the 1,000 bar — so closeness to the bar has to be measured
+                in the bar's own units. Cohort-scoping these chips would print
+                categories parked under a 1,000 bar beside a Category Breakdown
+                table publishing one at 732 in the same view. The parked/published
+                decision is a property of the bank, not of the cohort on screen:
+                this section is cohort-free, declared as such in
+                `calibrationAuditHooks.test.tsx`, and the fold below names the
+                population the bar counts. */}
+            <h2 className="text-title-3 text-text-primary mb-1">What About Niche &amp; Long-Shot Markets?</h2>
             {/* Notice 34. Six lines of grey answered this heading with a policy
                 explanation; the answer is a number and a sentence. The number
                 the reader wants is HOW MANY are waiting — that is the card's
@@ -2091,7 +2116,11 @@ export default function CalibrationPage() {
                 minor leagues)? A calibration curve is only honest with enough resolved outcomes behind it, so
                 we don&rsquo;t publish one for any category below{" "}
                 {minCategoryOutcomes.toLocaleString()} resolved outcomes &mdash; under that bar it&rsquo;s
-                statistical noise, not a signal. Right now{" "}
+                statistical noise, not a signal. {/* #7195: the population the bar counts, said
+                once, in the fold. Without it a reader who flips the toggle above and sees these
+                numbers stand still has no way to tell a fixed bar from a stuck card. */}
+                That bar counts every resolved outcome, traded or not, so the numbers here don&rsquo;t
+                move when you switch between traded and all markets above. Right now{" "}
                 {thin.length}{" "}
                 {thin.length === 1 ? "category is" : "categories are"} still accumulating
                 ({thinTotal.toLocaleString()} outcomes and counting). The moment one crosses the bar it
