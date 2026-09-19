@@ -53,11 +53,31 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxtwitter", "social_media"),
     ("kxeurovision", "music"),
     ("kxrottentomatoes", "movies"),
-    ("kxrt", "movies"),
+    # `kxrt` USED TO BE BARE, and `str.startswith` has no idea a ticker ends.
+    # Kalshi's Rotten Tomatoes series is the bare `KXRT-…`, but `kxrt` is also a
+    # prefix of `KXRTX5090…` — 65 NVIDIA RTX 5090 GPU price markets, which this
+    # page filed under MOVIES and rendered as critic-score side markets ("NVIDIA
+    # RTX 5090 · Hourly price on Oct 02" sat in `movies_tv.side_markets`).
+    # `KXRTCOMPARE` and `KXRTTV` are real Rotten Tomatoes series and are named
+    # rather than swept, because the only thing separating them from the GPUs is
+    # that we know what they are. 85 kept / 65 dropped, measured 2026-09-19.
+    ("kxrt-", "movies"),
+    ("kxrtcompare", "movies"),
+    ("kxrttv", "movies"),
     ("kxbeastgames", "tv_streaming"),
     ("kxbachelor", "tv_streaming"),
     ("kxloveisland", "tv_streaming"),
-    ("kxli", "tv_streaming"),
+    # Same collision, four characters and three orders of magnitude worse.
+    # `kxli` was here for Love Island's real tickers (`KXLIUK…`, `KXLIUSA…`), and
+    # it also matched `KXLIGAMX…`, `KXLIGUE1…`, `KXLIGUE2…`, `KXLIGAPORTUGAL…`
+    # and `KXLIIGA…` — 4,235 SOCCER markets against 87 Love Island ones, every
+    # one of them filed as TV & streaming. After #7278 sorted the sections
+    # most-OPEN-first these stopped being buried: a four-way soccer spread sits
+    # near its flat baseline, so it scores as maximally open, and Liga MX took
+    # positions 1-4 of MOVIES & TV. The ranking ship did not cause this — it
+    # stopped hiding it.
+    ("kxliuk", "tv_streaming"),
+    ("kxliusa", "tv_streaming"),
     ("kxpodcast", "social_media"),
     ("kxelon", "social_media"),
     ("kxmusk", "social_media"),
