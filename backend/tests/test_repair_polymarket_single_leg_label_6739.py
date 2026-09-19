@@ -1221,6 +1221,78 @@ async def test_the_restore_puts_the_old_label_back(receipt):
 
 
 @pytest.mark.asyncio
+async def test_a_real_applys_own_receipt_drives_a_real_restore(
+    monkeypatch, fast, receipt
+):
+    """The producer/consumer round trip: apply -> its OWN receipt -> restore.
+
+    Every other reversal test feeds the restore a payload THIS FILE built, so
+    together they prove only that the restore reads the shape the test writes.
+    Neither half can see the apply renaming a key -- "from", "to", "outcome_id"
+    -- because the hand-built payload would go on carrying the old spelling.
+    Both halves stay green and the printed undo command is dead at the one
+    moment it is ever invoked: after a bad apply on 187 live legs.
+
+    So here the receipt is the one the apply actually staged, and the world the
+    restore meets is the one the apply actually wrote -- derived from that
+    receipt, never typed out beside it.
+    """
+    _venue(
+        monkeypatch,
+        _FakeService(
+            [
+                _Market("0xaa", "KooKoo vs. SaiPa", ["KooKoo", "SaiPa"]),
+                _Market("0xbb", "Ilves vs. Tappara", ["Ilves", "Tappara"]),
+            ]
+        ),
+    )
+    apply_session = _Session(
+        page=[
+            _row(1, 10, "0xaa", "KooKoo vs. SaiPa"),
+            _row(2, 20, "0xbb", "Ilves vs. Tappara"),
+        ]
+    )
+
+    applied = await rail.repair(apply_session, apply=True)
+
+    assert applied["counts"]["relabelled"] == 2
+    assert len(apply_session.receipts) == 1, (
+        "the apply staged no receipt — the round trip below would be vacuous"
+    )
+
+    staged = apply_session.receipts[0]
+    receipt["payload"] = staged
+
+    # Stated before the derivation so a drifted key fails HERE, naming both
+    # sides, rather than as a bare KeyError inside the harness. Reading these
+    # with `.get` instead would be worse than useless: a missing "to" would make
+    # the restore compare None against None, match every row, and pass.
+    reads = {"outcome_id", "from", "to"}
+    assert reads <= set(staged["changes"][0]), (
+        f"the apply stages {sorted(staged['changes'][0])} but the reversal reads "
+        f"{sorted(reads)} — the undo command every apply prints cannot put these "
+        "rows back"
+    )
+
+    # The post-apply world, read off the receipt itself rather than typed out
+    # beside it: every leg now carries the name the apply actually wrote.
+    restore_session = _RestoreSession(
+        {c["outcome_id"]: c["to"] for c in staged["changes"]}
+    )
+
+    out = await rail.repair(restore_session, apply=True, undo_identity="id-1")
+
+    assert out["mode"] == "restore"
+    assert out["counts"]["restored"] == 2, (
+        "the restore did not read the shape the apply staged — receipt was "
+        f"{staged['changes']!r}, restore reported {out['counts']!r}"
+    )
+    assert restore_session.names == {1: "Yes", 2: "Yes"}, (
+        "the round trip did not land both legs back on the name they started on"
+    )
+
+
+@pytest.mark.asyncio
 async def test_the_restore_leaves_a_row_something_else_has_corrected_since(
     receipt,
 ):
