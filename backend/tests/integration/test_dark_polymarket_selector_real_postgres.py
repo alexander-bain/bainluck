@@ -60,13 +60,27 @@ SPECIMEN_EXTERNAL_ID = "972409"
 SPECIMEN_TITLE = "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)"
 MONEYLINE_CID = "0xf5200af34f486ef08072a3759b351021d4895123ed6a6ab338fbc5458147a365"
 MONEYLINE_PRICE, MONEYLINE_BID, MONEYLINE_ASK = 0.295, 0.21, 0.38
-#: The label the API SERVES for that leg — not the stored one and not the
-#: venue's. Two production hops make it: `_parent_outcome_data` names a
-#: single-market event's leg "Yes", and `_build_related_futures` relabels a
-#: "Yes" on a matchup-named market to "<first side> Win". Named here rather than
-#: inlined because the arm below and its failure message must not be able to
-#: disagree about what is expected.
-SERVED_OUTCOME_LABEL = "UFC 331: Ozzy Diaz Win"
+#: The label the API SERVES for that leg — which since #6739 IS the venue's own.
+#:
+#: It used to be `"UFC 331: Ozzy Diaz Win"`, made by two production hops:
+#: `_parent_outcome_data` named a single-market event's leg `"Yes"`, and
+#: `_build_related_futures` relabelled a `"Yes"` on a matchup-named market to
+#: `"<first side> Win"` — a POSITIONAL guess that also dragged the card prefix
+#: ("UFC 331: ") into a fighter's name. #6739 fixed the writer: the stored leg is
+#: now `outcomes[0]`, the array parallel to `outcome_prices`, so the label is the
+#: side this price belongs to by construction. `_build_related_futures` passes
+#: any non-`Yes`/`No` name through untouched, so the second hop no longer fires
+#: and the served string is the venue's clean `"Ozzy Diaz"`.
+#:
+#: 🔴 THIS CONSTANT MOVED BECAUSE THE PRODUCT DID, AND THE OLD VALUE IS KEPT
+#: ABOVE ON PURPOSE. The arm's own failure message predicted this exact edit
+#: ("if a label above names the fighter but is spelled differently … this
+#: expectation is stale"), and that note is why the red was read as a ship
+#: landing rather than a regression. Do not "restore" the prefixed form.
+#:
+#: Named here rather than inlined because the arm below and its failure message
+#: must not be able to disagree about what is expected.
+SERVED_OUTCOME_LABEL = "Ozzy Diaz"
 
 
 @pytest.fixture
@@ -551,15 +565,16 @@ class TestTheReaderCanActuallySeeIt:
         # Only `series_markets` nests an `outcomes` list, and this market is not
         # one. Reading the wrong shape is how the first version of this arm
         # would have failed even once the row was surfaced.
-        # The SERVED label, which is not the stored one and is not the venue's.
-        # Two hops, both of them production behaviour this arm exists to pin:
-        # `_parent_outcome_data` yields a single-market event ONE leg named
-        # "Yes" (the venue's own convention for a two-sided moneyline), and
-        # `_build_related_futures` then relabels a "Yes" on a matchup-named
-        # market to "<first side> Win". The working sibling reads exactly the
-        # same way on production today — "UFC 331: Gable Steveson Win". Asserted
-        # as an equality on the whole string, because "the fighter's name
-        # appears somewhere" is satisfied by the market_name on every row here.
+        # The SERVED label, which is not the stored one — it IS the venue's,
+        # since #6739. `_parent_outcome_data` now names a single-market event's
+        # leg from `outcomes[0]` (the array parallel to `outcome_prices`), so
+        # the stored name is the side this price belongs to; and
+        # `_build_related_futures` passes any non-"Yes"/"No" name through
+        # untouched, so its positional "<first side> Win" relabel no longer
+        # fires on this row. Asserted as an equality on the whole string,
+        # because "the fighter's name appears somewhere" is satisfied by the
+        # market_name on every row here — and because the whole point is that
+        # the card prefix is NOT dragged into the fighter's name any more.
         priced = [
             r for r in mine
             if (r.get("outcome_name") or "") == SERVED_OUTCOME_LABEL
@@ -583,7 +598,9 @@ class TestTheReaderCanActuallySeeIt:
             "If a label above names the fighter but is spelled differently, the "
             "selector is fine and this expectation is stale — the served label "
             "comes from `_parent_outcome_data` naming a single-market event's leg "
-            "'Yes' and `_build_related_futures` relabelling it '<first side> Win'. "
+            "from the venue's `outcomes[0]` (#6739), which is whatever the venue "
+            "calls that side. A bare 'Yes' here means the writer stopped reading "
+            "`outcomes` and the leg names no side at all, which IS a regression. "
             f"Full payload: {blob}"
         )
         assert priced[0]["probability"] == pytest.approx(MONEYLINE_PRICE), (
