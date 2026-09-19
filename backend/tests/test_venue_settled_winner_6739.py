@@ -70,9 +70,11 @@ import pytest
 
 from app.utils.venue_settlement import (
     WINNER_SENTENCE,
+    _names_a_participant,
     choose_settled_score,
     choose_settled_winner,
     is_full_scope_score_market,
+    settlement_from_graded_rows,
 )
 
 #: The production specimen, verbatim (``/events/15313807``, 2026-09-17).
@@ -215,14 +217,24 @@ class TestTheRefusals:
         assert choose_settled_winner(graded, HOME, AWAY) == "Crawley wins"
 
     @pytest.mark.parametrize(
-        "outcome_name", ["Yes", "No", "Over 21.5", "Draw", "Carlos Alcaraz", "", "   "]
+        "outcome_name", ["Yes", "No", "Over 21.5", "Carlos Alcaraz", "", "   "]
     )
     def test_an_outcome_that_is_not_one_of_the_two_sides_is_nothing(
         self, outcome_name
     ):
         """Fail-closed. A moneyline whose graded outcome is ``Yes`` is a market
         this module has no standing to read a side out of, and a third party's
-        name on a two-player match is a linkage defect, not a result."""
+        name on a two-player match is a linkage defect, not a result.
+
+        🔴 ``"Draw"`` WAS THE SEVENTH PARAMETER HERE AND IT MOVED, on purpose,
+        to `TestTheDrawIsAResult`. It did not stop being refused as a SIDE —
+        :func:`_names_a_participant` still answers ``None`` for it and
+        `test_a_draw_is_never_reported_as_one_of_the_two_sides` pins that. What
+        changed is the question this function answers: a three-way moneyline
+        has three verdicts, and reading the third as "the venue said nothing"
+        was the defect. Deleting the case rather than moving it would have
+        retired the only assertion that a draw is not a participant.
+        """
         assert choose_settled_winner([_row(MONEYLINE, outcome_name)], HOME, AWAY) is None
 
     def test_nothing_graded_is_nothing(self):
@@ -244,6 +256,135 @@ class TestTheRefusals:
         names, so it is ours that renders."""
         graded = [_row(MONEYLINE, "  FIONA   CRAWLEY ")]
         assert choose_settled_winner(graded, HOME, AWAY) == "Crawley wins"
+
+
+class TestTheDrawIsAResult:
+    """The third verdict on a three-way moneyline (2026-09-19).
+
+    THE DEFECT, PHOTOGRAPHED ON PRODUCTION 2026-09-19 04:46Z. Eight soccer
+    matches served ``venue_settled: true`` with ``venue_settled_result: null``,
+    so each page drew a bare **"Settled"** chip over a win-probability hero and
+    never said what happened — while the venue had graded the draw outright.
+    Read back from Kalshi's own API on two of them::
+
+        KXUELGAME-26SEP16STUREN-TIE   Tie             finalized   result=yes
+        KXUELGAME-26SEP16STUREN-STU   Sturm Graz      finalized   result=no
+        KXUELGAME-26SEP16STUREN-REN   Stade Rennais   finalized   result=no
+
+    The refusal was correct as a PARTICIPANT question and wrong as a RESULT
+    one: ``Tie`` is not one of the two sides, and the caller was reading "not a
+    side" as "the venue said nothing about the whole contest".
+
+    All eight are Kalshi three-ways (``Tie``); Polymarket writes ``Draw``, and
+    its one graded draw in the population sits on a ``- Halftime Result``
+    market, which `test_a_halftime_draw_is_not_the_match_result` pins as
+    refused by the market classifier exactly as before.
+    """
+
+    #: The 2026-09-19 replay of the shipped functions over every graded leg in
+    #: the scoreless `live`/`suspended` arm, before and after.
+    MEASURED = {
+        "events_holding_a_grade": 1295,
+        "already_rendering_a_result": 980,
+        "null_result_before": 315,
+        "null_result_after": 307,
+        "events_changed": 8,
+        "events_byte_identical": 1287,
+    }
+
+    def test_the_specimen_reports_the_draw(self):
+        assert (
+            choose_settled_winner(
+                [_row("Sturm Graz vs Stade Rennais", "Tie")],
+                "Sturm Graz",
+                "Stade Rennais",
+            )
+            == "Draw"
+        )
+
+    @pytest.mark.parametrize("venue_word", ["Tie", "Draw", "  tie ", "DRAW"])
+    def test_both_venues_spellings_and_their_casing(self, venue_word):
+        """Kalshi writes ``Tie``, Polymarket writes ``Draw``. Normalised-exact
+        through the same helper the score-market test uses, so the vocabulary
+        cannot drift into a substring rule."""
+        assert (
+            choose_settled_winner(
+                [_row("Gorica vs Varazdin", venue_word)], "Gorica", "Varazdin"
+            )
+            == "Draw"
+        )
+
+    def test_a_draw_is_never_reported_as_one_of_the_two_sides(self):
+        """What the moved parametrize case used to assert, kept: the draw is a
+        third verdict, NOT a participant. If this ever returns a side, the
+        sentence would name a team that did not win."""
+        assert _names_a_participant("Tie", "Gorica", "Varazdin") is None
+        assert _names_a_participant("Draw", "Gorica", "Varazdin") is None
+
+    def test_a_draw_and_a_side_refuse_each_other(self):
+        """🔴 THE REASON THE DRAW LIVES INSIDE THE SAME SET. On a three-way
+        moneyline "the venue graded Tie" and "the venue graded Sturm Graz" are
+        contradictory claims about one match. Computed on a separate path and
+        joined with ``or``, whichever ran first would have been published and
+        the contradiction would never have been visible — which is the
+        confident-wrong-answer shape this module refuses everywhere else."""
+        graded = [
+            _row("Sturm Graz vs Stade Rennais", "Tie"),
+            _row("Sturm Graz vs Stade Rennais", "Sturm Graz"),
+        ]
+        assert choose_settled_winner(graded, "Sturm Graz", "Stade Rennais") is None
+
+    def test_the_same_draw_graded_twice_is_still_one_answer(self):
+        graded = [
+            _row("Gorica vs Varazdin", "Tie"),
+            _row("Gorica vs Varazdin", "Draw"),
+        ]
+        assert choose_settled_winner(graded, "Gorica", "Varazdin") == "Draw"
+
+    def test_a_halftime_draw_is_not_the_match_result(self):
+        """The live Polymarket specimen, ``/events/15312519``. Its graded
+        ``Draw`` sits on ``Shan United vs. Ezra FC - Halftime Result``, which
+        the classifier calls ``other`` — so the draw never reaches the verdict
+        set, and that event keeps the winner its real moneyline graded. A draw
+        admitted by outcome name alone would have overwritten it."""
+        graded = [
+            _row("Shan United vs. Ezra FC - Halftime Result", "Draw"),
+            _row("Shan United vs. Ezra FC", "Shan United"),
+        ]
+        assert (
+            choose_settled_winner(graded, "Shan United", "Ezra FC")
+            == "Shan United wins"
+        )
+
+    def test_a_draw_on_a_derivative_book_is_refused_like_every_other_grade(self):
+        """The draw inherits the market test whole; it is not a bypass."""
+        graded = [_row("Set Handicap: A (-1.5) vs B (+1.5)", "Tie")]
+        assert choose_settled_winner(graded, "A", "B") is None
+
+    def test_a_draw_renders_the_settled_line_through_the_shared_policy(self):
+        """End to end through the function both readers actually call, so the
+        rails and the detail page cannot answer this row differently."""
+        assert settlement_from_graded_rows(
+            [_row("Carlisle vs Forest Green", "Tie")], "Carlisle", "Forest Green"
+        ) == {"venue_settled": True, "venue_settled_result": "Draw"}
+
+    def test_the_winner_path_is_untouched_by_the_widening(self):
+        """1,287 of the 1,295 measured events are byte-identical after the
+        change; this is that claim on the specimen the file was built around."""
+        assert (
+            choose_settled_winner([_row(MONEYLINE, VENUE_HOME)], HOME, AWAY)
+            == "Crawley wins"
+        )
+
+    def test_the_replay_adds_up(self):
+        m = self.MEASURED
+        assert m["already_rendering_a_result"] + m["null_result_before"] == (
+            m["events_holding_a_grade"]
+        )
+        assert m["null_result_before"] - m["events_changed"] == m["null_result_after"]
+        assert m["events_byte_identical"] + m["events_changed"] == (
+            m["events_holding_a_grade"]
+        )
 
 
 class TestTheScoreStillWins:

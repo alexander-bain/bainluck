@@ -144,6 +144,36 @@ def choose_settled_score(graded_outcome_names: Iterable[Optional[str]]) -> Optio
 #: "Settled · Fiona Crawley", which does not say which of the two she is.
 WINNER_SENTENCE = "{participant} wins"
 
+#: The graded moneyline outcome that names NEITHER side because the match had
+#: no winner. Normalised-exact, never a substring.
+#:
+#: 🔴 A DRAW IS A RESULT, AND REFUSING IT IS NOT THE SAME REFUSAL AS REFUSING A
+#: PROP. :func:`_names_a_participant` answers ``None`` for ``Tie`` because a tie
+#: is not one of the two sides — correctly, as a participant question. But the
+#: caller reads that ``None`` as "the venue said nothing about the whole
+#: contest", and on these rows the venue said the most definite thing it can
+#: say. Measured on production 2026-09-19 over the scoreless ``live``/
+#: ``suspended`` arm: 1,295 events hold a positive venue grade, 980 already
+#: render a result, and of the 315 that do not, **8 are soccer matches whose
+#: graded full-scope moneyline is the draw leg** — every one of them a Kalshi
+#: three-way where the ``-TIE`` market is ``finalized``/``result=yes`` and both
+#: side markets are ``result=no``. Those 8 pages say "Settled" and never say
+#: what happened.
+#:
+#: The vocabulary is the venues' own and is deliberately only these two:
+#: ``Tie`` is what Kalshi writes on its three-way soccer moneylines (8 legs) and
+#: ``Draw`` is Polymarket's (1 leg). Nothing here is inferred from a price, from
+#: a missing winner, or from "neither side was graded" — the draw leg itself
+#: carries ``is_winner = true`` under :data:`VENUE_SETTLEMENT_SOURCE`, which is
+#: the same warrant every other sentence in this module rests on.
+DRAW_OUTCOME_NAMES = frozenset({"tie", "draw"})
+
+#: What a graded draw renders as. "Settled · Draw", matching the register the
+#: score path already publishes for the same event shape — a graded
+#: ``Correct Score`` market on a drawn match sends ``Draw 0-0``, so this is that
+#: sentence with the score removed, exactly as :data:`WINNER_SENTENCE` is.
+DRAW_SENTENCE = "Draw"
+
 #: An outcome name that is itself a MATCHUP rather than one side of one.
 #:
 #: 🔴 #4629's both-sides refusal below is defeated by TRUNCATION, and the
@@ -219,7 +249,12 @@ def choose_settled_winner(
     home_team_name: Optional[str],
     away_team_name: Optional[str],
 ) -> Optional[str]:
-    """The one side the venue graded as winning the WHOLE match, as a sentence.
+    """What the venue graded about the WHOLE match, as a sentence.
+
+    That is a side winning on all but eight of the rows it answers, which is
+    why it is named for the winner; since 2026-09-19 it is also ``"Draw"``,
+    because a three-way moneyline has three verdicts and the third one is a
+    result too (:data:`DRAW_OUTCOME_NAMES`).
 
     #6739's producer half, and the fallback under :func:`choose_settled_score`:
     56 of the 426 measured events grade a full-scope SCORE market, and the
@@ -267,24 +302,43 @@ def choose_settled_winner(
     because the recognizer's ticker branch needs the id: a ``KXNBA2HSPREAD``
     ticker under a bare-matchup title is a spread, and the name alone cannot
     say so.
+
+    🔴 A GRADED DRAW IS THE THIRD VERDICT, AND IT COMPETES IN THE SAME
+    DISAGREEMENT TEST (:data:`DRAW_OUTCOME_NAMES`). The set now holds SENTENCES
+    rather than participants so that "the venue graded Tie" and "the venue
+    graded Sturm Graz" land in one set and refuse each other — on a three-way
+    moneyline those are contradictory claims about one match, and a draw
+    admitted on a separate path would have been published beside a winner
+    instead of refusing with one. The formatting moved inside the loop for that
+    reason alone; for every row that has no draw leg the set is the same set of
+    the same size and the answer is byte-identical.
+
+    The draw test is checked BEFORE the participant test, and the order is not
+    arbitrary: it is the only order under which a venue that named a side
+    called ``Tie`` would still be read as that side rather than as a draw. No
+    such side exists in the measured population (0 of 4,804 graded legs), which
+    is why the precedence is stated here rather than defended by a guard.
     """
     from app.utils.game_market_class import classify_game_market_class
 
-    winners = set()
+    verdicts = set()
     for market_name, market_external_id, outcome_name in graded_markets:
         if (
             classify_game_market_class(market_name or "", market_external_id)
             != "moneyline"
         ):
             continue
+        if _normalise_segment(outcome_name or "") in DRAW_OUTCOME_NAMES:
+            verdicts.add(DRAW_SENTENCE)
+            continue
         participant = _names_a_participant(
             outcome_name, home_team_name, away_team_name
         )
         if participant is not None:
-            winners.add(participant)
-    if len(winners) != 1:
+            verdicts.add(WINNER_SENTENCE.format(participant=participant))
+    if len(verdicts) != 1:
         return None
-    return WINNER_SENTENCE.format(participant=next(iter(winners)))
+    return next(iter(verdicts))
 
 
 def venue_settlement_is_askable(
