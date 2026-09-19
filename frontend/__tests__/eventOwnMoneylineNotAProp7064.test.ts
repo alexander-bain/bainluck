@@ -208,3 +208,37 @@ describe("#7064 the call site — a filter nothing calls is not a fix", () => {
     expect(source).toMatch(/withoutEventOwnMoneyline\(servedGameMarkets\)/);
   });
 });
+
+describe("#7064 the REAL production payload, driven through the real filter", () => {
+  // Captured verbatim from GET /api/events/15314172/game-markets on 2026-09-19 — the very event in
+  // the issue. A hand-written fixture proves the predicate does what I think it does; this proves
+  // it does it to the rows production actually serves.
+  const served = require("./fixtures/gameMarkets15314172-7064.json") as {
+    home_team: string;
+    away_team: string;
+    player_props: { market_name: string }[];
+    props_script: { key: string }[];
+  };
+
+  it("BEFORE: the served payload really carries the offender in both arrays", () => {
+    expect(served.player_props).toHaveLength(66);
+    expect(served.player_props.filter((p) => p.market_name === "Boston vs Tampa Bay")).toHaveLength(2);
+    expect(served.props_script.filter((m) => m.key.startsWith("Boston vs Tampa Bay|"))).toHaveLength(2);
+  });
+
+  it("AFTER: exactly the two moneyline rows leave each array, and 64 real props stay", () => {
+    const out = withoutEventOwnMoneyline(served);
+    expect(out.player_props).toHaveLength(64);
+    expect(out.props_script).toHaveLength(64);
+    expect(out.player_props.some((p) => p.market_name === "Boston vs Tampa Bay")).toBe(false);
+    expect(out.props_script!.some((m) => String(m.key).startsWith("Boston vs Tampa Bay|"))).toBe(false);
+  });
+
+  it("AFTER: every OTHER market on the real payload survives, name for name", () => {
+    // The blunt-instrument check. A filter that deleted the offender and something else with it
+    // would pass both assertions above.
+    const before = served.player_props.map((p) => p.market_name).filter((n) => n !== "Boston vs Tampa Bay");
+    const after = withoutEventOwnMoneyline(served).player_props.map((p) => p.market_name);
+    expect(after).toEqual(before);
+  });
+});
