@@ -341,16 +341,23 @@ class TestTheSearchHeadlineLaneCannotPoisonTheSession:
         )
 
     def test_the_headline_statement_is_inside_the_savepointed_try(self):
-        """The savepoint must WRAP the headline select, not merely coexist with it."""
+        """The savepoint must WRAP the headline select, not merely coexist with it.
+
+        #7243 moved the statement into `_headline_contender_statement`, so the two
+        constants this used to look for (`HEADLINE_MARKET_TIER`,
+        `MIN_CONTENDER_VOLUME`) are now one call away and no longer appear in the
+        try. The select did not move; the token identifying it did, and the
+        builder's name identifies it more precisely than two constants that merely
+        happened to be inside it.
+        """
         tree = _route_ast()
-        wanted = {"HEADLINE_MARKET_TIER", "MIN_CONTENDER_VOLUME"}
         guarded = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.Try)
             and any(_writes_mark(h, _HEADLINE_SHED_MARK) for h in node.handlers)
-            and wanted
-            <= {c.id for c in ast.walk(node) if isinstance(c, ast.Name)}
+            and "_headline_contender_statement"
+            in {c.id for c in ast.walk(node) if isinstance(c, ast.Name)}
         ]
         assert guarded, (
             "the headline-contender select is not inside the try whose handler "

@@ -283,24 +283,48 @@ class TestTheTwoLanesCannotDrift:
     That fix landed on the dropdown, the identical arm in the results endpoint
     was left alone, and the same query broke the same way the day after it was
     declared fixed. Both lanes now share ONE helper; this asserts they still do.
+
+    AMENDED by #7243, which moved the whole statement into one builder. This test
+    counted "exactly 2 call sites of `_headline_contender_outcome_clause`" — one per
+    lane — and that count is now 1, because the lanes no longer spell the predicate
+    at all: they call `_headline_contender_statement`, which spells it once. The
+    INVARIANT is unchanged and the assertion is strictly stronger (one shared
+    spelling rather than two identical ones); only the thing it counts moved. The
+    clause ORDER inside that builder is now load-bearing too — see
+    `test_search_headline_contender_clause_order_7243.py`.
     """
 
-    def test_both_headline_lanes_call_the_shared_clause_helper(self):
+    def _lane_callers(self, name):
         source = (
             pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "events.py"
         ).read_text()
         tree = ast.parse(source)
-        calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_headline_contender_outcome_clause"
-        ]
-        assert len(calls) == 2, (
-            f"expected the search and typeahead headline lanes to share the "
-            f"clause helper, found {len(calls)} call site(s) — if a lane was "
-            "given its own inline predicate the two will drift, which is #3394"
+        out = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Name)
+                    and inner.func.id == name
+                ):
+                    out.append(node.name)
+        return out
+
+    def test_the_clause_helper_is_spelled_in_exactly_one_place(self):
+        assert set(self._lane_callers("_headline_contender_outcome_clause")) == {
+            "_headline_contender_statement"
+        }, (
+            "the clause helper is called outside the one builder — a lane given "
+            "its own inline predicate is how the two drift, which is #3394"
+        )
+
+    def test_both_headline_lanes_reach_that_place(self):
+        callers = self._lane_callers("_headline_contender_statement")
+        assert len(callers) == 2, (
+            "expected the search and typeahead headline lanes to both reach the "
+            f"shared builder, found {callers}"
         )
 
     def test_the_sql_clause_carries_the_correspondence_and_no_price_floor(self):
