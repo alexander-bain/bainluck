@@ -10552,15 +10552,28 @@ async def get_trending_searches():
     all-time cumulative counter whose TTL was reset on every write, so it served
     a leaderboard accumulated since the key was created. `read_window` sums
     hour-buckets and genuinely rolls — see `app/utils/search_trending.py`.
+
+    #3123: the five it serves are the five a reader SEES, and `/typeahead` votes
+    per keystroke, so one person typing "stanford" could take every slot with
+    `sta`, `stan`, `stanf`, `stanfo`, `stanford`. The route over-reads and
+    collapses that ladder here, at the READ — `read_window` itself is unchanged
+    because `typeahead_warmer.resolve_head` is its other caller and what the
+    warmer heads from is not this issue's decision to make.
     """
     try:
         from app.tasks.redis_state import get_redis_client
-        from app.utils.search_trending import read_window
+        from app.utils.search_trending import (
+            FRAGMENT_SCAN_MULTIPLIER,
+            collapse_typing_fragments,
+            read_window,
+        )
 
+        served = 5
+        rows = read_window(get_redis_client(), served * FRAGMENT_SCAN_MULTIPLIER)
         return {
             "trending": [
                 {"query": query, "count": int(score)}
-                for query, score in read_window(get_redis_client(), 5)
+                for query, score in collapse_typing_fragments(rows)[:served]
             ]
         }
     except Exception:
