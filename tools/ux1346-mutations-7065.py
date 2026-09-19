@@ -18,7 +18,6 @@ the harness could not run (a mutation did not apply, the baseline was not green)
 — that is a story about this script, never a verdict about the guard.
 """
 
-import re
 import subprocess
 import sys
 from pathlib import Path
