@@ -671,10 +671,25 @@ FLIP_EVIDENCE: dict[str, dict[str, Any]] = {
 #: the MONITOR being readable — closed on #4443. `basketball_nba` is the second
 #: release, #4493. `baseball_mlb` is the third, #4436 under D113: it needed the
 #: branch reorder above as well as this line, which is why it did not ship with
-#: the NBA. `icehockey_nhl` is the fourth and is deliberately still absent: it
-#: clears every structural branch and waits only on its streak, so it is a
-#: one-line addition here when its release comes. Adding it early would land two
-#: flips under a cert that graded one.
+#: the NBA. `icehockey_nhl` is the fourth and last, #7089 — timed to its season,
+#: whose first StatPal fixture is 2026-09-19 23:00Z.
+#:
+#: **The NHL's release is the one that changes nothing on the day it lands, and
+#: that is the whole of what it is for.** The other three each moved a sport from
+#: refused to permitted. The NHL was permitted already — its row read 15/7 at
+#: 2026-09-19T00:51:01Z — but permitted BY ITS STREAK, alone among the four. A
+#: streak resets: `authority_streak` breaks its walk on the first `BELOW` day and
+#: the walk starts at the NEWEST day, so one day under 99.5% takes 15 to 0 and
+#: shuts the gate for a week. `ours_covered_pct` was 100.0 over `both = 82`, and
+#: 81/82 is 98.8% — ONE extra row of ours, of exactly the kind #3093/#3463 track,
+#: scores BELOW. That denominator is about to grow ~17× as the season opens. So
+#: this line does not buy the NHL a permission; it stops the permission it had
+#: already earned from being revocable by a monitor blip, which is what D104 said
+#: those leagues should never wait on. #7089 measures all of it.
+#:
+#: **The set is now every key in `AUTHORITY_BY_SPORT`, so the four releases are
+#: done.** A fifth member is a NEW sport and needs its own release — and its own
+#: structural branches, which the ruling still cannot buy it.
 #:
 #: The first two additions were refused on the WAIT ALONE before they were made,
 #: read from the live row rather than inferred from the config (standing notice
@@ -703,7 +718,7 @@ FLIP_EVIDENCE: dict[str, dict[str, Any]] = {
 #: that we lack is now OUR fetch bug to fix, filed under #2867, never a reason to
 #: say the venue does not cover it (standing notices 26/27).
 FLIP_RULED_WITHOUT_STREAK: frozenset[str] = frozenset(
-    {"americanfootball_nfl", "basketball_nba", "baseball_mlb"}
+    {"americanfootball_nfl", "basketball_nba", "baseball_mlb", "icehockey_nhl"}
 )
 
 

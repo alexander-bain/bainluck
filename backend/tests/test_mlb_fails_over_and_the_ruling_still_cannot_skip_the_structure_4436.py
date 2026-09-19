@@ -303,19 +303,23 @@ class TestOnlyBaseballShipsOnThisIssue:
     """Alex: "then the rest in one release each" — so the set grows by one."""
 
     def test_the_ruled_set_is_exactly_what_has_been_graded(self):
-        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA, MLB}), (
-            "football #4417, the NBA #4493, MLB #4436. NHL is its own release "
-            "under #2867; adding it here lands two flips under a cert that "
-            "graded one"
+        assert FLIP_RULED_WITHOUT_STREAK == frozenset({NFL, NBA, MLB, NHL}), (
+            "football #4417, the NBA #4493, MLB #4436, the NHL #7089. That is "
+            "every sport the switch names, so a fifth member is a NEW sport "
+            "and needs a release of its own"
         )
 
-    def test_the_nhl_still_waits(self):
-        """The control that proves this ship is one sport wide.
+    def test_a_sport_outside_the_set_still_waits(self, monkeypatch):
+        """The control that proves this ship was one sport wide.
 
-        The NHL is the last real sport that reaches the CLOCK, so it is also the
-        only remaining real proof that the streak branch still binds anything.
+        This docstring used to say the NHL was "the last real sport that
+        reaches the CLOCK, so it is also the only remaining real proof that the
+        streak branch still binds anything". #7089 ruled it, so that proof is
+        now CONSTRUCTED — which is exactly what #4564 anticipated. The branch
+        still binds; nothing real is left in the state that shows it.
         """
-        permitted, why = flip_permitted(NHL, _days(5))
+        sport = register_specimen(monkeypatch, "mlb_4436_still_waiting")
+        permitted, why = flip_permitted(sport, _days(5))
         assert permitted is False, why
         assert f"5/{REQUIRED_STREAK_DAYS}" in why, why
 
@@ -385,8 +389,10 @@ class TestTheServedNoteFollowsTheRuledSet:
             "seven consecutive daily gate states" not in note
         ), f"{sport} is ruled; its note still describes the retired wait: {note}"
 
-    def test_an_unruled_sports_note_still_describes_the_gate(self):
+    def test_an_unruled_sports_note_still_describes_the_gate(self, monkeypatch):
+        """Asserted against the NHL until #7089 ruled it; now a specimen."""
         from app.routes.admin_providers import _authority_note
 
-        assert NHL not in FLIP_RULED_WITHOUT_STREAK
-        assert "seven consecutive daily gate states" in _authority_note(NHL)
+        key = register_specimen(monkeypatch, "mlb_4436_unruled_note")
+        assert key not in FLIP_RULED_WITHOUT_STREAK
+        assert "seven consecutive daily gate states" in _authority_note(key)

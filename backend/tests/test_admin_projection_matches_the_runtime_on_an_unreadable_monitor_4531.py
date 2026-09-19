@@ -103,10 +103,15 @@ RULED = "basketball_nba"
 #: NOT ruled, so its refusal must survive unchanged — and must still carry the
 #: ledger's own failed-read reason rather than a streak verdict never computed.
 #: Kept in step with `UNRULED` in
-#: `test_ruled_failover_survives_monitor_read_failure_4443`; when the NHL ships
-#: as the third ruled release this specimen moves, and #4531's own note about
-#: the shrinking pool of unruled controls applies here too.
-UNRULED = "icehockey_nhl"
+#: `test_ruled_failover_survives_monitor_read_failure_4443`.
+#:
+#: **The pool ran out on #7089, as that note predicted.** The NHL was the last
+#: real unruled sport and is now ruled, so this is a CONSTRUCTED key registered
+#: per test — which also means the row it names reaches the endpoint only
+#: because `register_specimen` patches `SHADOW_STAMPERS`, the map the projection
+#: iterates. A test here that stops registering it will KeyError on the row
+#: rather than quietly measure a different sport.
+UNRULED = "unruled_4531_admin_projection"
 
 #: `None` for the days — NOT `[]`. That distinction is the whole defect: `[]` is
 #: "measured, nothing there"; `None` is "we could not look".
@@ -215,6 +220,9 @@ async def test_an_unreadable_monitor_does_not_open_the_projection_for_an_unruled
     monkeypatch, call
 ):
     """A degraded snapshot store must not become a way to project anything."""
+    from tests.authority_specimens import register_specimen
+
+    register_specimen(monkeypatch, UNRULED)
     _ledger_unreadable(monkeypatch)
 
     row = (await _failover_rows(call))[UNRULED]
