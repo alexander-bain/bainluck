@@ -42,7 +42,7 @@ pydantic-settings>=2.14.1
 
 # Auth (optional)
 firebase-admin>=6.3.0
-PyJWT>=2.8.0
+PyJWT>=2.13.0
 
 # Google Sheets API (ground truth enrichment)
 google-api-python-client>=2.100.0
