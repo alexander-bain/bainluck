@@ -166,11 +166,26 @@ enum LaunchRig {
 
     // MARK: - Making a refresh's response genuinely, controllably DIFFERENT
 
-    /// Launch-argument key that withholds the first N cards from every refresh
-    /// AFTER the first paint, so a pull's response differs from the painted one
-    /// by construction.
+    /// Launch-argument key that withholds the first N cards from every network
+    /// publication AFTER the first one, so a pull's response differs from the
+    /// published one by construction.
     ///
     /// `xcrun simctl launch <sim> <bundle> -launch_changed_refresh 5`.
+    ///
+    /// 🪤 **"AFTER THE FIRST PUBLICATION", NOT "AFTER THE FIRST PAINT" — AND THE
+    /// DIFFERENCE IS THE WHOLE AFFORDANCE.** This said "after the first paint"
+    /// until native/247, and the call site implemented that literally, as
+    /// `!items.isEmpty`. **The last-good cache seed is a paint.** So in a WARM
+    /// container the first *network* load was already withheld, the journey's
+    /// BEFORE and AFTER were both staged, and it measured `SERVED 20 → 20` —
+    /// reporting *the feed did not change* on a refresh that published correctly.
+    /// Green in a cold container, red in the class run, same build: the shape of
+    /// an instrument reading shared container state rather than the app.
+    ///
+    /// The payload the change is measured AGAINST must be one the server really
+    /// sent, so the witness is a completed NETWORK publication
+    /// (`DiscoverViewModel.hasPublishedNetworkFeed`) and nothing a cache can
+    /// satisfy.
     ///
     /// 🔴 THE GAP THIS EXISTS FOR, IN #7074'S OWN WORDS. Alex, physical phone,
     /// build 15: *"Pull gesture briefly shows activity with no apparent change."*

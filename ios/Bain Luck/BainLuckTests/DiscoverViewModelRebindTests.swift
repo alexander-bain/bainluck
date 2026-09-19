@@ -148,16 +148,28 @@ final class DiscoverViewModelRebindTests: XCTestCase {
         let vm = DiscoverViewModel(client: fake, lastGood: FakeLastGood(nil),
                                    telemetry: nil, retryBudget: 30)
 
-        async let a: Void = vm.load()          // identity 1 — parks on the gate
+        async let a: DiscoverLoadOutcome = vm.load()  // identity 1 — parks on the gate
         await fulfillment(of: [arrived], timeout: 5)  // A is deterministically in-flight
         await vm.rebindForIdentityChange()     // identity 2 — loads B (call 2), publishes
 
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }), Set(100...104), "new identity B published")
 
         fake.openGate()                        // A's late response returns now
-        await a
+        let aOutcome = await a
 
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }), Set(100...104),
                        "the prior identity's late response was discarded — no cross-identity overwrite")
+
+        // #7170, and this is the arm codex named: "never allow an old signed-in
+        // request to publish over a newer identity". The refusal is unchanged — the
+        // assertion above still pins it — and the load now REPORTS the refusal
+        // instead of exiting silently. A pull that was superseded by an identity
+        // rebind is precisely the case the footer-generation guard cannot catch,
+        // because the rebind bumps `loadGeneration` without touching
+        // `footerRefreshGeneration`.
+        XCTAssertEqual(
+            aOutcome, .superseded,
+            "The prior identity's load reported \(aOutcome) after being superseded by a rebind."
+        )
     }
 }

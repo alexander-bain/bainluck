@@ -328,13 +328,36 @@ final class FooterRefreshSaysWhatItIsDoing1472Tests: XCTestCase {
 
         // The return must sit inside the success arm. A scroll on the failure
         // arm would tear the reader away from the only notice they get.
-        let beforeScroll = scope[..<scroll.lowerBound]
+        //
+        // 🪤 PINNED BY ITS INVARIANT, NOT BY ITS SPELLING (#7170). This read
+        // `range(of: "if vm.error == nil {")` and went red when that guard became
+        // `if footerRefreshPhase == .refreshed {` — a change that STRENGTHENED the
+        // rule this test exists to protect. `error == nil` was never the success
+        // test: `load()` has nine terminals that publish nothing and set no error,
+        // so the old spelling admitted a cancelled refresh to this branch and
+        // scrolled a reader to the top of a feed that had not changed. A scan that
+        // names one phrasing red-lights the repair and green-lights the defect.
+        //
+        // So: locate the success arm anywhere in the chain of conditions enclosing
+        // the scroll (the NEAREST one is `if let proxy {`, an optional binding, so
+        // "nearest" is the wrong question), then keep the original test's real
+        // check — that no `else` intervenes between that arm and the scroll, which
+        // is how the scroll would fall onto the failure path.
+        let linesBefore = String(scope[..<scroll.lowerBound])
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
         let successArm = try XCTUnwrap(
-            beforeScroll.range(of: "if vm.error == nil {", options: .backwards),
-            "the scroll-to-top is not guarded by the success test"
+            linesBefore.lastIndex(where: {
+                $0.hasPrefix("if ") && $0.hasSuffix("{") && $0.contains(".refreshed")
+            }),
+            "the scroll-to-top is not guarded by a success test. No condition enclosing it asks whether "
+            + "the feed was actually REFRESHED, so it runs on outcomes that published nothing — which "
+            + "scrolls a reader to the top of a feed that did not change (#7170). Conditions found:\n"
+            + linesBefore.filter { $0.hasPrefix("if ") }.joined(separator: "\n")
         )
         XCTAssertFalse(
-            beforeScroll[successArm.upperBound...].contains("} else {"),
+            linesBefore[successArm...].contains("} else {"),
             "the scroll-to-top has fallen out of the success arm — a failed refresh must leave the reader "
             + "where they are, next to the 'Couldn't refresh' notice that is their only word on it."
         )

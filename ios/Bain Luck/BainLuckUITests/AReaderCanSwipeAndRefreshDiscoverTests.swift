@@ -417,6 +417,350 @@ final class AReaderCanSwipeAndRefreshDiscoverTests: XCTestCase {
         )
     }
 
+    /// #7170: **a pull republishes the feed, and reports the outcome of its OWN
+    /// request.**
+    ///
+    /// The sibling above proves the gesture reaches the closure; the one before it
+    /// proves the top of the feed says something. Both passed on a build that lied.
+    /// `testACompletedPullSaysSoAtTheTopOfTheFeed` asserted the notice reads "Feed
+    /// refreshed. Checked just now." — and it did, on a refresh that never
+    /// reassigned `items`. A test of what a row SAYS cannot see that the sentence
+    /// is false.
+    ///
+    /// So this one reads the two rig fields the notice cannot fake:
+    ///   * `FEED` — `vm.itemsVersion`, one bump per `items` reassign. It moves iff
+    ///     a generation published.
+    ///   * `OUTCOME` — which of `load()`'s terminals the refresh actually reached.
+    ///
+    /// 🪤 `FEED` ALONE WAS REJECTED AS A WITNESS ONCE ALREADY, and the rejection
+    /// still stands in the form it was made: `testPullingDownRunsTheRefresh`'s
+    /// docs record that `itemsVersion` FAILED its positive control as a witness
+    /// *for the gesture* — the feed arrives complete, so scrolling to the end
+    /// reloads nothing and the version sits still for reasons having nothing to do
+    /// with refreshing. That is why the gesture is witnessed by `PULLS` here too,
+    /// and `FEED` is only ever read AFTER `PULLS` has moved. A `FEED` that sits
+    /// still while `PULLS` sits still says nothing; a `FEED` that sits still after
+    /// `PULLS` moved is the defect.
+    ///
+    /// ⏱ THE EIGHT-SECOND SETTLE IS LOAD-BEARING, not padding. A pull issued
+    /// immediately after the first load reproduces a DIFFERENT non-publish: the
+    /// backend answers the immediate second request out of its singleflight with a
+    /// typed UNAVAILABLE, which `mayReplaceRendered` correctly declines. That is a
+    /// working refusal, it sets an error, and it now reports `failed` — a correct
+    /// outcome, and not the one this test is about.
+    func testAPullRepublishesTheFeedAndSaysWhatItDid() throws {
+        // LaunchRig.debugCountsKey — draws the counter this test reads.
+        let app = UITestLaunch.launchApp(extra: ["-launch_debug_counts", "YES"])
+
+        JourneyPrecondition.tabBar(of: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
+
+        let badge = app.descendants(matching: .any).matching(identifier: "discover-debug-counts").firstMatch
+        XCTAssertTrue(
+            badge.waitForExistence(timeout: UITestLaunch.contentTimeout),
+            "-launch_debug_counts drew no badge, so this test has no witness. A flag with no visible effect is the #3157 shape: silently inert."
+        )
+        JourneyPrecondition.settle(JourneyPrecondition.cards(in: app))
+        Thread.sleep(forTimeInterval: 8)
+
+        // THE CONTROL, before anything is pulled: the field must exist and must
+        // read `none`. A badge that already named an outcome would mean something
+        // other than a refresh writes it, and every assertion below would be
+        // reading a number this gesture did not produce.
+        let outcomeBefore = try badgeWord("OUTCOME", of: badge)
+        XCTAssertEqual(
+            outcomeBefore, "none",
+            "The badge reported OUTCOME '\(outcomeBefore)' before any refresh ran. Only a completed "
+            + "refresh may write that field, so this test cannot attribute what it reads later to the pull."
+        )
+
+        let pullsBefore = try badgeField("PULLS", of: badge)
+        let feedBefore = try badgeField("FEED", of: badge)
+
+        try pullToRefresh(in: app)
+
+        // Wait on the GESTURE first. Everything after this point is a statement
+        // about a refresh that provably ran.
+        var pullsAfter = pullsBefore
+        let deadline = Date().addingTimeInterval(UITestLaunch.contentTimeout)
+        while Date() < deadline {
+            pullsAfter = (try? badgeField("PULLS", of: badge)) ?? pullsAfter
+            if pullsAfter > pullsBefore { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertGreaterThan(
+            pullsAfter, pullsBefore,
+            "The pull never reached the refresh closure (PULLS stayed at \(pullsBefore)), so this run "
+            + "says nothing about publication. This is the gesture failing, not the feed."
+        )
+
+        // Now let the load finish. The outcome field is written when `load()`
+        // RETURNS, so poll it off `none` rather than reading once.
+        var outcomeAfter = "none"
+        var feedAfter = feedBefore
+        let settleBy = Date().addingTimeInterval(UITestLaunch.contentTimeout)
+        while Date() < settleBy {
+            outcomeAfter = (try? badgeWord("OUTCOME", of: badge)) ?? outcomeAfter
+            feedAfter = (try? badgeField("FEED", of: badge)) ?? feedAfter
+            if outcomeAfter != "none" { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "7170-pull-outcome-\(outcomeAfter)"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        XCTAssertEqual(
+            outcomeAfter, "published",
+            "A pull that reached the closure ended at the '\(outcomeAfter)' terminal of load(). "
+            + "The reader was told their refresh completed; it did not publish. "
+            + "(FEED \(feedBefore) → \(feedAfter), PULLS \(pullsBefore) → \(pullsAfter).)"
+        )
+
+        // The independent half: `OUTCOME` is the app's account of itself, `FEED` is
+        // the consequence. A `published` that did not move `FEED` would mean the
+        // contract is reporting a publication that did not happen — the same class
+        // of defect one layer down — so the two are asserted separately on purpose.
+        XCTAssertGreaterThan(
+            feedAfter, feedBefore,
+            "`items` was never reassigned (FEED \(feedBefore) → \(feedAfter)) though the gesture "
+            + "landed and load() reported '\(outcomeAfter)', so the refresh did not republish the feed."
+        )
+    }
+
+    /// #7074's LAST ARM: **a controlled changed response arrives, renders, and
+    /// leaves the reader where they were standing.**
+    ///
+    /// This is the journey #7074 asked for and native/243 could not build: *"Prove
+    /// gesture→request→completion and useful stable position on a controlled
+    /// changed-response test"* and, one line later, *"Test actual gestures and read
+    /// frames, not state-machine tests alone."* Against the live API those pull in
+    /// opposite directions — a finger cannot control what production serves, and
+    /// the server may legitimately serve the same cards twice, so asserting "the
+    /// cards changed" would red on a working app.
+    ///
+    /// `-launch_changed_refresh` resolves it by making the DIFFERENCE the
+    /// controlled variable: the real gesture, the real network, the real screen,
+    /// and a response that differs from the published one by construction. See
+    /// `LaunchRig.changedRefreshKey`; the affordance is `#if DEBUG` at its only
+    /// call site and cannot exist in a Release build.
+    ///
+    /// 🪤 IT COULD NOT RUN AT ALL UNTIL #7170. The pull's load was being cancelled
+    /// by `.refreshable`'s task teardown, so no refresh ever published and there was
+    /// nothing for the rig to stage — measured as `OUTCOME cancelled · FEED 1 → 1`.
+    /// A version of this test written then would have failed and read as "the rig
+    /// does not work".
+    ///
+    /// 🪤 AND IT WAS WRITTEN ONCE AND WITHDRAWN (`928a40736`). The rig withheld from
+    /// the first load of a WARM container — the last-good cache seed is a paint —
+    /// so both sides of the experiment were staged and it measured no difference at
+    /// all. It was green in isolation and red in its class, on one build, because
+    /// `native-uitest.sh` uninstalls once per INVOCATION. The witness is now a
+    /// completed network publication (`DiscoverViewModel.hasPublishedNetworkFeed`),
+    /// which no cache can satisfy, and the container tests in
+    /// `AControlledChangedRefresh7074Tests` hold that from the other side.
+    ///
+    /// 🪤 THE TOP CARD'S IDENTITY IS NOT THE WITNESS, though it reads like the
+    /// obvious one. `interleave`, grouping and the view's own filters sit between
+    /// the response and the screen, so a card at response index 20 survives a
+    /// 12-card withholding and can still be drawn first — measured, byte-identical
+    /// on both sides, with the feed working correctly. Codex ruled the same:
+    /// *"a single top-card identity need not change after grouping."* The count of
+    /// cards actually served to the screen is the witness that survives grouping.
+    func testAControlledChangedRefreshRendersAndKeepsTheReadersPlace() throws {
+        let app = UITestLaunch.launchApp(extra: [
+            "-launch_debug_counts", "YES",
+            // LaunchRig.changedRefreshKey — the controlled difference. 30 rather
+            // than a handful so the shrink it causes cannot be confused with the
+            // few-card jitter between two live pages (see the margin below).
+            "-launch_changed_refresh", "30",
+        ])
+
+        JourneyPrecondition.tabBar(of: app)
+        _ = try JourneyPrecondition.firstCard(in: app)
+
+        let badge = app.descendants(matching: .any).matching(identifier: "discover-debug-counts").firstMatch
+        XCTAssertTrue(
+            badge.waitForExistence(timeout: UITestLaunch.contentTimeout),
+            "-launch_debug_counts drew no badge, so this test has no witness."
+        )
+        JourneyPrecondition.settle(JourneyPrecondition.cards(in: app))
+        // The sibling that pulls reliably spends this window first, and it is
+        // load-bearing rather than politeness: pulling the instant the first load
+        // settles is answered from the backend's singleflight with a typed
+        // UNAVAILABLE, which `mayReplaceRendered` correctly declines — so the
+        // refresh does not publish and the experiment never runs.
+        Thread.sleep(forTimeInterval: 8)
+
+        let outcomeBefore = try badgeWord("OUTCOME", of: badge)
+        XCTAssertEqual(
+            outcomeBefore, "none",
+            "The badge named an outcome before any refresh ran, so nothing read after the pull can "
+            + "be attributed to it."
+        )
+
+        let servedBefore = try badgeField("SERVED", of: badge)
+        let feedBefore = try badgeField("FEED", of: badge)
+        let pullsBefore = try badgeField("PULLS", of: badge)
+
+        // THE ANTI-VACUITY GUARD ON THE WITNESS ITSELF. The assertion below reads a
+        // 15-card shrink; a page that never held 15 spare cards cannot show one, and
+        // the honest answer is that this run did not perform the experiment — not a
+        // failure, and emphatically not a pass.
+        try XCTSkipIf(
+            servedBefore < 25,
+            "NOT WALKED: production served only \(servedBefore) cards, so a 30-card withholding "
+            + "cannot produce a shrink distinguishable from page jitter. The experiment was not run."
+        )
+        // And the payload the change is measured AGAINST must be the UNSTAGED one.
+        // If the first publication were itself withheld, `servedBefore` would already
+        // be ~20 and this guard is what notices — it is the withdrawn journey's exact
+        // failure, kept as a tripwire rather than a memory.
+        XCTAssertGreaterThan(
+            servedBefore, 30,
+            "The FIRST network publication was already shortened (SERVED \(servedBefore)), so the "
+            + "before and the after are both staged and there is no difference to observe. This is "
+            + "the warm-container confound that withdrew this journey once."
+        )
+
+        // 🔴 THE ARMING PRECONDITION, and it must be read BEFORE the pull. `RIG` is
+        // the drop that will be applied to the NEXT publication, written only at a
+        // publication terminal, so a non-zero value proves the launch argument
+        // arrived AND that payload A exists.
+        //
+        // Zero has two innocent causes and neither is a defect: the argument did not
+        // reach the app, or the first network load failed and the page on screen is
+        // the container's cache seed — in which case the reader's pull would BE the
+        // first publication and correctly go unstaged. Measured, both: the run that
+        // reported `SERVED 50 → 50` before this field existed was the second one.
+        // Without this check that run reads as "the refresh published and the reader
+        // saw nothing", which is the product verdict, from an experiment never run.
+        let rigArmed = try badgeField("RIG", of: badge)
+        try XCTSkipIf(
+            rigArmed != 30,
+            "NOT WALKED: the rig is not armed (RIG \(rigArmed), SERVED \(servedBefore)). Either the "
+            + "launch argument did not reach the load, or no network publication has happened yet — "
+            + "so there is no payload A and a pull now would be the first publication, correctly "
+            + "unstaged. This run performed no experiment; it is not evidence about the app."
+        )
+
+        try pullToRefresh(in: app)
+
+        var pullsAfter = pullsBefore
+        var outcome = "none"
+        var feedAfter = feedBefore
+        var servedAfter = servedBefore
+        let deadline = Date().addingTimeInterval(UITestLaunch.contentTimeout)
+        while Date() < deadline {
+            pullsAfter = (try? badgeField("PULLS", of: badge)) ?? pullsAfter
+            outcome = (try? badgeWord("OUTCOME", of: badge)) ?? outcome
+            feedAfter = (try? badgeField("FEED", of: badge)) ?? feedAfter
+            servedAfter = (try? badgeField("SERVED", of: badge)) ?? servedAfter
+            if pullsAfter > pullsBefore && outcome != "none" { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "7074-changed-refresh-\(outcome)"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        // The run's own numbers, banked rather than reconstructed: a passing
+        // journey that records nothing leaves its next reader re-running it to find
+        // out what it measured.
+        let measured = "RIG \(rigArmed) · SERVED \(servedBefore) -> \(servedAfter)"
+            + " · FEED \(feedBefore) -> \(feedAfter) · PULLS \(pullsBefore) -> \(pullsAfter)"
+            + " · OUTCOME \(outcome)"
+        print("7074 CHANGED-RESPONSE MEASUREMENT: \(measured)")
+        let note = XCTAttachment(string: measured)
+        note.name = "7074-changed-refresh-measurement"
+        note.lifetime = .keepAlways
+        add(note)
+
+        // 1 — THE REQUEST. Without this the rest describes a page nobody touched.
+        XCTAssertGreaterThan(
+            pullsAfter, pullsBefore,
+            "The pull never reached the refresh closure, so no experiment was performed."
+        )
+
+        // 2 — ADMISSION AND PUBLICATION, from the app's own account and from its
+        // consequence, asserted separately so one cannot cover for the other.
+        XCTAssertEqual(
+            outcome, "published",
+            "The controlled refresh ended at the '\(outcome)' terminal, so the staged response was "
+            + "never admitted (FEED \(feedBefore) → \(feedAfter))."
+        )
+        XCTAssertGreaterThan(
+            feedAfter, feedBefore,
+            "`items` was never reassigned, so nothing the rig staged reached the screen."
+        )
+
+        // 2b — the arming must still hold on the load that just published, or the
+        // shrink below is being read off a publication the rig had no part in.
+        let rigArmedAfter = try badgeField("RIG", of: badge)
+        XCTAssertEqual(
+            rigArmedAfter, 30,
+            "The rig was armed before the pull and reads \(rigArmedAfter) after it, so the response "
+            + "just published was not the staged one and the comparison below is meaningless."
+        )
+
+        // 3 — THE RENDERED CHANGE, which is the clause a live-API journey cannot
+        // assert without the rig. 30 cards were withheld from the response, so the
+        // list the reader is now looking at must be materially shorter than the one
+        // they were looking at. The margin is 15 — half the withholding — because
+        // two live pages need not be the same size and the difference must not be
+        // readable as jitter in either direction.
+        XCTAssertLessThan(
+            servedAfter, servedBefore - 15,
+            "The refresh published a response with 30 cards withheld from its front and the feed on "
+            + "screen did not shrink (SERVED \(servedBefore) → \(servedAfter)). A change that "
+            + "published without reaching the reader is exactly what Alex reported as 'no apparent "
+            + "change'."
+        )
+        XCTAssertGreaterThan(
+            servedAfter, 0,
+            "The staged refresh emptied the feed, which is the empty-state terminal rather than a "
+            + "changed response — the rig manufactured a different defect."
+        )
+
+        // 4 — THE USEFUL STABLE POSITION. A reader who pulled from the top belongs
+        // at the top: the first card of the NEW feed must be on screen, not
+        // somewhere they have to hunt for. #7074's end-card arm is the other half
+        // of this and is still open — that reader starts at the bottom.
+        let cards = JourneyPrecondition.cards(in: app)
+        let window = app.windows.firstMatch.frame
+        let topCardFrame = cards.firstMatch.frame
+        XCTAssertTrue(
+            cards.firstMatch.exists && !topCardFrame.isEmpty,
+            "There is no first card after the refresh: the pull emptied the page."
+        )
+        XCTAssertLessThan(
+            topCardFrame.minY, window.midY,
+            "After a pull from the top the reader is looking at \(topCardFrame) in a \(window) window — "
+            + "the first card of the refreshed feed is below the halfway line, so they landed in the "
+            + "middle of a feed they have never seen."
+        )
+    }
+
+    /// One `NAME word` field out of the rig badge, for the fields that are not
+    /// numbers. Same token-keyed parse as ``badgeField``; see its note on why
+    /// position is never used.
+    private func badgeWord(
+        _ name: String,
+        of badge: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> String {
+        let text = badge.label
+        let parts = text.split(separator: "\u{00B7}").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let field = parts.first(where: { $0.hasPrefix(name + " ") }) else {
+            XCTFail("Could not read \(name) out of the debug badge: '\(text)'", file: file, line: line)
+            throw XCTSkip("unreadable badge")
+        }
+        return String(field.dropFirst(name.count + 1))
+    }
+
     /// One `NAME n` field out of the rig badge's
     /// `SERVED a - DRAWN b - FEED c - PULLS d`.
     ///

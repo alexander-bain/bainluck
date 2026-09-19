@@ -404,7 +404,7 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         let fake = GatedFakeClient(first: aContent, second: bContent, firstCallArrived: arrived)
         let vm = DiscoverViewModel(client: fake, lastGood: nil, telemetry: nil)
 
-        async let a: Void = vm.load()   // call 1 — blocks on the gate
+        async let a: DiscoverLoadOutcome = vm.load()   // call 1 — blocks on the gate
         // #5229: wait for A to be PROVABLY parked on the gate, rather than yielding
         // once and hoping. A single yield does not guarantee the `async let` child
         // has reached its network await; when it has not, call 2 below takes the
@@ -416,10 +416,22 @@ final class DiscoverViewModelLoadTests: XCTestCase {
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }), Set(100...112), "newer load B published")
 
         fake.openGate()                 // A's late response returns now
-        await a
+        let aOutcome = await a
 
         XCTAssertEqual(Set(vm.items.compactMap { $0.futures?.id }), Set(100...112),
                        "superseded load A's late response discarded — no cross-session overwrite")
+
+        // #7170: A discarded its response — and must SAY so. This assertion is the
+        // half that was missing, and its absence is the whole defect: A leaves
+        // `error` nil (there is nothing wrong, it simply no longer speaks for the
+        // screen), so a caller reading `error == nil` reads this exact silent
+        // discard as a completed refresh.
+        XCTAssertEqual(
+            aOutcome, .superseded,
+            "The superseded load reported \(aOutcome). It published nothing and set no error, so any "
+            + "caller that infers success from a nil error — as `refreshFeed` did — announces "
+            + "'Feed refreshed' over a feed this load never touched."
+        )
     }
 
     // MARK: - Item 3: first-card attribution telemetry

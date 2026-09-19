@@ -102,6 +102,57 @@ extension DiscoverFeedProviding {
     }
 }
 
+/// What ONE `load()` generation actually did to the feed on screen (#7170).
+///
+/// 🔴 THE DEFECT THIS TYPE EXISTS TO END. `DiscoverView.refreshFeed` inferred its
+/// outcome from `vm.error == nil` after the await. But `load()` has NINE terminals
+/// that publish nothing AND set no error — eight superseded-generation guards and
+/// the cancellation catch — and on a feed that was already healthy (`error` nil
+/// from the previous load) every one of them read as success. So a pull that
+/// republished nothing told the reader **"Feed refreshed. Checked just now."**
+/// Measured against an inert control on `D2DA47A0`: `FEED` (one bump per `items`
+/// reassign) did not move, and the notice affirmed anyway.
+///
+/// **The absence of an error is not the presence of a refresh.** Only the load
+/// knows which terminal it reached, so the load is what says — and it says it as a
+/// value tied to its own generation, not as a flag a later load can overwrite
+/// between the `return` and the caller's next statement.
+///
+/// Making this the return type is deliberate: the compiler then refuses a terminal
+/// that forgets to declare itself, which is precisely the mistake that produced
+/// nine silent exits.
+enum DiscoverLoadOutcome: Equatable, Sendable {
+    /// This generation PUBLISHED: `items` was reassigned from an admissible
+    /// response.
+    ///
+    /// NOT a claim that the cards differ. A valid response carrying unchanged
+    /// content is a correct, completed refresh and may honestly report "checked" —
+    /// card difference is a property of the world, not a success criterion.
+    /// Covers both reconcile paths (`.repaint` and `.reconcile`): each assigns
+    /// `items`, so each is a publication.
+    case published
+
+    /// This generation reached an honest failure terminal and set `error`: every
+    /// attempt failed, or the response was inadmissible (`mayReplaceRendered`
+    /// refused a typed-UNAVAILABLE or degraded body). Whatever is on screen is the
+    /// reader's prior content, deliberately kept.
+    case failed
+
+    /// A newer generation claimed the feed while this one was in flight, so this
+    /// one no longer speaks for the screen — **including about its own outcome**.
+    /// Its response was discarded by design (the identity/generation refusal that
+    /// keeps an old signed-in request from painting over a newer identity), and
+    /// reporting the newer load's result as this one's would be the same lie
+    /// relocated.
+    case superseded
+
+    /// Abandoned quietly: task teardown (a torn-down `.task`/`.refreshable`) or a
+    /// cancelled request. No error was shown and none should be — but nothing was
+    /// refreshed either, which is exactly the pair the old `error == nil` read
+    /// could not distinguish.
+    case cancelled
+}
+
 final class DiscoverViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = [] {
         didSet { itemsVersion &+= 1 }
@@ -116,6 +167,59 @@ final class DiscoverViewModel: ObservableObject {
     /// every SwiftUI body pass. Not `@Published`: it always changes in lockstep
     /// with `items`, whose publish already re-runs any dependent view body.
     private(set) var itemsVersion = 0
+
+    /// #7074 — has a NETWORK publication already completed this app session?
+    ///
+    /// Read by ONE caller: the `#if DEBUG` changed-response rig, to decide whether
+    /// the payload in hand is the one the experiment measures against (the first)
+    /// or the one it stages a change into (every later one). It is deliberately
+    /// NOT `!items.isEmpty`: **the last-good cache seed is a paint**, so that read
+    /// made the first network load of a warm container the "second" one, staged
+    /// both sides of the experiment identically, and produced the sentence *the
+    /// feed did not change* from an instrument that had not run the experiment.
+    /// See `LaunchRig.changedRefreshKey`.
+    ///
+    /// Set at the publication terminal only — not by the cache seed, not by a
+    /// pagination splice, and not by any terminal that keeps last-good behind a
+    /// banner. Session-scoped by construction: a fresh launch has published
+    /// nothing, which is what a cold container means.
+    private(set) var hasPublishedNetworkFeed = false
+
+    /// #7074 — how many cards the changed-response rig will withhold from the NEXT
+    /// network publication. `0` means the experiment is NOT armed.
+    ///
+    /// 🔴 THE ARMED WITNESS, AND THE JOURNEY IS UNSOUND WITHOUT IT. An unarmed rig
+    /// and a rig whose change never reached the screen produce the SAME
+    /// observation — *the feed did not change* — and that sentence is the product
+    /// verdict the arm exists to reach. It has now been produced twice by
+    /// instruments that had not run the experiment: native/244's type-coercing
+    /// argument read, and a run where the container's cache seeded the page, the
+    /// first network load FAILED, and the reader's pull therefore became the first
+    /// publication — correctly unstaged, and indistinguishable from a defect
+    /// without this field.
+    ///
+    /// It carries BOTH halves of "armed", which is why one number is enough: it is
+    /// written only at the publication terminal (so a non-zero value proves payload
+    /// A exists) and its value is the drop the call site actually read (so a
+    /// non-zero value proves the launch argument arrived).
+    ///
+    /// Always `0` in Release: the call site that computes the drop is compiled out.
+    private(set) var rigChangedRefreshDropArmed = 0
+
+    #if DEBUG
+    /// #7074 — the changed-response drop, when a UNIT TEST supplies it instead of
+    /// the launch argument. `nil` (the shipping-shaped default) falls through to
+    /// `LaunchRig.changedRefreshDrop()`, so the simulator journey exercises the
+    /// real argument read and this property changes nothing for it.
+    ///
+    /// It exists so the warm-container regression above is provable in the pure
+    /// suite: the alternative is writing the key into `UserDefaults.standard`,
+    /// which is shared process state that would leak a shortened feed into every
+    /// test running beside it — the same class of confound as the cache seed, and
+    /// codex's instruction on this repair is to keep unrelated tests' state out of
+    /// the rig's decision. Compiled out of Release with the call site that reads it.
+    var rigChangedRefreshDropOverride: Int?
+    #endif
 
     /// #4110: the `edition` of the list currently on screen — which ordered list
     /// the reader is looking at, not how fresh it is. Set by every writer that
@@ -302,8 +406,13 @@ final class DiscoverViewModel: ObservableObject {
     ///   awaiting it nor schedules a second one; the ladder owns both decisions. Every
     ///   caller-initiated load (cold start, pull-to-refresh, Retry, identity rebind)
     ///   leaves this false and therefore supersedes any ladder already running.
+    /// - Returns: what THIS generation did — see ``DiscoverLoadOutcome``. Callers
+    ///   that only want the side effects (cold start, Retry, the recovery ladder,
+    ///   identity rebind) may discard it; `refreshFeed` must not, because "nobody
+    ///   set an error" is not "the feed was refreshed" (#7170).
+    @discardableResult
     @MainActor
-    func load(isRecoveryAttempt: Bool = false) async {
+    func load(isRecoveryAttempt: Bool = false) async -> DiscoverLoadOutcome {
         // A caller-initiated load owns the feed from here: stop any recovery ladder
         // still counting down behind the error card. If this load also ends with
         // nothing to show, its own terminal schedules a fresh one.
@@ -333,7 +442,7 @@ final class DiscoverViewModel: ObservableObject {
         // with no added delay — while the divergent no-token state skips the seed and
         // lets the cleanup resolve the namespace to anonymous first.
         let seedContext = await client.optimisticSeedContext()
-        guard generation == loadGeneration else { return }
+        guard generation == loadGeneration else { return .superseded }
         let seedAdmissible = Self.shouldSeedOptimisticCache(
             signedInNamespace: seedContext.signedInNamespace,
             credentialEligibleForRestore: seedContext.credentialEligibleForRestore)
@@ -348,7 +457,7 @@ final class DiscoverViewModel: ObservableObject {
             let cached = await lastGood.loadLastGoodFeed()
             // A newer load() started while we read the disk cache — its identity
             // owns the feed now; do not seed stale content over it.
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration else { return .superseded }
             if let cached {
                 let renderable = Self.renderable(cached.response.items)
                 if renderable.isEmpty {
@@ -443,7 +552,7 @@ final class DiscoverViewModel: ObservableObject {
                 admittedFirstAttempt = true
                 // A newer load() superseded this one mid-flight (refresh / account
                 // switch) — drop this response rather than overwrite (C42, races).
-                guard generation == loadGeneration else { return }
+                guard generation == loadGeneration else { return .superseded }
 
                 // Principal publication gate (L2-210 Item 1 / C72): never publish an
                 // anonymous network response over a signed-in user's optimistic
@@ -461,7 +570,7 @@ final class DiscoverViewModel: ObservableObject {
                 // identity, not a signed-in Boolean parity that would let one
                 // authenticated account's response paint over another's.
                 let currentIdentity = await client.currentFeedPrincipal()
-                guard generation == loadGeneration else { return }
+                guard generation == loadGeneration else { return .superseded }
                 if !Self.shouldPublishFeed(
                     identityAtFetch: fetch.identityAtFetch,
                     expectedSignedIn: fetch.expectedSignedIn,
@@ -477,7 +586,7 @@ final class DiscoverViewModel: ObservableObject {
                     // error) rather than start a new unbounded request.
                     guard remaining > 0 else { break }
                     try? await Task.sleep(for: .seconds(min(retryBackoff, remaining)))
-                    guard generation == loadGeneration else { return }
+                    guard generation == loadGeneration else { return .superseded }
                     continue
                 }
 
@@ -524,7 +633,7 @@ final class DiscoverViewModel: ObservableObject {
                             itemCount: items.count,
                             cacheAgeSeconds: lastGoodStoredAt.map { Date().timeIntervalSince($0) }))
                     }
-                    return
+                    return .failed
                 }
 
                 // #7074: the rig's controlled changed response, and NOTHING in a
@@ -536,14 +645,19 @@ final class DiscoverViewModel: ObservableObject {
                 // so the gesture, the network, the reconcile decision and the
                 // screen downstream of it are all the real ones.
                 #if DEBUG
-                let rigDrop = LaunchRig.changedRefreshDrop()
+                let rigDrop = rigChangedRefreshDropOverride ?? LaunchRig.changedRefreshDrop()
                 #else
                 let rigDrop: Int? = nil
                 #endif
+                // The witness is a completed NETWORK publication, never
+                // `!items.isEmpty`. A warm container's cache seed paints before
+                // this line has ever run, so the paint read staged the FIRST
+                // network load and the journey compared two staged lists —
+                // see `hasPublishedNetworkFeed`.
                 let staged = Self.rigStagedRefresh(
                     items: Self.renderable(response.items),
                     edition: response.edition,
-                    hasPaintedFeed: !items.isEmpty,
+                    hasPublishedNetworkFeed: hasPublishedNetworkFeed,
                     drop: rigDrop
                 )
                 let renderable = staged.items
@@ -602,25 +716,40 @@ final class DiscoverViewModel: ObservableObject {
                 isShowingCachedContent = false
                 refreshFailedShowingCache = false
                 lastGoodStoredAt = nil
+                // #7074: the rig's witness, set at the ONE terminal that published
+                // a list the server actually sent. Every other exit from this
+                // function leaves it alone — a cache seed, a kept-last-good banner
+                // and a cancellation have all painted or preserved something, and
+                // none of them is a payload the experiment can measure against.
+                hasPublishedNetworkFeed = true
+                // Written HERE, after the flag, so a non-zero value proves both
+                // halves of "armed": payload A exists, and the launch argument
+                // reached the call site. See `rigChangedRefreshDropArmed`.
+                rigChangedRefreshDropArmed = rigDrop ?? 0
                 telemetry?(DiscoverFeedTelemetry(
                     outcome: .revalidateSuccess,
                     networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
                     mergeMs: mergeMs,
                     dataReadyMs: seededFromCache ? nil : Self.elapsedMs(since: loadStart)))
-                return
+                return .published
             } catch let cancel where Self.isCancellation(cancel) {
                 // Raw OR wrapped cancellation (task teardown, superseded generation,
                 // or the deadline race cancelling the loser): abandon quietly — keep
                 // prior content, no error banner, no failure telemetry (L2-214 Item 2).
+                //
+                // #7170: quiet to the SCREEN, never quiet to the CALLER. This is the
+                // one non-generation terminal that leaves `error` untouched, so
+                // under the old `error == nil` read it was indistinguishable from
+                // the success five lines above.
                 loading = false
-                return
+                return .cancelled
             } catch {
                 // The attempt ran (and failed) — it counts as admitted, so any
                 // further loop is a retry that must respect the exhausted-budget
                 // throw rather than start a new unbounded request (L2-208 Item 2).
                 admittedFirstAttempt = true
                 // A newer load() owns the feed — stop silently, let it drive state.
-                guard generation == loadGeneration else { return }
+                guard generation == loadGeneration else { return .superseded }
                 print("DiscoverView load error: \(error)")
                 // Only transient transport / 5xx / 429 self-heal; decode and
                 // non-retryable 4xx cannot, so never spend a retry on them. And a
@@ -629,14 +758,14 @@ final class DiscoverViewModel: ObservableObject {
                 let remaining = deadline.timeIntervalSinceNow
                 guard Self.isRetryable(error), remaining > 0 else { break }
                 try? await Task.sleep(for: .seconds(min(retryBackoff, remaining)))
-                guard generation == loadGeneration else { return }
+                guard generation == loadGeneration else { return .superseded }
             }
         }
 
         // All network attempts failed. Never blank last-good content — keep it and
         // tell the truth that the refresh failed (#1465). With nothing cached, fall
         // to the honest error state exactly as before.
-        guard generation == loadGeneration else { return }
+        guard generation == loadGeneration else { return .superseded }
         loading = false
         if !items.isEmpty {
             refreshFailedShowingCache = true
@@ -654,6 +783,10 @@ final class DiscoverViewModel: ObservableObject {
             // (#3180). Keep trying quietly behind it.
             if !isRecoveryAttempt { scheduleColdStartRecovery(after: generation) }
         }
+        // Both branches above set `error` and neither published, so this terminal
+        // is honest in the reader's direction already — it is the caller-facing
+        // half that #7170 was missing.
+        return .failed
     }
 
     /// Keep trying, quietly, after the initial load has already settled to the honest
@@ -920,10 +1053,16 @@ final class DiscoverViewModel: ObservableObject {
     ///
     /// - **no drop asked for** ⇒ unchanged. This is every reader, and it is the
     ///   assertion that makes the affordance an affordance rather than a defect.
-    /// - **nothing painted yet** ⇒ unchanged. The first paint is payload A, the
-    ///   thing the change will be measured *against*. Shortening it too would
-    ///   leave the journey comparing two shortened lists and calling the
+    /// - **nothing PUBLISHED yet** ⇒ unchanged. The first network publication is
+    ///   payload A, the thing the change will be measured *against*. Shortening it
+    ///   too would leave the journey comparing two shortened lists and calling the
     ///   difference between them evidence.
+    ///   🪤 The witness is a publication and not a PAINT, and the distinction is
+    ///   not pedantry — it is the defect native/247 repaired. A warm container's
+    ///   last-good cache seed paints, so `!items.isEmpty` was already true when the
+    ///   first network response arrived; both sides of the experiment were staged
+    ///   and the journey reported `SERVED 20 → 20`, i.e. *the feed did not change*,
+    ///   about a refresh that published perfectly well.
     /// - **the drop would empty the feed** ⇒ keep one card. An empty payload is
     ///   not a smaller payload: it is `mayReplaceRendered`'s refusal terminal and
     ///   Discover's empty state, so the rig would manufacture a different defect
@@ -937,9 +1076,9 @@ final class DiscoverViewModel: ObservableObject {
     /// does NOT take. Restamping keeps the rig honest with the contract instead
     /// of quietly testing the wrong branch.
     static func rigStagedRefresh<Item>(
-        items: [Item], edition: String?, hasPaintedFeed: Bool, drop: Int?
+        items: [Item], edition: String?, hasPublishedNetworkFeed: Bool, drop: Int?
     ) -> (items: [Item], edition: String?) {
-        guard let drop, drop > 0, hasPaintedFeed, !items.isEmpty else {
+        guard let drop, drop > 0, hasPublishedNetworkFeed, !items.isEmpty else {
             return (items, edition)
         }
         let withheld = Swift.min(drop, items.count - 1)
