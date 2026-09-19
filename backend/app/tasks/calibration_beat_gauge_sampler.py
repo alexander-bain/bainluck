@@ -258,6 +258,48 @@ def _unit_cost_reason_prefix() -> str:
 
 UNIT_COST_REASON_PREFIX = _unit_cost_reason_prefix()
 
+#: The FIFTH and SIXTH prefixes, added by CAL-P1306 (#6599): whether the
+#: REFINEMENT POLICY that is supposed to end the livelock ever fires.
+#:
+#: 🔴 THE RING CAN SAY A UNIT CANCELLED AND CANNOT SAY WHAT WAS DONE ABOUT IT.
+#: CAL-P1301/1303 exist to break exactly the livelock #6599 describes: a slot
+#: that cancels is remembered durably (``staged:unit_cancels:<ref>``), is moved
+#: to the tail of the next beat's attempt order, and is CUT FINER — on its
+#: second cancellation, or on its first when
+#: ``cancellation_is_conclusive`` holds (``staged:unit_cancel_conclusive:<ref>``,
+#: then ``staged:unit_split:<outcome>:<ref>``). Not one of those keys matches a
+#: prefix above, and none is a fixed name in :data:`OPERATIONAL_GAUGES`, so the
+#: entire policy is invisible on the banked row.
+#:
+#: What that costs, measured on the live ring 2026-09-19: twenty-four
+#: consecutive beats (2026-09-18T12:37Z → 2026-09-19T12:37Z) are identical —
+#: 128 planned, 2 attempted, 2 cancelled, 0 completed, ``units_banked`` frozen
+#: at 1, every one stopping on ``window_stop:units_cancelling`` under one
+#: unchanged ``input_fingerprint`` — while the served page sat 98 h stale. On
+#: those rows "the refinement never fired" and "the refinement fired every beat
+#: and did not help" are the same row, and they call for opposite fixes. The
+#: gauges that separate them were being written and thrown away.
+#:
+#: Cardinality is bounded by the producer, not by hope:
+#: ``STAGED_UNIT_MAX_CANCELLATIONS`` ends the beat at the second cancellation,
+#: so these two prefixes add at most a handful of keys per observation.
+#:
+#: LITERALS, FOR :data:`CURSOR_PREFIX`'S REASON AND NOT ANOTHER. The emitter is
+#: ``precompute_calibration.py``, which ruling 009 freezes, so CAL-P993's
+#: read-it-off-the-emitter rule is unavailable and adding a constant there would
+#: spend a bank wipe on a string. The drift risk is carried instead by
+#: ``test_the_refinement_prefixes_still_match_the_frozen_writer``, which reads
+#: the writer's source and fails if either literal moves. When the freeze lifts,
+#: promote both to imports and delete that guard.
+#:
+#: ``staged:unit_cancel`` is deliberately not suffixed with ``:`` — it is the
+#: one stem that covers the per-slot keys AND the two fixed names beside them
+#: (``staged:unit_cancelled_after_ms``, ``staged:unit_cancel_not_persisted``,
+#: the latter being the signal that the durable memory the whole policy rests on
+#: was LOST). It cannot collide with :data:`UNIT_COST_REASON_PREFIX`.
+UNIT_CANCEL_PREFIX = "staged:unit_cancel"
+UNIT_SPLIT_PREFIX = "staged:unit_split:"
+
 #: Every prefix ``select_gauges`` scans for. One tuple so a third prefix is one
 #: line here and nowhere else.
 CAPTURED_PREFIXES = (
@@ -265,6 +307,8 @@ CAPTURED_PREFIXES = (
     CANCEL_CAUSE_PREFIX,
     CURSOR_PREFIX,
     UNIT_COST_REASON_PREFIX,
+    UNIT_CANCEL_PREFIX,
+    UNIT_SPLIT_PREFIX,
 )
 
 #: The FOURTH capture rule, added by CAL-P1030 (#3454) — and the first one that
@@ -425,6 +469,14 @@ OPERATIONAL_GAUGES = (
     "staged:window_left_ms",
     "staged:cursor_resume",
     "staged:units_cancelled",
+    # CAL-P1306 (#6599). The counterpart to ``staged:units_cancelled`` directly
+    # above, and the only key that says a refinement was actually APPLIED rather
+    # than merely considered: the writer records it inside the
+    # ``outcome == SPLIT_APPLIED`` arm alone, so its presence is the policy
+    # working and its absence — on a beat that cancelled — is the policy
+    # declining. The per-slot half is covered by :data:`UNIT_SPLIT_PREFIX`; this
+    # is a fixed name, so a prefix cannot reach it.
+    "staged:units_split",
     # CAL-P1030 (#3454). The rebuild's most destructive event, and the one its
     # telemetry could not show. ``retain_planned_units``' CAL-P034 FAIL-CLOSED
     # arm discards EVERY banked unit — building bank AND serving bank — when any
