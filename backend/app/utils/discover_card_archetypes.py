@@ -462,8 +462,25 @@ def _threshold_points(
 
 
 def _has_recent_movement(outcomes: list[dict[str, Any]]) -> bool:
+    """Is this market being written — the FORMAT question, not a dated claim.
+
+    `movement_stored` first, and that ordering is the whole point (#4079 numeric
+    half). Since the feed's served `movement` became a DATED subtraction — a
+    number or nothing, never the per-write delta — a market whose day cannot be
+    dated serves `movement: None` on every row while still trading normally.
+    Reading that here would have quietly changed which cards get
+    `probability_timeline`, turning a truth fix into a layout change nobody
+    asked for. So the caller hands both: the dated number to print, and the
+    stored delta to decide the shape with.
+
+    The two older keys stay behind it for every caller that has only one —
+    `test_date_bucket_ladder_1052` and the search/browse adapters build these
+    rows themselves.
+    """
     for outcome in outcomes:
-        movement = outcome.get("movement")
+        movement = outcome.get("movement_stored")
+        if movement is None:
+            movement = outcome.get("movement")
         if movement is None:
             movement = outcome.get("probability_change_24h")
         try:
