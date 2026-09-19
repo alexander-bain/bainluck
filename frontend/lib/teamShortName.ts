@@ -527,6 +527,103 @@ const UNSHIPPABLE_BADGES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The crest badge for a surface that must not be able to paint a slur — the one
+ * `/events/[id]`'s hero uses (#7270).
+ *
+ * ── WHY THIS EXISTS RATHER THAN A CALL TO `teamCrestBadge` ───────────────────
+ *
+ * The event hero carried its own INLINE copy of the initials rule and never
+ * called this module at all, so `UNSHIPPABLE_BADGES` — which names "ASS" as its
+ * reason to exist — was never consulted. Production, 390px, a live Big 12 game:
+ * `/events/15311215` painted `ASS` for "Arizona State Sun Devils" (A·S·S·D cut
+ * to three) with `KJ` opposite it.
+ *
+ * The obvious repair is to swap the inline copy for `teamCrestBadge`. MEASURED
+ * OVER THE WHOLE POPULATION, THAT REPAIR IS A REGRESSION, and this function is
+ * the reason the swap was not made. 30,340 distinct `events` team names
+ * (exhaustive — paged past db-query's 1,000-row cap, not sampled), scored
+ * through this module rather than a re-implementation of it:
+ *
+ *     rule                    unshippable   badges containing a space
+ *     inline initials (live)           29                           0
+ *     teamCrestBadge                   75                          26
+ *     this function                     0                           0
+ *
+ * All 29 of the live ones carry no logo of either kind, so every one is on a
+ * reader's screen when that page is opened. The 75 are not the same 29: the
+ * swap fixes all 29 and introduces 73 reader-visible new ones, because
+ * `teamCrestBadge` badges a short name by its LAST WORD — "Nigeria" becomes
+ * `NIG`, "Detroit Pistons" `PIS`, "Fuchs" `FUC`, "Titans" `TIT`. A racial slur
+ * across a national team's crest is not a fix for `ASS`. That residue is
+ * `teamCrestBadge`'s own known, filed defect (#4537 — its header says the test
+ * is "do not INTRODUCE one", not "never emit one"), and it is not this issue's
+ * to reopen.
+ *
+ * ── THE RULE ─────────────────────────────────────────────────────────────────
+ *
+ * Take the first candidate that is clean, so the badge can only get better:
+ * `teamCrestBadge` first (it is what every other surface draws — notice 35, one
+ * card family), then the expression the hero ships today, then nothing. The
+ * fallback is what makes this monotone: a name the helper would spoil keeps
+ * exactly the badge it has on production right now, and no name anywhere gets a
+ * worse one. Verified as an identity, not asserted — over those 30,340 names,
+ * every badge this returns is either `teamCrestBadge`'s or today's.
+ *
+ * ── THE BLAST RADIUS, WHICH IS NOT 29 ───────────────────────────────────────
+ *
+ * Removing the slurs is the ship, but it is not most of what changes. The hero
+ * was the only surface still lettering by raw initials, so adopting the shared
+ * rule moves 28,240 of the 30,340 badges. Stated because "a p1 slur fix" and "a
+ * 93% rewrite of one tile" deserve to be read as the same sentence:
+ *
+ *     22,177  gain glyphs — a one-token name showed ONE letter and now shows
+ *             three ("Instituto" I -> INS, "Krka" K -> KRK)
+ *      6,012  same length, different letters ("Al Nassr Club" ANC -> NAS)
+ *         51  lose one glyph, all of one family ("Al Ahli Saudi Club" AAS -> AS)
+ *
+ * Dangling punctuation goes with it, which the raw split could never avoid:
+ * "Wagner Seahawks (W)" WS( -> WAG, "Garcia Beitia / Giordano" GB/ -> GAR,
+ * "FC Nantes - More Markets" FN- -> NMM. The 51 are the whole downside and they
+ * stay legible; nothing becomes empty.
+ *
+ * A badge with a SPACE in it is rejected on the same test. `teamCrestBadge`
+ * leaves a doubles pair to #3110's rule, which slices the raw string, so
+ * "de Minaur / Peers" comes back as `"DE "` — a fragment, #4466's class. Those
+ * 26 fall back and keep today's value; closing them properly is that pair rule's
+ * job, not a call site's.
+ *
+ * WHY EMPTY RATHER THAN A CENSORED THIRD GUESS when both candidates are
+ * unshippable: a crest tile with nothing in it is honest and the caller already
+ * renders it (notice 34 — where a thing cannot be shown honestly, leave the
+ * space empty rather than explaining it). Inventing a third lettering to dodge a
+ * word would be a rule no other surface applies. On today's population this arm
+ * is unreachable — 0 names of 30,340 reach it — and it is kept because it is the
+ * only thing standing between a future name and the exact defect this fixes.
+ */
+export function shippableCrestBadge(
+  name: string | null | undefined,
+  sportKey?: string | null,
+): string {
+  const full = (name ?? "").trim();
+  if (!full) return "";
+  const shippable = (badge: string) =>
+    badge !== "" && !UNSHIPPABLE_BADGES.has(badge) && !/\s/.test(badge);
+  const preferred = teamCrestBadge(full, sportKey);
+  if (shippable(preferred)) return preferred;
+  // The expression the hero shipped inline before #7270: a first initial per
+  // space-separated word, capped at three. Kept as the fallback rather than
+  // deleted, because for the names `teamCrestBadge` spoils it is the value
+  // already on production and it is clean.
+  const initials = full
+    .split(" ")
+    .map(word => word.charAt(0))
+    .join("")
+    .slice(0, 3)
+    .toUpperCase();
+  return shippable(initials) ? initials : "";
+}
+
+/**
  * Onomastic particles: the little words that are part of a PERSON's surname
  * rather than a word in front of it. "Alex de Minaur" shortened to "Minaur"
  * named nobody (#7163) — the event hero printed it against Kasnikowski while

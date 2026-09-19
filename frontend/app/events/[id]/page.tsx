@@ -118,7 +118,7 @@ import {
 import type { ActiveChartPoint } from "@/lib/types";
 import TeamNameLink from "@/components/TeamNameLink";
 import { PinIcon } from "@/components/PinButton";
-import { teamShortNames } from "@/lib/teamShortName";
+import { teamShortNames, shippableCrestBadge } from "@/lib/teamShortName";
 import EventHeroProbabilityPair from "@/components/EventHeroProbabilityPair";
 import { SignalBars } from "@/components/discover/shared";
 import { confidenceFromSources, countProbabilitySources } from "@/lib/confidence";
@@ -1820,7 +1820,10 @@ export default function EventPage({ params }: EventPageProps) {
                   className={`text-sm font-extrabold ${(event.home_team_data?.logo_large || espnTeamLogoByName(event.home_team, event.sport_key)) ? "hidden" : ""}`}
                   style={{ color: teamTextColor(event.home_team_data?.primary_color) || "var(--text-secondary)" }}
                 >
-                  {event.home_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                  {/* #7270 — the badge policy lives in `lib/teamShortName.ts`, which
+                      owns the unshippable list. This hero used to inline its own copy
+                      of the initials rule and painted `ASS` on a live Big 12 game. */}
+                  {shippableCrestBadge(event.home_team, event.sport_key ?? event.sport)}
                 </span>
               </div>
                 }
@@ -2147,7 +2150,8 @@ export default function EventPage({ params }: EventPageProps) {
                   className={`text-sm font-extrabold ${(event.away_team_data?.logo_large || espnTeamLogoByName(event.away_team, event.sport_key)) ? "hidden" : ""}`}
                   style={{ color: teamTextColor(event.away_team_data?.primary_color) || "#64748B" }}
                 >
-                  {event.away_team.split(" ").map(w => w.charAt(0)).join("").slice(0, 3).toUpperCase()}
+                  {/* #7270 — see the home tile above; same policy, same helper. */}
+                  {shippableCrestBadge(event.away_team, event.sport_key ?? event.sport)}
                 </span>
               </div>
                 }
