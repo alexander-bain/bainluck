@@ -13581,8 +13581,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
 
     # Compute standings context for event detail
     standings_context = _compute_standings_context(
-        team_lookup.get(event.home_team_name),
-        team_lookup.get(event.away_team_name),
+        # The event's own league (#7262): standings context is built from
+        # `current_record`, which is the field a wrong-sport row gets wrong.
+        # `loaded_sport_key` called here rather than reusing `event_sport_key`
+        # below — that name is BOUND further down this function, so reading it
+        # here is an UnboundLocalError, not a stale value (gotcha #7). The
+        # helper is a lazy-safe attribute read and emits no IO.
+        _team_for_event(team_lookup, event.home_team_name, loaded_sport_key(event)),
+        _team_for_event(team_lookup, event.away_team_name, loaded_sport_key(event)),
         event.home_team_name,
         event.away_team_name,
     )
@@ -24677,6 +24683,174 @@ def _crest_row_preference(team):
     )
 
 
+#: A `logo_url_small` ending here is ESPN's blank shield, not a crest. **431 of
+#: production's 1,630 enriched rows carry it** (measured 2026-09-19), nearly
+#: every `baseball_ncaa` row among them, so a placeholder must never vouch for
+#: another placeholder — see `_rows_by_league`.
+_PLACEHOLDER_CREST_SUFFIX = "/default.png"
+
+
+def _crest_for_corroboration(team) -> str | None:
+    """This row's crest, or None when it carries nothing that can vouch for a club."""
+    logo = getattr(team, "logo_url_small", None)
+    if not logo or logo.endswith(_PLACEHOLDER_CREST_SUFFIX):
+        return None
+    return logo
+
+
+def _rows_by_league(rows) -> dict:
+    """For ONE name key, the best row per LEAGUE — corroborated crests only (#7262).
+
+    The name→row map can only ever hold one answer, so a school's four rows
+    settle it by `_crest_row_preference`'s alphabetical tie-break and the reader
+    gets whichever sport sorts last. Measured on production 2026-09-19,
+    `GET /api/leagues/americanfootball_ncaaf` served Syracuse Orange as row 1432
+    — **`lacrosse_ncaa`, `SYRACUSE`, `13-6`** — above its own football games, and
+    North Texas as its `basketball_wncaab` row (`19-13`). A football team cannot
+    be 13-6 in week 4; the football rows (17075 `1-2`, 15314 `1-1`) exist and were
+    not chosen. This map is the second answer, keyed on the league, so a caller
+    that knows the event's sport can ask for the row that belongs to it.
+
+    **Corroboration is the safety rail, and it is the existing discriminator.**
+    A row is eligible only when at least one OTHER row under the same key carries
+    the same crest. That is what keeps the wrong-identity rows out: the
+    `americanfootball_ncaaf` row named "Ohio State Buckeyes" (837) carries
+    `TXST`, Texas State's maroon `#501214` and Texas State's crest, corroborated
+    by nobody — so this map holds no NCAAF entry for that name, the key stays
+    dropped, and the card keeps its derived initials rather than gaining Texas
+    State's badge. Serving it would have been a strictly worse answer than the
+    null it replaced. That row is a `teams` defect (#7262's third arm), not a
+    lookup rule, and this function deliberately cannot paper over it.
+
+    Nothing here overrides the cross-league guard for callers that do not know
+    the sport: `_dedupe_team_name_lookup`'s own answer is untouched, and a name
+    key it dropped is still dropped on a bare `.get()`.
+    """
+    if len(rows) < 2:
+        return {}
+
+    crest_count: dict = {}
+    for team in rows:
+        crest = _crest_for_corroboration(team)
+        if crest:
+            crest_count[crest] = crest_count.get(crest, 0) + 1
+    corroborated = {crest for crest, n in crest_count.items() if n > 1}
+    if not corroborated:
+        return {}
+
+    best: dict = {}
+    for team in rows:
+        if _crest_for_corroboration(team) not in corroborated:
+            continue
+        identity = _team_league_identity(team)
+        incumbent = best.get(identity)
+        if incumbent is None or _same_league_row_preference(team) > _same_league_row_preference(
+            incumbent
+        ):
+            # Two rows of one league under one key: #7132's total order decides,
+            # so this map is no more order-dependent than the lookup beside it.
+            best[identity] = team
+    return best
+
+
+class TeamNameLookup(dict):
+    """The name→`TeamSnapshot` map, plus the per-league rows behind it (#7262).
+
+    A plain `dict` to every existing reader — `.get(name)` returns exactly what
+    it returned before this class existed, cross-league guard and all — with
+    `by_league` carried alongside for the readers that know which sport they are
+    rendering. Two answers rather than one changed answer: a caller with no
+    sport in hand cannot be made worse off by a map it never reads.
+    """
+
+    __slots__ = ("by_league",)
+
+    def __init__(self, mapping=None, by_league=None):
+        super().__init__(mapping or {})
+        self.by_league = by_league or {}
+
+    def subset(self, names) -> "TeamNameLookup":
+        """The rows for `names`, keeping the per-league map with them.
+
+        🔴 `by_league` is filtered on the REQUESTED names, not on the surviving
+        keys. A name the cross-league guard dropped is absent from `self` but is
+        precisely the name whose per-league rows matter — filtering on the kept
+        keys would have discarded every Oregon, Miami and Ohio State entry and
+        left the whole fix inert on the route that reported it.
+        """
+        return TeamNameLookup(
+            {k: v for k, v in self.items() if k in names},
+            {k: v for k, v in self.by_league.items() if k in names},
+        )
+
+    def __eq__(self, other):
+        """Equal only when the per-league map agrees too.
+
+        Inherited `dict.__eq__` ignores `by_league`, and the one comparison this
+        class invites is the LAT-P115 parity check — "does the refresh-behind
+        build produce what the blocking build produced?". That guard reads `==`,
+        so without this the whole new field is invisible to precisely the test
+        written to catch it drifting. A bare `dict` carries no per-league map and
+        is therefore NOT equal to a lookup that has one, which is the answer that
+        keeps such a guard honest.
+        """
+        base = dict.__eq__(self, other)
+        if base is NotImplemented or base is False:
+            return base
+        return self.by_league == getattr(other, "by_league", {})
+
+    def __ne__(self, other):
+        result = self.__eq__(other)
+        return result if result is NotImplemented else not result
+
+
+def _as_lookup(mapping) -> TeamNameLookup:
+    """`mapping` as a `TeamNameLookup`, without copying one that already is.
+
+    The process-global cache is seeded by `_shape_team_lookup` and is always the
+    real thing; a test (or a future caller) that plants a plain dict there gets
+    an empty `by_league` and today's behaviour rather than an AttributeError.
+    """
+    if isinstance(mapping, TeamNameLookup):
+        return mapping
+    return TeamNameLookup(mapping)
+
+
+def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
+    """The row for `name` that belongs to THIS event's league, else today's answer.
+
+    The whole cross-league ambiguity problem is a question the caller can often
+    answer: "Panthers" is ambiguous on its own and is not ambiguous on an NFL
+    fixture. Where the event's league has a corroborated row under this key, that
+    row is the answer; everywhere else this returns exactly what `.get(name)`
+    returns, including `None`.
+
+    Accepts a plain `dict` (no `by_league`) and degrades to `.get` — but note
+    that every production caller passes a `TeamNameLookup`, so a test that
+    exercises only the dict path is testing the branch nothing takes.
+    """
+    # 🔴 `is None`, NOT falsiness. A `TeamNameLookup` whose every key the
+    # cross-league guard dropped is an EMPTY dict carrying a full `by_league` —
+    # i.e. precisely the population this function exists to answer — and
+    # `if not team_lookup` discards it.
+    if team_lookup is None or not name:
+        return None
+    default = team_lookup.get(name)
+    by_league = getattr(team_lookup, "by_league", None)
+    if not by_league:
+        return default
+    rows = by_league.get(name)
+    if not rows:
+        return default
+    identity = league_identity(sport_key)
+    if identity is None:
+        # No key travelled with the event, so nothing can be matched against a
+        # league — never against `_team_league_identity`'s `sport_id` fallback,
+        # which is a row id and would equate two different questions.
+        return default
+    return rows.get(identity, default)
+
+
 def _standings_vintage(team):
     """Sort key for WHEN this row's standings board was last written.
 
@@ -24784,9 +24958,15 @@ def _dedupe_team_name_lookup(teams) -> dict:
     lookup: dict = {}
     key_sport: dict = {}
     ambiguous: set = set()
+    rows_by_key: dict = {}
 
     def _register(key, team, identity):
-        if not key or key in ambiguous:
+        if not key:
+            return
+        # Collected BEFORE the ambiguity gate: a dropped key is exactly the one
+        # whose per-league rows a sport-aware caller needs (#7262).
+        rows_by_key.setdefault(key, []).append(team)
+        if key in ambiguous:
             return
         if key not in lookup:
             lookup[key] = team
@@ -24820,7 +25000,13 @@ def _dedupe_team_name_lookup(teams) -> dict:
         for alt_name in (team.alternate_names or []):
             _register(alt_name, team, identity)
 
-    return lookup
+    by_league = {}
+    for key, rows in rows_by_key.items():
+        per_league = _rows_by_league(rows)
+        if per_league:
+            by_league[key] = per_league
+
+    return TeamNameLookup(lookup, by_league)
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
@@ -24853,7 +25039,7 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     global _team_cache, _team_cache_time
 
     if not team_names:
-        return {}
+        return TeamNameLookup()
 
     names_set = set(team_names)
     now = time.monotonic()
@@ -24863,8 +25049,11 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
             age < _TEAM_CACHE_TTL * _STALE_SERVE_CEILING
             and _serve_stale_and_refresh("team_lookup", _rebuild_team_lookup)
         ):
-            # Fast path: filter cached lookup by requested names
-            return {k: v for k, v in _team_cache.items() if k in names_set}
+            # Fast path: filter cached lookup by requested names. Through
+            # `subset` so the per-league map (#7262) survives the filter — a
+            # plain comprehension here returns a bare dict and silently strips
+            # it on the path that serves almost every request.
+            return _as_lookup(_team_cache).subset(names_set)
 
     # Load all teams with ESPN data — single simple query
     result = await db.execute(_enriched_teams_stmt())
@@ -24874,7 +25063,7 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     _team_cache_time = now
 
     # Return only the subset matching requested names
-    return {k: v for k, v in full_lookup.items() if k in names_set}
+    return _as_lookup(full_lookup).subset(names_set)
 
 
 def _enriched_teams_stmt():
@@ -25252,20 +25441,25 @@ def _format_event(
     # the same as "we looked and there is no photo" — is fully preserved, because
     # WITHIN the individual-sport population all four keys are always present.
     # Absence here means "this sport has crests", which is a different question.
-    image_sport_key = event.sport.key if event.sport else None
-    if is_individual_sport(image_sport_key):
+    event_sport_key = event.sport.key if event.sport else None
+    if is_individual_sport(event_sport_key):
         response.update(
             participant_images_for_event(
                 home_team=event.home_team_name,
                 away_team=event.away_team_name,
-                sport_key=image_sport_key,
+                sport_key=event_sport_key,
             )
         )
 
-    # Add team data (colors, logos) from lookup
-    if team_lookup:
-        home_team = team_lookup.get(event.home_team_name)
-        away_team = team_lookup.get(event.away_team_name)
+    # Add team data (colors, logos) from lookup — through the event's own league
+    # (#7262), so a school's four rows cannot answer a football card with its
+    # lacrosse record.
+    #
+    # `is not None`: a lookup whose keys were all dropped is falsy and still
+    # carries the per-league map.
+    if team_lookup is not None:
+        home_team = _team_for_event(team_lookup, event.home_team_name, event_sport_key)
+        away_team = _team_for_event(team_lookup, event.away_team_name, event_sport_key)
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             response["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):

@@ -286,7 +286,7 @@ from app.utils import principal_independent_cache as _pic
 from app.utils.principal_independent_cache import (
     bind_reuse_sink as _bind_shared_reuse_sink,
 )
-from app.routes.events import _build_team_lookup, _format_team_data
+from app.routes.events import _build_team_lookup, _format_team_data, _team_for_event
 
 logger = logging.getLogger(__name__)
 
@@ -2122,8 +2122,12 @@ async def enrich_event_team_data(db, feed_items: list[dict]) -> None:
     for item in feed_items:
         if item["type"] == "event":
             d = item["data"]
-            home_team = team_lookup.get(d["home_team"])
-            away_team = team_lookup.get(d["away_team"])
+            # `d["sport"]` is the sport key `_format_event` already put on the
+            # item, so the card resolves a school's name against its OWN league
+            # (#7262) rather than whichever of its four rows sorts last.
+            item_sport_key = d.get("sport")
+            home_team = _team_for_event(team_lookup, d["home_team"], item_sport_key)
+            away_team = _team_for_event(team_lookup, d["away_team"], item_sport_key)
             if home_team:
                 d["home_team_data"] = _format_team_data(home_team)
             if away_team:
