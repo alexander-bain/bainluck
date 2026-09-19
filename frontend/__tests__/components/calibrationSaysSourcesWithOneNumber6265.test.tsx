@@ -31,15 +31,26 @@
  *
  * 🔴 "Replace `sources.length` with `providerGroups.length` everywhere" passes
  * every positive assertion in this file and is WRONG. One site is honest and
- * must keep the raw count, because it says a different word:
+ * must keep a KEY count, because it says a different word:
  *
  *     … open "Break out the shapes" inside the Sportsbooks panel to
- *     see all 7 KEYS separately.
+ *     see all N KEYS separately.
  *
- * Seven is the right answer there — that panel really does break out seven keys.
- * The defect was never "7 is wrong", it was "7 is not what 'sources' means on
- * this page". So the last test below pins the keys line to the RAW count, and it
- * is the one that fails on the over-broad fix.
+ * The defect this file ships against was never "7 is wrong", it was "7 is not
+ * what 'sources' means on this page". So the last tests below pin the keys line
+ * to a key count, and they are the ones that fail on the over-broad fix.
+ *
+ * ═══ AMENDED BY #7308: WHICH key count, which this file got wrong ═══
+ *
+ * The control below used to assert the RAW seven on the stated premise that
+ * "that panel really does break out seven keys". It does not — it breaks out
+ * four, and renders "Break out the shapes (4)" on itself. Both numbers were
+ * individually true, which is exactly how the line survived the census above:
+ * that audit asked whether "keys" was the right WORD for the number, and never
+ * asked the number of keys in WHAT. The control now asserts the agreement
+ * between the sentence and the control it points at, with a fixture that
+ * separates panel / provider / page-wide counts so no answer passes by
+ * coincidence. The header of `shapeBreakoutPointer` carries the reasoning.
  */
 
 import React from "react";
@@ -222,17 +233,117 @@ describe("every reader-visible 'N sources' is the PROVIDER count", () => {
   });
 });
 
-/* ════════ THE OTHER DIRECTION — the honest raw count is NOT suppressed ════════ */
+/* ════════ THE OTHER DIRECTION — the honest KEY count is NOT suppressed ════════ */
 
+/**
+ * ═══ THIS CONTROL WAS RE-POINTED BY #7308, AND WHY THAT IS NOT A WEAKENING ═══
+ *
+ * It read:
+ *
+ *     expect(text).toContain(`${RAW_KEY_N} keys`);   // 7
+ *
+ * on the stated premise "that panel really does break out seven keys". The
+ * premise is false: the panel breaks out FOUR — the `odds_api_family` keys —
+ * and the control it names renders "Break out the shapes (4)". So the sentence
+ * promised seven keys inside a disclosure labelled four. #6265's census asked
+ * the VOCABULARY question ("keys" is the right word for a raw count, so the
+ * line passed) and never the locality one: the number of keys in *what*.
+ *
+ * The control's JOB is unchanged and still the point of this file — a blanket
+ * `sources.length` → `providerGroups.length` sweep must fail here. What changes
+ * is that it can no longer be discharged by a number that merely happens to be
+ * right: the assertion is now the AGREEMENT between the sentence and the
+ * control it points at, both read out of one render. On the real fixture the
+ * panel count (4) and the provider count (4) coincide, which would let the
+ * over-broad sweep pass — so the discriminating fixture below separates all
+ * three counts and is the strawman guard for this pair.
+ */
 describe("the one site that legitimately counts KEYS still counts keys", () => {
-  test("🔴 'see all N keys separately' keeps the RAW count", () => {
-    // THE CONTROL. A blanket `sources.length` → `providerGroups.length` sweep
-    // passes every test above and breaks this one: the Sportsbooks panel really
-    // does break out seven keys, so seven is the correct answer there. The
-    // defect was never that 7 is wrong — it was that 7 is not what "sources"
-    // means on this page.
+  /** The number the sentence promises the reader they will find. */
+  function promisedKeys(text: string): number | null {
+    const m = /see all (\d+) keys separately/.exec(text);
+    return m ? Number(m[1]) : null;
+  }
+
+  /** The number the control it names renders on itself. */
+  function controlKeys(text: string): number | null {
+    const m = /Break out the shapes \((\d+)\)/.exec(text);
+    return m ? Number(m[1]) : null;
+  }
+
+  test("🔴 'see all N keys separately' is the count the named control renders", () => {
     const text = visibleText(render());
-    expect(text).toContain(`${RAW_KEY_N} keys`);
-    expect(text).not.toContain(`${PROVIDER_N} keys`);
+    // Positive control: both sites are on the page at all. Without this the
+    // agreement below is satisfied by null === null.
+    expect(promisedKeys(text)).not.toBeNull();
+    expect(controlKeys(text)).not.toBeNull();
+    expect(promisedKeys(text)).toBe(controlKeys(text));
+    // And it is still a KEY count, not the provider count the rest of the page
+    // says "sources" about — the sweep this file exists to catch.
+    expect(text).not.toContain(`${PROVIDER_N} sources separately`);
+  });
+
+  test("🔴 the sentence does NOT quote the page-wide key count — #7308", () => {
+    // The defect itself, in the direction it actually failed: seven keys exist
+    // on the page, four are in the panel the sentence names.
+    const text = visibleText(render());
+    expect(promisedKeys(text)).not.toBe(RAW_KEY_N);
+  });
+
+  test("the sentence names the panel by the heading that panel actually renders", () => {
+    // "the Sportsbooks panel" was hard-coded while the panel's own heading reads
+    // "Sportsbooks (Odds API)" — a second expression in agreement with a
+    // rendered string, which is the same class one layer up.
+    const text = visibleText(render());
+    const named = /inside the (.+?) panel to see all/.exec(text);
+    expect(named).not.toBeNull();
+    expect(text).toContain(`${named![1]} 25.0pp ECE`);
+  });
+});
+
+/* ══════════ THE STRAWMAN GUARD — three counts that cannot be confused ══════════ */
+
+describe("when the panel count, the provider count and the raw count all differ", () => {
+  /**
+   * The real payload groups 7 keys into 4 providers with 4 in the breakout
+   * panel, so `panel === providers` and a wrong answer scores as a right one.
+   * One more `odds_api_*` shape separates them: 8 raw / 4 providers / 5 in the
+   * panel. Nothing else about the fixture moves.
+   */
+  const SPLIT_KEYS = [...REAL_SOURCE_KEYS, "odds_api_h2h"];
+
+  function renderSplit(): string {
+    const payload = makePayload();
+    const extra = [0, 1, 2, 3, 4].map(i => bucket("odds_api_h2h", i));
+    (global as unknown as { __calPayload: CalibrationData }).__calPayload = {
+      ...payload,
+      buckets: [...payload.buckets, ...extra],
+      // `by_source` is optional on the wire type; `makePayload` always sets it,
+      // so the fallback is a type obligation rather than a real branch.
+      by_source: [
+        ...(payload.by_source ?? []),
+        { source: "odds_api_h2h", ece: 0.02, mce: 0.05, n: 2_000 },
+      ],
+    } as unknown as CalibrationData;
+    return renderToStaticMarkup(<CalibrationPage />);
+  }
+
+  test("the fixture separates the three counts before anything is asserted on it", () => {
+    const providers = groupSourcesByProvider(SPLIT_KEYS);
+    const panel = providers.find(g => g.provider === "odds_api_family")!;
+    expect(SPLIT_KEYS.length).toBe(8);
+    expect(providers.length).toBe(4);
+    expect(panel.sources.length).toBe(5);
+    // The whole point: no two of them are equal, so only one answer passes.
+    expect(new Set([SPLIT_KEYS.length, providers.length, panel.sources.length]).size).toBe(3);
+  });
+
+  test("🔴 the sentence takes the PANEL's count — not the page's, not the provider count", () => {
+    const text = visibleText(renderSplit());
+    expect(text).toContain("see all 5 keys separately");
+    expect(text).not.toContain("see all 8 keys separately");
+    expect(text).not.toContain("see all 4 keys separately");
+    // …and it still agrees with the control, which is the contract.
+    expect(/Break out the shapes \((\d+)\)/.exec(text)![1]).toBe("5");
   });
 });

@@ -53,6 +53,7 @@ import {
   providerKpiDetail,
   shapeBreakdownNote,
   shapeBreakdownProviders,
+  shapeBreakoutPointer,
 } from "@/lib/calibrationProviderPanels";
 // UX-P128: which Source Comparison rows are measurements, in what order, and
 // the sentence By Source owes for the ones the cohort emptied.
@@ -753,6 +754,11 @@ export default function CalibrationPage() {
       : [],
   }));
   const providerShapeNote = shapeBreakdownNote(providerPanels);
+  // #7308. Which panel the Source Comparison note may send a reader into, and
+  // the count that panel's own control renders. Derived here rather than at the
+  // sentence so the prose cannot quote a number from a different scope than the
+  // disclosure it names — see the helper's header for why 7 and 4 were both true.
+  const shapeBreakout = shapeBreakoutPointer(providerPanels);
   // UX-P128. `buildProviderPanels` drops a 0-outcome provider, and it is right
   // to: there is no curve to draw. But a panel that simply vanishes reads as
   // "this source does not exist", which is the same deception as the 0.0pp row
@@ -1126,14 +1132,19 @@ export default function CalibrationPage() {
             <strong className="text-text-secondary">Bucket</strong> column averages the ten
             probability buckets with equal weight, so a tiny bucket counts as much as a huge one
             &mdash; which is why it can read below ECE.
-            {shapeInline ? null : (
+            {shapeInline || !shapeBreakout ? null : (
               <>
                 {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
                 prediction markets publish a single shape each, so a per-shape column here would
                 exist for one provider and be blank for the others. The shape-by-shape breakdown is
                 in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
-                below &mdash; open &ldquo;Break out the shapes&rdquo; inside the Sportsbooks panel to
-                see all {sources.length} keys separately.
+                below &mdash; open &ldquo;Break out the shapes&rdquo; inside the{" "}
+                {shapeBreakout.label}{" "}
+                {shapeBreakout.providerCount === 1 ? "panel" : "panels"} to see{" "}
+                {shapeBreakout.keyCount === null
+                  ? "their keys"
+                  : `all ${shapeBreakout.keyCount} keys`}{" "}
+                separately.
               </>
             )}
           </p>
