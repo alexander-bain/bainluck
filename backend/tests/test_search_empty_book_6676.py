@@ -254,7 +254,28 @@ class TestTheSpecimen:
         # The rest of the card is untouched: the ship withholds rungs, it does not
         # hollow out the payload's other keys.
         assert card["id"] == 57777176
-        assert card["outcome_count"] == 8
+        # #6585, 2026-09-19 — THIS LINE READ `== 8` AND THAT WAS THE BUG, PINNED.
+        #
+        # The intent above is right and is kept: a withholding ship must not
+        # hollow out the payload. But `outcome_count` is not one of the card's
+        # incidental keys — it is the badge the reader reads as "how many answers
+        # this board holds", and freezing it at the RAW row count while this very
+        # test asserts four of those rows are refused is what let the search card
+        # promise 8 answers over a board serving 4.
+        #
+        # Measured on production the same shape: `/search?q=Stranger Things`
+        # badged 15 against `/futures/114237`'s 12, one tap apart. 3 of 236
+        # served futures cards across the 30 replayed reader queries.
+        #
+        # So the count now names the survivors this file's own guard produces —
+        # which is what makes it inherit #6676's drop for free, and every later
+        # one. The untouched-payload intent is asserted on `id` above and on the
+        # ladder below; it was never about this number.
+        assert card["outcome_count"] == 4
+        assert card["outcome_count"] == len(card["top_outcomes"]), (
+            "on this specimen the whole board fits on the card, so the badge and "
+            "the ladder must be the same number"
+        )
 
     def test_a_phantom_never_sits_in_the_normalization_divisor(self):
         """The second, quieter lie: four phantoms deflate every real number.
