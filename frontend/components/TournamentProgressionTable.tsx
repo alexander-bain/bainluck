@@ -99,6 +99,98 @@ export function progressionDisplayName(
   return legendName(name);
 }
 
+/** Fractional layout slack. Smaller than a pixel, so it cannot hide a column. */
+const SUBPIXEL_PX = 0.5;
+
+/**
+ * Where the scroller must sit for the SORTED column to be readable (#7192).
+ *
+ * The grid is a leaderboard ordered by its rightmost column, and the rightmost
+ * column is the first thing a phone clips. Measured on production at 390px
+ * (scroller clientWidth 316) the day this shipped:
+ *
+ *     grid  cols  overflow  sort column       visible at scrollLeft 0
+ *     mlb    4     271px    `World Series ▼`  no
+ *     nfl    4     240px    `Super Bowl ▼`    no
+ *     mls    2      51px    `MLS Cup ▼`       no
+ *
+ * So MLB asserted a ranking of 30 teams and showed the reader a leading column
+ * (`Make Playoffs`: 100 100 99 89 65 77 44 10) that visibly contradicted it,
+ * with nothing on screen to explain the order. #6722 deleted the table's pixel
+ * floor and fixed the one-column grids; it cannot help here, because the four
+ * columns genuinely need 587px and no allocation of them fits in 316.
+ *
+ * If the columns cannot all fit, the one that must be on screen is the one the
+ * order comes from — so the scroller opens aligned to it. The `#` and `Team`
+ * cells are `position: sticky`, so scrolling right costs the reader nothing:
+ * they keep the row's identity and gain the number that ranks it.
+ *
+ * This is pure arithmetic, deliberately: jsdom reports every rect, `clientWidth`
+ * and `scrollWidth` as 0 (#6722's suite says so), so an effect that read the DOM
+ * directly could only be guarded by a test that never ran. All coordinates are
+ * in the scroller's CLIENT box — `rect.left - scrollerRect.left` — which is what
+ * `tools/progression-col-fit-6722.mjs` prints.
+ *
+ * @param stickyRight right edge of the sticky `Team` cell; content to the left
+ *   of it is underneath that cell, which is hidden, not visible.
+ * @returns the scrollLeft to set, or `null` when nothing should move — there is
+ *   no overflow (every desktop), or the column is already wholly readable.
+ */
+export function sortColumnScrollLeft({
+  colLeft,
+  colRight,
+  clientWidth,
+  scrollLeft,
+  stickyRight,
+}: {
+  colLeft: number;
+  colRight: number;
+  clientWidth: number;
+  scrollLeft: number;
+  stickyRight: number;
+}): number | null {
+  // THREE THINGS THAT LOOK LOAD-BEARING AND ARE NOT. Each was written, mutated,
+  // and deleted when its mutant survived — a guard whose removal changes no
+  // answer is a safety net nobody is standing under:
+  //
+  //  - an "is there overflow?" early return. A column can only be past the right
+  //    edge if the content is wider than the box, which IS overflow; a grid that
+  //    fits leaves by the "already readable" door below. Every desktop takes it.
+  //  - a rect sanity check. An unmeasured box (jsdom: every rect 0) or a NaN
+  //    fails both comparisons and leaves by that same door.
+  //  - an UPPER clamp to `scrollWidth - clientWidth`. The column is part of the
+  //    content, so the offset that puts its right edge on the container's right
+  //    edge cannot exceed the content's own scrollable width. Dropping it also
+  //    drops `scrollWidth` from what the caller has to measure.
+  //
+  // The LOWER clamp is different and is kept: sorting by an early stage asks to
+  // scroll to a negative offset, because that column starts underneath the
+  // sticky cell even at the very start of the table.
+  const overRight = colRight - clientWidth;
+  const underSticky = stickyRight - colLeft;
+
+  // The minimum move that makes the column readable, in whichever direction it
+  // is hiding. Below the tolerance nothing moves: fractional layout widths
+  // leave a column a hair past an edge, and acting on that is a visible lurch
+  // on every resize in exchange for half a pixel.
+  let next: number;
+  if (overRight > SUBPIXEL_PX) {
+    next = scrollLeft + overRight;
+  } else if (underSticky > SUBPIXEL_PX) {
+    next = scrollLeft - underSticky;
+  } else {
+    return null; // already readable
+  }
+
+  next = Math.max(0, next);
+  // The clamp can eat the whole move — `Make Playoffs` is 10.7px behind the
+  // sticky cell at scrollLeft 0 and there is nowhere further left to go. Then
+  // the honest answer is "nothing to do", not a write of the offset we are
+  // already at.
+  return Math.abs(next - scrollLeft) < SUBPIXEL_PX ? null : next;
+}
+
+
 /**
  * Font weight / opacity class based on probability value.
  * Higher values get bolder text; very small values fade out.
@@ -341,24 +433,102 @@ export default function TournamentProgressionTable({
   // differ, so the affordance erased the encoding it shipped beside.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const headRef = useRef<HTMLTableSectionElement | null>(null);
+  const nameThRef = useRef<HTMLTableCellElement | null>(null);
+  const stageThRefs = useRef(new Map<string, HTMLTableCellElement>());
+  const alignedStageKey = useRef<string | null>(null);
+  const readerScrolled = useRef(false);
+  const selfScroll = useRef(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [headHeight, setHeadHeight] = useState(0);
+  const [stickyEdge, setStickyEdge] = useState(0);
 
   const syncScrollAffordance = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+    // Once the grid opens on its sort column (#7192) the columns a reader has
+    // not seen are behind them, so the cue has to point both ways.
+    setCanScrollLeft(el.scrollLeft > 4);
     setHeadHeight(headRef.current?.getBoundingClientRect().height ?? 0);
+    // Where the sticky `Team` cell ends, in THIS wrapper's coordinates. The
+    // left-hand cue cannot sit on the container's edge the way the right one
+    // does: the sticky cells are opaque and already cover it, so a fade there
+    // would be painted under them and seen by nobody. It belongs at the seam
+    // the hidden columns actually disappear behind. The `- 8` is the scroller's
+    // own `-mx-2`.
+    const nameBox = nameThRef.current?.getBoundingClientRect();
+    setStickyEdge(nameBox ? nameBox.right - el.getBoundingClientRect().left - 8 : 0);
   }, []);
+
+  // Put the column the ranking comes from on screen (#7192).
+  //
+  // WHO IS ALLOWED TO MOVE THE TABLE, because "align it once at mount" is the
+  // obvious rule and it is wrong in both directions:
+  //
+  //  - mount is too early. Measured against the local build with production
+  //    data: the effect rested the scroller at 267px and the settled layout
+  //    wanted 262.9 — the web font swapped under it. A 4px overshoot is
+  //    harmless; the same lateness in the other direction re-clips the column
+  //    this exists to show, and a mount-only rule can never notice.
+  //  - and it must never re-assert itself over a reader. Someone who scrolls
+  //    back to `Make Playoffs` is answering the question themselves.
+  //
+  // So: realign on any layout change until the reader scrolls, and after that
+  // only when they pick a different column to sort by — which is a request for
+  // that column, not a fight over this one.
+  const alignSortColumn = useCallback(() => {
+    const el = scrollRef.current;
+    const key = sort.stageKey;
+    if (!el || key === null) return;
+    const th = stageThRefs.current.get(key);
+    if (!th) return;
+    const scrollerBox = el.getBoundingClientRect();
+    const colBox = th.getBoundingClientRect();
+    const nameBox = nameThRef.current?.getBoundingClientRect();
+    const next = sortColumnScrollLeft({
+      colLeft: colBox.left - scrollerBox.left,
+      colRight: colBox.right - scrollerBox.left,
+      clientWidth: el.clientWidth,
+      scrollLeft: el.scrollLeft,
+      stickyRight: nameBox ? nameBox.right - scrollerBox.left : 0,
+    });
+    alignedStageKey.current = key;
+    if (next === null) return;
+    // Claim the scroll event this assignment is about to fire, so the handler
+    // does not read our own move as the reader taking over. It only ever fires
+    // one, because the arithmetic returns null for a move it would not make.
+    selfScroll.current = true;
+    el.scrollLeft = next;
+    syncScrollAffordance();
+  }, [sort.stageKey, syncScrollAffordance]);
+
+  const handleScroll = useCallback(() => {
+    if (selfScroll.current) selfScroll.current = false;
+    else readerScrolled.current = true;
+    syncScrollAffordance();
+  }, [syncScrollAffordance]);
 
   useEffect(() => {
     syncScrollAffordance();
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(syncScrollAffordance);
+    const observer = new ResizeObserver(() => {
+      syncScrollAffordance();
+      if (!readerScrolled.current) alignSortColumn();
+    });
     observer.observe(el);
+    // The scroller's own box does not change when a font swap widens the table
+    // inside it, so the header row is observed too — it is the element whose
+    // width tracks the content.
+    if (headRef.current) observer.observe(headRef.current);
     return () => observer.disconnect();
-  }, [syncScrollAffordance, safeStages.length, sortedParticipants.length]);
+  }, [syncScrollAffordance, alignSortColumn, safeStages.length, sortedParticipants.length]);
+
+  useEffect(() => {
+    if (alignedStageKey.current === sort.stageKey) return;
+    alignSortColumn();
+  }, [sort.stageKey, safeStages.length, sortedParticipants.length, alignSortColumn]);
 
   if (!safeStages.length || !safeParticipants.length) {
     return (
@@ -403,7 +573,7 @@ export default function TournamentProgressionTable({
       <div className="relative">
         <div
           ref={scrollRef}
-          onScroll={syncScrollAffordance}
+          onScroll={handleScroll}
           className="overflow-x-auto -mx-2 px-2"
         >
           {/* NO FIXED PIXEL FLOOR ON THIS TABLE (#6722). It carried
@@ -441,11 +611,23 @@ export default function TournamentProgressionTable({
             <thead ref={headRef}>
               <tr className="border-b border-white/10">
                 {/* Rank column */}
-                <th className="sticky left-0 z-10 bg-surface-card py-2 px-1 text-center text-text-secondary font-medium w-8">
+                {/* `min-w-[32px]` is not decoration and not a duplicate of
+                    `w-8` (#7192). `w-8` is a HINT that `table-layout: auto`
+                    discards when the table is already at its min-content width,
+                    and the rank column measured 21.3px on production — while
+                    `Team` beside it is pinned at `left-8`, i.e. 32px. Those two
+                    numbers must be the SAME number or the sticky block has a
+                    10.7px transparent slot in it, and the scrolled columns run
+                    through the gap: opening the grid on its sort column made
+                    that visible as fragments of `Division` between the rank and
+                    the crest. A min-width is the one width declaration auto
+                    layout may not discard. Keep it equal to `left-8` below. */}
+                <th className="sticky left-0 z-10 bg-surface-card py-2 px-1 text-center text-text-secondary font-medium w-8 min-w-[32px]">
                   #
                 </th>
                 {/* Name column - sticky */}
                 <th
+                  ref={nameThRef}
                   className="sticky left-8 z-10 bg-surface-card py-2 px-2 text-left text-text-secondary font-medium cursor-pointer hover:text-text-primary transition-colors min-w-[92px] sm:min-w-[140px]"
                   onClick={() => handleSort(null)}
                 >
@@ -464,6 +646,10 @@ export default function TournamentProgressionTable({
                   return (
                   <th
                     key={stage.key}
+                    ref={(node) => {
+                      if (node) stageThRefs.current.set(stage.key, node);
+                      else stageThRefs.current.delete(stage.key);
+                    }}
                     className={`py-2 px-2 text-center font-medium cursor-pointer transition-colors whitespace-nowrap ${isResolved ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}
                     onClick={() => handleSort(stage.key)}
                   >
@@ -512,7 +698,7 @@ export default function TournamentProgressionTable({
                   onMouseLeave={() => onHoverParticipant?.(null)}
                 >
                   {/* Rank */}
-                  <td className="sticky left-0 z-10 bg-surface-card py-1.5 px-1 text-center text-text-secondary text-xs">
+                  <td className="sticky left-0 z-10 bg-surface-card py-1.5 px-1 text-center text-text-secondary text-xs min-w-[32px]">
                     {idx + 1}
                   </td>
                   {/* Name */}
@@ -646,6 +832,27 @@ export default function TournamentProgressionTable({
             data-testid="progression-scroll-affordance"
             style={{ height: headHeight }}
             className="pointer-events-none absolute top-0 -right-2 w-8 bg-gradient-to-l from-surface-card to-transparent"
+          />
+        )}
+        {/* The mirror of it (#7192) — and deliberately NOT the same shape.
+            The grid now opens scrolled to its sort column, so on a phone the
+            earlier stages are the ones off-screen: behind the sticky Team cell
+            rather than past the right edge. Without a cue on that side the
+            reader is told about columns they have already seen and not about
+            the ones they have not.
+            FULL HEIGHT, where the right-hand cue is header-only. #4261 found
+            that a full-height wash on the RIGHT erased the last 32px of every
+            cell, which is where the bars differ — true, and it does not
+            transfer. This seam is where a column is DISAPPEARING under the
+            sticky block: what it washes is the tail of a column whose head is
+            already hidden, which on MLS renders as `%` and `24h` fragments with
+            no number attached. Header-only would leave those in the body. */}
+        {canScrollLeft && stickyEdge > 0 && (
+          <div
+            aria-hidden="true"
+            data-testid="progression-scroll-affordance-left"
+            style={{ left: stickyEdge }}
+            className="pointer-events-none absolute inset-y-0 w-8 bg-gradient-to-r from-surface-card to-transparent"
           />
         )}
       </div>

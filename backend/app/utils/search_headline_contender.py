@@ -102,6 +102,109 @@ HEADLINE_MARKET_TIER = 1
 # The typed entity must be a real contender in the market, not a listed longshot.
 MIN_CONTENDER_PROBABILITY = 0.05
 
+# #6430 — THE SAME FLOOR, WHEN THE OUTCOME IS ANCHORED TO A TEAM WE HOLD.
+#
+# Clause 3 above asks "is this market about you?" and answers it with a price,
+# because price was the only signal to hand. Price is field-size-blind, and in a
+# large field it answers wrongly. Measured on production 2026-09-19,
+# `MLB World Series Champion 2026` (114584, tier 1, volume 40,784,846):
+#
+#     field 31 outcomes, mean 3.49%, only 7 of 31 at or above 0.05
+#     Dodgers 0.3050  -> promoted    (q=dodgers serves the market at row 1)
+#     Yankees 0.1050  -> promoted    (q=yankees  serves the market at row 1)
+#     Boston Red Sox 0.0455 -> REFUSED, and it is the only failing clause
+#
+# So 24 of 31 MLB clubs cannot reach their own championship market by typing
+# their name, including clubs ABOVE the field mean — the Red Sox are 9th of 31
+# and 1.3x the average. A Dodgers fan gets the World Series card; a Red Sox fan
+# gets ten tier-5 "1st Inning Winner" rows and no championship question at all.
+#
+# THE REPAIR IS NOT A FIELD-RELATIVE FLOOR, AND THE CORPUS IS WHY. Replaying
+# `min(0.05, 1/field)` over the live tier-1 volume>=10k corpus admits:
+#
+#     112897   Presidential Election Winner 2028          128 outcomes, 5 priced >= 0.05
+#     56775566 Pro Football Championship Game Matchup     256 outcomes, top price 0.035
+#
+# — which is clause 3's own LeBron case, reintroduced wholesale. Field size does
+# not separate a 31-club championship from a 128-name presidential field.
+#
+# IDENTITY DOES. `futures_outcomes.team_id` is an anchored correspondence to a
+# club row we hold, not a string that happens to match. Measured the same minute:
+#
+#     114584   MLB World Series Champion 2026        31 outcomes, 30 with team_id
+#     112897   Presidential Election Winner 2028    128 outcomes,  0 with team_id
+#     56775566 Pro Football Championship Matchup    256 outcomes,  0 with team_id
+#
+# The two markets that would have poisoned a price-relative floor are excluded
+# BY CONSTRUCTION, and the 25 markets the anchor does admit are the league
+# championships a fan means: College Football National Championship, Pro
+# Football 2027 Champion, the World Series, the conference titles, Champions
+# League, F1 Constructors. So for an anchored outcome the identity IS the
+# contender evidence, and the price clause relaxes to a priced-at-all floor.
+#
+# THERE IS NO ANCHORED PRICE FLOOR, AND CERT-3125 IS WHY.
+#
+# The first version of this arm kept a sub-floor of 0.005, chosen off the price
+# histogram (a 144-row mode at the venues' 1c tick over a thin dust tail). That
+# floor was measured against the wrong question. It admits 14 of the World
+# Series market's 30 anchored clubs, so the ship this arm exists to deliver —
+# "a correctly anchored club reaches its championship market by typing its
+# name" — still fails for sixteen clubs, the Diamondbacks among them at 0.0015
+# against a real two-sided book (bid 0.0010 / ask 0.0020). A floor that answers
+# "is this club likely to win" cannot answer "is this market about this club",
+# and the second is the only question this lane asks.
+#
+# PRICE IS NOT THE DISCRIMINATOR. IDENTITY AGREEMENT IS. Dropping the floor with
+# nothing in its place is not safe either, and the corpus says so by name:
+# `Coach of the Year Winner` (416, tier 1, volume 12,179,061) carries the
+# outcome "Mike Brown" anchored to team 11 NEW ENGLAND PATRIOTS and "Will Hardy"
+# anchored to team 6 NORTH CAROLINA TAR HEELS, both at 0.000000. A bare
+# `team_id IS NOT NULL` makes a coach's name a headline contender on a mis-anchor
+# — clause 3's poison arriving through the anchor instead of through the string.
+#
+# So an anchored outcome qualifies when the anchor CORRESPONDS: the outcome's own
+# name agrees with the name of the team it is anchored to. Two independent
+# signals that must say the same thing, which is ruling 048's shape (an
+# id-anchored correspondence, never an id-less claim). Measured on production
+# 2026-09-19, market 114584: 28 of 30 anchored outcomes agree; the 2 that do not
+# are "New York Mets" anchored to NEW YORK YANKEES and "Los Angeles Angels"
+# anchored to LOS ANGELES DODGERS — the same team-identity poison #7188 is
+# repairing, which this rule correctly REFUSES rather than papers over. When
+# #7188 lands those two become 30 of 30 here with no change to this file.
+#
+# 🔴 SAY THE COST OUT LOUD (CERT-3128). "Correctly refused" is still a reader
+# losing something: a fan typing "mets" gets no championship card at row 1 and
+# "angels" gets none at all, measured the same minute. This ship's reach is
+# therefore EVERY CORRECTLY ANCHORED CLUB — 28 of 30 here — and not the whole
+# field; an earlier draft claimed the whole field and CERT-3128 blocked it for
+# the difference. The gap is carried on **#7233**, its fix is #7188's ordered
+# data repair (lane1's by D39), and the fix is NOT to loosen this rule: dropping
+# the correspondence term to rescue those two re-admits "Mike Brown" below.
+#
+# THE WHOLE CORPUS REPLAY, tier 1 + volume >= 10,000, newly-admitted outcomes:
+#
+#     400     La Liga Winner                       17
+#     114584  MLB World Series Champion 2026       14
+#     399     English Premier League Winner?       12
+#     129037  Pro Football: 2027 Champion           8
+#     392     Champions League Winner               7
+#                                                  --
+#                                          5 markets, 58 outcomes
+#
+# Five markets, every one a league championship a fan means. `Coach of the Year`
+# is excluded by the correspondence term; `Presidential Election Winner 2028`
+# (0 anchored) and `Pro Football Championship Game Matchup` (0 anchored) remain
+# excluded by construction, as they were.
+#
+# PRICED AT ALL IS STILL REQUIRED — `current_probability IS NOT NULL`. A row with
+# no number is not a quote and has nothing to render; a row at 0.000000 is the
+# market saying this club cannot win, which is a true answer to "is this market
+# about you" and is shown as part of the field, never as a number about the club.
+#
+# NAME-ONLY OUTCOMES ARE UNTOUCHED: every clause above still governs them, so
+# `fed`, `LeBron`, `president`, `Trump` and `Jordan` cannot reach this lane by
+# any new route. This arm can only ever ADD a market that lists a real club.
+
 # The market must be one people actually trade. `volume` is not a new signal here:
 # it is already an ORDER BY key in the futures window and `_rerank_search_futures`
 # calls it "the real-interest signal". See the measured table above for the floor.
@@ -183,7 +286,7 @@ def contender_patterns(
     return patterns
 
 
-def is_contender_outcome(probability, volume) -> bool:
+def is_contender_outcome(probability, volume, *, team_anchored: bool = False) -> bool:
     """The numeric half of the rule — clauses 3 and 4, on one outcome row.
 
     Kept here rather than only in SQL so a guard can assert the boundary values
@@ -191,6 +294,22 @@ def is_contender_outcome(probability, volume) -> bool:
     A probability of exactly 1.0 is admitted: `WTA Cincinnati Winner` carries a
     live 0.99 and there is no principled line between that and 1.0 — the volume
     floor is what excludes the degenerate rows, and it does so on merit.
+
+    `team_anchored` — the outcome carries a `team_id` AND its own name agrees
+    with that team's name, i.e. it IS a club we hold rather than a string that
+    matched one or a mis-anchored row that merely carries an id (#6430 /
+    CERT-3125, reasoning at the constants above). Such a row faces NO price
+    floor: identity is the whole contender evidence, and the caller is
+    responsible for establishing the correspondence — this function is told the
+    answer, it does not guess it from `team_id` alone.
+
+    It is keyword-only and defaults False so every existing caller and every
+    replay corpus row keeps its exact previous verdict: this arm is strictly
+    additive and can only widen, never refuse what it admitted before.
+
+    The volume floor is NOT relaxed — identity answers "is this market about
+    you", not "does anyone trade it". A price of None is still refused for both
+    arms: a row with no number is not a quote.
     """
     if probability is None or volume is None:
         return False
@@ -199,7 +318,11 @@ def is_contender_outcome(probability, volume) -> bool:
         volume = float(volume)
     except (TypeError, ValueError):
         return False
-    return probability >= MIN_CONTENDER_PROBABILITY and volume >= MIN_CONTENDER_VOLUME
+    if volume < MIN_CONTENDER_VOLUME:
+        return False
+    if team_anchored:
+        return True
+    return probability >= MIN_CONTENDER_PROBABILITY
 
 
 def promote_headline_contenders(

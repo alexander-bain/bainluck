@@ -264,7 +264,12 @@ class TestPoliticsPresidential:
         parties = {c["name"]: c["party"] for c in candidates}
         assert parties["Trump"] == "R"
         assert parties["Newsom"] == "D"
-        assert parties["Unknown Person"] == "I"
+        # #7228: this asserted "I" and was pinning the defect. The headline here
+        # is the GENERAL election, which is evidence of nobody's party, so an
+        # unrecognised name now carries no badge instead of being *stated* to be
+        # an Independent. In a party-specific race the contest supplies the
+        # letter — see test_politics_candidate_party_is_evidenced_7228.py.
+        assert parties["Unknown Person"] == ""
 
     async def test_dual_source_merge(self, client, mock_db):
         """Two headline markets (Kalshi + Polymarket) merge into one candidate list."""

@@ -56,7 +56,10 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Base, Event, Sport
 from app.services.anchor_channel import duplicate_tag
-from app.utils.aggregation import compute_aggregate_probability
+from app.utils.aggregation import (
+    compute_aggregate_probability,
+    compute_aggregate_probability_tiered,
+)
 from app.utils.proven_duplicates import (
     FoldedBlendView,
     folded_probability_sources,
@@ -275,18 +278,31 @@ class TestFoldedProbabilitySources:
     def test_the_canonical_gains_the_ghosts_kalshi(self):
         """THE SHIP, through the real predicate against a real engine."""
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources={"betting": 0.24}),
-            _event(GHOST_ID, home="Shelton", away="Alcaraz",
-                   sources={"kalshi": 0.31}, tags=[duplicate_tag(CANON_ID)]),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources={"betting": 0.24},
+            ),
+            _event(
+                GHOST_ID,
+                home="Shelton",
+                away="Alcaraz",
+                sources={"kalshi": 0.31},
+                tags=[duplicate_tag(CANON_ID)],
+            ),
         )
         assert _folded(eng, CANON_ID) == {"betting": 0.24, "kalshi": 0.31}
 
     def test_an_untagged_event_folds_to_exactly_its_own_sources(self):
         """Acceptance 3's no-change half, at the fold itself."""
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources={"betting": 0.24}),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources={"betting": 0.24},
+            ),
         )
         assert _folded(eng, CANON_ID) == {"betting": 0.24}
 
@@ -300,10 +316,19 @@ class TestFoldedProbabilitySources:
         curve shape for a reader to notice is wrong.
         """
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources={"betting": 0.24}),
-            _event(GHOST_ID, home="Alcaraz", away="Shelton",
-                   sources={"kalshi": 0.31}, tags=[duplicate_tag(CANON_ID)]),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources={"betting": 0.24},
+            ),
+            _event(
+                GHOST_ID,
+                home="Alcaraz",
+                away="Shelton",
+                sources={"kalshi": 0.31},
+                tags=[duplicate_tag(CANON_ID)],
+            ),
         )
         assert _folded(eng, CANON_ID) == {"betting": 0.24}
 
@@ -315,10 +340,19 @@ class TestFoldedProbabilitySources:
         which is the absorption ruling 048 bans.
         """
         eng = _engine(
-            _event(CANON_ID, home="Ben Shelton", away="Carlos Alcaraz",
-                   sources={"betting": 0.24}),
-            _event(GHOST_ID, home="Shelton", away="Alcaraz",
-                   sources={"kalshi": 0.31}, tags=[duplicate_tag(CANON_ID + 1)]),
+            _event(
+                CANON_ID,
+                home="Ben Shelton",
+                away="Carlos Alcaraz",
+                sources={"betting": 0.24},
+            ),
+            _event(
+                GHOST_ID,
+                home="Shelton",
+                away="Alcaraz",
+                sources={"kalshi": 0.31},
+                tags=[duplicate_tag(CANON_ID + 1)],
+            ),
         )
         assert _folded(eng, CANON_ID) == {"betting": 0.24}
 
@@ -538,13 +572,17 @@ class TestTheRealRoute:
         assert "kalshi" in payload["win_probability_sources"], "the venue is listed"
         # A completed game resolves its hero from the SCORE (`resolve_settled_hero`),
         # which outranks the blend entirely — so assert the blend directly.
-        assert compute_aggregate_probability(
-            FoldedBlendView(
-                _route_event(status="completed", finished=True,
-                             sources={"espn": 0.62}),
-                {"espn": 0.62, "kalshi": 0.31},
+        assert (
+            compute_aggregate_probability(
+                FoldedBlendView(
+                    _route_event(
+                        status="completed", finished=True, sources={"espn": 0.62}
+                    ),
+                    {"espn": 0.62, "kalshi": 0.31},
+                )
             )
-        ) == 0.62
+            == 0.62
+        )
 
     def test_an_untagged_event_is_unchanged_through_the_real_route(self, serve):
         """Acceptance 3, through the route: no tagged twin, no difference."""
@@ -613,9 +651,9 @@ class TestTheRealRoute:
         assumed: drop it and this test passes while the hero is still folded
         (it did exactly that when #3903 landed). Since #3903 the hero cascade
         lives in `app.utils.hero_probability.resolve_hero`, which does a
-        MODULE-LEVEL `from app.utils.aggregation import
-        compute_aggregate_probability`, so its binding is captured at import and
-        patching the `aggregation` module alone never reaches it.
+        MODULE-LEVEL import from `app.utils.aggregation`, so its binding is
+        captured at import and patching the `aggregation` module alone never
+        reaches it.
 
         The `aggregation` patch is kept anyway, and NOT because this test's
         assertions need it — dropping it alone leaves this test green. It is
@@ -625,19 +663,30 @@ class TestTheRealRoute:
         mutant that flipped the hero to the raw row while leaving those folded
         would be a state the codebase cannot actually be in, and a control that
         models an impossible state is not a control.
-        """
-        real = compute_aggregate_probability
 
-        def _ignores_the_fold(event, event_status=None):
+        🔴 THE TWO PATCHES NOW HAVE DIFFERENT SHAPES (#6694). `resolve_hero`
+        reads `compute_aggregate_probability_tiered`, which returns
+        `(probability, tier)`, while the route still reads the float-returning
+        wrapper. Patching both with one callable would hand the route a tuple
+        and break it for a reason that has nothing to do with the fold — the
+        mutant has to reproduce each seam in that seam's own shape, or it stops
+        being a control and becomes a type error wearing a control's name.
+        """
+        real = compute_aggregate_probability_tiered
+
+        def _tiered_ignores_the_fold(event, event_status=None):
             raw = getattr(event, "_event", event)
             return real(raw, event_status)
+
+        def _ignores_the_fold(event, event_status=None):
+            return _tiered_ignores_the_fold(event, event_status)[0]
 
         monkeypatch.setattr(
             "app.utils.aggregation.compute_aggregate_probability", _ignores_the_fold
         )
         monkeypatch.setattr(
-            "app.utils.hero_probability.compute_aggregate_probability",
-            _ignores_the_fold,
+            "app.utils.hero_probability.compute_aggregate_probability_tiered",
+            _tiered_ignores_the_fold,
         )
         payload, _ = serve(
             _route_event(sources=None),
