@@ -71,6 +71,11 @@ _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(?:trump|biden|desantis|harris|newsom|haley|ramaswamy|kennedy|rfk)\b", re.I), "presidential"),
     (re.compile(r"\b(?:president|presidential|2028\s*election|white\s*house|nominee|primary)\b", re.I), "presidential"),
     (re.compile(r"\b(?:senate|senator|house\s*(?:of\s*rep|seat)|congress|midterm|2026\s*election)\b", re.I), "congressional"),
+    # A Federal Reserve governor is not a state governor. Without this line
+    # "Lisa Cook out as Fed Governor by October 31?" files under Gubernatorial
+    # on the word "Governor" alone. Sits beside the federal-appointment line
+    # below (`cabinet|secretary of|ambassador`), which is the same class.
+    (re.compile(r"\bfed(?:eral\s*reserve)?\s*governor(?:s|ship)?\b", re.I), "policy"),
     (re.compile(r"\b(?:governor|gubernatorial)\b", re.I), "gubernatorial"),
     (re.compile(r"\b(?:supreme\s*court|scotus|justice|roe|overturn)\b", re.I), "scotus"),
     (re.compile(r"\b(?:bill|legislation|executive\s*order|policy|tariff|immigration|gun|abortion|cannabis|marijuana|legalize|ban|mandate|regulation)\b", re.I), "policy"),
@@ -92,12 +97,89 @@ def _is_non_politics(market: FuturesMarket) -> bool:
     return bool(_NON_POLITICS_RE.search(market.name or ""))
 
 
+# The places that actually elect a governor: the 50 states plus the five
+# inhabited territories. DC is absent deliberately — it elects a Mayor.
+_US_GOVERNORSHIPS = frozenset(
+    s.casefold()
+    for s in (
+        "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
+        "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho",
+        "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana",
+        "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota",
+        "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada",
+        "New Hampshire", "New Jersey", "New Mexico", "New York",
+        "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon",
+        "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota",
+        "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington",
+        "West Virginia", "Wisconsin", "Wyoming",
+        "American Samoa", "Guam", "Northern Mariana Islands", "Puerto Rico",
+        "U.S. Virgin Islands", "US Virgin Islands",
+    )
+)
+
+# The title shape every venue uses for a first-level-subdivision executive
+# race, here and abroad: "<place> Governor Election Winner", "<place> Governor
+# winner?", "<place> Gubernatorial Election Winner".
+#
+# `lieutenant` is optional INSIDE the pattern rather than left to the place
+# phrase, and that is the whole reason this was measured before it was
+# written: ten real US races — "Alabama Lieutenant Governor Election Winner",
+# Arkansas, California, Georgia, Idaho, Nevada, Oklahoma, Rhode Island, Texas,
+# Vermont — have a leading phrase that is not a bare state name, and a rule
+# that reads it as one ships all ten abroad.
+#
+# The place phrase is capped at four words (the longest real ones are "Rio
+# Grande do Norte" and "Northern Mariana Islands") and every word must be
+# capitalised or a Portuguese/Spanish connector. Both guards exist to stop
+# `.+?` swallowing a sentence: without them "Will Trump endorse the Ohio
+# Governor Election Winner" parses its place as "Will Trump endorse the Ohio"
+# and, finding no US state, calls a US market international.
+#
+# The place repetition is LAZY (`{0,3}?`). Greedy, it wins the whole phrase
+# before the optional `lieutenant` group is ever tried, so "Alabama Lieutenant
+# Governor winner?" parses its place as "Alabama Lieutenant" and the guard
+# above fails open on the exact ten races it was written for.
+_PLACE_LED_GOV_RACE_RE = re.compile(
+    r"^(?P<place>[^\s]+(?:\s+[^\s]+){0,3}?)\s+"
+    r"(?:lieutenant\s+)?(?:governor|gubernatorial)\s+"
+    r"(?:election\s+)?winner\s*\??$",
+    re.I,
+)
+
+_PLACE_CONNECTORS = frozenset({"de", "do", "da", "dos", "das", "del", "la", "of"})
+
+
+def _place_led_gov_race_is_us(name: str) -> bool | None:
+    """Is this a place-led governor race, and if so is the place American?
+
+    Returns None when the title is not that shape at all, which means "I have
+    nothing to say" — the caller leaves such a title to the ordinary name
+    patterns. `False` is a positive finding, not a lookup miss: the title
+    names a governorship and it is not one of ours.
+    """
+    match = _PLACE_LED_GOV_RACE_RE.match((name or "").strip())
+    if match is None:
+        return None
+    place = match.group("place").strip()
+    words = place.split()
+    if not all(w[:1].isupper() or w.casefold() in _PLACE_CONNECTORS for w in words):
+        return None
+    return place.casefold() in _US_GOVERNORSHIPS
+
+
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
     for prefix, theme in _THEME_BY_TICKER:
         if ext.startswith(prefix):
             return theme
     name = market.name or ""
+    # Decide a place-led race by WHOSE governorship it is, before the name
+    # patterns below can assert a US one from the word "governor" alone.
+    # Those patterns recognise a foreign contest only by a country word, and
+    # "São Paulo Governor Election Winner" never says Brazil (#7240).
+    is_us_race = _place_led_gov_race_is_us(name)
+    if is_us_race is not None:
+        return "gubernatorial" if is_us_race else "international"
     for pat, theme in _THEME_BY_NAME:
         if pat.search(name):
             return theme
