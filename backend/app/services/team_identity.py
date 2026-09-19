@@ -12,10 +12,20 @@ Resolution priority:
 5. Return None
 
 Auto-registration: when fuzzy matching succeeds, the mapping is registered
-so subsequent lookups are O(1).
+so subsequent lookups are O(1). That cache is why steps 3 and 4 refuse a tie
+rather than break it: a guess written here is read back at step 2 as an exact
+match forever after.
+
+Both fuzzy steps score twice — first under ``_strict_name``, which keeps a
+trailing initial, and only then under ``normalize_name``, which strips it as a
+reserve-team suffix ("Los Angeles C" -> "los angeles"). Kalshi abbreviates a
+club to city plus initial, so the strict pass is the one that can tell the
+Chargers from the Rams; the loose pass stays behind it for the soccer reserve
+sides it was written for.
 """
 
 import logging
+import re
 from typing import Optional
 
 from sqlalchemy import select, and_, or_, func
@@ -23,9 +33,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import Team, TeamIdentityMapping
-from app.utils.name_normalization import normalize_name
+from app.utils.name_normalization import normalize_name, normalize_team_name
 
 logger = logging.getLogger(__name__)
+
+
+# "St.Louis Cardinals" and "St. Louis Cardinals" name one club. `normalize_name`
+# repairs the missing space; `normalize_team_name` does not, so the strict form
+# below applies the same repair before it.
+_PERIOD_WITHOUT_SPACE_RE = re.compile(r"\.([A-Za-z])")
+
+
+def _strict_name(name: str) -> str:
+    """Normalize for matching WITHOUT stripping a trailing single letter.
+
+    ``normalize_name`` treats a trailing "C"/"B"/"W"/"II" as a reserve-team suffix
+    — correct for "Barcelona B", ruinous for Kalshi's "Los Angeles C", where that
+    letter is the only thing separating the Chargers from the Rams. This is the
+    form that keeps it. Both sides of a comparison must use the same one.
+    """
+    if not name:
+        return ""
+    return normalize_team_name(_PERIOD_WITHOUT_SPACE_RE.sub(r". \1", name))
+
+
+_SCORE_EXACT = 100
+_SCORE_CANDIDATE_WITHIN_TARGET = 60
+_SCORE_TARGET_WITHIN_CANDIDATE = 50
+_SCORE_LAST_WORD = 40
+
+# Below this a match is not trusted enough to resolve, let alone to register.
+_MATCH_FLOOR = 40
 
 
 def _fuzzy_score(candidate: str, target: str) -> int:
@@ -33,33 +71,132 @@ def _fuzzy_score(candidate: str, target: str) -> int:
 
     Returns 0 for no match, higher is better.
     - Exact match: 100
-    - Containment (long strings only): 60
+    - Candidate contained in target: 60
+    - Target contained in candidate: 50
     - Last-word match (mascot): 40
     - No match: 0
+
+    The two containment directions score differently because they say different
+    things about the candidate. "los angeles d" inside "los angeles dodgers"
+    explains every character of the candidate; "los angeles" inside
+    "los angeles d" leaves the one character that decides which Los Angeles club
+    this is unaccounted for. Scored the same — as they were until #7188 — the
+    Dodgers and the Angels (whose ``alternate_names`` carry the bare city) tied
+    at 60 and the winner was whichever row the query returned first.
     """
     if not candidate or not target:
         return 0
 
     # Exact match
     if candidate == target:
-        return 100
+        return _SCORE_EXACT
 
     # Containment — only if both long enough to avoid "LA" false positives
     if len(candidate) >= 4 and len(target) >= 4:
-        if candidate in target or target in candidate:
-            return 60
+        if candidate in target:
+            return _SCORE_CANDIDATE_WITHIN_TARGET
+        if target in candidate:
+            return _SCORE_TARGET_WITHIN_CANDIDATE
 
     # Last-word match (mascot): "Lakers" == last word of "Los Angeles Lakers"
     target_parts = target.split()
     candidate_parts = candidate.split()
     if len(target_parts) > 1 and len(candidate_parts) == 1:
         if candidate == target_parts[-1] and len(candidate) >= 4:
-            return 40
+            return _SCORE_LAST_WORD
     if len(candidate_parts) > 1 and len(target_parts) == 1:
         if target == candidate_parts[-1] and len(target) >= 4:
-            return 40
+            return _SCORE_LAST_WORD
 
     return 0
+
+
+def _sole_best_team(
+    scored: list[tuple[int, int]], floor: int = _MATCH_FLOOR
+) -> tuple[Optional[int], bool]:
+    """``(team_id, ambiguous)`` for the best score at or above ``floor``.
+
+    ``scored`` is ``(team_id, score)`` in whatever order the query returned.
+    Several entries naming the SAME team is agreement, not ambiguity — a club has
+    many mapping rows and many alternate names. Two DISTINCT teams tied at the top
+    is ambiguity, and the old ``score > best_score`` accumulator resolved it by
+    heap order; ``resolve_team`` then wrote that guess into
+    ``team_identity_mapping``, where it answered every later lookup for the name at
+    score 100, before any fuzzy matching ran. A coin flip became a fact (#7188).
+
+    Any tie between distinct teams refuses, an exact one included. Two rows
+    carrying literally the same name are sometimes duplicates of one club
+    ("New York R" beside "New York Rangers") and sometimes two real clubs sharing
+    a city alias — the Cubs and the White Sox both answer to "Chicago" — and this
+    function cannot tell them apart. Guessing is what it is here to stop; folding
+    the duplicates is #2693's job.
+
+    The second element distinguishes "nothing came close" from "several did".
+    Callers must not fall back to a looser reading of an ambiguous name: the
+    looser form is the one that threw away the distinguishing letter, so it turns
+    a refusal into a confident wrong answer.
+    """
+    best_score = 0
+    winners: set[int] = set()
+
+    for team_id, score in scored:
+        if score < floor:
+            continue
+        if score > best_score:
+            best_score = score
+            winners = {team_id}
+        elif score == best_score:
+            winners.add(team_id)
+
+    if len(winners) == 1:
+        return next(iter(winners)), False
+    return None, bool(winners)
+
+
+def _sole_literal_match(name: str, candidates: list[tuple[int, list[str]]]) -> Optional[int]:
+    """The one team carrying ``name`` verbatim, ignoring case and outer space.
+
+    This runs before any normalization because normalization is lossy in ways that
+    matter here: ``_strict_name`` folds "St Louis Blues" and "St. Louis Blues" to
+    one string, and those are two rows for one club, so the tie rule below would
+    refuse a club asked for by its own exact name. A raw match is the strongest
+    evidence available and only one row has it.
+    """
+    wanted = name.strip().casefold()
+    if not wanted:
+        return None
+    holders = {
+        team_id
+        for team_id, raw_names in candidates
+        if any(raw.strip().casefold() == wanted for raw in raw_names)
+    }
+    return next(iter(holders)) if len(holders) == 1 else None
+
+
+def _resolve_scored(
+    strict_scored: list[tuple[int, int]],
+    loose_scored: list[tuple[int, int]],
+    floor: int = _MATCH_FLOOR,
+) -> Optional[int]:
+    """Pick a team from the strict scores, falling back to the loose ones.
+
+    The loose pass is a fallback for "the strict form found no purchase at all",
+    never a tiebreak for "the strict form was inconclusive". ``normalize_name``
+    strips the trailing initial, so for a fragment like "Los Angeles C" the loose
+    form is strictly less informative than what the caller asked about: a lone
+    cached row named "Los Angeles" scores 50 against the strict form and 100
+    against the loose one. Consulting it whenever the strict pass fell short would
+    convert exactly the ambiguity this module exists to refuse into a confident
+    wrong club (CERT-3130).
+    """
+    best, ambiguous = _sole_best_team(strict_scored, floor)
+    if best is not None:
+        return best
+    if ambiguous or any(score > 0 for _, score in strict_scored):
+        return None
+
+    best, _ambiguous = _sole_best_team(loose_scored, floor)
+    return best
 
 
 # =============================================================================
@@ -315,8 +452,9 @@ class TeamIdentityService:
         sport_key: str,
     ) -> Optional[Team]:
         """Step 3: fuzzy match against mapping table source_name (any source)."""
-        name_norm = normalize_name(name)
-        if not name_norm:
+        name_strict = _strict_name(name)
+        name_loose = normalize_name(name)
+        if not name_strict and not name_loose:
             return None
 
         # Get sport key prefix for sport-scoped matching
@@ -335,17 +473,31 @@ class TeamIdentityService:
         )
         mappings = result.scalars().all()
 
-        best_team_id = None
-        best_score = 0
+        strict_scored: list[tuple[int, int]] = []
+        loose_scored: list[tuple[int, int]] = []
+        literal: list[tuple[int, list[str]]] = []
 
         for mapping in mappings:
-            mapping_name_norm = normalize_name(mapping.source_name)
-            score = _fuzzy_score(name_norm, mapping_name_norm)
-            if score > best_score:
-                best_score = score
-                best_team_id = mapping.team_id
+            if mapping.team_id is None:
+                continue
+            source_name = str(mapping.source_name)
+            literal.append((mapping.team_id, [source_name]))
+            strict_scored.append(
+                (mapping.team_id, _fuzzy_score(name_strict, _strict_name(source_name)))
+            )
+            loose_scored.append(
+                (mapping.team_id, _fuzzy_score(name_loose, normalize_name(source_name)))
+            )
 
-        if best_team_id and best_score >= 40:
+        # The cache only answers on a name that accounts for the whole fragment.
+        # A row named "Los Angeles" is a fact about the city, not about
+        # "Los Angeles D", and letting it answer at 50 preempts step 4 — where the
+        # canonical teams table would have said Dodgers (CERT-3130).
+        best_team_id = _sole_literal_match(name, literal) or _resolve_scored(
+            strict_scored, loose_scored, floor=_SCORE_CANDIDATE_WITHIN_TARGET
+        )
+
+        if best_team_id is not None:
             team_result = await session.execute(
                 select(Team).where(Team.id == best_team_id)
             )
@@ -359,8 +511,9 @@ class TeamIdentityService:
         sport_key: str,
     ) -> Optional[Team]:
         """Step 4: fuzzy match on teams.name / teams.alternate_names."""
-        name_norm = normalize_name(name)
-        if not name_norm:
+        name_strict = _strict_name(name)
+        name_loose = normalize_name(name)
+        if not name_strict and not name_loose:
             return None
 
         # Get sport key prefix for sport-scoped matching
@@ -376,24 +529,30 @@ class TeamIdentityService:
         result = await session.execute(query)
         teams = result.scalars().all()
 
-        best_team = None
-        best_score = 0
+        strict_scored: list[tuple[int, int]] = []
+        loose_scored: list[tuple[int, int]] = []
+        literal: list[tuple[int, list[str]]] = []
+        by_id: dict[int, Team] = {}
 
         for team in teams:
-            # Score against primary name
-            score = _fuzzy_score(name_norm, normalize_name(team.name))
+            by_id[team.id] = team
+            candidate_names = [team.name] + [str(alt) for alt in (team.alternate_names or [])]
+            literal.append((team.id, candidate_names))
+            strict_scored.append((
+                team.id,
+                max(_fuzzy_score(name_strict, _strict_name(n)) for n in candidate_names),
+            ))
+            loose_scored.append((
+                team.id,
+                max(_fuzzy_score(name_loose, normalize_name(n)) for n in candidate_names),
+            ))
 
-            # Score against alternate names
-            for alt in (team.alternate_names or []):
-                alt_score = _fuzzy_score(name_norm, normalize_name(str(alt)))
-                score = max(score, alt_score)
+        best_team_id = _sole_literal_match(name, literal) or _resolve_scored(
+            strict_scored, loose_scored
+        )
 
-            if score > best_score:
-                best_score = score
-                best_team = team
-
-        if best_team and best_score >= 40:
-            return best_team
+        if best_team_id is not None:
+            return by_id[best_team_id]
         return None
 
 
