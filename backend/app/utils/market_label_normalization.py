@@ -21,6 +21,9 @@ import logging
 import re
 from typing import Optional
 
+# Pure module (re/logging/datetime/typing only), so this cannot cycle back.
+from app.utils.futures_categorization import is_game_prop
+
 logger = logging.getLogger(__name__)
 
 
@@ -799,6 +802,23 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     # Name patterns are more reliable than category (Polymarket uses "championship"
     # for everything; Kalshi uses "game_prop" for some season markets).
     # Check most-specific patterns first, then fall back to category.
+
+    # A market that names one fixture is that fixture's prop, whatever the
+    # name ends with. "Athletics vs. Cleveland Guardians - 4th Inning Winner"
+    # reaches _TIER_1_PATTERNS' bare \bwinner\b otherwise and prints
+    # "Championship" on the search card (#6471). Kalshi's poller has forced
+    # this since it was written; asking the shared predicate here means the
+    # other four callers agree — in particular the re-tier sweep in
+    # _backfill_team_links, which re-reads every tier-5 row and used to
+    # promote these straight back to tier 1.
+    #
+    # Non-sport questions are exempt: "OpenAI vs. Anthropic: First to another
+    # Millennium Prize?" is an "A vs B: C" string but it is a top-level
+    # question, and those carry no tier hierarchy (see _NON_SPORT_CATEGORIES
+    # at the foot of this function).
+    if (sport_category or category or "").lower() not in _NON_SPORT_CATEGORIES:
+        if is_game_prop(market_name or ""):
+            return 5
 
     # Tier 5 first — game-level and series-level markets are never championships
     for pattern in _TIER_5_PATTERNS:
