@@ -418,16 +418,31 @@ class _RecordingSession:
     results cannot express.
     """
 
-    def __init__(self):
+    def __init__(self, grades_per_event=None):
         self.calls = []          # (sql, params)
         self.score_writes = []
         self.completed_at_writes = []
         self.blend_writes = 0
         self.commits = 0
+        # Queue 067: event_id -> how many EVENTS_DERIVED_SOURCES grades sit on
+        # it. Defaults to none, so every pre-existing test keeps its old shape.
+        self.grades_per_event = grades_per_event or {}
+        self.grade_retractions = []
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
         self.calls.append((sql, params or {}))
+
+        # Queue 067 — BEFORE the population count, which also says
+        # "COUNT(*) AS n". Dispatching on the table keeps them apart.
+        if "futures_outcomes" in sql:
+            if sql.startswith("SELECT") or "SELECT COUNT" in sql:
+                n = self.grades_per_event.get(params["event_id"], 0)
+                return _Result([SimpleNamespace(n=n)])
+            self.grade_retractions.append(params)
+            return SimpleNamespace(
+                rowcount=self.grades_per_event.get(params["event_id"], 0)
+            )
 
         if "GROUP BY 1, 2" in sql:
             return _Result(list(_GROUPS))
@@ -470,7 +485,7 @@ def _fake_espn():
 async def _run(**kw):
     from scripts import repair_event_final_scores as mod
 
-    s = _RecordingSession()
+    s = _RecordingSession(kw.pop("grades_per_event", None))
     with patch("app.services.espn_api.get_espn_service", return_value=_fake_espn()):
         res = await mod.repair(s, kw.pop("apply", False), **kw)
     return s, res
@@ -632,3 +647,123 @@ class TestApplyPath:
             "event_id": 15182559,
             "completed_at": datetime(2026, 5, 3, 3, 0, tzinfo=UTC),
         }]
+
+
+# ---------------------------------------------------------------------------
+# QUEUE 067 — the grades that stood on the score this rail replaces.
+#
+# Correcting `events.home_score`/`away_score` invalidates every outcome graded
+# FROM those columns, and this rail used to leave them untouched. That is not
+# cosmetic: `game_score` and its EVENTS_DERIVED_SOURCES siblings are tier 2 but
+# NOT in OVERWRITABLE_WINNER_SOURCES, so `backfill_winners`' re-resolution HAVING
+# clause excludes any market carrying one — forever. Fixing the score under a
+# `game_score` grade changed nothing anybody could see.
+#
+# Fixture 12080353 is the score defect (45-56 stored, 109-87 final); 15182559 is
+# the control — its score already matches ESPN and only its completed_at is
+# repaired, so nothing about its grades has been disproven.
+# ---------------------------------------------------------------------------
+_GRADES = {12080353: 7, 15182559: 5}
+
+
+class TestStaleGradesAreRetracted:
+
+    @pytest.mark.asyncio
+    async def test_a_corrected_score_retracts_the_grades_derived_from_it(self):
+        s, res = await _run(apply=True, limit=25, grades_per_event=_GRADES)
+        assert [p["event_id"] for p in s.grade_retractions] == [12080353]
+        assert res["grades_retracted"] == 7
+
+    @pytest.mark.asyncio
+    async def test_an_event_whose_score_was_never_wrong_keeps_its_grades(self):
+        # 15182559 gets a completed_at repair and nothing else. A repair that
+        # un-grades on the strength of an unrelated write is worse than the bug.
+        s, _ = await _run(apply=True, limit=25, grades_per_event=_GRADES)
+        assert 15182559 not in [p["event_id"] for p in s.grade_retractions]
+        assert s.completed_at_writes, "the control must still get its own repair"
+
+    @pytest.mark.asyncio
+    async def test_only_events_derived_sources_are_retracted(self):
+        # A venue's settlement said what it said; our score being wrong does not
+        # disprove it, and it outranks these grades anyway. The source list is
+        # imported from the ladder, never restated here — that is the point.
+        from app.utils.resolution_authority import (
+            AUTHORITATIVE_SOURCES,
+            EVENTS_DERIVED_SOURCES,
+        )
+
+        s, _ = await _run(apply=True, limit=25, grades_per_event=_GRADES)
+        sources = set(s.grade_retractions[0]["sources"])
+        assert sources == set(EVENTS_DERIVED_SOURCES)
+        assert not (sources & AUTHORITATIVE_SOURCES)
+        assert "game_score" in sources and "box_score" in sources
+
+    @pytest.mark.asyncio
+    async def test_the_dry_run_names_the_grades_it_would_un_grade(self):
+        # An operator approving a score fix must see that it also un-grades
+        # rows. A plan that hides half its writes is not a plan.
+        s, res = await _run(apply=False, limit=25, grades_per_event=_GRADES)
+        assert s.grade_retractions == []
+        assert res["grades_retracted"] == 0
+        assert res["grades_to_retract"] == 7
+        entry = [e for e in res["ledger"] if e["event_id"] == 12080353][0]
+        assert entry["events_derived_grades"] == 7
+        assert entry["grade_action"] == "retract_for_regrade"
+
+    @pytest.mark.asyncio
+    async def test_planned_and_applied_counts_agree(self):
+        # Two counters, not one: "it returned" is not "it worked" (gotcha #53).
+        _, res = await _run(apply=True, limit=25, grades_per_event=_GRADES)
+        assert res["grades_to_retract"] == res["grades_retracted"] == 7
+
+    @pytest.mark.asyncio
+    async def test_an_event_with_no_derived_grades_is_not_churned(self):
+        # The score is still repaired; there is simply nothing to retract, and
+        # no UPDATE is issued against futures_outcomes.
+        s, res = await _run(apply=True, limit=25, grades_per_event={})
+        assert s.score_writes, "the score defect must still be repaired"
+        assert s.grade_retractions == []
+        assert res["grades_to_retract"] == res["grades_retracted"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_retraction_rides_the_same_commit_as_the_score(self):
+        # If the score lands and the retraction does not, the grades outlive the
+        # value they were computed from — the exact state this repairs.
+        s, _ = await _run(apply=True, limit=25, grades_per_event=_GRADES)
+        order = [
+            "score" if "UPDATE events SET home_score" in sql
+            else "retract" if "UPDATE futures_outcomes" in sql
+            else "commit?"
+            for sql, _p in s.calls
+            if "UPDATE events SET home_score" in sql or "UPDATE futures_outcomes" in sql
+        ]
+        assert order == ["score", "retract"]
+        assert s.commits >= 1
+
+    def test_is_winner_goes_to_unknown_and_never_to_a_graded_loss(self):
+        # NULL is UNKNOWN truth; False is an affirmative graded LOSS (see the
+        # FuturesOutcome.is_winner column comment). Retracting to False would
+        # publish a fabricated loss — the CAL-P056 class, one layer over.
+        from scripts.repair_event_final_scores import (
+            _RETRACT_EVENTS_DERIVED_GRADES_SQL as sql,
+        )
+
+        assert "is_winner = NULL" in sql
+        assert "resolution_source = NULL" in sql
+        assert "is_winner = false" not in sql.lower()
+
+    def test_the_retraction_makes_the_market_regradeable_again(self):
+        # The whole mechanism: `backfill_winners` re-resolves a market only when
+        # no outcome carries `is_winner AND resolution_source NOT IN
+        # <overwritable>`. game_score is not in that set, so clearing BOTH
+        # columns is what puts the market back in front of the real grader.
+        from app.utils.resolution_authority import (
+            EVENTS_DERIVED_SOURCES,
+            OVERWRITABLE_WINNER_SOURCES,
+        )
+
+        blocking = EVENTS_DERIVED_SOURCES - set(OVERWRITABLE_WINNER_SOURCES)
+        assert "game_score" in blocking, (
+            "if game_score ever becomes overwritable this retraction is "
+            "unnecessary — and this test should be the thing that says so"
+        )
