@@ -157,3 +157,61 @@ describe("#6292 — six columns on a phone", () => {
     expect(cellsOf(empty)).toHaveLength(0);
   });
 });
+
+// #7183 — EVERY FIGURE IN THE COLUMN IS AT THE SAME PRECISION.
+//
+// Production (2026-09-19 10:13Z, 390px) printed the 90-100% bucket's error as a
+// bare "+1pp" in a `tabular-nums` column of "-0.5pp" and "+2.7pp", because the
+// cells stringified the raw number and JS drops a trailing ".0".
+//
+// Why the suite above could not see it: its assertions interpolate the fixture's
+// own number — ``toContain(`${BUCKETS[r].error}pp`)`` — which RESTATES the
+// rendering rule instead of pinning a format, and both of its fixtures are
+// non-integer, so they render identically either way. The bug is only reachable
+// through a whole-numbered row, which is what this fixture is. It is not a
+// second copy of the rows above; it exists to be the case they cannot be.
+const WHOLE: AggBucket[] = [
+  // `aggregateBuckets` rounds to 1dp (`Math.round(x * 1000) / 10`), so each of
+  // these is a value that function can really produce — 96.0 - 95.0 = 1.0.
+  { midpoint: 95, n: 15114, winners: 14512, avgProb: 95, actual: 96, error: 1,
+    bucket: "90-100%", ciLower: 95.8, ciUpper: 96.4 },
+  // ...and the negative and exact-zero arms, which sign handling can get wrong
+  // independently: `(-0).toFixed(1)` is "0.0", never "-0.0".
+  { midpoint: 45, n: 68953, winners: 30000, avgProb: 46, actual: 44, error: -2,
+    bucket: "40-50%", ciLower: 43.8, ciUpper: 44.5 },
+  { midpoint: 55, n: 1000, winners: 550, avgProb: 55, actual: 55, error: 0,
+    bucket: "50-60%", ciLower: 52, ciUpper: 58 },
+];
+
+describe("#7183 — a whole-numbered figure keeps its decimal", () => {
+  const MARKUP_W = renderToStaticMarkup(<CalibrationBucketTable buckets={WHOLE} />);
+  const cellText = (r: number, c: number) => textOf(cellsOf(MARKUP_W)[r * 6 + c]);
+
+  test("the ERROR column prints 1dp on every row, signed, never a bare integer", () => {
+    expect(cellText(0, 5)).toBe("+1.0pp");
+    expect(cellText(1, 5)).toBe("-2.0pp");
+    expect(cellText(2, 5)).toBe("0.0pp"); // no "+" at exactly zero, and no "-0.0"
+  });
+
+  test("`Avg Predicted` and `Actual Rate` keep theirs too — same line, same class", () => {
+    expect(cellText(0, 2)).toBe("95.0%");
+    expect(cellText(1, 2)).toBe("46.0%");
+    // The actual-rate cell carries the inline CI span, so assert its leading
+    // figure rather than the whole cell's text.
+    expect(cellsOf(MARKUP_W)[0 * 6 + 3]).toContain(">96.0%");
+    expect(cellsOf(MARKUP_W)[1 * 6 + 3]).toContain(">44.0%");
+  });
+
+  test("no cell in a tabular-nums figure column is at a different precision", () => {
+    // The column-level claim, so a later change that fixes one cell and leaves
+    // another cannot pass. Every figure this table prints carries exactly one
+    // decimal place.
+    const cells = cellsOf(MARKUP_W);
+    expect(cells).toHaveLength(6 * WHOLE.length);
+    for (let r = 0; r < WHOLE.length; r++) {
+      for (const c of [2, 5]) {
+        expect(cellText(r, c)).toMatch(/^[+-]?\d+\.\d(%|pp)$/);
+      }
+    }
+  });
+});
