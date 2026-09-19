@@ -355,6 +355,21 @@ nonisolated struct ProbabilityTimelineResponse: Decodable, Sendable {
     let bucketSeconds: Int
     let timeline: [TimelineEntry]
     let outcomes: [TimelineOutcomeMeta]
+
+    /// How much of the requested window this market was ACTUALLY observed for,
+    /// and on how many distinct instants (#7077, live/399's producer half).
+    ///
+    /// 🔴 `hours` AND `actual_hours` ARE BOTH THE WINDOW THE ROUTE SEARCHED, not
+    /// the data. Asked for 168 h, The Game Awards' 20 hours of prices came back
+    /// under `actual_hours: 168`, so a client that believes either of them draws
+    /// a week and plots one day into it. These two keys are measured from the
+    /// points actually served, so they are the only ones that can say so.
+    ///
+    /// Optional because an older server does not send them and because an empty
+    /// history sends nulls rather than zeros — an absence and an instant must not
+    /// share a shape (gotcha #53).
+    let coverageHours: Double?
+    let observationTimes: Int?
 }
 
 /// Probability snapshot for all tracked outcomes at one timestamp.
