@@ -25,11 +25,20 @@
  * orphan soccer's "Draw" leg: the two team legs vanish and the third stays behind, answering a
  * question whose siblings are gone. The market is judged once and all of its rows go with it.
  *
- * WHY IT FAILS OPEN. Every guard here refuses in the direction of KEEPING the row — a market name
- * carrying a colon is never a bare matchup, an unparseable key is kept, a missing side name means
- * no match. This filter DELETES something a reader can currently see, so the safe direction is
- * "renders exactly as it does today". A venue that prefixed a league ("MLB: Boston vs Tampa Bay")
- * would not be caught, and that is the deliberate choice, not an oversight.
+ * WHY IT FAILS OPEN. Every guard here refuses in the direction of KEEPING the row — an unparseable
+ * key is kept, a missing side name means no match, a name that does not parse as a matchup is kept.
+ * This filter DELETES something a reader can currently see, so the safe direction is "renders
+ * exactly as it does today". A venue that prefixed a league ("MLB: Boston vs Tampa Bay") is not
+ * caught, and that is the deliberate choice, not an oversight.
+ *
+ * The work is done by `labelNamesSide`, and it is worth saying which guard does NOT do it. An
+ * earlier draft rejected any name containing a colon, to keep "Boston vs Tampa Bay: Race to 14
+ * Points". Mutation testing showed that guard could be deleted with every test still green, and the
+ * reason is a proof rather than a gap in the fixtures: a qualifier makes the side label LONGER than
+ * the team name, and a longer string can never be an exact match, a whole-word prefix or a
+ * whole-word suffix of a shorter one. So the colon guard could not change an outcome, and keeping
+ * it would have been unreachable code claiming to protect something. The qualified-market cases are
+ * pinned by tests against the behaviour instead.
  *
  * SCOPE. This is the ux half of #7064. The backend classifies these rows into `player_props[]`
  * (`routes/events.py`, not ux's file set under notice 41); the page is in any case the only place
@@ -83,8 +92,10 @@ export function labelNamesSide(
  * Is `marketName` the bare matchup of this event's two sides — i.e. the event's own moneyline?
  *
  * Both sides must be named, and they must name DIFFERENT sides, so a market that mentions one club
- * twice is not swept up. A colon means the name carries a qualifier ("Boston vs Tampa Bay: Race to
- * 14 Points"), which is a real market about the game and not the game's own question.
+ * twice is not swept up. A qualified name ("Boston vs Tampa Bay: Race to 14 Points") is a real
+ * market about the game rather than the game's own question, and is rejected because the qualifier
+ * leaves the second side reading "Tampa Bay: Race to 14 Points", which names no club — see the
+ * module comment on why there is no separate colon guard.
  */
 export function isEventOwnMoneylineMarket(
   marketName: string | null | undefined,
@@ -92,7 +103,7 @@ export function isEventOwnMoneylineMarket(
   awayTeam: string | null | undefined,
 ): boolean {
   const name = (marketName ?? "").trim();
-  if (!name || name.includes(":")) return false;
+  if (!name) return false;
   if (!fold(homeTeam) || !fold(awayTeam)) return false;
 
   const parts = name.match(SIDE_SEPARATOR);
