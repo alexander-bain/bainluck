@@ -862,6 +862,137 @@ def _opening_baseline_at(outcomes: Iterable[Any]) -> Any:
     return next(iter(stamps))
 
 
+# ─── THE DATED BASIS A "TODAY" CLAIM RESTS ON (#4079, statement A8) ───────────
+#
+# `probability_change_24h` is a PER-WRITE delta — `new - previous` at write
+# time, for a previous write of unknown age — and the card spends it on the
+# sentence "Up 9.5 points today". Measured on production 2026-09-19 09:2xZ over
+# every row that makes that claim (open market, non-null delta at or above the
+# card floor): of 2,445 rows, **927 (38%) are supported by a dated comparison**
+# and the rest are not. 797 carry the right SIGN and a materially wrong AMOUNT,
+# 260 of those against a dated move that does not even clear the card floor; a
+# further 513 have no qualifying dated basis at all, so nothing can authorise
+# the word "today" for them.
+#
+# The sweep's A4 and A7 retire the two loudest wrong classes at the source, but
+# neither can make the AMOUNT right, and neither can cover the ten minutes
+# between a price write and the next sweep — a poll writes a fresh per-write
+# delta and the card spends it immediately.
+#
+# So the claim is not fixed by deleting more deltas. It is fixed by giving the
+# copy layer the dated evidence it was always missing: ONE observed price per
+# in-scope outcome, WITH the instant it was observed. The card then subtracts
+# that from the price it is already holding and states the answer, and a write
+# between sweeps changes that answer to the new correct one rather than to an
+# unvetted per-write number.
+#
+# 🔴 THIS DOES NOT REINTERPRET `probability_change_24h`. That column keeps its
+# meaning and every one of its readers — the sweep, `max_movement_24h`,
+# `/api/futures/movers`' ranking, and `compute_futures_highlight`'s CHOICE of
+# which outcome a card talks about. The bank is a separate, differently-named
+# value that answers a different question: not "is this market interesting"
+# but "may this card print a number and call it today's".
+
+#: The `market_metadata` key the sweep banks the dated observations under.
+#:
+#: A key in the market's existing JSONB rather than a column, because a column
+#: is DDL and the measured alternative was refused on cost: one timestamp per
+#: OUTCOME grew the size-capped shared load artifact 12% (#4079). One small blob
+#: per MARKET, published only for the ~1,495 markets that actually make a
+#: movement claim, is roughly two orders of magnitude cheaper than that.
+DATED_BASIS_METADATA_KEY = "dated_movement_basis"
+
+#: The window a banked basis may be read inside, and the minimum age it must
+#: have before it can date a claim about "today".
+#:
+#: 🔴 BOTH BOUNDS ARE LOAD-BEARING AND THE READER APPLIES THEM ITSELF. The
+#: producer already refuses to bank a basis younger than the minimum — a
+#: twenty-minute-old price cannot date a claim about the day — so the lower
+#: bound here is belt and braces. The UPPER bound is not: it is what makes a
+#: stopped sweep fail CLOSED. A bank nobody refreshes only ever gets older, so
+#: once its basis leaves the window the card stops saying "today" on its own,
+#: without anything having to notice that the sweep died.
+#:
+#: Their twins in `app/tasks/__init__.py` (`MOVEMENT_WINDOW_HOURS`,
+#: `DATED_BASIS_MIN_AGE_HOURS`) are the producer's copy, and the two live in
+#: different modules only because this one may not import Celery. They are held
+#: equal by `test_the_carrier_and_the_sweep_agree_on_the_window` rather than by
+#: hope.
+DATED_BASIS_WINDOW_HOURS = 24
+DATED_BASIS_MIN_AGE_HOURS = DATED_BASIS_WINDOW_HOURS // 2
+
+
+def dated_movement_basis(market: Any) -> dict:
+    """The banked `{outcome_id: [price, observed_at]}` for one market.
+
+    `{}` for every unreadable case, which at the one caller means "no dated
+    evidence" and therefore no dated sentence — the honest-unavailable path,
+    never a guess.
+
+    `market_metadata` is a real column in `MARKET_COLUMNS`, so it is present on
+    BOTH carrier shapes — projected on a plain ORM row, folded onto the row by
+    `to_plain`/`from_plain` — and needs none of `_carrier_stamp`'s branching.
+    What it does need is `__dict__`, never `getattr`: a deferred attribute
+    lazy-loads and raises `MissingGreenlet` on this async path inside the
+    per-item serializer, which empties the whole futures pool rather than
+    dropping one card (gotcha #42). A projection that stopped loading the column
+    therefore degrades to `{}` — exclusion — rather than to an exception.
+
+    The shape is validated here and not at the caller, because a malformed cell
+    is exactly the case where a caller reading it positionally would print a
+    number it made up.
+    """
+    state = _instance_dict(market)
+    if state is None:
+        # The `__slots__` carrier (`tennis_population.MarketRow`, #5778). It has
+        # no instance dict and no metadata slot; reading the attribute is safe
+        # there for the reason `_carrier_stamp` gives, but there is nothing to
+        # read, so this is exclusion by construction.
+        return {}
+    metadata = state.get("market_metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    bank = metadata.get(DATED_BASIS_METADATA_KEY)
+    if not isinstance(bank, dict):
+        return {}
+    return bank
+
+
+def read_dated_basis_entry(entry: Any) -> tuple[float | None, datetime | None]:
+    """One bank cell as `(price, observed_at)`, or `(None, None)`.
+
+    Written as a named function rather than a two-line unpack at the caller
+    because every failure mode here is a wrong NUMBER on a card: a cell that is
+    the wrong length, a price that is not a price, a stamp that will not parse.
+    Each of those folds to "no dated evidence", and none of them may fold to a
+    partial answer — a price with no instant cannot be aged, and an instant with
+    no price cannot be subtracted.
+
+    The stamp is written by the sweep as `...Z`; `fromisoformat` accepts that
+    from Python 3.11, which is this project's floor. A naive stamp is read as
+    UTC, the same reading every other consumer in this module applies to the
+    columns `tasks/` writes.
+    """
+    if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+        return None, None
+    raw_price, raw_at = entry
+    if isinstance(raw_price, bool) or not isinstance(raw_price, (int, float, str)):
+        return None, None
+    try:
+        price = float(raw_price)
+    except (TypeError, ValueError):
+        return None, None
+    if not isinstance(raw_at, str):
+        return None, None
+    try:
+        observed_at = datetime.fromisoformat(raw_at)
+    except ValueError:
+        return None, None
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    return price, observed_at
+
+
 def opening_baseline_stamp(market: Any) -> Any:
     """`opening_baseline_at` for a market on EITHER carrier shape (#4758).
 
@@ -1271,6 +1402,11 @@ __all__ = [
     "FuturesOutcomeSnapshot",
     "SportSnapshot",
     "market_load_options",
+    "DATED_BASIS_METADATA_KEY",
+    "DATED_BASIS_WINDOW_HOURS",
+    "DATED_BASIS_MIN_AGE_HOURS",
+    "dated_movement_basis",
+    "read_dated_basis_entry",
     "opening_baseline_stamp",
     "price_poll_stamp",
     "displayed_price_stamp",
