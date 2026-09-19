@@ -104,8 +104,14 @@ enum EvolutionLeaderboardGeometry {
     /// A column sized against `14%` while the row draws `14.0%` is the wrap all
     /// over again, one release later and harder to see; the only way that cannot
     /// happen is for the measured string and the drawn string to be the same call.
-    static func probLabel(_ pct: Double) -> String {
-        pct < 1 && pct > 0 ? String(format: "%.1f%%", pct) : "\(Int(pct.rounded()))%"
+    /// `nil` — no supported probability — is the app's absent marker, never `0%`.
+    /// `formatProbabilityOrDash` already states the rule this table was missing:
+    /// a probability we do not have is not a probability of zero, and the backend
+    /// serialises "no price" and "priced at exactly zero" identically as `null`.
+    /// A MEASURED zero still prints `0%` (#5899 pins it).
+    static func probLabel(_ pct: Double?) -> String {
+        guard let pct else { return absentProbabilityMarker }
+        return pct < 1 && pct > 0 ? String(format: "%.1f%%", pct) : "\(Int(pct.rounded()))%"
     }
 
     /// The sign is drawn here and the magnitude comes from `deltaPointsNumber`, so
@@ -113,7 +119,13 @@ enum EvolutionLeaderboardGeometry {
     /// (#6931). The strings are byte-for-byte what this function always returned —
     /// `printf` rounds the magnitude and prepends the sign, so pulling the sign out
     /// front changes nothing; `AHeroMoveAgreesWithTheTable6931Tests` sweeps it.
-    static func changeLabel(_ pct: Double) -> String {
+    ///
+    /// A `nil` delta draws the SAME dash a zero draws, deliberately: on screen the
+    /// dash already reads as "nothing to report", which is true of both, and #7285
+    /// asked for the visible column not to move. The two part company only when
+    /// spoken — see `spokenChange`.
+    static func changeLabel(_ pct: Double?) -> String {
+        guard let pct else { return "-" }
         if pct > 0 { return "+\(deltaPointsNumber(pct))%" }
         if pct < 0 { return "-\(deltaPointsNumber(pct))%" }
         return "-"
@@ -121,9 +133,25 @@ enum EvolutionLeaderboardGeometry {
 
     /// Spoken form of the same delta. `-` is a dash on screen and nothing at all in
     /// a sentence.
-    static func spokenChange(_ pct: Double) -> String {
-        pct == 0 ? "unchanged over 24 hours"
-                 : "\(String(format: "%+.1f", pct))% over 24 hours"
+    ///
+    /// 🔴 #7285 — `spokenChange((change ?? 0) * 100)` TOLD A VOICEOVER READER A
+    /// MARKET WAS "unchanged over 24 hours" WHENEVER WE HAD NO 24-HOUR NUMBER FOR
+    /// IT. Three of five table rows on `/futures/58776433` serve a null change and
+    /// twenty-two of twenty-four on `/futures/58321581`, so the sentence was not a
+    /// corner: it was most of the board, and it is the one claim the sighted reader
+    /// never sees made (they get the dash). Absence and no-movement are different
+    /// facts and only the spoken form has room to say so.
+    static func spokenChange(_ pct: Double?) -> String {
+        guard let pct else { return "24-hour change not available" }
+        return pct == 0 ? "unchanged over 24 hours"
+                        : "\(String(format: "%+.1f", pct))% over 24 hours"
+    }
+
+    /// Spoken form of the price, for the same reason: `absentProbabilityMarker` is
+    /// an em dash, which a screen reader says as nothing at all, so a row would
+    /// name a participant and then state no number. Said in words instead.
+    static func spokenProb(_ pct: Double?) -> String {
+        pct == nil ? "probability not available" : probLabel(pct)
     }
 
     // MARK: - Fonts
@@ -223,9 +251,12 @@ enum EvolutionLeaderboardGeometry {
     static func columns(
         for outcomes: [TimelineOutcomeMeta], at typeSize: DynamicTypeSize = .large
     ) -> Columns {
+        // The optional is carried into the label, not coalesced before it: the
+        // measured string and the drawn string are one call (see above), and since
+        // #7285 the drawn string for a null is a dash, not `0%`.
         columns(
-            probs: outcomes.map { probLabel(($0.currentProbability ?? 0) * 100) },
-            changes: outcomes.map { changeLabel(($0.probabilityChange24h ?? 0) * 100) },
+            probs: outcomes.map { probLabel($0.currentProbability.map { $0 * 100 }) },
+            changes: outcomes.map { changeLabel($0.probabilityChange24h.map { $0 * 100 }) },
             typeSize: typeSize)
     }
 }
