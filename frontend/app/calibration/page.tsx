@@ -334,6 +334,35 @@ export default function CalibrationPage() {
   // the in-request fallback omits it — never regress to the noisy 100 floor.
   const minCategoryOutcomes = data?.min_category_outcomes ?? 1000;
 
+  // #7302 — the publish bar is the ONLY filter, because it is the only one the
+  // page tells the reader about.
+  //
+  // There used to be a `.slice(0, 15)` on the end of this chain, and it was a
+  // second, unstated filter that three pieces of the page's own copy deny:
+  //
+  //   * the Categories stat card prints `categories.length`, so it read "15"
+  //     while 21 categories cleared the bar;
+  //   * the Category Breakdown table calls itself "Every published category";
+  //   * the niche card promises, in so many words, "the moment one crosses the
+  //     bar it appears above automatically".
+  //
+  // Measured on the live payload 2026-09-19 21:38Z, 21 categories cleared the
+  // 1,000-outcome bar and the slice rendered 15. The six it dropped —
+  // tech (3,444), cricket (3,165), other (2,591), geopolitics (1,749),
+  // rugbyleague_nrl (1,219), aussierules_afl (1,211) — appeared NOWHERE: not in
+  // the card's count, not in the "every published category" table, and not in
+  // the niche card's 109 either, because that list is the backend's BELOW-bar
+  // population. 15 + 109 = 124 against a payload holding 130. Six graded
+  // categories fell down the gap between two lists that are each described as
+  // exhaustive.
+  //
+  // The eligibility basis stays ALL-COHORT deliberately — do not add
+  // `cohortFilter` here. #7195 settled that: the bar is applied by the backend
+  // on the all-cohort count (geopolitics is published at 1,749 all-cohort while
+  // its traded count is 732), so cohort-scoping the bar would park a category
+  // under a 1,000 bar beside a table publishing one at 732 in the same view.
+  // The COUNTS are cohort-scoped, downstream, in `categoryMetrics` — which is
+  // the #7190 fix and is a different question from which categories exist.
   const categories = useMemo(() => {
     if (!normalized) return [];
     const catMap: Record<string, number> = {};
@@ -343,8 +372,7 @@ export default function CalibrationPage() {
     return Object.entries(catMap)
       .filter(([, n]) => n >= minCategoryOutcomes)
       .sort(([, a], [, b]) => b - a)
-      .map(([cat]) => cat)
-      .slice(0, 15);
+      .map(([cat]) => cat);
   }, [normalized, minCategoryOutcomes]);
 
   // Per-source metrics for the comparison section
@@ -424,9 +452,9 @@ export default function CalibrationPage() {
   // Option C amendment 6: the section note's numerator. Counted over the rows
   // the table actually renders, intersected with the pooled key map — NOT over
   // `pooledByCategory` alone, which includes normalized keys below the
-  // `minCategoryOutcomes` floor or outside the top-15 slice and therefore
-  // invisible. Same population as the denominator, or the fraction is a claim a
-  // reader cannot check.
+  // `minCategoryOutcomes` floor and therefore invisible. Same population as the
+  // denominator, or the fraction is a claim a reader cannot check. (The "or
+  // outside the top-15 slice" clause went with the slice itself — #7302.)
   const pooledRenderedRowCount = useMemo(
     () =>
       categoryMetrics.filter(
