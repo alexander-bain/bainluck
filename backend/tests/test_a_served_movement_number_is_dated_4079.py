@@ -126,7 +126,36 @@ NOW = datetime(2026, 9, 19, 14, 0, tzinfo=UTC)
 #: The age of the GTA specimen's own banked observation, and a basis that is
 #: INSIDE the window by a comfortable margin — the boundary cases get their own
 #: tests rather than riding on every fixture.
-BASIS_AT = NOW - timedelta(hours=19, minutes=18)
+BASIS_AGE = timedelta(hours=19, minutes=18)
+
+BASIS_AT = NOW - BASIS_AGE
+
+
+def _real_clock_basis() -> datetime:
+    """A basis aged off the REAL clock, for call sites that read the real clock.
+
+    ⚠️ `BASIS_AT` IS AN ABSOLUTE INSTANT AND MUST NEVER FEED A REAL-CLOCK CALL
+    SITE. Every test that injects `now=NOW` is correctly frozen; but
+    `_format_market_detail` takes no `now` and reads `datetime.now(UTC)`
+    itself, so pairing it with `BASIS_AT` dates the basis against a clock that
+    keeps moving. `DATED_BASIS_WINDOW_HOURS` is 24 and `BASIS_AT` is
+    2026-09-18T18:42:00Z, so those tests began failing the moment real time
+    passed 2026-09-19T18:42:00Z — 24.0h — and, because the anchor recedes for
+    good, they would have stayed red for ever. That is gotcha #44 in its exact
+    form: offset FIRST, then pin. An anchor that is a fixed DATE is only fixed
+    until tomorrow.
+
+    The specimen's NUMBERS (0.705 → 0.66, the -4.5 point day) stay frozen — the
+    file's docstring is right that they must be. It is the INSTANT that has to
+    move, and only for the callers that read the clock themselves.
+
+    Worth knowing when this bit: it also made
+    `test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column`
+    pass VACUOUSLY. That test asserts the amount is withheld, and a basis
+    outside the window withholds it for a reason that has nothing to do with
+    the squeeze it is named for.
+    """
+    return datetime.now(UTC) - BASIS_AGE
 
 CANONICAL_KEY = "served-movement-dated-4079"
 
@@ -224,7 +253,7 @@ def _cell(price, at=BASIS_AT):
 # re-measures this file against the clock and reports a defect.
 
 
-def _game_awards_market(*, bank=True, market_id=58321581):
+def _game_awards_market(*, bank=True, market_id=58321581, basis_at=BASIS_AT):
     """The specimen. `market_id` exists because of a REAL vacuity trap.
 
     `_score_futures` hydrates its rows through the shared `market_load`
@@ -247,7 +276,7 @@ def _game_awards_market(*, bank=True, market_id=58321581):
         # an observation only where one qualifies, and the two rungs below have
         # none. A fixture where every row were datable could not tell a served
         # refusal from a served number.
-        bank={str(leader.id): _cell(0.705)} if bank else None,
+        bank={str(leader.id): _cell(0.705, basis_at)} if bank else None,
     )
 
 
@@ -391,13 +420,87 @@ def test_the_detail_ladder_serves_the_dated_move_too():
     `_format_market_detail`, so a fix that lived only in the feed cannot pass
     it, and a withdrawal of it cannot pass it either.
     """
-    market = _game_awards_market()
+    # `_format_market_detail` reads the real clock, so the basis is aged off it.
+    market = _game_awards_market(basis_at=_real_clock_basis())
     detail = _format_market_detail(market, ["kalshi"], set())
     by_name = {o["name"]: o for o in detail["outcomes"]}
     assert by_name["Grand Theft Auto VI"]["probability_change_24h"] == (
         pytest.approx(0.66 - 0.705)
     )
     assert by_name["Resident Evil Requiem"]["probability_change_24h"] is None
+
+
+def test_the_real_clock_basis_sits_inside_the_window_at_every_hour():
+    """The guard for the failure that took this file red at 2026-09-19T18:42Z.
+
+    `BASIS_AT` is an absolute instant and `_format_market_detail` reads the
+    real clock, so the pair was only valid for the 24 hours after the specimen
+    was captured; at 24.0h exactly the two detail assertions flipped to `None`
+    and would have stayed there permanently.
+
+    This asserts the property the detail tests actually depend on — that the
+    real-clock basis is strictly inside the dating window, with margin on both
+    sides — rather than re-asserting the arithmetic. It holds at every hour of
+    every day, which is the whole point.
+    """
+    age_hours = (datetime.now(UTC) - _real_clock_basis()).total_seconds() / 3600
+
+    assert DATED_BASIS_MIN_AGE_HOURS < age_hours < DATED_BASIS_WINDOW_HOURS, (
+        f"the real-clock basis is {age_hours:.2f}h old, outside the "
+        f"{DATED_BASIS_MIN_AGE_HOURS}-{DATED_BASIS_WINDOW_HOURS}h window"
+    )
+    # Margin, so a slow shard cannot drift the basis out mid-run.
+    assert age_hours < DATED_BASIS_WINDOW_HOURS - 4
+
+
+def test_no_real_clock_call_site_is_dated_off_the_absolute_anchor():
+    """`BASIS_AT` may only reach callers that are handed a frozen `now`.
+
+    Written as source inspection because the failure mode is silent: pairing
+    the absolute anchor with a real-clock caller does not raise, it just
+    withholds the number — which reads as a correct refusal and, in the squeeze
+    test's case, as a PASS.
+
+    Parsed with `ast`, not a regex: a non-greedy `\\(...\\)` stops at the first
+    close-paren and truncates the very nested call this is looking for.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(inspect.getmodule(_real_clock_basis)))
+
+    def _name(node):
+        return getattr(node.func, "id", None) if isinstance(node, ast.Call) else None
+
+    checked = 0
+    for node in ast.walk(tree):
+        if _name(node) != "_format_market_detail" or not node.args:
+            continue
+        built_inline = node.args[0]
+        if _name(built_inline) != "_game_awards_market":
+            continue  # built on its own line above; that call is checked below
+        checked += 1
+        assert any(
+            kw.arg == "basis_at" and _name(kw.value) == "_real_clock_basis"
+            for kw in built_inline.keywords
+        ), f"a real-clock call site is dated off the frozen anchor (line {node.lineno})"
+
+    # Also cover the form where the market is built on a preceding line: any
+    # `_game_awards_market(basis_at=...)` in the module must use the helper.
+    for node in ast.walk(tree):
+        if _name(node) != "_game_awards_market":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "basis_at":
+                checked += 1
+                assert _name(kw.value) == "_real_clock_basis", (
+                    f"`basis_at` on line {node.lineno} is not the real-clock helper"
+                )
+
+    assert checked >= 6, (
+        f"the inspection matched only {checked} call sites, so it is not "
+        "reading this module — the guard would pass on a reverted fix"
+    )
 
 
 def test_the_ladder_is_dated_RAW_because_the_ladder_PRINTS_raw():
@@ -409,7 +512,9 @@ def test_the_ladder_is_dated_RAW_because_the_ladder_PRINTS_raw():
     that population — and the served price is asserted beside the move, because
     "the amount is raw" is only true while the price beside it is.
     """
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    detail = _format_market_detail(
+        _game_awards_market(basis_at=_real_clock_basis()), ["kalshi"], set()
+    )
     gta = {o["name"]: o for o in detail["outcomes"]}["Grand Theft Auto VI"]
     assert gta["probability"] == pytest.approx(0.66)
     assert gta["probability_change_24h"] == pytest.approx(0.66 - 0.705)
@@ -429,7 +534,10 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     above is the divisor. Its control is that test: blanket-nulling the ladder
     fails there.
     """
-    market = _game_awards_market()
+    # Real-clock basis, so the withholding this test asserts can only be the
+    # SQUEEZE. Dated off `BASIS_AT` the amount is withheld for staleness and the
+    # test passes without exercising the divisor at all.
+    market = _game_awards_market(basis_at=_real_clock_basis())
     market.outcomes[1].current_probability = 0.45
     market.outcomes[2].current_probability = 0.30
     detail = _format_market_detail(market, ["kalshi"], set())
@@ -728,7 +836,9 @@ async def test_the_wire_contract_is_unchanged_so_shipped_CLIENTS_still_read_it()
     assert "movement" in _distribution_row(card, "Grand Theft Auto VI")
     for row in card["discover_card"]["distribution_outcomes"]:
         assert "movement_stored" not in row
-    detail = _format_market_detail(_game_awards_market(), ["kalshi"], set())
+    detail = _format_market_detail(
+        _game_awards_market(basis_at=_real_clock_basis()), ["kalshi"], set()
+    )
     assert "probability_change_24h" in detail["outcomes"][0]
 
 
