@@ -3320,6 +3320,55 @@ UNOBSERVED_PRIOR_BATCH = 10_000
 STALE_RANK_BATCH = 50_000
 GRADED_RANK_BATCH = 50_000
 
+#: How old the OLDEST observation in the window must be before statement A7 will
+#: treat it as a dated baseline for a claim about "today" (#4079).
+#:
+#: Half the window, DERIVED from it rather than typed as 12, so the two cannot
+#: drift into disagreeing about what "today" means.
+#:
+#: 🔴 THIS IS THE REFUSAL-TO-GUESS BOUND, and it is the half of A7 that keeps it
+#: honest. A7 contradicts a claim by comparing `current_probability` against the
+#: oldest price we observed inside the window. If that observation is twenty
+#: minutes old, the comparison is a statement about twenty minutes and refuting
+#: a claim about the day with it would be the same error A7 exists to correct,
+#: pointed the other way. An outcome we have only just started observing has no
+#: dated baseline, so A7 leaves it alone — "we never looked that far back" and
+#: "we looked and it went the other way" are different findings and only the
+#: second one refutes the claim (gotcha #53, and A4's `obs.lo IS NOT NULL` is
+#: the same stance one step weaker).
+#:
+#: MEASURED on production 2026-09-19 07:45Z over A4's scope (open market,
+#: `|delta| >= 0.02`, same-scale observations in the window): of 2,794 rows,
+#: 2,386 (85%) carry a basis at least twelve hours old and 1,441 (52%) one at
+#: least twenty. Raising the bar to twenty hours would drop A7's population from
+#: 143 rows to 91 and buy nothing: at twelve hours the card's word is already
+#: wrong about at least half the day it names.
+#: Integer division deliberately: `window_hours` is bound as an int in every
+#: other statement here and asyncpg infers a bare parameter from what it is
+#: handed, so keeping both the same type keeps both interval expressions the
+#: same expression.
+DATED_BASIS_MIN_AGE_HOURS = MOVEMENT_WINDOW_HOURS // 2
+
+#: Rows retired per run by statement A7, the CONTRADICTED-DIRECTION sweep,
+#: biggest claim first.
+#:
+#: Its own constant for the reason every other statement here has one — a
+#: separate backlog against a separate predicate — and sized the same way:
+#: A7's whole standing population at the reader-visible floor measured **143
+#: rows at 07:47Z on 2026-09-19 and 153 four minutes later**, so one run clears
+#: the standing backlog many times over and this ceiling exists only to keep a
+#: regressing writer from blowing the task's 120 s `soft_time_limit`. (Both
+#: numbers are quoted because the drift is the point: the population accrues
+#: continuously as writers strand deltas, so a single figure would read as a
+#: fixed backlog when it is a rate.)
+#:
+#: COST, paid explicitly because A7 is the second statement to touch
+#: `futures_odds_snapshots`: it reuses A4's lateral over A4's rows and adds
+#: three aggregates to it (the ordered first value, `min(captured_at)` and the
+#: source count) rather than opening a second scan. EXPLAIN ANALYZE on
+#: production is quoted at the statement.
+CONTRADICTED_DIRECTION_BATCH = 10_000
+
 
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.update_max_movement")
 def update_max_movement(self):
@@ -3400,6 +3449,16 @@ def update_max_movement(self):
     retired — that widening would have been INERT. A3 and A4 instead take the
     rank claim in their own `SET`, because their rows are open, ungraded and
     freshly stamped, so A5 and A6 can never reach them.
+
+    Statement A7 exists because A4 bounds the SIZE of the claim and never its
+    DIRECTION, and a claim can sit inside the window's extrema while pointing
+    the wrong way. A4 asks "did it travel this far"; A7 asks "did it travel this
+    way", against the oldest price we observed in the window. Measured
+    2026-09-19: of 2,794 rows in A4's scope, 149 have a dated comparison that
+    materially contradicts their sign against a basis at least twelve hours old,
+    and A4 keeps 143 of them — nearly disjoint populations. Four were movement
+    chips on the served feed that minute, two of them telling a reader an
+    outcome that had risen forty points was down seven.
 
     Statement C exists because statement B structurally cannot lower a market.
     B drives off `GROUP BY market_id` over non-null deltas, so a market whose
@@ -3841,8 +3900,160 @@ def update_max_movement(self):
                 {"batch": GRADED_RANK_BATCH},
             )
 
-            # B. Recompute the per-market maximum over what survived A, A2, A3
-            #    and A4.
+            # A7. Retire deltas whose DIRECTION a dated comparison contradicts
+            #     (#4079). A4's sibling, lettered after A5/A6 to keep the list
+            #     monotonic; it is a DELTA statement and runs before B like
+            #     every other one.
+            #
+            #     🔴 WHAT A4 CANNOT SEE, WHICH IS THE WHOLE REASON THIS EXISTS.
+            #     A4 is an OVERSTATEMENT test: it asks whether the claimed move
+            #     is bigger than the window's extrema can justify. It never asks
+            #     whether the claim is a dated comparison at all, and a claim
+            #     can sit comfortably inside the extrema while pointing the
+            #     wrong way. Codex's counterexample, 0735Z: 23 h ago 0.40, 1 h
+            #     ago 0.60, now 0.50. The stored per-write delta is -0.10, which
+            #     is within [lo, hi] and which A4 therefore KEEPS — while the
+            #     dated change over the day is +0.10. The card reads "down 10
+            #     points today" about an outcome that rose ten.
+            #
+            #     MEASURED on production 2026-09-19 07:45-07:47Z, over A4's own
+            #     scope: of 2,794 rows, **172 carry a delta whose sign a dated
+            #     comparison materially contradicts, 149 of them against a basis
+            #     at least twelve hours old — and A4 keeps 143 of those 149
+            #     (96%).** The two statements are very nearly disjoint
+            #     populations, which is why this is a seventh statement and not
+            #     a widening of A4. A4 fires on 92 rows in the same scope.
+            #
+            #     THE READER'S VERSION, off the served feed the same minute —
+            #     4 of the 49 movement chips on `/api/feed?limit=100`:
+            #
+            #       * "S&P 500 (SPY) closes above $745 on September 21?" — the
+            #         chip says DOWN 7.5 points. The outcome was observed at
+            #         0.49 eighteen and a half hours ago and is at 0.895 now: it
+            #         rose forty points. Its neighbour `$735` is the same story.
+            #       * "CMA Music Video of the Year 2026 / Choosin' Texas" — DOWN
+            #         10 points, against 0.570 -> 0.635 over 23.5 h.
+            #       * "UFC Flyweight champion / Alexandre Pantoja" — DOWN 3.5
+            #         against a 2-point rise.
+            #
+            #     AND THE CONTROL IS ITS OWN SIBLING, which is what makes this
+            #     testable rather than plausible: `$740`, in the SAME market,
+            #     written by the same poll against a basis of the same age,
+            #     claims +39.5 and rose +39.5. A7 leaves it alone. Any predicate
+            #     that takes `$740` with `$745` is indiscriminate, not working.
+            #
+            #     THE BASIS IS THE OLDEST OBSERVATION IN THE WINDOW, which is
+            #     also the one nearest the window's far edge, and it must be at
+            #     least `DATED_BASIS_MIN_AGE_HOURS` old — see that constant for
+            #     why a fresh basis is a refusal rather than a pass.
+            #
+            #     🔴 `sources = 1`, AND IT COSTS NOTHING TODAY. A4 subtracts a
+            #     blend from the EXTREMA of its constituents, and argues that a
+            #     blend lies between them; A7 subtracts a blend from ONE
+            #     constituent's row, and that argument is not available to it. A
+            #     systematic offset between two same-scale sources could
+            #     manufacture a sign. So A7 additionally refuses any outcome
+            #     observed from more than one bookmaker in the window. MEASURED:
+            #     all 2,794 rows in scope are single-source today, so the guard
+            #     retires the same 143 rows with it as without it — it is a
+            #     structural fail-closed for the day a multi-source outcome
+            #     appears, bought for zero coverage. `SCALE_IDENTICAL_SNAPSHOT_SOURCES`
+            #     still applies on top of it, for A4's reason.
+            #
+            #     NO SEPARATE TOLERANCE, unlike A4. A4 pads by one point to
+            #     absorb blend-vs-constituent drift; `sources = 1` removes that
+            #     term outright, and the materiality bar below is the full card
+            #     floor — twice A4's pad — so the dated move must clear the same
+            #     threshold that decides whether a chip is drawn at all.
+            #
+            #     ONE-DIRECTIONAL IN A4'S SENSE. It fires only on a CONTRADICTED
+            #     direction, never on a magnitude disagreement: a claim that
+            #     understates a move it got the sign of is left standing, and a
+            #     delta-blind writer nudging the price further the way the claim
+            #     already points can only move the dated change further onto the
+            #     claim's own side. Drift cannot turn an honest caption into a
+            #     swept one.
+            #
+            #     NULL rather than the dated change itself, for A4's reason
+            #     exactly: storing the windowed number would silently convert a
+            #     per-write column into a windowed one for the whole served book
+            #     and rewrite `/api/futures/movers`' ranking input. Every reader
+            #     already treats NULL as "no movement", so the card loses a
+            #     wrong word rather than gaining a new kind of number — the
+            #     honest-unavailable claim, in the vocabulary that already ships.
+            #
+            #     COST, EXPLAIN ANALYZE of this selection on production
+            #     2026-09-19 07:51Z, quoted as the RANGE two consecutive runs
+            #     actually gave rather than the friendlier of them: **0.77 s and
+            #     1.16 s** at this limit, against A4's 1.77 s over the same
+            #     rows. Comparable because the added aggregates ride A4's
+            #     existing scan of `futures_odds_snapshots` rather than opening
+            #     a second one; the run's total stays far inside the 120 s
+            #     `soft_time_limit`.
+            contradicted = await session.execute(
+                text("""
+                    UPDATE futures_outcomes
+                    SET probability_change_24h = NULL
+                    WHERE id IN (
+                        SELECT fo.id
+                        FROM futures_outcomes fo
+                        JOIN futures_markets fm ON fm.id = fo.market_id
+                        CROSS JOIN LATERAL (
+                            SELECT (array_agg(
+                                        s.probability ORDER BY s.captured_at
+                                    ))[1] AS basis,
+                                   min(s.captured_at) AS basis_at,
+                                   count(DISTINCT s.bookmaker) AS sources,
+                                   bool_or(
+                                       s.bookmaker <> ALL(:scale_identical)
+                                   ) AS foreign_scale
+                            FROM futures_odds_snapshots s
+                            WHERE s.outcome_id = fo.id
+                              AND s.captured_at
+                                  > now() - (:window_hours * interval '1 hour')
+                        ) obs
+                        WHERE fo.probability_change_24h IS NOT NULL
+                          AND fo.current_probability IS NOT NULL
+                          AND abs(fo.probability_change_24h) >= :floor
+                          AND fm.status = 'open'
+                          AND obs.basis IS NOT NULL
+                          -- `IS FALSE` for A4's reason: NULL and TRUE must both
+                          -- fail, so the fail-closed intent is readable.
+                          AND obs.foreign_scale IS FALSE
+                          AND obs.sources = 1
+                          AND obs.basis_at
+                              <= now()
+                                 - (:basis_age_hours * interval '1 hour')
+                          -- Direction AND materiality in one CASE, written as
+                          -- two subtractions rather than `abs()` + `sign()` so
+                          -- that each arm reads as the contradiction it tests:
+                          -- a claim that it ROSE, refuted by a dated FALL of at
+                          -- least the card floor, and the mirror.
+                          AND CASE
+                                WHEN fo.probability_change_24h > 0
+                                THEN obs.basis - fo.current_probability
+                                     >= :floor
+                                ELSE fo.current_probability - obs.basis
+                                     >= :floor
+                              END
+                        ORDER BY abs(fo.probability_change_24h) DESC
+                        LIMIT :batch
+                    )
+                """),
+                {
+                    "window_hours": MOVEMENT_WINDOW_HOURS,
+                    "basis_age_hours": DATED_BASIS_MIN_AGE_HOURS,
+                    # Decimal, never the float — A4's note above explains why a
+                    # `float` here makes a delta sitting exactly on the floor
+                    # fail its own floor test.
+                    "floor": floor,
+                    "batch": CONTRADICTED_DIRECTION_BATCH,
+                    "scale_identical": list(SCALE_IDENTICAL_SNAPSHOT_SOURCES),
+                },
+            )
+
+            # B. Recompute the per-market maximum over what survived A, A2, A3,
+            #    A4 and A7.
             result = await session.execute(text("""
                 UPDATE futures_markets fm
                 SET max_movement_24h = sub.max_mv
@@ -3875,7 +4086,7 @@ def update_max_movement(self):
                   )
             """))
 
-            # One commit for all of them: a reader must never see A/A2/A3/A4's
+            # One commit for all of them: a reader must never see A/A2/A3/A4/A7's
             # cleared outcomes against B and C's un-recomputed markets, because
             # between those two states the superset bound is false. A5 and A6
             # join the same transaction for the card's sake rather than the
@@ -3888,6 +4099,7 @@ def update_max_movement(self):
             graded_rows = graded.rowcount
             impossible_rows = impossible.rowcount
             unobserved_rows = unobserved.rowcount
+            contradicted_rows = contradicted.rowcount
             rank_expired_rows = rank_expired.rowcount
             rank_graded_rows = rank_graded.rowcount
             cleared_markets = cleared.rowcount
@@ -3929,6 +4141,14 @@ def update_max_movement(self):
                 # quieter half. Folding them would hide the first big drain
                 # behind a number that was already moving.
                 "unobserved_retired": unobserved_rows,
+                # #4079 / A7. Its own counter for the reason each of the three
+                # above has one, and here the separation is the diagnosis: a
+                # non-zero `unobserved_retired` says a writer is OVERSTATING,
+                # while a non-zero `contradicted_retired` says a writer is
+                # stranding deltas long enough for the market to turn around
+                # under them. Same writers, opposite failures, and only
+                # separate counters can tell an operator which one is running.
+                "contradicted_retired": contradicted_rows,
                 "cleared_markets": cleared_markets,
                 # Both backlogs have to be empty before the strip is honest, so
                 # `backlog_drained` reports the AND. Reporting only A's would go

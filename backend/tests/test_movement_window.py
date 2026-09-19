@@ -372,20 +372,21 @@ def test_a_full_batch_reports_the_backlog_as_undrained(run_task) -> None:
 def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
     """And the day it comes up short, the sweep has caught up.
 
-    Six rowcounts because A4 (#4079) is the FOURTH statement to touch
-    `futures_outcomes`; the list is consumed in execution order, and #4079's
-    two RANK sweeps (A5/A6) make the outcome statements six, so the two market
-    statements are now positions 7 and 8. Each retirement counter is
+    The list is consumed in EXECUTION order, so every statement added to the
+    task shifts everything after it. Seven outcome sweeps now — A, A2, A3, A4,
+    the two RANK sweeps A5/A6, and A7, the dated-direction sweep — which puts
+    the two market statements at positions 8 and 9. Each retirement counter is
     asserted against a DISTINCT value so a statement that read its sibling's
     rowcount could not pass — which is the whole reason this fixture is a
     sequence rather than a repeated number.
     """
-    result, _ = run_task([12, 6, 9, 8, 1, 1, 4, 2])
+    result, _ = run_task([12, 6, 9, 8, 1, 1, 5, 4, 2])
 
     assert result["expired"] == 12
     assert result["graded_retired"] == 6
     assert result["impossible_retired"] == 9
     assert result["unobserved_retired"] == 8
+    assert result["contradicted_retired"] == 5
     assert result["cleared_markets"] == 2
     assert result["backlog_drained"] is True, (
         f"a short run did not report the backlog drained: {result}"
@@ -395,9 +396,10 @@ def test_a_short_batch_reports_the_backlog_as_drained(run_task) -> None:
 def test_the_result_still_carries_the_original_contract(run_task) -> None:
     """LAT-P115's keys survive: the warm is still reported, never swallowed.
 
-    Positions 5 and 6 are #4079's rank sweeps A5/A6, so the recompute is 7th.
+    Positions 5 and 6 are #4079's rank sweeps A5/A6 and position 7 is its
+    dated-direction sweep A7, so the recompute is 8th.
     """
-    result, _ = run_task([5, 3, 7, 2, 0, 0, 9, 1])
+    result, _ = run_task([5, 3, 7, 2, 0, 0, 6, 9, 1])
 
     assert result["updated"] == 9, f"the recompute's rowcount moved key: {result}"
     assert result["movers_warm"] == {"terminal": "ok", "completed": 1}
@@ -611,9 +613,10 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
 
     If A2 landed after them the recompute would read rows A2 was about to
     retire, and the market maximum would be a full run stale. #6536 adds a
-    THIRD outcome sweep (A3) and #4079 a FOURTH (A4) and then two RANK sweeps
-    (A5/A6) under the same obligation, so the count is the number of sweeps and
-    the ordering claim is unchanged.
+    THIRD outcome sweep (A3) and #4079 a FOURTH (A4), then two RANK sweeps
+    (A5/A6) and a SEVENTH, the dated-direction sweep A7, all under the same
+    obligation — so the count is the number of sweeps and the ordering claim is
+    unchanged.
 
     The count is the half that catches a DROPPED sweep, which is why it is
     pinned here rather than left to the per-statement `_phase_*` helpers.
@@ -622,8 +625,8 @@ def test_both_sweeps_run_before_either_market_statement(run_task) -> None:
     outcome_idx = [i for i, s in enumerate(events) if "UPDATE futures_outcomes" in s]
     market_idx = [i for i, s in enumerate(events) if "UPDATE futures_markets" in s]
 
-    assert len(outcome_idx) == 6, (
-        f"expected all six outcome sweeps, saw {len(outcome_idx)}: {events}"
+    assert len(outcome_idx) == 7, (
+        f"expected all seven outcome sweeps, saw {len(outcome_idx)}: {events}"
     )
     assert max(outcome_idx) < min(market_idx), (
         "a market statement ran before an outcome sweep, so it recomputed over "
