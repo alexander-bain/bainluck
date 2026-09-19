@@ -8,7 +8,7 @@ Pulled out of the 950-line `_sync_espn_live_events` god function in
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update as _sql_update
+from sqlalchemy import or_, select, update as _sql_update
 
 # live/048 — the state ladder's two doors (EVENT-GRAPH-DOCTRINE §R). Safe to
 # import here: `event_completion` imports nothing but `datetime`.
@@ -392,6 +392,47 @@ _ESPN_CLUB_NAME_FIELDS = (
 _ESPN_IDENTITY_LOCATION_FIELD = "location"
 
 
+def _espn_name_probes(espn_team, exclude_word: str = "") -> list[str]:
+    """Significant words from the ESPN payload's club-name fields.
+
+    These are SEARCH PROBES, not evidence. `upsert_team` narrows its pre-mint
+    candidate set with an ILIKE on the first word of the name it was handed,
+    which is the CALLER's spelling of the city — so it can never reach a
+    canonical row that spells the city the other way. `%Los%` does not match
+    `LA Galaxy`, and that is why `Los Angeles G` (12617) was minted beside it
+    while `Los Angeles C`/`New York I`/`New York R` were not: those three share
+    a first word with their canonical and this one does not (#6974).
+
+    The ESPN payload names the club we are about to stamp onto the row, so it
+    is the one probe available here that does not depend on the caller's
+    spelling. Widening the candidate set cannot widen what is ACCEPTED: every
+    candidate still has to pass `_canonical_names_match` against the incoming
+    name, exactly as before. This lets that predicate see rows the ILIKE hid.
+
+    `location` is excluded for the reason the constant above gives — it names a
+    city, not a club. Only `_ESPN_CLUB_NAME_FIELDS` are probed, and words
+    shorter than three characters are dropped because a one-letter fragment
+    (`G`, `C`) is what put us here.
+    """
+    if not espn_team:
+        return []
+    skip = exclude_word.strip().lower()
+    seen: set[str] = set()
+    for field in _ESPN_CLUB_NAME_FIELDS:
+        value = getattr(espn_team, field, None)
+        if not value:
+            continue
+        for raw in str(value).split():
+            word = raw.strip().strip(".,'\"")
+            if len(word) < 3:
+                continue
+            lowered = word.lower()
+            if lowered == skip:
+                continue
+            seen.add(lowered)
+    return sorted(seen)
+
+
 def espn_identity_corresponds(team_name, existing_alternate_names, espn_team) -> bool:
     """Does this ESPN payload name the club we are about to stamp it onto?
 
@@ -491,6 +532,25 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
                 )
             )
             for candidate in fuzzy_result.scalars():
+                if _canonical_names_match(team_name, candidate.name):
+                    team = candidate
+                    break
+
+    if not team:
+        # The probe above is the CALLER's spelling of the city, so it cannot
+        # reach a canonical that spells it the other way — see
+        # `_espn_name_probes`. Same acceptance test, wider candidate set.
+        _probes = _espn_name_probes(
+            espn_team, team_name.split()[0] if team_name else ""
+        )
+        if _probes:
+            probe_result = await session.execute(
+                select(Team).where(
+                    Team.sport_id == sport_id,
+                    or_(*[Team.name.ilike(f"%{p}%") for p in _probes]),
+                )
+            )
+            for candidate in probe_result.scalars():
                 if _canonical_names_match(team_name, candidate.name):
                     team = candidate
                     break
