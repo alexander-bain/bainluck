@@ -1,9 +1,10 @@
-import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData } from "@/lib/types";
+import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import {
   eventSectionKey,
   isSuspendedStatus,
   liveSectionTitle,
 } from "@/lib/eventState";
+import { isTournamentLive } from "@/lib/tournamentLive";
 
 export interface FeedSection {
   key: string;
@@ -122,9 +123,17 @@ export function groupFeedIntoSections(items: FeedItem[]): FeedSection[] {
       // `groupTopMarkets` has run, so the members never join a cross-source group.
       topMarkets.push(item);
     } else if (item.type === "tournament") {
-      // Tournaments sort into live or upcoming based on schedule_status
-      const td = item.data as unknown as Record<string, unknown>;
-      if (td.schedule_status === "in-progress") {
+      // #7065 — the CARD's decider, not a second one. This arm used to read
+      // `schedule_status === "in-progress"` alone, which this repo had already
+      // measured as never occurring (0 of 94 schedule rows / 0 of 7 tournaments,
+      // 2026-08-29; 0 of 2 on 2026-09-19). A dead test makes the `else`
+      // unconditional, so no tournament could EVER reach Live Now here — while
+      // `TournamentCard` decided the badge on the schedule window and drew a
+      // pulsing `● LIVE` on the card directly under the `📅 Upcoming` heading.
+      // Same function now, so the two cannot disagree. `schedule_status` is
+      // still consulted, inside it, in the arm where it is the only evidence.
+      const td = item.data as unknown as FeedTournamentData;
+      if (isTournamentLive(td)) {
         liveNow.push(item);
       } else {
         upcoming.push(item);

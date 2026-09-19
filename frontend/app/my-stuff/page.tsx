@@ -35,6 +35,7 @@ import {
 } from "@/lib/myStuffProgression";
 import { groupAwardRows, type AwardNominee } from "@/lib/myStuffAwards";
 import { MY_STUFF_FEED_PARAMS, followedSportFutures } from "@/lib/myStuffSections";
+import { isTournamentLive } from "@/lib/tournamentLive";
 import { feedItemHasRenderableContent } from "@/components/discover/utils";
 import EntityImage from "@/components/EntityImage";
 import { eventSectionKey, hasNoReportedResult, liveSectionTitle } from "@/lib/eventState";
@@ -335,9 +336,16 @@ function MyTeamsFeed({ principal }: { principal: string }) {
         continue;
       }
       if (item.type === "tournament") {
-        // Tournaments go into live or upcoming based on schedule_status
+        // #7065 — the shared decider, not a third copy. The `schedule_status ===
+        // "in-progress"` test that stood here is dead in production (0 of 94
+        // schedule rows / 0 of 7 tournaments, measured 2026-08-29), so this
+        // `else` was unconditional and a tournament inside its own window was
+        // filed under Upcoming while its card drew `● LIVE`. Exactly the
+        // live/048 + CERT-786 failure in the paragraph below, one card type
+        // over: every copy of a decision ends in an `else` that means
+        // "upcoming", and the copies drift.
         const td = item.data as FeedTournamentData;
-        if (td.schedule_status === "in-progress") {
+        if (isTournamentLive(td)) {
           liveNow.push(item);
         } else {
           upcoming.push(item);
