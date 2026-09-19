@@ -59,6 +59,13 @@ def _names_match(candidate: str, team_name: str, alt_names: Optional[list] = Non
     return False
 
 
+def _normalized_names(team: dict) -> list[str]:
+    """Every non-empty normalized name/alias a team answers to."""
+    all_names = [team["name"]] + (team.get("alternate_names") or [])
+
+    return [n for n in (_normalize_name(name) for name in all_names) if n]
+
+
 def match_outcome_to_team(
     outcome_name: str,
     teams: list[dict],
@@ -76,13 +83,42 @@ def match_outcome_to_team(
     if not outcome_name or outcome_name.lower() in ("yes", "no", "over", "under"):
         return None
 
-    matched_team_ids = []
-    for team in teams:
-        if _names_match(outcome_name, team["name"], team.get("alternate_names")):
-            matched_team_ids.append(team["id"])
+    candidate_norm = _normalize_name(outcome_name)
 
-    if len(matched_team_ids) == 1:
-        return matched_team_ids[0]
+    matched = []
+    exact_team_ids = []
+    for team in teams:
+        if not _names_match(outcome_name, team["name"], team.get("alternate_names")):
+            continue
+
+        names_norm = _normalized_names(team)
+        matched.append((team["id"], names_norm))
+        if candidate_norm and candidate_norm in names_norm:
+            exact_team_ids.append(team["id"])
+
+    # An exact hit beats another row's substring hit. Production teams carry a
+    # city-only alias ("New York" sits on both the Yankees and the Mets), and the
+    # substring arm of _names_match fires that alias against every other club in
+    # the same city — so without this "New York Yankees" read as ambiguous and
+    # bound to nothing (#7188).
+    #
+    # The exception is a candidate that is itself a shortening of another matched
+    # club's name: a bare "Los Angeles" is an exact alias of the Lakers and the
+    # Clippers do not carry it, but it still names either club, so it must stay
+    # ambiguous. Two exact hits (the preseason twin shares the name) and a
+    # truncated fragment like "New York M" (no exact hit at all) also fall
+    # through to the single-match rule below.
+    if len(exact_team_ids) == 1:
+        winner = exact_team_ids[0]
+        shortens_a_sibling = any(
+            team_id != winner and any(candidate_norm in n for n in names_norm)
+            for team_id, names_norm in matched
+        )
+        if not shortens_a_sibling:
+            return winner
+
+    if len(matched) == 1:
+        return matched[0][0]
 
     return None
 
