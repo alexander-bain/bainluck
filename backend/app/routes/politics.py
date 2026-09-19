@@ -445,6 +445,135 @@ _NON_US_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Ranking: the open questions first (#7251)
+# ---------------------------------------------------------------------------
+
+
+def _decidedness(row: dict) -> float:
+    """How settled this question is, 0.0 (wide open) to 1.0 (a foregone conclusion).
+
+    DISTANCE FROM 50 IS ONLY THE BINARY ANSWER, and this page is barely binary
+    at all — `/politics` is mostly multi-candidate "Winner" ladders. Every 98%
+    card in #7251's shopped Gubernatorial table is a THREE-outcome market, and
+    a key written as `abs(prob - 50)` mismodels those in both directions:
+
+    * it cannot see that a 3-way at 97.9% is as settled as a binary at 97.9%
+      (it scores 47.9 against 47.9 — right by accident, for the wrong reason,
+      and wrong the moment the arity changes);
+    * it buries a flat field. A five-way whose leader sits at 2.1% is a
+      perfectly open race and scores 47.9 — LAST — which is #7251's own SCOTUS
+      complaint reproduced by its cure.
+
+    So the two shapes are scored separately and normalised onto one 0..1 scale
+    so a single `sort` can compare them:
+
+    * `outcome_count <= 2` — a one-sided Kalshi "Yes" contract or a true
+      binary. BOTH tails are settled: 2% means "almost certainly no" just as
+      98% means "almost certainly yes". Decidedness is distance from 50. This
+      is what demotes the `<5` tail that the `prob > 95` guard above never
+      covered, WITHOUT widening that guard into a deletion (see
+      `_by_uncertainty`).
+    * `outcome_count > 2` — only the HIGH end is settled. The floor is a flat
+      field (`100/n`), not zero, so the leader's lead is measured from there:
+      a flat 15-way and a flat 3-way both score 0.0, and a 3-way at 97.9%
+      scores 0.97 exactly like a binary at 97.9%.
+
+    Ported unchanged in behaviour from `entertainment._decidedness` (#7278),
+    which is the same defect on the sibling page; the two files keep their own
+    copies because neither imports the other and a shared home for four lines
+    of arithmetic would be the only coupling between them.
+    """
+    prob = row["prob"]
+    if row.get("outcome_count", 2) <= 2:
+        return abs(prob - 50) / 50.0
+    flat = 100.0 / row["outcome_count"]
+    # Clamped because a leader BELOW the flat baseline (a field even wider than
+    # its arity suggests, or a stale rung) is not "negatively decided" — it is
+    # simply as open as a question gets.
+    return max(0.0, min(1.0, (prob - flat) / (100.0 - flat)))
+
+
+# Measured on the 54 served `/politics` rows that carry a volume, 2026-09-19
+# 18:11–18:20Z: min 4 · p10 200 · p25 2,322 · p50 11,029 · p75 23,344 · max
+# 2.6M. The eight thinnest are 4, 5, 9, 127, 146, 200, 269, 395 — and NOTHING
+# SITS BETWEEN 9 AND 127. Every floor in [10, 127) yields the identical
+# partition, so this threshold is a gap in the data rather than a tuned
+# parameter and nobody has to defend it to the digit. It stops being safe only
+# above ~395, which is the volume of the one market this issue is named after.
+_THINLY_TRADED_VOLUME = 100
+
+
+def _never_really_traded(market: FuturesMarket) -> bool:
+    """Has this market ever actually traded? Unknown counts as yes.
+
+    Ranking by uncertainty alone promotes degenerate rows: flipping SCOTUS
+    most-open-first puts a market with **4 contracts** of lifetime volume above
+    one with 11,031. So the thinnest rows are sunk beneath the traded ones.
+
+    A NULL FAILS OPEN, and this file has already ruled why. Coverage over the
+    60 served rows is `volume` 54/60, `liquidity` 30/60, `open_interest` 23/60,
+    `volume_24h` 18/60 — so `volume` is the only column that can carry a floor
+    at all, and reading its 6 NULLs as zero would sink California AG, North
+    Dakota SoS, Alabama AG, the Italy referendum, Maine HD-94 and a Thailand
+    row on no evidence. `_market_row`'s own #6235/#2950 note governs:
+    "a priced zero is DATA (the market says no); a NULL is the ABSENCE of data,
+    and only the second is grounds for refusing the row."
+
+    `volume` is LIFETIME, not current, on purpose. This is a "has this thing
+    ever really traded" gate that suppresses degenerate rows; it is deliberately
+    NOT a liquidity ranking, and it must not become one — ordering by liquidity
+    would re-introduce a different version of the defect #7251 is about.
+    """
+    # `getattr`, not `market.volume`, and for the SAME reason the NULL fails
+    # open rather than a defensive one: an absent attribute is the absence of
+    # data too, and refusing a row over it would be the exact mistake the
+    # paragraph above forbids. `FuturesMarket.volume` is a real column, so the
+    # default is unreachable in production —
+    # `test_the_volume_column_the_floor_reads_still_exists` is what keeps that
+    # true, so this can never quietly degrade into "no row is ever thin".
+    volume = getattr(market, "volume", None)
+    if volume is None:
+        return False
+    return volume < _THINLY_TRADED_VOLUME
+
+
+def _by_uncertainty(row: dict, market: FuturesMarket) -> tuple[int, float]:
+    """Sort key for every `/politics` section: the open questions first.
+
+    Replaces `-abs(row["prob"] - 50)` (#7251), which was most-DECIDED-first and
+    put 45 of the page's 60 cards — every one of them >95% or <5% — above the
+    questions still worth reading. On SCOTUS it ranked the single genuinely
+    open market, at 18.5%, LAST of ten.
+
+    ASCENDING, and lexicographic: a row that never really traded sits below one
+    that did, and within each group the most open question leads.
+
+    ⚠️  THE FLOOR DEMOTES, IT DOES NOT DELETE, and that is a deliberate
+    departure from the fix #7251 proposed. Dropping thin rows would shrink a
+    section, and a section on this page can be ~entirely decided — the
+    Gubernatorial wall is ten of ten — so a deleting floor could render a
+    section blank, a state the page has never drawn. Demotion degrades
+    gracefully: the slice at each call site drops the sunk rows only when
+    better ones exist to take their place. The same reasoning is why the
+    `outcome_count <= 2 and prob > 95` guard above is NOT widened to cover the
+    `<5` tail or multi-outcome rows: `_decidedness` already demotes both, and
+    ranking is the non-destructive way to say the same thing.
+
+    THE KEY IS A SELECTOR, NOT JUST AN ORDER. Both call sites slice after
+    sorting (`[:limit]`, `side_markets[:8]`) out of pools far larger than the
+    cap, so the old key did not merely bury the open questions — it dropped
+    them from the payload.
+
+    The honest cost of the lexicographic form: a section whose only open
+    question is also its only thin market will still lead with decided rows.
+    That is the trade 627's floor read asked for — a 4-contract market is noise
+    before it is a question — and it is why the floor is a gap in the
+    distribution rather than a number tuned to promote anything.
+    """
+    return (1 if _never_really_traded(market) else 0, _decidedness(row))
+
+
 def _is_headline_market(name_lower: str) -> bool:
     if _NON_US_RE.search(name_lower):
         return False
@@ -570,7 +699,11 @@ def _build_presidential(
     """Returns (response_dict, outcome_id_to_candidate_key)."""
     kalshi_headline = None
     poly_headline = None
-    side_markets: list[dict] = []
+    # Rows PAIRED WITH THEIR MARKET, for the same reason as `build_section`:
+    # `_by_uncertainty`'s volume floor reads a column the served row does not
+    # carry, and `volume` is an internal signal that stays out of the payload.
+    # Unpaired back to plain rows at the `side_markets` key below (#7251).
+    side_markets: list[tuple[dict, FuturesMarket]] = []
     # Every market that could headline, kept with the contest it settles so the
     # pairing can be decided across sources instead of one market at a time.
     contenders: list[dict] = []
@@ -600,7 +733,7 @@ def _build_presidential(
                 continue
         row = _market_row(m, now=now)
         if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
-            side_markets.append(row)
+            side_markets.append((row, m))
 
     def _largest(src: str, contest: str | None) -> dict | None:
         pool = [
@@ -641,9 +774,9 @@ def _build_presidential(
             continue
         row = _market_row(c["market"], now=now)
         if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
-            side_markets.append(row)
+            side_markets.append((row, c["market"]))
 
-    side_markets.sort(key=lambda r: -abs(r["prob"] - 50))
+    side_markets.sort(key=lambda rm: _by_uncertainty(*rm))
 
     # #7228: the contest is the party evidence for every name in its field. Both
     # chosen headlines settle the same race by construction (`best_poly` is
@@ -718,7 +851,7 @@ def _build_presidential(
         "has_dual_source": has_dual,
         "kalshi_market_id": kalshi_headline["market_id"] if kalshi_headline else None,
         "poly_market_id": poly_headline["market_id"] if poly_headline else None,
-        "side_markets": side_markets[:8],
+        "side_markets": [row for row, _ in side_markets][:8],
     }
     return response, outcome_id_map
 
@@ -1112,16 +1245,19 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     _t = _mark("theme_classify", _t)
 
     def build_section(markets: list, limit: int = 10) -> list[dict]:
-        rows = []
+        # PAIRED WITH THE MARKET, not just the row: the volume floor in
+        # `_by_uncertainty` reads a column that never enters the served row.
+        # `volume` is an internal signal and stays out of the payload (#7251).
+        pairs: list[tuple[dict, FuturesMarket]] = []
         for m in markets:
             row = _market_row(m, now=now)
             if not row:
                 continue
             if row["outcome_count"] <= 2 and row["prob"] > 95:
                 continue
-            rows.append(row)
-        rows.sort(key=lambda r: -abs(r["prob"] - 50))
-        return rows[:limit]
+            pairs.append((row, m))
+        pairs.sort(key=lambda rm: _by_uncertainty(*rm))
+        return [row for row, _ in pairs][:limit]
 
     # Presidential — dual-source merge
     presidential, outcome_id_map = _build_presidential(
