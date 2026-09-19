@@ -120,7 +120,6 @@ from app.config.team_aliases import (
 )
 from app.utils.search_headline_contender import (
     HEADLINE_MARKET_TIER,
-    MIN_ANCHORED_CONTENDER_PROBABILITY,
     MIN_CONTENDER_PROBABILITY,
     MIN_CONTENDER_VOLUME,
     contender_patterns,
@@ -4127,21 +4126,41 @@ def _headline_contender_outcome_clause(pattern):
     arm in the results endpoint was left alone, and the same query broke the
     same way the day after it was declared fixed.
 
-    Mirrors `is_contender_outcome` exactly — see #6430 at
-    `MIN_ANCHORED_CONTENDER_PROBABILITY` for why an outcome anchored to a club
-    we hold is judged against a lower floor than a bare name match. The `or_`
-    is strictly additive: the left arm is the previous predicate unchanged, so
-    no market that qualified before can stop qualifying now.
+    Mirrors `is_contender_outcome` exactly — see #6430 / CERT-3125 in
+    `search_headline_contender` for why an outcome whose anchor CORRESPONDS
+    faces no price floor at all. The `or_` is strictly additive: the left arm is
+    the previous predicate unchanged, so no market that qualified before can
+    stop qualifying now.
+
+    THE CORRESPONDENCE IS SPELLED AS "THE SAME PATTERN MATCHES BOTH NAMES".
+    `is_contender_outcome` is handed `team_anchored` as an answered question;
+    here is where it is answered. The typed term must match the outcome's own
+    name AND the name of the team that outcome is anchored to — two independent
+    signals agreeing, rather than a `team_id` that is merely present. The term
+    is the same compiled pattern for both sides, so the test adds no new
+    vocabulary and stays injection-proof by construction (`contender_word_pattern`
+    reduces the term to alphanumeric runs).
+
+    What that refuses, measured on production 2026-09-19: "Mike Brown" on
+    `Coach of the Year Winner`, anchored to NEW ENGLAND PATRIOTS at 0.000000,
+    and "New York Mets" on the World Series, anchored to NEW YORK YANKEES —
+    #7188's team-identity poison, refused rather than papered over.
+
+    COST: the join is `teams.id = futures_outcomes.team_id`, a primary-key
+    lookup on the row the outer predicate already selected, inside a subquery
+    the pg_trgm GIN on `futures_outcomes.name` still drives. It adds no scan.
     """
     return FuturesMarket.id.in_(
-        select(FuturesOutcome.market_id).where(
+        select(FuturesOutcome.market_id)
+        .outerjoin(Team, Team.id == FuturesOutcome.team_id)
+        .where(
             FuturesOutcome.name.op("~*")(pattern),
+            FuturesOutcome.current_probability.isnot(None),
             or_(
                 FuturesOutcome.current_probability >= MIN_CONTENDER_PROBABILITY,
                 and_(
                     FuturesOutcome.team_id.isnot(None),
-                    FuturesOutcome.current_probability
-                    >= MIN_ANCHORED_CONTENDER_PROBABILITY,
+                    Team.name.op("~*")(pattern),
                 ),
             ),
         )
