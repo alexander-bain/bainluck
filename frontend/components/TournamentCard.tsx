@@ -4,6 +4,7 @@ import Link from "next/link";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { isTournamentLive } from "@/lib/tournamentLive";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -398,34 +399,16 @@ function _isCupEvent(tournament: GolfTournament): boolean {
     key.includes("walker") || key.includes("solheim");
 }
 
+// #7065 — THE BODY OF THIS DECISION MOVED TO `lib/tournamentLive.ts`, UNCHANGED.
+// It is not the card's private business: `lib/feedSections.ts` and
+// `app/my-stuff/page.tsx` decide which SECTION the same tournament is filed
+// under, and they used to do it from `schedule_status` alone — a string measured
+// as never occurring — so a card drawing the LIVE badge below was filed under
+// `📅 Upcoming`. They now call the same function this does, so the badge and the
+// heading above it cannot disagree. The reasoning behind each arm (UX-P180's
+// midnight-UTC calendar dates, the window-as-veto) travelled with the code.
 function _isLive(tournament: GolfTournament): boolean {
-  const now = new Date();
-
-  // ⚠️ `start_date` / `end_date` are CALENDAR DATES stamped at midnight UTC —
-  // the first and LAST DAY of the tournament, not the instants it starts and
-  // stops. Measured on the served payload: 188 of 188 `pga_schedule` stamps and
-  // 6 of 6 tournament windows are exactly `T00:00:00+00:00`. Comparing `now`
-  // against the raw `end_date` instant retired the tournament at the START of
-  // its final day, so the card went dark for the whole of the final round — in
-  // every timezone, UTC included. The window closes when that day is OVER.
-  //
-  // And the window is a VETO, not a last-resort fallback. The sibling deciders
-  // of this same boundary already treat it that way: `isTournamentLive` (end +1d)
-  // and `isCompleted` (end +24h) in app/categories/golf/tournaments/[slug]/page.tsx.
-  // As a fallback it was unreachable whenever `movement_24h` was non-zero, and
-  // residual 24h movement outlives a tournament by a day — which left a pulsing
-  // LIVE dot on a card whose champion had already been decided.
-  if (tournament.start_date && tournament.end_date) {
-    const start = new Date(tournament.start_date);
-    const endOfLastDay = new Date(new Date(tournament.end_date).getTime() + 86400000);
-    return now >= start && now < endOfLastDay;
-  }
-
-  if (tournament.schedule_status === "in-progress") return true;
-  // No schedule window to veto against — fall back to the price signal.
-  return tournament.golfers.some(
-    (g) => g.movement_24h !== null && Math.abs(g.movement_24h) >= 0.01,
-  );
+  return isTournamentLive(tournament);
 }
 
 function _currentRound(tournament: GolfTournament): string {
