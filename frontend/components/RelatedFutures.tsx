@@ -2574,20 +2574,32 @@ export default function RelatedFutures({
   // Playoff path: prefer LeagueContextService data (merged multi-source, volume-weighted)
   // over raw ILIKE-matched futures entries
   const leagueCtx = safeData.league_context;
-  let homePlayoff: RelatedFuture[];
-  let awayPlayoff: RelatedFuture[];
+  // #7206: a path row plus the GRID COLUMN it came from, where there is one.
+  //
+  // `ctxToFutures` used to throw `col.key` away and keep only `col.label`, so
+  // `Relegated` reached `AdvancementPath` indistinguishable from `Top 4` — a
+  // rung down the table wearing the same shape as a rung up it. That is why the
+  // block could be headed CHAMPIONSHIP PATH over an 78.5% chance of going down.
+  // The key travels beside the row rather than inside it: `RelatedFuture` is the
+  // API's own type and these rows are synthetic, so widening the contract to
+  // carry a field the backend never sends would be the wrong place to put it.
+  type PathSource = { future: RelatedFuture; columnKey?: string };
+  let homePlayoff: PathSource[];
+  let awayPlayoff: PathSource[];
 
   if (leagueCtx && (leagueCtx.home_team || leagueCtx.away_team)) {
     // Convert league context cells to RelatedFuture entries for PlayoffPathPair
     const ctxToFutures = (
       teamCtx: { cells: Record<string, number>; changes_24h: Record<string, number>; sources_available?: string[] } | undefined,
       columns: { key: string; label: string }[],
-    ): RelatedFuture[] => {
+    ): PathSource[] => {
       if (!teamCtx) return [];
       const sourceCount = teamCtx.sources_available?.length ?? 1;
       return columns
         .filter((col) => teamCtx.cells[col.key] != null)
         .map((col, i) => ({
+          columnKey: col.key,
+          future: {
           market_id: 0,
           market_name: col.label,
           clean_label: col.label,
@@ -2613,14 +2625,23 @@ export default function RelatedFutures({
           resolution_date: null,
           bookmaker_count: sourceCount,
           all_sources: teamCtx.sources_available,
+          },
         }));
     };
     homePlayoff = ctxToFutures(leagueCtx.home_team, leagueCtx.columns);
     awayPlayoff = ctxToFutures(leagueCtx.away_team, leagueCtx.columns);
   } else {
-    // Fallback: use raw ILIKE-matched futures
-    homePlayoff = [...homeCats.championship, ...homeCats.conference];
-    awayPlayoff = [...awayCats.championship, ...awayCats.conference];
+    // Fallback: use raw ILIKE-matched futures.
+    //
+    // These rows carry NO structured column key — they are whatever the ILIKE
+    // matched, labelled by market name — so they reach `AdvancementPath` with
+    // `columnKey` absent and the heading is left alone. That is deliberate: the
+    // only way to call one of these a relegation rung would be to pattern-match
+    // its name, which is the classifier this fix exists to avoid. #7206's
+    // residual is written on the issue.
+    const bare = (f: RelatedFuture): PathSource => ({ future: f });
+    homePlayoff = [...homeCats.championship, ...homeCats.conference].map(bare);
+    awayPlayoff = [...awayCats.championship, ...awayCats.conference].map(bare);
   }
 
   // Section counts — suppress stat props when game-markets components already show them.
@@ -2651,14 +2672,18 @@ export default function RelatedFutures({
   const hasSeriesData = seriesMarkets.length > 0 || legacySeries.length > 0;
 
   // Build per-team championship path data for the new layout
-  const buildPathEntries = (futures: RelatedFuture[]) => {
-    return futures.map((f) => {
+  const buildPathEntries = (sources: PathSource[]) => {
+    return sources.map(({ future: f, columnKey }) => {
       const resolved = f.probability != null && f.probability >= 0.995;
       return {
         label: f.clean_label || f.market_name,
         prob: f.probability || 0,
         change: f.probability_change_24h ?? null,
         resolved,
+        // #7206: WHAT this rung is, not what it is called. `AdvancementPath`
+        // reads it to decide whether the block may call itself a championship
+        // path. Undefined on the fallback rows above, by design.
+        columnKey,
         // #1986: a row merged from two sources must report TWO, not the winner
         // row's own bookmaker_count. source_count is set by the backend blend
         // pass; fall back to the previous derivation when it is absent.
