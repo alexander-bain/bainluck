@@ -419,6 +419,60 @@ def _score_for_trending(row: dict) -> float:
     return score
 
 
+def _decidedness(row: dict) -> float:
+    """How settled this question is, 0.0 (wide open) to 1.0 (a foregone conclusion).
+
+    DISTANCE FROM 50 IS ONLY THE BINARY ANSWER, and this page is not mostly
+    binary: measured on the served payload of 2026-09-19 18:20Z, **89 of 115
+    rows carry `outcome_count > 2`**. On a field of seventeen, a leader at 34.5%
+    ("Big Brother Season 28 · Winner") is the most open question on the page,
+    and a leader at 2.1% among five ("Who will Elon Musk back a primary against
+    in 2026?") is a perfectly flat field — neither is remotely settled, yet both
+    sit ~16 and ~48 points from 50. Ranking them by `abs(prob - 50)` buries the
+    best questions we have, which is the same defect in the other direction.
+
+    So the two shapes are scored separately and normalised onto one 0..1 scale
+    so a single `sort` can compare them:
+
+    * `outcome_count <= 2` — a one-sided Kalshi "Yes" contract (25 of the 115)
+      or a true binary. BOTH tails are settled: 2% means "almost certainly no"
+      just as 98% means "almost certainly yes". Decidedness is distance from 50.
+    * `outcome_count > 2` — only the HIGH end is settled. The floor is a flat
+      field (`100/n`), not zero, so the leader's lead is measured from there:
+      a flat 15-way and a flat 3-way both score 0.0, and a 3-way at 97.9%
+      scores 0.97 exactly like a binary at 97.9%.
+
+    Replaces `-abs(prob - 50)` (#7278), which ranked every section
+    most-DECIDED-first. Because each of the three call sites slices after
+    sorting, that key did not merely order the wall — it SELECTED it out of
+    pools far larger than the cap (505 movies/TV candidates for 10 side-market
+    slots), dropping the open questions from the payload entirely.
+    """
+    prob = row["prob"]
+    if row.get("outcome_count", 2) <= 2:
+        return abs(prob - 50) / 50.0
+    flat = 100.0 / row["outcome_count"]
+    # Clamped because a leader BELOW the flat baseline (a field even wider than
+    # its arity suggests, or a stale rung) is not "negatively decided" — it is
+    # simply as open as a question gets.
+    return max(0.0, min(1.0, (prob - flat) / (100.0 - flat)))
+
+
+def _by_uncertainty(row: dict) -> tuple[float, float]:
+    """Sort key for the section builders: most-open question first.
+
+    `_score_for_trending` above already scores `(50 - abs(prob - 50))` — the
+    same direction, and the within-page control for it: that section served 0 of
+    5 settled rows on the payload where its siblings served 20 of 20.
+
+    `volume_24h` breaks ties only. It is null on 49 of those 115 rows, so
+    gating or weighting on it would rank most of the page on missing data; it
+    orders two questions that are equally open and never lifts a settled market
+    over an open one. Nulls sort last within a tie and no further.
+    """
+    return (_decidedness(row), -(row.get("volume_24h") or 0))
+
+
 def _build_trending(all_rows: list[dict], limit: int = 5) -> list[dict]:
     """Pick top N trending markets with kind diversity."""
     scored = sorted(all_rows, key=_score_for_trending, reverse=True)
@@ -446,7 +500,7 @@ def _build_list(markets: list, limit: int = 12) -> list[dict]:
         row = _market_row(m)
         if row and _is_interesting(row):
             rows.append(row)
-    rows.sort(key=lambda r: -abs(r["prob"] - 50))
+    rows.sort(key=_by_uncertainty)
     return rows[:limit]
 
 
@@ -561,7 +615,7 @@ def _build_movies_tv(themed: dict) -> dict:
 
     side_markets.extend(rt_ungrouped)
     side_markets.extend(box_ungrouped)
-    side_markets.sort(key=lambda r: -abs(r["prob"] - 50))
+    side_markets.sort(key=_by_uncertainty)
 
     return {
         "count": len(combined),
@@ -594,7 +648,7 @@ def _build_cultural(themed: dict) -> list[dict]:
         row = _market_row(m)
         if row and _is_interesting(row):
             rows.append(row)
-    rows.sort(key=lambda r: -abs(r["prob"] - 50))
+    rows.sort(key=_by_uncertainty)
     return rows[:20]
 
 
