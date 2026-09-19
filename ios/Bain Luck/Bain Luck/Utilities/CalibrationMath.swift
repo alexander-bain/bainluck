@@ -15,8 +15,11 @@ import Foundation
 /// guaranteeing the two surfaces print the same digits.
 ///
 /// ECE is the n-weighted headline metric (reflects the outcomes users actually
-/// see); MCE is the equal-weighted worst-bucket-sensitivity number. All error
-/// values are in percentage points (pp).
+/// see); `mce` is the equal-weighted mean over the ten buckets — a tiny bucket
+/// counts as much as a huge one, which is why it can read BELOW ECE. It is NOT a
+/// maximum, whatever the three letters suggest; the reader-facing column was
+/// renamed to `Bucket` in #7174 and the key kept for web parity. All error values
+/// are in percentage points (pp).
 nonisolated enum CalibrationMath {
 
     /// One probability bucket after aggregation across sources/categories.
@@ -91,7 +94,13 @@ nonisolated enum CalibrationMath {
         .sorted { $0.bucketIdx < $1.bucketIdx }
     }
 
-    /// Equal-weighted mean |error| (pp). Worst-bucket sensitive. Web `mce`.
+    /// Equal-weighted mean |error| across the buckets (pp). Web `mce`.
+    ///
+    /// #7174 — it is a MEAN. It is more sensitive to a bad thin bucket than ECE
+    /// is, which is the property the old "worst-bucket" wording was reaching for,
+    /// but it is bounded by the mean of the errors and not by the worst of them:
+    /// `mce(cal) <= max |error|`, with equality only when every bucket ties.
+    /// Shown to readers as `Bucket`.
     static func mce(_ cal: [AggBucket]) -> Double {
         guard !cal.isEmpty else { return 0 }
         return cal.reduce(0.0) { $0 + abs($1.error) } / Double(cal.count)

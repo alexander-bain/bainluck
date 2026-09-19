@@ -291,7 +291,9 @@ final class CalibrationViewModel: ObservableObject {
 
     /// Headline metric: n-weighted error (pp). This is what the web page leads with.
     var cohortECE: Double { CalibrationMath.ece(cohortBuckets) }
-    /// Demoted secondary: equal-weighted worst-bucket-sensitivity error (pp).
+    /// Demoted secondary: the equal-weighted mean error across the ten buckets
+    /// (pp). Drawn under the `Bucket` header; the key stays `mce` for web
+    /// parity (#7174).
     var cohortMCE: Double { CalibrationMath.mce(cohortBuckets) }
     var cohortBrier: Double {
         let thin = includeThin
