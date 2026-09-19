@@ -4716,6 +4716,14 @@ async def get_probability_timeline(
         "hours": requested_hours,
         "actual_hours": actual_hours,
         "top": top,
+        # #7077 live half — and THIS is the door the phone actually reads.
+        # `APIClient.swift:929` fetches `/probability-timeline`; nothing native
+        # calls `/futures/{id}/history`. Production 01:05Z for market 58321581,
+        # the Game Awards market in Alex's screenshot: `actual_hours` **168**,
+        # and NINE buckets spanning **20.0 hours**. Measured off the buckets, so
+        # what is reported is the domain the chart draws — bucket-aligned, which
+        # is why it reads 04:30 where `/history` reads the raw 04:31.
+        **_measure_timeline_coverage(timeline),
         # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
         # Self-describing payload metadata: it says what one step of `timeline` below
         # actually spans, which is not recoverable from the series itself. No client
@@ -4983,6 +4991,11 @@ async def get_cross_source_timeline(
         "source": "merged",
         "hours": hours,
         "top": top,
+        # #7077 live half, same defect on the sibling door. This one is read by
+        # the web (`frontend/lib/api.ts:1104`), not native. Fixed with the same
+        # helper rather than left lying: one door honest and its twin not is how
+        # the next reader gets the wrong domain from the other route.
+        **_measure_timeline_coverage(timeline),
         # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
         # Self-describing payload metadata: it says what one step of `timeline` below
         # actually spans, which is not recoverable from the series itself. No client
@@ -4994,6 +5007,103 @@ async def get_cross_source_timeline(
         "timeline": timeline,
         "outcomes": outcomes_meta,
     }
+
+
+def _coverage_of(stamps: list) -> dict:
+    """The one measurement both chart doors report, given their instants.
+
+    Nulls rather than zeros on an empty series — gotcha #53: "no observations"
+    and "an instant of observation" must not share a shape. One observation is
+    `coverage_hours: 0.0` with `observation_times: 1`, which is a different
+    sentence from `None`/`0` and has to render differently.
+    """
+    if not stamps:
+        return {
+            "coverage_start": None,
+            "coverage_end": None,
+            "coverage_hours": None,
+            "observation_times": 0,
+        }
+
+    first, last = min(stamps), max(stamps)
+    return {
+        "coverage_start": first.isoformat(),
+        "coverage_end": last.isoformat(),
+        "coverage_hours": round((last - first).total_seconds() / 3600, 2),
+        "observation_times": len({s.isoformat() for s in stamps}),
+    }
+
+
+def _parse_stamp(raw):
+    """ISO string -> datetime, or None. A bad stamp is skipped, never fatal."""
+    if not raw:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(raw)
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return None
+
+
+def _measure_timeline_coverage(timeline: list) -> dict:
+    """Coverage of a BUCKETED series (`/probability-timeline`, #7077).
+
+    The door native's futures chart actually reads — `APIClient.swift:929`.
+    Nothing native calls `/futures/{id}/history`, so this is the payload behind
+    the Game Awards screenshot: `actual_hours` 168, nine buckets over 20.0 h.
+
+    Measured off the bucket stamps because those are the x-positions drawn; a
+    coverage claim taken from the raw rows would disagree with the plotted line
+    by up to one `bucket_seconds`, which is a second error covering the first.
+    """
+    stamps = [
+        s for s in (_parse_stamp((b or {}).get("timestamp")) for b in (timeline or []))
+        if s is not None
+    ]
+    return _coverage_of(stamps)
+
+
+def _measure_history_coverage(outcome_history: dict) -> dict:
+    """Measure the span the served points ACTUALLY cover (#7077 live half).
+
+    `actual_hours` is the window this route SEARCHED, not the window the data
+    covers, and nothing in the payload has ever said the difference. Measured on
+    production 2026-09-19 against the three markets Alex's build-15 phone walk
+    named:
+
+    | market | requested | served `actual_hours` | points actually span |
+    |---|---|---|---|
+    | 58321581 Game Awards | 168 h | **168** | **19.3 h**, all on Sep 18 |
+    | 61122553 Meta training pause | 168 h | **168** | 75.4 h, 2 points/outcome |
+    | 59530987 US bank failure | 168 h | **720** (auto-extended) | 598.6 h |
+
+    So the field named "actual" echoes either the request or an internal
+    `_EXTEND_TIERS` constant, and never the observations. A client that draws its
+    domain from it draws a week and plots one day into it — which is exactly the
+    Game Awards screenshot, six x-axis ticks all reading "Sep 18".
+
+    `total_data_points` cannot stand in for this either: it is summed ACROSS
+    outcomes, so Game Awards reports 80 from 8 distinct observation times, and a
+    24-outcome field would clear the `sparse` threshold on one observation each.
+    `observation_times` below is that count un-multiplied.
+
+    Measured AFTER `_apply_settled_winner_freeze`, deliberately: the span
+    reported is the span the chart DRAWS, injected settlement point included,
+    because a domain label that disagreed with the plotted line would be a second
+    error covering the first.
+
+    Returns nulls rather than zeros on an empty history — gotcha #53: "no
+    observations" and "an instant of observation" must not share a shape.
+    """
+    stamps = []
+    for entry in outcome_history.values():
+        for point in entry.get("history") or []:
+            parsed = _parse_stamp(point.get("timestamp"))
+            if parsed is not None:
+                stamps.append(parsed)
+
+    return _coverage_of(stamps)
 
 
 @router.get("/{market_id}/history")
@@ -5289,6 +5399,11 @@ async def get_futures_history(
         "round_boundaries": round_boundaries,
         "leaderboard": (market.market_metadata or {}).get("leaderboard"),
         "total_data_points": total_data_points,
+        # #7077 live half: what the points COVER, beside what we SEARCHED.
+        # `actual_hours` above stays exactly as it was — it is the search window
+        # and `auto_extended`'s caption is correct about it. These four are the
+        # separate, measured claim, so no existing reader's meaning moves.
+        **_measure_history_coverage(outcome_history),
     }
 
     # Signal to the frontend when data is sparse so it can show appropriate UI
