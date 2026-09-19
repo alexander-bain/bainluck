@@ -132,8 +132,13 @@ describe.each(TABLES)("#7174 structural — %s header row", (_name, marker) => {
     const beside = cells[eceAt + 1];
     expect(beside).toBeDefined();
 
-    // Positive: it says what it is.
-    expect(beside.text).toBe("Per-bucket");
+    // Positive: it says what it is. One word, and no ⓘ, on a measured width
+    // budget — at 390px "Per-bucket ⓘ" wrapped and pushed BRIER off the
+    // viewport, and "Bucket ⓘ" still clipped it (see the page comment). So this
+    // assertion is load-bearing in BOTH directions: a rename back to a maximum
+    // reintroduces the lie, and a rename to something longer truncates Brier on
+    // every phone. Either way, re-shoot at 390px before you change it.
+    expect(beside.text).toBe("Bucket");
 
     // Negative, scoped to THIS cell — not a sweep of the file. "MCE" expands to
     // Maximum Calibration Error, and in a header cell that acronym IS the

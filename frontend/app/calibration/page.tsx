@@ -1095,7 +1095,7 @@ export default function CalibrationPage() {
             by pooling its outcomes and running the same calculation used for every other row.{" "}
             <strong className="text-text-secondary">ECE</strong> (n-weighted error) is the headline
             metric &mdash; it reflects the outcomes users actually see. The{" "}
-            <strong className="text-text-secondary">per-bucket</strong> figure averages the ten
+            <strong className="text-text-secondary">Bucket</strong> column averages the ten
             probability buckets with equal weight, so a tiny bucket counts as much as a huge one
             &mdash; which is why it can read below ECE.
             {shapeInline ? null : (
@@ -1125,9 +1125,22 @@ export default function CalibrationPage() {
                     2026-09-19 printed Polymarket at ECE 2.7pp and "MCE" 2.6pp,
                     and a maximum cannot sit below a mean of the same errors.
                     Renamed to what it IS. See `calibration_ece.py`, which has
-                    said so in its own docstring since CAL-P067. */}
+                    said so in its own docstring since CAL-P067.
+
+                    🪤 THE HEADER IS ONE WORD AND NO ⓘ BECAUSE OF A MEASURED
+                    WIDTH BUDGET, not brevity for its own sake. At 390px this
+                    table fits its container with nothing to spare: "MCE ⓘ" was
+                    the widest this column may be. Shot at 390px on the real
+                    payload, "Per-bucket ⓘ" wrapped to two lines and pushed
+                    BRIER off the viewport (0.1527 rendered as "0.152"), and
+                    "Bucket ⓘ" still clipped it. Dropping the ⓘ — which cannot
+                    be hovered on a phone anyway, and whose text now also sits
+                    in the "How these rows are measured" disclosure two inches
+                    above — buys the column back. So: widen this header and you
+                    truncate Brier on every phone. Re-shoot at 390px if you do.
+                    ECE carries no mark either, so the two are symmetric. */}
                 <th className="pb-2 pr-1 sm:pr-4 text-right" title="Average error across the ten probability buckets, each counted once — so a thin bucket weighs as much as a busy one. A mean, not a maximum, so it can read below ECE.">
-                  Per-bucket&nbsp;<span className="text-text-muted/60">&#9432;</span>
+                  Bucket
                 </th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
@@ -1855,7 +1868,7 @@ export default function CalibrationPage() {
                 <th className="pb-2 pr-1 sm:pr-4 text-right">Outcomes</th>
                 <th className="pb-2 pr-1 sm:pr-4 text-right">ECE</th>
                 {/* #7174, same rename as the Source Comparison header. */}
-                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Average error across the ten probability buckets, each counted once — so a thin bucket weighs as much as a busy one. A mean, not a maximum, so it can read below ECE.">Per-bucket&nbsp;<span className="text-text-muted/60">&#9432;</span></th>
+                <th className="pb-2 pr-1 sm:pr-4 text-right" title="Average error across the ten probability buckets, each counted once — so a thin bucket weighs as much as a busy one. A mean, not a maximum, so it can read below ECE.">Bucket</th>
                 <th className="pb-2 text-right">Brier</th>
               </tr>
             </thead>
