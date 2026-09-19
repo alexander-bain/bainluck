@@ -16,12 +16,54 @@ EXPECTED_COLUMN_SUMS = {
 }
 
 
+def monotonic_pairs(columns: list) -> list[tuple[str, str]]:
+    """``(bound_key, column_key)`` for every sequential column that has a bound.
+
+    A grid column is bounded by the column a team must ALREADY have come
+    through to reach it. That is usually the column before it, which is why
+    this used to be implicit — but it is not always, and where it is not, the
+    implicit reading is a lie that overwrites real market prices (#7076).
+
+    A column may therefore name its own prerequisite with ``depends_on``. In the
+    four leagues that carry a ``division`` column the conference/pennant cell
+    declares ``depends_on="make_playoffs"``: a wild card wins the pennant
+    without winning its division, so "P(pennant) <= P(division)" is false, and
+    enforcing it flattened Boston's pennant and World Series cells onto their
+    division blend.
+
+    A ``depends_on`` that does not name an EARLIER sequential column cannot be
+    honoured, so it degrades to the previous column — the historical behaviour,
+    never something new. That degradation is silent by design (a grid page must
+    not 500 over a config typo) and is therefore not the protection: the guard
+    test over every LEAGUE_CONFIGS entry is.
+    """
+    seq_cols = sorted(
+        [c for c in columns if (c.sequential if hasattr(c, "sequential") else True)],
+        key=lambda c: c.order if hasattr(c, "order") else 0,
+    )
+    seq_keys = [c.key if hasattr(c, "key") else c for c in seq_cols]
+
+    pairs: list[tuple[str, str]] = []
+    for i in range(1, len(seq_keys)):
+        declared = getattr(seq_cols[i], "depends_on", None)
+        bound = declared if declared in seq_keys[:i] else seq_keys[i - 1]
+        if declared is not None and bound != declared:
+            logger.warning(
+                "Grid column %s declares depends_on=%r, which is not an earlier "
+                "sequential column; bounding it by %s instead",
+                seq_keys[i], declared, bound,
+            )
+        pairs.append((bound, seq_keys[i]))
+    return pairs
+
+
 def enforce_monotonicity(teams: list[dict], columns: list) -> int:
     """Enforce monotonicity across sequential grid columns for every team.
 
-    For sequential columns ordered earliest-to-latest (e.g., Make Playoffs ->
-    Division -> Conference -> Championship), later stages must have probability
-    <= earlier stages.  If Conference > Division, cap Conference at Division.
+    Each sequential column is capped at the column that bounds it — the
+    previous one by default, or whatever ``depends_on`` names
+    (`monotonic_pairs`).  If Conference > Make Playoffs, cap Conference at Make
+    Playoffs.
 
     This function is idempotent and should be called:
       1. During initial cell building (per-team, before normalization)
@@ -30,20 +72,15 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
 
     Returns the number of violations corrected.
     """
-    seq_cols = [c for c in columns if (c.sequential if hasattr(c, "sequential") else True)]
-    seq_keys = [c.key if hasattr(c, "key") else c for c in sorted(
-        seq_cols, key=lambda c: c.order if hasattr(c, "order") else 0
-    )]
+    pairs = monotonic_pairs(columns)
 
-    if len(seq_keys) < 2:
+    if not pairs:
         return 0
 
     violations_fixed = 0
     for team in teams:
         cells = team.get("cells", {})
-        for i in range(1, len(seq_keys)):
-            prev_key = seq_keys[i - 1]
-            curr_key = seq_keys[i]
+        for prev_key, curr_key in pairs:
             prev_cell = cells.get(prev_key)
             curr_cell = cells.get(curr_key)
             if prev_cell and curr_cell:
