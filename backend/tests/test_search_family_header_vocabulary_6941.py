@@ -186,6 +186,11 @@ class TestSearchSpeaksTheHouseVocabulary:
 
 
 class TestTheEntityBranchIsUntouched:
+    """Untouched BY #6941. #5736 has since moved it off `str.title()` — this
+    assertion is unchanged by that (a lower-case query still reads as a title);
+    the entity arm's own guards live in
+    `test_search_entity_header_is_the_readers_own_words_5736.py`."""
+
     def test_an_entity_family_still_reads_as_the_query(self):
         markets = [
             _mkt(5, "Carlos Alcaraz to win the US Open"),

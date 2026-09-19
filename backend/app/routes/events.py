@@ -1646,7 +1646,7 @@ def _compose_futures_families(
     """
     from collections import OrderedDict
 
-    from app.utils.discover_bundles import story_family_label
+    from app.utils.discover_bundles import story_family_label, title_word
     from app.utils.feed_market_quality import _story_key
 
     query_label = " ".join(t for t, _ in expanded).strip()
@@ -1694,7 +1694,20 @@ def _compose_futures_families(
                 # compete on their own.
                 continue
         else:  # entity:
-            label = query_label.title()
+            # #5736. The reader's own words, not `.title()`. An entity family is
+            # headed by the QUERY, so this is a casing rule applied to free text
+            # a person typed — and `str.title()` lowercases every letter after
+            # the first of every token. Typing `NFL` got `Nfl` back and
+            # `US Open` got `Us Open`: not a failed guess at capitalisation, an
+            # active un-doing of the reader's. (Same shape as Alex's report 145
+            # / #1938, "awkward to see 'Mma' with the 2nd and 3rd letter in
+            # lowercase" — this time on their own text.)
+            #
+            # `title_word` is the rule the story arm beside it already uses, so
+            # `q=atp` stops serving `Grand Slam Tennis` and `Atp` in one
+            # response. Per TOKEN, not per string: `expanded` is already the
+            # tokenised query, so no separator is invented or lost.
+            label = " ".join(title_word(t) for t, _ in expanded)
         headline = members[0]  # reranked: name-match then volume
         rest = members[1:]
         shown = rest[:4]
