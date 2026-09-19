@@ -118,13 +118,56 @@ means "no rows left INSIDE THIS WINDOW" and the response repeats the window back
 so nobody reads it as "the cohort is empty". Widening is an operator's choice
 with a cost, not a default.
 
-ATTENDED ONLY: never wire either to a beat. This is a drain with an end state,
-not a standing job. Read ``scan_exhausted``, not ``remaining_legs``.
+REVERSIBILITY — THE RECEIPT IS WRITTEN FROM ``RETURNING``, NOT FROM A SNAPSHOT
+------------------------------------------------------------------------------
+🔴 A PRE-APPLY SNAPSHOT OF THIS COHORT CANNOT COVER THE APPLY. The population is
+selected at apply time and it REGROWS — 185 legs at 10:00Z, 186 at 10:27Z, 186 at
+10:44Z on 2026-09-19, because settling is continuous. So a backup taken before
+the call describes a set that is neither a superset nor a subset of what the call
+writes, and "186 rows banked" is a number about the past, not a cover.
+
+The only set that is exactly the set of rows changed is the one Postgres names:
+``UPDATE … RETURNING fo.id``. This rail therefore builds its undo record AFTER
+the write, FROM those ids, and stages it with
+``publish_owned_snapshot_in_txn`` — the store's in-transaction publisher, so the
+receipt and the write land together or not at all (CERT-851's lesson, reused
+rather than restated). **If the receipt cannot be persisted the write is rolled
+back**, which makes an unreversible apply structurally unreachable rather than
+unlikely: there is no ordering of a crash that leaves a changed row with no
+record of its old name.
+
+The restore is a COMPARE-AND-SET IN BOTH DIRECTIONS: ``SET name = <old>`` only
+``WHERE name IS NOT DISTINCT FROM <new>`` — the exact label this rail wrote. A
+leg that has since been corrected by the poller, by a person, or by any later
+repair fails that predicate, is counted ``refused_changed_since``, and keeps its
+current name. A broad ``UPDATE … WHERE id = ANY(...)`` would undo those
+corrections silently, which is the one way a rollback can do more harm than the
+defect it reverses.
+
+Each CALL banks its own receipt, because each call writes its own page. A 186-leg
+drain is two calls and therefore two ``undo_identity`` values, two restore
+commands, and a reversal that is complete only when both have run — both halves
+say so in their own output rather than leaving the operator to infer it.
+
+ATTENDED ONLY MEANS OPERATOR-INVOKED, NOT ALEX-ONLY
+----------------------------------------------------
+"ATTENDED ONLY: never wire either to a beat" is a statement about SCHEDULING —
+this is a drain with an end state, and a beat would re-run it forever against a
+population that is meant to reach zero. It has never been a statement about who
+may press the button. Who may is D51(b)'s question ("a data repair that writes a
+backup first and ships a one-command restore may be applied UNATTENDED by the
+owning lane"), and the answer turns on the two properties above: the receipt
+covers every row actually changed, and the restore is one command printed in the
+apply's own response. Read ``scan_exhausted``, not ``remaining_legs``.
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+import secrets
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 # The bounds this rail runs its database work under are NOT re-implemented here.
@@ -182,15 +225,15 @@ CLEANUP_RESERVE_SECONDS = 3.0
 SERIALIZATION_RESERVE_SECONDS = 0.5
 
 #: Time reserved for everything AFTER the loop's last fetch: the single bulk
-#: write, its commit, at most one cleanup, the terminal count, serialization,
-#: and the dependency's commit.
-POST_LOOP_RESERVE_SECONDS = 8.0
+#: write, the receipt staged beside it, its commit, at most one cleanup, the
+#: terminal count, serialization, and the dependency's commit.
+POST_LOOP_RESERVE_SECONDS = 10.0
 
 #: The slice of the reserve that is NOT the terminal count. The count is armed
 #: with whatever is left of the wall once this is set aside, so an over-running
 #: loop shortens the count's timeout instead of borrowing against work that
 #: still has to run. A guard asserts the DERIVED client bounds fit inside it.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.5
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 8.5
 
 #: Bound on the page SELECT. It does not widen the worst case: ``started`` is
 #: captured BEFORE this query, so a slow SELECT leaves the loop less room and
@@ -234,6 +277,53 @@ REMAINING_COUNT_MIN_BUDGET_SECONDS = 0.5
 #: is a plan bound as much as a product one, and both halves report it back.
 DEFAULT_WINDOW_DAYS = 30
 
+#: 🔴 CLIENT BOUND ON STAGING THE RECEIPT. The store arms its own 5s server-side
+#: timeout, which is four times what is left under this rail's wall, so the
+#: client bound is the real one and it is stated here rather than inherited. The
+#: failure mode is the safe one BY CONSTRUCTION: the receipt is staged inside the
+#: write's own open transaction, so a bound that fires takes the UPDATE down with
+#: it on the rollback. Slow store ⇒ nothing written, not a write nobody can undo.
+RECEIPT_BUDGET_SECONDS = 2.0
+
+#: Schema of the undo record. Versioned because ``read_snapshot_standalone``
+#: checks it: a future shape change must not let this restore read an old
+#: receipt as if it carried today's fields.
+UNDO_SCHEMA = "polymarket-single-leg-label-undo/v1"
+
+#: The store refuses to overwrite an owned identity from a different owner
+#: (CERT-856). The owner is the per-invocation token that also salts the
+#: identity, so two applies in the same second cannot silently replace one
+#: another's receipt — the population that would notice is "the operator
+#: reversing a production write".
+UNDO_OWNER_KEY = "invocation"
+
+#: A label repair is reversible for as long as the row exists. The store's
+#: default (7 days) would quietly type a 3-week-old receipt as too old to read,
+#: which reads to an operator as "your reversal is gone".
+UNDO_MAX_AGE_S = 365 * 86400
+
+REASON_UNDO_MISSING = "UNDO_MISSING"
+REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
+REASON_UNDO_UNREADABLE = "UNDO_UNREADABLE"
+
+#: Bound on the restore's read of the rows it is about to put back.
+RESTORE_SELECT_BUDGET_SECONDS = 5.0
+
+#: Bound on the restore's single compare-and-set UPDATE, keyed by primary key
+#: over at most one page's worth of ids.
+RESTORE_WRITE_BUDGET_SECONDS = 2.0
+
+#: Verdicts one row of a receipt can reach on the way back. Every one is
+#: COUNTED — a reversal that reports the receipt's LENGTH would print a full
+#: restore over a run that put nothing back (gotcha #53, and the sibling rail's
+#: `test_it_reports_what_postgres_wrote_not_what_the_receipt_held`).
+RESTORE_VERDICTS = (
+    "restored",
+    "already_old",
+    "refused_changed_since",
+    "missing",
+)
+
 #: 🔴 THE POPULATION, WRITTEN ONCE. The census and the pager must not be able to
 #: disagree about what a side-less settled leg is.
 #:
@@ -273,6 +363,144 @@ LEG_VERDICTS = (
     "refused_collision",
     "raced",
 )
+
+
+# ---------------------------------------------------------------------------
+# The undo receipt (D51). Reuses the durable-state store; invents nothing.
+# ---------------------------------------------------------------------------
+
+
+def landed_digest(ids: list[int]) -> str:
+    """Content address of the ids that ACTUALLY landed.
+
+    Over the sorted ids and nothing else. It is part of the identity so that an
+    operator holding two restore commands can tell which page each one reverses
+    without opening the store, and so a mistyped identity fails to read rather
+    than reading somebody else's page.
+    """
+    body = json.dumps(sorted(int(i) for i in ids), separators=(",", ":"))
+    return hashlib.sha256(body.encode()).hexdigest()[:16]
+
+
+def new_invocation() -> str:
+    return secrets.token_hex(8)
+
+
+def undo_identity_for(digest: str, *, at: datetime, invocation: str) -> str:
+    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"repair:polymarket_single_leg_label:undo:{stamp}:{digest}:{invocation}"
+
+
+def restore_command(identity: str) -> str:
+    """The one command that puts this page back (D51). Printed by every apply."""
+    return (
+        "source ~/.claude/.env && curl -s -X POST -H "
+        '"Authorization: Bearer $ADMIN_TOKEN" '
+        f'"$BAINLUCK_API/api/admin/repairs/polymarket-single-leg-label'
+        f'?apply=true&undo_identity={identity}"'
+    )
+
+
+def _undo_envelope(identity: str, payload: dict[str, Any]):
+    from app.utils.durable_state import DurableEnvelope
+
+    return DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        # A property of the ARTIFACT ("this record was fully written"), not of
+        # the run: `decode_envelope` types an incomplete envelope as MALFORMED,
+        # so a partial page's receipt would be unreadable — unreversible
+        # exactly for the runs most likely to need reversing (CERT-1979).
+        complete=True,
+        source="repair:polymarket-single-leg-label:undo",
+    )
+
+
+async def _save_undo_co_commit(
+    session, identity: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Stage the receipt in the WRITE'S OWN open transaction.
+
+    Never on its own connection. That would put the record either before the
+    UPDATE (claiming rows that may roll back) or after its commit (a durable
+    relabel whose old names exist nowhere), and both are a lie waiting for a
+    crash. Here there is one commit and it carries both.
+
+    Bounded client-side because the store arms a 5s server timeout this rail
+    cannot afford; a bound that fires returns ``error`` and the caller rolls the
+    UPDATE back with it. Never raises — the store's contract, preserved.
+    """
+    from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+    try:
+        return await asyncio.wait_for(
+            publish_owned_snapshot_in_txn(
+                session,
+                _undo_envelope(identity, payload),
+                owner_key=UNDO_OWNER_KEY,
+                owner=payload[UNDO_OWNER_KEY],
+            ),
+            timeout=RECEIPT_BUDGET_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "identity": identity,
+            "error_class": "TimeoutError",
+            "error": (
+                f"the receipt did not persist inside its {RECEIPT_BUDGET_SECONDS}s "
+                f"client bound"
+            ),
+        }
+
+
+async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
+    """``(payload, reason)`` — "I could not read" is never "it is not there".
+
+    ``read_snapshot_standalone`` NEVER RAISES: a store outage comes back as
+    ``unavailable``, not as an exception. So a bare ``not got.ok`` test would
+    collapse "the database is down" into "your receipt does not exist" on the
+    one path where that sentence is read as "this apply cannot be reversed"
+    (gotcha #53). Only the store's own MISSING is reported missing; everything
+    else is UNREADABLE, which says try again rather than give up.
+    """
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.durable_state import MISSING
+
+    try:
+        got = await read_snapshot_standalone(
+            identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
+        )
+    except Exception:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
+        logger.warning(
+            "repair_polymarket_single_leg_label: undo read raised for %s", identity
+        )
+        return None, REASON_UNDO_UNREADABLE
+    if not got.ok or got.envelope is None:
+        if got.status == MISSING:
+            return None, REASON_UNDO_MISSING
+        logger.warning(
+            "repair_polymarket_single_leg_label: undo read for %s was %s (%s) — "
+            "NOT a missing receipt",
+            identity,
+            got.status,
+            got.error_class,
+        )
+        return None, REASON_UNDO_UNREADABLE
+    payload = got.envelope.payload
+    if not isinstance(payload, dict) or not isinstance(payload.get("changes"), list):
+        return None, REASON_UNDO_CORRUPT
+    return payload, "ok"
+
+
+class _ReceiptNotPersisted(Exception):
+    """The undo record could not be staged beside the write it describes.
+
+    Private and never raised out of ``repair``: it exists only to leave the
+    commit unreached after the rollback, so the "no receipt ⇒ no write" rule is
+    enforced by control flow rather than by an ``if`` a later edit can fall past.
+    """
 
 
 class VenueUnavailable(Exception):
@@ -327,6 +555,13 @@ def _paused_before_examining(
         "repair": "polymarket-single-leg-label",
         "applied": False,
         "counts": {"legs_examined": 0, **{v: 0 for v in LEG_VERDICTS}},
+        # Present and empty rather than absent: a page that examined nothing
+        # wrote nothing, and an operator's script must be able to read the same
+        # keys on every terminal instead of branching on which one it got.
+        "planned_changes": [],
+        "changes": [],
+        "undo_identity": None,
+        "restore_command": None,
         "samples": [],
         "remaining_legs": None,
         "remaining_legs_measured": False,
@@ -452,6 +687,190 @@ async def _fetch_batch(service, condition_ids: list[str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Restore — one earlier apply's page, put back. Dry-run by default.
+# ---------------------------------------------------------------------------
+
+
+async def _restore(session, apply: bool, undo_identity: str) -> dict[str, Any]:
+    """Put ONE earlier apply's page back, compare-and-set in both directions.
+
+    🔴 THE PREDICATE IS THE WHOLE SAFETY ARGUMENT. Each row goes back only
+    ``WHERE fo.name IS NOT DISTINCT FROM <the label this rail wrote>``. A leg the
+    poller re-ingested, a person corrected, or a later repair touched no longer
+    carries that label, so it is refused and counted ``refused_changed_since``
+    rather than being dragged back to "Yes". An id-keyed ``UPDATE`` without that
+    clause is how a rollback undoes work nobody asked it to undo.
+
+    Every row of the receipt lands in exactly one of ``RESTORE_VERDICTS``, and
+    ``restored`` is counted from what Postgres RETURNED, never from the
+    receipt's length — a reversal that reported its input would print a full
+    restore over a run that wrote nothing.
+    """
+    started = time.monotonic()
+    out: dict[str, Any] = {
+        "repair": "polymarket-single-leg-label",
+        "mode": "restore",
+        "undo_identity": undo_identity,
+        "applied": False,
+        "counts": {"in_receipt": 0, **{v: 0 for v in RESTORE_VERDICTS}},
+        "samples": [],
+        "refused": None,
+        "taken_at": None,
+    }
+
+    payload, reason = await _read_undo(undo_identity)
+    if payload is None:
+        out["refused"] = reason
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    changes = [c for c in payload.get("changes") or [] if c.get("outcome_id")]
+    out["taken_at"] = payload.get("taken_at")
+    out["counts"]["in_receipt"] = len(changes)
+    if not changes:
+        # An empty receipt is a REAL state (an apply whose every row raced), not
+        # a failure — and not a success either. Said plainly rather than
+        # returning zeros that read like a completed reversal.
+        out["refused"] = "UNDO_EMPTY"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    by_id = {int(c["outcome_id"]): c for c in changes}
+
+    # ---- what the rows carry NOW ----------------------------------------
+    try:
+        result = await _bounded_statement(
+            session,
+            timeout_literal=f"'{int(RESTORE_SELECT_BUDGET_SECONDS * 1000)}ms'",
+            server_budget_s=RESTORE_SELECT_BUDGET_SECONDS,
+            # `= ANY(:ids)` and not a CAST spelling: this is the form
+            # `backfill_winners` runs against `futures_outcomes` every six hours
+            # in production, so it is the one array bind on this driver with a
+            # measured history. A repair's reversal path is the worst possible
+            # place to debut a SQL spelling — this rail's own `days` bind once
+            # shipped with a double-colon cast and was INERT from the moment it
+            # released. (Written without the literal on purpose: the guard that
+            # catches that class greps this source, and it is right to be blunt
+            # rather than learn to skip comments.)
+            sql=(
+                "SELECT fo.id, fo.name FROM futures_outcomes fo "
+                "WHERE fo.id = ANY(:ids)"
+            ),
+            params={"ids": sorted(by_id)},
+        )
+        current = {int(r[0]): r[1] for r in result.fetchall()}
+    except Exception as exc:  # noqa: BLE001 — a restore that cannot look says so
+        await _safe_rollback(session)
+        out["refused"] = f"RESTORE_READ_FAILED: {type(exc).__name__}: {exc}"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    restorable: list[dict[str, Any]] = []
+    for outcome_id, change in sorted(by_id.items()):
+        if outcome_id not in current:
+            out["counts"]["missing"] += 1
+            continue
+        now_name = current[outcome_id]
+        if now_name == change.get("to"):
+            restorable.append(change)
+        elif now_name == change.get("from"):
+            # Already back — a second restore of the same page, or the poller
+            # having independently rewritten the old label. Not an error and not
+            # a restoration; its own count so a re-run reads honestly.
+            out["counts"]["already_old"] += 1
+        else:
+            out["counts"]["refused_changed_since"] += 1
+            logger.info(
+                "repair_polymarket_single_leg_label restore: outcome %s now reads "
+                "%r, not the %r this apply wrote — leaving it alone",
+                outcome_id,
+                now_name,
+                change.get("to"),
+            )
+
+    out["samples"] = [
+        {
+            "outcome_id": c["outcome_id"],
+            "market_id": c.get("market_id"),
+            "from": c.get("to"),
+            "to": c.get("from"),
+        }
+        for c in restorable[:20]
+    ]
+
+    if not apply:
+        out["counts"]["restored"] = 0
+        out["would_restore"] = len(restorable)
+        out["apply_hint"] = "re-invoke with &apply=true"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    if not restorable:
+        out["applied"] = True
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    values = ", ".join(
+        f"(CAST(:id{i} AS bigint), CAST(:old{i} AS text), CAST(:new{i} AS text))"
+        for i in range(len(restorable))
+    )
+    params: dict[str, Any] = {}
+    for i, c in enumerate(restorable):
+        params[f"id{i}"] = int(c["outcome_id"])
+        params[f"old{i}"] = c.get("from")
+        params[f"new{i}"] = c.get("to")
+
+    # ONE column, the same one the apply named. `last_updated` is a poller
+    # touch-stamp another surface reads as liveness (#2024); a reversal must not
+    # forge a venue observation any more than the apply may.
+    undo_sql = f"""
+        UPDATE futures_outcomes fo
+           SET name = v.old_name
+          FROM (VALUES {values}) AS v(id, old_name, new_name)
+         WHERE fo.id = v.id
+           AND fo.name IS NOT DISTINCT FROM v.new_name
+     RETURNING fo.id
+    """
+    try:
+        result = await _bounded_statement(
+            session,
+            timeout_literal=f"'{int(RESTORE_WRITE_BUDGET_SECONDS * 1000)}ms'",
+            server_budget_s=RESTORE_WRITE_BUDGET_SECONDS,
+            sql=undo_sql,
+            params=params,
+        )
+        put_back = {int(r[0]) for r in result.fetchall()}
+        await _bounded_statement(
+            session,
+            timeout_literal=f"'{int(COMMIT_BUDGET_SECONDS * 1000)}ms'",
+            server_budget_s=COMMIT_BUDGET_SECONDS,
+            sql="SELECT 1",
+            commit=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — a lock on these very rows
+        await _safe_rollback(session)
+        out["refused"] = f"RESTORE_WRITE_FAILED: {type(exc).__name__}: {exc}"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    out["applied"] = True
+    out["counts"]["restored"] = len(put_back)
+    # A row that lost its own compare between the SELECT above and this UPDATE
+    # is the same class as the apply's `raced`, and it is counted in the same
+    # bucket rather than vanishing from the arithmetic.
+    out["counts"]["refused_changed_since"] += len(restorable) - len(put_back)
+    logger.info(
+        "repair_polymarket_single_leg_label restore %s: %s of %s receipted rows "
+        "put back",
+        undo_identity,
+        len(put_back),
+        len(changes),
+    )
+    out["elapsed_s"] = round(time.monotonic() - started, 2)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Repair — dry-run by default.
 # ---------------------------------------------------------------------------
 
@@ -462,6 +881,7 @@ async def repair(
     limit: int = None,
     sport: str = None,
     after_id: int = None,
+    undo_identity: str = None,
 ) -> dict[str, Any]:
     """Re-ask the venue for each side-less settled leg and store the shipped label.
 
@@ -474,7 +894,15 @@ async def repair(
     declared one outside it would advertise a knob no caller could turn. It is
     reported back on every response as ``window_days`` because
     ``scan_exhausted`` is scoped to it.
+
+    ``undo_identity`` takes precedence over every other parameter and puts ONE
+    earlier apply's page back (D51). It re-derives nothing: it reads that
+    apply's own receipt and compare-and-sets against the labels that apply
+    actually wrote.
     """
+    if undo_identity:
+        return await _restore(session, apply, undo_identity)
+
     started = time.monotonic()
     cap = min(int(limit), APPLY_LEG_CAP) if limit else APPLY_LEG_CAP
     days = int(DEFAULT_WINDOW_DAYS)
@@ -680,6 +1108,12 @@ async def repair(
     # ---- the write -------------------------------------------------------
     write_terminal: Optional[str] = None
     write_reason: Optional[str] = None
+    #: Set only once a receipt has COMMITTED with its page. Reported as
+    #: `undo_identity`, and `None` is therefore an honest "nothing to reverse"
+    #: rather than a missing field — a dry run, an empty page, and a rolled-back
+    #: write all leave it unset, and none of those wrote anything.
+    receipt_identity: Optional[str] = None
+    changes: list[dict[str, Any]] = []
     if apply and writable:
         # ONE statement, compare-and-set on the exact name each row was selected
         # on, RETURNING the ids that actually landed. A row the ordinary poller
@@ -718,6 +1152,65 @@ async def repair(
             )
             # Read BEFORE the commit — see COMMIT_BUDGET_SECONDS.
             landed = {int(r[0]) for r in result.fetchall()}
+
+            # 🔴 THE RECEIPT, BUILT FROM `RETURNING` AND STAGED IN THIS SAME
+            # OPEN TRANSACTION. Not from `writable` — that is the PLAN, and a
+            # row the poller re-ingested is in the plan and not in the write, so
+            # a receipt of the plan would offer to "restore" a label this rail
+            # never wrote. `landed` is the only set Postgres will vouch for.
+            #
+            # A receipt that does not persist takes the write down with it:
+            # there is no ordering of a crash, a pool timeout or a store outage
+            # that leaves a relabelled row whose old name is recorded nowhere.
+            if landed:
+                changes = [
+                    {
+                        "outcome_id": p["outcome_id"],
+                        "market_id": p["market_id"],
+                        "category": p["category"],
+                        "from": p["outcome_name"],
+                        "to": p["new_name"],
+                    }
+                    for p in writable
+                    if p["outcome_id"] in landed
+                ]
+                invocation = new_invocation()
+                undo_identity_written = undo_identity_for(
+                    landed_digest([c["outcome_id"] for c in changes]),
+                    at=datetime.now(timezone.utc),
+                    invocation=invocation,
+                )
+                staged = await _save_undo_co_commit(
+                    session,
+                    undo_identity_written,
+                    {
+                        UNDO_OWNER_KEY: invocation,
+                        "taken_at": datetime.now(timezone.utc).isoformat(),
+                        "repair": "polymarket-single-leg-label",
+                        "window_days": days,
+                        "sport": sport,
+                        "changes": changes,
+                    },
+                )
+                if staged.get("status") != "ok":
+                    await _safe_rollback(session)
+                    write_terminal = "paused_receipt_unpersisted"
+                    write_reason = (
+                        f"the undo receipt did not persist "
+                        f"({staged.get('status')}: {staged.get('error')}), so the "
+                        f"relabel of {len(landed)} legs was rolled back rather "
+                        f"than left unreversible — re-invoke with the same cursor"
+                    )
+                    logger.warning(
+                        "repair_polymarket_single_leg_label: receipt %s was %s — "
+                        "rolled the page back",
+                        undo_identity_written,
+                        staged.get("status"),
+                    )
+                    landed = set()
+                    changes = []
+                    raise _ReceiptNotPersisted(write_reason)
+
             await _bounded_statement(
                 session,
                 timeout_literal=f"'{int(COMMIT_BUDGET_SECONDS * 1000)}ms'",
@@ -725,6 +1218,17 @@ async def repair(
                 sql="SELECT 1",
                 commit=True,
             )
+            # Only now. Before the commit the identity names a receipt that may
+            # still roll back, and an operator handed a restore command for a
+            # page that never landed would read `UNDO_MISSING` and not know
+            # which of the two things had failed.
+            if landed:
+                receipt_identity = undo_identity_written
+        except _ReceiptNotPersisted:
+            # Already classified, already rolled back, already logged. Re-raised
+            # only to leave the commit below unreached, and swallowed here so it
+            # cannot be re-described by the generic arm as a write timeout.
+            pass
         except ClientDeadlineExceeded as exc:
             await _safe_rollback(session)
             write_terminal = "paused_pool_timeout"
@@ -747,9 +1251,10 @@ async def repair(
             for p in writable:
                 if p["outcome_id"] in landed:
                     counts["relabelled"] += 1
-                    # The only audit trail this table can carry:
-                    # `futures_outcomes` has no metadata column, so the old
-                    # label survives nowhere else.
+                    # `futures_outcomes` has no metadata column, so the row
+                    # itself cannot carry its own history. The DURABLE record of
+                    # the old label is the receipt staged above; this line is
+                    # the human-readable echo of it, not the audit trail.
                     logger.info(
                         "repair_polymarket_single_leg_label: outcome %s (market %s) "
                         "%r -> %r",
@@ -848,6 +1353,28 @@ async def repair(
         "applied": bool(apply),
         "counts": counts,
         "planned": len(writable),
+        # 🔴 THE COMPLETE PLAN, NOT TWENTY OF IT. `samples` is a preview and was
+        # never a reviewable artifact: an operator asked to authorise a write
+        # cannot review a write they can only see a sixth of. Bounded by
+        # APPLY_LEG_CAP, so this is at most 120 short rows.
+        "planned_changes": [
+            {
+                "outcome_id": p["outcome_id"],
+                "market_id": p["market_id"],
+                "category": p["category"],
+                "from": p["outcome_name"],
+                "to": p["new_name"],
+            }
+            for p in writable
+        ],
+        # What actually landed, from `RETURNING`. On a dry run it is empty
+        # because nothing was written — the plan is above, and conflating the
+        # two is how a dry run reads as a completed apply.
+        "changes": changes,
+        "undo_identity": receipt_identity,
+        "restore_command": (
+            restore_command(receipt_identity) if receipt_identity else None
+        ),
         "samples": samples,
         "remaining_legs": remaining,
         "remaining_legs_measured": remaining_measured,

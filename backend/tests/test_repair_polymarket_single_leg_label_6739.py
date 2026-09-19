@@ -51,6 +51,22 @@ class _Result:
     def scalar_one(self):
         return self._scalar
 
+    def scalar_one_or_none(self):
+        """What the durable store reads off its own upsert.
+
+        Absent, this raised `AttributeError` INSIDE the store's own `except`,
+        which classifies it as a failed publish — so every apply test read as a
+        rolled-back page and the four that failed were failing about the
+        harness, not about the rail.
+        """
+        return self._scalar
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class _Session:
     """Records every statement the rail issues, routed by statement SHAPE.
@@ -60,15 +76,30 @@ class _Session:
     a count.
     """
 
-    def __init__(self, page=(), remaining=0, landed=None, census_rows=()):
+    def __init__(
+        self,
+        page=(),
+        remaining=0,
+        landed=None,
+        census_rows=(),
+        receipt_generation=1,
+    ):
         self.page = list(page)
         self.remaining = remaining
         #: ids the compare-and-set is allowed to return. ``None`` = all of them,
         #: which is the un-raced case.
         self.landed = landed
         self.census_rows = list(census_rows)
+        #: What the durable store's upsert RETURNS. ``None`` is the store's own
+        #: "nothing was written" — a superseded or occupied identity — which is
+        #: how the receipt-failure path is driven without patching the rail.
+        self.receipt_generation = receipt_generation
         self.statements: list[tuple[str, dict]] = []
         self.writes: list[tuple[str, dict]] = []
+        #: Every undo payload the rail staged, decoded from the JSON the store
+        #: binds. The receipt assertions read THIS, not a mock's call args, so
+        #: they see what would actually be stored.
+        self.receipts: list[dict] = []
         self.commits = 0
         self.rollbacks = 0
         self.invalidations = 0
@@ -105,6 +136,11 @@ class _Session:
         upper = sql.upper()
         if upper.startswith("SET LOCAL"):
             return _Result()
+        if "INSERT INTO DURABLE_STATE_SNAPSHOTS" in upper:
+            import json as _json
+
+            self.receipts.append(_json.loads((params or {})["payload"]))
+            return _Result(scalar=self.receipt_generation)
         if upper.startswith("UPDATE"):
             self.writes.append((sql, dict(params or {})))
             ids = [v for k, v in (params or {}).items() if k.startswith("id")]
@@ -851,3 +887,574 @@ def test_every_bind_in_the_rails_sql_actually_parses_as_a_bind():
         f"these binds are written as `:name::type` and will be mis-parsed by "
         f"SQLAlchemy: {sorted(written)} — use CAST(:name AS type)"
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. Reversibility (D51) — the receipt, and the one command that uses it
+#
+# The four things THESE guards exist to stop:
+#
+# 1. **A receipt built from the PLAN.** `writable` is what the rail meant to
+#    write; `RETURNING` is what it wrote. A row the poller re-ingested is in the
+#    first and not the second, and a restore that offered to put it back would
+#    rewrite a label this rail never touched.
+# 2. **A write that outlives its receipt.** Stage the record on its own
+#    connection, or after the commit, and one crash leaves a relabelled row
+#    whose old name exists nowhere. The receipt goes in the write's own
+#    transaction and a failure to stage it rolls the write back.
+# 3. **A restore keyed on the id alone.** Between apply and reversal the poller,
+#    a person, or a later repair may have corrected a leg. `WHERE id = ANY(...)`
+#    drags those corrections back to "Yes"; the compare-and-set on the label
+#    this rail wrote leaves them alone.
+# 4. **A reversal that reports its INPUT.** Counting the receipt's length prints
+#    a full restore over a run that put nothing back (gotcha #53).
+# ---------------------------------------------------------------------------
+
+
+class _RestoreSession:
+    """A session for the reversal path, keyed on the names rows carry NOW.
+
+    Separate from `_Session` deliberately: the restore reads a shape the apply
+    harness has no route for, and teaching one fake both jobs is how a test ends
+    up asserting against a branch that never ran.
+    """
+
+    def __init__(self, names: dict, *, select_raises=None, write_raises=None):
+        #: outcome_id -> the name the row carries right now. A missing key is a
+        #: row that no longer exists.
+        self.names = dict(names)
+        self.select_raises = select_raises
+        self.write_raises = write_raises
+        self.statements: list[tuple[str, dict]] = []
+        self.writes: list[tuple[str, dict]] = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.invalidations = 0
+
+    async def execute(self, stmt, params=None):
+        sql = " ".join(str(stmt).split())
+        params = dict(params or {})
+        self.statements.append((sql, params))
+        upper = sql.upper()
+        if upper.startswith("SET LOCAL"):
+            return _Result()
+        if upper.startswith("SELECT FO.ID, FO.NAME"):
+            if self.select_raises:
+                raise self.select_raises
+            wanted = params.get("ids") or []
+            return _Result(
+                rows=[(i, self.names[i]) for i in wanted if i in self.names]
+            )
+        if upper.startswith("UPDATE"):
+            self.writes.append((sql, params))
+            if self.write_raises:
+                raise self.write_raises
+            landed = []
+            i = 0
+            while f"id{i}" in params:
+                row_id = params[f"id{i}"]
+                # The fake honours the compare-and-set; a fake that returned
+                # every id would make guard 3 vacuous.
+                if self.names.get(row_id) == params[f"new{i}"]:
+                    self.names[row_id] = params[f"old{i}"]
+                    landed.append(row_id)
+                i += 1
+            return _Result(rows=[(r,) for r in landed])
+        return _Result()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+    async def invalidate(self):
+        self.invalidations += 1
+
+
+@pytest.fixture
+def receipt(monkeypatch):
+    """Serve one stored undo record, with its store status under test control."""
+    state = {"status": "ok", "payload": None}
+
+    async def _read(identity, expected_version=None, max_age_s=None):
+        from app.utils.durable_state import DurableEnvelope, EnvelopeRead
+
+        if state["status"] != "ok":
+            return EnvelopeRead(status=state["status"], tier="durable")
+        return EnvelopeRead(
+            status="ok",
+            tier="durable",
+            envelope=DurableEnvelope.build(
+                identity=identity,
+                schema_version=rail.UNDO_SCHEMA,
+                payload=state["payload"],
+                complete=True,
+                source="test",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.durable_snapshots.read_snapshot_standalone", _read
+    )
+    return state
+
+
+def _receipt_payload(changes):
+    return {
+        rail.UNDO_OWNER_KEY: "abc123",
+        "taken_at": "2026-09-19T11:00:00+00:00",
+        "repair": "polymarket-single-leg-label",
+        "window_days": 30,
+        "sport": None,
+        "changes": list(changes),
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_names_the_rows_that_landed_not_the_rows_planned(
+    monkeypatch, fast
+):
+    """Guard 1. Leg 2 is planned and RACED — it must not appear in the receipt.
+
+    Without this the restore would offer to rewrite a leg whose current label
+    some other writer owns.
+    """
+    _venue(
+        monkeypatch,
+        _FakeService(
+            [
+                _Market("0xaa", "KooKoo vs. SaiPa", ["KooKoo", "SaiPa"]),
+                _Market("0xbb", "Ilves vs. Tappara", ["Ilves", "Tappara"]),
+            ]
+        ),
+    )
+    session = _Session(
+        page=[
+            _row(1, 10, "0xaa", "KooKoo vs. SaiPa"),
+            _row(2, 20, "0xbb", "Ilves vs. Tappara"),
+        ],
+        landed=[1],
+    )
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["counts"]["relabelled"] == 1
+    assert out["counts"]["raced"] == 1
+    assert len(session.receipts) == 1, (
+        "the rail staged no receipt — every assertion below would be vacuous"
+    )
+    assert [c["outcome_id"] for c in session.receipts[0]["changes"]] == [1]
+    assert session.receipts[0]["changes"][0] == {
+        "outcome_id": 1,
+        "market_id": 10,
+        "category": "hockey",
+        "from": "Yes",
+        "to": "KooKoo",
+    }
+    assert [c["outcome_id"] for c in out["changes"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_is_staged_before_the_commit_that_carries_the_write(
+    monkeypatch, fast
+):
+    """Guard 2, read off ONE timeline.
+
+    Ordering asserted against the statement transcript rather than against two
+    separate counters: the property is "these land together", and only the
+    transcript can show that the receipt went in before the transaction closed.
+    """
+    _venue(monkeypatch, _FakeService([_Market("0xaa", "A vs. B", ["A", "B"])]))
+    session = _Session(page=[_row(1, 10, "0xaa", "A vs. B")])
+
+    await rail.repair(session, apply=True)
+
+    shapes = [
+        (
+            "update"
+            if s.upper().startswith("UPDATE")
+            else "receipt"
+            if "INSERT INTO DURABLE_STATE_SNAPSHOTS" in s.upper()
+            else "other"
+        )
+        for s, _p in session.statements
+    ]
+    assert "update" in shapes and "receipt" in shapes
+    assert shapes.index("update") < shapes.index("receipt"), (
+        "the receipt was staged BEFORE the write, so it describes rows that may "
+        "yet roll back"
+    )
+    assert session.commits == 1, (
+        "the write and its receipt did not share one commit"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_receipt_that_will_not_persist_rolls_the_relabel_back(
+    monkeypatch, fast
+):
+    """Guard 2's other half — the property Codex asked to see proved.
+
+    `receipt_generation=None` is the store's own "nothing was written"
+    (superseded / occupied). The rail must treat an unrecorded write as no write
+    at all, and hand the operator back the SAME cursor so the page is retried
+    rather than stepped over.
+    """
+    _venue(monkeypatch, _FakeService([_Market("0xaa", "A vs. B", ["A", "B"])]))
+    session = _Session(
+        page=[_row(1, 10, "0xaa", "A vs. B")], receipt_generation=None
+    )
+
+    out = await rail.repair(session, apply=True, after_id=99)
+
+    assert out["terminal"] == "paused_receipt_unpersisted"
+    assert out["counts"]["relabelled"] == 0
+    assert out["counts"]["raced"] == 0, (
+        "a rolled-back page reported concurrent re-ingests that never happened"
+    )
+    assert out["changes"] == []
+    assert out["undo_identity"] is None
+    assert out["restore_command"] is None
+    assert session.rollbacks == 1
+    assert session.commits == 0, "the page committed without a durable receipt"
+    assert out["next_cursor"] == {"after_id": 99}
+    assert out["scan_exhausted"] is False
+
+
+@pytest.mark.asyncio
+async def test_every_apply_prints_the_one_command_that_reverses_it(
+    monkeypatch, fast
+):
+    """D51's actual requirement: a restore that is runnable, not described."""
+    _venue(monkeypatch, _FakeService([_Market("0xaa", "A vs. B", ["A", "B"])]))
+    session = _Session(page=[_row(1, 10, "0xaa", "A vs. B")])
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["undo_identity"]
+    assert out["undo_identity"].startswith(
+        "repair:polymarket_single_leg_label:undo:"
+    )
+    assert out["restore_command"] == rail.restore_command(out["undo_identity"])
+    assert f"undo_identity={out['undo_identity']}" in out["restore_command"]
+    assert "apply=true" in out["restore_command"]
+
+
+@pytest.mark.asyncio
+async def test_two_pages_bank_two_different_receipts(monkeypatch, fast):
+    """A 186-leg drain is two calls, so a reversal is two commands.
+
+    An identity shared between calls would let the second page's receipt replace
+    the first's, and the store's owner guard would refuse it — either way one
+    page becomes unreversible.
+    """
+    _venue(
+        monkeypatch,
+        _FakeService(
+            [
+                _Market("0xaa", "A vs. B", ["A", "B"]),
+                _Market("0xbb", "C vs. D", ["C", "D"]),
+            ]
+        ),
+    )
+    first = await rail.repair(
+        _Session(page=[_row(1, 10, "0xaa", "A vs. B")]), apply=True
+    )
+    second = await rail.repair(
+        _Session(page=[_row(2, 20, "0xbb", "C vs. D")]), apply=True, after_id=1
+    )
+
+    assert first["undo_identity"] != second["undo_identity"]
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_banks_no_receipt_and_offers_no_restore(monkeypatch, fast):
+    _venue(monkeypatch, _FakeService([_Market("0xaa", "A vs. B", ["A", "B"])]))
+    session = _Session(page=[_row(1, 10, "0xaa", "A vs. B")])
+
+    out = await rail.repair(session, apply=False)
+
+    assert session.receipts == []
+    assert out["undo_identity"] is None
+    assert out["restore_command"] is None
+    assert out["changes"] == [], "a dry run reported rows it did not write"
+
+
+@pytest.mark.asyncio
+async def test_the_dry_run_shows_the_whole_plan_not_a_sample_of_it(
+    monkeypatch, fast
+):
+    """An operator cannot authorise a write they can only see a sixth of.
+
+    25 rows: `samples` caps at 20 by design, `planned_changes` must not.
+    """
+    markets = [_Market(f"0x{i:02x}", f"H{i} vs. A{i}", [f"H{i}", f"A{i}"])
+               for i in range(25)]
+    _venue(monkeypatch, _FakeService(markets))
+    session = _Session(
+        page=[_row(i + 1, 100 + i, f"0x{i:02x}", f"H{i} vs. A{i}")
+              for i in range(25)]
+    )
+
+    out = await rail.repair(session, apply=False)
+
+    assert out["planned"] == 25
+    assert len(out["samples"]) == 20
+    assert len(out["planned_changes"]) == 25
+    assert out["planned_changes"][24]["to"] == "H24"
+
+
+@pytest.mark.asyncio
+async def test_the_restore_puts_the_old_label_back(receipt):
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["mode"] == "restore"
+    assert out["counts"]["restored"] == 1
+    assert session.names[1] == "Yes"
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_the_restore_leaves_a_row_something_else_has_corrected_since(
+    receipt,
+):
+    """Guard 3 — the reason a broad id-keyed UPDATE is refused.
+
+    Leg 2 now reads "Tappara": somebody corrected it after the apply. A reversal
+    that dragged it back to "Yes" would undo work nobody asked it to undo.
+    """
+    receipt["payload"] = _receipt_payload(
+        [
+            {"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"},
+            {"outcome_id": 2, "market_id": 20, "from": "Yes", "to": "Ilves"},
+            {"outcome_id": 3, "market_id": 30, "from": "Yes", "to": "Lukko"},
+        ]
+    )
+    session = _RestoreSession({1: "KooKoo", 2: "Tappara"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["counts"]["restored"] == 1
+    assert out["counts"]["refused_changed_since"] == 1
+    assert out["counts"]["missing"] == 1, "leg 3 is gone and was not counted"
+    assert session.names[1] == "Yes"
+    assert session.names[2] == "Tappara", "a later correction was overwritten"
+    assert "IS NOT DISTINCT FROM v.new_name" in session.writes[0][0], (
+        "the reversal is not a compare-and-set on the label this rail wrote"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_second_restore_of_the_same_page_reports_already_old(receipt):
+    """Re-running a reversal is not an error and it is not a restoration."""
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "Yes"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["counts"]["already_old"] == 1
+    assert out["counts"]["restored"] == 0
+    assert session.writes == [], "the reversal rewrote a row already back"
+
+
+@pytest.mark.asyncio
+async def test_the_restore_counts_what_postgres_returned_not_the_receipt(receipt):
+    """Guard 4. The fake loses leg 1's compare between the read and the write —
+    the row-lock race — and the count must follow Postgres, not the input."""
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "KooKoo"})
+    real_execute = session.execute
+
+    async def _racing_execute(stmt, params=None):
+        if " ".join(str(stmt).split()).upper().startswith("UPDATE"):
+            session.names[1] = "somebody else"
+        return await real_execute(stmt, params)
+
+    session.execute = _racing_execute
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["counts"]["restored"] == 0
+    assert out["counts"]["refused_changed_since"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_restore_dry_run_reports_the_plan_and_writes_nothing(receipt):
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(session, apply=False, undo_identity="id-1")
+
+    assert out["applied"] is False
+    assert out["would_restore"] == 1
+    assert out["counts"]["restored"] == 0
+    assert session.writes == []
+    assert session.commits == 0
+    assert out["samples"][0] == {
+        "outcome_id": 1, "market_id": 10, "from": "KooKoo", "to": "Yes",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_store_outage_is_not_reported_as_a_missing_receipt(receipt):
+    """`read_snapshot_standalone` never raises — it returns `unavailable`.
+
+    Telling an operator mid-reversal that their receipt does not exist is how a
+    reversible apply becomes an unreversed one.
+    """
+    receipt["status"] = "unavailable"
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["refused"] == rail.REASON_UNDO_UNREADABLE
+    assert session.writes == []
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_a_receipt_that_is_genuinely_absent_says_so_by_its_own_name(receipt):
+    receipt["status"] = "missing"
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["refused"] == rail.REASON_UNDO_MISSING
+    assert session.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_receipt_whose_shape_is_wrong_is_refused_not_read_as_empty(
+    receipt,
+):
+    """A payload with no `changes` list is CORRUPT, and "corrupt" must not
+    arrive as "nothing to restore" — the two send an operator to very different
+    places."""
+    receipt["payload"] = {"invocation": "abc", "rows": []}
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+
+    assert out["refused"] == rail.REASON_UNDO_CORRUPT
+    assert session.writes == []
+
+
+@pytest.mark.asyncio
+async def test_the_reversal_names_one_column_and_never_the_touch_stamp(receipt):
+    """The apply may not forge `last_updated` (#2024) and neither may the
+    reversal — a rollback that bumped it would claim a venue observation on the
+    way back out."""
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "KooKoo"})
+
+    await rail.repair(session, apply=True, undo_identity="id-1")
+
+    sql = session.writes[0][0].lower()
+    assert "set name = v.old_name" in sql
+    assert "last_updated" not in sql
+    assert "is_winner" not in sql
+
+
+@pytest.mark.asyncio
+async def test_the_restore_takes_precedence_over_every_other_parameter(receipt):
+    """An operator reversing a page must never be able to start a NEW drain by
+    leaving a stale `sport=` or `after_id=` on the command line."""
+    receipt["payload"] = _receipt_payload(
+        [{"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"}]
+    )
+    session = _RestoreSession({1: "KooKoo"})
+
+    out = await rail.repair(
+        session, apply=True, undo_identity="id-1", sport="hockey", after_id=5
+    )
+
+    assert out["mode"] == "restore"
+    assert not any(
+        "LIMIT CAST(:cap AS int)" in s for s, _p in session.statements
+    ), "the reversal also ran a page of the drain"
+
+
+def test_the_restore_is_reachable_by_the_documented_parameter():
+    """`undo_identity` is forwarded only to repairs whose SIGNATURE names it;
+    FastAPI drops an unknown query param silently, so a restore nobody can
+    address is a restore that does not exist."""
+    assert "undo_identity" in inspect.signature(rail.repair).parameters
+
+    import app.routes.admin_repairs as mod
+
+    assert "undo_identity" in set(inspect.signature(mod.run_repair).parameters)
+
+
+def test_the_receipt_budget_fits_inside_the_post_loop_reserve():
+    """The receipt is charged against the same reserve as the write and its
+    commit, and the guard reads the DERIVED client bounds — the arithmetic
+    CERT-681 withheld a token over on the sibling rail."""
+    charged = (
+        rail.client_db_budget_seconds(rail.WRITE_BUDGET_SECONDS)
+        + rail.RECEIPT_BUDGET_SECONDS
+        + rail.client_db_budget_seconds(rail.COMMIT_BUDGET_SECONDS)
+        + rail.CLEANUP_RESERVE_SECONDS
+        + rail.SERIALIZATION_RESERVE_SECONDS
+    )
+    assert charged <= rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
+        f"the write, its receipt, the commit, one cleanup and the serialization "
+        f"are charged {charged}s against a "
+        f"{rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve"
+    )
+
+
+def test_the_undo_record_is_not_aged_out_of_readability():
+    """The store's default max age is 7 days. A label repair is reversible for
+    as long as the row exists, and a receipt typed too-old reads to an operator
+    exactly like a receipt that was never written."""
+    from app.utils.durable_state import DEFAULT_MAX_AGE_S
+
+    assert rail.UNDO_MAX_AGE_S > DEFAULT_MAX_AGE_S
+    assert rail.UNDO_MAX_AGE_S >= 90 * 86400
+
+
+@pytest.mark.asyncio
+async def test_every_bind_on_the_reversal_path_survives_parsing(receipt):
+    """The reversal's SQL is built inline, so the module-level bind guard above
+    cannot see it — and the reversal is the one path nobody exercises until they
+    need it. Compiled here from the statements the rail ACTUALLY issued.
+
+    `= ANY(:ids)` is asserted by name because it is the spelling with production
+    history on this driver (`backfill_winners` runs it against this very table
+    every six hours); a CAST spelling would be a debut on the rollback path.
+    """
+    from sqlalchemy import text
+
+    receipt["payload"] = _receipt_payload(
+        [
+            {"outcome_id": 1, "market_id": 10, "from": "Yes", "to": "KooKoo"},
+            {"outcome_id": 2, "market_id": 20, "from": "Yes", "to": "Ilves"},
+        ]
+    )
+    session = _RestoreSession({1: "KooKoo", 2: "Ilves"})
+
+    out = await rail.repair(session, apply=True, undo_identity="id-1")
+    assert out["counts"]["restored"] == 2, "the write never ran; this is vacuous"
+
+    read_sql = next(
+        s for s, _p in session.statements if s.upper().startswith("SELECT FO.ID")
+    )
+    assert set(text(read_sql)._bindparams) == {"ids"}
+    assert "= ANY(:ids)" in read_sql
+
+    write_sql, write_params = session.writes[0]
+    assert set(text(write_sql)._bindparams) == set(write_params)
