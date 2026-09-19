@@ -918,8 +918,21 @@ struct EvolutionLeaderboardRow: View {
     let isHighlighted: Bool
     let columns: EvolutionLeaderboardGeometry.Columns
 
-    private var probPct: Double { (outcome.currentProbability ?? 0) * 100 }
-    private var changePct: Double { (outcome.probabilityChange24h ?? 0) * 100 }
+    /// 🔴 #7285 — BOTH OF THESE COALESCED TO ZERO, and the row then had no way to
+    /// tell "we have no number" from "the number is zero". The dash it drew was
+    /// right by luck; the sentence it SPOKE — "unchanged over 24 hours" — was a
+    /// claim about a market we had no 24-hour reading for. The optional is kept
+    /// alive as far as the labels, so each of the three readers below decides for
+    /// itself: the drawn delta treats them alike, the drawn price and the spoken
+    /// row do not.
+    private var probPct: Double? { outcome.currentProbability.map { $0 * 100 } }
+    private var changePct: Double? { outcome.probabilityChange24h.map { $0 * 100 } }
+
+    /// Absence is not a direction, so it takes the same neutral tint a zero does.
+    private var changeTint: Color {
+        guard let changePct, changePct != 0 else { return .secondary }
+        return changePct > 0 ? .green : .red
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -973,10 +986,7 @@ struct EvolutionLeaderboardRow: View {
                     .fontWeight(.medium)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .foregroundStyle(
-                        changePct > 0 ? .green :
-                        changePct < 0 ? .red : .secondary
-                    )
+                    .foregroundStyle(changeTint)
                     .frame(width: change, alignment: .trailing)
             }
         }
@@ -989,7 +999,7 @@ struct EvolutionLeaderboardRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(position). \(outcome.name), "
-            + "\(EvolutionLeaderboardGeometry.probLabel(probPct)), "
+            + "\(EvolutionLeaderboardGeometry.spokenProb(probPct)), "
             + EvolutionLeaderboardGeometry.spokenChange(changePct))
     }
 }
