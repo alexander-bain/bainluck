@@ -178,8 +178,25 @@ def test_the_restamp_gauge_is_not_swept_in_by_the_new_prefix():
 # ---------------------------------------------------------------------------
 
 def test_the_stamp_moved_for_this_capture_rule():
-    """A capture rule changes what absence MEANS, and the ring outlives it."""
-    assert GAUGE_CAPTURE_VERSION == UNIT_COST_CAPTURE_VERSION
+    """A capture rule changes what absence MEANS, and the ring outlives it.
+
+    🔴 THIS WAS AN EQUALITY, AND THE EQUALITY POINTED THE WRONG WAY. Written as
+    ``GAUGE_CAPTURE_VERSION == UNIT_COST_CAPTURE_VERSION`` it asserted "the stamp
+    is exactly #4314's floor", which is true only while #4314 is the newest
+    capture rule. So it went RED on the one action it should bless — a later ship
+    bumping the stamp — and stayed GREEN through the one it should catch: CAL-P1306
+    (#6599) added two prefixes and a fixed gauge in ``ec030df12`` without moving
+    the stamp, and this test passed. A guard that fires on the fix and sleeps
+    through the defect is worse than none, because its name says it is watching.
+
+    What #4314 actually needs is that its floor is still LICENSED by the stamp —
+    a row stamped with the current version retains the cost family. That is an
+    inequality. The "somebody added a capture rule and forgot the stamp" duty is
+    not expressible here at all (this file cannot see a future prefix) and lives
+    in ``test_calibration_refinement_capture_6599.py`` as a pinned census of the
+    capture rules, which is the only shape that fails closed on a new one.
+    """
+    assert GAUGE_CAPTURE_VERSION >= UNIT_COST_CAPTURE_VERSION
 
 
 def test_the_drop_and_stop_floor_did_not_move():

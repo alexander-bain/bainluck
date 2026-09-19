@@ -32,9 +32,14 @@ from pathlib import Path
 
 from app.tasks.calibration_beat_gauge_sampler import (
     CAPTURED_PREFIXES,
+    DROP_AND_STOP_CAPTURE_VERSION,
+    GAUGE_CAPTURE_VERSION,
     OPERATIONAL_GAUGES,
+    REFINEMENT_CAPTURE_VERSION,
     UNIT_CANCEL_PREFIX,
+    UNIT_COST_CAPTURE_VERSION,
     UNIT_SPLIT_PREFIX,
+    capture_version,
     select_gauges,
 )
 
@@ -160,3 +165,75 @@ def test_the_cancel_prefix_cannot_swallow_the_cost_reason_family():
     a reach over a neighbouring family that is captured for other reasons."""
     assert not "staged:unit_cost_reason:no_unit_completed".startswith(UNIT_CANCEL_PREFIX)
     assert not "staged:unit_ms_mean".startswith(UNIT_CANCEL_PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# the version floor — the half ``ec030df12`` shipped without
+# ---------------------------------------------------------------------------
+
+def test_the_stamp_moved_for_this_capture_rule():
+    """The capture rule above changed what ABSENCE means, so the stamp must move.
+
+    Without this, every row banked before the deploy carries a gauge map the
+    refinement keys were discarded from at capture time and is stamped ``3`` —
+    the same value as the rows banked after it. A reader asking #6599's own
+    question ("did the refinement fire?") reads absence on both and cannot tell
+    "the sampler could not see it" from "the policy declined", which are the two
+    readings this whole ship exists to separate.
+    """
+    assert GAUGE_CAPTURE_VERSION == REFINEMENT_CAPTURE_VERSION
+
+
+def test_the_older_floors_did_not_move():
+    """Re-dating an earlier floor would make a week of rows stop licensing a
+    reading they legitimately license — the reason the floors are separate
+    constants and not one number (``DROP_AND_STOP_CAPTURE_VERSION``'s comment
+    says exactly this)."""
+    assert DROP_AND_STOP_CAPTURE_VERSION == 2
+    assert UNIT_COST_CAPTURE_VERSION == 3
+    assert UNIT_COST_CAPTURE_VERSION < REFINEMENT_CAPTURE_VERSION
+
+
+def test_a_row_banked_before_this_deploy_is_below_the_floor():
+    """The floor has to actually separate the two populations, or it is a
+    decoration. A row stamped with the PREVIOUS stamp must fall below it, and a
+    row stamped with the current one must not."""
+    assert capture_version({"gauge_capture_version": 3}) < REFINEMENT_CAPTURE_VERSION
+    assert capture_version(
+        {"gauge_capture_version": GAUGE_CAPTURE_VERSION}
+    ) >= REFINEMENT_CAPTURE_VERSION
+
+
+#: Every capture rule ``select_gauges`` applies, pinned. NOT a restatement of the
+#: module for its own sake — see the test below for why this exact shape.
+EXPECTED_CAPTURE_PREFIXES = 6
+EXPECTED_OPERATIONAL_GAUGES = 13
+
+
+def test_adding_a_capture_rule_fails_this_until_the_stamp_moves():
+    """🔴 THE GUARD THAT WAS MISSING, AND THE REASON #6599 NEEDED A SECOND SHIP.
+
+    #4314 had a test called ``test_the_stamp_moved_for_this_capture_rule`` that
+    asserted ``GAUGE_CAPTURE_VERSION == UNIT_COST_CAPTURE_VERSION``. That fires
+    when a later ship bumps the stamp — the CORRECT action — and is silent when a
+    ship adds a capture rule and forgets to, which is the defect. CAL-P1306 walked
+    straight through it: two prefixes and a fixed gauge added, stamp untouched,
+    suite green.
+
+    An equality against a floor cannot express the duty, because the duty is about
+    a rule that does not exist yet. A pinned CENSUS can: adding a prefix or a fixed
+    operational gauge moves one of these counts, this test fails, and its message
+    names the two things the author now owes. Crude on purpose — a count is the
+    only property of "the set of capture rules" that a future rule cannot satisfy
+    by accident.
+    """
+    assert len(CAPTURED_PREFIXES) == EXPECTED_CAPTURE_PREFIXES, (
+        "A capture prefix was added or removed. A capture rule changes what "
+        "ABSENCE means on every row banked before it, so you now owe BOTH: bump "
+        "GAUGE_CAPTURE_VERSION, and add a <NAME>_CAPTURE_VERSION floor equal to "
+        "the new stamp so absence below it reads UNKNOWN. Then update this count."
+    )
+    assert len(OPERATIONAL_GAUGES) == EXPECTED_OPERATIONAL_GAUGES, (
+        "A fixed operational gauge was added or removed — same duty as above: "
+        "bump the stamp, add the floor, then update this count."
+    )
