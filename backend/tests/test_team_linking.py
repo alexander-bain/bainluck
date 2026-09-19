@@ -136,6 +136,58 @@ class TestMatchOutcomeToTeam:
         assert match_outcome_to_team("Clippers", self.TEAMS) == 4
 
 
+class TestMatchOutcomeToTeamWithCityOnlyAliases:
+    """Production rows carry a bare city alias; the fixture above does not (#7188).
+
+    `teams.alternate_names` on production reads ['Yankees', 'New York'] for the
+    Yankees and ['Mets', 'New York'] for the Mets. The bare city is 8+ chars, so
+    the substring arm of _names_match fires it against every other club in the
+    same city — which made the exact full club name read as ambiguous and bind
+    to nothing. An exact name/alias hit must beat another row's substring hit.
+    """
+
+    # Shaped from the live rows (ids are the production ids).
+    MLB = [
+        {"id": 6610, "name": "New York Yankees", "alternate_names": ["Yankees", "New York"]},
+        {"id": 10737, "name": "New York Mets", "alternate_names": ["Mets", "New York"]},
+        {"id": 10707, "name": "Los Angeles Dodgers", "alternate_names": ["Dodgers", "Los Angeles"]},
+        {"id": 10712, "name": "Los Angeles Angels", "alternate_names": ["Angels", "Los Angeles"]},
+    ]
+
+    NBA = [
+        {"id": 49, "name": "Los Angeles Lakers", "alternate_names": ["Los Angeles", "Lakers"]},
+        {"id": 537, "name": "Los Angeles Clippers", "alternate_names": ["LA", "Clippers", "LA Clippers"]},
+    ]
+
+    def test_exact_full_name_beats_a_siblings_city_alias(self):
+        assert match_outcome_to_team("New York Yankees", self.MLB) == 6610
+        assert match_outcome_to_team("New York Mets", self.MLB) == 10737
+
+    def test_exact_full_name_beats_a_siblings_city_alias_nba(self):
+        assert match_outcome_to_team("Los Angeles Lakers", self.NBA) == 49
+        assert match_outcome_to_team("Los Angeles Clippers", self.NBA) == 537
+
+    def test_exact_alias_still_wins(self):
+        assert match_outcome_to_team("Yankees", self.MLB) == 6610
+        assert match_outcome_to_team("Dodgers", self.MLB) == 10707
+
+    def test_truncated_fragment_stays_unbound(self):
+        """'New York M' is genuinely ambiguous — it must bind to nothing, not the Yankees."""
+        for fragment in ("New York M", "New York Y", "Los Angeles D", "Los Angeles A"):
+            assert match_outcome_to_team(fragment, self.MLB) is None, fragment
+
+    def test_bare_city_stays_unbound(self):
+        assert match_outcome_to_team("New York", self.MLB) is None
+        assert match_outcome_to_team("Los Angeles", self.NBA) is None
+
+    def test_duplicate_exact_rows_stay_unbound(self):
+        """The preseason twin shares the exact name — two exact hits is still ambiguous."""
+        with_twin = self.MLB + [
+            {"id": 863, "name": "New York Mets", "alternate_names": ["Mets"]},
+        ]
+        assert match_outcome_to_team("New York Mets", with_twin) is None
+
+
 # =============================================================================
 # Match Outcome to Roster
 # =============================================================================
