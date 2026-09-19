@@ -54,11 +54,27 @@ const EVENT_ID = 15305644;
 const HOME = "Dencheva";
 const AWAY = "Lachinova";
 
-/** A related-futures row, defaulted to the reported page's shape. */
+/**
+ * A related-futures row, defaulted to the reported page's shape.
+ *
+ * #4646 (ux/1349) MOVED THIS DEFAULT from `"Dencheva vs Lachinova"` to the same market
+ * one qualifier along, and the reason is worth reading before moving it back.
+ *
+ * The bare matchup IS the event's own moneyline, and the rail now drops it before any of
+ * the rails this file is about — so the suppression cases would have passed for a brand
+ * new reason (the row never reaches the gate) and the control would have failed (the
+ * section cannot come back on a row that no longer renders). A green suite would then
+ * have been proving nothing at all about the gate/body population split that #3775 is.
+ *
+ * `Set 1 Winner:` is the production shape of a per-side market that survives #4646
+ * (`/api/events/15314529/related-futures`, 2026-09-19). The rows still arrive once per
+ * side, still carry the two players as outcomes, and are still pinned at the settled
+ * rails by their probabilities — which is the entire fixture requirement here.
+ */
 function row(over: Partial<RelatedFuture> = {}): RelatedFuture {
   return {
     market_id: 7001,
-    market_name: "Dencheva vs Lachinova",
+    market_name: "Set 1 Winner: Dencheva vs Lachinova",
     display_category: "game_prop",
     market_tier: 5,
     category: "game",
@@ -139,9 +155,11 @@ const CAPTION = /related futures from multiple sources/;
 
 describe("#3775 — the section never announces futures it does not draw", () => {
   it("THE REPORTED PAGE: two settled game props draw nothing, so nothing renders", () => {
-    // The exact shape of `/events/15305644`: the event's OWN head-to-head
-    // market, returned once per side, decided — so both rows are pinned at the
-    // rails that `StatPropsSection` drops.
+    // The shape of `/events/15305644`: one market, returned once per side,
+    // decided — so both rows are pinned at the rails that `StatPropsSection`
+    // drops. The reported page's market was the head-to-head itself; since
+    // #4646 that one is dropped a step earlier, so the case is pinned on the
+    // per-side market beside it, which reaches this gate exactly as it did.
     const html = render({
       home: [row({ probability: 0.99, outcome_id: 9001, outcome_name: HOME })],
       away: [

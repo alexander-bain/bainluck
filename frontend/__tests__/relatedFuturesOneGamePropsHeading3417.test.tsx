@@ -61,11 +61,24 @@ const EVENT_ID = 15309061;
 const HOME = "Zverev";
 const AWAY = "Khachanov";
 
-/** A related-futures row, defaulted to the reported page's shape. */
+/**
+ * A related-futures row, defaulted to the reported page's shape.
+ *
+ * #4646 (ux/1349) MOVED THIS DEFAULT, and the move is not cosmetic. It used to be
+ * `"Zverev vs Khachanov"` — the bare matchup, i.e. the event's own moneyline, which the
+ * rail now refuses to render at all because the hero has already answered it. Every case
+ * below would have gone from "the eyebrow prints once" to "there is no section", which is
+ * a true statement about #4646 and says nothing about this file's question.
+ *
+ * So the default is now a per-side market the rail still carries — the `Set 1 Winner:`
+ * shape, read off a live WTA payload (`Set 1 Winner: Nika Radisic vs Viktoria Morvayova`,
+ * `/api/events/15314529/related-futures`, 2026-09-19). NOTHING ELSE CHANGED: the rows
+ * still arrive one per side, which is the only property #3417 is about.
+ */
 function row(over: Partial<RelatedFuture> = {}): RelatedFuture {
   return {
     market_id: 7001,
-    market_name: "Zverev vs Khachanov",
+    market_name: "Set 1 Winner: Alexander Zverev vs Karen Khachanov",
     display_category: "game_prop",
     market_tier: 5,
     category: "game",
