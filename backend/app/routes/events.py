@@ -94,6 +94,7 @@ from app.utils.hero_probability import resolve_hero
 from app.utils.settled_hero import resolve_settled_hero
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import venue_settlement_is_askable
+from app.utils.venue_settlement_reader import attach_venue_settlement
 from app.utils.standings_shape import public_standings
 from app.utils import (
     moneyline_to_probability,
@@ -6441,6 +6442,23 @@ async def search_events(
             }
         sports_found[sport_key]["count"] += 1
 
+    # ── #7092: search results stop denying a result the venue already named ──
+    #
+    # THE SECOND CALLER, AND IT IS NOT SCOPE CREEP — IT IS THE SAME ROW.
+    # `_format_event_with_aggregated_odds` has exactly two callers, this one and
+    # `list_events`, so a fix applied to one of them leaves the identical card
+    # denying the identical result on the other. Measured on production
+    # 2026-09-19 01:1xZ: `GET /api/events/search?q=Fonseca` served `15314179`
+    # with `status: suspended`, no score, and `venue_settled` /
+    # `venue_settled_result` ABSENT — the same row, in the same state, that
+    # `/sports/tennis_other` was denying in the same minute.
+    #
+    # #6739's own docstring records why this is not left for later: "Scoping to
+    # the issue's own sample would have shipped the fix to a third of its own
+    # class." Search is bounded at `per_page` = 100, a fifth of the list route's
+    # ceiling, so it is strictly the cheaper of the two call sites.
+    await attach_venue_settlement(db, events, formatted_results, now)
+
     # Calculate pagination metadata
     total_count = total_count or 0
     # #2623: `total_results` is what the page prints as "· 16 games", so a count
@@ -12111,6 +12129,26 @@ async def list_events(
                 folded_opening=_folded.opening if _folded is not None else None,
             )
         )
+
+    # ── #7092: this list stops denying a result the venue already named ──
+    #
+    # #6739 put the venue's verdict on the league rails and this route was the
+    # door the page actually reads: `/sports/{key}` fetches
+    # `/api/events?sport=…`, not `/api/leagues/{sport_key}`. So the fix landed
+    # one route over from the surface in its own screenshot. Measured on
+    # production 2026-09-19 01:26Z, `/sports/tennis_atp` at phone width, the
+    # first two cards under "Live & Paused" read "No result reported · Sep 18"
+    # while `15314463` and `15314462` each held a positive venue grade — the
+    # identical pair of sentences #6739 removed one route away.
+    #
+    # THE GATE SIZES THIS, NOT THE PAGE, which is the question a 500-row route
+    # has to answer before it adopts a rail's helper. Measured the same hour:
+    # `/api/events?limit=500` served 457 rows, 31 were askable (7%), and those
+    # 31 ids returned 5 rows in 9.7 ms; `?sport=soccer_other` served 305 rows
+    # of which 3 were askable. Every row carrying a score and every fixture
+    # still ahead of its kickoff is refused before a statement is issued, so
+    # the ordinary page pays nothing at all.
+    await attach_venue_settlement(db, events, formatted, now)
 
     return {
         "events": formatted,
