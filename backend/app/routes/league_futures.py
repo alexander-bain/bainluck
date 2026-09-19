@@ -48,7 +48,6 @@ from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.resolution_authority import can_write_winner
 from app.utils.matchup_sides import sided_yes_no_labels
 from app.utils.lifecycle import event_is_playable, served_event_status
-from app.utils.event_completion import started_without_result
 from app.utils.entity_page_tiers import (
     AVAILABILITY_DEGRADED,
     AVAILABILITY_EMPTY,
@@ -1364,53 +1363,21 @@ async def _attach_venue_settlement(
     ``venue_settlement_is_askable`` reads the values THIS payload is about to
     carry — the ``served_event_status`` status, the scores as published — plus
     the one input a list brief does not carry, ``started_without_result``,
-    computed here from the same house predicate the detail route uses. A row
+    computed from the same house predicate the detail route uses. A row
     holding a score of our own is refused by that gate and keeps it: our result
     outranks the venue's grade, and publishing both invites a page to choose.
+
+    #7092 — THE BODY MOVED, THE DOOR DID NOT. ``/api/events`` draws the same
+    card family (notice 35) and needs the identical answer, so the logic now
+    lives in
+    :func:`~app.utils.venue_settlement_reader.attach_venue_settlement` beside
+    the query it issues, and both routes call that one function. This name,
+    signature and behaviour are unchanged — it is the rail's door, and #6739's
+    guards drive the rail through it.
     """
-    from app.utils.venue_settlement_reader import (
-        askable_briefs,
-        venue_settlements_for_events,
-    )
+    from app.utils.venue_settlement_reader import attach_venue_settlement
 
-    by_id: dict[int, Event] = {}
-    for event in events:
-        event_id = getattr(event, "id", None)
-        if event_id is not None:
-            by_id[int(event_id)] = event
-
-    started = {
-        event_id: started_without_result(
-            served_event_status(
-                event.status, getattr(event, "commence_time", None), now
-            ),
-            getattr(event, "commence_time", None),
-            now,
-        )
-        for event_id, event in by_id.items()
-    }
-
-    candidates = askable_briefs(briefs, started)
-    if not candidates:
-        # THE ORDINARY PAGE PAYS NOTHING. Every rail row with a score, and every
-        # scheduled row still ahead of its own kickoff, is refused by the gate
-        # before any query is issued — so a league mid-slate issues zero extra
-        # statements and only a page actually carrying an ungraded-looking
-        # finished match issues one.
-        return
-
-    settlements = await venue_settlements_for_events(
-        db,
-        [
-            by_id[int(brief["id"])]
-            for brief in candidates
-            if int(brief["id"]) in by_id
-        ],
-    )
-    for brief in candidates:
-        settlement = settlements.get(int(brief["id"]))
-        if settlement is not None:
-            brief.update(settlement)
+    await attach_venue_settlement(db, events, briefs, now)
 
 
 def _format_game_brief(

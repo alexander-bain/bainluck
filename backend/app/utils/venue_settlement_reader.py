@@ -72,6 +72,8 @@ from typing import Iterable, Sequence
 from sqlalchemy import select
 
 from app.models.models import FuturesMarket, FuturesOutcome
+from app.utils.event_completion import started_without_result
+from app.utils.lifecycle import served_event_status
 from app.utils.venue_settlement import (
     VENUE_SETTLEMENT_SOURCE,
     settlement_from_graded_rows,
@@ -211,3 +213,103 @@ def askable_briefs(
         if venue_settlement_is_askable(gate, live_claim_is_unbacked=False):
             out.append(brief)
     return out
+
+
+async def attach_venue_settlement(db, events: Sequence, briefs: list[dict], now) -> None:
+    """Put the venue's own verdict on the LIST cards that deny having one.
+
+    #6739 wrote this for the league rails; #7092 gave it a second caller and
+    that is why it lives here rather than in either route. The rails
+    (``/api/leagues/{sport_key}``) and the events list (``/api/events``, and
+    the search results beside it) draw THE SAME CARD — notice 35, one card
+    family everywhere — so a row that reads "Settled · Mikrut wins" on one of
+    them and "No result reported" on another is the identical defect #6739
+    exists to remove, merely relocated from detail-vs-list to list-vs-list.
+
+    🔴 THE GATE INPUT IS RECOMPUTED HERE RATHER THAN READ OFF THE BRIEF,
+    BECAUSE ONE OF THE TWO CALLERS DOES NOT HAVE IT. ``/api/events`` publishes
+    ``started_without_result`` on every card (``events.py``'s
+    ``_format_event``); the league rails' ``_format_game_brief`` does not carry
+    it at all. A shared function may therefore not read it off the brief, and
+    the caller that HAS it does not get to skip the computation — otherwise the
+    two surfaces would answer the same row from two different derivations.
+
+    They would in fact agree, and that was checked rather than assumed, because
+    the two derivations are not the same expression: ``_format_event`` computes
+    the flag from the RAW ``event.status`` while publishing the SERVED one, and
+    :func:`~app.utils.event_completion.started_without_result` answers False for
+    anything that is not literally ``"scheduled"``. So the question is whether a
+    premature-``live`` row can be published ``status: "scheduled"`` beside
+    ``started_without_result: false`` and be askable. It cannot, and the reason
+    is structural rather than statistical:
+    :func:`~app.utils.lifecycle.served_event_status` downgrades a ``live`` row
+    only when ``live_start_satisfied`` is False, which is exactly the three
+    cases ``start > now``, ``start is None``, and the comparison raising — and
+    ``started_without_result`` answers False for all three (it needs
+    ``start < now - UPCOMING_GRACE``, and returns False on a None or an
+    uncomparable time). The divergence is unreachable, not merely rare;
+    production 2026-09-19 agrees at 0 of 457 rows on the unfiltered list, which
+    is a consistency check on that argument and not the argument itself.
+
+    ``TestBothDerivationsOfTheGateInputAgree`` pins it, so a future change to
+    either function that opens the gap is a red test rather than two surfaces
+    quietly disagreeing about one row — which is the defect #6739 exists to
+    remove.
+
+    🔴 THE BRIEFS ARE MATCHED TO THEIR ROWS BY ID, NEVER BY POSITION. A
+    formatter drops a row it cannot format (gotcha #42), so the two lists are
+    the same length only on a page where nothing went wrong — and the page
+    where something went wrong is the one where a positional zip would put
+    Schoolkate's result on Mikrut's card. There is no correct wrong answer
+    here: a card that names the loser is worse than a card that names nobody.
+
+    Mutates the briefs in place and returns nothing: the keys are an ADDITION
+    to the shared event card's contract (ruling 047 — extend the contract,
+    never fork the card), under the names ``/api/events/{id}`` has served since
+    #6381, so a second reader has nothing new to learn.
+    """
+    by_id: dict[int, object] = {}
+    for event in events:
+        event_id = getattr(event, "id", None)
+        if event_id is not None:
+            by_id[int(event_id)] = event
+
+    started = {
+        event_id: started_without_result(
+            served_event_status(
+                getattr(event, "status", None),
+                getattr(event, "commence_time", None),
+                now,
+            ),
+            getattr(event, "commence_time", None),
+            now,
+        )
+        for event_id, event in by_id.items()
+    }
+
+    candidates = askable_briefs(briefs, started)
+    if not candidates:
+        # THE ORDINARY PAGE PAYS NOTHING. Every row with a score, and every
+        # scheduled row still ahead of its own kickoff, is refused by the gate
+        # before any query is issued — so a league mid-slate and a 457-row
+        # unfiltered list alike issue zero extra statements, and only a page
+        # actually carrying an ungraded-looking finished match issues one.
+        #
+        # This is what makes the read sized by the GATE rather than by the
+        # page. Measured on production 2026-09-19: `/api/events?limit=500`
+        # served 457 rows of which 31 were askable, and those 31 ids returned
+        # 5 rows in 9.7 ms.
+        return
+
+    settlements = await venue_settlements_for_events(
+        db,
+        [
+            by_id[int(brief["id"])]
+            for brief in candidates
+            if int(brief["id"]) in by_id
+        ],
+    )
+    for brief in candidates:
+        settlement = settlements.get(int(brief["id"]))
+        if settlement is not None:
+            brief.update(settlement)
