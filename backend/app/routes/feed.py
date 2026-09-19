@@ -13065,13 +13065,43 @@ async def _score_golf_tournaments(
         reason = (
             f"{t.get('tour_label') or 'Golf'}: {leader['name']} leads at {leader_pct}%"
         )
-        if leader.get("movement_24h") and abs(leader["movement_24h"]) >= 0.01:
+        # #7179 — the DATED move, or no movement clause. This is the fourth
+        # claim-producing path #4079's A8 did not reach: the other three share
+        # `_dated_movement_change`, which keys a banked basis on `outcome_id`,
+        # and a `golfers[]` entry has no outcome id to key on (it is an AVERAGE
+        # across several markets' outcomes, assembled in `routes/golf.py`).
+        #
+        # It needs no bank. The golf aggregation ALREADY subtracts a 23-25h
+        # `FuturesOddsSnapshot` — a tighter dated window than A8's own 12-24h —
+        # and only falls back to the per-write `probability_change_24h` when no
+        # snapshot is in range. Both answers landed in one field, so this line
+        # could not tell them apart and spent either on the word "today".
+        # `movement_is_dated` reports which arm produced the number, so the
+        # clause is now gated on the measurement rather than on the field name.
+        #
+        # ABSENT, not just False, is a refusal: a golf base published by the
+        # previous release carries no such key, and an old payload cannot be
+        # asked what it measured. It is served for up to `last_good` (2h) after
+        # deploy, so expect the two live golf chips to go quiet until the hourly
+        # precompute republishes, then return. That gap is the fix failing
+        # closed on an unanswerable question, and it is the same property that
+        # makes a STOPPED snapshot sweep silence these captions by itself
+        # instead of letting them drift into fiction.
+        #
+        # SELECTION AND RANKING ARE UNTOUCHED, deliberately: `_score_tournament`
+        # and `_tournament_is_live` still read `movement_24h` exactly as before,
+        # so the same tournaments appear in the same order. This narrows what a
+        # card may SAY, never what a reader is SHOWN — the rule A8 shipped under.
+        if (
+            leader.get("movement_is_dated")
+            and leader.get("movement_24h")
+            and abs(leader["movement_24h"]) >= 0.01
+        ):
             mv = leader["movement_24h"]
             direction = "up" if mv > 0 else "down"
             # POINTS, not "%". `movement_24h` is a probability DELTA in 0-1
-            # units (it falls back to `probability_change_24h`, which every
-            # writer stores as `new - previous`), so `mv * 100` is percentage
-            # POINTS. Printing it with a "%" told the reader a different, wrong
+            # units, so `mv * 100` is percentage POINTS. Printing it with a "%"
+            # told the reader a different, wrong
             # number: Shane Lowry 37.8% -> 47.8% rendered as "up 10.0% today",
             # which reads as a tenth more than he had rather than ten points.
             # Same transform, same unit, same sentence family as the futures

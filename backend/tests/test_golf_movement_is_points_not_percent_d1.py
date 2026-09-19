@@ -81,6 +81,14 @@ def _tournament(movement: float, probability: float = _LOWRY_PROBABILITY) -> dic
                 "probability": probability,
                 "movement_24h": movement,
                 "probability_change_24h": movement,
+                # #7179 — the card states a move only when the aggregation
+                # measured it against a dated snapshot rather than falling back
+                # to a per-write delta. The Lowry specimen WAS a dated move; this
+                # file is about the UNIT it is printed in, so the fixture says so
+                # and every assertion below goes on testing points-vs-percent.
+                # Without it the clause is (correctly) silenced and all 14 unit
+                # assertions here would pass vacuously on an empty sentence.
+                "movement_is_dated": True,
                 "american_odds": None,
                 "is_winner": None,
                 "rank": 1,
