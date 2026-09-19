@@ -398,6 +398,67 @@ def _is_single_winner_field(outcomes: list) -> bool:
     return total * 100 <= _MAX_FIELD_SUM_PCT
 
 
+# `_is_single_winner_field` asks whether a field partitions *a* contest. It
+# cannot ask **which** contest, and that is the whole of #3838: two coherent
+# fields can each partition a different race, and blending them is not a blend.
+#
+# Measured on production 2026-09-19, the three markets that reach the poly slot
+# for the `presidential` theme, after `clean_outcomes` strips the `Person XX`
+# placeholders:
+#
+#     id      name                                    clean  sum%   verdict
+#     112897  Presidential Election Winner 2028          53  90.2   general
+#     112895  Democratic Presidential Nominee 2028       52  95.2   dem_primary
+#     108445  2028 Democratic presidential nominee       48  96.5   dem_primary (kalshi)
+#
+# Both poly fields clear the 150% bound comfortably, so the coherence gate
+# cannot separate them — and the slot was decided by `len(outcomes)`, which the
+# general election won **53 to 52**. One placeholder row. The card was therefore
+# titled with Kalshi's Democratic primary and filled with the general-election
+# field, which is how JD Vance came to lead the 2028 *Democratic* nomination at
+# 21.1% with Rubio 5th and Trump on the same ladder.
+#
+# 🔴 THE MARGIN IS THE WARNING, NOT THE BUG. 53-52 is one outcome wide and both
+# counts move whenever Polymarket fills in a placeholder name, so the slot flips
+# between two different questions on its own. #3838 recorded the partner as
+# `58335992` ("Who will announce Presidential run before 2028?", 2063.6% — the
+# rack #5541 bounded out); by the time it was re-shopped the partner was
+# `112897`. Same card, same title, three different questions over its life. A
+# size tiebreak between markets that were never established to ask the same
+# thing is a coin flip with a stable-looking result.
+#
+# So the contest is read off the title and pairing REQUIRES agreement. The keys
+# are deliberately coarse — a party primary is not the general election, and
+# that is the only distinction this needs to make.
+_CONTEST_PARTY_NOMINEE_RE = re.compile(
+    r"\b(?:democratic|democrat|republican|gop)\b", re.I
+)
+_CONTEST_NOMINEE_RE = re.compile(r"\bnomin", re.I)
+_CONTEST_GENERAL_RE = re.compile(
+    r"\b(?:who\s+win|next\s+president|presidential\s+election|election\s+winner|"
+    r"win\s+the\s+(?:2028|2032)\s+president|president\s+of\s+the\s+united\s+states)",
+    re.I,
+)
+
+
+def _contest_key(name_lower: str) -> str:
+    """Which race does this headline settle? Two headlines pair only if equal.
+
+    `dem_primary` / `gop_primary` / `general`, or `other` when the title names a
+    presidential contest this does not recognise. `other` pairs only with
+    `other`, which preserves the previous behaviour for titles outside the three
+    named races rather than silently widening or narrowing them.
+    """
+    if _CONTEST_NOMINEE_RE.search(name_lower):
+        party = _CONTEST_PARTY_NOMINEE_RE.search(name_lower)
+        if party:
+            token = party.group(0).lower()
+            return "gop_primary" if token in ("republican", "gop") else "dem_primary"
+    if _CONTEST_GENERAL_RE.search(name_lower):
+        return "general"
+    return "other"
+
+
 # ---------------------------------------------------------------------------
 # Presidential — merge candidates across Kalshi + Polymarket
 # ---------------------------------------------------------------------------
@@ -411,6 +472,9 @@ def _build_presidential(
     kalshi_headline = None
     poly_headline = None
     side_markets: list[dict] = []
+    # Every market that could headline, kept with the contest it settles so the
+    # pairing can be decided across sources instead of one market at a time.
+    contenders: list[dict] = []
 
     for m in pres_markets:
         name_lower = (m.name or "").lower()
@@ -427,17 +491,58 @@ def _build_presidential(
             and _is_single_winner_field(outcomes)
         ):
             src = _source(m)
-            entry = {"market_id": m.id, "q": m.name, "outcomes": outcomes}
-            if src == "kalshi":
-                if kalshi_headline is None or len(outcomes) > len(kalshi_headline["outcomes"]):
-                    kalshi_headline = entry
-            elif src == "polymarket":
-                if poly_headline is None or len(outcomes) > len(poly_headline["outcomes"]):
-                    poly_headline = entry
+            if src in ("kalshi", "polymarket"):
+                contenders.append({
+                    "src": src,
+                    "contest": _contest_key(name_lower),
+                    "market": m,
+                    "entry": {"market_id": m.id, "q": m.name, "outcomes": outcomes},
+                })
+                continue
+        row = _market_row(m, now=now)
+        if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
+            side_markets.append(row)
+
+    def _largest(src: str, contest: str | None) -> dict | None:
+        pool = [
+            c for c in contenders
+            if c["src"] == src and (contest is None or c["contest"] == contest)
+        ]
+        if not pool:
+            return None
+        return max(pool, key=lambda c: len(c["entry"]["outcomes"]))
+
+    # Kalshi still establishes the contest when it has one, so the card keeps the
+    # headline it has today; what changes is that Polymarket is now answered from
+    # the SAME race rather than from whichever of its fields happened to be
+    # widest. When Kalshi is absent the poly headline sets the contest, which is
+    # the previous behaviour for that case unchanged.
+    best_kalshi = _largest("kalshi", None)
+    if best_kalshi is not None:
+        # Kalshi sets the contest, so re-filtering the Kalshi side by it would
+        # return `best_kalshi` again by construction. Only the poly side is
+        # actually constrained here.
+        best_poly = _largest("polymarket", best_kalshi["contest"])
+    else:
+        best_poly = _largest("polymarket", None)
+
+    chosen = [c for c in (best_kalshi, best_poly) if c]
+    chosen_ids = {id(c) for c in chosen}
+    for c in chosen:
+        if c["src"] == "kalshi":
+            kalshi_headline = c["entry"]
         else:
-            row = _market_row(m, now=now)
-            if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
-                side_markets.append(row)
+            poly_headline = c["entry"]
+
+    # A contender that did not take the slot used to be dropped on the floor, so
+    # the correct Democratic-nominee market (112895) was not merely unpaired —
+    # it was absent from the page entirely. Demote, do not discard.
+    for c in contenders:
+        if id(c) in chosen_ids:
+            continue
+        row = _market_row(c["market"], now=now)
+        if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
+            side_markets.append(row)
 
     side_markets.sort(key=lambda r: -abs(r["prob"] - 50))
 
