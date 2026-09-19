@@ -442,6 +442,7 @@ export default function TournamentProgressionTable({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [headHeight, setHeadHeight] = useState(0);
   const [stickyEdge, setStickyEdge] = useState(0);
+  const [leftBleedExposed, setLeftBleedExposed] = useState(false);
 
   const syncScrollAffordance = useCallback(() => {
     const el = scrollRef.current;
@@ -450,6 +451,10 @@ export default function TournamentProgressionTable({
     // Once the grid opens on its sort column (#7192) the columns a reader has
     // not seen are behind them, so the cue has to point both ways.
     setCanScrollLeft(el.scrollLeft > 4);
+    // Deliberately `> 0` and not the cue's `> 4` (#7246). The cue is advice and
+    // 4px of travel is not worth advising about; this one is a cover, and 4px of
+    // a scrolled column showing past the card edge is the whole defect.
+    setLeftBleedExposed(el.scrollLeft > 0);
     setHeadHeight(headRef.current?.getBoundingClientRect().height ?? 0);
     // Where the sticky `Team` cell ends, in THIS wrapper's coordinates. The
     // left-hand cue cannot sit on the container's edge the way the right one
@@ -822,6 +827,45 @@ export default function TournamentProgressionTable({
             </tbody>
           </table>
         </div>
+        {/* The sticky block does not reach the card edge, and this is the 8px
+            that proves it (#7246).
+
+            `position: sticky; left: 0` pins to the scroller's CONTENT edge, not
+            its padding edge, so the `#` cell's box starts at x=8 — the scroller's
+            own `px-2` — and the strip at [0, 8] is covered by nothing. Measured
+            at rest on production, /playoffs/mlb at 390px:
+
+              cell            left   background   box in the scroller
+              #  (sticky)     0px    #ffffff      [8, 40]
+              Team (sticky)   32px   #ffffff      [40, 188]
+              Make Playoffs   —      transparent  [-89, 19]
+
+            so 11px of a scrolled-away header ran through the gap and a reader saw
+            `fs` floating left of `#`, plus the pale-blue tail of a probability
+            bar on rows that had one. It has been there since the sticky columns
+            were written and was invisible while the grid rested at scrollLeft 0,
+            because the slot sat over nothing. #7192 rests the grid mid-table,
+            which is the first time anything has been behind it.
+
+            WHY A COVER AND NOT A SMALLER PIN. The tempting fix is `left-[-8px]`
+            on `#` with `left-[24px]` on `Team`, which makes the block pin at the
+            padding edge. It also drags the rank and the crest 8px outside the
+            page's content column the instant the reader scrolls — the names stop
+            lining up with the heading above them. Geometry stays; the cover moves.
+
+            NOT z-10. The sticky cells are, and they must keep winning: this is an
+            extension of their background into the bleed, never something that can
+            paint over them. It beats the bars (positioned, z-auto) on tree order.
+
+            The three 2s — the scroller's `px-2`, this `w-2` and this `-left-2` —
+            are one number and the guard reads them out of the classes. */}
+        {leftBleedExposed && (
+          <div
+            aria-hidden="true"
+            data-testid="progression-sticky-bleed-cover"
+            className="pointer-events-none absolute inset-y-0 -left-2 w-2 bg-surface-card"
+          />
+        )}
         {/* -right-2 lands on the scroll container's own clip edge, which that
             container's -mx-2 puts 8px outside this wrapper. The height is the
             header row's, so the cue sits on the clipped column name and never

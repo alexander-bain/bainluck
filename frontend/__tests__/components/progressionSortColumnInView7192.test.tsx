@@ -303,7 +303,21 @@ describe("#7192 arm B — the component wires the alignment and marks the hidden
     expect(CODE).toContain("left: stickyEdge");
     // And it must not also carry a container-edge offset class that would
     // fight the measured one.
-    expect(CODE).not.toContain("-left-2");
+    //
+    // SCOPE NARROWED BY #7246, intent unchanged. This was a file-wide
+    // `not.toContain("-left-2")`, which was a true statement about the CUE
+    // written as a statement about the FILE — safe only while nothing else
+    // could legitimately sit at the container's edge. #7246 put something
+    // there: an opaque 8px cover for the strip the sticky block does not
+    // reach, whose whole job is to be at `-left-2`. The claim being made here
+    // has always been "this cue is positioned by measurement, not by a
+    // container offset", so it is now asked of the cue's own JSX block.
+    const leftCue = (() => {
+      const at = CODE.indexOf('data-testid="progression-scroll-affordance-left"');
+      return CODE.slice(CODE.lastIndexOf("<div", at), CODE.indexOf("/>", at) + 2);
+    })();
+    expect(leftCue).toContain("left: stickyEdge");
+    expect(leftCue).not.toContain("-left-2");
     expect(CODE).toContain("bg-gradient-to-r from-surface-card to-transparent");
     // Measured from the sticky header itself, never assumed: the `Team` column
     // is 92px at its floor and 140px+ from `sm:`, so a hardcoded seam would be
@@ -326,7 +340,22 @@ describe("#7192 arm B — the component wires the alignment and marks the hidden
     // Neither one may take a tap meant for a header link.
     const cueLines = CODE.split("\n").filter((l) => l.includes("progression-scroll-affordance"));
     expect(cueLines).toHaveLength(2);
-    expect(CODE.match(/pointer-events-none absolute/g)).toHaveLength(2);
+    // SCOPE NARROWED BY #7246, intent unchanged. The file-wide count of
+    // `pointer-events-none absolute` was standing in for "both cues are inert
+    // overlays"; it read 2 because the cues were the only two overlays. The
+    // #7246 cover is a third, so the claim is now made of each cue by name and
+    // the file-wide count moved to that fix's own guard, which can say what the
+    // third one is.
+    const rightCueBlock = CODE.slice(
+      CODE.lastIndexOf("<div", rightCue),
+      CODE.indexOf("/>", rightCue) + 2,
+    );
+    const leftCueBlock = CODE.slice(
+      CODE.lastIndexOf("<div", leftCue),
+      CODE.indexOf("/>", leftCue) + 2,
+    );
+    expect(rightCueBlock).toContain("pointer-events-none absolute");
+    expect(leftCueBlock).toContain("pointer-events-none absolute");
     // Their heights differ on purpose and the difference is load-bearing: the
     // right cue stays on the header (#4261 measured that a full-height wash
     // there erased the bars), the left one runs the full height because what it
