@@ -1243,7 +1243,11 @@ export default function CalibrationPage() {
               ? Math.min(100 - barLeft, ((row.rangeHigh! - row.rangeLow!) / 10) * 100)
               : Math.min(100, ((row.mce ?? 0) / 10) * 100);
             return (
-              <div key={row.label}>
+              <div
+                key={row.label}
+                data-testid="calibration-benchmark-row"
+                data-benchmark-highlight={row.highlight ? "1" : "0"}
+              >
                 <div className="flex justify-between items-baseline text-sm mb-1">
                   <span className={row.highlight ? "font-semibold text-text-primary" : "text-text-secondary"}>
                     {row.label}
@@ -1262,8 +1266,29 @@ export default function CalibrationPage() {
                         across two lines on production. Breaking between the
                         fragments (at the spaces below) is fine; breaking at the
                         hyphen of "2-5pp" or "0.3-1.2pp" is not. */}
+                    {/* #7225. Our row is `cohortMCE` — the ten buckets averaged
+                        with EQUAL weight — while the hero and the stat card
+                        1,200px above are `cohortECE`, n-weighted. Both are
+                        right; on production they read 1.0pp and 0.9pp, and a
+                        reader met them with nothing to tell them apart: same
+                        cohort word ("traded"), same denominator (449,027
+                        outcomes, printed on both), same unit, same green bold.
+                        The only separator was "per-bucket" in the grey subtitle
+                        above — so the word travels with the number now, inside
+                        the SAME nowrap token, because a qualifier that wraps
+                        onto its own line has stopped qualifying anything.
+                        The page's own vocabulary, not a new coinage: "show the
+                        math" already says "Per-bucket error, the ten buckets
+                        averaged with equal weight", and #7174 renamed this
+                        statistic's column header to "Bucket" for the same
+                        reason. Our row only — the three published benchmarks
+                        are someone else's figures and we cannot say how they
+                        were averaged (CAL-P1261's rule). */}
                     <span className="whitespace-nowrap">
                       {isRange ? `${row.rangeLow}-${row.rangeHigh}pp` : `${(row.mce ?? 0).toFixed(1)}pp`}
+                      {row.highlight && !isRange ? (
+                        <span className="font-normal text-text-secondary"> per-bucket</span>
+                      ) : null}
                     </span>
                     {row.ci ? <> <span className="whitespace-nowrap">{`(95% CI: ${row.ci})`}</span></> : ""}
                     {row.n ? <> | <span className="whitespace-nowrap">{`${row.n.toLocaleString()} outcomes`}</span></> : ""}
