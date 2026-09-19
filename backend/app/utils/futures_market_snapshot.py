@@ -993,6 +993,95 @@ def read_dated_basis_entry(entry: Any) -> tuple[float | None, datetime | None]:
     return price, observed_at
 
 
+def dated_movement_points(
+    market: Any,
+    outcome_id: Any,
+    current_probability: Any,
+    stored_change: Any,
+    now: datetime | None = None,
+) -> float | None:
+    """The 24h move a SERVED NUMBER may carry, or `None` (#4079).
+
+    ═══ WHY THIS IS HERE AND NOT AT A CALLER ═══
+
+    #7176 taught the copy layer to date its sentence, and left every NUMBER
+    beside that sentence reading the per-write delta: the Discover card's
+    `movement`, the distribution row's `movement`, and the detail ladder's
+    `probability_change_24h`. Alex's phone line 21 is about the number, not the
+    prose — a green `+30.5` beside a plotted line that is nearly flat — and the
+    prose fix structurally cannot reach it, because the clients draw the badge
+    off the raw field whether or not a caption was suppressed (#7226 is that
+    gap, reported from the other side).
+
+    So this is the ONE subtraction, and both routes call it. `feed.py`'s
+    `_dated_movement_change` — the caption's answer — is this function plus the
+    card floor, which is why the sentence and the badge beside it can no longer
+    be computed from two different bases.
+
+    ═══ WHAT IT RETURNS IS A SUBTRACTION, NOT A LOOKUP ═══
+
+    `current - basis`, where the basis is the oldest price the sweep actually
+    OBSERVED inside the window and `current` is the price the caller is already
+    holding. Banking an observation rather than a computed change is what makes
+    the answer survive a WRITE BETWEEN SWEEPS: a poll landing thirty seconds
+    after the bank moves this result to the new, correct dated move, where a
+    banked change would have gone stale for ten minutes. See
+    `DATED_BASIS_METADATA_KEY` for the producer's side of that bargain.
+
+    Same scale as the column it replaces — a probability fraction off the raw
+    stored price, never a display-scaled one — so a caller that normalizes its
+    probabilities for display must still hand this the unscaled price, exactly
+    as it hands the stored delta today.
+
+    ═══ IT NARROWS WHAT MAY BE SAID, NEVER WHAT IS SHOWN OR CHOSEN ═══
+
+    🔴 `stored_change` is the gate on whether there is a claim AT ALL, on its
+    truthiness, exactly as every serving site tests it today. A row the writers
+    left NULL stays silent even when the bank can date a large move for it —
+    promoting it would be a new selection policy, and the `US bank failure`
+    specimen (a real -9.0 point day with a NULL delta) is deliberately still
+    silent after this. The column keeps every reader it has: `/api/futures/movers`
+    ranking, `compute_futures_highlight`'s choice of subject, the confidence
+    signal's liveness test, and the archetype classifier's format choice all go
+    on reading the stored value.
+
+    ═══ EVERY REFUSAL IS THE SAME REFUSAL ═══
+
+    `None` for: no stored claim, no price, no id, no bank, an unreadable cell,
+    or a basis outside the window. Every client already treats a null movement
+    as "draw no badge" (`MovementBadge` renders nothing, `OutcomeRow` gates on
+    `abs(change) >= 0.005`), so a row that cannot date its move loses a badge
+    rather than gaining a wrong one. A refusal is never 0.0: that value is
+    reserved for a day the bank MEASURED as flat, and returning it for a day
+    nobody measured would be the one wrong answer this cannot afford.
+
+    NO CARD FLOOR HERE, unlike the caption's wrapper. The floor decides whether
+    a SENTENCE is worth a card's line; each client already has its own
+    threshold for the badge, and applying the caption's floor here would delete
+    a truthful 1.5-point arrow in the name of a rule about prose.
+
+    The upper age bound is what makes a STOPPED SWEEP fail closed: a bank nobody
+    refreshes only ever gets older, so it leaves the window by itself and the
+    badges go quiet without anything having to detect the outage.
+    """
+    if not stored_change:
+        return None
+    if current_probability is None or outcome_id is None:
+        return None
+    basis, observed_at = read_dated_basis_entry(
+        dated_movement_basis(market).get(str(outcome_id))
+    )
+    if basis is None or observed_at is None:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    age_hours = (reference - observed_at).total_seconds() / 3600.0
+    if not DATED_BASIS_MIN_AGE_HOURS <= age_hours <= DATED_BASIS_WINDOW_HOURS:
+        return None
+    return float(current_probability) - basis
+
+
 def opening_baseline_stamp(market: Any) -> Any:
     """`opening_baseline_at` for a market on EITHER carrier shape (#4758).
 
@@ -1407,6 +1496,7 @@ __all__ = [
     "DATED_BASIS_MIN_AGE_HOURS",
     "dated_movement_basis",
     "read_dated_basis_entry",
+    "dated_movement_points",
     "opening_baseline_stamp",
     "price_poll_stamp",
     "displayed_price_stamp",

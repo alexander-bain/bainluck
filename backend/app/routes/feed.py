@@ -6237,12 +6237,16 @@ from app.utils.market_staleness import (
 # `displayed_price_stamp` (#5809) is the third, and it is not reached off a
 # market at all — it takes the printed legs. That is why it is safe under the
 # same analyser: no market escapes into it.
+#
+# `dated_movement_points` (#4079 numeric half) is the fourth, and it is the same
+# positional escape as `opening_baseline_stamp`: it reads `market_metadata`,
+# which is in `MARKET_COLUMNS`, through `dated_movement_basis`. It is called at
+# every site that serves a movement NUMBER, so a projection that stopped loading
+# that column would silence badges rather than raise MissingGreenlet inside the
+# per-item serializer (gotcha #42) — the refusal the analyser exists to protect.
 from app.utils.futures_market_snapshot import (
     CARD_PRICE_AGE_LEG_COUNT,
-    DATED_BASIS_MIN_AGE_HOURS,
-    DATED_BASIS_WINDOW_HOURS,
-    dated_movement_basis,
-    read_dated_basis_entry,
+    dated_movement_points,
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
@@ -6898,6 +6902,14 @@ def _dated_movement_change(
     window of wrong numbers here; it is a window of numbers recomputed against a
     slightly older basis, which is the honest thing a dated claim can be.
 
+    🔴 THE SUBTRACTION ITSELF IS `dated_movement_points`, SHARED. This function
+    is that calculation plus two things only a SENTENCE needs: the subject the
+    highlight picked, and the card floor. The badge drawn beside the sentence
+    and the detail ladder's own number now come out of the same helper on the
+    same basis (#4079 numeric half), so a card can no longer say one thing in
+    prose and print another in a chip — which is exactly what it did while this
+    was the only dated reader on the page.
+
     ═══ IT NARROWS WHAT MAY BE SAID, NEVER WHAT IS SHOWN ═══
 
     🔴 The SELECTION is untouched and that is deliberate. `top_mover_name` is
@@ -6940,25 +6952,15 @@ def _dated_movement_change(
     if row is None:
         return None
 
-    current = row.get("probability")
-    outcome_id = row.get("id")
-    if current is None or outcome_id is None:
-        return None
-
-    basis, observed_at = read_dated_basis_entry(
-        dated_movement_basis(market).get(str(outcome_id))
+    move = dated_movement_points(
+        market,
+        row.get("id"),
+        row.get("probability"),
+        row.get("probability_change_24h"),
+        now=now,
     )
-    if basis is None or observed_at is None:
+    if move is None:
         return None
-
-    reference = now or datetime.now(timezone.utc)
-    if reference.tzinfo is None:
-        reference = reference.replace(tzinfo=timezone.utc)
-    age_hours = (reference - observed_at).total_seconds() / 3600.0
-    if not DATED_BASIS_MIN_AGE_HOURS <= age_hours <= DATED_BASIS_WINDOW_HOURS:
-        return None
-
-    move = float(current) - basis
     # The card floor decides whether a movement chip is drawn at all, so a dated
     # move below it is not a smaller claim — it is no claim. This is the arm
     # that silences the `Phantom Blade Zero` specimen, whose stored delta says
@@ -10358,14 +10360,38 @@ async def _score_sports_mode_futures(
                     float(o.current_probability) if _outcome_prints_a_price(o) else None
                 ),
                 "rank": position,
-                "movement": (
-                    float(o.probability_change_24h)
-                    if o.probability_change_24h
-                    else None
+                # #4079 NUMERIC HALF — the badge is DATED or it is absent.
+                #
+                # This is the number `MovementBadge` draws on the phone
+                # (`leader.movement`) and the arrow the web card prints. Until
+                # now it was `probability_change_24h`: `new - previous` at write
+                # time, for a previous write of unknown age, rendered as "today".
+                # #7176 dated the SENTENCE and could not reach this, because the
+                # clients redraw the raw field whether or not the caption was
+                # suppressed — which is #7226, reported from the other side.
+                #
+                # `dated_movement_points` returns the move against an observation
+                # the sweep actually banked, or None for every case it cannot
+                # date. None is the path every client already takes: the badge is
+                # not drawn. It is never 0.0, which would be the one reading that
+                # claims a measured flat day.
+                #
+                # The RAW price, not a display-scaled one — `_normalize_feed_
+                # probabilities` runs below and the banked basis is on the
+                # stored scale, so the subtraction has to happen here.
+                "movement": dated_movement_points(
+                    market, o.id, o.current_probability, o.probability_change_24h, now=now
                 ),
             }
             for position, o in enumerate(printed_outcomes, start=1)
         ]
+        # The confidence glyph asks "is this market being traded", which the
+        # per-write delta answers honestly — it is evidence of a write, not a
+        # claim about a day. Banked here, off the same legs, so dating the badge
+        # above cannot silently drop a bar. See the `confidence_signal` call.
+        _legs_moved_since_last_write = any(
+            o.probability_change_24h for o in printed_outcomes
+        )
         # The pre-humanization names, for `_printed_affirmative_percent`: after
         # the rewrite below a "Yes" row is a restatement of the question.
         _raw_card_names = [o["name"] for o in top_outcomes_data]
@@ -10551,7 +10577,18 @@ async def _score_sports_mode_futures(
                     else None,
                     _display_scale,
                 ),
-                "movement": (
+                # #4079 numeric half — `distribution_outcomes[].movement` is a
+                # SERVED number on the same card as the badge above, so it is
+                # dated by the same subtraction or it is absent. See the
+                # top_outcomes site for why the raw price is the input.
+                "movement": dated_movement_points(
+                    market, o.id, o.current_probability, o.probability_change_24h, now=now
+                ),
+                # NOT served — `_distribution_outcomes` copies three named keys.
+                # The archetype's format choice (`probability_timeline`) is a
+                # liveness question, so it keeps reading the stored column and
+                # the card's SHAPE does not move when a badge goes quiet.
+                "movement_stored": (
                     float(o.probability_change_24h)
                     if o.probability_change_24h is not None
                     else None
@@ -10632,9 +10669,10 @@ async def _score_sports_mode_futures(
         # outcome carries a captured closing/settled price.
         _conf_signal = confidence_signal(
             source_count=source_count,
-            has_recent_movement=any(
-                o.get("movement") for o in top_outcomes_data
-            ),
+            # #4079 numeric half: the STORED column, not the dated badge. This
+            # bar means "recently written", and a write is what the per-write
+            # delta is actually evidence of.
+            has_recent_movement=_legs_moved_since_last_write,
             has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
             has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
         )
@@ -11779,16 +11817,33 @@ async def _score_futures(
                         else None
                     ),
                     "rank": position,
+                    # #4079 NUMERIC HALF — dated or absent. The twin of the
+                    # `_score_sports_mode_futures` site, which carries the
+                    # reasoning; `MOVER_MIN_PROBABILITY` stays in front of it so
+                    # a thin nominee ticking a few tenths is still not a mover
+                    # (#235 item 2), and the dating narrows that set further.
                     "movement": (
-                        float(o.probability_change_24h)
-                        if o.probability_change_24h
-                        and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                        dated_movement_points(
+                            market,
+                            o.id,
+                            o.current_probability,
+                            o.probability_change_24h,
+                            now=now,
+                        )
+                        if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
                         else None
                     ),
                 }
                 # Show top 3 in feed card
                 for position, o in enumerate(printed_outcomes, start=1)
             ]
+            # See the sibling scorer: the confidence bar asks whether this market
+            # is being written, which the stored column answers.
+            _legs_moved_since_last_write = any(
+                o.probability_change_24h
+                and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                for o in printed_outcomes
+            )
 
             # The pre-humanization names, for `_printed_affirmative_percent`:
             # after the rewrite below a "Yes" row restates the question.
@@ -12144,10 +12199,15 @@ async def _score_futures(
                                     else None
                                 ),
                                 "rank": o.rank,
-                                "movement": (
-                                    float(o.probability_change_24h)
-                                    if o.probability_change_24h
-                                    else None
+                                # #4079 numeric half — `matched_outcomes` is a
+                                # reader's own team, which is the last row that
+                                # should carry an undatable "today" number.
+                                "movement": dated_movement_points(
+                                    market,
+                                    o.id,
+                                    o.current_probability,
+                                    o.probability_change_24h,
+                                    now=now,
                                 ),
                             }
                         )
@@ -12264,7 +12324,22 @@ async def _score_futures(
                         else None,
                         _display_scale,
                     ),
+                    # #4079 numeric half — the served distribution number is
+                    # dated by the same subtraction as the badge, or absent.
                     "movement": (
+                        dated_movement_points(
+                            market,
+                            o.id,
+                            o.current_probability,
+                            o.probability_change_24h,
+                            now=now,
+                        )
+                        if float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
+                        else None
+                    ),
+                    # NOT served (see the sibling scorer): the archetype's
+                    # format choice stays on the stored column.
+                    "movement_stored": (
                         float(o.probability_change_24h)
                         if o.probability_change_24h is not None
                         and float(o.current_probability or 0) >= MOVER_MIN_PROBABILITY
@@ -12339,9 +12414,9 @@ async def _score_futures(
             # outcome carries a captured closing/settled price.
             _conf_signal = confidence_signal(
                 source_count=source_count,
-                has_recent_movement=any(
-                    o.get("movement") for o in top_outcomes_data
-                ),
+                # #4079 numeric half: the STORED column — see the sibling
+                # scorer. A dated badge going quiet may not dim a liveness bar.
+                has_recent_movement=_legs_moved_since_last_write,
                 has_volume=bool(market.volume_24h and float(market.volume_24h) > 0),
                 has_closing_line=_outcomes_have_closing_line(sorted_outcomes),
             )

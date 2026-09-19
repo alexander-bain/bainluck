@@ -12,17 +12,17 @@
     "distribution_outcomes": [
       {
         "label": "Above 30",
-        "movement": 0.0,
+        "movement": null,
         "probability": 0.4828
       },
       {
         "label": "Above 20",
-        "movement": 0.0,
+        "movement": null,
         "probability": 0.3793
       },
       {
         "label": "Above 10",
-        "movement": 0.0,
+        "movement": null,
         "probability": 0.1379
       }
     ],
