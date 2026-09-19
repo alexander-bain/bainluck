@@ -769,6 +769,18 @@ export interface FuturesMarket {
    * ahead of Heroku, so every deploy has a window where it is missing.
    */
   prices_updated_at?: string | null;
+  /**
+   * #5516 — the row's own tier (1 championship … 5 props/other), computed by
+   * `compute_market_tier` from the market NAME. Carried here because it is the
+   * only field that can contradict `category`, which Polymarket's poller sets to
+   * `championship` for every sport-tagged row (see `marketCategoryLabel`).
+   *
+   * OPTIONAL, and absent is a third state, not a synonym for null: Vercel ships
+   * ahead of Heroku, so every deploy has a window where an older payload omits
+   * it. The chip's contradiction test reads an explicit 5 only, so that window
+   * keeps today's behaviour rather than silently suppressing every chip.
+   */
+  market_tier?: number | null;
   source_count?: number;
   group_id?: string | null;
   canonical_market_key?: string | null;

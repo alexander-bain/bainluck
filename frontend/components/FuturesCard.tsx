@@ -139,7 +139,9 @@ export default function FuturesCard({
   // UX-P276 (#2710). Resolved once here rather than in the chip so the chip's
   // truthiness gate and the text it renders are the same value — a chip that
   // tests `market.category` and prints a derived label can render an empty pill.
-  const categoryLabel = marketCategoryLabel(market.category);
+  // #5516 — the tier is passed because it is the only field that can contradict
+  // `category`; the helper owns the rule, this call site must not re-derive it.
+  const categoryLabel = marketCategoryLabel(market.category, market.market_tier);
 
   const handlePinClick = (e: React.MouseEvent) => {
     e.preventDefault();
