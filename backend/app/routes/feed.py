@@ -13291,6 +13291,20 @@ async def _score_golf_tournaments(
                     "probability": g["probability"],
                     "rank": g["rank"],
                     "movement_24h": g.get("movement_24h"),
+                    # #7226 — the flag the `reason` gate 50 lines above already
+                    # reads, now carried to the client. Without it the card's
+                    # two movement surfaces disagreed by construction: the
+                    # server sentence asked whether the move was dated and
+                    # refused when it was not, while `MovementBadge` had no way
+                    # to ask and announced every move as "in the last 24h".
+                    #
+                    # `bool(...)` collapses ABSENT to False deliberately. Absent
+                    # and False are the same refusal here (see the A8 paragraph
+                    # above) — an old golf base published before #7179 cannot be
+                    # asked what it measured — and sending a real boolean rather
+                    # than a missing key means the client's gate reads the same
+                    # way whichever base it got.
+                    "movement_is_dated": bool(g.get("movement_is_dated")),
                 }
                 for g in golfers[:10]  # Top 10 for feed
             ],

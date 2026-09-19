@@ -488,3 +488,81 @@ class TestTheProvenanceTravelsWithTheValue:
             "odds_api": 0.2,
             "datagolf_model": 0.22,
         }
+
+
+# --- 7. The wire (#7226) --------------------------------------------------
+
+
+class TestTheFlagReachesTheFeedCard:
+    """The LAST link: the served feed card must carry the flag, not just compute it.
+
+    #7179 (every class above) stopped the server SENTENCE lying. It could not stop
+    the BADGE lying, because the badge is drawn by the client and the client was
+    never sent the flag: `_score_golf_tournaments` rebuilds each golfer field by
+    field for the feed, and that projection listed `name / probability / rank /
+    movement_24h` only. So on one card, in one render:
+
+        server `reason`  — gated on `movement_is_dated`, went quiet when undated
+        client `MovementBadge` — "Up 17 points in the last 24h", ungated
+
+    Measured on production 2026-09-19 18:10Z, AFTER #7179 was live: `/api/golf`
+    served the flag on 135/135 golfer entries (108 dated, 27 not), and
+    `/api/feed?category=golf` served golfer keys `['movement_24h', 'name',
+    'probability', 'rank']` — the flag absent from every one. The producer had it
+    and the projection dropped it.
+
+    `TestTheProvenanceTravelsWithTheValue` above guards the same drop one hop
+    earlier (`_build_tournament_entry` -> the golf base). This guards golf base ->
+    feed card. Both hops rebuild field by field, and both fail CLOSED and silently
+    when a flag is dropped, which is why each needs its own assertion rather than
+    one at the end.
+    """
+
+    @staticmethod
+    def _served_golfer(monkeypatch, *, dated: bool | None) -> dict:
+        card = _card(monkeypatch, _golfer(_SHIPLEY_MOVE, dated=dated))
+        golfers = card["data"]["golfers"]
+        assert len(golfers) == 1, f"projection changed shape: {golfers}"
+        return golfers[0]
+
+    def test_a_dated_move_is_published_as_dated(self, monkeypatch):
+        golfer = self._served_golfer(monkeypatch, dated=True)
+        assert golfer["movement_is_dated"] is True, (
+            "the feed card does not tell the client this move is dated, so the "
+            "badge cannot gate and announces every move as 'in the last 24h'"
+        )
+
+    def test_an_undated_move_is_published_as_undated(self, monkeypatch):
+        """The mirror, so the assertion above cannot pass on a hardcoded True."""
+        golfer = self._served_golfer(monkeypatch, dated=False)
+        assert golfer["movement_is_dated"] is False
+
+    def test_a_pre_ship_base_publishes_the_refusal_explicitly(self, monkeypatch):
+        """A base with NO key must serve `False`, not a missing key.
+
+        Absent and False are the same refusal (the A8 paragraph in the route says
+        why: an old base cannot be asked what it measured). But the client gate is
+        `=== true`, and shipping a real boolean rather than a hole means the gate
+        reads identically whichever base the card was built from — including the
+        up-to-2h `last_good` window after a deploy, which is exactly when the two
+        bases are both in flight.
+        """
+        golfer = self._served_golfer(monkeypatch, dated=None)
+        assert "movement_is_dated" in golfer, (
+            "a pre-#7179 base leaves the key absent all the way to the wire"
+        )
+        assert golfer["movement_is_dated"] is False
+
+    @pytest.mark.parametrize("dated", [True, False, None])
+    def test_the_number_itself_is_untouched(self, monkeypatch, dated):
+        """The control. This ship narrows what the card may SAY about the move.
+
+        It must not change the move, drop the card, or reorder anything — the same
+        property `TestTheFixNarrowsTheSentenceAndNothingElse` pins for the
+        sentence. These assertions pass before this change and after it.
+        """
+        golfer = self._served_golfer(monkeypatch, dated=dated)
+        assert golfer["movement_24h"] == pytest.approx(_SHIPLEY_MOVE, abs=1e-9)
+        assert golfer["probability"] == pytest.approx(0.283, abs=1e-9)
+        assert golfer["rank"] == 1
+        assert golfer["name"] == "Neal Shipley"

@@ -1543,6 +1543,13 @@ export interface FeedTournamentData {
     probability: number;
     rank: number;
     movement_24h: number | null;
+    // #7226 — is `movement_24h` a dated 23-25h snapshot subtraction, or the
+    // per-write `probability_change_24h` fallback? Only the first may be shown
+    // as a 24h move. OPTIONAL because a payload built before the producer
+    // shipped carries no such key, and absent is a refusal, not a false
+    // negative to be defaulted away: gate on `=== true`, never on truthiness
+    // of a `??`-defaulted value.
+    movement_is_dated?: boolean;
   }[];
   market_ids: number[];
   source_count: number;
