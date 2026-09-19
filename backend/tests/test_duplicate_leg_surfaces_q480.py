@@ -145,7 +145,15 @@ def test_a_correctly_decomposed_sub_market_still_serves_both_its_legs():
 
 _AST_GUARDED = [
     ("app.routes.feed", "_top_outcomes_for_trace"),
-    ("app.routes.events", "_build_search_top_outcomes"),
+    # #5516 moved the search surface's pre-sort refusal chain out of
+    # `_build_search_top_outcomes` and into `_search_surviving_legs`, so that the
+    # card-withdrawal predicate and the ladder builder judge the same legs. This
+    # entry follows the chain to where it now lives; the guard is unchanged in
+    # kind (still one named function, still anchored on its own AST) and
+    # `test_the_search_builder_still_reaches_that_filter` below keeps the
+    # extraction from being orphaned — a chain nobody calls would satisfy this
+    # row on its own.
+    ("app.routes.events", "_search_surviving_legs"),
     ("app.routes.futures", "_format_market_detail"),
 ]
 
@@ -180,6 +188,20 @@ def test_the_surface_calls_the_filter_in_its_own_body(module_name, func_name):
     assert calls & {"drop_duplicate_legs", "_drop_duplicate_legs"}, (
         f"{module_name}.{func_name} no longer drops duplicate legs — a market "
         "holding both a rung and its _yes/_no twin will crown the twin"
+    )
+
+
+def test_the_search_builder_still_reaches_that_filter():
+    """#5516: the extraction above is only safe while the builder CALLS it.
+
+    `_search_surviving_legs` holding the drop proves nothing if
+    `_build_search_top_outcomes` stops going through it — the row in
+    `_AST_GUARDED` would stay green while the search card and the typeahead
+    dropdown both crowned the twin again. This is the link the parametrized
+    guard cannot see, and it is the whole cost of moving the chain.
+    """
+    assert "_search_surviving_legs" in _calls_in(
+        "app.routes.events", "_build_search_top_outcomes"
     )
 
 
