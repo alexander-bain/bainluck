@@ -185,6 +185,21 @@ class TestDiscoveryAdvancesTheConsensus:
         written = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
         assert written.year != 2020
         assert stamp != "2020-01-01T00:00:00Z"
+        # ...and say the thing the year check still cannot: that this stamp is an
+        # observation time from THIS run, which is what #4028 actually cares about.
+        # `year != 2020` passes for any year that is not 2020 — including a 2021
+        # constant no observation produced — so the seed class is narrowed by it,
+        # not closed.
+        #
+        # The window is deliberately loose. This assertion replaces a flake, so it
+        # must not import a tighter clock dependency than the one it retires: an
+        # hour cannot be reached by a test pausing under parallel CI load, and it
+        # still excludes every stale-constant stamp by years. Precision here would
+        # buy nothing the year check does not already give and would re-open the
+        # deploy-blocking failure mode this file exists to close.
+        assert written.tzinfo is not None, "an observation time must carry its zone"
+        age_seconds = (datetime.now(timezone.utc) - written).total_seconds()
+        assert -5 <= age_seconds <= 3600, f"stamp is not from this run: {stamp}"
 
 
 # ---------------------------------------------------------------------------
