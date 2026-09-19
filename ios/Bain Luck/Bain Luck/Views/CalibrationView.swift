@@ -293,8 +293,9 @@ struct CalibrationSurfaceView: View {
     }
 
     // ECE-first (#894): the n-weighted error is the headline — it reflects the
-    // outcomes users actually see. MCE (equal-weighted, worst-bucket sensitive) is
-    // demoted to a secondary line.
+    // outcomes users actually see. The per-bucket error (equal-weighted across
+    // the ten buckets) is demoted to a secondary line. #7174: that line used to
+    // call it "worst-bucket (MCE)" and it is neither — see `Header.bucket`.
     private var eceHeroCard: some View {
         VStack(spacing: 4) {
             Text("CALIBRATION ERROR (ECE)")
@@ -305,7 +306,7 @@ struct CalibrationSurfaceView: View {
                     .foregroundStyle(viewModel.eceColor(viewModel.cohortECE))
                 Text("pp").font(.title3.weight(.medium)).foregroundStyle(.secondary)
             }
-            Text("n-weighted \u{00B7} worst-bucket (MCE) \(String(format: "%.1f", viewModel.cohortMCE))pp")
+            Text("n-weighted \u{00B7} per-bucket \(String(format: "%.1f", viewModel.cohortMCE))pp")
                 .font(.caption2).foregroundStyle(.tertiary)
             if let ciLo = viewModel.data?.mceCiLower, let ciHi = viewModel.data?.mceCiUpper {
                 Text("95% CI: \(String(format: "%.1f", ciLo))\u{2013}\(String(format: "%.1f", ciHi))pp")
@@ -318,9 +319,10 @@ struct CalibrationSurfaceView: View {
         .frame(maxWidth: .infinity).padding(.vertical, 16)
         .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 14))
         .accessibilityIdentifier(Self.eceHook)
-        // ECE and MCE together, because web's ECE card publishes both and the
-        // pair is the claim — an ECE quoted without its worst bucket is the
-        // number this page exists to stop people reading alone.
+        // ECE and the per-bucket mean together, because web's ECE card publishes
+        // both and the pair is the claim — an ECE quoted without it is the
+        // number this page exists to stop people reading alone. The key stays
+        // `mce`: it is compared against web's `data-mce` by name (#7174).
         .accessibilityValue(String(format: "%.4f %.4f", viewModel.parity.ece, viewModel.parity.mce))
     }
 
@@ -456,14 +458,22 @@ struct CalibrationSurfaceView: View {
 
     private var sourceComparisonSection: some View {
         let widths = sourceNumericWidths
-        return cardSection("Source Comparison", sub: "How each data source performs independently, sorted by ECE (n-weighted, the headline metric). MCE is the worst-bucket sensitivity number. Lower is better.") {
+        // #7174 — the second column is headed `Bucket`, not `MCE`, and this
+        // sentence says what it averages rather than naming a statistic. The
+        // number is an equal-weighted mean over the ten buckets, so it can read
+        // BELOW the n-weighted ECE beside it; a reader who was told it was a
+        // maximum would read that pair as an arithmetic impossibility. Wording
+        // tracks web's "How these rows are measured" note so the two surfaces
+        // explain one number the same way.
+        return cardSection("Source Comparison", sub: "How each data source performs independently, sorted by ECE (n-weighted, the headline metric). Bucket averages the ten probability buckets with equal weight, so a tiny bucket counts as much as a huge one \u{2014} which is why it can read below ECE. Lower is better.") {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    Text("Source").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("N").frame(width: widths.n, alignment: .trailing)
-                    Text("ECE").frame(width: widths.ece, alignment: .trailing)
-                    Text("MCE").frame(width: widths.mce, alignment: .trailing)
-                    Text("Brier").frame(width: widths.brier, alignment: .trailing)
+                    let header = CalibrationSourceTableGeometry.Header.self
+                    Text(header.source).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(header.n).frame(width: widths.n, alignment: .trailing)
+                    Text(header.ece).frame(width: widths.ece, alignment: .trailing)
+                    Text(header.bucket).frame(width: widths.mce, alignment: .trailing)
+                    Text(header.brier).frame(width: widths.brier, alignment: .trailing)
                 }
                 .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 .padding(.horizontal, 12).padding(.vertical, 8)
@@ -630,7 +640,15 @@ struct CalibrationSurfaceView: View {
                     Text("Category").frame(maxWidth: .infinity, alignment: .leading)
                     Text("Outcomes").frame(width: 72, alignment: .trailing)
                     Text("ECE").frame(width: 48, alignment: .trailing)
-                    Text("MCE").frame(width: 46, alignment: .trailing)
+                    // #7174 — same rename as the Source Comparison table above,
+                    // over the same `mce` value. This table's widths are still
+                    // literals (#3954 only measured the other one), so the box
+                    // has to clear the longer word: a trailing-aligned header
+                    // that does not fit is clipped at the LEADING edge, which
+                    // would print "ucket". Measured, 46pt already did.
+                    Text(CalibrationSourceTableGeometry.Header.bucket)
+                        .frame(width: CalibrationSourceTableGeometry.categoryBucketColumnWidth,
+                               alignment: .trailing)
                 }
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -689,7 +707,8 @@ struct CalibrationSurfaceView: View {
             metricText(row.mce, "%.1f")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 46, alignment: .trailing)
+                .frame(width: CalibrationSourceTableGeometry.categoryBucketColumnWidth,
+                       alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -763,8 +782,23 @@ struct CalibrationSurfaceView: View {
                 benchmarkRow("Iowa Electronic Markets", 1.5, "Berg et al. 2008", false)
                 benchmarkRow("Academic consensus", 3.5, "Arrow et al. 2008 (2\u{2013}5pp)", false)
             }
-            Text("Lower is better. Most prediction markets achieve 2\u{2013}5pp MCE.")
+            // #7174 — this read "Most prediction markets achieve 2–5pp MCE",
+            // which put the false name on somebody ELSE's numbers: the rows
+            // below are published figures (Metaculus reports a MEAN calibration
+            // error, Berg et al. and Arrow et al. likewise), and calling the set
+            // of them MCE asserted a statistic none of them published. It also
+            // read as a ranking. Web dropped the same sentence for this one.
+            Text("Lower is better. These are published figures from other domains and eras \u{2014} reference points, not a ranking.")
                 .font(.caption2).foregroundStyle(.tertiary)
+                // L2-238 Item 2 again, one layer in: `cardSection` applies this to
+                // the `sub:` it owns, and nothing applies it to the Texts a caller
+                // passes through `content()`. The stack then hands this line less
+                // height than it needs and `Text` complies by collapsing to a
+                // single truncated line. The sentence it replaced was short enough
+                // to fit, so the squeeze was here all along with nothing to show
+                // for it — caught in the 390pt frame, which printed "…from other
+                // dom…".
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

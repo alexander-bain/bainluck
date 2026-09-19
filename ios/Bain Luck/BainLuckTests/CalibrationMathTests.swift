@@ -72,7 +72,7 @@ final class CalibrationMathTests: XCTestCase {
         let cd = try decode()
         let agg = CalibrationMath.aggregate(cd.buckets, filter: wellTraded)
         XCTAssertEqual(CalibrationMath.ece(agg), 2.1714, accuracy: 0.001)   // n-weighted headline
-        XCTAssertEqual(CalibrationMath.mce(agg), 3.35, accuracy: 0.001)     // equal-weighted worst-bucket
+        XCTAssertEqual(CalibrationMath.mce(agg), 3.35, accuracy: 0.001)     // equal-weighted bucket mean
         XCTAssertEqual(CalibrationMath.brier(cd.buckets, filter: wellTraded), 0.208571, accuracy: 0.0001)
         XCTAssertEqual(CalibrationMath.totalN(cd.buckets, filter: wellTraded), 700)
     }

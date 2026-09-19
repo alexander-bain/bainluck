@@ -44,7 +44,8 @@ import UIKit
 /// `artifacts-native-065/AFTER-3954-calibration-sources.png`.
 ///
 /// No column model can close that gap — the four numbers are now AT their ink
-/// (`N` sized by Combined's `437,910`, `MCE` by `17.3`, `Brier` by `0.248`), so
+/// (`N` sized by Combined's `437,910`, `Bucket` by its own header since #7174,
+/// `Brier` by `0.248`), so
 /// the next point taken from them truncates a number instead of a name. The
 /// narrow case needs a column dropped or a name wrapped, which is the layout call
 /// #3954 deliberately left open. Tracked with the renders and three costed
@@ -53,8 +54,8 @@ import UIKit
 /// **#3966 — ANSWERED. Alex ruled D92 = B: the name wraps.** `sourceNameLineLimit`
 /// below is that ruling, and it is the reason no later change should reach back
 /// for the numeric columns: they are not the constraint any more. The two options
-/// not taken are recorded because they will look tempting again — dropping `MCE`
-/// and `Brier` at compact width frees ~72pt and costs half the numbers on a phone,
+/// not taken are recorded because they will look tempting again — dropping
+/// `Bucket` and `Brier` at compact width frees ~72pt and costs half the numbers on a phone,
 /// and shortening the names to `Per-sportsbook` gives up exactly the provider
 /// disambiguation #3954 existed to protect.
 ///
@@ -72,6 +73,64 @@ import UIKit
 /// half-rescue a seventh is worse than the truncation, and a modifier that reads
 /// as a safety net while changing nothing is worse still.
 enum CalibrationSourceTableGeometry {
+
+    /// The header strings the table DRAWS, in the order it draws them.
+    ///
+    /// Constants rather than literals because this file and the view each used to
+    /// spell them separately: `numericWidths` measured `"MCE"` while
+    /// `sourceComparisonSection` drew `Text("MCE")`, and nothing connected the two.
+    /// A column sized against one word and filled with another is a silent clip —
+    /// the header is the widest thing in three of these four columns, so the
+    /// measurement is the only thing standing between a longer word and truncated
+    /// ink. #7174 widened one of them, which is when the duplication became a
+    /// hazard worth removing rather than a tidiness note.
+    enum Header {
+        static let source = "Source"
+        static let n = "N"
+        static let ece = "ECE"
+
+        /// #7174 — WAS `"MCE"`, and that was false.
+        ///
+        /// The number under this column is `CalibrationMath.mce`, which is
+        /// `sum(|error|) / count` — an equal-weighted MEAN over the ten
+        /// probability buckets. A maximum it is not, and the two names are not
+        /// interchangeable: a mean can sit BELOW the n-weighted mean beside it,
+        /// and on 2026-09-19 production printed Polymarket at `ECE 2.7pp /
+        /// MCE 2.6pp`, which a maximum of the same errors cannot do. Web renamed
+        /// the column on the same day (#7178) and `calibration_ece.py` has said
+        /// so in its own docstring since CAL-P067; this is the iOS twin, so the
+        /// two surfaces keep printing the same digits under the same word.
+        ///
+        /// 🪤 The value key stays `mce` everywhere it is not read by a person —
+        /// this struct's field, the view model, the parity record web publishes
+        /// as `data-mce`. Renaming those is an API-shaped change with no reader
+        /// on the other end, and the parity record is compared against web's by
+        /// key.
+        static let bucket = "Bucket"
+
+        static let brier = "Brier"
+    }
+
+    /// The Category Breakdown table's last column, shared by its header and its
+    /// values so the two cannot drift apart.
+    ///
+    /// Still a literal: #3954 measured the Source Comparison table's four columns
+    /// and deliberately left this smaller table alone. It is here rather than in
+    /// the view so a guard can assert the one thing a literal cannot promise for
+    /// itself — that it clears the ink of the word above it. A trailing-aligned
+    /// header wider than its box loses characters from the LEADING edge, so the
+    /// failure reads as a plausible label rather than as damage.
+    ///
+    /// UNCHANGED AT 46 BY MEASUREMENT, and the measuring is the point. #7174 put
+    /// a longer word over this column and the obvious move was to widen the box
+    /// to match; it was widened to 52 and then put back, because at `.large` the
+    /// header face draws `MCE` at 24.8pt and `Bucket` at 37.8pt — both inside 46.
+    /// The 6pt would have come out of the category name beside it, and that label
+    /// is `lineLimit(1)`, so it pays for slack by truncating rather than wrapping
+    /// the way the Source Comparison names do. A widening that buys nothing and
+    /// costs a name is worse than the literal it replaced.
+    static let categoryBucketColumnWidth: Double = 46
+
     /// The row's own inset, applied on each side (`.padding(.horizontal, 12)`).
     static let horizontalPadding: Double = 12
     /// The source's colour swatch, and the gap between it and the name.
@@ -207,10 +266,10 @@ enum CalibrationSourceTableGeometry {
         typeSize: DynamicTypeSize = .large
     ) -> NumericWidths {
         NumericWidths(
-            n: columnWidth(header: "N", values: n, typeSize: typeSize),
-            ece: columnWidth(header: "ECE", values: ece, typeSize: typeSize),
-            mce: columnWidth(header: "MCE", values: mce, typeSize: typeSize),
-            brier: columnWidth(header: "Brier", values: brier, typeSize: typeSize))
+            n: columnWidth(header: Header.n, values: n, typeSize: typeSize),
+            ece: columnWidth(header: Header.ece, values: ece, typeSize: typeSize),
+            mce: columnWidth(header: Header.bucket, values: mce, typeSize: typeSize),
+            brier: columnWidth(header: Header.brier, values: brier, typeSize: typeSize))
     }
 
 }
