@@ -165,10 +165,24 @@ class TestTheMeasuredExclusions:
         a quote. Withholding here would delete a RESULT and pre-empt #4788."""
         assert _refuted(resolution_source="polymarket") is False
 
-    def test_kalshi_is_not_governed_by_polymarkets_price_rule(self):
-        """gotcha #19: the two venues write these columns under different rules,
-        which is why #5611 scoped itself and left this ship to be built."""
-        assert _refuted(source="kalshi") is False
+    def test_kalshi_is_governed_on_its_own_terms_not_polymarkets(self):
+        """#7222 BUILT THE SHIP THIS TEST WAS WAITING FOR, and the assertion
+        flipped rather than being deleted.
+
+        It used to read ``_refuted(source="kalshi") is False`` under the note
+        "gotcha #19: the two venues write these columns under different rules,
+        which is why #5611 scoped itself and LEFT THIS SHIP TO BE BUILT". The
+        ship is built, so a Kalshi leg quoting 49% off a 0.1c/97.8c book against
+        its own 1c trade is now refused like its Polymarket twin.
+
+        What gotcha #19 was actually protecting survives, and it is the line
+        below: a zero ``last_price`` means "the venue told us zero" on Polymarket
+        and "never traded" on Kalshi, so the Kalshi arm requires a positive trade.
+        The full Kalshi case lives in ``test_kalshi_refuted_midpoint_7222.py``.
+        """
+        assert _refuted(source="kalshi") is True
+        assert _refuted(source="kalshi", last_price=0.0) is False
+        assert _refuted(source="polymarket", last_price=0.0) is True
         assert _refuted(source="odds_api") is False
 
     def test_source_matching_is_not_case_or_whitespace_sensitive(self):
@@ -192,7 +206,9 @@ class TestTheScreenAgreesWithTheRule:
         assert needs_trade_disconfirmation("polymarket", None, prob, bid, ask), name
 
     def test_the_screen_never_asks_about_a_graded_or_foreign_row(self):
-        assert not needs_trade_disconfirmation("kalshi", None, 0.4895, 0.001, 0.978)
+        # "foreign" stopped meaning Kalshi at #7222; it means a venue with no
+        # recorded trades at all, which is every source but these two.
+        assert not needs_trade_disconfirmation("odds_api", None, 0.4895, 0.001, 0.978)
         assert not needs_trade_disconfirmation(
             "polymarket", "poly", 0.4895, 0.001, 0.978
         )
@@ -316,14 +332,18 @@ class TestTheRouteAsksTheRightQuestionOfTheSnapshots:
         assert await _refuted_midpoint_outcome_ids(db, _poly_market(honest)) == set()
         assert db.statements == [], "a clean board must ask the database nothing"
 
-    async def test_a_kalshi_market_is_not_screened_by_this_arm_at_all(self):
+    async def test_a_market_from_a_venue_with_no_trades_costs_no_query(self):
+        """Was ``test_a_kalshi_market_is_not_screened_by_this_arm_at_all`` until
+        #7222 put Kalshi in scope. The cheap-exit property it was really pinning
+        — a market this arm cannot judge never touches the snapshot table — is
+        what is asserted now, on a venue that records no trades at all."""
         from app.routes.futures import _refuted_midpoint_outcome_ids
 
         db = _FakeSession(rows=[(1, 0.0040)])
-        kalshi = _poly_market(
-            [_poly_outcome(1, 0.470000, 0.0020, 0.9380)], source="kalshi"
+        foreign = _poly_market(
+            [_poly_outcome(1, 0.470000, 0.0020, 0.9380)], source="odds_api"
         )
-        assert await _refuted_midpoint_outcome_ids(db, kalshi) == set()
+        assert await _refuted_midpoint_outcome_ids(db, foreign) == set()
         assert db.statements == []
 
     async def test_an_outcome_with_no_snapshot_row_fails_open(self):
@@ -471,9 +491,7 @@ class TestBothArmsLandInOneWithheldSet:
         )
         monkeypatch.setattr(futures_route, "_refuted_midpoint_outcome_ids", _poly_arm)
         monkeypatch.setattr(futures_route, "_book_refuted_outcome_ids", _book_arm)
-        monkeypatch.setattr(
-            futures_route, "_empty_book_outcome_ids", _empty_book_arm
-        )
+        monkeypatch.setattr(futures_route, "_empty_book_outcome_ids", _empty_book_arm)
         monkeypatch.setattr(futures_route, "_format_market_detail", _fake_detail)
 
         await futures_route.get_futures_market(8641774, _DB())

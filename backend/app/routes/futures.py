@@ -21,7 +21,7 @@ from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
-    POLYMARKET_BOOKMAKER,
+    MIDPOINT_TRADE_SOURCES,
     WITHHELD_PRICE_FIELDS,
     field_names_two_favourites,
     market_is_proved_exclusive_field,
@@ -3314,7 +3314,21 @@ async def _refuted_midpoint_outcome_ids(
     Ties on ``captured_at`` resolve to the trade CLOSEST to the served price,
     which is the fail-open direction: if two snapshots share a microsecond, the
     one most likely to support what we print is the one that gets to speak.
+
+    🔴 THE BOOKMAKER IS READ OFF THE MARKET, NOT HARDCODED (#7222), AND THIS LINE
+    IS THE WHOLE REASON THE KALSHI HALF OF THE PREDICATE WOULD OTHERWISE BE INERT.
+    Both queries below named ``POLYMARKET_BOOKMAKER`` literally, so widening
+    ``needs_trade_disconfirmation`` to Kalshi would have produced Kalshi candidates
+    and then looked for their trades in Polymarket's snapshots, found none, and
+    served every one of them unchanged — a fix that passes its unit tests and
+    changes nothing a reader sees. The screen and the read now take their venue
+    from the same place, and ``MIDPOINT_TRADE_SOURCES`` is the membership test both
+    sides share, so a third venue cannot be added to one half alone.
     """
+    venue = (market.source or "").strip().lower()
+    if venue not in MIDPOINT_TRADE_SOURCES:
+        return set()
+
     candidates = [
         o
         for o in market.outcomes
@@ -3337,7 +3351,7 @@ async def _refuted_midpoint_outcome_ids(
         )
         .where(
             FuturesOddsSnapshot.outcome_id.in_(candidate_ids),
-            FuturesOddsSnapshot.bookmaker == POLYMARKET_BOOKMAKER,
+            FuturesOddsSnapshot.bookmaker == venue,
         )
         .group_by(FuturesOddsSnapshot.outcome_id)
         .subquery()
@@ -3354,7 +3368,7 @@ async def _refuted_midpoint_outcome_ids(
                 FuturesOddsSnapshot.captured_at == newest.c.captured_at,
             ),
         )
-        .where(FuturesOddsSnapshot.bookmaker == POLYMARKET_BOOKMAKER)
+        .where(FuturesOddsSnapshot.bookmaker == venue)
     )
     served = {o.id: _as_float(o.current_probability) for o in candidates}
     latest_trade: dict[int, float] = {}
