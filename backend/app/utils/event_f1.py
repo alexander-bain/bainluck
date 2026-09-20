@@ -61,6 +61,87 @@ def shares_gp(name: str | None, tokens: set[str]) -> bool:
     return bool(gp_tokens(name) & tokens)
 
 
+#: #7541 — the chip a motorsport concept may print, by VENUE EVIDENCE.
+#:
+#: Kalshi files each championship in its own ticker family, and we already store
+#: it: `KXF1RACE-AZEGP26` against `KXMOTOGPRACE-OSTE26`. Longest prefix first, so
+#: a future `KXF1SPRINT` can never be decided by a shorter neighbour.
+#:
+#: The labels are OURS, not the venue's raw text. `market_metadata.competition`
+#: carries "F1" / "MotoGP" on these same rows and would have been one field
+#: shorter to read, but it is provider prose on a reader's screen: an allowlist
+#: keyed on the ticker prints only strings we chose, and an unrecognised family
+#: falls to `None` rather than to whatever the venue typed.
+_MOTORSPORT_TICKER_LABELS: tuple[tuple[str, str], ...] = tuple(
+    sorted(
+        (
+            ("kxf1race", "F1"),
+            ("kxf1wdc", "F1"),
+            ("kxf1wcc", "F1"),
+            ("kxf1", "F1"),
+            ("kxmotogprace", "MotoGP"),
+            ("kxmotogp", "MotoGP"),
+            ("kxnascarrace", "NASCAR"),
+            ("kxnascar", "NASCAR"),
+            ("kxindycar", "IndyCar"),
+            ("kxformulae", "Formula E"),
+        ),
+        key=lambda pair: -len(pair[0]),
+    )
+)
+
+
+def ticker_sport_label(external_id: str | None) -> str | None:
+    """The championship a single venue ticker declares, or `None`.
+
+    Prefix match on the Kalshi ticker family. `None` for a Polymarket id, an
+    unrecognised family, or no ticker at all — the caller then emits no label
+    and the chip keeps the fallback it has had since #999.
+    """
+    tick = (external_id or "").strip().lower()
+    if not tick:
+        return None
+    for prefix, label in _MOTORSPORT_TICKER_LABELS:
+        if tick.startswith(prefix):
+            return label
+    return None
+
+
+def gp_sport_label(external_ids) -> str | None:
+    """The chip a Grand Prix card may print, decided by EVIDENCE (#7541).
+
+    `domain` is OUR routing token — it keys the adapter registry and the event
+    URL — and this adapter's motorsport domain is `f1`. Every surface printed
+    `domain.upper()` when no label was served, so `Motorrad Grand Prix von
+    Osterreich Winner` — the MotoGP Austrian GP, won by a MotoGP rider — wore an
+    `F1` chip on the sports feed on 2026-09-20. That is not a near-miss of a
+    label; it is the card naming a championship the race has nothing to do with.
+    Exactly #5603's Power-Slap-in-a-UFC-chip, in the domain #5603 explicitly
+    left alone ("`cycling`, `f1` and `motorsports` keep the fallback they have
+    always had").
+
+    EVERY DOUBT RESOLVES DOWNWARD, as in :func:`event_combat.card_sport_label`.
+    The tickers handed in are the group's WINNER-ANCHOR rows — the markets the
+    card is actually built from — not every row that shares a name token, so the
+    evidence is about the card the reader is looking at. They must AGREE: two
+    championships under one GP token is our grouping being wrong, and the honest
+    answer then is to say nothing rather than to pick a side. A group with no
+    Kalshi row (Polymarket-only) yields `None` and renders exactly as it does
+    today.
+
+    `None` is a first-class answer, never a blank chip: the callers omit the key
+    entirely, and `conceptDomainLabel` (frontend) falls back to the domain.
+    """
+    labels = {
+        lab
+        for lab in (ticker_sport_label(x) for x in (external_ids or ()))
+        if lab
+    }
+    if len(labels) != 1:
+        return None
+    return labels.pop()
+
+
 #: How long before lights-out a Grand Prix counts as under way, and how long
 #: after. The anchor is the winner market's `resolution_date`, which the census
 #: of 60 production GP-winner rows (2026-09-09) shows is the RACE START and not
@@ -147,7 +228,7 @@ async def list_f1_gp_concepts(
     # Winner…" market) leaking a nonsense concept onto the feed — `is_gp_winner_market`
     # stays untouched (the /event adapter still resolves NASCAR/MotoGP by slug).
     groups: dict[frozenset, dict] = {}
-    for _mid, name, status, res in rows:
+    for _mid, ext, name, status, res in rows:
         if "grand prix" not in (name or "").lower():
             continue
         if not is_gp_winner_market(name):
@@ -166,14 +247,21 @@ async def list_f1_gp_concepts(
                 "status": status,
                 "resolution": res,
                 "markets": 0,
+                # #7541: the tickers of THIS group's winner anchors — the rows the
+                # card is built from. The size-proxy loop below deliberately does
+                # not feed this: it matches on any shared token, and a foreign row
+                # sweeping in by name must not get a vote on the chip.
+                "tickers": [],
             }
+            g = groups[toks]
         elif res is not None and (g["resolution"] is None or res < g["resolution"]):
             # Prefer the soonest-resolving winner market's race time as the anchor.
             g["resolution"] = res
+        g["tickers"].append(ext)
 
     # Count all weekend markets per GP (winner + quali/sprint/podium/…) as a size
     # proxy — the analogue of a card's fight_count.
-    for _mid, name, _status, _res in rows:
+    for _mid, _ext, name, _status, _res in rows:
         toks_n = gp_tokens(name)
         for toks, g in groups.items():
             if toks & toks_n:
@@ -185,6 +273,10 @@ async def list_f1_gp_concepts(
         status = f1_status(g["status"], res, now)
         if status not in statuses:
             continue
+        # #7541: absent, never null — a `sport_label: None` on the wire would
+        # satisfy a consumer's presence test and render a BLANK chip, the one
+        # outcome worse than the wrong one. Same shape as `event_combat`'s.
+        label = gp_sport_label(g["tickers"])
         concepts.append(
             {
                 "key": f"event:f1:{g['slug']}",
@@ -195,6 +287,7 @@ async def list_f1_gp_concepts(
                 "is_major": False,
                 "entry_count": g["markets"],
                 "latest_commence": res,
+                **({"sport_label": label} if label else {}),
             }
         )
 
@@ -256,6 +349,11 @@ class F1EventAdapter:
         winner = max(candidates, key=_real_count) if candidates else None
         if winner is None:
             return None
+
+        # #7541: the SAME evidence the feed card uses, over the same rows — the
+        # winner markets this slug resolved to. The card and the page print one
+        # chip between them or the reader has caught us contradicting ourselves.
+        gp_label = gp_sport_label([m.external_id for m in candidates])
 
         canonical_slug = clean_slug(winner.name or "") or slug
 
@@ -345,6 +443,8 @@ class F1EventAdapter:
             "event": {
                 "key": f"event:f1:{canonical_slug}",
                 "domain": "f1",
+                # #7541: absent, never null (see `gp_sport_label`).
+                **({"sport_label": gp_label} if gp_label else {}),
                 "name": winner.name,
                 "status": event_status,
                 "start_date": race_iso,

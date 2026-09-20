@@ -426,6 +426,53 @@ class TestF1EventAdapter:
         # the sprint sub-market folds in as a child, not the primary
         assert any("Sprint" in (c.get("market_name") or "") for c in body["children"])
 
+    async def test_a_motogp_race_page_does_not_wear_an_f1_chip(self, client, mock_db):
+        """#7541 — the page half of the sports-feed defect.
+
+        `EventHeader` prints `conceptDomainLabel(event.sport_label, event.domain)`,
+        the same function the card uses, so the MotoGP Austrian GP page read `F1`
+        for the same reason its card did. Both halves ship together or the reader
+        catches the card and the page disagreeing about the championship."""
+        from tests.integration.test_route_weather import _entity_result
+        winner = _f1_market(
+            61497311, "Motorrad Grand Prix von Osterreich Winner",
+            "KXMOTOGPRACE-OSTE26",
+            [("Marc Marquez", 0.60), ("Jorge Martin", 0.18), ("Marco Bezzecchi", 0.07)],
+        )
+        mock_db.execute.return_value = _entity_result([winner])
+        resp = await client.get("/api/event/event:f1:motorrad-grand-prix-von-osterreich-winner")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["event"]["sport_label"] == "MotoGP"
+        assert body["event"]["domain"] == "f1", "the routing token is untouched"
+
+    async def test_an_f1_race_page_still_says_f1(self, client, mock_db):
+        """The control: the label the page already showed must survive, now
+        carried by the ticker rather than by the routing token."""
+        from tests.integration.test_route_weather import _entity_result
+        winner = _f1_market(
+            61495797, "Azerbaijan Grand Prix Winner", "KXF1RACE-AZEGP26",
+            [("Max Verstappen", 0.40), ("Lando Norris", 0.30)],
+        )
+        mock_db.execute.return_value = _entity_result([winner])
+        resp = await client.get("/api/event/event:f1:azerbaijan-grand-prix")
+        assert resp.status_code == 200
+        assert resp.json()["event"]["sport_label"] == "F1"
+
+    async def test_an_unevidenced_gp_page_omits_the_key(self, client, mock_db):
+        """A Polymarket-only GP has no ticker family to read. The key is ABSENT
+        rather than null, so the frontend takes its domain fallback and renders
+        exactly as it does today."""
+        from tests.integration.test_route_weather import _entity_result
+        winner = _f1_market(
+            3, "Monaco Grand Prix: Driver Winner", "0x8f3a91bd2c",
+            [("Lando Norris", 0.5)], source="polymarket",
+        )
+        mock_db.execute.return_value = _entity_result([winner])
+        resp = await client.get("/api/event/event:f1:monaco-grand-prix")
+        assert resp.status_code == 200
+        assert "sport_label" not in resp.json()["event"]
+
     async def test_f1_no_markets_404(self, client, mock_db):
         from tests.integration.test_route_weather import _entity_result
         mock_db.execute.return_value = _entity_result([])

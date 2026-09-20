@@ -95,7 +95,21 @@ COMBAT_PROJECTION: tuple[str, ...] = (
     "commence_time",
     "market_metadata",
 )
-F1_PROJECTION: tuple[str, ...] = ("id", "name", "status", "resolution_date")
+#: `external_id` is the venue's ticker and it is the SPORT evidence, not an
+#: identifier we happen to carry (#7541). `motorsports` is one category holding
+#: several championships, and the lister's only discriminator was the words
+#: "grand prix" — which MotoGP, Formula E and IndyCar all use — so a MotoGP race
+#: entered the `f1` namespace and printed an `F1` chip. Kalshi files the two in
+#: different ticker families (`KXF1RACE-AZEGP26` vs `KXMOTOGPRACE-OSTE26`), and
+#: that is the signal :func:`app.utils.event_f1.gp_sport_label` reads. Same
+#: column, same reason, as `COMBAT_PROJECTION` above.
+F1_PROJECTION: tuple[str, ...] = (
+    "id",
+    "external_id",
+    "name",
+    "status",
+    "resolution_date",
+)
 CYCLING_PROJECTION: tuple[str, ...] = ("name", "status", "resolution_date")
 
 CONCEPT_SOURCES: tuple[ConceptSource, ...] = (
