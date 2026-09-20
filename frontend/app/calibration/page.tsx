@@ -945,12 +945,34 @@ export default function CalibrationPage() {
   // the order the Sources card already prints its names in. Ordering by cohort
   // n instead would reshuffle the hero when the toggle moves, for no reader
   // benefit.
-  const heroProviderNames = (() => {
+  // #7507 — THE COUNT HALF OF THE SAME DEFECT.
+  //
+  // #7456 (above) converted the sentences that print a LIST and stopped there.
+  // The three sites that print a COUNT — the Sources stat card, the "Show the
+  // math" population line and the footer — still read `providerGroups.length`,
+  // which is the payload's provider map and knows nothing about the toggle. So
+  // in the DEFAULT cohort the page said, on one 390px screen:
+  //
+  //   hero      "… across Kalshi, Polymarket, and sportsbook odds"     3 ✅
+  //   card      SOURCES 4 · … · DataGolf                               4 ❌
+  //   table     DataGolf — "No outcomes in this cohort"                0
+  //
+  // By the note directly above this one, naming DataGolf in a cohort-scoped
+  // place is "the opposite falsehood"; the card is the most prominent
+  // cohort-scoped place on the page, sitting in a KPI row whose every other
+  // card is cohort-scoped.
+  //
+  // One derivation now feeds the list and the count, so the two cannot drift
+  // apart again — that drift IS this issue. It keeps `providerGroups`' order and
+  // its predicate is `sourceRowsExcludedFromRollup` (`state === "no-cohort-data"`),
+  // NOT `censoredSourceRows`: a censored provider has outcomes in the cohort and
+  // is only withheld from the RANKING, so all-markets still counts DataGolf's 36.
+  // Folding the two would drop it from a cohort it is measurably in.
+  const cohortProviderGroups = (() => {
     const withheld = new Set(sourceRowsExcludedFromRollup(sourceRows).map(r => r.provider));
-    return listProviderNames(
-      providerGroups.filter(g => !withheld.has(g.provider)).map(g => g.provider)
-    );
+    return providerGroups.filter(g => !withheld.has(g.provider));
   })();
+  const heroProviderNames = listProviderNames(cohortProviderGroups.map(g => g.provider));
   // Measured, not assumed: a provider is in the population list because it has
   // outcomes in the payload, not because it has a key in it.
   const populationProviderNames = (() => {
@@ -1215,7 +1237,12 @@ export default function CalibrationPage() {
                   page answered one question with two numbers under one word. The
                   raw count is not suppressed — it is still printed, as "keys",
                   where the shapes are actually broken out. */}
-              {" "}&middot; {providerGroups.length} sources &middot; {categories.length} categories.{" "}
+              {/* #7507 — `cohortProviderGroups`, not `providerGroups`: this
+                  sentence leads with `cohortN`, so its "N sources" is the
+                  cohort's. #6265's contract is unchanged — the card, this line
+                  and the footer still answer with ONE number; that number is
+                  now also true of the cohort they all name. */}
+              {" "}&middot; {cohortProviderGroups.length} sources &middot; {categories.length} categories.{" "}
               <a href="#methodology" className="text-accent-brand hover:underline">
                 How we measure this
               </a>{" "}
@@ -1294,9 +1321,15 @@ export default function CalibrationPage() {
         {/* UX-P080 item 2: counts PROVIDERS, from the same `providerGroups` the
             two tables below are built from — so the card cannot say 5 while
             they say 3. The shapes are named in the subtext rather than dropped. */}
-        <StatCard label="Sources" value={String(providerGroups.length)}
+        {/* #7507: the COHORT's providers. The value and the names come from one
+            list, so the card cannot count a provider it does not name — and the
+            page's own Source Comparison row for that provider ("No outcomes in
+            this cohort") cannot contradict the card above it. Every shape inside
+            a counted provider is still named, which is UX-P080 item 2's promise;
+            what leaves is a whole provider the cohort has nothing from. */}
+        <StatCard label="Sources" value={String(cohortProviderGroups.length)}
           testId="calibration-stat-sources"
-          detail={providerKpiDetail(providerGroups, sourceLabel)} />
+          detail={providerKpiDetail(cohortProviderGroups, sourceLabel)} />
         <StatCard label="Categories" value={String(categories.length)}
           testId="calibration-stat-categories"
           detail={topCats} />
@@ -3120,9 +3153,15 @@ export default function CalibrationPage() {
             The count travels as `data-source-n` for the same reason the two
             population counts do: a probe should read the number, not the prose,
             and this page has now had the same contradiction twice. */}
+        {/* #7507 — `cohortProviderGroups` here too. This line leads with
+            `footerPopulationPhrase(cohortN, …)`, so it is cohort-scoped like the
+            card and the population line, and the three still print one number.
+            `data-source-n` moves with the prose deliberately: a probe that read
+            the payload count while the sentence beside it read the cohort count
+            would make the contradiction unfalsifiable from the attribute. */}
         <p data-testid="calibration-footer-population"
-          data-cohort-n={cohortN} data-full-n={fullN} data-source-n={providerGroups.length}>
-          {footerPopulationPhrase(cohortN, fullN)} &middot; {providerGroups.length} sources &middot; {categories.length} categories
+          data-cohort-n={cohortN} data-full-n={fullN} data-source-n={cohortProviderGroups.length}>
+          {footerPopulationPhrase(cohortN, fullN)} &middot; {cohortProviderGroups.length} sources &middot; {categories.length} categories
           {priceCohort !== "all" && ` (${priceCohort === "closing" ? "closing line" : "opening price"} cohort)`}
         </p>
         <p className="mt-1">

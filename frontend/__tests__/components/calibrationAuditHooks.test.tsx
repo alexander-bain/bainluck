@@ -625,13 +625,31 @@ describe("item 1 — the Brier card earns its sentence", () => {
 });
 
 describe("item 2 — the Sources KPI counts providers, not shapes", () => {
-  test("the card's value comes from providerGroups, not from sources", () => {
-    expect(SOURCE).toContain("value={String(providerGroups.length)}");
+  /**
+   * #7507 moved both literals from `providerGroups` to `cohortProviderGroups`.
+   * UX-P080 item 2's requirement is UNCHANGED and is still what these pin: the
+   * card counts PROVIDERS rather than raw source keys, and the shapes inside a
+   * counted provider are named in the subtext rather than dropped.
+   *
+   * What changed is which providers are in scope. `cohortProviderGroups` is
+   * `providerGroups` filtered to those with outcomes in the cohort on screen —
+   * so the card stopped counting and naming DataGolf in the default cohort,
+   * where the page's own Source Comparison row says it has none. The assertions
+   * below therefore check the value is derived from a PROVIDER GROUPING (item
+   * 2's subject) and still reject a raw-key count, which is the regression item
+   * 2 exists to prevent.
+   */
+  test("the card's value comes from a provider grouping, not from sources", () => {
+    expect(SOURCE).toContain("value={String(cohortProviderGroups.length)}");
     expect(SOURCE).not.toContain("value={String(sources.length)}");
+    // …and that grouping is `providerGroups` narrowed, never a second count
+    // built alongside it — the "in step" failure mode named three tests down.
+    const cohortDecl = SOURCE.match(/const cohortProviderGroups = \(\(\) => \{([\s\S]*?)\}\)\(\);/)?.[1] ?? "";
+    expect(cohortDecl).toContain("providerGroups.filter(");
   });
 
   test("the shapes are named in the subtext rather than dropped", () => {
-    expect(SOURCE).toContain("detail={providerKpiDetail(providerGroups, sourceLabel)}");
+    expect(SOURCE).toContain("detail={providerKpiDetail(cohortProviderGroups, sourceLabel)}");
   });
 
   test("the KPI is derived from the SAME groups the tables below render", () => {
