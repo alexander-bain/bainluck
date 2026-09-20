@@ -12,6 +12,7 @@ still LIVE — because this tool sits on every lane's critical path and must
 never wedge the bus for a legitimate re-stage.
 """
 
+import errno
 import os
 import signal
 import subprocess
@@ -385,6 +386,51 @@ def _pre_repair_variant(src):
     return "".join(out)
 
 
+#: How long the probe below will wait for the script to reach a state it needs.
+#: Generous on purpose: it is an upper bound on a wedge, not a performance
+#: assertion, and it is only ever reached when something is actually wrong.
+PROBE_WAIT_S = 30
+
+
+def _wait_until(predicate, timeout=PROBE_WAIT_S, interval=0.02):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return False
+
+
+def _open_fifo_writer(fifo, timeout=PROBE_WAIT_S):
+    """Open the write end of `fifo`, waiting for a reader, but never forever.
+
+    🔴 THIS IS WHY THE BAND USED TO WEDGE, AND WHY THE RECORDED DIAGNOSIS ("a
+    leaked process from a killed run — kill the strays and re-run") IS WRONG.
+    `open(fifo, "w")` blocks until some process opens the read end, it takes no
+    timeout, and nothing interrupts it. When the TERM below landed BEFORE the
+    script reached the id scan, the script died without ever opening the FIFO
+    for reading, so the reader this call waits for could never arrive: pytest
+    sat at 0% CPU with a defunct child, forever, and the band stopped dead.
+    Measured on a fresh worktree with no prior run — `test_the_pre_repair_trap_
+    shape_really_did_resume_and_append`, `Q.md.lockd` ABSENT (so the script had
+    not taken the lock, i.e. had not reached the scan), bash a zombie (so the
+    parent was not in `wait`), `log.fifo` present with no reader.
+
+    `O_NONBLOCK` turns "wait forever" into ENXIO ("no reader yet"), which a loop
+    can bound. Returns the fd on success and None if no reader ever appeared —
+    the caller reports that as a failed probe rather than hanging on it.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            return os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as exc:
+            if exc.errno != errno.ENXIO:
+                raise
+            time.sleep(0.02)
+    return None
+
+
 def _term_during_critical_section(script, workdir):
     """SIGTERM a run that is provably holding the lock, at a known point.
 
@@ -395,6 +441,20 @@ def _term_during_critical_section(script, workdir):
     lock already taken, the TERM is delivered and held pending, and closing the
     writer end releases grep so the trap fires at a command boundary we chose.
     Deterministic, and no multi-megabyte fixture.
+
+    🪤 The ORDER below is the whole repair, and it is not cosmetic. The probe
+    used to `sleep(0.4)`, assume the script had reached the scan, and only then
+    take the write end. Under load — a `-k` band, ten lanes on one laptop — the
+    script needs longer than that to start, so the TERM landed first and the
+    write-end open blocked on a reader that was already dead. Now every step
+    waits for the state it depends on:
+
+      1. the lock directory exists  -> the script IS inside the critical section
+      2. the write end opens        -> the script IS blocked reading the FIFO
+      3. only THEN the TERM, which bash holds pending against a blocked `grep`
+      4. closing the write end releases `grep`, and the trap fires there
+
+    No sleep guesses at a duration; nothing waits without a bound.
     """
     q = workdir / "Q.md"
     q.write_text("# Q\n")
@@ -410,14 +470,25 @@ def _term_during_critical_section(script, workdir):
         env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(workdir),
              "CERT_QUEUE": str(q), "CERT_LOG": str(fifo)},
     )
-    time.sleep(0.4)
-    held_during_scan = lockd.exists()
-    p.send_signal(signal.SIGTERM)
-    time.sleep(0.2)
-    open(fifo, "w").close()
-    out, _err = p.communicate(input="body\n", timeout=60)
+    try:
+        held_during_scan = _wait_until(lockd.exists)
+        writer_fd = _open_fifo_writer(fifo)
+        reader_reached_scan = writer_fd is not None
+        p.send_signal(signal.SIGTERM)
+        # The signal has to be delivered while `grep` is still blocked on the
+        # FIFO; bash then runs the trap at that command's boundary. Bounded and
+        # tiny — this one is a delivery gap, not a state we can poll for.
+        time.sleep(0.2)
+        if writer_fd is not None:
+            os.close(writer_fd)
+        out, _err = p.communicate(input="body\n", timeout=60)
+    finally:
+        if p.poll() is None:            # a probe must never leave a live child
+            p.kill()
+            p.communicate(timeout=30)
     return {
         "held_during_scan": held_during_scan,
+        "reader_reached_scan": reader_reached_scan,
         "returncode": p.returncode,
         "stdout": out.strip(),
         "appended": len(q.read_text()) - len("# Q\n"),
@@ -436,6 +507,10 @@ class TestASignalCannotResumeIntoTheCriticalSection:
     def test_a_term_holding_the_lock_fails_closed(self, tmp_path):
         r = _term_during_critical_section(SCRIPT, tmp_path)
         assert r["held_during_scan"], "probe never got the lock; it proves nothing"
+        assert r["reader_reached_scan"], (
+            "the script never opened the log for reading, so the TERM did not "
+            "land inside the critical section; it proves nothing"
+        )
         assert r["returncode"] != 0, "a terminated stage must not report success"
         assert r["returncode"] == 143, f"expected 128+SIGTERM, got {r['returncode']}"
         assert r["stdout"] == "", f"a terminated stage handed out id {r['stdout']!r}"
@@ -478,6 +553,7 @@ class TestASignalCannotResumeIntoTheCriticalSection:
         r = _term_during_critical_section(buggy, work)
 
         assert r["held_during_scan"]
+        assert r["reader_reached_scan"]
         assert r["returncode"] == 0 and r["appended"] > 0, (
             "the pre-repair trap shape is supposed to survive its own TERM and "
             f"append anyway; got {r}"
@@ -554,3 +630,65 @@ class TestGuardIsNotVacuous:
             "produced a double stage, so the locked test above is not being "
             "exercised — widen RACE_QUEUE_BLOCKS"
         )
+
+
+class TestTheProbeItselfCannotWEDGETheSuite:
+    """The probe above is the only thing in this file that can hang a whole run,
+    and it did: in a `-k` band this file stopped dead at 0% CPU with a defunct
+    child and never recovered, while passing 20/20 when run alone. The recorded
+    diagnosis at the time — "a leaked process from a killed run, kill the strays
+    and re-run" — was wrong, and the next lane to believe it re-ran into the same
+    wall. The cause was `open(fifo, "w")` waiting for a reader that had already
+    died, with no timeout and nothing to interrupt it.
+
+    So the bound is now a tested property, not a comment. 🪤 Both arms run the
+    open in a DAEMON thread and assert the thread finished: a reverted blocking
+    implementation then FAILS these tests instead of wedging the suite that is
+    trying to catch it — which is the whole difference between a guard and a
+    second instance of the defect.
+    """
+
+    @staticmethod
+    def _in_a_thread(fn, join_timeout=25):
+        box = {}
+        t = threading.Thread(target=lambda: box.update(v=fn()), daemon=True)
+        t.start()
+        t.join(timeout=join_timeout)
+        return t, box
+
+    def test_a_write_end_with_no_reader_gives_up_instead_of_blocking_forever(
+        self, tmp_path
+    ):
+        fifo = tmp_path / "log.fifo"
+        os.mkfifo(fifo)
+
+        t, box = self._in_a_thread(lambda: _open_fifo_writer(fifo, timeout=0.5))
+
+        assert not t.is_alive(), (
+            "the write end never gave up on a FIFO nobody is reading — this is "
+            "the wedge itself, not a slow test"
+        )
+        assert box["v"] is None, "it must report 'no reader', not a usable fd"
+
+    def test_it_does_open_when_a_reader_is_there(self, tmp_path):
+        """The other half: a bound that never opens would pass the test above and
+        break every probe in this file."""
+        fifo = tmp_path / "log.fifo"
+        os.mkfifo(fifo)
+        reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            t, box = self._in_a_thread(
+                lambda: _open_fifo_writer(fifo, timeout=PROBE_WAIT_S)
+            )
+            assert not t.is_alive()
+            assert box["v"] is not None, "a reader was open and it still gave up"
+            os.close(box["v"])
+        finally:
+            os.close(reader)
+
+    def test_the_probe_leaves_no_live_child_behind(self, tmp_path):
+        """The `finally` in `_term_during_critical_section`. A probe that returns
+        while its bash is still running turns one wedged test into a band-wide
+        mystery, which is how this one was misdiagnosed."""
+        r = _term_during_critical_section(SCRIPT, tmp_path)
+        assert r["returncode"] is not None, "the child was never reaped"
