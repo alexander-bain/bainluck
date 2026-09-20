@@ -40,13 +40,18 @@ def _team(team_id, name, sport_id):
 #: Production `teams` rows, 2026-09-19, for every id this repair names or is
 #: endangered by.
 REAL_TEAMS = {
+    36: _team(36, "Chicago Bulls", 2),
     537: _team(537, "Los Angeles Clippers", 2),
     544: _team(544, "Los Angeles Rams", 1),
     556: _team(556, "Los Angeles Chargers", 1),
+    851: _team(851, "Chicago White Sox", 33178),
+    856: _team(856, "Chicago Cubs", 33178),
     863: _team(863, "New York Mets", 33178),
     6610: _team(6610, "New York Yankees", 53232),
     10707: _team(10707, "Los Angeles Dodgers", 53232),
     10712: _team(10712, "Los Angeles Angels", 53232),
+    10714: _team(10714, "Chicago Cubs", 53232),
+    10734: _team(10734, "Chicago White Sox", 53232),
     10737: _team(10737, "New York Mets", 53232),
     12649: _team(12649, "Los Angeles C", 2),
 }
@@ -55,16 +60,17 @@ REAL_TEAMS = {
 # --- the shipped table ------------------------------------------------------
 
 def test_the_shipped_repoint_table_is_clean_against_production_rows():
-    """The three families this repair actually moves."""
+    """The four families this repair actually moves."""
     assert plan_violations(REPOINTS, REAL_TEAMS) == []
 
 
-def test_the_shipped_table_covers_the_three_measured_families():
-    """32 legs: Mets 9, Dodgers 8, Chargers 15. Guards the ids, not the counts."""
+def test_the_shipped_table_covers_the_four_measured_families():
+    """40 legs: Mets 9, Dodgers 8, Chargers 15, Cubs 8. Guards the ids, not the counts."""
     assert {(rp.wrong, rp.right) for rp in REPOINTS} == {
-        (6610, 10737),  # Yankees -> Mets
-        (10712, 10707),  # Angels  -> Dodgers
-        (544, 556),  # Rams    -> Chargers
+        (6610, 10737),  # Yankees    -> Mets
+        (10712, 10707),  # Angels     -> Dodgers
+        (544, 556),  # Rams       -> Chargers
+        (10734, 10714),  # White Sox  -> Cubs
     }
 
 
@@ -76,6 +82,49 @@ def test_the_preseason_mets_twin_is_refused_as_a_target():
     problems = plan_violations(bad, REAL_TEAMS)
     assert problems, "863 is sport 33178 (preseason); the repoint must be refused"
     assert any("different" in p and "sport" in p for p in problems)
+
+
+def test_the_preseason_cubs_twin_is_refused_as_a_target():
+    """856 is `Chicago Cubs` too, at the lower id a name lookup returns first.
+
+    The same trap as 863, and it is live for the family added after the first
+    apply — so it is asserted on this family rather than inherited from the
+    Mets one.
+    """
+    bad = (Repoint(("Chicago C",), wrong=10734, right=856, why="x"),)
+    problems = plan_violations(bad, REAL_TEAMS)
+    assert problems, "856 is sport 33178 (preseason); the repoint must be refused"
+    assert any("different" in p and "sport" in p for p in problems)
+
+
+def test_the_chicago_bulls_are_refused_as_a_target():
+    """A live `'Chicago C'` leg IS bound to the Bulls (team 36, NBA).
+
+    The prefix test cannot tell the two apart — `'Chicago C'` is a prefix of
+    both `'Chicago Cubs'` and, in the other direction, of nothing about the
+    Bulls — so the sport guard (MLB 53232 vs NBA 2) is the only thing standing
+    between this repair and an NBA row.
+    """
+    bad = (Repoint(("Chicago C",), wrong=10734, right=36, why="x"),)
+    problems = plan_violations(bad, REAL_TEAMS)
+    assert problems
+    assert any("sport" in p for p in problems)
+
+
+def test_the_chicago_w_legs_would_be_refused_as_a_defect():
+    """Guard 2 on the family's own counter-case.
+
+    Two `'Chicago W'` legs sit in the same markets bound to the White Sox, and
+    they are CORRECT — the venue's truncation separates the two Chicago clubs
+    perfectly (CHC vs CHW) and only the binding lost that. If someone ever
+    widens `leg_names` to a bare `'Chicago'`, this is the assertion that says
+    no.
+    """
+    bad = (Repoint(("Chicago W",), wrong=10734, right=10714, why="x"),)
+    problems = plan_violations(bad, REAL_TEAMS)
+    assert problems
+    assert any("not obviously wrong" in p for p in problems)
+    assert any("not a prefix" in p for p in problems)
 
 
 # --- trap 2: the junk row whose name IS the fragment ------------------------
