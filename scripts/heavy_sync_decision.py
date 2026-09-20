@@ -347,6 +347,66 @@ INFLIGHT_READ_SECONDS = 26
 #: this one by `test_the_bands_edge_is_a_whole_turn_of_the_wait_loop`.
 CONFIRM_SEPARATION_SECONDS = INFLIGHT_POLL_SECONDS + INFLIGHT_READ_SECONDS
 
+#: WHAT THE RUN STILL OWES THE BAND AT THE INSTANT IT WAKES — the wake to the
+#: VERDICT (#5470's residual, found by authority/909).
+#:
+#: :func:`wait_seconds` authorises a sleep by asking :func:`decide` about the
+#: moment the run WAKES. Nothing is decided at that moment. The run has to
+#: re-read every fact first — `read_facts` again: two `ls-remote`s, two
+#: `fetch`es, `cat-file`, `merge-base`, and the `age` call to the Platform API —
+#: and the verdict it was authorised on is taken AFTER that read. So the sleep
+#: was validated with less margin than the work it must still do, and the margin
+#: it was short by is this.
+#:
+#: Measured end to end, wake instant to the verdict line, over every sleeping
+#: run in this workflow's last 100 (14 of them, 2026-09-19..09-20):
+#: 9.72 / 10.24 / 10.47 / 10.62 / 10.73 / 10.78 / 10.86 / 11.50 / 11.57 / 11.75
+#: / 12.04 / 12.19 / 13.02 / 16.41 s. Rounded UP FROM THE MAXIMUM rather than
+#: from the median, because the two errors are not the same size: under-stating
+#: authorises a sleep that cannot finish, which is the hour this constant exists
+#: to stop, while over-stating declines one whose remaining band was going to be
+#: spent for nothing anyway. The wake is computed, not read — a log line is
+#: printed by the first thing that finishes, and the two `ls-remote`s ahead of it
+#: cost ~5 s that reading the first line would charge to nobody.
+#:
+#: The specimen is run 35518945494, 2026-09-20, and it is the 13.02 in that list.
+#: The gate reached PUSH at 15:14:47Z and slept 2640 s for the 180-min cycle
+#: floor, landing 15:58:47Z — 13 s inside a band that closes at 15:59:00. It woke,
+#: spent 13.02 s re-reading, and printed `HOLD: :59 is outside the :38-:58
+#: heavy-sync window`. Forty-four minutes of runner for the verdict it already
+#: held, and heavy stayed on `704cdc47` while main served `d0555293`.
+POST_WAKE_READ_SECONDS = 17
+
+def wake_to_push_seconds() -> int:
+    """The band a run must still hold at the instant it wakes, to reach a push.
+
+    THE WAKE TO THE PUSH, WHICH IS WHAT THE SLEEP'S DEADLINE IS ACTUALLY ABOUT.
+    ``decide`` is not the last gate. The in-flight read stands between it and the
+    push, and then the band is asked ONE more time (``HOLD — the band closed while
+    the fleet was being read``). So a sleep landing with only the re-read's worth
+    of band left still loses the cycle, one gate further down: PUSH at :58:5x,
+    ~26 s of broadcast, a final ``band-seconds-left`` of 0, exit. Charging only the
+    re-read would fix the specimen and leave its neighbours — a wake with 20 s of
+    band is as doomed as one with 13, and for the next reason along.
+
+    This is the SLEEP path's statement of the rule the confirm loop's edge already
+    lives by: a remainder of band the run can SPEND but cannot FINISH inside is a
+    remainder it must not spend, because the fallback — HOLD now and let the next
+    trigger re-judge — is the run this file has always been and costs nothing but
+    the attempt.
+
+    A FUNCTION AND NOT A CONSTANT, for the reason :func:`min_cycle_interval_min`
+    is one. The fleet read here is the same broadcast, on the same endpoint, in the
+    same run that :data:`INFLIGHT_READ_SECONDS` already measures, so it is derived
+    from that rather than measured again — and a derived CONSTANT is only derived
+    at import. ``= 43`` behaves identically today and silently stops tracking the
+    moment either measurement is corrected, which is the drift this file has paid
+    for before; that mutant survives every test that patches the total instead of
+    the inputs
+    (``test_the_two_charges_are_derived_from_measurements_and_are_what_decline_it``).
+    """
+    return POST_WAKE_READ_SECONDS + INFLIGHT_READ_SECONDS
+
 
 def band_seconds_left(now: datetime | None = None) -> int:
     """Whole seconds until the band's closing edge; ``0`` once it has passed.
@@ -645,6 +705,31 @@ def wait_seconds(
     — the same "how late may a push be" the rest of the file reads, never a
     second number (``test_a_floor_clearing_after_this_bands_close_never_sleeps``).
 
+    AND THE DEADLINE IS THE WAKE PLUS EVERYTHING THE RUN STILL OWES, NOT THE WAKE.
+    The deadline used to be measured to the wake instant, which is the one instant
+    at which this run does nothing: it re-reads every fact first
+    (:data:`POST_WAKE_READ_SECONDS`), and after the verdict it still has an
+    in-flight read and a final band check to clear before it may push
+    (:func:`wake_to_push_seconds`). Run 35518945494 slept 2640 s to land 13 s
+    inside the band and spent 13.02 s waking up, so it HOLDed on the clock it had
+    just waited 44 minutes for — a sleep authorised with less margin than the work
+    it had left. So the deadline is asked about the PUSH, which is the last thing
+    the sleep is for, and ``decide`` is then safe to ask about the wake (see the
+    comment at the call).
+
+    IT IS A NARROW CUT, and that is measured rather than hoped: replayed over the
+    14 sleeps in this workflow's last 100 runs, it declines exactly one — run
+    35518945494, the only one of the 14 that HOLDed. The next-closest survivor woke
+    with 459 s of band against a 43 s charge
+    (``test_a_sleep_that_cannot_afford_its_own_re_read_is_not_taken``).
+
+    Declining costs nothing that was there to lose. The alternative to a sleep that
+    cannot finish is not a later push, it is the same HOLD 44 minutes earlier, with
+    the runner and the ``heavy-deploy`` slot handed back — and that slot is the
+    part that matters, because the group cancels a PENDING duplicate rather than
+    the running sleeper, so a doomed sleeper also swallows every trigger that
+    arrives while it waits.
+
     The cycle budget is untouched by either edge: the target is never EARLIER
     than the floor permits, so a sleeping run pushes at the first instant an
     awake one could have.
@@ -656,11 +741,31 @@ def wait_seconds(
     secs = max(opens_in, seconds_until_floor_clears(heavy_release_age_min))
     if secs <= 0:
         return 0
-    if secs > band_seconds_left_at_open(now):
+    # `>=` and not `>`: the deadline is the band's closing EDGE, and the final band
+    # check the push has to clear reads `band_seconds_left`, which is 0 AT the edge
+    # rather than at the second after it. A sleep that fits exactly therefore lands
+    # the push on a zero and HOLDs — the same lost cycle, one second wide and one
+    # gate further down (`test_a_sleep_that_fits_exactly_lands_the_push_on_a_zero`).
+    if secs + wake_to_push_seconds() >= band_seconds_left_at_open(now):
         return 0
+    # The projected age stays on `secs` alone, and deliberately: the floor's
+    # question is how old heavy is at the moment we would push, and the push is
+    # LATER than the target by everything above, so this under-states it. An
+    # under-stated age can only refuse a cycle, never buy one — the direction a
+    # cost gate is allowed to be wrong in, and the one
+    # `test_the_projection_can_never_land_under_the_floor` reads.
     projected_age = (
         None if heavy_release_age_min is None else heavy_release_age_min + (secs + 59) // 60
     )
+    # ASKED ABOUT THE WAKE, AND THAT IS SOUND ONLY BECAUSE OF THE LINE ABOVE.
+    # The verdict is really taken `POST_WAKE_READ_SECONDS` after this instant, so
+    # judging the wake is judging a moment the run never occupies — which is the
+    # whole defect, and which the deadline has just closed: it proved the band is
+    # still open all the way to the PUSH, so it is open at the verdict too and the
+    # two readings cannot disagree. Charging the re-read here as well would be a
+    # branch nothing can reach; the equivalence is pinned instead, so weakening the
+    # deadline fails a test rather than silently re-opening this
+    # (`test_judging_the_wake_is_sound_only_because_the_deadline_covers_the_re_read`).
     at_target = decide(
         main_live=main_live,
         heavy_live=heavy_live,
