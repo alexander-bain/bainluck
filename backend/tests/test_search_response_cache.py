@@ -659,6 +659,7 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     production's own reason on failure.
     """
     from app.tasks.search_head_warmer import (
+        _LOCK_TTL_SECONDS,
         REFRESH_AHEAD_SECONDS,
         effective_pass_period_s,
         full_rebuild_budget_s,
@@ -692,10 +693,24 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     # from 70 to 50 and the two boundaries crossed — but a test that silently
     # starts checking a different clause is worth less than one that fails, so the
     # budget is passed explicitly to put (2)'s boundary back above (1)'s.
-    reachable_budget = 80.0
+    #
+    # ⚠️ AND SINCE #3655 THE FIXTURE HAS A CEILING TOO, for the mirror-image
+    # reason. The lock TTL is now 80 s (derived — `derive_lock_ttl_s`), so a
+    # budget at or above it is refused by clause (6) before clause (2) is
+    # consulted: this fixture sat at 80.0 and the "one second above the boundary
+    # must pass" arm below started reading THE PASS OUTRUNS ITS OWN LOCK. The
+    # budget therefore has to sit strictly inside `(period, _LOCK_TTL_SECONDS)`,
+    # and both ends are asserted so the next constant to move fails here loudly
+    # instead of quietly re-pointing this test at a different clause.
+    reachable_budget = 70.0
     assert period + reachable_budget > SEARCH_RESPONSE_TTL_SECONDS - period, (
         "this fixture must keep clause (2)'s boundary above clause (1)'s, or it is "
         "asserting on clause (1) while claiming to test clause (2)"
+    )
+    assert reachable_budget < _LOCK_TTL_SECONDS, (
+        f"this fixture's budget ({reachable_budget}s) is at or above the "
+        f"{_LOCK_TTL_SECONDS}s lock TTL, so clause (6) fires first and the "
+        f"assertions below are testing (6) under (2)'s name"
     )
     survives, why_survives = residency_invariant(
         refresh_ahead_s=period + reachable_budget, budget_s=reachable_budget
@@ -756,10 +771,28 @@ def test_the_refresh_ahead_window_actually_keeps_the_head_alive():
     )
     assert not interval_dead, "clause (4) is dead: a TTL equal to the interval must NOT pass"
     assert "WRITE INTERVAL" in why_interval, why_interval
-    # ...and one second of life above it must pass, so (4) is driven both ways.
-    assert residency_invariant(
+    # ...and one second of life above it, clause (4) must STOP firing, so it is
+    # driven both ways.
+    #
+    # ⚠️ ASSERTED ON WHICH CLAUSE FIRES, NOT ON `ok`, AND #3655 IS WHY. The 100 s
+    # budget this fixture needs to reach (4)'s boundary is itself unshippable
+    # under clauses (6) and (8): a live pass then needs a lock over 100 s while a
+    # residual one must expire before `ttl - beat - budget` = 81 s, and those two
+    # have no overlap — `derive_lock_ttl_s(budget_s=100)` raises for exactly that
+    # reason. So no lock TTL makes this configuration RESIDENT, and an assertion
+    # on `ok` would silently become an assertion about (6)/(8). What clause (4)
+    # owes is that it stops accusing the write interval, and that is what is
+    # checked.
+    cleared_ok, why_cleared = residency_invariant(
         ttl_s=boundary + 1, refresh_ahead_s=170, budget_s=wide
-    )[0], "clause (4) refuses a TTL that clears the write interval"
+    )
+    assert "WRITE INTERVAL" not in why_cleared, (
+        f"clause (4) refuses a TTL that clears the write interval: {why_cleared}"
+    )
+    assert cleared_ok or "OUTRUNS ITS OWN LOCK" in why_cleared, (
+        f"a 100s budget is expected to be refused by clause (6) once (4) is "
+        f"cleared, and it was refused by something else: {why_cleared}"
+    )
 
     # And the shipped threshold is the derived one, not a hand-picked neighbour.
     from app.tasks.search_head_warmer import derive_refresh_ahead_s
@@ -904,7 +937,7 @@ def test_the_full_rebuild_budget_is_the_pass_not_one_query():
     )
 
 
-def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
+def test_the_message_expiry_is_derived_from_the_entry_life_not_the_beat_period():
     """#3364: the bound that decides whether a fire is delivered at all.
 
     The old value was the beat period, justified against the task's WALL. The
@@ -913,21 +946,33 @@ def test_the_message_expiry_is_derived_from_the_lock_ttl_not_the_beat_period():
     `matched_emitted` 30 / `matched_delivered` 0 in one 600 s bucket under the
     old bound.
 
-    Asserted as a DERIVATION rather than as the number 180, so lowering
-    `_LOCK_TTL_SECONDS` moves the bound with it instead of silently leaving a
-    stale literal behind.
+    ⚠️ **THIS TEST WAS NAMED `..._from_the_lock_ttl_...` AND #3655 MOVED THE
+    INPUT, NOT THE VALUE.** The expiry was derived from `_LOCK_TTL_SECONDS` on the
+    argument that a message older than the longest this warmer can withhold a
+    slot is merely old. #3655 then had to shorten that lock to 80 s so a residual
+    lock could not outlive the 180 s entry it protects — at which point the old
+    derivation would have cut this bound 180 -> 80 as a SIDE EFFECT of a repair
+    aimed somewhere else, on the one beat whose delivered-fire ratio was measured
+    to track this number. The bound now derives from the entry life, which is
+    what its own argument was always about, and the wired 180 does not move.
     """
     from app.tasks.search_head_warmer import (
         _LOCK_TTL_SECONDS,
         BEAT_PERIOD_SECONDS,
         derive_message_expiry_s,
     )
+    from app.utils.search_cache import SEARCH_RESPONSE_TTL_SECONDS
 
     derived = derive_message_expiry_s()
-    assert derived == float(_LOCK_TTL_SECONDS)
+    assert derived == float(SEARCH_RESPONSE_TTL_SECONDS)
+    # Still a derivation and not a literal: move the entry life and it follows.
+    assert derive_message_expiry_s(entry_life_s=240.0) == 240.0
     # The whole point: strictly above the period, or the flat rule would apply
     # and the delivery deficit would be back.
     assert derived > BEAT_PERIOD_SECONDS
+    # And it still covers everything the warmer itself can hold a message off for
+    # — the obligation the old derivation discharged by construction.
+    assert derived > _LOCK_TTL_SECONDS
 
 
 def test_the_message_expiry_refuses_rather_than_clamping():
@@ -941,17 +986,17 @@ def test_the_message_expiry_refuses_rather_than_clamping():
 
     from app.tasks.search_head_warmer import derive_message_expiry_s
 
-    # A lock TTL at or under the beat period means this beat does not need a
+    # An entry life at or under the beat period means this beat does not need a
     # delivery bound at all — the flat #1609 rule covers it.
     with pytest.raises(ValueError, match="beat period"):
-        derive_message_expiry_s(beat_s=20.0, lock_ttl_s=20.0)
+        derive_message_expiry_s(beat_s=20.0, entry_life_s=20.0)
 
     # Too many messages alive at once is a real cost even at ~30 ms a skip, so
     # the cap is enforced rather than documented.
     with pytest.raises(ValueError, match="alive at once"):
-        derive_message_expiry_s(beat_s=1.0, lock_ttl_s=180.0)
+        derive_message_expiry_s(beat_s=1.0, entry_life_s=180.0)
 
-    for bad in ({"beat_s": 0}, {"lock_ttl_s": 0}, {"beat_s": -20.0}):
+    for bad in ({"beat_s": 0}, {"entry_life_s": 0}, {"beat_s": -20.0}):
         with pytest.raises(ValueError, match="must both be positive"):
             derive_message_expiry_s(**bad)
 
