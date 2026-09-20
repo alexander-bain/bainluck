@@ -112,7 +112,13 @@ async def session():
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    import app.models.models  # noqa: F401 — registers every table on Base
+    # `from app.models import models`, not `import app.models.models`: the two
+    # forms are identical in effect (both execute the module, which is the whole
+    # point — it registers every table on Base), but mixing `import app…` with
+    # `from app… import` in one scope is `py/import-and-import-from`, a note-level
+    # CodeQL finding. The sibling census file still carries the other form; this
+    # one is the same import without the finding.
+    from app.models import models  # noqa: F401 — registers every table on Base
     from app.services.database import Base
     from scripts.repair_7354_settled_orientation_swap import BAK_TABLE
 
