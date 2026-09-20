@@ -991,6 +991,113 @@ def test_B10_a_fill_taken_before_settlement_is_not_a_settled_markets_answer(venu
     assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
 
 
+def test_B11_an_empty_post_settlement_fill_is_not_answered_by_the_series_it_carried(
+    venue, broker
+):
+    """open fill → settle → EMPTY fill → bounded retry → healthy fill. CERT-3152.
+
+    B9 walks a settled market whose fills fail with nothing in the cache, and
+    B10 walks a healthy fill taken before settlement. The gap between them is the
+    state a real market actually passes through, and it is the one that looks
+    fine:
+
+      a healthy series fetched while the market was OPEN, then settlement, then
+      one attempt that fetches NOTHING.
+
+    Last-good carries the old series forward — correctly; that is what B5 pins —
+    and `build_payload` calls a payload with points `ok`, and the fill that ran
+    stamps `market_settled`. Every clause of the settled short-circuit is then
+    satisfied by a payload whose attempt asked the venue and came back with
+    nothing, so the chart froze for the seven-day settled TTL WITHOUT the hours
+    that decided the question — the only hours a settled chart is missing. The
+    reader sees a full-looking chart that stops before the end, a warm cache, and
+    no retry for a week.
+
+    The distinction this arm holds the code to is between the payload's DISPLAY
+    series and THIS ATTEMPT's yield (`stats.fetched_points`, counted before the
+    last-good merge).
+    """
+    _seed_specimen()
+    _, _, open_t, _ = _cold_then_warm(broker)         # a healthy fill while OPEN
+    healthy = _in_week(_timeline_points(open_t))
+    assert len(healthy) > 1
+    assert _payload()["market_settled"] is False
+
+    _set_market_status("settled")
+    venue.kalshi_mode = "empty"
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=4)
+    assert _timeline()["venue_history"]["fill"] == "requested"
+    broker.run_enqueued()
+
+    carried = _payload()
+    assert carried["market_settled"] is True
+    assert carried["status"] == "ok", "last-good still carries the series (B5)"
+    assert carried["stats"]["fetched_points"] == 0, "and the attempt fetched none of it"
+    assert _in_week(_timeline_points(_timeline())) == healthy, "the chart kept its history"
+
+    # 🔴 THE FINDING: a full payload is not an answered attempt.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=8)
+    assert _timeline()["venue_history"]["fill"] == "requested", (
+        "an empty post-settlement fill was frozen in as the week's answer "
+        "because the series it carried made the payload look complete"
+    )
+    broker.run_enqueued()                              # second empty attempt
+
+    # …and the retry is what recovers the terminal history the moment the venue
+    # publishes it, which is the whole point of not freezing.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=12)
+    venue.kalshi_mode = "recorded"
+    assert _timeline()["venue_history"]["fill"] == "requested"
+    broker.run_enqueued()
+    answered = _payload()
+    assert answered["stats"]["fetched_points"] > 0
+    assert answered["settled_empty_attempts"] == 0, "a venue that answered is not silent"
+    assert len(_in_week(_timeline_points(_timeline()))) >= len(healthy)
+
+    # NOW the retries stop, older than the refresh age and never asked again.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=16)
+    assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
+    assert broker.calls == []
+
+
+def test_B12_a_venue_that_purged_a_settled_market_is_asked_a_bounded_number_of_times(
+    venue, broker
+):
+    """The ceiling. Kalshi purges a settled market's candles (gotcha #35).
+
+    B11's repair says "an empty attempt is not the answer", and taken alone that
+    is an unbounded three-hourly request per settled chart for the whole seven-
+    day TTL — the same defect, paid to the venue instead of the reader. So the
+    venue is asked `MAX_SETTLED_EMPTY_ATTEMPTS` times, and then the series it
+    already has is accepted as all there is.
+    """
+    from app.tasks.generic_market_history_fill import MAX_SETTLED_EMPTY_ATTEMPTS
+
+    _seed_specimen()
+    _, _, open_t, _ = _cold_then_warm(broker)
+    healthy = _in_week(_timeline_points(open_t))
+
+    _set_market_status("settled")
+    venue.kalshi_mode = "empty"
+    for attempt in range(1, MAX_SETTLED_EMPTY_ATTEMPTS + 1):
+        FrozenDatetime.current = FROZEN_NOW + timedelta(hours=4 * attempt)
+        assert _timeline()["venue_history"]["fill"] == "requested", (
+            f"attempt {attempt} is inside the ceiling of "
+            f"{MAX_SETTLED_EMPTY_ATTEMPTS} and the venue must still be asked"
+        )
+        broker.run_enqueued()
+        assert _payload()["settled_empty_attempts"] == attempt
+
+    FrozenDatetime.current = FROZEN_NOW + timedelta(
+        hours=4 * (MAX_SETTLED_EMPTY_ATTEMPTS + 1)
+    )
+    assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
+    assert broker.calls == []
+    # Spending the ceiling costs the reader nothing: the chart still draws every
+    # observation it had.
+    assert _in_week(_timeline_points(_timeline())) == healthy
+
+
 # ═══ C — IDENTITY AND SHAPE ═════════════════════════════════════════════════
 
 OTHER_MARKET_ID, OTHER_OUTCOME_ID, OTHER_TICKER = 59165100, 219751700, "KXOTHERQUESTION-26-YES1"

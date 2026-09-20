@@ -93,6 +93,16 @@ REFRESH_AFTER_SECONDS = 3 * 3600
 CACHE_TTL_SECONDS = 36 * 3600
 SETTLED_CACHE_TTL_SECONDS = 7 * 24 * 3600
 
+#: How many post-settlement attempts may come back with nothing of their own
+#: before the carried series is accepted as all there is. THREE, one per
+#: `REFRESH_AFTER_SECONDS`, so a venue that publishes its terminal candle late
+#: has ~9 hours to do it while a venue that has purged the market (gotcha #35 —
+#: Kalshi market data goes at ≥74 days) is asked three times rather than every
+#: three hours for the seven-day settled TTL. Without a ceiling, the repair for
+#: "one bad attempt froze the chart for a week" is "every settled chart asks
+#: forever", which is the same bug spent on the venue instead of the reader.
+MAX_SETTLED_EMPTY_ATTEMPTS = 3
+
 _SETTLED_STATUSES = {"settled", "closed", "resolved"}
 
 
@@ -175,12 +185,71 @@ def answers_a_settled_market(payload: dict | None) -> bool:
     three-hour retry an open market gets. That is a retry ceiling, not a sweep:
     the per-market claim and the site-wide hourly cap are unchanged, and a
     successful post-settlement fill ends the retries on the next read.
+
+    🔴 AN `ok` PAYLOAD IS NOT AN ANSWERED ATTEMPT (CERT-3152). Three of those
+    four words were tested and the fourth was assumed: a market with a HEALTHY
+    pre-settlement series that settles and is then asked once, unsuccessfully,
+    carries its old points forward (that is what last-good is for and it is
+    right), and `build_payload` calls a payload with points `ok`. Stamped
+    `market_settled` by the fill that ran, it read as the week's answer — while
+    the hours that decided the question, the only hours a settled market's chart
+    is missing, were exactly the ones never fetched. The reader sees a full-
+    looking chart that stops before the end, a warm cache, and no retry for a
+    week: the same silent freeze one layer in.
+
+    So the question is asked of THIS ATTEMPT — `stats.fetched_points`, counted
+    before the last-good merge — and not of the payload's display series.
+
+    ⏳ AND THE RETRY IS BOUNDED, because a venue can be empty FOREVER: Kalshi
+    purges a settled market's candles (gotcha #35), so "ask again until it
+    answers" is an unbounded three-hourly request for every settled market for
+    its whole TTL. After `MAX_SETTLED_EMPTY_ATTEMPTS` post-settlement attempts
+    that fetched nothing, the carried series is accepted as all there is and the
+    chart holds it for the rest of the settled TTL. A payload that predates this
+    counter has no attempt to describe, so it is not an answer — it costs one
+    bounded retry, which rewrites it with the counter.
     """
     if not isinstance(payload, dict):
         return False
+    if payload.get("market_settled") is not True:
+        return False
+    stats = payload.get("stats")
+    stats = stats if isinstance(stats, dict) else {}
+    if settled_empty_attempts(payload) >= MAX_SETTLED_EMPTY_ATTEMPTS:
+        # The venue has been asked its ceiling of times since this market
+        # settled and has published nothing since. Stop asking; keep the chart.
+        return True
     if payload.get("status") != "ok" or not payload.get("outcomes"):
         return False
-    return payload.get("market_settled") is True
+    return int(stats.get("fetched_points") or 0) > 0
+
+
+def settled_empty_attempts(payload: dict | None) -> int:
+    """How many post-settlement attempts in a row have fetched nothing."""
+    if not isinstance(payload, dict):
+        return 0
+    try:
+        return max(0, int(payload.get("settled_empty_attempts") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def next_settled_empty_attempts(last_good: dict | None, payload: dict, *,
+                                settled: bool) -> int:
+    """The counter this fill's payload carries forward.
+
+    Counts only attempts made WHILE SETTLED that fetched nothing of their own —
+    an open market's empty fill is an ordinary retry and is not on this clock,
+    and one fetched point resets it, because a venue that answered once is not
+    the silent venue this ceiling exists for.
+    """
+    if not settled:
+        return 0
+    stats = payload.get("stats")
+    fetched = int((stats if isinstance(stats, dict) else {}).get("fetched_points") or 0)
+    if fetched > 0:
+        return 0
+    return settled_empty_attempts(last_good) + 1
 
 
 def plan_on_demand_fill(
@@ -543,6 +612,16 @@ async def build_generic_history(
 
     degraded = bool(stats.get("fetch_errors") or stats.get("window_errors"))
 
+    # 🔴 WHAT *THIS* ATTEMPT GOT, COUNTED BEFORE THE LAST-GOOD MERGE — the only
+    # line in this function from which that is still visible. Past it, a series
+    # carried out of the cache and a series fetched a second ago are the same
+    # list of points, and `status` says `ok` for either. A settled market's
+    # payload is kept for SEVEN DAYS on the strength of being an answer, so
+    # "the payload has points" is not the question `answers_a_settled_market`
+    # can ask; "this attempt was answered" is (CERT-3152).
+    stats["fetched_points"] = sum(len(e["points"]) for e in entries.values())
+    stats["fetched_outcomes"] = sum(1 for e in entries.values() if e["points"])
+
     # LAST-GOOD. Only series that still pass every identity binding against the
     # CURRENT rows are carried, and only onto the SAME contract.
     carried, _refusals = validate_payload(last_good, market, outcomes) if last_good else ({}, [])
@@ -616,6 +695,13 @@ async def fill_generic_market_history(
     # fill actually ran under is evidence; comparing timestamps to a settlement
     # time we do not carry would be a guess.
     payload["market_settled"] = settled
+    # Carried forward across fills, so the ceiling counts ATTEMPTS and not reads.
+    # It rides the payload rather than a Redis key of its own for the reason the
+    # rest of this state does: one key, one TTL, and a counter that cannot
+    # outlive the series it describes.
+    payload["settled_empty_attempts"] = next_settled_empty_attempts(
+        last_good, payload, settled=settled
+    )
     written = False
     if not dry_run:
         written = write_cached_history(market_id, payload, settled=settled, rc=rc)

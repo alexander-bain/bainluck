@@ -57,7 +57,11 @@ def _payload(market, outcome, *, points=None, contract=None, **over):
             "contract": contract or gmh.kalshi_contract(outcome),
             "points": points,
         }},
-        "stats": {},
+        # A payload whose series came from its OWN attempt — the ordinary case.
+        # `stats.fetched_points` is counted before the last-good merge, so a
+        # payload that merely CARRIES a series says 0 here while looking
+        # identical above (CERT-3152); the arms that need that shape pass it.
+        "stats": {"fetched_points": len(points)},
     }
     body.update(over)
     return body
@@ -281,6 +285,13 @@ def test_only_a_successful_post_settlement_fill_ends_a_settled_markets_retries()
                           market_settled=True)),
         ("ok but carrying no series", dict(_payload(market, outcome), outcomes={},
                                            market_settled=True)),
+        # 🔴 CERT-3152's finding, as a unit: a HEALTHY pre-settlement series
+        # carried forward by last-good is a full payload, status `ok`, stamped
+        # settled by the fill that ran — and the attempt behind it fetched
+        # nothing, so it cannot hold the hours that decided the question.
+        ("ok, but every point was carried out of the cache",
+         dict(_payload(market, outcome, stats={"fetched_points": 0}),
+              market_settled=True)),
         ("taken before the market settled", dict(_payload(market, outcome),
                                                  market_settled=False)),
         ("from a fill that never stamped the state", _payload(market, outcome)),
@@ -292,6 +303,54 @@ def test_only_a_successful_post_settlement_fill_ends_a_settled_markets_retries()
     # failed attempt is left alone, so this is a ceiling and not a sweep.
     stale = dict(_payload(market, outcome), outcomes={}, status="empty", market_settled=True)
     assert _plan(stale, market=settled, rc=_Redis(), now=NOW)["reason"] == "answered_recently"
+
+
+def test_a_venue_that_has_purged_a_settled_market_is_asked_a_bounded_number_of_times():
+    """The repair for "one attempt froze the chart" must not be "ask forever".
+
+    Kalshi purges a settled market's candles (gotcha #35), so a venue can be
+    empty for good. Asking on every read past the refresh age would then spend a
+    request every three hours, for every settled chart, for the whole seven-day
+    TTL — the same defect paid to the venue instead of the reader. After
+    `MAX_SETTLED_EMPTY_ATTEMPTS` post-settlement attempts that fetched nothing of
+    their own, the carried series is accepted as all there is.
+    """
+    market, outcome = _market(), _outcome()
+    settled = _market(status="settled")
+    later = NOW + timedelta(seconds=fill.REFRESH_AFTER_SECONDS + 1)
+    carried = dict(_payload(market, outcome, stats={"fetched_points": 0}),
+                   market_settled=True)
+
+    for spent in range(fill.MAX_SETTLED_EMPTY_ATTEMPTS):
+        attempt = dict(carried, settled_empty_attempts=spent)
+        assert fill.answers_a_settled_market(attempt) is False, (
+            f"attempt {spent + 1} of {fill.MAX_SETTLED_EMPTY_ATTEMPTS} is inside "
+            "the ceiling and the venue must still be asked"
+        )
+        assert _plan(attempt, market=settled, rc=_Redis(), now=later)["reason"] == "claimed"
+
+    spent_out = dict(carried, settled_empty_attempts=fill.MAX_SETTLED_EMPTY_ATTEMPTS)
+    assert fill.answers_a_settled_market(spent_out) is True
+    assert _plan(spent_out, market=settled, rc=_Redis(), now=later)["reason"] == (
+        "settled_and_already_answered"
+    )
+
+    # The counter counts ATTEMPTS MADE WHILE SETTLED that fetched nothing…
+    empty = {"stats": {"fetched_points": 0}}
+    assert fill.next_settled_empty_attempts(None, empty, settled=True) == 1
+    assert fill.next_settled_empty_attempts(spent_out, empty, settled=True) == (
+        fill.MAX_SETTLED_EMPTY_ATTEMPTS + 1
+    )
+    # …an OPEN market's empty fill is an ordinary retry and is not on this clock…
+    assert fill.next_settled_empty_attempts(spent_out, empty, settled=False) == 0
+    # …and one fetched point resets it, because a venue that answered once is
+    # not the silent venue this ceiling exists for.
+    answered_now = {"stats": {"fetched_points": 4}}
+    assert fill.next_settled_empty_attempts(spent_out, answered_now, settled=True) == 0
+
+    # A counter nobody can read is not a licence to stop asking.
+    for junk in ("three", None, -2, {}):
+        assert fill.settled_empty_attempts(dict(carried, settled_empty_attempts=junk)) == 0
 
 
 class _SessionReturning:
