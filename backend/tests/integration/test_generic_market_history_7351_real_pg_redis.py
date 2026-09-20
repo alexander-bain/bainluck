@@ -1149,28 +1149,41 @@ def test_C3_independent_binaries_stay_independent_and_a_field_is_never_renormali
     assert hist["venue_history"]["state"] == "warm"
 
 
+def _field_venue_coherent(venue: Venue, *, omit: tuple[str, int] | None = None):
+    """Candles whose field sums to exactly 1.00 at every instant it is complete.
+
+    `_field_venue` drifts each ticker up by a cent per tier, so its field sums
+    1.00 / 1.04 / 1.08 and the squeeze is NOT the identity at two of its three
+    instants. That is the right fixture for "the venue's own scale moved"; it
+    cannot isolate a missing companion, because the scale already fails. Here the
+    mids are exactly .40/.30/.20/.10 at every hour, so the ONLY thing `omit` can
+    change is whether one instant has a whole field.
+    """
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {60: {"markets": [
+        {"market_ticker": f"KXFIELD-26-{sfx}", "candlesticks": [
+            _candle(_hours_ago(h), f"{p - 0.01:.2f}", f"{p + 0.01:.2f}")
+            for h in (40, 30, 12) if omit != (sfx, h)]}
+        for _oid, sfx, _name, p in FIELD]}}
+
+
 @pytest.mark.parametrize("capture_scale, what", [
-    (1.12, "a field whose captures sum to 112%, so the squeeze visibly fires"),
-    (1.00, "a field whose captures sum to 100%, so the squeeze is the identity "
-           "at every instant we can measure"),
+    (1.12, "captures at 112%, so the squeeze visibly fires on our own rows too"),
+    (1.00, "captures at 100%, so the squeeze is the identity at every instant we "
+           "CAN measure — and the venue instants still have to answer for themselves"),
 ])
-def test_C4_an_exclusive_field_refuses_the_raw_series_on_history_only(venue, broker, capture_scale, what):
+def test_C4_an_exclusive_fields_venue_instants_must_answer_for_themselves(venue, broker, capture_scale, what):
     """`/history` prints the #23-squeezed scale; a raw venue point is not on it.
 
-    🔴 AND THE SECOND CASE IS THE ONE THAT MATTERS. The squeeze is a WHOLE-FIELD
-    operation: what it does to one outcome is a function of the other outcomes'
-    values at the SAME instant. A venue point is by construction at an instant no
-    capture reached, so at that instant this route holds no companion values and
-    no denominator — there is nothing to squeeze it with and nothing to prove it
-    would not have been squeezed.
-
-    The first presentation admitted the whole market whenever every CAPTURED
-    instant happened to come through unchanged, which is exactly what a field
-    sitting at 100% does for as long as it sits there. That is an inference from
-    one instant to a different one, and this is its control: identical field,
-    identical candles, captures that need no squeeze at all — and the series is
-    still refused, because the evidence the scale contract needs is
-    contemporaneous with the point being admitted and does not exist.
+    🔴 THE SECOND PARAMETER IS THE CONTROL. The squeeze is a WHOLE-FIELD operation:
+    what it does to one outcome is a function of the other outcomes' values at the
+    SAME instant. The first presentation admitted the whole market whenever every
+    CAPTURED instant happened to come through unchanged — which is exactly what a
+    field sitting at 100% does for as long as it sits there — and then served venue
+    points at instants no capture reached. That is an inference from one instant to
+    a different one. Here the captures need no squeeze at all and the series is
+    still refused, because this venue's own field sums to 1.04 and 1.08 at two of
+    its three instants: measured where the point is, not where the captures are.
     """
     _seed_field(mutually_exclusive=True, capture_scale=capture_scale)
     _field_venue(venue)
@@ -1179,13 +1192,61 @@ def test_C4_an_exclusive_field_refuses_the_raw_series_on_history_only(venue, bro
     hist = _history(FIELD_MARKET_ID)
     assert hist["venue_history"]["state"] == "refused", what
     assert hist["venue_history"]["refusals"][-1]["reason"] == (
-        "exclusive_field_scale_unprovable_at_venue_instants"
+        "printed_scale_is_not_the_venue_raw_scale"
     ), what
     assert all("provenance" not in p for e in hist["outcomes"] for p in e["history"])
     # The phone's reader plots the RAW scale by ruling (#7284) and may serve them.
     tl = _timeline(FIELD_MARKET_ID)
     assert tl["venue_history"]["points_served"] == 12
     assert len(venue.provider_requests()) == 3, "four tickers ride ONE batched request per tier"
+
+
+def test_C4b_an_exclusive_field_with_a_hole_at_the_venue_instant_is_refused(venue, broker):
+    """The control codex named: captures that need no squeeze, a venue point with
+    no companion evidence.
+
+    Every mid here is exactly its outcome's price, so the field sums to 1.00
+    wherever it is whole and the scale objection of C4 cannot fire. The single
+    difference is that Dogwood has no candle at one of the three hours. A field
+    with a hole has no denominator at that instant, so there is nothing to
+    establish that the squeeze would have left the other three alone — and the
+    honest answer is a refusal, not three quarters of a field.
+    """
+    _seed_field(mutually_exclusive=True, capture_scale=1.0)
+    _field_venue_coherent(venue, omit=("D", 30))
+    _timeline(FIELD_MARKET_ID)
+    broker.run_enqueued()
+    hist = _history(FIELD_MARKET_ID)
+    assert hist["venue_history"]["state"] == "refused"
+    assert hist["venue_history"]["refusals"][-1]["reason"] == (
+        "exclusive_field_incomplete_at_venue_instant"
+    )
+    assert all("provenance" not in p for e in hist["outcomes"] for p in e["history"])
+    assert _timeline(FIELD_MARKET_ID)["venue_history"]["points_served"] == 11
+
+
+def test_C4c_an_exclusive_field_whose_venue_instants_carry_the_whole_field_is_served(venue, broker):
+    """And the refusal is not a blanket one, which is the whole point of measuring.
+
+    Same exclusive market, same captures, same tickers as C4b — the one change is
+    that no candle is missing. Every venue instant carries all four outcomes and
+    they sum to 1.00, so the squeeze is measured to be the identity AT THE POINT
+    BEING SERVED and the series is admitted. Without this control, C4 and C4b are
+    equally satisfied by a route that simply refuses every exclusive field, which
+    would quietly drop a capability the delivered candidate had.
+    """
+    _seed_field(mutually_exclusive=True, capture_scale=1.0)
+    _field_venue_coherent(venue)
+    _timeline(FIELD_MARKET_ID)
+    broker.run_enqueued()
+    hist = _history(FIELD_MARKET_ID)
+    assert hist["venue_history"]["state"] == "warm"
+    assert hist["venue_history"]["points_served"] == 12
+    served = {e["name"]: {p["timestamp"]: p["probability"] for p in e["history"]} for e in hist["outcomes"]}
+    for _oid, _sfx, name, p in FIELD:
+        assert served[name][_iso(_hours_ago(30))] == pytest.approx(p), (
+            "an admitted venue point must be served at its RAW value, unsqueezed"
+        )
 
 
 def _field_venue_at_distinct_minutes(venue: Venue):

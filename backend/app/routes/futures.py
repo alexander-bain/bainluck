@@ -4573,30 +4573,54 @@ def _venue_scale_refusal(
 ) -> Optional[str]:
     """None when `/history`'s PRINTED scale is the venue's raw scale here; else why not.
 
-    🔴 A SQUEEZABLE EXCLUSIVE FIELD IS REFUSED, AND MEASURED EQUALITY ELSEWHERE IN
-    THE WINDOW DOES NOT RESCUE IT. The squeeze is a whole-field operation: what it
-    does to one outcome's number is a function of the OTHER outcomes' values at
-    the SAME instant. A venue point is, by construction, at an instant no capture
-    reached (`unclaimed_instants`) — so at that instant this route has no
-    companion values and no denominator, and cannot know what the squeeze would
-    have done there.
+    🔴 FOR A SQUEEZABLE EXCLUSIVE FIELD THE EVIDENCE MUST BE CONTEMPORANEOUS WITH
+    THE POINT BEING ADMITTED. The squeeze is a whole-field operation: what it does
+    to one outcome's number is a function of the OTHER outcomes' values at the
+    SAME instant. A venue point is, by construction, at an instant no capture
+    reached (`unclaimed_instants`), so the captures cannot answer for it.
 
-    The first presentation admitted such a market whenever every captured instant
-    happened to come through the squeeze unchanged. That is the inference this
-    correction removes: two outcomes sitting at .5/.5 all week are exactly the
-    case where the squeeze is the identity *because the field already sums to
-    one*, and it says nothing about an unobserved instant where it may not. The
-    evidence needed is contemporaneous with the point being admitted, and it does
-    not exist, so the honest answer is a refusal rather than a converted number.
+    The first presentation admitted such a market whenever every CAPTURED instant
+    happened to come through the squeeze unchanged. That is the inference removed
+    here: two outcomes sitting at .5/.5 all week are exactly the case where the
+    squeeze is the identity *because the field already sums to one*, and that says
+    nothing about an unobserved instant where it may not.
 
-    What is still admitted is what needs no inference: a market that cannot be
-    squeezed by construction — a non-exclusive family (#199) or a single-outcome
-    binary, which is the named specimen this ship is for. There the printed value
-    IS the raw one, and the per-instant comparison below is what proves it over
-    the captures this window does hold.
+    So the venue instants are asked to answer for themselves, through the SAME
+    scale contract this route prints with rather than a second copy of its rules:
+    every charted outcome must have an observation at that instant (a field with a
+    hole has no denominator), and running `devigged_consensus_by_time` over those
+    contemporaneous raw values must return them unchanged. Where that holds the
+    squeeze is measured to be the identity AT THE POINT BEING SERVED; where it
+    does not, the series is refused rather than converted by a rule nobody ruled
+    on. Nothing new is fetched and no denominator is borrowed from today.
+
+    A market that cannot be squeezed by construction needs none of this — a
+    non-exclusive family (#199) or the single-outcome binary the named specimen is
+    — and falls straight through to the per-capture comparison below.
     """
-    if bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1:
-        return "exclusive_field_scale_unprovable_at_venue_instants"
+    squeezable = bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1
+    if squeezable:
+        from app.utils.futures_history_basis import devigged_consensus_by_time
+
+        charted_ids = {int(o.id) for o in charted_outcomes}
+        venue_columns: dict[datetime, dict[int, float]] = defaultdict(dict)
+        for oid, rows in venue_by_outcome.items():
+            for row in rows:
+                venue_columns[row.captured_at][int(oid)] = float(row.probability)
+        for column in venue_columns.values():
+            if set(column) != charted_ids:
+                return "exclusive_field_incomplete_at_venue_instant"
+        venue_printed = devigged_consensus_by_time(
+            {at: {market.source: col} for at, col in venue_columns.items()},
+            mutually_exclusive=True,
+        )
+        for at, column in venue_columns.items():
+            printed_here = venue_printed.get(at)
+            if printed_here is None:
+                return "printed_scale_is_not_the_venue_raw_scale"
+            for oid, raw in column.items():
+                if abs(float(printed_here.get(oid, raw + 1.0)) - raw) > 5e-5:
+                    return "printed_scale_is_not_the_venue_raw_scale"
     for oid in venue_by_outcome:
         for captured_at, raw_values in (outcome_time_groups.get(oid) or {}).items():
             point = devigged.get(captured_at)
