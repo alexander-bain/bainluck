@@ -795,6 +795,117 @@ def _members_span_multiple_seasons(items: list[dict[str, Any]]) -> bool:
     return len(seasons) > 1
 
 
+# ── CANDIDACY IS NOT VICTORY (#7552) ─────────────────────────────────────────
+#
+# #4147 above made an authored sentence answerable to its members along ONE
+# axis (season). This is the second axis, and it is the one the golf comment
+# below already states in prose: "Who wins the BMW PGA Championship?" is false
+# of the hole-in-one row sitting right under it. A shared question is a claim
+# about the members, and a member that answers a DIFFERENT question does not
+# stop being wrong because it shares a topic.
+#
+# Served on production 2026-09-20 16:47Z, Discover page one, slot 5, headed
+# "Who wins in 2028?":
+#
+#     Who will announce Presidential run before 2028?   90%
+#       J.D. Vance leads at 90%
+#
+# Announcing a run is not winning one, and the 90% reads as a 90% chance of
+# WINNING to a reader who takes the heading at its word. `_story_key` assigns
+# `story:us_2028_election` from a topic regex alone — a year plus any of four
+# election nouns — so membership carries topic + timeframe and neither question
+# family nor cohort. Measured over all 42,325 open markets (2026-09-20 16:5xZ):
+# 115 markets take that key and the authored sentence is false of 85, because
+# the "Will X announce a Presidential run before 2028?" family is one Kalshi
+# series decomposed per person — 75 rows that will keep winning seats in a
+# bundle capped at a handful.
+#
+# THIS IS A CLASS, NOT AN INSTANCE. #6890 ("Who wins on the next card?" over
+# three UFC futures), #4147, #6353 ("Who wins Be evicted?"), #4785 — all closed,
+# all the same shape, all fixed one story at a time, none leaving a guard. So
+# the claim is read off the authored sentence rather than listed per key: any
+# future "Who wins …?" inherits this automatically, which is the only way the
+# fifth instance does not need a fifth patch.
+#
+# TWO DELIBERATE LIMITS, BOTH FAIL-OPEN (#4147's "an unknown season never
+# splits"):
+#
+#   1. Only a VICTORY question is guarded. Measured over the same population,
+#      the candidacy vocabulary also matches 3 members of
+#      `story:middle_east_conflict` ("Will Iran withdraw from the NPT before
+#      2027?") — and those are honest members, because that family asks "Where
+#      is the Middle East conflict heading?", which a withdrawal genuinely
+#      answers. The verb is only disqualifying once the sentence above it
+#      promises a winner.
+#   2. Only an AUTHORED question is guarded. The derived tier phrases itself
+#      "Who wins {shared}?" and would classify as victory, but its members were
+#      selected BY their shared phrase, and the golf/UFC prefixes override the
+#      sentence to "What happens at X?" after this runs. Guarding only what
+#      `AUTHORED_STORY_QUESTIONS` states keeps the claim and the check reading
+#      the same string.
+#
+# Effect over the whole population: 85 evictions from 6,079 members under
+# authored keys (1.4%) — 83 of the 2028 key, 2 of `story:regional_us_elections`
+# ("Will Bernie endorse Kshama Sawant…", "Will Lauren Boebert drop out of the
+# CO-04 race?"), both true. Zero members move under `story:ufc_events`,
+# `story:fifa_world_cup`, `story:grand_slam_tennis`,
+# `story:major_entertainment_events` or `story:music_charts` — the winner
+# families whose "Will X become champion…" phrasing is the obvious false
+# positive, and is not one: becoming the champion IS winning.
+#
+# An evicted member is NOT dropped from the feed. It never enters the cluster,
+# so it is absent from `represented_ids` and falls through the emit loop as its
+# own card — exactly where it was before the bundler ran (D1 clause c). An
+# evicted OVERFLOW member simply frees a seat, since the reserve can never be
+# emitted standalone.
+_VICTORY_QUESTION_RE = re.compile(
+    r"\b(who|which)\b.{0,40}\b"
+    r"(wins?|winner|tops?|beats?|reaches?|ends\s+up\s+with|comes\s+out\s+on\s+top)\b",
+    re.IGNORECASE,
+)
+
+#: Acts that are ABOUT a contest without being the winning of it — entering it,
+#: leaving it, or backing someone else in it. Read as a deny-list rather than a
+#: positive "is a winner market" test on purpose: the winner markets in these
+#: families are phrased a dozen ways ("2028 Republican presidential nominee",
+#: "Which party wins…", "Will a Trump family member be the … nominee?") and a
+#: positive test would evict the ones it failed to recognise, which is the
+#: expensive direction of the error.
+_CANDIDACY_NOT_VICTORY_RE = re.compile(
+    r"""
+      \b(announce|announces|announcing|declare|declares|declaring)\b
+        .{0,40}\b(run|runs|running|candidacy|bid|campaign)\b
+    | \b(run|runs|running)\s+for\b
+    | \b(enter|enters|entering|join|joins)\b.{0,20}\b(race|contest|primary|field)\b
+    | \b(withdraw|withdraws|drop\s+out|drops\s+out|suspend|suspends)\b
+    | \b(concede|concedes|endorse|endorses|endorsement)\b
+    | \b(be|become|becomes)\s+a\s+candidate\b
+    | \b(file|files|filing)\b.{0,20}\bto\s+run\b
+    | \b(seek|seeks|seeking)\b.{0,20}\bnomination\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _story_question_promises_a_winner(story_key: str) -> bool:
+    """Whether this family's AUTHORED sentence promises the reader a winner."""
+    authored = AUTHORED_STORY_QUESTIONS.get(story_key)
+    return bool(authored and _VICTORY_QUESTION_RE.search(authored))
+
+
+def _member_answers_story_question(story_key: str, item: dict[str, Any]) -> bool:
+    """Whether a member may sit under its family's authored question.
+
+    ``True`` for every member of a family we make no checkable promise about —
+    the guard is a narrowing of one specific claim, not a general relevance
+    test, and an unrecognised name is kept.
+    """
+    if not _story_question_promises_a_winner(story_key):
+        return True
+    name = str(_futures_data(item).get("name") or "")
+    return not _CANDIDACY_NOT_VICTORY_RE.search(name)
+
+
 # ── A DERIVED KEY CANNOT BE AUTHORED, SO ITS COPY IS CUT FROM THE MEMBERS ────
 #
 # #6423 mints one story key PER GOLF TOURNAMENT, which means the key did not
@@ -1388,6 +1499,10 @@ def _with_story_overflow(
                 continue
             if not _theme_member_eligible(surplus):
                 continue
+            # #7552. The reserve can only fill seats, so an evicted surplus row
+            # is not lost — the seat goes to a member that answers the question.
+            if not _member_answers_story_question(story_key, surplus):
+                continue
             seen.add(surplus_id)
             topped.append(surplus)
     return topped
@@ -1451,6 +1566,10 @@ def assemble_story_theme_bundles(
             continue
         story_key = _theme_story_key(item)
         if story_key is None:
+            continue
+        # #7552. Before `min_items`, so a family whose answering members are too
+        # few to fold never forms on the strength of rows that do not answer it.
+        if not _member_answers_story_question(story_key, item):
             continue
         groups.setdefault(story_key, []).append(item)
 
