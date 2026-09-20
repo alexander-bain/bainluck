@@ -46,10 +46,10 @@ import ast
 import inspect
 import textwrap
 
-import pytest
-
+# ONE import form for this module, deliberately. `import X` beside
+# `from X import y` is CodeQL `py/import-and-import-from`, and a test file that
+# exists to clear a CodeQL alert has no business raising one.
 import app.routes.events as events_module
-from app.routes.events import typeahead_search
 
 #: The mark the shed handler writes. Located by this rather than by position, so
 #: reordering the route's stages cannot silently point this file at a different
@@ -65,7 +65,9 @@ LOGGING_METHODS = {"debug", "info", "warning", "error", "exception", "critical"}
 
 def _route_function() -> ast.AsyncFunctionDef:
     """The route's own tree."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(typeahead_search)))
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(events_module.typeahead_search))
+    )
     for node in tree.body:
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             return node
@@ -123,6 +125,42 @@ def _logging_calls(node: ast.AST) -> list[ast.Call]:
         and isinstance(child.func.value, ast.Name)
         and child.func.value.id in {"logger", "logging", "log"}
     ]
+
+
+def _render_record(forged_query: str) -> str:
+    """The shed handler's logging call, rendered the way `logging` renders it.
+
+    The call's own argument expressions are evaluated against `forged_query` in
+    the route module's namespace, so the result is the MESSAGE a reader of the
+    logs would see — not a restatement of the source. A source-level ban proves
+    nothing if the value arrives in a shape the ban did not imagine.
+
+    Every branch here either appends or raises, so the values below are always
+    bound: an `except` that called `pytest.fail` instead read to CodeQL as a
+    fall-through (`py/uninitialized-local-variable`, error). Factored out rather
+    than repeated because two copies of an eval harness is one copy too many.
+    """
+    call = _logging_calls(_shed_handler())[0]
+    namespace = dict(vars(events_module))
+    namespace["q"] = forged_query
+
+    rendered = []
+    for arg in call.args:
+        try:
+            rendered.append(
+                eval(compile(ast.Expression(arg), "<shed-log>", "eval"), namespace)
+            )
+        except NameError as exc:
+            raise AssertionError(
+                "the shed log now spends a value this guard cannot evaluate "
+                f"({exc}). That is not a harness failure to route around: a new "
+                "value in this log line is exactly what wants reading before it "
+                "ships. Add it to the namespace only once you have checked it "
+                "carries nothing the caller supplied."
+            ) from exc
+
+    template, values = rendered[0], tuple(rendered[1:])
+    return template % values if values else template
 
 
 def _names_excused_by_len(call: ast.Call) -> set[int]:
@@ -206,26 +244,7 @@ class TestTheShedLogCannotBeForged:
         evaluated against a forged query and rendered the way `logging` renders
         them.
         """
-        call = _logging_calls(_shed_handler())[0]
-        namespace = dict(vars(events_module))
-        namespace["q"] = FORGED_QUERY
-
-        try:
-            template = eval(compile(ast.Expression(call.args[0]), "<log>", "eval"), namespace)
-            values = tuple(
-                eval(compile(ast.Expression(arg), "<log>", "eval"), namespace)
-                for arg in call.args[1:]
-            )
-        except NameError as exc:  # pragma: no cover — a deliberate stop
-            pytest.fail(
-                "the shed log now spends a value this guard cannot evaluate "
-                f"({exc}). That is not a harness failure to route around: a new "
-                "value in this log line is exactly what wants reading before it "
-                "ships. Add it to the namespace only once you have checked it "
-                "carries nothing the caller supplied."
-            )
-
-        message = template % values if values else template
+        message = _render_record(FORGED_QUERY)
 
         assert "\n" not in message, (
             f"the emitted record spans more than one line: {message!r}. Whatever "
@@ -247,15 +266,7 @@ class TestTheShedLogCannotBeForged:
         A shed line that names neither the lane nor a dimension of the query is
         the silent-degradation failure mode wearing a log call.
         """
-        call = _logging_calls(_shed_handler())[0]
-        namespace = dict(vars(events_module))
-        namespace["q"] = FORGED_QUERY
-        template = eval(compile(ast.Expression(call.args[0]), "<log>", "eval"), namespace)
-        values = tuple(
-            eval(compile(ast.Expression(arg), "<log>", "eval"), namespace)
-            for arg in call.args[1:]
-        )
-        message = template % values if values else template
+        message = _render_record(FORGED_QUERY)
 
         assert "headline" in message.lower(), (
             f"the shed record does not name the lane that shed: {message!r}"
