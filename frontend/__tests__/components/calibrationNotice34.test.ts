@@ -97,7 +97,14 @@ const MOVED_BEHIND_A_DISCLOSURE: ReadonlyArray<readonly [string, string]> = [
   // (the curve is dashed there too now), so the needle is the part of the
   // sentence that is about where the note LIVES rather than what it says.
   ["how to read the By Category dots", "with wide error bars, never hidden"],
-  ["which categories are excluded and why", "statistical noise, not a calibration signal"],
+  // #7515 moved this sentence's text out of page.tsx and into
+  // `describeCategoryPublishBar`, because the bar it states is counted on the
+  // ALL-cohort population while the Outcomes column beside it is cohort-scoped,
+  // and the paragraph named neither — the default view published `geopolitics`
+  // at 732 under a stated 1,000 bar. Same repoint as #7174 and #7399 above: the
+  // claim this row makes is about LOCATION, so a needle that followed the prose
+  // out of the file is replaced by one that cannot, not by a deleted assertion.
+  ["which categories are excluded and why", 'data-testid="calibration-category-bar-note"'],
   ["which population the category table counts", 'data-testid="calibration-category-population-note"'],
 ] as const;
 

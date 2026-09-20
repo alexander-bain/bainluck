@@ -33,6 +33,7 @@ import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
 import { mceIntervalForCohort, formatMceInterval } from "@/lib/calibrationIntervalScope";
 import {
   describeCategoryPopulation,
+  describeCategoryPublishBar,
   describeCategoryTablePopulation,
   footerPopulationPhrase,
 } from "@/lib/calibrationPopulation";
@@ -2182,8 +2183,24 @@ export default function CalibrationPage() {
           Every published category, sorted by ECE. Lower is better.
         </p>
         <CalibrationCardNote label="What this table counts">
-          <p className="text-xs text-text-muted mb-3">
-            Calibration metrics by market category. Categories with fewer than {minCategoryOutcomes.toLocaleString()} resolved outcomes are excluded &mdash; a sub-category chart below that sample size is statistical noise, not a calibration signal.
+          {/* #7515 — the bar is counted on ALL outcomes, the column beside it on
+              the active cohort, and this paragraph used to state the first while
+              sitting on top of the second. Default view, 2026-09-20: "fewer than
+              1,000 ... are excluded" three lines above `Geopolitics 732`. The
+              sentence now names the bar's population (the niche card's own
+              wording since #7195) and, only while a sub-bar row is actually
+              rendered, says so. Derivation lives in lib/calibrationPopulation so
+              it is testable without mounting the page. */}
+          <p
+            className="text-xs text-text-muted mb-3"
+            data-testid="calibration-category-bar-note"
+            data-bar={minCategoryOutcomes}
+            data-rows-below-bar={categoryMetrics.filter(cm => cm.n < minCategoryOutcomes).length}
+          >
+            {describeCategoryPublishBar(
+              minCategoryOutcomes,
+              categoryMetrics.map(cm => cm.n)
+            )}
           </p>
           {/* UX-P118 item 5 / #2108 / Option C amendment 6: WHICH POPULATION.
               The API publishes a per-category ECE over the whole population; this

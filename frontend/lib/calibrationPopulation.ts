@@ -361,3 +361,57 @@ export function describeCategoryTablePopulation(
     " Some rows group several closely related categories under one name."
   );
 }
+
+/**
+ * The publish bar, with the population that bar counts.
+ *
+ * #7515 — THE BAR AND THE COLUMN BESIDE IT ARE IN DIFFERENT POPULATIONS, and
+ * the fold stated the bar without naming either. Eligibility is decided by the
+ * backend on the ALL-COHORT count — #7195/#7302 settled that deliberately, and
+ * this function does not reopen it — while the Outcomes column is cohort-scoped,
+ * which is the #7190 fix. Measured on production 2026-09-20 in the default
+ * (traded) view: the fold said "fewer than 1,000 resolved outcomes are excluded"
+ * and the column three lines below published `geopolitics` at **732**, while the
+ * niche card further down listed `Chess 809` as still short of the same bar. The
+ * reader was given a rule, a row that breaks it, and a parked row larger than
+ * the published one.
+ *
+ * TWO CLAUSES, AND THEY EARN THEIR PLACE DIFFERENTLY (standing notice 34 / D102
+ * — the target is jargon and prose nobody can act on, not grey type as such):
+ *
+ *   * The units clause is unconditional, because the bar's population is a fact
+ *     about the bar in either cohort. It is the sentence the niche card has
+ *     carried since #7195, word for word — one bar, one vocabulary. A reader who
+ *     meets the bar twice on one page must not meet it two different ways.
+ *   * The consequence clause is CONDITIONAL ON THE RENDERED ROWS, not on the
+ *     cohort key. It states something the reader can see on screen, so it
+ *     appears exactly when a row is there to be confused by and disappears when
+ *     the data stops contradicting — no permanent paragraph explaining a case
+ *     that is not on screen. Keying it on the data rather than on
+ *     `cohort.key === "traded"` also means the all-markets view gets the clause
+ *     if it ever publishes a sub-bar row, which a cohort branch would miss.
+ *
+ * `renderedRowOutcomes` is the Outcomes column as rendered — the same cohort-
+ * scoped `n` the table prints — so the comparison is against what the reader
+ * actually reads, never against a recomputed population.
+ */
+export function describeCategoryPublishBar(
+  bar: number,
+  renderedRowOutcomes: readonly number[]
+): string {
+  const label = bar.toLocaleString();
+  // `n < bar`, deliberately, and not `!(n >= bar)`: a row whose count arrives as
+  // NaN compares false either way round the bar, and the negated form would read
+  // it as below the bar and warn about a row the reader cannot see. A row sitting
+  // exactly ON the bar is published, so it is not below it.
+  const anyBelowBar = renderedRowOutcomes.some(n => n < bar);
+  return (
+    `Calibration metrics by market category. Categories with fewer than ${label} ` +
+    `resolved outcomes are excluded — a sub-category chart below that sample size ` +
+    `is statistical noise, not a calibration signal. That bar counts every ` +
+    `resolved outcome, traded or not` +
+    (anyBelowBar
+      ? `, so a row here can show fewer than ${label} in the Outcomes column.`
+      : `.`)
+  );
+}
