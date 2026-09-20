@@ -940,6 +940,64 @@ the glyph and the disagreement is recorded rather than reconciled by choosing on
 > describe.** `availability` still reads `"stale"`, so **criterion 5 is still RED.** No datapoint is
 > banked for this beat either.
 
+
+### 🟩 THE FREEZE IS LIFTED — both halves observed together (calibration/1273, 2026-09-15 02:38 PT / 09:38Z)
+
+Ruling 009 says whoever observes the condition writes the numbers AND the lift in the SAME entry, and
+that it does not expire on its own. This is that entry.
+
+**Clause 2 — the count.** `backend/scripts/calibration_freeze_score.py --baseline-at 2026-08-28T18:55:19Z`:
+
+```
+RULING 009 FREEZE SCORE — 22 of the last 24
+  23/24 clean   (1 misses; 2 allowed)
+  .#######################   <- oldest ... newest
+  window   2026-09-14T09:35:02.791862+00:00 -> 2026-09-15T08:35:45.123067+00:00
+  misses   1 incomplete · 0 interrupted · 0 unattributed
+  ring     168 observations, 0 excluded as pre-baseline
+  VERDICT  CONDITION_MET
+```
+
+**23 of 24, one miss against two allowed.** `0 excluded as pre-baseline` is what makes this a verdict
+rather than a description of the ring as it stands: every observation in the window is post-v3921, so
+the count is the one the amendment defined.
+
+**Clause 1 — a fresh publish exists post-baseline**, implied by the window above: its newest edge is
+`2026-09-15T08:35:45Z`, eighteen days after the `2026-08-28T18:55:19Z` baseline.
+
+**No-regression — `calibration_scorecard.py --live`, same session:**
+
+```
+self_check.ok   : true   — by_category 39/39 cells reproduced exactly
+                           by_source    7/7  cells reproduced exactly
+headline_pass   : true
+NEEDLE          : 45/52 cells at bar @ 2026-09-15T09:16:39.809423Z
+```
+
+All three halves hold in one reading, so **the ruling-009 freeze on
+`backend/app/tasks/precompute_calibration.py` is LIFTED as of 2026-09-15T09:38Z.**
+
+🔴 **THE LIFT IS NOT AN ACTIVATION, AND IT UNBLOCKS NOTHING BY ITSELF.** Codex ruled this explicitly
+and the 2026-09-15 08:11Z directive repeats it as "no merge or activation regardless of freeze
+score". In particular **#6275 (`36a29c945`, under review as CERT-2907) and #6090 (`a1f3398b5`) stay
+HELD** — their cost is a wholesale fingerprint invalidation and a multi-hour re-stage, which is an
+activation decision that belongs to codex and Alex, not to this lane and not to this page. What the
+lift changes is that "the file is frozen" stops being a reason on its own; every other reason stands.
+
+Recorded, not acted on.
+
+> **RESCUE NOTE — this entry reached a ref five days late, and the pipeline moved under it
+> (calibration/2645, 2026-09-20 05:55 PT / 12:55Z).** The 46 lines above were written by
+> calibration/1273 on 2026-09-15 and were never committed: they sat dirty in another lane's
+> worktree until native/267 saved them to a patch, and `git log --all -S` found the text on no ref.
+> They are landed here **verbatim**, so read them as a 2026-09-15 observation, not as a statement
+> about today. Two things have happened since and neither is in the text above: **no new snapshot
+> has published since 2026-09-15** — the accuracy page's own banner reads 120 hourly rebuilds with
+> no new generation, which is the open P1 **#6868** — so the clause-2 count is stale by five days
+> and must be re-run before anyone cites `CONDITION_MET` as current; and the **#6868 investigation
+> freeze on `backend/app/tasks/precompute_calibration.py` is a separate freeze that is still on**,
+> untouched by a ruling-009 lift. Nothing above is edited and nothing is acted on.
+
 ---
 
 ## 6. The inventory — every queued cell, ordered by excess
