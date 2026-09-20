@@ -617,6 +617,47 @@ def _slug_tournament(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
+def _display_name_from_markets(tourn_key: str, tourn_markets: list) -> str | None:
+    """Recover the venue's own spelling of a tournament from its member markets.
+
+    The key is a slug, and `_slug_tournament` turns every non-alphanumeric run
+    into a separator rather than deleting it, so `Children's` and `Children S`
+    collapse to the same `children_s` token. Re-casing the key cannot rebuild
+    the apostrophe from that, which is how the Korn Ferry card came to read
+    "Nationwide Children S Hospital Championship" (#7020). The markets still
+    carry the real spelling, so read it there and keep the key for identity.
+
+    Members disagree, though. One BMW PGA family carries both
+    `BMW PGA Championship: To Make the Cut` and `Bmw Pga Championship: Top 10
+    Finishers` (#7348), so taking the first member is a coin flip that can turn
+    one garbled name into another. Prefer a candidate `.title()` could NOT have
+    produced: an apostrophe, an ampersand or an acronym is exactly the
+    information the slug destroyed, while a candidate equal to its own
+    `.title()` carries none. Ties go to the most common spelling and then to
+    the first seen, so a card does not rename itself between two requests that
+    happened to order the markets differently.
+
+    The slug-equality filter is the safety property, not a tidiness check: an
+    accepted candidate slugifies back to this same key, so this can only
+    restore characters the slug erased and can never change WHICH tournament
+    the card is about. A member carrying a different event, or chrome we do not
+    strip, is refused and the caller keeps its existing fallback.
+    """
+    counts: dict[str, int] = {}
+    for market in tourn_markets:
+        name = getattr(market, "name", None)
+        if not name:
+            continue
+        candidate = _strip_market_chrome(name)
+        if not candidate or _slug_tournament(candidate) != tourn_key:
+            continue
+        counts[candidate] = counts.get(candidate, 0) + 1
+
+    if not counts:
+        return None
+    return max(counts, key=lambda c: (c != c.title(), counts[c]))
+
+
 def _major_claim_allowed(key: str, market_name: str, external_id: str | None) -> bool:
     """Gate a Priority-1 major claim on the LEVEL and TOUR discriminators."""
     if key == "masters" and not _is_the_masters(market_name):
@@ -2084,10 +2125,13 @@ def _build_tournament_entry(
     golfers = all_golfers[:_MAX_GOLFERS]
 
     order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
-    display_name = TOURNAMENT_DISPLAY_NAMES.get(
-        tourn_key,
-        _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key, tourn_key.replace("_", " ").title()),
-    )
+    # The hand-maintained maps win, then the venue's own spelling, and only then
+    # the slug. Re-casing the key is lossy (#7020) and every entry the maps have
+    # gained for it — `hsbc_women_s_world_championship` among them — was this
+    # same defect patched one tournament at a time.
+    display_name = TOURNAMENT_DISPLAY_NAMES.get(tourn_key) or _TOUR_EVENT_DISPLAY_NAMES.get(tourn_key)
+    if not display_name:
+        display_name = _display_name_from_markets(tourn_key, tourn_markets) or tourn_key.replace("_", " ").title()
     is_tour_event = tourn_key not in TOURNAMENT_ORDER and not tourn_key.startswith("other_") and tourn_key != "other"
 
     if tourn_key.startswith("other_"):
