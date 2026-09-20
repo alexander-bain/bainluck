@@ -28,6 +28,7 @@ import {
   MEMBER_NAME_CAP,
   cohortPhrase,
   describeCategoryPopulation,
+  describeCategoryPublishBar,
   describeCategoryTablePopulation,
   nameAll,
 } from "@/lib/calibrationPopulation";
@@ -370,5 +371,109 @@ describe("describeCategoryTablePopulation", () => {
     const some = describeCategoryTablePopulation("all", 15, 15);
     expect(none).not.toEqual(some);
     expect(some.startsWith(none)).toBe(true);
+  });
+});
+
+/**
+ * #7515 — the publish bar names the population it counts.
+ *
+ * The row counts below are MEASURED, off `GET /api/calibration` as rendered at
+ * 390px on 2026-09-20 14:05Z, both toggle states. They are the Outcomes column
+ * the reader actually reads, not a recomputed population:
+ *
+ *   traded (default) — geopolitics 732 is published under a stated 1,000 bar,
+ *                      while the niche card lists Chess 809 as short of it
+ *   all markets      — the same category reads 1,749 and every row clears
+ *
+ * As with the fixtures above, nothing here asserts a live census: the sets are
+ * trimmed to the SHAPES that matter (one row under the bar, no row under the
+ * bar). Pinning "21 categories" would be #2108 restated as a constant.
+ */
+describe("describeCategoryPublishBar", () => {
+  // The default view, trimmed: the sub-bar row plus two ordinary ones.
+  const TRADED_ROWS = [129771, 1219, 732];
+  // The same three in the all-markets view — nothing under the bar.
+  const ALL_ROWS = [190958, 1219, 1749];
+  const BAR = 1000;
+
+  it("names the population the bar counts, in either cohort", () => {
+    // Unconditional, because it is a fact about the bar and not about the view.
+    // This is the sentence the niche card has carried since #7195 — a reader who
+    // meets the bar twice on one page must not meet it two different ways.
+    for (const rows of [TRADED_ROWS, ALL_ROWS]) {
+      expect(describeCategoryPublishBar(BAR, rows)).toContain(
+        "counts every resolved outcome, traded or not"
+      );
+    }
+  });
+
+  it("warns at the point of confusion when a row really is below the bar", () => {
+    const s = describeCategoryPublishBar(BAR, TRADED_ROWS);
+
+    expect(s).toContain("fewer than 1,000 in the Outcomes column");
+    // The rule itself must survive the addition — the clause explains the
+    // exception, it does not replace the bar.
+    expect(s).toContain("Categories with fewer than 1,000 resolved outcomes are excluded");
+  });
+
+  it("stays silent when no row contradicts the bar", () => {
+    const s = describeCategoryPublishBar(BAR, ALL_ROWS);
+
+    expect(s).not.toContain("Outcomes column");
+    // Ends cleanly on the units clause rather than trailing a comma.
+    expect(s.endsWith("traded or not.")).toBe(true);
+  });
+
+  it("the clause is driven by the rows, so neither branch is dead", () => {
+    // Without this the conditional could be stuck on (a permanent paragraph
+    // about a case that is not on screen) or stuck off (the defect, restored),
+    // and every assertion above would still pass.
+    const withRow = describeCategoryPublishBar(BAR, TRADED_ROWS);
+    const without = describeCategoryPublishBar(BAR, ALL_ROWS);
+    expect(withRow).not.toEqual(without);
+    expect(withRow.length).toBeGreaterThan(without.length);
+  });
+
+  it("keys on the DATA, not on the cohort, so all-markets is covered too", () => {
+    // #7195 fixed eligibility to the all-cohort count, so today only the traded
+    // view can show a sub-bar row. If that ever stops being true, a branch on
+    // `cohort.key === "traded"` would go quiet exactly when it was needed.
+    expect(describeCategoryPublishBar(BAR, [190958, 1749, 400])).toContain(
+      "Outcomes column"
+    );
+  });
+
+  it("prints the bar it was given, not a baked-in 1,000", () => {
+    // `min_category_outcomes` is Redis-tunable (#997). A hard-coded threshold
+    // would pass every assertion above on today's payload and lie on tomorrow's.
+    const s = describeCategoryPublishBar(2500, [40000, 900]);
+    expect(s).toContain("fewer than 2,500 resolved outcomes are excluded");
+    expect(s).toContain("fewer than 2,500 in the Outcomes column");
+    expect(s).not.toContain("1,000");
+  });
+
+  it("an empty table states the rule without inventing an exception", () => {
+    const s = describeCategoryPublishBar(BAR, []);
+    expect(s).toContain("Categories with fewer than 1,000 resolved outcomes are excluded");
+    expect(s).not.toContain("Outcomes column");
+  });
+
+  it("a row sitting exactly on the bar is published, not below it", () => {
+    // Pins `n < bar` against `n <= bar`. The bar excludes categories with FEWER
+    // than the threshold, so a category holding exactly the threshold clears it
+    // and there is no exception to explain.
+    expect(describeCategoryPublishBar(BAR, [40000, BAR])).not.toContain(
+      "Outcomes column"
+    );
+  });
+
+  it("a non-finite row count cannot manufacture the clause", () => {
+    // Pins the POLARITY of the comparison. A missing `n` arriving as NaN is
+    // false against both `n < bar` and `n >= bar`, so the equivalent-looking
+    // rewrite `!(n >= bar)` flips it to true and warns about a row the reader
+    // cannot see. This is the only assertion that separates those two forms.
+    expect(describeCategoryPublishBar(BAR, [40000, NaN])).not.toContain(
+      "Outcomes column"
+    );
   });
 });
