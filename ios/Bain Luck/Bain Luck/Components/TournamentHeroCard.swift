@@ -102,12 +102,21 @@ nonisolated struct TournamentHeroCard: View {
 
     /// Determine the current round number based on tournament dates.
     /// Returns 1-4 based on which day of the tournament we're in, or nil if unknown.
+    ///
+    /// Counted in whole calendar days from the day `start_date` NAMES, not in
+    /// elapsed hours from the UTC midnight it is written as (#6666). The old
+    /// arithmetic subtracted two instants, so west of UTC it rolled over at
+    /// 17:00 local: R1 lit the evening before the tournament began, and every
+    /// round afterwards changed seven hours early — beside a date range that
+    /// was itself a day out, so the two wrongs agreed and neither looked like a
+    /// bug. `tournamentRoundNumber` reads the reader's own calendar for "today",
+    /// which is the thing a round number is actually about, and holds the rule
+    /// where a guard can state the instant it is asking about — inside this
+    /// body, `Date()` can only be tested against whatever today happens to be.
+    ///
+    /// `roundCount` defaults to the four rounds `roundProgressView` draws.
     private var currentRound: Int? {
-        guard let startDate = parseFlexibleDate(tournament.startDate) else { return nil }
-        let now = Date()
-        let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: now).day ?? 0
-        guard daysSinceStart >= 0 && daysSinceStart < 4 else { return nil }
-        return daysSinceStart + 1
+        tournamentRoundNumber(start: tournament.startDate, now: Date())
     }
 
     @ViewBuilder
