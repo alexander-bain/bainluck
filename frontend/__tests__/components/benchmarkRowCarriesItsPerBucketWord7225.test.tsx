@@ -283,18 +283,28 @@ function theNumberToken(rowHtml: string): string {
 /* ═══════════ the harness proves itself, and proves the fixture bites ═══════════ */
 
 describe("the harness renders the real calibration page", () => {
+  // #7524 moved these two counts from 4/3 to 3/2. The Iowa Electronic Markets
+  // row was removed: its 1.5pp is a vote-share forecast error, which Further
+  // Reading on the same page says in our own words, and it was being plotted as
+  // a calibration benchmark beside our per-bucket error.
+  //
+  // The counts are this suite's anti-vacuity scaffolding, not its subject —
+  // #7225 is about the word "per-bucket" travelling inside the same nowrap
+  // token as our figure, and every assertion about that is untouched. Kept as
+  // exact equality rather than relaxed to `toBeGreaterThan`: a loose bound
+  // still passes on the spinner these two tests exist to rule out.
   test("positive control: the page is built, not a loading shell", () => {
     // Every assertion below is satisfied by an empty string or a spinner.
     const html = render();
     expect(html).toContain("How We Compare");
     expect(html).toContain("Metaculus");
-    expect(benchmarkRows(html).length).toBe(4);
+    expect(benchmarkRows(html).length).toBe(3);
   });
 
   test("exactly one benchmark row is ours", () => {
     const rows = benchmarkRows(render());
     expect(rows.filter(r => r.highlighted).length).toBe(1);
-    expect(rows.filter(r => !r.highlighted).length).toBe(3);
+    expect(rows.filter(r => !r.highlighted).length).toBe(2);
   });
 
   test("the fixture makes the two statistics DISAGREE, in the confusable shape", () => {
