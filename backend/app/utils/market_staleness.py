@@ -40,6 +40,36 @@ _MONTH_YEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 🔴 A DAY RANGE IS DATED BY ITS END, NOT ITS START (#7274 / #1567).
+#
+# `_EXPLICIT_MONTH_DAY_RE` needs a month name in front of every day it reads, so
+# on a range rung ("September 15 - 30, 2026") the only thing it can match is the
+# OPENING day — and "last match wins" then dates the rung 15 days before it can
+# actually stop happening. Measured on production 2026-09-19, market 58776433
+# (*When will the Danube River return to normal levels?*): that rung was read as
+# expired on the 19th, INSIDE its own open window, and the Discover card dropped
+# a live 14.5% option off the board. The same parse also loses the explicit year
+# — " - 30, 2026" is outside the match — so the rung fell to the year-guessing
+# path as well.
+#
+# The trailing day is matched WITHOUT a month name of its own, so a cross-month
+# range ("Dec 28 - Jan 3, 2027") is deliberately NOT this pattern: the existing
+# last-match-wins rule already reads its end correctly, and re-reading it here
+# would be a second answer to a question already answered.
+#
+# Word separators require real whitespace ("1 to 31"), dashes do not ("1-31"),
+# so a bare "1to31" cannot be read as a range.
+_MONTH_DAY_RANGE_RE = re.compile(
+    r"\b("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+    r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?"
+    r"(?:\s*[-–—]\s*|\s+(?:to|through|thru|until)\s+)"
+    r"(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}))?\b",
+    re.IGNORECASE,
+)
+
 # A tournament whose QUALIFYING campaign runs on a different calendar than the
 # tournament itself. World Cup qualifying runs into November, so the July
 # final-date rule must not fire on a qualifier title. UX-P006 / #1567.
@@ -328,6 +358,9 @@ def outcome_deadline_expired(
     UX-P006 / #1567 widened this past month+DAY rungs to DAY-LESS ones ("Before
     July", "Before July 2026", "Before 2027"), which the day-requiring regex
     below skipped entirely.
+
+    #7274 dates a RANGE rung ("September 15 - 30, 2026") by its closing day. It
+    was read by its opening day, so a window still open expired mid-window.
     """
     name = outcome_name or ""
     if not name:
@@ -340,6 +373,26 @@ def outcome_deadline_expired(
         month = _MONTH_NAME_TO_NUMBER[match.group(1).lower().rstrip(".")]
         day = int(match.group(2))
         explicit_year = match.group(3)
+        # #7274: if the day this matched is the OPENING day of a range, the rung
+        # runs until the range's CLOSING day and cannot be expired before it. The
+        # containment test is what keeps last-match-wins intact: a range followed
+        # by a later date ("September 15 - 30, 2026, resolves October 5, 2026")
+        # still expires on the later date, because that match sits outside the
+        # range's span.
+        day_range = None
+        for candidate in _MONTH_DAY_RANGE_RE.finditer(name):
+            if candidate.start() <= match.start() < candidate.end():
+                day_range = candidate
+        if day_range is not None:
+            end_day = int(day_range.group(3))
+            if end_day < day:
+                # A range that closes before it opens is a month rollover we have
+                # not been given ("September 30 - 2"), and guessing which month
+                # the closing day belongs to would be inventing the deadline. We
+                # cannot date the end, so we do not delete the rung.
+                return False
+            day = end_day
+            explicit_year = day_range.group(4)
         year = int(explicit_year) if explicit_year else now.year
         try:
             deadline = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)

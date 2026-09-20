@@ -2912,6 +2912,109 @@ jobs:
           print("#4079 acceptance GREEN on all", t, "tests")
           PY
 
+      - name: "#7284 chart-route real-session guard — provision the disposable database"
+        # Same bargain as the #4079 step above and for the same reason: the guard
+        # DROPS AND RECREATES THE WHOLE SCHEMA, so it gets a database of its own
+        # (`bl_timeline_route_7284`, created here and thrown away with the runner,
+        # never `bl_searchtest`) plus a fresh per-run nonce in a sentinel table.
+        # `TIMELINE_ROUTE_DATABASE_URL` is what the suite reads and it deliberately
+        # does NOT fall back to `$DATABASE_URL`.
+        #
+        # CI is the only route for this guard: the Mac's Postgres is 14 and the
+        # schema carries a PG15-only `NULLS NOT DISTINCT` unique index, so
+        # `Base.metadata.create_all` cannot build it there.
+        run: |
+          set -o pipefail
+          python - <<'PY' > /tmp/tlroute.env
+          import asyncio, secrets, asyncpg, sys
+
+          NONCE = secrets.token_hex(24)
+          DB = "bl_timeline_route_7284"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database=DB,
+                  host="localhost", port=5432)
+              await c.execute(
+                  "CREATE TABLE timeline_route_disposable (nonce text NOT NULL)")
+              await c.execute(
+                  "INSERT INTO timeline_route_disposable VALUES ($1)", NONCE)
+              print("server_version:", await c.fetchval("SHOW server_version"),
+                    file=sys.stderr)
+              await c.close()
+
+          asyncio.run(go())
+          print(f"TIMELINE_ROUTE_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}")
+          print(f"TIMELINE_ROUTE_NONCE={NONCE}")
+          PY
+          cat /tmp/tlroute.env >> "$GITHUB_ENV"
+          echo "provisioned bl_timeline_route_7284 with a fresh sentinel nonce"
+
+      - name: "#7284 the chart route answers on a real session, and answers the board"
+        # PILLAR: TRUTH. SHIP: the phone timeline and the detail page agree,
+        # without the chart endpoint crashing on a sports market.
+        #
+        # #7284 pointed `/probability-timeline` at the detail route's formatter.
+        # That formatter walks `market.sport.key`, `FuturesMarket.sport` is a lazy
+        # relationship, and the timeline route did not eager-load it — a
+        # `MissingGreenlet` 500 on every market with a `sport_id`. Every gate the
+        # change passed was green because every fixture was a `SimpleNamespace`
+        # with `sport=None`, and a NULL FK short-circuits with no IO at all. The
+        # green was real and meaningless: the specimen was blind, not the guard.
+        #
+        # So this step exists to run the one thing a mock harness cannot: a
+        # PERSISTED market with a real non-null Sport FK, both real routes, real
+        # PostgreSQL, timeline called FIRST in its own fresh async session.
+        #
+        # Same three refusals as the #4079 step, for the same reasons: a SKIP is
+        # what this suite does when it cannot see its database and reads exactly
+        # like a pass; ZERO collected is a collection error wearing a green hat;
+        # and a short count means something was deselected. pytest's exit code is
+        # read for its VALUE (gotcha #54) — 1 is a result, anything else is a
+        # story about the harness.
+        run: |
+          # `set +e` on purpose: the step runs under `bash -e`, so a red suite
+          # would abort HERE and the refusals below — the half that cannot be
+          # faked — would never execute.
+          set +e
+          python -m pytest \
+            tests/integration/test_the_timeline_route_loads_on_a_real_session_7284.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/tlroute-junit.xml 2>&1 | tee /tmp/tlroute.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          EXPECTED = 9
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/tlroute-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#7284 guard produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#7284 guard collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#7284 guard SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#7284 guard ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#7284 guard RED: {f} failed, {e} errors")
+          print("#7284 chart-route real-session guard GREEN on all", t, "tests")
+          PY
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

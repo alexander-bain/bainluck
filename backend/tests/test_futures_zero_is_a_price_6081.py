@@ -260,9 +260,23 @@ class TestTheIdiomDoesNotComeBack:
         )
 
     def test_every_served_site_uses_the_strict_form(self):
+        """#7284 lowered this 9 -> 8, and the deletion is the reason.
+
+        The site that went was `get_probability_timeline`'s participant table,
+        which re-derived `current_probability` with its own copy of the strict
+        idiom. It now reads `served["probability"]` from `_format_market_detail`
+        — one of the eight that remain, and itself on the strict form — so the
+        timeline did not lose the #6081 behaviour, it INHERITED it. A genuine
+        `Decimal('0.000000')` still serves as `0.0` there, not as `None`.
+
+        That is why a count going DOWN is not automatically a regression here,
+        and equally why it must not be lowered on sight: the question to answer
+        before touching this number is whether the payload the deleted site
+        served still comes from a strict site, or from nowhere.
+        """
         strict = [ln for kind, ln in _conditional_probability_reads(futures_routes) if kind == "strict"]
-        assert len(strict) == 9, (
-            f"expected 9 served sites on the strict form, found {len(strict)} "
+        assert len(strict) == 8, (
+            f"expected 8 served sites on the strict form, found {len(strict)} "
             f"at lines {strict}. If a served site was added, give it the strict "
             "form and raise this number; if one was deleted, lower it with the "
             "payload it served."

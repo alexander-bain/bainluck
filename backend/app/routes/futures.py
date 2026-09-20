@@ -4483,12 +4483,23 @@ async def get_probability_timeline(
     markets with many contestants). Auto-extends the time window for sparse
     markets (common for non-sports futures).
     """
-    # Verify market exists and load outcomes + team enrichment
+    # Verify market exists and load outcomes + team enrichment.
+    #
+    # `FuturesMarket.sport` is loaded because this route asks `_format_market_detail`
+    # for its numbers (#7284), and that helper dereferences `market.sport.key`.
+    # `sport` is a plain lazy `relationship()` (models.py), so on the async session
+    # an un-eager-loaded access raises `MissingGreenlet` — a 500, not a fallback.
+    # The detail route has always loaded it; delegating to its formatter without
+    # matching its loads is what made that a defect here. Measured when it was
+    # caught: 18,179 of 51,088 open futures markets carry a non-NULL `sport_id`,
+    # and the rest short-circuit on `if market.sport` with no IO at all, which is
+    # exactly why no fixture showed it.
     result = await db.execute(
         select(FuturesMarket)
         .options(
             selectinload(FuturesMarket.outcomes)
-            .selectinload(FuturesOutcome.team)
+            .selectinload(FuturesOutcome.team),
+            selectinload(FuturesMarket.sport),
         )
         .where(FuturesMarket.id == market_id)
     )
@@ -4525,6 +4536,51 @@ async def get_probability_timeline(
     charted_outcomes = drop_duplicate_legs(
         market.outcomes, lambda o: o.external_id
     )
+
+    # 🔴 #7284 — THE PARTICIPANT TABLE ASKS THE BOARD; IT DOES NOT RE-DERIVE IT.
+    #
+    # #6641 above fixed ONE of the ways this reader disagreed with the board
+    # below it on the same phone screen. It was not one drop that had been
+    # missed, it was the whole display policy: every value in `outcomes_meta`
+    # came straight off `futures_outcomes`, so the table served raw prices where
+    # the ladder served squeezed ones, and per-write deltas where the ladder
+    # served #4079's dated amount or refused to speak.
+    #
+    # WHAT A READER SAW (native/255, iPhone 17 Pro, 2026-09-19 18:48Z, both
+    # tables inside ONE viewport):
+    #
+    #   /futures/58776433   table `October 1 - 31, 2026  59%  +12.5%`
+    #                       ladder `October 1 - 31, 2026  49%  (no movement)`
+    #   /futures/60268421   table 10 movement claims, three of them disagreeing
+    #                       with the ladder's 7 and two on rows it withheld
+    #   /futures/58321581   table -0.4% on a row whose detail value is null
+    #
+    # So this reader asks `_format_market_detail` — the one place the display
+    # policy lives — and takes its answer. Not a copy of the rules: the call.
+    # Every drop, every withheld price, the #23 squeeze, the dated movement and
+    # its refusals arrive together and cannot drift from the ladder, because
+    # there is nothing here to drift.
+    #
+    # ROWS THE BOARD DROPS LEAVE THE CHART TOO, for #6641's own reason stated one
+    # comment above: the `> top` test and the Field sum must count the outcomes
+    # the participants come from. Leaving a dropped row inside Field would
+    # re-publish, as part of a line, exactly the number the board refused to
+    # print as a row.
+    #
+    # THE PLOTTED HISTORY IS NOT RESCALED, and that is codex's ruling of
+    # 2026-09-19 rather than an oversight: the series are real observations at
+    # real instants, and dividing them by TODAY's field sum would assert a
+    # historic displayed percent nobody observed — the same arithmetic #4079's
+    # scale ruling rejected by name. On a squeezed board the line and the table
+    # are therefore on different scales; the honest fix for that is the board
+    # not being squeezed (#7274), not a second fiction here.
+    canonical_board = {
+        row["id"]: row
+        for row in _format_market_detail(
+            market, None, await _withheld_price_outcome_ids(db, market)
+        )["outcomes"]
+    }
+    charted_outcomes = [o for o in charted_outcomes if o.id in canonical_board]
 
     requested_hours = hours
     actual_hours = hours
@@ -4628,14 +4684,23 @@ async def get_probability_timeline(
     else:
         bucket_seconds = 3600  # 1 hour
 
-    # Determine the top N outcomes by current probability
+    # Determine the top N outcomes by current probability.
+    #
+    # #7284: the BOARD's probability, not the stored one, so the table cannot be
+    # ordered by one number and labelled with another. A withheld row reads
+    # `None` here and sinks, exactly as it does on the ladder (`probability ?? 0`
+    # is the clients' own rule).
     sorted_outcomes = sorted(
         charted_outcomes,
-        key=lambda o: o.current_probability or 0,
+        key=lambda o: canonical_board[o.id]["probability"] or 0,
         reverse=True,
     )
     top_outcome_ids = {o.id for o in sorted_outcomes[:top]}
-    outcome_names = {o.id: o.name for o in charted_outcomes}
+    # #7284: the SERIES KEY is a name, so the label the table prints and the key
+    # the line is filed under have to be the same string or the phone cannot join
+    # them. Taking both from the board means a repaired rung name (#6479's
+    # `Los Angeles R` -> `Los Angeles Rams`) reaches the chart legend too.
+    outcome_names = {o.id: canonical_board[o.id]["name"] for o in charted_outcomes}
 
     # Group snapshots: outcome_id -> bucket_key -> [probabilities]
     # bucket_key is the truncated timestamp
@@ -4689,13 +4754,17 @@ async def get_probability_timeline(
     # Build outcome metadata list (ordered by current probability)
     outcomes_meta = []
     for o in sorted_outcomes[:top]:
+        # #7284: every served value comes off the board. `rank` and the team
+        # enrichment below stay on the ORM row deliberately — they are identity,
+        # not display, and the ladder does not restate them.
+        served = canonical_board[o.id]
         meta: dict = {
             "id": o.id,
-            "name": o.name,
-            "current_probability": float(o.current_probability) if o.current_probability is not None else None,
+            "name": served["name"],
+            "current_probability": served["probability"],
             "rank": o.rank,
-            "probability_change_24h": float(o.probability_change_24h) if o.probability_change_24h else None,
-            "opening_probability": float(o.opening_probability) if o.opening_probability else None,
+            "probability_change_24h": served["probability_change_24h"],
+            "opening_probability": served["opening_probability"],
         }
         # Team enrichment (logos, colors, record)
         if o.team:
@@ -4712,10 +4781,12 @@ async def get_probability_timeline(
             meta["team_id"] = o.team_id  # FK may exist without loaded team
         outcomes_meta.append(meta)
     if len(charted_outcomes) > top:
-        # Sum remaining probabilities for Field
+        # Sum remaining probabilities for Field — #7284: the BOARD's numbers, or
+        # the Field row is the one line on the table still on the raw scale, and
+        # a reader adding the column up gets a total the page disagrees with.
         field_current = sum(
-            float(o.current_probability) for o in sorted_outcomes[top:]
-            if o.current_probability
+            canonical_board[o.id]["probability"] or 0.0
+            for o in sorted_outcomes[top:]
         )
         outcomes_meta.append({
             "id": None,
@@ -5775,6 +5846,7 @@ def _format_market_detail(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.market_staleness import expired_ladder_rungs
     from app.utils.outcome_display import (
         assign_display_ranks,
         is_placeholder_outcome_name,
@@ -6011,6 +6083,62 @@ def _format_market_detail(
         }
         for o in sorted_outcomes
     ]
+
+    # 🔴 #7274 — ONE DIVISOR RULE, OR THE CARD AND THIS PAGE PRINT TWO NUMBERS
+    # FOR ONE LEG.
+    #
+    # WHAT A READER SAW, measured on production 2026-09-19. Discover's card for
+    # market 58776433 (*When will the Danube River return to normal levels?*)
+    # printed `October 1 - 31, 2026` at **59%**; tapping it, `/futures/58776433`
+    # printed the same leg at **49%**. Neither number was a cache artifact — the
+    # card reproduced on two independently rebuilt feed payloads.
+    #
+    # THE CAUSE IS THE DIVISOR'S MEMBERSHIP, NOT A PRICE. Both surfaces divide by
+    # the sum of the legs they show, and only one of them strips rungs whose own
+    # deadline has passed. The feed drops them (`feed.py`, UX-P004 b+e) and
+    # divides by the 0.8845 that survives — under the squeeze band, so it prints
+    # the stored price. This page divided by all 1.1935, including a
+    # `Before September 1, 2026` rung that on the 19th could no longer happen, so
+    # every live rung was squeezed by 16% of probability mass held by dead ones.
+    # `_feed_display_scale`'s own docstring names the contract that breaks: one
+    # divisor, "so one outcome never renders at two different numbers".
+    #
+    # THE MEMBERSHIP RULE IS SHARED, NOT THE DIVISOR — the same
+    # `expired_ladder_rungs` the feed calls, so the two surfaces cannot drift into
+    # two answers about which rungs are real. It also stops this page pricing an
+    # impossible option at 14%, which is a truth win on its own account.
+    #
+    # ABOVE the withheld-price nulling and everything below it, for the reason
+    # that block states in its own comment: a row left in place until after the
+    # squeeze is still in the divisor. Probabilities are passed raw and unnulled,
+    # which is what the helper's `EXPIRED_RUNG_MAX_PROBABILITY` guard needs — a
+    # past-dated rung priced at or above it already resolved YES and is the
+    # ladder's answer, not a ghost, and is never stripped.
+    #
+    # OPEN MARKETS ONLY. A settled or closed board is a RESULT, and a result
+    # shows what ran, including the windows that elapsed without the event
+    # happening. Expiry is a statement about what can still happen, which is a
+    # question only an open market asks. This also bounds the change to #7274's
+    # population.
+    #
+    # AND NEVER THE WHOLE BOARD: if every rung has expired the ladder is dead,
+    # and the feed answers that by dropping the card. This page cannot drop
+    # itself, and an empty All Outcomes table would be a worse answer than a
+    # stale one, so the list stands unchanged.
+    expired_rungs_dropped = 0
+    if getattr(market, "status", None) == "open":
+        expired_rung_names = expired_ladder_rungs(
+            [(o["name"], o.get("probability")) for o in outcomes],
+            datetime.now(timezone.utc),
+        )
+        if expired_rung_names:
+            live_rungs = [o for o in outcomes if o["name"] not in expired_rung_names]
+            # ROWS, not names: the count below feeds the identity answer, and two
+            # rows can carry one name on a board the earlier twin rules spared.
+            if live_rungs:
+                expired_rungs_dropped = len(outcomes) - len(live_rungs)
+                outcomes = live_rungs
+
     # #5611/#5876: a price no book and no trade supports — and a Polymarket
     # midpoint the newest trade refutes — are not published. The rules and
     # everything measured about them are in `app.utils.futures_unsupported_price`;
@@ -6168,7 +6296,14 @@ def _format_market_detail(
     # itself shorten the list (#1201 strips a run of exact-0.5 untraded midpoints
     # in place), so the pre-drop length is the only one that reproduces today's
     # `len(outcomes)` at this call site.
-    concept_outcome_count = len(outcomes)
+    #
+    # #7274's expired rungs are ADDED BACK, and that is this comment's own rule
+    # applied to a drop that now lands above this line rather than below it. A
+    # date ladder is exactly the shape that can fall to two live rungs, and a
+    # two-row count is what the combat adapters read as a fight — so letting the
+    # expiry drop feed this would invent a breadcrumb on a river-level market.
+    # The identity answer stays bit-identical to the one served before #7274.
+    concept_outcome_count = len(outcomes) + expired_rungs_dropped
 
     # #4253: a single-winner field cannot have five different winners. Measured
     # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
@@ -6427,6 +6562,14 @@ def _format_market_detail(
         # and so the 19 markets where this empties every price are findable.
         # Machine-readable only — notice 34 keeps diagnostics off the page.
         "prices_withheld": prices_withheld,
+        # #7274: how many ladder rungs were dropped because their own deadline has
+        # passed — the same rule and the same helper the Discover card applies, so
+        # the two surfaces divide by one set. A COUNT rather than a flag, for
+        # `prices_withheld`'s reason: an after-check can tell a board the rule
+        # fired on from one that simply has no expired rung, without re-deriving
+        # the rule. Machine-readable only — notice 34 keeps diagnostics off the
+        # page. Always present, so its absence means an old build.
+        "expired_rungs_dropped": expired_rungs_dropped,
         "bookmakers": bookmakers or [],
         "category_tags": market.category_tags or [],
         "created_at": market.created_at.isoformat() if market.created_at else None,
