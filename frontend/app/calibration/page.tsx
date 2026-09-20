@@ -2430,7 +2430,37 @@ export default function CalibrationPage() {
             </li>
           )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
-          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. We only include markets where real trading occurred &mdash; outcomes with zero bids or no trading volume are excluded, because a price without participants isn&rsquo;t a prediction. Data refreshes hourly.</li>
+          {/* #7341 — this card used to close on "We only include markets where
+              real trading occurred — outcomes with zero bids or no trading
+              volume are excluded". That is a UNIVERSAL claim, and the page
+              falsifies it by name four blocks lower: the never-traded filter is
+              asymmetric, so `exclusion_symmetry.poly_never_traded_in_curve`
+              outcomes (19,805 on the 2026-09-19 payload) never showed a bid or
+              a trade in any snapshot and are counted anyway. The summary now
+              states the asymmetry instead of denying it, and hands the counts
+              to the block that already publishes them — no new number reaches
+              the reader (notice 34).
+
+              It also spells the predicate "never-traded", which is the word the
+              per-source block below already uses. That is deliberate: the page
+              keeps TWO distinct predicates, and they must not borrow each
+              other's vocabulary —
+
+                "untraded"    the COHORT: `price_moved === false`. Those rows
+                              traded; the price just never moved. Alex's rename
+                              (UX-P075 item (a)); not touched here.
+                "never-traded" the EXCLUSION: no real bid and no trade in any
+                              snapshot. A different set, a different rule, and
+                              the only one this sentence is about.
+
+              The existing over-claim sweep in calibrationCohort.test.ts reads
+              this file comment-stripped but matches three LITERAL phrases
+              ("where real trading moved the price", /well[- ]traded/,
+              /thinly[- ]traded/). "real trading occurred" is the same claim in
+              different words, so it passed every arm. The guard added beside
+              those bans the CLAIM SHAPE and is keyed on the payload, so it goes
+              quiet only if the asymmetry is actually closed. */}
+          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted. Data refreshes hourly.</li>
           {/* CAL-P1217 — the exclusions stop being a handful of named rules and
               become an accounting a reader can add up.
               *
