@@ -6222,6 +6222,7 @@ from app.utils.market_staleness import (
     infer_market_real_world_end as _infer_market_real_world_end,
     is_title_implied_stale as _market_title_implied_stale_blocker,
     prices_have_stopped as _prices_have_stopped,
+    stale_observation_keys as _stale_observation_keys,
 )
 
 # Both bound at MODULE scope deliberately, not called as
@@ -6254,8 +6255,127 @@ from app.utils.futures_market_snapshot import (
     opening_baseline_stamp,
     price_poll_stamp as _price_poll_stamp,
     displayed_price_stamp as _displayed_price_stamp,
+    outcome_observed_at as _outcome_observed_at,
     outcome_prints_a_price as _outcome_prints_a_price,
 )
+
+
+def _drop_stale_observation_legs(market, outcomes: list) -> list:
+    """Legs not observed alongside the rest of their own board, gone (#7537).
+
+    🔴 #7274 IS A CONTRACT BETWEEN TWO SURFACES, SO ITS MEMBERSHIP RULES COME
+    IN PAIRS. That issue closed on one sentence — "the membership rule is
+    SHARED, not the divisor ... so the two surfaces cannot drift into two
+    answers about which rungs are real" — and #7537 adds a membership rule to
+    `_format_market_detail`. A rule the detail page applies and this file does
+    not is #7274 reopening under a new name, which is why this is not optional
+    wiring. Codex ruled it directly on 2026-09-20: "Feed/detail (and applicable
+    category/timeline consumers) must share eligibility."
+
+    ═══ MEASURED ON THE SERVED FEED, NOT ON THE POPULATION ═══
+
+    Live's census found 100 squeezed boards of 7,933 and could not find one on
+    page one, which is true and is the wrong window: page one is the top ~60 by
+    score, and the card pool is wider. Over the 115 futures cards `/api/feed`
+    actually served on 2026-09-20, FIVE carry a priced stale leg and THREE would
+    print a different rounded leader percent on card and page once #7537 lands.
+    The worst is live's own specimen, market 3971707 (*Super League Rugby
+    Champion*, tier 1, open, ME) — served as a card, not hypothetical:
+
+        leg `Leeds Rhinos`, raw 0.3950 (Kalshi's own midpoint)
+          card  36.1%   page  30.2%   <- 5.9 points apart TODAY, already #7274
+          card  36.1%   page  39.5%   <- after #7537, page honest, card not
+          card  39.5%   page  39.5%   <- with this function
+
+    Eleven of its fourteen legs were last written 2026-09-06 at one microsecond;
+    three were written today. The card divides by 1.0951 of fossil-inflated
+    mass, the contemporaneous legs sum to 0.6350, and 0.6350 is under
+    `_feed_display_scale`'s 1.05 floor — so the card stops scaling at all and
+    prints the price Kalshi is quoting. Both surfaces then divide by one
+    instant, which is the whole of #7537.
+
+    ⚠️ THE STAMP IS READ THROUGH `_outcome_observed_at`, NEVER OFF
+    `last_updated`. A rehydrated snapshot leg does not carry that column at all
+    (`OUTCOME_LOAD_ONLY_EXTRA`, not `OUTCOME_COLUMNS`), and `_as_utc` answers
+    `None` for a non-datetime rather than raising — so the obvious wiring is not
+    a crash, it is a filter that silently does nothing on the cached path while
+    passing every ORM-row test. See that function's own note.
+
+    DROPPED HERE, not withheld as the detail page withholds. The two surfaces
+    owe each other one DIVISOR, not one render: a detail table row can print "-"
+    in a column, a card has no such affordance, and every sibling membership
+    rule in this chain (expired rungs, fabricated books, unrankable placeholders)
+    already drops. `outcome_count` reads `len(market.outcomes)` off the DB row,
+    so the reader's "14 outcomes" is untouched by what this removes — the
+    identity add-back #7274 needed is structurally unnecessary here.
+
+    BEFORE THE LEADER PICK, for the phantom filter's reason one line down: a
+    fossil that outranks the live prices does not merely inflate the divisor, it
+    NAMES THE CARD'S LEADER off a book the venue no longer keeps. The detail
+    page reaches the same place from the other side — a withheld row reads as 0
+    and can never be crowned.
+
+    OPEN MARKETS ONLY (#7274's own bound, and live's): a settled board is a
+    RESULT, and a result shows what ran.
+
+    ⚠️ THE WHOLE BOARD IS ASKED; ONLY A PRICED LEG IS DROPPED — TWO STEPS, AND
+    CERT-3188 BLOCKED THE ONE-STEP VERSION. The first cut narrowed the
+    GENERATOR to priced legs, which reads as the same rule and is not:
+    `stale_observation_keys` measures every stamp against the newest stamp IN
+    THE SET IT IS GIVEN, so narrowing the input also moves the reference
+    instant. The counterexample the bus found is two eight-day-old priced legs
+    beside one freshly-observed `NULL`-priced leg — detail's reference is that
+    fresh stamp and it withholds both prices, while a priced-only reference is
+    itself eight days old, nothing is stale, and the card keeps both. A tap
+    then still turns a number into a blank, which is the exact defect #7537
+    exists to close, re-entering by the back door. So the board dates the
+    board — the detail half's own generator pairs every row in
+    `sorted_outcomes` with the raw stamp column, and that is the same
+    population this passes.
+
+    (Named in words rather than quoted as an attribute access on purpose:
+    CERT-949's guard scans this module for a per-outcome read of that column,
+    stripping `#` comments but not docstrings, so quoting detail's line here
+    reddened a shard on prose alone. The rule it protects is real and this
+    function obeys it — the stamp is read through `_outcome_observed_at`.)
+
+    The priced test moves to the DROP instead, where #6256's boundary actually
+    lives and where it costs nothing: this is a rule about a DIVISOR, and a leg
+    rendering no price is in no divisor — so dropping it wins nothing here and
+    costs something elsewhere. `test_unpriced_leg_cannot_date_the_mark_6256`
+    keeps a specimen (*Which party will win the House in 2026?*) whose whole
+    tail is `NULL` and 125 days old, and a blanket drop deletes that card's
+    blank rows and with them the shipped guard that they must not date the
+    card's age mark. That suite went red on exactly this and was right to.
+    `displayed_price_stamp` drew the same line one function over — "a leg that
+    prints no number is not a price fact either" — so this is the module's
+    existing rule applied again rather than a new exception. A blank row can
+    therefore still never be DROPPED, which is all #6256 ever asked; what it
+    can now do is date the board, which is what detail already lets it do.
+
+    FAILS OPEN. `stale_observation_keys` measures against the board's own newest
+    stamp, so the leg holding that stamp is never stale and the empty set is
+    structurally impossible — live confirmed 0 all-stale boards of 7,933. The
+    guard below is therefore unreachable by construction and kept anyway,
+    because the harmful direction here is taking a card's numbers away: an
+    all-stale board keeps every leg rather than becoming a card with nothing on
+    it. Note the contrast with the expired-rung block, which `continue`s the
+    whole card — an expired rung CANNOT happen, while a stale leg only lacks a
+    current witness, and those two facts do not earn the same remedy.
+    """
+    if getattr(market, "status", None) != "open":
+        return outcomes
+    stale_ids = _stale_observation_keys(
+        (o.id, _outcome_observed_at(o)) for o in outcomes
+    )
+    if not stale_ids:
+        return outcomes
+    survivors = [
+        o
+        for o in outcomes
+        if o.id not in stale_ids or not _outcome_prints_a_price(o)
+    ]
+    return survivors or outcomes
 
 
 def _card_price_observed_at(displayed_outcomes: list) -> str | None:
@@ -10120,6 +10240,13 @@ async def _score_sports_mode_futures(
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
             reverse=True,
         )
+        # #7537: the same membership rule as `_score_futures`, and it has to be
+        # here too for #4610's reason — both serializers print the same card
+        # type, so a divisor rule that lands in one of them just moves the
+        # disagreement from card-vs-page to card-vs-card. Sports mode has no
+        # expired-rung drop of its own, so this sits directly after the dedup
+        # sort, which is the same relative position: before the leader pick.
+        sorted_outcomes = _drop_stale_observation_legs(market, sorted_outcomes)
         # UX-P126/F5: nothing UNRANKABLE may hold a leader or top-N slot. Runs BEFORE
         # the top-10 slice and leader pick, same reason the phantom-book filter in
         # `_score_futures` does: a placeholder that outranks the real prices doesn't
@@ -11624,6 +11751,13 @@ async def _score_futures(
                 if not live_outcomes:
                     continue
                 sorted_outcomes = live_outcomes
+
+            # #7537: and a leg nobody observed when its siblings were observed
+            # leaves this list too, so this card's divisor and the detail page's
+            # hold the same legs (#7274). Placed against the SAME set the page
+            # measures — after the duplicate-leg and expired-rung drops — so the
+            # two boards agree on their own newest stamp as well as on the rule.
+            sorted_outcomes = _drop_stale_observation_legs(market, sorted_outcomes)
 
             # UX-P011 (#1574): drop outcomes whose price was manufactured by averaging
             # an untradeable book. A 1c-bid / 99c-ask quote midpoints to a confident-
