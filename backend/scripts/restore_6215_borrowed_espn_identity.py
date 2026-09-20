@@ -2,7 +2,7 @@
 
 One command, D51:
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/restore_6215_borrowed_espn_identity.py --apply
+    heroku run:detached -a bainluck -- python3 scripts/restore_6215_borrowed_espn_identity.py --apply
 
 Restores from `backup_6215_borrowed_espn_identity`, row by row and column by
 column, so a team whose identity was legitimately re-enriched between the repair

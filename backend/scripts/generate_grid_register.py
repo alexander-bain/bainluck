@@ -24,9 +24,9 @@ shared with the daily drift sentinel so the two can never disagree about what
 the sources currently say.
 
 Usage:
-    heroku run --app bainluck python3 backend/scripts/generate_grid_register.py --league nba --dry-run
-    heroku run --app bainluck python3 backend/scripts/generate_grid_register.py --league nba --write
-    heroku run --app bainluck python3 backend/scripts/generate_grid_register.py --league nba --diff
+    heroku run --app bainluck python3 scripts/generate_grid_register.py --league nba --dry-run
+    heroku run --app bainluck python3 scripts/generate_grid_register.py --league nba --write
+    heroku run --app bainluck python3 scripts/generate_grid_register.py --league nba --diff
 """
 import argparse
 import asyncio

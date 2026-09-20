@@ -15,9 +15,9 @@ to LINKED poly markets (``event_id IS NOT NULL``) — the rows the win-prob blen
 the shadow audit measure; ``--all`` also backfills unlinked game groups.
 
 Usage:
-    heroku run --app bainluck python3 backend/scripts/backfill_polymarket_matchups.py --dry-run
-    heroku run --app bainluck python3 backend/scripts/backfill_polymarket_matchups.py
-    heroku run --app bainluck python3 backend/scripts/backfill_polymarket_matchups.py --all
+    heroku run --app bainluck python3 scripts/backfill_polymarket_matchups.py --dry-run
+    heroku run --app bainluck python3 scripts/backfill_polymarket_matchups.py
+    heroku run --app bainluck python3 scripts/backfill_polymarket_matchups.py --all
 """
 import argparse
 import asyncio
