@@ -135,13 +135,15 @@ print(f"baseline GREEN: {line}\n")
 
 killed = survived = 0
 for name, path, old, new in MUTANTS:
-    src = open(path).read()
+    with open(path) as fh:
+        src = fh.read()
     if old not in src:
         print(f"  ?? {name}\n     ANCHOR NOT FOUND — mutant never applied, this is not a pass")
         survived += 1
         continue
     assert src.count(old) == 1, f"anchor is ambiguous for: {name}"
-    open(path, "w").write(src.replace(old, new, 1))
+    with open(path, "w") as fh:
+        fh.write(src.replace(old, new, 1))
     good, line = run_tests()
     subprocess.run(["git", "-C", REPO, "checkout", "--", path], check=True)
     if good:
