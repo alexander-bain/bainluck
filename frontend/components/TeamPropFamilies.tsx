@@ -23,6 +23,23 @@ function pct(v: number | null): string {
   return v === null ? "—" : `${Math.round(v * 100)}%`;
 }
 
+// `result` has THREE states and each needs its own branch (#7405). It used to
+// have two: `"won"` and everything-else, so `null` rendered the same "Out" as a
+// real `"lost"`. `null` is not a loss — it is the backend's explicit "this row
+// is settled and we never graded it" (`utils/prop_families.py::_settled_status`
+// leaves it None for a terminal market with no graded outcome, and for one
+// marked settled by `resolution_date` alone). Measured when this was written,
+// across 120 team slugs: of the 440 rows that rendered "OUT", only 110 were a
+// real `"lost"` — the other 330 (75%), on 32 of 120 teams, were this bug. The
+// loudest was FC Cincinnati's 65% favourite to score first against DC United
+// wearing "OUT" on a market whose three outcomes were all `is_winner IS NULL`
+// — a stated negative result we had no evidence for.
+//
+// Silence is not an option here: the row keeps its price, and a price with no
+// marker is the #6595->#5481 / #6169->#6815 failure (withholding the field just
+// moves the lie into the price channel, which has no marker at all). So the
+// unknown case says so, in the site's existing vocabulary for an ungraded
+// settled row ("No result reported").
 function WhatHitBadge({ result }: { result: "won" | "lost" | null }) {
   if (result === "won") {
     return (
@@ -31,9 +48,16 @@ function WhatHitBadge({ result }: { result: "won" | "lost" | null }) {
       </span>
     );
   }
+  if (result === "lost") {
+    return (
+      <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-text-muted">
+        Out
+      </span>
+    );
+  }
   return (
     <span className="rounded-full bg-surface-elevated px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-text-muted">
-      Out
+      No result
     </span>
   );
 }

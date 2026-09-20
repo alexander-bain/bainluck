@@ -1,0 +1,47 @@
+{
+ "family_key": "offensive rookie of the year",
+ "label": "Offensive Rookie Of The Year",
+ "sport": "football",
+ "entity_count": 2,
+ "sources": [
+  "polymarket"
+ ],
+ "rows": [
+  {
+   "entity": "Jalen Milroe",
+   "market_id": 34617279,
+   "outcome_id": 153596367,
+   "probability": 0.001,
+   "source": "polymarket",
+   "sources": [
+    "polymarket"
+   ],
+   "cross_source": {
+    "polymarket": 0.001
+   },
+   "group_id": "polymarket:23940",
+   "status": "settled",
+   "settled": true,
+   "result": "lost",
+   "top_outcome": null
+  },
+  {
+   "entity": "Elijah Arroyo",
+   "market_id": 34617279,
+   "outcome_id": 153596370,
+   "probability": 0.001,
+   "source": "polymarket",
+   "sources": [
+    "polymarket"
+   ],
+   "cross_source": {
+    "polymarket": 0.001
+   },
+   "group_id": "polymarket:23940",
+   "status": "settled",
+   "settled": true,
+   "result": "lost",
+   "top_outcome": null
+  }
+ ]
+}
