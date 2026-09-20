@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import EmbedAwareLink from "@/components/EmbedAwareLink";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration } from "@/lib/api";
+import { compactOutcomeCount } from "@/lib/calibrationProofFigures";
 import {
   STORY_ONE_LINER,
   STORY_ANTI_THESIS,
@@ -85,12 +86,7 @@ export default function AboutPage() {
           : worst.length
           ? Math.max(...worst).toFixed(1)
           : null;
-      const out =
-        data.total_outcomes && data.total_outcomes >= 1000
-          ? `${(data.total_outcomes / 1_000_000).toFixed(1)}M`
-          : data.total_outcomes
-          ? `${data.total_outcomes}`
-          : null;
+      const out = compactOutcomeCount(data.total_outcomes);
       setProof({ points: pts, outcomes: out });
     } catch {
       // keep the editorial fallback copy
