@@ -17,6 +17,7 @@ import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, use
 import { fetchEventsByIds, fetchFuturesByIds } from "@/lib/api";
 import type { Event, FuturesMarketDetailResponse } from "@/lib/types";
 import EventCard from "@/components/EventCard";
+import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import FuturesCard from "@/components/FuturesCard";
 import ProgressionLadder from "@/components/ProgressionLadder";
 import { Button } from "@/components/ui/button";
@@ -421,6 +422,10 @@ function MyTeamsFeed({ principal }: { principal: string }) {
   const hasEvents = feedSections.length > 0;
   const hasFutures = Boolean(teamFuturesData && teamFuturesData.items.length > 0);
   const hasPinned = pinnedEvents.length > 0 || pinnedFutures.length > 0;
+  // #7529 — pin both halves of a split-squad home-and-home and this grid shows
+  // the same two clubs at the same minute twice; the host is what tells them
+  // apart. Empty map on every other set of pins.
+  const pinnedHostCues = useMemo(() => hostCuesForEvents(pinnedEvents), [pinnedEvents]);
   const hasFollowedSport = followedSportItems.length > 0;
   const hasContent = hasEvents || hasFutures || hasPinned || hasFollowedSport;
 
@@ -555,6 +560,7 @@ function MyTeamsFeed({ principal }: { principal: string }) {
                         isPinned={true}
                         onPinToggle={togglePin}
                         pinDisabled={isMaxReached}
+                        hostCue={pinnedHostCues.get(event.id) ?? null}
                       />
                     ))}
                     {pinnedFutures.map((market) => (

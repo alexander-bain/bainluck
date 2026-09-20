@@ -20,6 +20,7 @@ import { searchAnswerState } from "@/lib/searchAnswerState";
 import LeagueChips from "@/components/LeagueChips";
 import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { eventPath } from "@/lib/eventKey";
+import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import { trackEvent } from "@/lib/analytics";
 import type { SearchResponse, SearchSuggestion } from "@/lib/types";
 
@@ -337,6 +338,10 @@ function SearchContent() {
   const hasTeams = results?.teams && results.teams.length > 0;
   const hasFutures = results?.futures && results.futures.length > 0;
   const hasEvents = results?.results && results.results.length > 0;
+  // #7529 — a split-squad home-and-home puts the same two clubs on this
+  // page twice at the same minute; the cue is the only thing telling those
+  // two cards apart. Empty map on every other query.
+  const hostCues = hostCuesForEvents(results?.results ?? []);
   // #999 L2-65: event concepts (tournament pages) as first-class results.
   const eventConcepts = results?.event_concepts ?? [];
   const hasEventConcepts = eventConcepts.length > 0;
@@ -513,6 +518,7 @@ function SearchContent() {
                   isPinned={isPinned(event.id)}
                   onPinToggle={togglePin}
                   pinDisabled={isMaxReached}
+                  hostCue={hostCues.get(event.id) ?? null}
                 />
               </div>
             ))}

@@ -22,6 +22,7 @@ import {
 } from "@/lib/clientPrincipal";
 import { TelemetryPreferences } from "@/components/Analytics";
 import EventCard from "@/components/EventCard";
+import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import FuturesCard from "@/components/FuturesCard";
 import type { UserFavoriteItem } from "@/lib/types";
 
@@ -112,6 +113,10 @@ export default function PreferencesPage() {
     async () => bindToPrincipal(principal!, await fetchFuturesByIds(pinnedFuturesIds)),
   );
   const pinnedFutures = dataForPrincipal(pinnedFuturesRecord, principal);
+
+  // #7529 — two cards of one fixture pair at one minute (a split-squad
+  // home-and-home) are told apart by who is hosting. Empty map otherwise.
+  const pinnedHostCues = hostCuesForEvents(pinnedEvents ?? []);
 
   // Auth'd user preferences
   const {
@@ -235,6 +240,7 @@ export default function PreferencesPage() {
                 isPinned
                 onPinToggle={togglePin}
                 pinDisabled={isMaxReached}
+                hostCue={pinnedHostCues.get(event.id) ?? null}
               />
             ))}
             {(pinnedFutures ?? []).map((market) => (

@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { fetchEvents, fetchSports } from "@/lib/api";
 import EventCard from "@/components/EventCard";
+import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
@@ -114,6 +115,13 @@ export default function SportPage({ params }: SportPageProps) {
   // (D54 = A). The bucket rule is `eventSectionKey`'s, shared with `/sports`
   // and My Stuff so the three cannot drift.
   const sections = useMemo(() => buildLeagueSections(events), [events]);
+  // #7529 — PER SECTION, not per page: two cards read as one game shown twice
+  // only when they sit in the same list under the same heading. A split-squad
+  // home-and-home is the case; every other section gets an empty map.
+  const sectionHostCues = useMemo(
+    () => new Map(sections.map((s) => [s.key, hostCuesForEvents(s.events)])),
+    [sections],
+  );
 
   // #3246 — the header sentence is composed FROM `sections`, the same value the
   // headings below are rendered from, so the page cannot promise a section it
@@ -240,7 +248,12 @@ export default function SportPage({ params }: SportPageProps) {
                   </h2>
                   <div className="grid gap-4 md:grid-cols-2">
                     {section.events.map((event) => (
-                      <EventCard key={event.id} event={event} showSport={false} />
+                      <EventCard
+                        key={event.id}
+                        event={event}
+                        showSport={false}
+                        hostCue={sectionHostCues.get(section.key)?.get(event.id) ?? null}
+                      />
                     ))}
                   </div>
                 </section>

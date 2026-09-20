@@ -20,6 +20,7 @@ import { awayIsTheComplement } from "@/lib/drawPricedWinner";
 import { PREMATCH_SAID, prematchReading } from "@/lib/prematchReading";
 import { teamCrestInitials, teamShortNames } from "@/lib/teamShortName";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import type { HostCue } from "@/lib/sameFixtureHostCue";
 import { PinIcon } from "@/components/PinButton";
 import {
   hasNoReportedResult,
@@ -51,6 +52,15 @@ interface EventCardProps {
   multiplier?: number;
   /** Personalization reason strings */
   personalizationReasons?: string[];
+  /**
+   * #7529 — the host, printed ONLY when a sibling in the same list is the same
+   * two clubs at the same minute (an NHL preseason split-squad home-and-home is
+   * the case that produced this). A card cannot see its siblings, so the LIST
+   * decides: `hostCuesForEvents(events).get(event.id) ?? null`. Absent on every
+   * unambiguous card, which is all but a handful — see `lib/sameFixtureHostCue`
+   * for why this is not a venue line on every card (notice 34 / D102).
+   */
+  hostCue?: HostCue | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +207,7 @@ export default function EventCard({
   personalized,
   multiplier,
   personalizationReasons,
+  hostCue = null,
 }: EventCardProps) {
   const { trackEventCardClick } = useAnalytics();
 
@@ -594,6 +605,30 @@ export default function EventCard({
               {showSport && event.sport && (
                 <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
                   {getSportLabel(event.sport, event.sport_name)}
+                </span>
+              )}
+              {/* #7529 — WHO IS HOSTING, on the rows where that is the only
+                  thing telling two cards apart. A split-squad home-and-home
+                  puts the same two clubs on the search page twice at the same
+                  minute, and row order is the card's only home/away signal —
+                  which reads as "the same game, shown twice".
+
+                  It is `flex-shrink-0` and nowrap while the sport label beside
+                  it truncates, because a cue clipped to "at T" is the one
+                  element here that has to survive 390px intact: it is the whole
+                  distinction. Same muted micro type as the sport label — this
+                  is a mark, not a caption (notice 34 / D102).
+
+                  Not announced separately, and that is correct: the shell's
+                  aria-label is already "{away} at {home}", so a reader who
+                  cannot see the layout has never had this ambiguity. */}
+              {hostCue && (
+                <span
+                  className="text-micro-xs text-text-muted whitespace-nowrap flex-shrink-0"
+                  data-testid="event-card-host-cue"
+                  data-host={hostCue.name}
+                >
+                  at {hostCue.label}
                 </span>
               )}
               {highlightLabel && !isLive && (
