@@ -385,3 +385,84 @@ export function describeCohort(
     reconciles,
   };
 }
+
+/** What the matched-bucket section says about which rows it holds. */
+export interface ActivityScopeCopy {
+  /**
+   * One sentence in the section body, under the caption that makes the table
+   * legible. Says which rows are NOT in either column, because the column
+   * heading alone cannot.
+   */
+  caption: string;
+  /**
+   * The arithmetic, one tap down inside the section's own "What 'traded' means
+   * here" note. Reconciles the two columns to the page's traded total.
+   */
+  reconciliation: string;
+}
+
+/**
+ * The scope disclosure for the matched-bucket comparison (#7519).
+ *
+ * This section is the ONE place on the page where `price_moved` is the subject
+ * rather than a filter, and that is what makes it the one place the page's own
+ * vocabulary misdescribes. Its two columns are `true` vs `false`; the flagless
+ * sportsbook rows are in NEITHER, because there is no price-move test to put
+ * them on a side of.
+ *
+ * Everywhere else, "traded" means the default cohort — `true` PLUS `null` —
+ * under UX-P080 item 3 (Alex, round 2): sportsbook lines are traded BY
+ * CONSTRUCTION, a sportsbook moves its line with money. That ruling is right
+ * and nothing here touches it. What it left behind is this: the page publishes
+ * 449,027 traded outcomes and heads a column "Traded" over 293,900 of them.
+ *
+ * #7335 is the proximate cause and is also not the thing to undo. It renamed
+ * these columns from "Price moved"/"Price unchanged" to the cohort nouns so the
+ * page would stop naming two cohorts three ways (UX-P075 item (c), Alex
+ * 2026-08-13). That rename is correct at every other site; it is only here that
+ * the shared noun names a population the columns do not hold. So the fix is to
+ * state the population, the way #7515 did for the category bar — never to
+ * re-split the vocabulary the rename deliberately joined.
+ *
+ * `lib/calibrationCohort.ts` recorded the moment this opened up, in the comment
+ * on `partitionNote`: that note "used to say sportsbook lines 'sit in neither
+ * cohort' — true of the old framing, and now a contradiction of the copy
+ * directly above it". True of the framing; still true of THESE TWO COLUMNS. It
+ * was retired as page-wide copy for a good reason and the one section that
+ * still needed it lost it. This puts it back, scoped to the section it is true
+ * of.
+ *
+ * Returns null when there are no flagless rows — then the two columns ARE the
+ * whole traded population, there is nothing outside them, and a note saying so
+ * would be boilerplate on a payload it does not describe (same rule
+ * `partitionNote` follows).
+ */
+export function describeActivityScope(
+  partition: ActivityPartition
+): ActivityScopeCopy | null {
+  const { movedN, unchangedN, notApplicableN } = partition;
+  if (notApplicableN <= 0) return null;
+
+  return {
+    // Notice 34 / D102: what the reader is handed WITHOUT a tap is the one fact
+    // the column heading gets wrong — which rows are missing, and that they are
+    // missing for a reason that is not "we don't count them". The arithmetic is
+    // a method note and folds.
+    caption:
+      `Both columns are the price-moved test, so the ${fmt(notApplicableN)} ` +
+      `sportsbook lines — traded, but never put to that test — are in neither.`,
+    // The reconciliation states the page's OWN traded total beside the column's,
+    // because the reader's question is not "how many are missing" but "is this
+    // the Traded I was reading about two screens up". It is not, and saying the
+    // two numbers next to each other is the only answer that settles it.
+    reconciliation:
+      `Here that makes two columns: ${fmt(movedN)} outcomes whose price moved ` +
+      `and ${fmt(unchangedN)} whose price never did. The ` +
+      `${fmt(notApplicableN)} sportsbook lines are counted as traded ` +
+      `everywhere else on this page — a sportsbook moves its line with money — ` +
+      `but there is no price move to test on them, so they sit outside this ` +
+      `comparison rather than on one side of it. The page's traded total of ` +
+      `${fmt(movedN + notApplicableN)} includes them; the Traded column here ` +
+      `does not.`,
+  };
+}
