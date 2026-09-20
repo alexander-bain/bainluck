@@ -7,10 +7,12 @@ import PlayerAvatar from "./PlayerAvatar";
 import ShowMore, { COLLAPSED_LIST_COUNT } from "./ShowMore";
 import {
   GRID_SECTION_LABEL,
+  GRID_SECTION_LABEL_DECIDED,
   formatAge,
   formatGridCell,
   gridCellExplanation,
   gridCellGlyph,
+  gridIsDecided,
   gridScrollFloorPx,
   gridScrolls,
   markedCellCount,
@@ -650,6 +652,10 @@ export default function PlayoffGrid({
   const sumFailing = grid.columnSums.filter(
     (check) => check.verdict !== "pass" && check.verdict !== "settled"
   ).length;
+  /* #7473: the heading's only condition. Rides the section as `data-decided`
+     for the same reason `data-marked` does — a probe should not have to read
+     the h2's words to know which of the two this grid is. */
+  const decided = gridIsDecided(grid);
 
   return (
     <section
@@ -665,9 +671,10 @@ export default function PlayoffGrid({
       data-sum-failing={sumFailing}
       data-monotonicity={grid.monotonicityViolations.length}
       data-scrolls={scrolls ? "true" : "false"}
+      data-decided={decided ? "true" : "false"}
     >
       <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted">
-        {GRID_SECTION_LABEL}
+        {decided ? GRID_SECTION_LABEL_DECIDED : GRID_SECTION_LABEL}
         {drawLabel && (
           <span className="ml-1.5 font-normal normal-case tracking-normal">· {drawLabel}</span>
         )}
