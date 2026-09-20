@@ -42,6 +42,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.routes import feed as feed_module
 from app.routes.feed import (
     _drop_stale_observation_legs,
     _feed_display_scale,
@@ -328,7 +329,6 @@ class TestTheHarmfulDirectionIsGuarded:
         """
         legs = board()
         stale_all = {leg.id for leg in legs}
-        import app.routes.feed as feed_module
 
         original = feed_module._stale_observation_keys
         feed_module._stale_observation_keys = lambda _observations: stale_all
@@ -351,7 +351,6 @@ class TestBothSerializersCarryTheRule:
         "func_name", ["_score_futures", "_score_sports_mode_futures"]
     )
     def test_the_serializer_calls_the_shared_filter(self, func_name):
-        import app.routes.feed as feed_module
 
         source = inspect.getsource(getattr(feed_module, func_name))
         tree = ast.parse(source.lstrip())
@@ -365,7 +364,6 @@ class TestBothSerializersCarryTheRule:
     def test_the_filter_reads_the_dual_carrier_reader_not_the_raw_column(self):
         """The mechanism, not the outcome — asserting the verdict alone would
         still pass a wiring that reads `last_updated` and dies on the cache."""
-        import app.routes.feed as feed_module
 
         source = inspect.getsource(feed_module._drop_stale_observation_legs)
         body = source.split('"""')[-1]
