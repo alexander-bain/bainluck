@@ -240,6 +240,64 @@ export function isKidSafeItem(item: FeedItem): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Pictures (#7461) — THE GATE ABOVE IS TEXT-ONLY BY CONSTRUCTION
+// ---------------------------------------------------------------------------
+// Everything above this line reads STRINGS. A blocklist cannot read a JPEG, so
+// no amount of hardening to `collectKidVisibleText` can ever cover a picture:
+// a non-text channel has to be closed at the point it is rendered. That is what
+// this section is, and the next person who adds a media field to a /play card
+// should add it here rather than assume the gate already covers it.
+//
+// THE LIVE LEAK. Measured on production 2026-09-20 (`GET /api/feed?limit=120…`,
+// the exact params `usePlayPool` uses): `"Resident Evil" Opening Weekend Box
+// Office` passes every text check — category `entertainment` is allowlisted,
+// "evil" is on neither list, and its outcomes are box-office buckets
+// (`55-60m`, `60-65m`, `65-70m`) — and carries
+// `https://image.tmdb.org/t/p/w1280/1CIaRYKf3zg2Xyce1CSfCMg2Vfw.jpg`, a horror
+// still that `CoolOrBoring` then paints full-bleed across a 224px hero on a card
+// built for an eight-year-old. `isPlayEligible` reads `true` for it.
+//
+// WHY A HOST RULE IS A REAL RULE HERE, AND NOT "ALLOWLIST AND HOPE". The two
+// rails differ in what the picture is DERIVED FROM, which is the whole point:
+//
+//   - the stock rail keys its image off the market's own text — text that has
+//     already passed the gate above, so the picture inherits that vetting;
+//   - the poster rail ships marketing art for an external WORK. Nothing about
+//     the film is constrained by the market text that passed, which is why one
+//     of the two live TMDB cards is candles and actors and the other is a body
+//     in a pool of blood. What a child sees is whatever poster the film has.
+//
+// So this is not a judgement that one CDN is wholesome. It is the line between
+// an image the gate transitively covers and an image it cannot see at all.
+// Measured the same day: of 75 images on that page, 73 are stock and 2 are
+// posters, so closing the poster rail costs two cards their picture and each
+// degrades to the gradient hero that already sits under the `<img>`.
+//
+// FAIL CLOSED. An unparseable URL, a non-https scheme, a host we do not know:
+// all of them return null. On a kid surface the absent picture is the safe
+// answer, and the card reads fine without one.
+const KID_SAFE_IMAGE_HOSTS = new Set(["images.pexels.com"]);
+
+/**
+ * The image a /play card may render, or `null`.
+ *
+ * Exact hostname match, never a suffix test: `endsWith("images.pexels.com")`
+ * would admit `images.pexels.com.attacker.example`, and a path test would admit
+ * `https://attacker.example/images.pexels.com/x.jpg`.
+ */
+export function kidSafeImageUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  return KID_SAFE_IMAGE_HOSTS.has(parsed.hostname) ? url : null;
+}
+
+// ---------------------------------------------------------------------------
 // Freshness (L2-187)
 // ---------------------------------------------------------------------------
 // A /play card must ALSO be fresh, not just kid-safe. /play renders a
