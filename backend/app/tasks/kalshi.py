@@ -280,6 +280,58 @@ def _is_generic_outcome_name(name: str) -> bool:
     return bool(_GENERIC_OUTCOME_PATTERNS.match(name.strip()))
 
 
+# The `-E<n>` leg of a Kalshi COUNT ticker — "exactly n" — as in
+# `KXDSENATESEATS-29-E52`, `KXHOUSEWINSTATE-AZD-E6`, `KXNUMREDISTRICTING-26NOV03-E5`.
+_EXACT_COUNT_LEG_RE = _re.compile(r"-E([0-9]+)$")
+
+
+def _exact_count_label(market) -> Optional[str]:
+    """The venue's bare-number label when the ticker's own leg corroborates it.
+
+    🔴 ON A COUNT MARKET THE BARE NUMBER IS THE ANSWER, NOT A PLACEHOLDER
+    (#7429). ``_GENERIC_OUTCOME_PATTERNS`` ends with a standalone ``[0-9]+$``
+    arm, written for Kalshi's obfuscated labels. But Kalshi obfuscates as
+    ``noun + suffix`` ("Option 1", "Team A", "Player 1") and every one of those
+    has its own arm; a label that is *only* digits arrives on questions that ask
+    for a count, where it is the whole answer. So step 2 rejected
+    ``yes_sub_title='52'``, step 3 found no subtitle, step 4 refused the title
+    for being a question (#4246), and step 5 handed back the ticker: **12 of the
+    13 rows on "How many Senate seats will Republicans hold after the Midterms?"
+    read `E48`, `E49`, `E50` …**, chart legend included, with ``Below 45`` —
+    which reached step 2 intact because it is not only digits — sitting legibly
+    at rank 7. 114 rows on 24 open markets, every one a count question.
+
+    THE PREDICATE IS ONE EQUALITY: the venue has to say the same number twice,
+    in two independently-authored fields — the ``-E<n>`` leg of the ticker and
+    the label itself. That is the same two-signal shape as
+    ``outcome_display_names`` (#4151), and it is what makes this unable to
+    assert anything the venue did not. Neither half alone would do: a bare ``1``
+    the ticker does not corroborate could still be an obfuscated ordinal, and
+    the ticker leg on its own is the string already on the screen.
+
+    Written as a single comparison on purpose. An ``isdigit()`` pre-check reads
+    like a second lock and is not one — ``leg.group(1)`` is ``[0-9]+``, so the
+    equality already implies the label is only digits. Its mutant survived the
+    whole suite; a branch no test can kill is a branch that documents a
+    guarantee it is not providing.
+
+    The failure direction is one-way, so nothing that reads correctly today can
+    regress: a shape this does not recognise falls through to the ladder
+    unchanged. That is why the older bare-number ticker format is left alone —
+    `KXHOUSEWINSTATE-FLD-7-7` already reaches the screen as ``7`` through step
+    5, and widening this to match it would buy nothing and risk something.
+
+    Returned VERBATIM, never re-typeset as "Exactly 52": the venue's own
+    ``yes_sub_title`` is ``52``, and beneath a question that asks *how many*, a
+    bare number is what a person would say back.
+    """
+    label = (market.yes_sub_title or "").strip()
+    leg = _EXACT_COUNT_LEG_RE.search(market.ticker or "")
+    if leg is None or leg.group(1) != label:
+        return None
+    return label
+
+
 def _is_question_title(title: str) -> bool:
     """A name that ends in a question mark can never be a contender (#4246).
 
@@ -309,15 +361,20 @@ def _kalshi_outcome_name(event_title, market, market_count: int) -> str:
 
     Priority:
       1. single-market event -> "Yes"
-      2. ``yes_sub_title`` (the player/team name) if not generic/obfuscated
-      3. ``subtitle`` if not generic
-      4. ``title`` when it differs from the event title AND is not a question
-      5. the parsed ticker, as a last resort
+      2. a bare-number label the ticker's own ``-E<n>`` leg corroborates
+      3. ``yes_sub_title`` (the player/team name) if not generic/obfuscated
+      4. ``subtitle`` if not generic
+      5. ``title`` when it differs from the event title AND is not a question
+      6. the parsed ticker, as a last resort
 
-    Step 4's question clause is #4246. Everything else is the original ladder.
+    Step 5's question clause is #4246, step 2 is #7429. Everything else is the
+    original ladder.
     """
     if market_count == 1:
         return "Yes"
+    exact_count = _exact_count_label(market)
+    if exact_count is not None:
+        return exact_count
     sub = market.yes_sub_title
     if sub and not _is_generic_outcome_name(sub):
         return sub
