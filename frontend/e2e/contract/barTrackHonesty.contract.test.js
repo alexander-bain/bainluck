@@ -49,14 +49,48 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
     const src = read(QUANTITY_GROUP);
 
     assert.ok(
-      /w-\[45%\]\s+shrink-0\s+truncate/.test(src),
-      "wideLabels must set a fixed `w-[45%] shrink-0 truncate` label width — a " +
+      /w-\[45%\]\s+shrink-0\b/.test(src),
+      "wideLabels must set a fixed `w-[45%] shrink-0` label width — a " +
         "content-width label makes the flex-1 track a different length per row",
     );
     assert.ok(
       !/max-w-\[45%\]/.test(src),
       "`max-w-[45%]` is the #1574(c) defect itself: it lets the label size to " +
         "its content, so equal percentages draw unequal bars",
+    );
+
+    // #7427 — THIS ASSERTION USED TO READ `w-[45%] shrink-0 truncate`, AND THE
+    // `truncate` IN IT WAS NEVER THIS GUARD'S PROPERTY.
+    //
+    // The invariant above is that the label width is FIXED rather than sized to
+    // content; the ellipsis was the incidental way the fixed width was made to
+    // hold one line, and pinning it here meant this file failed the repair for a
+    // defect the fixed width had itself created. Measured on production at 390px:
+    // the slot is 128–135px of a 300px row, so "Before January 20, 2029" printed
+    // "Before January 20, …" above "Before 2027" and lost the only token telling
+    // two rungs four years apart apart, and a coal ladder printed "Above 20
+    // million short t…" on all six rungs. 8 of 89 rungs on that draw were over.
+    //
+    // This is the same lesson as the `?? 0` in the next assertion down, one
+    // assertion up: a guard that hard-codes an implementation string fails the
+    // fix for the bug inside it. So the pair below re-states the guard as the two
+    // properties it actually protects, and is strictly STRONGER than the single
+    // literal it replaces — the width is still fixed, and now the label also may
+    // not spend its tail to stay on one line.
+    //
+    // Both are anchored to `w-[45%]` so they speak about the wide-label arm only.
+    // `truncate` remains correct on the #4404 numeric arm in the same file, where
+    // wrapping orphaned an operator above the number it qualified, and a
+    // file-wide assertion here would forbid it there.
+    assert.ok(
+      !/w-\[45%\][^"]*\btruncate\b/.test(src),
+      "the wide label must not `truncate`: the slot is narrower than the labels " +
+        "the venues write, so the ellipsis lands on the load-bearing tail (#7427)",
+    );
+    assert.ok(
+      /w-\[45%\][^"]*\bline-clamp-2\b/.test(src),
+      "the wide label must wrap within its fixed slot, bounded (#7427) — " +
+        "unbounded wrapping lets one pathological label grow the row without limit",
     );
   });
 

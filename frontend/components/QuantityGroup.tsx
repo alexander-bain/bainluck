@@ -257,10 +257,40 @@ export default function QuantityGroup({
                   // A FIXED label width, not `max-w-`. With a content-width label
                   // the `flex-1` track below is a different length on every row,
                   // so two rungs printing the same % render visibly different
-                  // bars (#1574 acceptance c). Truncate rather than wrap so the
-                  // track always starts at the same x.
+                  // bars (#1574 acceptance c).
+                  //
+                  // #7427 — THE WIDE LABEL WRAPS; IT DOES NOT ELLIPSISE. The line
+                  // that used to sit here said "Truncate rather than wrap so the
+                  // track always starts at the same x", and that reason does not
+                  // hold: the width is a fixed 45% whether the text wraps or not,
+                  // so wrapping moves the track's x by exactly zero. Truncating
+                  // bought nothing the fixed width had not already bought, and it
+                  // cost the TAIL — which on these labels is the load-bearing
+                  // token. Measured on production at 390px (the slot is 128–135px
+                  // of a 300px row): "Before January 20, 2029" printed as "Before
+                  // January 20, …" directly above "Before 2027", clipping away the
+                  // one word that tells two rungs four years apart apart; and a
+                  // coal ladder printed "Above 20 million short t…" on all six
+                  // rungs, so the ladder stopped naming its own unit. 8 of 91
+                  // rungs on that draw were over the slot, by 16–33px each.
+                  //
+                  // Two lines, not unbounded: at this width two lines hold about
+                  // 44 characters against the 27 the widest measured label needs,
+                  // so the clamp is headroom rather than a second clip, while a
+                  // pathological label still cannot grow the row without limit.
+                  // `break-words` covers the one case wrapping alone cannot, an
+                  // unbroken token wider than the slot.
+                  //
+                  // This is deliberately NOT the #4404 treatment one arm below.
+                  // There the label is mono and numeric ("≥ 0.5goals") and wrapping
+                  // orphaned an operator above the number it qualified, so widening
+                  // the slot was right and wrapping was wrong. Here the label is a
+                  // prose phrase that already reads across a line break, and the
+                  // slot cannot be widened far enough anyway — the widest label is
+                  // 54% of the row, and paying that out of the `flex-1` track would
+                  // shorten every bar on every ladder to fix eight rows.
                   wideLabels
-                    ? "w-[45%] shrink-0 truncate text-[12px] font-semibold leading-tight"
+                    ? "w-[45%] shrink-0 break-words line-clamp-2 text-[12px] font-semibold leading-tight"
                     : roomyNumericTrack
                       ? "shrink-0 truncate font-mono text-[13px] font-bold tabular-nums"
                       : "w-11 shrink-0 font-mono text-[13px] font-bold tabular-nums",
