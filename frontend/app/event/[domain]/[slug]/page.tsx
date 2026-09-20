@@ -52,6 +52,35 @@ import ScoringRecordsLadders, {
 const SHOW_SPARKLINE = true;
 const SHOW_MOVERS = true;
 
+/**
+ * How often an open concept page revalidates (#7621 — see the call site).
+ *
+ * L2-66 freshness-as-a-feature: during live play, refetch at in-play cadence so
+ * the fused leaderboard and the "as of" chip stay honestly fresh. L2-138:
+ * tightened 45s → 30s, the top of Alex's 15-30s "updating before your eyes"
+ * target, so the felt-live table and the chart move together. L2-91: an UPCOMING
+ * event within ~24h of its start also polls, slowly (5 min), so a page left open
+ * transitions countdown → live on its own when the server flips status. Only
+ * near-start open pages poll; everything else returns 0 and swr does not arm a
+ * timer at all.
+ *
+ * Module scope, NOT an inline arrow in the config: identity is a correctness
+ * property for this option. `lib/eventLivePush.ts`'s `makeEventRefreshInterval`
+ * carries the swr source and the production measurement behind that.
+ */
+function conceptRefreshInterval(latest?: { event?: { status?: string | null; start_date?: string | null } | null } | null): number {
+  const status = latest?.event?.status;
+  if (status === "live") return 30000;
+  if (status === "upcoming" && latest?.event?.start_date) {
+    const start = Date.parse(latest.event.start_date);
+    if (!Number.isNaN(start)) {
+      const hoursToStart = (start - Date.now()) / 3_600_000;
+      if (hoursToStart <= 24 && hoursToStart >= -12) return 300000;
+    }
+  }
+  return 0;
+}
+
 export default function EventConceptPage() {
   const params = useParams();
   const router = useRouter();
@@ -122,18 +151,16 @@ export default function EventConceptPage() {
       // L2-91: an UPCOMING event within ~24h of its start also polls slowly (5 min)
       // so a page left open transitions countdown → live on its own when the server
       // flips status — without a manual reload. Only near-start open pages poll.
-      refreshInterval: (latest) => {
-        const status = latest?.event?.status;
-        if (status === "live") return 30000;
-        if (status === "upcoming" && latest?.event?.start_date) {
-          const start = Date.parse(latest.event.start_date);
-          if (!Number.isNaN(start)) {
-            const hoursToStart = (start - Date.now()) / 3_600_000;
-            if (hoursToStart <= 24 && hoursToStart >= -12) return 300000;
-          }
-        }
-        return 0;
-      },
+      // #7621: hoisted to module scope, and that is load-bearing rather than
+      // tidiness. swr keeps `refreshInterval` in its polling effect's dependency
+      // array and clears the pending timeout on cleanup, so an inline arrow — a
+      // new identity every render — restarts the countdown from zero each time
+      // this component re-renders. The promise three lines above ("a page left
+      // open transitions countdown → live on its own") is exactly what that
+      // breaks, and it breaks silently: nothing errors, the page simply never
+      // asks again. Safe to hoist because the callback is a pure function of its
+      // argument and the clock.
+      refreshInterval: conceptRefreshInterval,
     },
   );
 

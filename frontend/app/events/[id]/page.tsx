@@ -25,7 +25,7 @@ import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
   eventFeedIsStalled,
-  eventRefreshInterval,
+  makeEventRefreshInterval,
   pageLiveClaimIsUnbacked,
 } from "@/lib/eventLivePush";
 import LiveAgeStamp, { heroStampIsStale } from "@/components/event/LiveAgeStamp";
@@ -191,6 +191,29 @@ export default function EventPage({ params }: EventPageProps) {
   // the SWR config closes over it and the hook that sets it needs `event`.
   const streamConnectedRef = useRef(false);
 
+  // #7621 — ONE callback for the life of the mount, and that is the whole fix.
+  //
+  // This used to be an inline arrow in the config below. swr keeps
+  // `refreshInterval` in its polling effect's DEPENDENCY ARRAY and clears the
+  // pending timeout on cleanup, so a new identity each render restarted the
+  // timer from zero — and this page re-renders about once a second for its
+  // countdown ring, so the 120s poll never survived to fire. Measured on
+  // production: 3 event fetches in 480s, all three of them the stream-disconnect
+  // handler below, against 30 sibling fetches on the same page. See
+  // `makeEventRefreshInterval` for the swr source and the full measurement.
+  //
+  // `useMemo` with an EMPTY dependency list is correct rather than lazy here:
+  // the callback closes over nothing reactive (status arrives as swr's argument,
+  // liveness through the ref, the cadences are module constants), which is the
+  // precondition the factory documents.
+  const eventPollInterval = useMemo(
+    () => makeEventRefreshInterval(streamConnectedRef, {
+      live: LIVE_REFRESH_INTERVAL,
+      scheduled: SCHEDULED_REFRESH_INTERVAL,
+    }),
+    [],
+  );
+
   const {
     data: event,
     error: eventError,
@@ -221,11 +244,9 @@ export default function EventPage({ params }: EventPageProps) {
       // from `event`, which is what this very call produces, so naming it here
       // would be a use-before-declare. The ref is written just after the hook
       // below, and SWR only ever invokes this after a render has completed.
-      refreshInterval: (data) =>
-        eventRefreshInterval(data?.status, streamConnectedRef.current, {
-          live: LIVE_REFRESH_INTERVAL,
-          scheduled: SCHEDULED_REFRESH_INTERVAL,
-        }),
+      // #7621: a STABLE reference, built above. Inlining the arrow here again
+      // is the bug — see the note on `eventPollInterval`.
+      refreshInterval: eventPollInterval,
       onSuccess: () => setLastRefresh(Date.now()),
     }
   );
