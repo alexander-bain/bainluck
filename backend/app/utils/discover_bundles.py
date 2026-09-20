@@ -79,9 +79,45 @@ GEOPOLITICS_STORY_KEYS = {
 
 # Tokens that must render upper-case in a derived title ("us_2028_election" ->
 # "2028 Election", "ai" -> "AI"). Keep lower-cased keys.
+#
+# ── THE LEAGUE HALF IS THE HOUSE SPELLING, NOT A SECOND OPINION (#5736) ───────
+#
+# `title_word` also cases the SEARCH entity header, which is the reader's own
+# query, so a league missing from this set is served back garbled: `atp` ->
+# `Atp`, `pga` -> `Pga`, `mma` -> `Mma` — the last being Alex's bug report 145
+# (#1938) verbatim. The first half of #5736 stopped `.title()` un-doing a reader
+# who typed `NFL`; this is its named remainder, the reader who typed lower case.
+#
+# The tokens below are not a fresh judgement call about capitalisation. They are
+# the league codes `detect_league` (`futures_categorization.py`) already returns
+# in upper case, so the site spells them this way on every other surface and the
+# search header was the one place that disagreed. The words in that vocabulary
+# that are ENGLISH WORDS rather than acronyms are deliberately left out —
+# `awards`, `boxing`, `rugby` must not be shouted at a reader who types them —
+# and so are the ambiguous short ones: `liv` (LIV Golf, but also Liv/Liverpool),
+# `lol`, `dota`, `europa`. `ncaa`, `psg` and `fiba` are not league codes but are
+# unambiguous and were typed on production; `fiba` and `psg` appear in the logged
+# queries below. Anything added here must be a token no reader could mean as a
+# word.
+#
+# REACH, MEASURED BEFORE WIDENING (2026-09-20, `artifacts-lane1b-411/`) — the
+# after-check on the first half said this set is shared with Discover's bundle
+# titles and so needed measuring rather than a one-line edit. It does not move
+# them: all 27 literal story keys `_story_key` can mint are named in
+# `AUTHORED_STORY_TITLES` or `NEUTRAL_STORY_TITLES`, none contains one of these
+# tokens, and every served title is byte-identical across the change. The golf
+# case the after-check called out by name — `bmw_pga_championship`, whose DERIVED
+# string does move — is the proof rather than the exception: that string is never
+# served, because `story_family_label` cuts the tournament verbatim out of the
+# venue's own name ("BMW PGA Championship", unchanged). Pinned by
+# `test_search_entity_header_is_the_readers_own_words_5736.py`.
 _TITLE_ACRONYMS = {
     "ai", "us", "usa", "uk", "eu", "un", "ipo", "ufo", "ufc", "nba", "wnba",
     "nfl", "mlb", "nhl", "cpi", "ppi", "wti", "ecb", "fbi", "gdp", "tv",
+    # League and governing-body codes — the `detect_league` vocabulary.
+    "afl", "atp", "cfl", "csgo", "epl", "fiba", "icc", "ipl", "lpga", "mls",
+    "mma", "nascar", "ncaa", "ncaab", "ncaaf", "nrl", "nwsl", "pdc", "pga",
+    "psg", "ucl", "wncaab", "wta", "xfl",
 }
 
 # ── A KEY THAT NAMES OUR RANKING IS NOT A NAME FOR THE READER'S SPORT (#6941) ─
