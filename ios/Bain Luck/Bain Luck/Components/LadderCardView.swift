@@ -38,6 +38,51 @@ nonisolated struct LadderRung: Identifiable, Sendable {
     }
 }
 
+/// #7036, fourth arm — the ladder card's badge colour, resolved through the
+/// contrast floor.
+///
+/// The colour this card is handed is drawn as LETTERS in both of the badge's
+/// branches — as the initials themselves when a crest exists but cannot be
+/// fetched (`TeamLogoView.initialsFallback` paints `Text(...).foregroundStyle(color)`),
+/// and as the fill under `Text(abbr).foregroundStyle(.white)` when there is no
+/// crest url at all. For the 146 clubs whose stored `primary_color` is under 3:1
+/// against a white card, both branches produce a blank circle.
+///
+/// **How reachable, measured 2026-09-20 and not inferred from the branches.**
+/// The second branch is currently dead for this defect: on `/api/playoffs/epl`,
+/// `la-liga` and `bundesliga` every logo-less row (Coventry, Hull, Atletico
+/// Madrid, Alaves, Deportivo, Malaga, Racing Santander, M´gladbach, Mainz 05)
+/// serves `primary_color: null` and therefore already takes the default, while
+/// every white-shirted row serves a crest that returns 200. The first branch is
+/// the live one and it is a FAILURE path — a dead CDN, an offline phone, a load
+/// that loses its race. So this makes the app's fallback legible rather than
+/// repairing a card a reader is looking at right now, and anyone quoting it
+/// should quote it that way.
+///
+/// `DS.emeraldDark` (`#059669`, 3.77:1) is the card's OWN existing default — the
+/// value a team with no stored colour already gets — so this is a floor under
+/// current behaviour rather than a new palette. Exposed as a hex because a
+/// `Color` cannot be compared in a test, and the mutant worth killing is a call
+/// site that has quietly gone back to `Color(hex: team.primaryColor)`.
+///
+/// 🪤 **One honest discrepancy, stated rather than papered over.**
+/// `DS.emeraldDark` is spelled `Color(red: 0.02, green: 0.59, blue: 0.40)` and
+/// annotated `// #059669`; those are not the same value — the literal renders
+/// (5, 150, **102**) and the comment says (5, 150, **105**). This takes the
+/// annotated hex, so a *floored* club's badge is 3/255 of blue away from the
+/// badge of a club that never had a colour at all. That is below any reader's
+/// threshold and both clear the floor, and the alternative — redefining
+/// `DS.emeraldDark` from a hex — repaints every other surface that uses it for
+/// a change nobody asked for. Named here so the next person finds it stated
+/// instead of measuring it.
+enum LadderCardTeamColour {
+    static let fallbackHex = "#059669"
+
+    static func badgeHex(_ storedHex: String?) -> String {
+        TeamTextContrast.textHexOnCard(storedHex, fallback: fallbackHex)
+    }
+}
+
 // MARK: - LadderCardView
 
 /// The adopted "2b" bar-ladder card: a team/entity header with a per-rung labeled
@@ -299,7 +344,7 @@ extension LadderCardView {
             title: team.name,
             abbr: team.shortName,
             logoUrl: team.logoUrl,
-            teamColor: team.primaryColor.map { Color(hex: $0) } ?? DS.emeraldDark,
+            teamColor: Color(hex: LadderCardTeamColour.badgeHex(team.primaryColor)),
             rank: rank ?? team.seed,
             subtitle: team.record,
             rungs: rungs,
