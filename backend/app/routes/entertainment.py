@@ -524,6 +524,46 @@ def _build_list(markets: list, limit: int = 12) -> list[dict]:
     return rows[:limit]
 
 
+def _distinct_served_market_ids(*sections) -> set:
+    """Every market id this payload puts on the page, counted once (#7392).
+
+    The hero and the footer both print this count, so it has to mean what a
+    reader would take it to mean: how many markets are on the page. Walking the
+    served structures is what makes that true by construction rather than by a
+    formula somebody has to keep in sync.
+
+    ⚠️ IT WALKS, IT DOES NOT SUM SECTION SIZES. A `market_id` can sit at three
+    depths here: a plain row (`_market_row`), a threshold group's rung
+    (`_group_threshold_markets` nests them under `thresholds[]`), and a theme
+    dict's inner list (`themes["music"]["album_drops"]`). A count that adds up
+    `len()`s misses the grouped rungs entirely and double-counts the rows that
+    two sections share. `top_outcomes` carries no `market_id`, so a ladder is
+    one market however many rungs it draws.
+
+    ⚠️ IT IS NOT A CORPUS COUNT. `themed` holds every market `_classify_theme`
+    accepted — 925 of them on the 2026-09-20 07:25Z bank — and the payload
+    serves 112. Only the arguments are walked, so a bucket the page stopped
+    serving stops being counted the moment it stops being served.
+    """
+    found: set = set()
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            mid = node.get("market_id")
+            if mid is not None:
+                found.add(mid)
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for section in sections:
+        walk(section)
+    return found
+
+
 def _build_music(themed: dict) -> dict:
     music_markets = themed.get("music", [])
     all_rows = []
@@ -818,21 +858,68 @@ async def get_entertainment(db: AsyncSession):
         list(spotlight_eligible), market_row_fn=_cross_source_row_fn
     )
 
-    total = sum(len(v) for v in themed.values())
+    themes = {
+        "music": music,
+        "movies_tv": movies_tv,
+        "tech_culture": {
+            "count": len(themed.get("social_media", [])),
+            "markets": tech_culture_markets,
+        },
+    }
+
+    # #7392: THE HERO COUNTS THE MARKETS THIS PAYLOAD PUTS ON THE PAGE.
+    #
+    # It used to be `sum(len(v) for v in themed.values())` — every bucket
+    # `_classify_theme` accepted, whether or not the payload serves it. Measured
+    # on the served bank 2026-09-20 07:25Z that printed **925** over a page that
+    # renders **112** distinct markets, and it printed it twice (the hero and the
+    # footer read this one key).
+    #
+    # The rule is #6978's, which repaired `/politics` and `/economics`: the hero
+    # names what a reader can reach. That issue recorded this route as unaffected
+    # by its own defect and was right to — those heroes were `len(all_markets)`,
+    # the PRE-GATE pool, so they called rows "active" that the route had already
+    # dropped for reading settled or stale. This total counted no dropped row.
+    # The over-claim here is section EXPOSURE, which is a different gap, and the
+    # sibling fix left it standing.
+    #
+    # ⚠️ NOT `sum(t["count"] for t in themes.values()) + len(cultural_moments)`,
+    # which is where this fix first landed and is wrong by 4.3x. It reads a
+    # section's `count` as the page's own published accounting — true of exactly
+    # one section. `frontend/app/entertainment/page.tsx` renders `.count` in a
+    # single place (line 1301, `TechCultureSidebar`); `music.count` (254) and
+    # `movies_tv.count` (149) are published to NO reader, and those sections
+    # render 34 and 41 rows. That formula printed 473 and 403 of them were
+    # neither rendered nor named. `TestTheBucketCountFormulaIsRefused` is the arm
+    # that keeps it from coming back.
+    #
+    # ⚠️ NOR a new `count` on `cultural_moments`: 472 printed beside 20 reachable
+    # rows restates the same over-claim in a new field, which is what #6978
+    # refused on `/economics`.
+    #
+    # DISTINCT, because the page is allowed to show one market twice and the
+    # reader still reaches one market: `side_markets` appears under both music
+    # and movies_tv, and `trending` and `cross_source` re-surface section rows
+    # (measured: 89 across the theme sections, 109 with the cultural feed —
+    # one overlap — and 112 with trending and cross-source).
+    #
+    # ⚠️ A NEW SERVED LIST MUST BE ADDED TO THIS CALL. The coupling is by
+    # argument, not by reading the returned dict, and that is deliberate: this
+    # runs before the `return` so it cannot count a key the payload drops.
+    # `TestEveryServedListReachesTheCount` walks the response and fails on any
+    # market-bearing list the count never saw.
+    total = len(
+        _distinct_served_market_ids(
+            trending, cross_source, themes, cultural_moments
+        )
+    )
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
         "trending": trending,
         "cross_source": cross_source,
-        "themes": {
-            "music": music,
-            "movies_tv": movies_tv,
-            "tech_culture": {
-                "count": len(themed.get("social_media", [])),
-                "markets": tech_culture_markets,
-            },
-        },
+        "themes": themes,
         "cultural_moments": cultural_moments,
         "by_source": {
             "kalshi": sum(
