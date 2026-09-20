@@ -4110,6 +4110,13 @@ def cap_low_quality_families(items: list[dict], cap: int = 1) -> list[dict]:
     return kept
 
 
+#: How many story-capped surplus items to carry per story (#7426). Sized to the
+#: theme bundler's ``max_items_per_bundle`` (6): a bundle can never seat more
+#: than that, so carrying more would be dead weight. These items are NEVER
+#: served on their own — they exist only to top up a bundle that actually forms.
+STORY_OVERFLOW_RESERVE = 6
+
+
 def diversify_quality_families(
     items: list[dict],
     *,
@@ -4121,6 +4128,32 @@ def diversify_quality_families(
     This is intentionally separate from low-quality suppression: a hot story
     can still have several cards, but not enough near-duplicates to consume the
     whole first screen.
+
+    THE STORY CAP IS A SLOT BUDGET, NOT A MEMBERSHIP BUDGET (#7426)
+    ---------------------------------------------------------------
+    Every per-story cap here was set when N same-story survivors meant N cards
+    on the page. They no longer do: ``assemble_story_theme_bundles`` folds an
+    eligible cluster into ONE card that seats up to six. So for a story that
+    folds, this cap stopped protecting slots and started deleting distinct
+    questions from a card that had room for them — measured on production
+    2026-09-20, ``story:middle_east_conflict`` (cap 4) served a four-member
+    "Middle East" bundle in one slot while ~25 distinct eligible questions
+    competed for those four seats, including the cohort's second-highest-volume
+    market (408,757 in 24h), which no Discover reader could reach at all.
+
+    The fix is not a bigger dial. If the fold ever fails to form, a raised cap
+    puts N same-story cards back on the page — the #1091 class. Instead the
+    surplus is carried OUT OF BAND on the survivors under
+    ``_story_overflow_members`` and spent only inside a bundle that actually
+    forms. The returned list is unchanged, so no slot can move; a story that
+    does not fold behaves exactly as it does today. Same shape as the
+    ``_grouped_members`` reserve ``_dedupe_futures_by_group_id`` already keeps,
+    and private keys are prefix-stripped before serving.
+
+    Only the STORY cap feeds the reserve. An item the EXACT-family cap rejects is
+    the same question in the same wording, which is what that cap exists to
+    remove; reviving it into a bundle would put two phrasings of one question on
+    one card.
     """
     sorted_items = sorted(
         items,
@@ -4198,6 +4231,9 @@ def diversify_quality_families(
                 return value
         return story_family_cap
 
+    story_overflow: dict[str, list[dict]] = {}
+    story_kept: dict[str, list[dict]] = {}
+
     for item in sorted_items:
         family = item.get("_quality_family_key")
         story = item.get("_quality_story_key")
@@ -4211,13 +4247,31 @@ def diversify_quality_families(
             count = story_counts.get(story, 0)
             cap = min(story_family_cap, _cap_for(story))
             if count >= cap:
+                # #7426: the cap is a SLOT budget, and a story that folds into one
+                # theme bundle spends one slot however many members it carries. So
+                # the surplus is remembered rather than deleted — see
+                # STORY_OVERFLOW_RESERVE. It does NOT go back in `kept`: the
+                # returned list, and therefore every ranking, first-page and slot
+                # decision downstream, is byte-identical to before this block.
+                overflow = story_overflow.setdefault(story, [])
+                if len(overflow) < STORY_OVERFLOW_RESERVE:
+                    overflow.append(item)
                 continue
 
         if family:
             exact_counts[family] = exact_counts.get(family, 0) + 1
         if story:
             story_counts[story] = story_counts.get(story, 0) + 1
+            story_kept.setdefault(story, []).append(item)
         kept.append(item)
+
+    # Attach each story's surplus to EVERY survivor of that story, sharing one
+    # list object. Not just the top one: a later pass may drop any single item,
+    # and hanging the reserve off one carrier would make its survival the thing
+    # that decides whether the bundle is complete.
+    for story, overflow in story_overflow.items():
+        for survivor in story_kept.get(story, ()):
+            survivor["_story_overflow_members"] = overflow
 
     return kept
 

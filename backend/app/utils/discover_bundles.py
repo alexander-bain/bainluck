@@ -1354,6 +1354,45 @@ def fold_same_question_cards(items: list[dict[str, Any]]) -> list[dict[str, Any]
     return kept
 
 
+def _with_story_overflow(
+    members: list[dict[str, Any]],
+    story_key: str,
+) -> list[dict[str, Any]]:
+    """Append the upstream story cap's surplus to a cluster's ranked members (#7426).
+
+    ``diversify_quality_families`` hangs the items its per-story cap rejected off
+    every survivor of that story under ``_story_overflow_members`` (one shared
+    list, so losing any single carrier does not lose the reserve). They are not
+    in ``items`` and therefore cannot be emitted as standalone cards; the only
+    thing they can do is fill seats in a bundle that forms.
+
+    Order is preserved — ranked members first, then the surplus in its own ranked
+    order — so the slice to ``max_items_per_bundle`` still keeps the strongest,
+    and a member already present is never added twice.
+    """
+    seen = {_item_id(item) for item in members}
+    topped = list(members)
+    for item in members:
+        for surplus in item.get("_story_overflow_members") or ():
+            if not isinstance(surplus, dict):
+                continue
+            surplus_id = _item_id(surplus)
+            if surplus_id in seen:
+                continue
+            # The carriers ARE this story's survivors, so this holds by
+            # construction — asserted anyway because the two sides key on
+            # different functions (`_quality_story_key` upstream,
+            # `_theme_story_key` here) and a silent cross-story seat is the one
+            # way this could put an unrelated question on the card.
+            if _theme_story_key(surplus) != story_key:
+                continue
+            if not _theme_member_eligible(surplus):
+                continue
+            seen.add(surplus_id)
+            topped.append(surplus)
+    return topped
+
+
 def assemble_story_theme_bundles(
     items: list[dict[str, Any]],
     *,
@@ -1394,6 +1433,17 @@ def assemble_story_theme_bundles(
     pack the queue named as its headline payoff. Keeping the default at 2
     preserves current behaviour exactly and lets every newly-eligible key fold.
     Raising it is a one-argument change once the upstream caps are revisited.
+
+    THE CAPS ARE NO LONGER THE BINDING CONSTRAINT ON MEMBERSHIP (#7426)
+    -------------------------------------------------------------------
+    They still decide whether a cluster reaches ``min_items`` and folds at all —
+    everything above stands. What changed is what happens to the tail: the caps
+    now hand their surplus down under ``_story_overflow_members`` and
+    :func:`_with_story_overflow` spends it here, so a bundle that forms can seat
+    up to ``max_items_per_bundle`` distinct questions rather than only as many as
+    the slot budget let through. ``story:middle_east_conflict`` was serving four
+    members in one slot while ~25 eligible questions competed for those four
+    seats. The reserve cannot create a bundle, only enlarge one.
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for item in items:
@@ -1409,6 +1459,12 @@ def assemble_story_theme_bundles(
     for story_key, members in groups.items():
         if len(members) < min_items:
             continue
+        # #7426: top up from the upstream story cap's surplus. Deliberately AFTER
+        # the `min_items` test on the ranked members, so the reserve can only
+        # enlarge a bundle that was going to form anyway — it can never conjure
+        # one, which is what keeps the cap-1 and cap-2 dials (`drake_iceman`,
+        # `russia_ukraine`, `ai`) meaning what they mean today.
+        members = _with_story_overflow(members, story_key)
         # The same question from two venues is ONE row (#4446). Folded BEFORE the
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
