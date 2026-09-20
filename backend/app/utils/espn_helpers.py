@@ -642,6 +642,60 @@ def espn_identity_corresponds(team_name, existing_alternate_names, espn_team) ->
     return any(_normalize_name(o) == _normalize_name(city) for o in ours)
 
 
+def espn_payload_renames_the_stored_id(team_name, espn_team) -> bool:
+    """Is this payload strong enough to OVERWRITE an ESPN id the row already has?
+
+    `espn_identity_corresponds` answers a different question: may a payload
+    *fill* an identity the row does not have. This one decides whether a payload
+    may *replace* one it does, and it is deliberately the stricter of the two —
+    the row is handing over its anchor, so the evidence has to be an identity,
+    not a resemblance. Exact normalized equality against a field that NAMES A
+    CLUB; no city arm, no aliases, no token overlap.
+
+    ═══ WHY NOT JUST REUSE `espn_identity_corresponds` ═══
+
+    Because it is measurably unsafe on this arm, and unsafe in exactly the place
+    #6974 has already been burnt. Run on the real helpers, 2026-09-20:
+
+        espn_identity_corresponds('Los Angeles C', None, <Lakers, id 13>) -> True
+        espn_payload_renames_the_stored_id('Los Angeles C', <Lakers, id 13>)-> False
+
+    `Los Angeles C` is a #6974 FRAGMENT row whose stored id `12` is the Clippers
+    and is CORRECT. `normalize_name` deletes a trailing `c` (it is in
+    `_RESERVE_SUFFIX_RE`), so the row normalizes to `los angeles`, which
+    token-overlaps the Lakers at 0.5 and is not a "rival" of them by any token
+    test — the loose predicate says yes and would hand the Clippers' row the
+    Lakers' id. Same shape for `Los Angeles G`/`LA Galaxy`. Strict equality
+    refuses all four fragment pairs, because `los angeles` is not `los angeles
+    lakers` and is not `lakers`.
+
+    ═══ WHY NOT `alternate_names` ═══
+
+    `upsert_team` WRITES `alternate_names` from the ESPN payload, so on a row
+    that has already taken a foreign identity every alias on it is the other
+    club's. Production, 2026-09-20: team 839 `Wisconsin Badgers` carries
+    `['Fighting Irish', 'Notre Dame Fighting Irish', 'Notre Dame']` and not one
+    Wisconsin alias. Letting the aliases vouch would make a Notre Dame payload
+    correspond to the Badgers — the corrupted field arbitrating its own
+    corruption. `team.name` is the ONE identity field `upsert_team` never
+    writes, which is the whole reason it is the witness here.
+
+    FAIL-CLOSED ON SILENCE, like its sibling: no name on either side is not
+    agreement. The cost of a wrong refusal is the status quo (a stale badge);
+    the cost of a wrong acceptance is a correct anchor destroyed.
+    """
+    ours = _normalize_name(team_name or "")
+    if not ours:
+        return False
+    return any(
+        _normalize_name(value) == ours
+        for value in (
+            getattr(espn_team, field, None) for field in _ESPN_CLUB_NAME_FIELDS
+        )
+        if value
+    )
+
+
 async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, stats=None):
     """Create or update a Team record with ESPN enrichment data.
 
@@ -757,11 +811,66 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
     # with mismatched ESPN data (e.g., from a wrong event-level match).
     # If the team already has an espn_id that differs from this ESPN team,
     # don't apply any ESPN data — the existing ID is likely correct.
+    #
+    # …UNLESS THE PAYLOAD NAMES THIS CLUB OUTRIGHT (#7419). "Likely correct" was
+    # an assumption with nothing behind it, and where it is wrong it is the rail
+    # that SEALS the row: the stored id is the only thing consulted, so the one
+    # payload that could fix it is the one this line throws away. Two clubs
+    # cannot share an ESPN id, so a payload whose own club name IS this row's
+    # name, arriving under a different id, is proof the stored id is the wrong
+    # one. ESPN is the authority for the event graph (D27); it wins.
+    #
+    # ═══ MEASURED, PRODUCTION 2026-09-20 ═══
+    # 555 team rows hold an `espn_id` across the eight leagues ESPN publishes a
+    # team directory for. Dereferencing each row's id in that directory and
+    # comparing against the row's own NAME: 538 agree, 11 hold an id the
+    # directory does not list (EPL 5, MLB 2, MLS 2, NCAAF 1, NCAAB 1 — untouched
+    # here, the payload never corresponds so this arm cannot reach them), 4 are
+    # the accent/fragment rows whose ids are right (`CF Montreal`/`CF Montréal`,
+    # `Los Angeles C`/`LA Clippers`, `Los Angeles G`/`LA Galaxy`), and **2 wear
+    # another club's identity**:
+    #
+    #   837 `Ohio State Buckeyes`  espn_id 326 -> Texas State Bobcats
+    #   839 `Wisconsin Badgers`    espn_id  87 -> Notre Dame Fighting Irish
+    #
+    # Both serve the other club's crest, colours, abbreviation and location on
+    # their team page, and both carry ONLY the other club's `alternate_names`,
+    # so search reaches them under the wrong club too. They are #6215's residue:
+    # that fix measured and closed the ID-LESS cohort (1,077 rows, ~1,010
+    # borrowed), and a row that already holds a foreign id was never in it.
+    #
+    # THE REFUSAL IS UNCHANGED FOR EVERY OTHER SHAPE. A wrong event-level match
+    # hands us a payload for a club this row is not, its names do not equal this
+    # row's, and we return exactly as before — that protection is the reason
+    # this guard exists and it is not being traded away. What changes is only
+    # that the id stops being a veto it never earned.
     if team.espn_id and team.espn_id != espn_team.espn_id:
-        # ESPN ID mismatch — skip all ESPN data updates
+        if not espn_payload_renames_the_stored_id(team_name, espn_team):
+            # ESPN ID mismatch — skip all ESPN data updates
+            if stats is not None:
+                stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
+            return team
+
+        logger.warning(
+            "ESPN id corrected for team %r (sport_id=%s): stored %r is another "
+            "club's id, payload names this club outright as %r under %r",
+            team_name,
+            sport_id,
+            team.espn_id,
+            espn_team.display_name,
+            espn_team.espn_id,
+        )
         if stats is not None:
-            stats["teams_upserted"] = stats.get("teams_upserted", 0) + 1
-        return team
+            stats["teams_espn_id_corrected"] = (
+                stats.get("teams_espn_id_corrected", 0) + 1
+            )
+        # The aliases go with the id. They were written FROM the foreign payload
+        # (the block at the bottom of this function), so unioning the correct
+        # club's names into them would leave `Notre Dame` a searchable alias of
+        # `Wisconsin Badgers` forever. A correction replaces; only a fill unions.
+        correcting_a_foreign_id = True
+    else:
+        correcting_a_foreign_id = False
 
     # The same guard for a row that has no ESPN id to disagree with (#6215).
     # Above, the id is the witness; here there is none, so the NAMES are —
@@ -814,8 +923,12 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
     for n in [espn_team.display_name, espn_team.short_name, espn_team.nickname, espn_team.name]:
         if n and n != team_name:
             alt_names.add(n)
-    if alt_names:
-        existing = set(team.alternate_names or [])
+    # A correction REPLACES; only a fill unions. Written so that a payload
+    # carrying no alias at all still clears the foreign ones — `if alt_names:`
+    # alone would leave `Notre Dame` on the Badgers whenever ESPN happened to
+    # send nothing to put in its place.
+    existing = set() if correcting_a_foreign_id else set(team.alternate_names or [])
+    if alt_names or correcting_a_foreign_id:
         team.alternate_names = list(existing | alt_names)
 
     if stats is not None:
