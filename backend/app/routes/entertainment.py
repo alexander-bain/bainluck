@@ -818,53 +818,21 @@ async def get_entertainment(db: AsyncSession):
         list(spotlight_eligible), market_row_fn=_cross_source_row_fn
     )
 
-    themes = {
-        "music": music,
-        "movies_tv": movies_tv,
-        "tech_culture": {
-            "count": len(themed.get("social_media", [])),
-            "markets": tech_culture_markets,
-        },
-    }
-
-    # #7392: THE HERO COUNTS WHAT THE PAGE CAN REACH — the same rule #6978 put
-    # on `/politics` and `/economics`, now with the one clause this page needs.
-    #
-    # It used to be `sum(len(v) for v in themed.values())`, which is the ACCEPTED
-    # set and so counted no dropped row — that part was honest, and it is why
-    # #6978 correctly recorded this route as unaffected by ITS defect. The
-    # over-claim here is a different one: `_classify_theme` files markets into
-    # more buckets than this payload serves counts for. Measured on the served
-    # bank 2026-09-20 07:25Z the hero said **925** while the three sections above
-    # summed to **453** (music 254 + movies_tv 149 + tech_culture 50). The other
-    # 472 — `awards` + `celebrity` + `viral` + `other` — reach a reader only
-    # through `cultural_moments`, and `CulturalMoments` renders that list and
-    # prints NO count, so the page tells the reader about exactly the rows in it.
-    #
-    # ⚠️ NOT `sum(t["count"] for t in themes.values())` alone, which is the
-    # mechanical port of #6978 and UNDER-counts here: it would print 453 and stop
-    # counting the cultural rows this page does render. `/economics`'s `other`
-    # bucket is served by nothing at all, which is why summing sections was the
-    # whole answer there; this route's cultural buckets are served, just capped.
-    #
-    # ⚠️ AND NOT a new `count` on `cultural_moments`. Publishing 472 beside 20
-    # reachable rows restates the same over-claim in a new field — the thing
-    # #6978 refused on `/economics` — so the honest number is the rows served.
-    #
-    # THE BOUNDARY OF THIS CLAIM, so nobody "finishes the job" by mistake: a
-    # section `count` is its BUCKET size, not its rendered row count (music says
-    # 254 and renders twelve), and that is deliberate — `TechCultureSidebar`
-    # prints "{count} markets" to the reader, so the bucket size is the page's
-    # own published accounting. `cultural_moments` publishes no such number, so
-    # for that one the rows ARE the accounting.
-    total = sum(t["count"] for t in themes.values()) + len(cultural_moments)
+    total = sum(len(v) for v in themed.values())
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
         "trending": trending,
         "cross_source": cross_source,
-        "themes": themes,
+        "themes": {
+            "music": music,
+            "movies_tv": movies_tv,
+            "tech_culture": {
+                "count": len(themed.get("social_media", [])),
+                "markets": tech_culture_markets,
+            },
+        },
         "cultural_moments": cultural_moments,
         "by_source": {
             "kalshi": sum(
