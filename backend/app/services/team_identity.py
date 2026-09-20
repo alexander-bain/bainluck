@@ -33,11 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import Team, TeamIdentityMapping
-from app.utils.name_normalization import (
-    names_a_different_club,
-    normalize_name,
-    normalize_team_name,
-)
+from app.utils.name_normalization import normalize_name, normalize_team_name
 
 logger = logging.getLogger(__name__)
 
@@ -285,11 +281,6 @@ class TeamIdentityService:
         if not source_id and not source_name:
             return  # Nothing to register
 
-        if await self._espn_mapping_names_another_club(
-            session, team_id, source, source_id, source_name
-        ):
-            return
-
         # Build the values dict
         values = {
             "team_id": team_id,
@@ -329,83 +320,6 @@ class TeamIdentityService:
                 },
             )
             await session.execute(stmt)
-
-    async def _espn_mapping_names_another_club(
-        self,
-        session: AsyncSession,
-        team_id: int,
-        source: str,
-        source_id: Optional[str],
-        source_name: Optional[str],
-    ) -> bool:
-        """Would this ESPN registration file one club's id under another club's row?
-
-        #7441. THE AUTO-REGISTER IS WHY THIS DOOR NEEDS A GUARD AT ALL. A fuzzy
-        hit at step 3 or 4 of :meth:`resolve_team` is written here, and step 2
-        reads it back as an EXACT match forever after — so one wrong hit is not
-        one wrong answer, it is a permanent one. #1918's repair rail says the
-        same thing from the other side: *"these very rows are written by live
-        traffic"*, which is why draining the table has never ended the defect.
-
-        THE WITNESS IS ALREADY IN THE ROW WE ARE POINTING AT. Two clubs cannot
-        share an ESPN id, so an ESPN ``source_id`` that disagrees with the target
-        team's own ``espn_id`` means one of the two is wrong — the same axiom
-        #7419 shipped in ``upsert_team``. Which one is wrong is decided by the
-        NAMES, and only a positive answer refuses:
-
-        * the payload names a DIFFERENT club than this row ⇒ the mapping is the
-          lie. Refuse it.
-        * the payload names THIS row's own club ⇒ the mapping is right and the
-          row's stored ``espn_id`` is the wrong one. That is #7419's case,
-          already corrected forward in ``upsert_team``, and refusing here would
-          block the mapping that becomes correct the moment it lands.
-
-        TWO WITNESSES, NEVER ONE. The id disagreeing is not enough (it is
-        #7419's shape too) and the names disagreeing is not enough (a club
-        legitimately has spellings a name matcher misses). Both, or nothing.
-
-        ═══ MEASURED, PRODUCTION 2026-09-20 ═══
-        1,251 ESPN mappings. 1,177 carry an id that agrees with the team row and
-        never reach the name test; 29 point at a row with no stored id to
-        disagree with. Of the 45 that contradict, this refuses **38** — every
-        one a genuine cross-club claim (``Toronto Maple Leafs`` -> Montreal
-        Canadiens, ``Coventry City``/``Hull City`` -> Manchester City,
-        ``Manchester United`` -> Newcastle United, ``Real Betis`` -> Real
-        Madrid, ``BYU Cougars`` -> Houston Cougars) — and admits **7**:
-        ``Ohio State Buckeyes``/``Ohio State Buckeyes`` and ``Wisconsin
-        Badgers``/``Wisconsin Badgers`` (#7419's two rows), plus the alias
-        shapes ``Army Black Knights``/``Army Knights``, ``Hampton Lady
-        Pirates``/``Hampton Pirates``, ``Mississippi State
-        Bulldogs``/``Mississippi State``, ``St. John's Red Storm``/``St.
-        John's`` and ``Richmond Spiders``/``Richmond Spiders``.
-
-        A refusal writes nothing and returns nothing to the caller: the only
-        caller that reads a value from this method is this one. The resolver
-        still returns whatever team it resolved — the wrong bind of the moment
-        is a different defect — but it is no longer cached as an identity.
-        """
-        if source != "espn" or not source_id:
-            return False
-
-        team = await session.get(Team, team_id)
-        stored = (getattr(team, "espn_id", None) or "").strip() if team else ""
-        if not stored or stored == str(source_id).strip():
-            return False
-
-        if not names_a_different_club(source_name, getattr(team, "name", None)):
-            return False
-
-        logger.warning(
-            "ESPN identity registration refused (#7441): source_id=%r names %r, "
-            "but team_id=%s is %r and holds espn_id=%r — two clubs cannot share "
-            "one ESPN id, so this mapping would file one club under the other",
-            source_id,
-            source_name,
-            team_id,
-            getattr(team, "name", None),
-            stored,
-        )
-        return True
 
     async def resolve_from_kalshi_ticker(
         self,

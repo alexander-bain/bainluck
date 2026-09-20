@@ -3,12 +3,6 @@ import SwiftUI
 nonisolated struct TournamentHeroCard: View {
     let tournament: GolfTournamentData
 
-    /// The instant the round strip is read against, captured when the card is
-    /// built. Defaulted, so no call site passes it; a guard passes it because
-    /// the alternative is asserting against whatever today happens to be, which
-    /// is a test that changes its mind four times a tournament (gotcha #44).
-    var now: Date = Date()
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
@@ -108,21 +102,12 @@ nonisolated struct TournamentHeroCard: View {
 
     /// Determine the current round number based on tournament dates.
     /// Returns 1-4 based on which day of the tournament we're in, or nil if unknown.
-    ///
-    /// Counted in whole calendar days from the day `start_date` NAMES, not in
-    /// elapsed hours from the UTC midnight it is written as (#6666). The old
-    /// arithmetic subtracted two instants, so west of UTC it rolled over at
-    /// 17:00 local: R1 lit the evening before the tournament began, and every
-    /// round afterwards changed seven hours early — beside a date range that
-    /// was itself a day out, so the two wrongs agreed and neither looked like a
-    /// bug. `tournamentRoundNumber` reads the reader's own calendar for "today",
-    /// which is the thing a round number is actually about, and holds the rule
-    /// where a guard can state the instant it is asking about — inside this
-    /// body, `Date()` can only be tested against whatever today happens to be.
-    ///
-    /// `roundCount` defaults to the four rounds `roundProgressView` draws.
-    var currentRound: Int? {
-        tournamentRoundNumber(start: tournament.startDate, now: now)
+    private var currentRound: Int? {
+        guard let startDate = parseFlexibleDate(tournament.startDate) else { return nil }
+        let now = Date()
+        let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: now).day ?? 0
+        guard daysSinceStart >= 0 && daysSinceStart < 4 else { return nil }
+        return daysSinceStart + 1
     }
 
     @ViewBuilder
@@ -144,7 +129,7 @@ nonisolated struct TournamentHeroCard: View {
         }
     }
 
-    var formattedDateRange: String? {
+    private var formattedDateRange: String? {
         // Uses the shared acronym/ISO-aware formatter so full ISO timestamps
         // ("2026-09-24T00:00:00+00:00") render as "Sep 24-27", never raw.
         formatDateRange(start: tournament.startDate, end: tournament.endDate)

@@ -48,7 +48,6 @@ import {
   movementWindowLabel,
   noPricedOutcomesNote,
   partitionOutcomesByPrice,
-  pickChartSeedOutcomes,
   pickHeroOutcome,
   sortFuturesOutcomes,
 } from "@/lib/futuresDetailDisplay";
@@ -379,17 +378,18 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     if (didInitSelection.current) return;
     if (!market?.outcomes || market.outcomes.length === 0) return;
 
-    // #7439 — the seed rule moved into `pickChartSeedOutcomes` so it could be
-    // asserted directly; while it was inline the only available test was a
-    // source grep, which cannot tell a correct filter from an inverted one.
-    // Behaviour on settled markets is unchanged (L2-156 Item 2); on a LIVE,
-    // non-mutually-exclusive field it no longer seeds a row already graded won,
-    // which is what drew a flat 100% line across an open market's trend.
-    const seeds: FuturesOutcome[] = pickChartSeedOutcomes(
-      market.outcomes,
-      market.status === "resolved",
-      market.mutually_exclusive,
+    const byProb = [...market.outcomes].sort(
+      (a, b) => (b.probability ?? 0) - (a.probability ?? 0)
     );
+    const settled = market.status === "resolved";
+    let seeds: FuturesOutcome[];
+    if (settled) {
+      const winner = market.outcomes.find((o) => o.is_winner === true) ?? byProb[0];
+      const runnerUp = byProb.find((o) => o.id !== winner.id);
+      seeds = runnerUp ? [winner, runnerUp] : [winner];
+    } else {
+      seeds = byProb.slice(0, 3);
+    }
 
     // Prefer ids that have history rows. If history hasn't loaded yet, fall back to
     // the computed seed — the effect re-runs when historyOutcomes arrives.
@@ -404,7 +404,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       didInitSelection.current = true;
       setSelectedOutcomes(new Set(seedIds));
     }
-  }, [market?.outcomes, market?.status, market?.mutually_exclusive, historyOutcomes]);
+  }, [market?.outcomes, market?.status, historyOutcomes]);
 
   // #883: the clarification that EXPLAINS the blend line's movement (#871-style,
   // deterministic from opening vs current — no per-source detail, blend-only).
@@ -572,18 +572,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // the fallback means it is frequently not a winner at all; the old name read as
   // a guarantee the value never made, and every misuse below started by trusting it.
   const resolvedFeatured = isResolved ? pickHeroOutcome(market.outcomes, leader, true) : null;
-  // #7439 — on a LIVE, non-mutually-exclusive field the hero features the live
-  // leader, not a row already graded won (which sits at 1.0 and wins the sort
-  // forever). `mutually_exclusive` is passed through rather than read inside the
-  // helper because the mutex half of that population must NOT move — see the
-  // fork documented on `pickHeroOutcome`. `resolvedFeatured` above passes a
-  // literal `true` and is unaffected.
-  const heroOutcome = pickHeroOutcome(
-    market.outcomes,
-    leader,
-    isResolved,
-    market.mutually_exclusive,
-  );
+  const heroOutcome = pickHeroOutcome(market.outcomes, leader, isResolved);
   // #6301 — the GRADE, asked for BY NAME through the one helper that owns the test.
   // `gradedWinner` returns the featured row only when `is_winner === true`, and null
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079

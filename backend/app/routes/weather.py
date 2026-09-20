@@ -1069,39 +1069,19 @@ async def get_cities(db: AsyncSession):
         data_is_celsius = bool(re.search(r"°C\b|degrees?\s*C\b|celsius", all_labels, re.I))
         data_is_fahrenheit = bool(re.search(r"°F\b|degrees?\s*F\b|fahrenheit", all_labels, re.I))
 
-        # ONE unit decision, and BOTH the mode and the bucket labels follow it
-        # (#3663). It used to convert only the mode: Los Angeles served
-        # `unit: "F"` and `mode: 91.4` over a ladder still labelled
-        # "27°C or below" … "37°C or higher", which is not merely mislabelled —
-        # a reader cannot tell which scale the modal 46% belongs to. Deciding
-        # here and converting in one place is the point; a second pass over the
-        # labels further down is a pass that can be skipped again.
-        needs_conversion = (
-            expected_unit == "F" and data_is_celsius and not data_is_fahrenheit
-        ) or (expected_unit == "C" and data_is_fahrenheit and not data_is_celsius)
+        if expected_unit == "F" and data_is_celsius and not data_is_fahrenheit:
+            if mode_val is not None:
+                mode_val = round(mode_val * 9 / 5 + 32, 1)
+        elif expected_unit == "C" and data_is_fahrenheit and not data_is_celsius:
+            if mode_val is not None:
+                mode_val = round((mode_val - 32) * 5 / 9, 1)
 
         # Heuristic fallback: if no unit marker in labels and value is
         # implausibly low for Fahrenheit (< 40 in a warm US city in spring/summer),
         # likely Celsius data
-        if (
-            expected_unit == "F"
-            and not data_is_celsius
-            and not data_is_fahrenheit
-            and mode_val is not None
-            and mode_val < 40
-            and city_id in ("la", "miami", "phoenix", "houston", "dallas", "austin", "san_antonio")
-        ):
-            needs_conversion = True
-
-        if needs_conversion:
-            if mode_val is not None:
-                mode_val = _convert_temp_value(mode_val, expected_unit)
-            # Labels carrying no degree marker at all (the heuristic branch
-            # above) are left alone: with no marker there is nothing asserting
-            # a scale to contradict, and rewriting free text on a guess is how
-            # a non-temperature number gets converted.
-            for d in dist:
-                d["label"] = _convert_temp_label(d["label"], expected_unit)
+        if expected_unit == "F" and not data_is_celsius and not data_is_fahrenheit:
+            if mode_val is not None and mode_val < 40 and city_id in ("la", "miami", "phoenix", "houston", "dallas", "austin", "san_antonio"):
+                mode_val = round(mode_val * 9 / 5 + 32, 1)
 
         unit = expected_unit
 
@@ -1127,59 +1107,6 @@ async def get_cities(db: AsyncSession):
         })
 
     return cities
-
-
-# A bucket's temperatures, with the degree marker that says which scale they
-# are on. The span form is matched first so "60-65°F" converts as one bound
-# pair rather than as a loose number followed by a marked one.
-_TEMP_SPAN_RE = re.compile(
-    r"(-?\d+(?:\.\d+)?)(\s*[-–]\s*)(-?\d+(?:\.\d+)?)\s*°([CF])", re.I
-)
-_TEMP_POINT_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*°([CF])", re.I)
-
-
-def _convert_temp_value(value: float, to_unit: str) -> float:
-    """Convert a temperature into `to_unit`, rounded the way `mode` is."""
-    if to_unit == "F":
-        return round(value * 9 / 5 + 32, 1)
-    return round((value - 32) * 5 / 9, 1)
-
-
-def _format_temp(value: float) -> str:
-    """One decimal, and no trailing '.0' — 91.4 stays 91.4, 32.0 reads 32."""
-    rounded = round(value, 1)
-    return str(int(rounded)) if rounded == int(rounded) else str(rounded)
-
-
-def _convert_temp_label(label: str, to_unit: str) -> str:
-    """Rewrite every marked temperature in `label` into `to_unit`.
-
-    Only the numbers are converted and only where the label itself says which
-    scale they are on; everything else survives byte for byte. That is
-    deliberate — the bound words are the contract. "27°C or below" is an OPEN
-    tail, and a converter that emitted "80.6°F" alone would move the 0.2% from
-    "everything at or under 27°C" to a single point. Likewise "60-65°F" must
-    stay a pair, not collapse to one bound.
-
-    A temperature already in `to_unit` is returned untouched, which also makes
-    this safe to run twice over a span the point pattern sees again.
-    """
-
-    def _span(m: re.Match) -> str:
-        low, separator, high, unit = m.group(1), m.group(2), m.group(3), m.group(4).upper()
-        if unit == to_unit:
-            return m.group(0)
-        low_conv = _format_temp(_convert_temp_value(float(low), to_unit))
-        high_conv = _format_temp(_convert_temp_value(float(high), to_unit))
-        return f"{low_conv}{separator}{high_conv}°{to_unit}"
-
-    def _point(m: re.Match) -> str:
-        value, unit = m.group(1), m.group(2).upper()
-        if unit == to_unit:
-            return m.group(0)
-        return f"{_format_temp(_convert_temp_value(float(value), to_unit))}°{to_unit}"
-
-    return _TEMP_POINT_RE.sub(_point, _TEMP_SPAN_RE.sub(_span, label))
 
 
 def _extract_sort_temp(label: str) -> float:

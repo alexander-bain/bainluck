@@ -100,31 +100,6 @@ enum CalendarDeadline {
         return (y, mo, d)
     }
 
-    /// The year/month/day a wire value is DISPLAYED as: its declared day when it
-    /// is a calendar date, and the reader's own calendar day when it is a real
-    /// instant. `nil` when the value is absent or unreadable.
-    ///
-    /// ``format(_:style:localZone:)`` answers "what does this say"; this answers
-    /// "which day is that", for a caller that has to reason about the day rather
-    /// than print it — comparing two ends of a range for the same month
-    /// (`formatDateRange`), or counting days since a tournament began
-    /// (`backendDayOffset`). Both questions must be settled by the SAME
-    /// discriminator that chooses the branch in `format`, or a surface can
-    /// compare two days in one calendar and print them from another.
-    ///
-    /// - Parameter localZone: the zone the INSTANT branch is read in. The
-    ///   declared-day branch ignores it by construction, as in `format`.
-    static func displayDay(_ raw: String?, localZone: TimeZone = .current) -> (year: Int, month: Int, day: Int)? {
-        guard let raw else { return nil }
-        if let declared = declaredDay(raw) { return declared }
-        guard let date = raw.asDate else { return nil }
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = localZone
-        let c = cal.dateComponents([.year, .month, .day], from: date)
-        guard let y = c.year, let mo = c.month, let d = c.day else { return nil }
-        return (y, mo, d)
-    }
-
     /// Render a deadline for display, or `nil` when the value cannot be read.
     ///
     /// - Parameter localZone: the zone the INSTANT branch renders in. Defaults to

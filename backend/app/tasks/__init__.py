@@ -830,10 +830,6 @@ _HEAVY_KEEP_ON_BACKGROUND = {
     # rather than games, filling the venue price history the futures sampler
     # cannot see between its ~78-minute readings.
     "app.tasks.fill_futures_chart_series",
-    # #7351 — the generic-market sibling: ONE named market per call, dispatched
-    # by a reader that just served a thin chart. A paced network fetch, so it
-    # must never reach the two `heavy` slots the calibration lane lives on.
-    "app.tasks.fill_generic_market_history",
     # live/039 — the one-time 30-day drain. Same family again, and the longest
     # runner of the three: re-triggered until it reports a TERMINAL verdict —
     # `drained`, or `drained_with_failures` when it gave up on events the venue
@@ -1651,29 +1647,6 @@ def fill_futures_chart_series(self, market_ids=None, limit: int = 25, dry_run: b
     return _tracked_run(
         "futures_chart_series",
         run_futures_chart_series_fill(market_ids, limit=limit, dry_run=dry_run),
-    )
-
-
-@celery_app.task(bind=True, soft_time_limit=240, time_limit=300, name="app.tasks.fill_generic_market_history")
-def fill_generic_market_history(self, market_ids=None, dry_run: bool = False):
-    """#7351: an ORDINARY market's chart draws the venue history our polls missed.
-
-    PILLAR: TRUTH. `futures_odds_snapshots` is a sampler; a quiet Kalshi binary
-    is polled every 1-2 hours and the specimen (market 59165099) served ONE
-    observation in seven days while Kalshi's own hourly candlesticks held ten.
-    `fill_futures_chart_series` fetches that history already — for concept
-    pages, keyed by outcome NAME and blended across venues, which is unsafe for
-    a single question (every binary has a "Yes"). This fills the identity-bound
-    sibling cache the two generic chart readers consume.
-
-    NAMED MARKETS ONLY, at most `MAX_MARKETS_PER_TASK`. There is no bare mode and
-    no beat entry: the only dispatcher is `routes/futures.py`, behind a
-    per-market claim and an hourly site-wide budget. Writes Redis only.
-    """
-    from app.tasks.generic_market_history_fill import run_generic_market_history_fill
-    return _tracked_run(
-        "generic_market_history",
-        run_generic_market_history_fill(market_ids, dry_run=dry_run),
     )
 
 

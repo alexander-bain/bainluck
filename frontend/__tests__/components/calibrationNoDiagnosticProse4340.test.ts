@@ -30,7 +30,6 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { compareMatchedBuckets, MatchedBucketInput } from "@/lib/calibrationMath";
-import { bySourceCaption, orderSourceRows } from "@/lib/calibrationSourceRows";
 import { PROD_BUCKETS } from "../lib/calibrationProdFixture";
 
 const PAGE_PATH = path.join(__dirname, "..", "..", "app", "calibration", "page.tsx");
@@ -146,29 +145,9 @@ describe("the stripper does not eat rendered prose", () => {
   // The other way this suite could be vacuous: a comment stripper that also
   // swallowed JSX text would make every assertion below trivially true — the
   // page could print all four banned clauses and this would still be green.
-  // #7446 SPLIT THIS CONTROL, IT DID NOT PRUNE IT. The probe used to be By
-  // Source's own caption, read as a literal. That caption is now DERIVED
-  // (`bySourceCaption`, so the promise cannot outrun the panels drawn), so its
-  // words are no longer bytes in `page.tsx` and a literal probe for them would
-  // red on a correct change — while silently ceasing to test the stripper.
-  //
-  // The control's subject was never that sentence; it is "the stripper leaves
-  // JSX text alone". So it now probes two literals the page still writes out,
-  // one unfolded and one inside a `<details>`, which is strictly more coverage
-  // than the single unfolded probe it replaces. The caption's own words are
-  // graded where they are now produced, in
-  // `bySourceCaptionMatchesThePanelsDrawn7446`.
   test("a caption the page still shows is present after stripping", () => {
-    expect(collapse(RENDERED)).toContain("One curve per category");
-    expect(collapse(RENDERED)).toContain("Every bucket is shown. Solid dots are well-sampled");
-  });
-
-  test("the derived caption still reaches the page, and reads as prose", () => {
-    // The literal is gone; the sentence is not. Without this, a refactor that
-    // dropped the call entirely would leave every assertion below green on a
-    // section with no caption at all.
-    expect(collapse(RENDERED)).toContain("{bySourceCaption(sourceRows)}");
-    expect(collapse(bySourceCaption([]))).toContain("One panel per data provider, all on the same");
+    expect(collapse(RENDERED)).toContain("One panel per data provider, all on the same");
+    expect(collapse(RENDERED)).toContain("Tap any point for example");
   });
 
   test("and a banned clause quoted in a comment does NOT survive it", () => {
@@ -210,25 +189,14 @@ describe("By Source: one short caption, then the charts", () => {
   test("that paragraph is the caption, and it is short", () => {
     const h = head();
     expect(h).toContain('data-testid="calibration-by-source-caption"');
-    // #7446: measure the SENTENCE, not the source bytes that produce it.
-    //
-    // This used to slice the caption's text out of `page.tsx`. With the caption
-    // derived, that slice returns `{bySourceCaption(sourceRows)}` — 30-odd
-    // characters that are under any length bar for the wrong reason, so the
-    // "short caption" claim would have gone on passing while measuring nothing.
-    //
-    // BOTH arms are measured, because the withheld arm is the longer one and it
-    // is the one this change introduced; a bar that only ever sees the short
-    // arm is the same vacuity one step along.
-    const withheld = orderSourceRows([
-      { provider: "kalshi", label: "Kalshi", sources: ["kalshi"], n: 1000, ece: 1, mce: 1, brier: 0.2, buckets: [{ n: 1000, winners: 400 }] },
-      { provider: "datagolf", label: "DataGolf", sources: ["datagolf"], n: 0, ece: 0, mce: 0, brier: 0, buckets: [] },
-    ]);
-    for (const rows of [[], withheld]) {
-      const text = collapse(bySourceCaption(rows)).trim();
-      expect(text.length).toBeGreaterThan(40);
-      expect(text.length).toBeLessThan(200);
-    }
+    // The rendered sentence, entities resolved, well inside "short caption".
+    const text = h
+      .slice(h.indexOf('data-testid="calibration-by-source-caption"'))
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&[a-z]+;/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(text.length).toBeLessThan(200);
   });
 
   test("the drawing key and the two derived notes are behind the fold", () => {

@@ -612,35 +612,3 @@ def shared_token_rivals(name_a: str, name_b: str) -> bool:
         ]
 
     return bool(_distinctive(only_a, only_b)) and bool(_distinctive(only_b, only_a))
-
-
-def names_a_different_club(name_a: str, name_b: str) -> bool:
-    """Do these two names POSITIVELY name different clubs?
-
-    #7441. The two predicates above answer opposite halves of the question and
-    neither answers it alone:
-
-    * :func:`names_match` is a RECALL instrument. It reads True for
-      ``Coventry City``/``Manchester City``, so "not a match" cannot be the
-      whole test — it would wave through the exact pairs that matter.
-    * :func:`shared_token_rivals` only ever fires on names that SHARE a token,
-      and says so: *"no shared token ⇒ not rivals, and that is not an
-      oversight."* So it reads False for ``Toronto Maple Leafs`` /
-      ``Montreal Canadiens``, which are about as different as two clubs get.
-
-    Together they cover both shapes: rivals catches the shared-token pairs the
-    matcher over-accepts, and a failed match catches the pairs rivals declines
-    to judge.
-
-    POSITIVE EVIDENCE ONLY. A missing name on either side returns False — this
-    is written for callers that REFUSE on True, and an absent name is not a
-    reason to refuse, it is the absence of a reason. `not names_match(None, x)`
-    is True, which is why the empty case is handled before either predicate is
-    consulted rather than left to fall out of them.
-
-    Residue is inherited, not new: a rival pair distinguished only by an
-    institution-type word is invisible to both halves.
-    """
-    if not (name_a or "").strip() or not (name_b or "").strip():
-        return False
-    return shared_token_rivals(name_a, name_b) or not names_match(name_a, name_b)

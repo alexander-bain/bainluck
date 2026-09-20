@@ -34,7 +34,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from app.utils.futures_chart_series import (
     CandleCall,
@@ -272,7 +272,6 @@ async def fetch_clob_tier(
 async def fetch_candle_tier(
     service: Any, tickers: Sequence[str], call: CandleCall, *,
     listed_at: Optional[datetime], now: datetime, stats: dict,
-    on_candle: Optional[Callable[[str, dict, int], None]] = None,
 ) -> dict[str, list[Point]]:
     """One Kalshi candlestick tier for a WHOLE FIELD, keyed by ticker.
 
@@ -291,14 +290,6 @@ async def fetch_candle_tier(
     `event_chart_backfill.candle_windows`, which is also where an inverted range
     is refused rather than turned into a backwards fetch that answers with an
     empty 200.
-
-    `on_candle(ticker, candle, period_interval)` (#7351) is an optional SINK that
-    is shown every raw candle this tier received. It changes nothing this
-    function returns. The generic-market reader needs each point's own book
-    (bid / ask / last trade) to ask the canonical support predicates at read
-    time, and this reduction throws the book away; the sink is how that caller
-    keeps it without a second copy of the windowing and batching above. A sink
-    that raises costs the sink its candle, never the tier.
     """
     from app.tasks.event_chart_backfill import candle_windows, normalize_candle
 
@@ -345,11 +336,6 @@ async def fetch_candle_tier(
                     bucket.append(
                         (_utc(candle.get("end_period_ts")), normalize_candle(candle))
                     )
-                    if on_candle is not None:
-                        try:
-                            on_candle(ticker, candle, call.period_interval)
-                        except Exception:  # noqa: BLE001 — a sink never costs the tier
-                            stats["sink_errors"] = stats.get("sink_errors", 0) + 1
             await asyncio.sleep(REQUEST_PAUSE_SECONDS)
 
     return {ticker: normalize_points(pts) for ticker, pts in collected.items()}
@@ -384,7 +370,6 @@ async def polymarket_outcome_series(
 async def kalshi_field_series(
     service: Any, outcomes: Sequence[Any], *, listed_at: Optional[datetime],
     now: datetime, lifetime_hours: float, stats: dict,
-    on_candle: Optional[Callable[[str, dict, int], None]] = None,
 ) -> dict[str, list[Point]]:
     """The layered Kalshi series for a whole field, keyed by TICKER.
 
@@ -403,8 +388,7 @@ async def kalshi_field_series(
     tiers_by_ticker: dict[str, list[list[Point]]] = {t: [] for t in tickers}
     for call in candle_calls(lifetime_hours):
         tier = await fetch_candle_tier(
-            service, tickers, call, listed_at=listed_at, now=now, stats=stats,
-            on_candle=on_candle,
+            service, tickers, call, listed_at=listed_at, now=now, stats=stats
         )
         for ticker in tickers:
             tiers_by_ticker[ticker].append(tier.get(ticker, []))

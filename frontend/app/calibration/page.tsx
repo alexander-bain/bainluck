@@ -62,7 +62,6 @@ import {
 // UX-P128: which Source Comparison rows are measurements, in what order, and
 // the sentence By Source owes for the ones the cohort emptied.
 import {
-  bySourceCaption,
   censoredPopulationText,
   censoredSourceRows,
   orderSourceRows,
@@ -1822,16 +1821,9 @@ export default function CalibrationPage() {
             caption below says what the card IS; everything else moved one click
             away into `calibration-panels-key`, which is the same fold idiom
             "The overall split" and "Show the math" already use on this page. */}
-        {/* #7446: the caption is derived, because #4340 folded its only
-            exception. "One panel per data provider" was a constant, and with
-            `withheldSourcesNote` now one click away inside
-            `calibration-panels-key`, a reader who never opens that fold met a
-            universal the section had already broken — three panels on
-            production 2026-09-20 under a sentence promising four. Same
-            derivation as the note and `data-withheld-sources`, so the promise
-            cannot outrun the panels. */}
         <p className="text-xs text-text-muted mb-3" data-testid="calibration-by-source-caption">
-          {bySourceCaption(sourceRows)}
+          One panel per data provider, all on the same 0&ndash;100% axis. Tap any point for example
+          outcomes, or a provider tab for the full-width view.
         </p>
         {/* The drawing key and the two derived notes. Folded, and the numbers a
             probe needs travel as data on the section above (`data-thin-floor`,

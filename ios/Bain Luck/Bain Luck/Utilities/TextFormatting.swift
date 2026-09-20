@@ -125,59 +125,6 @@ nonisolated private let _dayOnly: DateFormatter = {
     return f
 }()
 
-// MARK: - Tournament dates are DAYS, not instants (#6666)
-
-/// How many whole calendar days separate a tournament's declared start day from
-/// `now`, counted the way a reader counts them: 0 is the day itself, 1 the day
-/// after, negative before it. Nil when the value cannot be read.
-///
-/// Both sides are reduced to a calendar day before subtracting — the day the
-/// wire value NAMES, and the reader's today — so the answer changes at local
-/// midnight and nowhere else. The elapsed-interval form this replaces
-/// (`dateComponents([.day], from: startInstant, to: now)`) subtracted two
-/// instants, so west of UTC it rolled over at 17:00 local instead.
-///
-/// `CalendarDeadline.displayDay` is the single discriminator for "is this wire
-/// value a declared day or a real instant" (#4081); a second one here is how two
-/// surfaces come to disagree about what day it is. A value that IS a real
-/// instant keeps the reader's zone, which is correct for it.
-///
-/// `calendar` is a parameter so a guard can ask the question from Los Angeles
-/// and from Kiritimati without moving the process it runs in — under a UTC
-/// harness the local-vs-UTC shift is zero and the obvious assertion is vacuous
-/// on the fix and the bug alike (gotcha #44 wearing a timezone).
-nonisolated func backendDayOffset(from raw: String?, to now: Date, calendar: Calendar = .current) -> Int? {
-    guard let day = CalendarDeadline.displayDay(raw, localZone: calendar.timeZone),
-          let named = calendar.date(
-              from: DateComponents(year: day.year, month: day.month, day: day.day)
-          )
-    else { return nil }
-    return calendar.dateComponents(
-        [.day],
-        from: calendar.startOfDay(for: named),
-        to: calendar.startOfDay(for: now)
-    ).day
-}
-
-/// Which round of a tournament `now` falls in — 1...`roundCount` — or nil when
-/// the tournament has not started, has finished, or declares no start day.
-///
-/// Lives here rather than inside `TournamentHeroCard` so the rule can be asked
-/// at a stated instant. A round number is a function of the clock, and a clock
-/// surface whose rule reads `Date()` inside a view body can only be guarded
-/// against whatever today happens to be.
-nonisolated func tournamentRoundNumber(
-    start: String?,
-    now: Date,
-    calendar: Calendar = .current,
-    roundCount: Int = 4
-) -> Int? {
-    guard let daysSinceStart = backendDayOffset(from: start, to: now, calendar: calendar),
-          daysSinceStart >= 0, daysSinceStart < roundCount
-    else { return nil }
-    return daysSinceStart + 1
-}
-
 /// Parse a backend date string. Handles full ISO-8601 with offset and optional
 /// fractional seconds (e.g. "2026-09-24T00:00:00+00:00") and bare "yyyy-MM-dd".
 nonisolated func parseFlexibleDate(_ raw: String?) -> Date? {
@@ -196,58 +143,25 @@ nonisolated func formattedShortDate(_ raw: String?) -> String? {
 /// Format a start/end backend date range as a compact design-system string:
 /// "Sep 24-27" (same month), "Sep 24 - Oct 1" (cross-month), or just the
 /// single end that is present. Returns nil when neither end parses.
-///
-/// ## Why this does not simply parse and format (#6666)
-///
-/// A tournament's `start_date` is a **date**, and the midnight attached to it is
-/// an artifact of how the server writes it down: `app/routes/golf.py` builds the
-/// value as `f"{t.start_date}T00:00:00+00:00"` from a date column, and on
-/// production 2026-09-20 **212 of 212** `/api/golf` date values carried exactly
-/// that suffix. Read in the reader's own zone, `2026-09-17T00:00:00+00:00` is
-/// 17:00 on the 16th in Pacific time, so every golf date in the app printed a
-/// day early anywhere west of UTC — both ends of the range, on the Golf page's
-/// hero, on every tour row, and on the tournament page. East of UTC it was
-/// right, which is why it survived so many glances.
-///
-/// So each end is resolved to the day it DISPLAYS as, through the one helper
-/// that knows the difference between a declared day and a real instant
-/// (`CalendarDeadline`, #4081). A declared day renders in UTC; anything that is
-/// genuinely an instant keeps the reader's zone. That discrimination is why the
-/// fix is not a timezone on `_monthDay` — that formatter also serves
-/// `formattedShortDate`, whose population is mixed (`event_concept.py`
-/// serialises `start_date or commence_time`), and pinning it to UTC would push
-/// an evening kickoff a day *late*. It is likewise not a change to
-/// `parseFlexibleDate`: `FeaturedTournaments.isBeingPlayed` reads
-/// `liveThrough: "2026-09-14T06:00:00+00:00"` through it, a genuine instant
-/// chosen for its hour, and a parse-level shift would quietly move the Browse
-/// live/resting clock.
-///
-/// The month comparison uses the same resolved days it prints from: comparing
-/// in one calendar while printing from another picks the "Sep 30 - Oct 1" shape
-/// for a range the reader then sees inside one month.
-///
-/// `localZone` is the zone the INSTANT branch renders in, defaulted to the
-/// reader's, and exists so a guard can pin a western zone — under a UTC harness
-/// the shift is zero and the obvious assertion cannot tell the fix from the bug.
-nonisolated func formatDateRange(start: String?, end: String?, localZone: TimeZone = .current) -> String? {
-    let startDay = CalendarDeadline.displayDay(start, localZone: localZone)
-    let endDay = CalendarDeadline.displayDay(end, localZone: localZone)
-    let startText = CalendarDeadline.format(start, style: .monthDay, localZone: localZone)
-    let endText = CalendarDeadline.format(end, style: .monthDay, localZone: localZone)
+nonisolated func formatDateRange(start: String?, end: String?) -> String? {
+    let startDate = parseFlexibleDate(start)
+    let endDate = parseFlexibleDate(end)
 
-    switch (startDay, endDay) {
+    switch (startDate, endDate) {
     case let (s?, e?):
-        guard let startText, let endText else { return startText ?? endText }
-        if s.year == e.year && s.month == e.month {
+        let cal = Calendar.current
+        let sameMonth = cal.isDate(s, equalTo: e, toGranularity: .month)
+            && cal.isDate(s, equalTo: e, toGranularity: .year)
+        if sameMonth {
             // "Sep 24-27"
-            return "\(startText)\u{2013}\(e.day)"
+            return "\(_monthDay.string(from: s))\u{2013}\(_dayOnly.string(from: e))"
         }
         // "Sep 24 - Oct 1"
-        return "\(startText) \u{2013} \(endText)"
-    case (_?, nil):
-        return startText
-    case (nil, _?):
-        return endText
+        return "\(_monthDay.string(from: s)) \u{2013} \(_monthDay.string(from: e))"
+    case let (s?, nil):
+        return _monthDay.string(from: s)
+    case let (nil, e?):
+        return _monthDay.string(from: e)
     case (nil, nil):
         return nil
     }
