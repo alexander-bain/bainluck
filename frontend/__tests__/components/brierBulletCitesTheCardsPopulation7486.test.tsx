@@ -185,20 +185,69 @@ function render(): string {
 
 /* ─────────────────────────────── readers ─────────────────────────────── */
 
-/** The text of the first element carrying `testid`, tags stripped, entities resolved. */
-function textOf(html: string, testid: string): string {
-  const open = new RegExp(`<([a-z]+)[^>]*data-testid="${testid}"[^>]*>`);
-  const m = html.match(open);
-  if (!m) return "";
-  const rest = html.slice((m.index ?? 0) + m[0].length);
-  // Close on the matching tag: these two elements hold only inline children.
-  const end = rest.indexOf(`</${m[1]}>`);
-  return (end === -1 ? rest : rest.slice(0, end))
-    .replace(/<[^>]*>/g, "")
-    .replace(/&#x27;|&rsquo;/g, "'")
-    .replace(/&sup2;/g, "²")
+/** The entities `renderToStaticMarkup` emits on this page, in ONE table. */
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#x27;": "'",
+  "&#39;": "'",
+  "&nbsp;": " ",
+  "&rsquo;": "’",
+  "&sup2;": "²",
+};
+
+/**
+ * Visible text of a markup fragment: tags dropped by a SCAN, entities decoded in
+ * ONE pass over ONE table, whitespace collapsed.
+ *
+ * Copied from `benchmarkRowCarriesItsPerBucketWord7225.test.tsx`, which carries
+ * the reasoning, because the obvious first draft — `.replace(/<[^>]*>/g, "")`
+ * followed by a chain of entity replaces — is a HIGH CodeQL finding
+ * (`js/incomplete-multi-character-sanitization`, `js/double-escaping`) and a
+ * test file is not an exemption. This file's first draft was that draft, and
+ * CodeQL failed the sha for it; the scan cannot mis-handle a nested bracket and
+ * no replacement's output is ever re-read.
+ */
+function text(fragment: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out
+    .replace(/&(?:amp|lt|gt|quot|nbsp|rsquo|sup2|#x27|#39);/g, m => ENTITIES[m])
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * The text of the element carrying `testid`, walked to its OWN closing tag —
+ * the bullet's sentence is broken by a `<strong>`, so the phrase a reader sees
+ * is not a substring of the markup.
+ */
+function textOf(html: string, testid: string): string {
+  const at = html.indexOf(`data-testid="${testid}"`);
+  if (at === -1) return "";
+  const open = html.indexOf(">", at);
+  let depth = 1;
+  const tag = /<(\/?)(?:div|p|span|strong|em|a|li)\b[^>]*?(\/?)>/g;
+  tag.lastIndex = open + 1;
+  let t: RegExpExecArray | null;
+  let end = -1;
+  while ((t = tag.exec(html)) !== null) {
+    if (t[2] === "/") continue; // self-closing
+    depth += t[1] === "/" ? -1 : 1;
+    if (depth === 0) {
+      end = t.index;
+      break;
+    }
+  }
+  if (end <= open) return "";
+  return text(html.slice(open + 1, end));
 }
 
 function attrOf(html: string, testid: string, name: string): string | null {
@@ -208,9 +257,17 @@ function attrOf(html: string, testid: string, name: string): string | null {
   return a ? a[1] : null;
 }
 
-/** Every 4dp figure the page prints, so "did anything else move" is answerable. */
+/**
+ * Every 4dp figure the page prints, so "did anything else move" is answerable.
+ * Read off `text()`, not the raw markup: a class name or a data attribute
+ * carrying digits is not something a reader sees.
+ */
 function fourDpFigures(html: string): string[] {
-  return (html.replace(/<[^>]*>/g, " ").match(/\b0\.\d{4}\b/g) ?? []).sort();
+  // No `\b` on either side: the page's text runs figures straight into the next
+  // label ("…0.1900Kalshi…"), and a trailing word boundary silently drops every
+  // one of those — it found 2 of the 7 on this fixture, which is how a
+  // "nothing else moved" arm quietly stops looking at most of the page.
+  return (text(html).match(/0\.\d{4}/g) ?? []).sort();
 }
 
 /* ──────────────────────────────── the arms ───────────────────────────── */
@@ -269,7 +326,7 @@ describe("#7486 — nothing that was already right moved (arm 4)", () => {
     // string now. Identical output is the requirement; a fix that moved one of
     // them would be a visible regression, not a repair.
     const figures = fourDpFigures(render());
-    expect(figures.length).toBeGreaterThanOrEqual(3);
+    expect(figures.length).toBeGreaterThanOrEqual(5);
     expect(new Set(figures)).toEqual(new Set([COHORT_BRIER.toFixed(4)]));
   });
 });
