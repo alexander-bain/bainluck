@@ -1399,11 +1399,38 @@ export function computeSharedChartDomain(
     // commence-based window and the real journey renders.
     const ctMs = commenceTime ? new Date(commenceTime).getTime() : NaN;
     const endFloorMs = !isNaN(ctMs) ? ctMs - 60 * 60 * 1000 : -Infinity;
+
+    // #7315 — CEILING, AND IT IS THE FLOOR'S TWIN. A game-end source cannot see
+    // the end of a game six hours after the game ended; a row stamped there is
+    // a later write, and it drags `end` with it. The two specimens in #7315 —
+    // `score_snapshots` rows written 51.7 h and 68.4 h after `completed_at` —
+    // stretched the Score Differential domain three days past the whistle,
+    // which is the 2026-09-14 chart-duration ruling as well as a wrong hero.
+    //
+    // Same failure mode as the floor, so the same shape: drop the rows, and if
+    // that leaves nothing, `gameEndTs.length > 0` falls through to the
+    // betting/commence branches below and the real journey still renders. Null
+    // or unparseable `completed_at` ⇒ no ceiling, i.e. today's behaviour.
+    //
+    // Scoped to the grace measured on `score_snapshots` (see
+    // POST_FULL_TIME_WRITE_GRACE_MS) but applied to every game-end series: the
+    // claim "nothing observed this game six hours after it finished" is about
+    // the game, not about one writer, and a ceiling that only one series obeyed
+    // would just wait for the next series to be poisoned.
+    const caMs = historyData.completed_at
+      ? new Date(historyData.completed_at).getTime()
+      : NaN;
+    const endCeilMs = !isNaN(caMs)
+      ? caMs + POST_FULL_TIME_WRITE_GRACE_MS
+      : Infinity;
+    const inGameWindow = (t: number) =>
+      !isNaN(t) && t >= endFloorMs && t <= endCeilMs;
+
     const gameEndTs: number[] = [];
 
     for (const pt of historyData.espn_history ?? []) {
       const t = new Date(pt.timestamp).getTime();
-      if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
+      if (inGameWindow(t)) gameEndTs.push(t);
     }
     for (const [source, pts] of Object.entries(
       historyData.win_prob_history ?? {},
@@ -1411,7 +1438,7 @@ export function computeSharedChartDomain(
       if (!GAME_END_SOURCES.has(source)) continue;
       for (const pt of pts) {
         const t = new Date(pt.timestamp).getTime();
-        if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
+        if (inGameWindow(t)) gameEndTs.push(t);
       }
     }
     // #6349 — THE SCORE IS A GAME-END SOURCE, AND LEAVING IT OUT INVERTED THE
@@ -1435,10 +1462,11 @@ export function computeSharedChartDomain(
     //
     // The `endFloorMs` guard above applies to these the same as to the rest: a
     // score row stamped before the pregame margin is the mis-attribution case,
-    // not a game end.
+    // not a game end. (#7315: and `endCeilMs` the same at the other end — this
+    // is the series both of its specimens came out of.)
     for (const pt of historyData.score_history ?? []) {
       const t = new Date(pt.timestamp).getTime();
-      if (!isNaN(t) && t >= endFloorMs) gameEndTs.push(t);
+      if (inGameWindow(t)) gameEndTs.push(t);
     }
 
     if (gameEndTs.length > 0) {
@@ -1914,6 +1942,29 @@ export function computeRealStartTime(
 // ---------------------------------------------------------------------------
 
 /**
+ * #7315 — HOW LONG AFTER FULL TIME A SERIES MAY STILL BE OBSERVING THE GAME.
+ *
+ * Past this, a row stamped after `completed_at` is a later WRITE, not a later
+ * reading: the game is over, so there is no newer information about it, only
+ * newer rows about it.
+ *
+ * Six hours is not a taste call — it sits in a measured gap. Over every event
+ * completed in the five days to 2026-09-19, `score_snapshots` rows stamped
+ * after their event's `completed_at` fall into two populations and nothing
+ * lies between them:
+ *
+ *   54 events  ≤ 21 minutes after (50 of them sub-second) — the ordinary
+ *              trailing write as a game is marked final
+ *    2 events  51.7 h and 68.4 h after — #7315's own two specimens
+ *
+ * So the threshold has ~17× clearance above the honest tail and ~8× below the
+ * nearest defect. It is deliberately far from both edges: a grace tight enough
+ * to be precise would start adjudicating the ordinary case, which is not what
+ * this rule is for.
+ */
+export const POST_FULL_TIME_WRITE_GRACE_MS = 6 * 60 * 60 * 1000;
+
+/**
  * #5521 — DOES THE StatPal SNAPSHOT ARM OUTRANK THE ESPN-SHAPED HISTORY ARM?
  *
  * Strictly newer wins. A tie keeps the ESPN arm, and so does any comparison
@@ -1924,14 +1975,57 @@ export function computeRealStartTime(
  *
  * Pure and exported so a guard can hold the comparison itself rather than
  * re-deriving it from a rendered score — the seam, not the symptom.
+ *
+ * ═══ 🔴 #7315 — A CLOCK COMPARISON IS THE RIGHT RULE WHILE A GAME IS BEING
+ * PLAYED AND THE WRONG ONE AFTER THE WHISTLE ═══
+ *
+ * #5521 made this pick clock-based, correctly, for the live case. What it has
+ * no notion of is *the game is over*, and the ladder beneath it ends at the
+ * event row — so a `score_snapshots` row stamped three days after full time
+ * outranked an ESPN point that said `Final`, and the hero printed a score the
+ * event row did not hold and could not hold:
+ *
+ *   /events/15313231  printed 5 – 5 · FINAL · TIED   (event row + ESPN: 5 – 6)
+ *   /events/15313146  printed 7 – 2                  (event row + ESPN: 7 – 3)
+ *
+ * An MLB regular-season game cannot end level, so the first one is visibly
+ * impossible — photographed on production at 390px after #7147's data repair
+ * had already corrected both rows. The data half (#7314) deletes the offending
+ * rows; this is what stops the next writer re-creating the symptom.
+ *
+ * THE TEST IS `completed_at`, NOT A PERIOD LABEL. The tempting version reads
+ * the history point's own `period` and lets a `Final` row win regardless of
+ * clock. Measured, that rule would be a dud: `espn_snapshots.period` holds zero
+ * rows matching `final`/`full`/`ft` in 30 days — every terminal spelling a
+ * reader sees comes in through `routes/events.py`'s MLB/`stat_model` supplement
+ * (`game_state.period`), so the rule would fire on the feeders that happen to
+ * write that English word and silently never fire anywhere else. `completed_at`
+ * is a column with one meaning, is served in this very payload, and is null
+ * while a game is live — which is exactly when this rule must not exist.
+ *
+ * So: absent or unparseable `completed_at` ⇒ #5521 unchanged, to the byte.
+ *
+ * The asymmetry is deliberate. This disables the snapshot arm's OVERRIDE, it
+ * does not drop poisoned points from both series: the history arm is already
+ * the default, so a rule about it would be a different change with a different
+ * blast radius, and nothing measured asks for one yet.
  */
 export function scoreSnapshotOutranksHistory(
   snapshotStamp: string | null | undefined,
   historyStamp: string | null | undefined,
+  /**
+   * #7315 — `EventHistoryResponse.completed_at`. Optional, so every existing
+   * caller keeps #5521's behaviour exactly.
+   */
+  completedAt?: string | null,
 ): boolean {
   const snap = snapshotStamp ? Date.parse(snapshotStamp) : NaN;
   const hist = historyStamp ? Date.parse(historyStamp) : NaN;
   if (Number.isNaN(snap) || Number.isNaN(hist)) return false;
+  const done = completedAt ? Date.parse(completedAt) : NaN;
+  if (!Number.isNaN(done) && snap > done + POST_FULL_TIME_WRITE_GRACE_MS) {
+    return false;
+  }
   return snap > hist;
 }
 
@@ -2124,7 +2218,14 @@ export function computeLastChartPoint(
   const lastScoreSnap = scoreSnaps?.length ? scoreSnaps[scoreSnaps.length - 1] : null;
   const espnStamp = lastEspn?.timestamp || null;
   const snapStamp = lastScoreSnap?.timestamp || null;
-  const snapWins = scoreSnapshotOutranksHistory(snapStamp, espnStamp);
+  // #7315 — the third argument is what stops a write days after full time from
+  // outranking a point that is the last reading of the game. It comes out of
+  // the same payload, so no caller changes.
+  const snapWins = scoreSnapshotOutranksHistory(
+    snapStamp,
+    espnStamp,
+    historyData.completed_at,
+  );
 
   const homeHist = pickHistorySide(
     lastEspn?.home_score,
