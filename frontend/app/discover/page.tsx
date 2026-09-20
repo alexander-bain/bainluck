@@ -33,6 +33,17 @@ import {
   reconcilePage1,
   shouldLoadNextPage,
 } from "@/lib/discover/feedPaging";
+import {
+  FEED_RESTORE_LANDING_TIMEOUT_MS,
+  clearFeedRestore,
+  landingTarget,
+  markAndDetectClientTransition,
+  readFeedSnapshot,
+  readScrollMark,
+  shouldRestoreOnMount,
+  writeFeedSnapshot,
+  writeScrollMark,
+} from "@/lib/discover/feedRestore";
 import FeedBootScript from "@/components/discover/FeedBootScript";
 import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
@@ -617,6 +628,23 @@ export default function DiscoverPage() {
   const [challengeIndex, setChallengeIndex] = useState(0);
   const [challengeComplete, setChallengeComplete] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // #7417 — restore state.
+  //
+  // `initialVisibleCount` is a STATE value rather than the `PAGE_SIZE` literal
+  // it used to be, because `shouldLoadNextPage` reads it as "the window the
+  // reader was handed on arrival". A restore hands them a window of, say, 60;
+  // comparing that against 20 says the reader advanced it themselves, and the
+  // auto-pager fires a page nobody asked for on the first commit after Back.
+  const [initialVisibleCount, setInitialVisibleCount] = useState(PAGE_SIZE);
+  // The offset a restore is still trying to land on, or `null` when there is
+  // nothing pending. Held as a ref as well as state because the sentinel
+  // observer and the snapshot writer both have to see it synchronously.
+  const [pendingScrollY, setPendingScrollY] = useState<number | null>(null);
+  const restorePendingRef = useRef(false);
+  // Until the mount effect has looked, nothing may be written: the first commit
+  // has empty item state, and saving that over a good edition is how a restore
+  // destroys the thing it is restoring.
+  const restoreCheckedRef = useRef(false);
   // Queue 309 — first-run orientation state. `null` means "storage not read
   // yet": the pre-mount render is deliberately today's Discover exactly, so no
   // first-run UI can appear in SSR markup and diverge from first hydration.
@@ -690,6 +718,56 @@ export default function DiscoverPage() {
       window.clearTimeout(timer);
     };
   }, [showSwipeHint]);
+
+  /**
+   * #7417 — put the reader's edition back before anything else touches state.
+   *
+   * 🔴 DECLARED ABOVE THE PAGE-1 PAYLOAD EFFECT ON PURPOSE. SWR's cache is
+   * global and survives a client-side navigation, so on a Back the
+   * `discover-feed` key resolves from cache on the very first commit and that
+   * effect runs in the same batch as this one. React runs effects in
+   * declaration order, so this seeds `page1Items` first and `reconcilePage1`
+   * folds the cached page into the restored edition. Declared below it, the
+   * order inverts: the cached 20-item page lands first, this overwrites it, and
+   * the fold that protects the reader's order never happens.
+   *
+   * 🔴 AN EFFECT, NOT A LAZY `useState` INITIALIZER. `sessionStorage` does not
+   * exist on the server, so a lazy initializer renders an empty feed on the
+   * server and a restored one on the client — a hydration mismatch. This is the
+   * same reason `dismissed` and the first-run storage are read in mount effects
+   * a few lines up, and not a style choice.
+   */
+  useEffect(() => {
+    restoreCheckedRef.current = true;
+    const clientTransition = markAndDetectClientTransition(window);
+    const navigationType =
+      (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
+        ?.type ?? null;
+
+    if (!shouldRestoreOnMount({ clientTransition, navigationType })) {
+      // A reload or a fresh arrival. The reader asked for a fresh feed, so the
+      // stale edition is dropped rather than left to be restored by the NEXT
+      // Back — where its scroll mark would point past a document that has only
+      // just been rebuilt from page one.
+      clearFeedRestore();
+      return;
+    }
+
+    const snapshot = readFeedSnapshot<FeedItem>();
+    if (!snapshot) return;
+
+    setPage1Items(snapshot.page1);
+    setAllItems(snapshot.rest);
+    setVisibleCount(snapshot.visibleCount);
+    setInitialVisibleCount(snapshot.visibleCount);
+    setHasMore(snapshot.hasMore);
+
+    const mark = readScrollMark(Date.now());
+    if (mark && mark.scrollY > 0) {
+      restorePendingRef.current = true;
+      setPendingScrollY(mark.scrollY);
+    }
+  }, []);
 
   const { data, isLoading, error: feedError, mutate: mutateFeed } = useSWR(
     "discover-feed",
@@ -845,8 +923,20 @@ export default function DiscoverPage() {
     trackEvent("feed_refresh", { trigger: "manual", new_items_count: 0 });
     setAllItems([]);
     setVisibleCount(PAGE_SIZE);
+    // 🔴 #7417 — THE SEED MOVES WITH THE WINDOW OR THE AUTO-PAGER STALLS. After
+    // a Back the seed is the restored window (say 60). Resetting `visibleCount`
+    // to 20 and leaving the seed at 60 makes `visibleCount <= initialVisibleCount`
+    // true, which `shouldLoadNextPage` reads as "the reader has not touched the
+    // window" — so pagination sits out the next three sentinel fires while the
+    // reader scrolls a 20-card feed. Reachable by anyone who presses Back and
+    // then taps refresh.
+    setInitialVisibleCount(PAGE_SIZE);
     setHasMore(true);
     setFeedUnavailable(false);
+    // A manual refresh is the reader asking for a fresh feed, exactly as a
+    // reload is. Keeping the old edition would let the NEXT Back restore the
+    // feed they just chose to discard.
+    clearFeedRestore();
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
@@ -869,15 +959,104 @@ export default function DiscoverPage() {
     if (!sentinel) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisibleCount((c) => c + PAGE_SIZE);
-        }
+        if (!entry.isIntersecting) return;
+        // 🔴 #7417 — THIS GUARD IS THE ONE THAT BREAKS THE LOOP. While a restore
+        // is landing, the browser has the reader clamped at the bottom of a
+        // document that is still growing, so the sentinel is in view for
+        // reasons that have nothing to do with the reader running out of cards.
+        // Left ungated it advances the window, which fetches a page, which
+        // makes the document taller, which keeps the sentinel in view — the
+        // 20→40 card doubling measured in the defect. The reader never asked
+        // for any of it, and the restore is about to move them away.
+        if (restorePendingRef.current) return;
+        setVisibleCount((c) => c + PAGE_SIZE);
       },
       { rootMargin: "400px" }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [feedUnavailable, isLoading]);
+
+  /**
+   * #7417 — land the reader on the offset they left from, once the restored
+   * document is actually tall enough to hold it.
+   *
+   * 🔴 THE HEIGHT CHECK IS THE POINT. Scrolling to a saved offset in a document
+   * that has not finished laying out is precisely the defect: the browser
+   * clamps to the short document's maximum and the reader ends up at the
+   * bottom. `landingTarget` only reports `reached` when the offset fits, so
+   * this waits frame by frame instead of scrolling into a document that is not
+   * there yet.
+   *
+   * On timeout it lands on the best available offset rather than abandoning the
+   * restore. That case is a reader who was deeper than `FEED_SNAPSHOT_MAX_ITEMS`
+   * can hold: as close as the cap reaches is still their part of the feed,
+   * where doing nothing would leave them at the top.
+   */
+  useEffect(() => {
+    if (pendingScrollY === null) return;
+    const deadline = Date.now() + FEED_RESTORE_LANDING_TIMEOUT_MS;
+    let frame = 0;
+    const attempt = () => {
+      const { y, reached } = landingTarget(
+        pendingScrollY,
+        document.documentElement.scrollHeight,
+        window.innerHeight,
+      );
+      if (!reached && Date.now() < deadline) {
+        frame = requestAnimationFrame(attempt);
+        return;
+      }
+      window.scrollTo(0, y);
+      restorePendingRef.current = false;
+      setPendingScrollY(null);
+    };
+    frame = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(frame);
+  }, [pendingScrollY]);
+
+  /**
+   * #7417 — keep the stored edition current.
+   *
+   * Written on state change rather than on the way out: a card tap is a
+   * client-side route change, so there is no unload event to hang this on, and
+   * `pagehide` never fires for the navigation that actually loses the feed.
+   *
+   * `restoreCheckedRef` is the guard that matters. The first commit of a Back
+   * has empty item state — the restore effect has not run yet — and writing
+   * that would blank the edition this whole module exists to preserve.
+   */
+  useEffect(() => {
+    if (!restoreCheckedRef.current) return;
+    if (page1Items.length === 0) return;
+    writeFeedSnapshot({ page1: page1Items, rest: allItems, visibleCount, hasMore });
+  }, [page1Items, allItems, visibleCount, hasMore]);
+
+  /**
+   * #7417 — keep the scroll mark current, throttled.
+   *
+   * 🔴 `restorePendingRef` IS LOAD-BEARING HERE, NOT DEFENSIVE. A restore in
+   * flight generates scroll events at the clamped bottom of a half-built
+   * document. Recording one overwrites the reader's real offset with the
+   * artefact the restore is in the middle of correcting, and the next Back
+   * would faithfully return them to the footer — the defect, now persisted.
+   */
+  useEffect(() => {
+    let timer = 0;
+    const onScroll = () => {
+      if (timer) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        if (!restoreCheckedRef.current || restorePendingRef.current) return;
+        writeScrollMark({ scrollY: window.scrollY, savedAt: Date.now() });
+      }, 250);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
 
   const handleDismiss = useCallback((itemId: string) => {
     // L2-242 — a dismiss is seen/dismiss evidence: never share the warm feed on
@@ -1192,14 +1371,18 @@ export default function DiscoverPage() {
         visibleCount,
         loadedCount,
         renderedCount: processedItems.length,
-        initialVisibleCount: PAGE_SIZE,
+        // #7417: the window the reader ARRIVED with, which after a Back is the
+        // restored one, not `PAGE_SIZE`. Hard-coding the literal here told the
+        // predicate that a restored reader had already advanced their window by
+        // two pages, so the auto-pager fetched on the first commit after Back.
+        initialVisibleCount,
         hasMore,
         loadingMore,
       })
     ) {
       loadNextPage();
     }
-  }, [visibleCount, loadedCount, processedItems.length, hasMore, loadingMore, loadNextPage]);
+  }, [visibleCount, loadedCount, processedItems.length, initialVisibleCount, hasMore, loadingMore, loadNextPage]);
 
   return (
     <ErrorBoundary fallback={<div className="p-8 text-center"><h2>Something went wrong</h2><button onClick={() => window.location.reload()} className="mt-2 text-sm text-accent-brand hover:underline">Reload page</button></div>}>
