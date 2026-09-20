@@ -362,6 +362,50 @@ def writable_leg_sql(alias: str = "fo") -> str:
     )
 
 
+#: The settlement badge :func:`writable_leg_sql` names. Spelled once so the SQL
+#: and Python forms below cannot drift apart on a string literal.
+SETTLEMENT_SOURCE = "api_settlement"
+
+
+def leg_is_graded(
+    is_winner: bool | None, resolution_source: str | None
+) -> bool:
+    """The Python twin of ``NOT writable_leg_sql()`` — "this leg has a verdict".
+
+    #7387. A reader on ``/sport/baseball/mlb/team/…`` saw a club shown **90% to
+    win its division** with **no cell at all** for reaching the playoffs, one row
+    above a 76-79 side showing 6%. Division ⊆ playoffs, so the row contradicted
+    itself, and the natural reading of the blank is *no data* — the exact
+    opposite of the truth, which is that the club had **clinched**.
+
+    🔴 ``is_winner`` ALONE IS NOT THE DISCRIMINATOR, and this is the whole reason
+    this function exists rather than an inline ``if outcome.is_winner``. The
+    column is ``default=False, server_default=text("false")`` (``models.py``), so
+    ``False`` is what a row is BORN with, not something a grader decided.
+    Measured on the two markets feeding the MLB column, 2026-09-20 14:3xZ: legs
+    at ``current_probability`` 0.9945, 0.9830, 0.9775 all carry
+    ``is_winner = false`` with ``resolution_source IS NULL``. Reading ``False``
+    as "lost" would eliminate the best teams in baseball.
+
+    So a leg has a verdict iff **``is_winner`` is TRUE** (nothing sets that by
+    accident) **or** it wears the settlement badge. That is exactly the negation
+    of :func:`writable_leg_sql`, which is the refusal the price writer and its
+    selector already share; stating it here keeps one rule, not two.
+
+    ``ungradeable_result`` IS NOT A VERDICT, and the carve-out is load-bearing
+    rather than tidy. It is the badge
+    :mod:`app.utils.kalshi_fabricated_loss` writes when it RETRACTS a loss the
+    venue never declared — a tier-1 write placed over ``api_settlement``
+    precisely because that settlement was never authorised. Market 266 carries 12
+    such legs today, priced from 0.0100 to 0.9950. Treating "has any resolution
+    source" as a verdict would republish every retracted fabrication as a hard
+    ``eliminated``, which is the harm that module exists to undo.
+    """
+    if is_winner is True:
+        return True
+    return (resolution_source or "") == SETTLEMENT_SOURCE
+
+
 #: Which of the two settled bounds retired a market, for the guard's exclusion
 #: report. A market can satisfy both; the winner is named first because it is
 #: our own reading and does not depend on an upstream being reachable.
