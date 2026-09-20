@@ -1100,8 +1100,28 @@ async def get_cities(db: AsyncSession):
             # above) are left alone: with no marker there is nothing asserting
             # a scale to contradict, and rewriting free text on a guess is how
             # a non-temperature number gets converted.
-            for d in dist:
-                d["label"] = _convert_temp_label(d["label"], expected_unit)
+            converted = [_convert_temp_label(d["label"], expected_unit) for d in dist]
+
+            # Then read the ladder in whole degrees (#7489). Converting a
+            # whole-Celsius ladder gives 1.8° steps, so the exact numbers ran
+            # "66.2°F · 68°F · 69.8°F … 84.2°F or higher" across the card — a
+            # precision the market never claimed, unlike every natively-°F city
+            # on the same page ("59°F or below", "60-61°F"), and two characters
+            # per rung wider, which clipped the last one off the edge.
+            #
+            # Rounded HERE and not in the converter because safety is a property
+            # of the whole ladder, not of one label: at a 1°F step a conversion
+            # to °C lands rungs 0.56° apart and rounding would print two of them
+            # identically, silently merging two buckets. So round only while
+            # every rung stays distinct, and otherwise keep the exact numbers —
+            # an ugly axis is a far smaller defect than two buckets wearing one
+            # label.
+            rounded = [_round_temp_bounds(label) for label in converted]
+            if len(set(rounded)) == len(rounded):
+                converted = rounded
+
+            for d, label in zip(dist, converted):
+                d["label"] = label
 
         unit = expected_unit
 
@@ -1178,6 +1198,36 @@ def _convert_temp_label(label: str, to_unit: str) -> str:
         if unit == to_unit:
             return m.group(0)
         return f"{_format_temp(_convert_temp_value(float(value), to_unit))}°{to_unit}"
+
+    return _TEMP_POINT_RE.sub(_point, _TEMP_SPAN_RE.sub(_span, label))
+
+
+def _round_temp_bounds(label: str) -> str:
+    """Rewrite every marked temperature in `label` to a whole degree.
+
+    A bound is a threshold a reader compares themself against, not a
+    measurement, so it reads the way the natively-Fahrenheit ladders on the
+    same page already read. `_format_temp`'s decimal is what a CONVERTED
+    ladder inherits from the arithmetic — 19°C is exactly 66.2°F — and it is
+    an artefact of the conversion, never something a venue published (#7489).
+
+    Everything that is not a marked number survives byte for byte, so the
+    bound words that carry the contract ("or below", "or higher") and the span
+    separators are untouched, for the same reason `_convert_temp_label` leaves
+    them alone.
+
+    ⚠️ Rounding RESTATES a bound: "19°C or below" becomes "66°F or below", not
+    "66.2°F or below". That is the deliberate trade, and it is only sound while
+    the rungs stay distinct — which is the caller's check, not this function's,
+    because it needs the whole ladder to make it.
+    """
+
+    def _span(m: re.Match) -> str:
+        low, separator, high, unit = m.group(1), m.group(2), m.group(3), m.group(4).upper()
+        return f"{round(float(low))}{separator}{round(float(high))}°{unit}"
+
+    def _point(m: re.Match) -> str:
+        return f"{round(float(m.group(1)))}°{m.group(2).upper()}"
 
     return _TEMP_POINT_RE.sub(_point, _TEMP_SPAN_RE.sub(_span, label))
 

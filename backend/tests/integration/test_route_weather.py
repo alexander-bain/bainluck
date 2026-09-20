@@ -470,13 +470,16 @@ class TestWeatherCitiesUnitAgreement:
 
         high = cities["la"]["high"]
         assert high["unit"] == "F"
-        # 33°C is the modal bucket and is exactly 91.4°F.
+        # 33°C is the modal bucket and is exactly 91.4°F. The MODE keeps the
+        # decimal — it is a measured point — while the BOUNDS round to whole
+        # degrees since #7489. The two differ here on purpose: mode 91.4 sits
+        # under a rung labelled "91°F".
         assert high["mode"] == 91.4
         assert [b["label"] for b in high["dist"]] == [
-            "80.6°F or below",
-            "82.4°F",
-            "91.4°F",
-            "98.6°F or higher",
+            "81°F or below",
+            "82°F",
+            "91°F",
+            "99°F or higher",
         ]
 
     async def test_la_conversion_preserves_bounds_and_probabilities(
@@ -585,13 +588,108 @@ class TestWeatherCitiesUnitAgreement:
 
         high = cities["miami"]["high"]
         assert high["unit"] == "F"
+        # Whole degrees since #7489 — the exact conversions are 78.8 / 80.6-82.4
+        # / 84.2. What this test is for survives that: the span is still a span
+        # with both bounds, and a second pass over it would read 180°F.
         assert [b["label"] for b in high["dist"]] == [
-            "78.8°F or below",
-            "80.6-82.4°F",
-            "84.2°F or higher",
+            "79°F or below",
+            "81-82°F",
+            "84°F or higher",
         ]
-        # 27-28°C has a midpoint of 27.5°C, which is 81.5°F.
+        # 27-28°C has a midpoint of 27.5°C, which is 81.5°F. The MODE keeps its
+        # decimal: it is a measured point, not a bound a reader compares to.
         assert high["mode"] == 81.5
+
+    async def test_a_converted_ladder_reads_in_whole_degrees(
+        self, client, mock_db
+    ):
+        """#7489 — the Los Angeles ladder exactly as production served it.
+
+        Fixing the scale (#3663) left the numbers at the precision the
+        arithmetic produces: 19°C is exactly 66.2°F, so the axis read
+        "66.2°F · 68°F · 69.8°F … 84.2°F or higher". Two defects in one —
+        a precision the market never published, and two characters per rung
+        more than the °C labels it replaced, which ran the last rung off the
+        right edge of the card at 390px.
+
+        The eleven inputs are the production ladder (19..29°C), so the
+        expected output below is readable straight off the screenshot.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=907,
+                name="Highest temperature in Los Angeles on Sep 21?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("19°C or below", 0.01, outcome_id=9070, rank=1),
+                    _outcome("20°C", 0.02, outcome_id=9071, rank=2),
+                    _outcome("21°C", 0.03, outcome_id=9072, rank=3),
+                    _outcome("22°C", 0.04, outcome_id=9073, rank=4),
+                    _outcome("23°C", 0.06, outcome_id=9074, rank=5),
+                    _outcome("24°C", 0.10, outcome_id=9075, rank=6),
+                    _outcome("25°C", 0.30, outcome_id=9076, rank=7),
+                    _outcome("26°C", 0.42, outcome_id=9077, rank=8),
+                    _outcome("27°C", 0.12, outcome_id=9078, rank=9),
+                    _outcome("28°C", 0.02, outcome_id=9079, rank=10),
+                    _outcome("29°C or higher", 0.02, outcome_id=9080, rank=11),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["la"]["high"]
+        assert high["unit"] == "F"
+        labels = [b["label"] for b in high["dist"]]
+        assert labels == [
+            "66°F or below",
+            "68°F", "70°F", "72°F", "73°F", "75°F",
+            "77°F", "79°F", "81°F", "82°F",
+            "84°F or higher",
+        ]
+        # Stated as its own assertion because it is the defect in one line, and
+        # because a future formatter could satisfy the list above for one
+        # ladder while still emitting a tenth somewhere else.
+        assert not [lab for lab in labels if "." in lab]
+        # The bound WORDS are the contract and rounding must not eat them.
+        assert labels[0].endswith("or below") and labels[-1].endswith("or higher")
+
+    async def test_rounding_is_skipped_when_it_would_give_two_rungs_one_label(
+        self, client, mock_db
+    ):
+        """The reason the rounding lives at the call site and not in the
+        converter: it is only safe as a property of the WHOLE ladder.
+
+        Amsterdam is served in °C, so a °F ladder converts. At a 1°F step the
+        rungs land 0.56°C apart and rounding prints 15.6 and 16.1 identically
+        as "16°C" — two buckets wearing one label, which is a truth defect and
+        strictly worse than the ugly axis #7489 was about. So the exact
+        numbers survive here.
+
+        Without the distinctness check this test reads
+        ["16°C", "16°C", "17°C"]; with it, the decimals are kept.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=908,
+                name="Highest temperature in Amsterdam on Sep 21?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("60°F", 0.30, outcome_id=9081, rank=1),
+                    _outcome("61°F", 0.45, outcome_id=9082, rank=2),
+                    _outcome("62°F", 0.25, outcome_id=9083, rank=3),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["amsterdam"]["high"]
+        assert high["unit"] == "C"
+        labels = [b["label"] for b in high["dist"]]
+        assert labels == ["15.6°C", "16.1°C", "16.7°C"]
+        # The point of keeping them: every rung still names a different bucket.
+        assert len(set(labels)) == len(labels)
 
     async def test_every_citys_labels_agree_with_its_declared_unit(
         self, client, mock_db
