@@ -330,6 +330,62 @@ class TestEachSeriesIsGatedOnItsOwnLastPoint:
         assert plan.writes is True
 
 
+class TestTheUndoObservesEveryColumnItRestores:
+    """A restore that writes a column it does not compare is a blind overwrite.
+
+    That is the CERT-3141 lesson. Every column the repair can write has a
+    routine newer-value case — the blend is rewritten by `backfill_winners` and
+    by any re-resolve WITHOUT touching the score — so a compare-and-swap that
+    observes only the score passes on exactly the rows where the undo would
+    replace a newer, better value with the pre-repair one.
+
+    Checked structurally rather than by eye, so a column added to the repair
+    later cannot quietly miss the WHERE.
+    """
+
+    def _restore_sql(self):
+        from scripts.restore_7354_settled_orientation_swap import _RESTORE_EVENT_SQL
+        return _RESTORE_EVENT_SQL
+
+    def test_every_restored_column_is_also_compared(self):
+        import re
+
+        sql = self._restore_sql()
+        set_clause, where_clause = sql.split("WHERE", 1)
+        restored = set(re.findall(r"b\.old_(\w+)", set_clause))
+        compared = set(re.findall(r"b\.new_(\w+)", where_clause))
+
+        assert restored, "the restore writes nothing — the parse is wrong"
+        assert restored == compared, (
+            f"restored but not compared: {sorted(restored - compared)}; "
+            f"compared but not restored: {sorted(compared - restored)}"
+        )
+
+    def test_the_comparison_is_null_safe(self):
+        """`= NULL` is never true, so a plain `=` CAS can never restore a row
+        whose banked value is NULL — and on a half-healed row the score half of
+        the manifest is exactly that until the stamp fills it in."""
+        sql = self._restore_sql()
+        _, where_clause = sql.split("WHERE", 1)
+
+        assert "IS NOT DISTINCT FROM" in where_clause
+        for bad in ("= b.new_home_score", "= b.new_win_probability_sources"):
+            assert bad not in where_clause, f"null-unsafe comparison: {bad}"
+
+    def test_the_backup_banks_an_old_value_for_every_column_the_repair_writes(self):
+        import re
+
+        from scripts.repair_7354_settled_orientation_swap import _BAK_CREATE_SQL
+
+        banked_old = set(re.findall(r"old_(\w+)\s", _BAK_CREATE_SQL))
+        restored = set(re.findall(r"b\.old_(\w+)", self._restore_sql()))
+
+        assert restored <= banked_old, (
+            f"the undo restores columns the backup never banks: "
+            f"{sorted(restored - banked_old)}"
+        )
+
+
 class TestEveryLazyImportInTheRailResolves:
     """A function-local import is not exercised by importing the module.
 
