@@ -753,23 +753,50 @@ def _reconcile_history_to_blend(competitors: list[dict]) -> None:
         blend = c.get("probability")
         if not hist or not isinstance(blend, (int, float)) or blend <= 0:
             continue
-        last_raw = None
-        for pt in reversed(hist):
-            p = pt.get("probability")
-            if p is not None:
-                last_raw = p
+        last_idx = None
+        for i in range(len(hist) - 1, -1, -1):
+            if hist[i].get("probability") is not None:
+                last_idx = i
                 break
+        if last_idx is None:
+            continue
+        last_raw = hist[last_idx]["probability"]
         if not last_raw or last_raw <= 0:
             continue
         factor = blend / last_raw
         if abs(factor - 1.0) < 1e-6:
             continue
-        # #1139: the whole-series multiplicative rescale can push an early
-        # high-raw point above 1.0 when a competitor's probability later
-        # collapsed (large factor) — e.g. Cameron Young's 202.9% on the live
-        # Open page. A probability > 100% is impossible and renders as a glitch,
-        # so clamp every scaled point to [0, 1]. The anchor point (== blend ≤ 1)
-        # is unaffected; only the improbable, overround-inflated peaks clip.
+        if factor > 1.0:
+            # #7560. DEFLATION IS RECONCILIATION; INFLATION IS FABRICATION, and
+            # only the first is what this function was written for. The rescale's
+            # whole justification (above) is that the raw series carries an
+            # overround the blend has already removed — so the raw series is
+            # BIGGER than the blend and the factor is < 1. A factor > 1 is the
+            # opposite case: the blend exceeds the series' own last point, so
+            # scaling lifts every earlier point, and the further back the series
+            # runs the more of it lands past 100%.
+            #
+            # #1139 met that case and clamped to [0, 1], which fixed the number's
+            # RANGE without fixing the claim: a clamped point is not a
+            # measurement, it is a saturated one, and a run of them draws a
+            # competitor as a certainty. MEASURED on production 2026-09-20 on the
+            # MotoGP Austria field (`KXMOTOGPRACE-OSTE26`, 6 of 22 legs priced):
+            # Jorge Martin's chart was 52 of 53 points at exactly 100%, Marc
+            # Marquez 73 of 84, and five riders read 100% at once on one race.
+            # Every published value was an exact multiple of that rider's own
+            # blend — the signature of this single rescale — while no snapshot in
+            # the table and no `normalize_candle` output can be 1.0 at all. The
+            # F1 sibling concept, same renderer and same shape, drew 2,484 points
+            # with none clamped, because its factor is ~1.
+            #
+            # So when the factor would inflate, anchor the ENDPOINT alone — the
+            # number the reader compares against the leaderboard, which is all
+            # #213/#199 ever required — and leave every earlier point at the
+            # honest price the venue actually quoted. The clamp below then only
+            # ever guards a source that hands us a raw point above 1.0.
+            c["history"] = [dict(pt) for pt in hist]
+            c["history"][last_idx]["probability"] = round(blend, 4)
+            continue
         c["history"] = [
             {
                 "timestamp": pt["timestamp"],

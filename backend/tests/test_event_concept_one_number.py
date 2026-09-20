@@ -85,12 +85,56 @@ class TestReconcileHistoryToBlend:
 
     def test_scaled_series_never_exceeds_100pct(self):
         # #1139 Cameron Young: an early raw peak (0.56) with a collapsed current
-        # (blend 0.126, last_raw ~0.035 → factor ~3.6) scaled to 202.9%. Clamp to
-        # [0,1]: the early point clips to 1.0, the anchor still equals the blend.
+        # (blend 0.126, last_raw ~0.035 → factor ~3.6) scaled to 202.9%.
         comp = {"name": "Cameron Young", "probability": 0.126,
                 "history": _hist(0.56, 0.30, 0.035)}
         _reconcile_history_to_blend([comp])
         probs = [p["probability"] for p in comp["history"]]
-        assert all(p <= 1.0 for p in probs)
-        assert max(probs) == 1.0  # the 0.56 early peak clamped, not left at 2.03
+        assert all(p <= 1.0 for p in probs)  # never the 202.9% of #1139
         assert comp["history"][-1]["probability"] == 0.126  # anchor preserved
+
+    def test_inflating_factor_leaves_early_points_raw(self):
+        """#7560: a factor > 1 anchors the endpoint and touches nothing else.
+
+        #1139 clamped this case to 1.0, which kept the number in range and still
+        published a claim nobody measured. The raw points are real quoted prices
+        and stay exactly as quoted; only the last one moves, to the blend.
+        """
+        comp = {"name": "Cameron Young", "probability": 0.126,
+                "history": _hist(0.56, 0.30, 0.035)}
+        _reconcile_history_to_blend([comp])
+        assert [p["probability"] for p in comp["history"]] == [0.56, 0.30, 0.126]
+
+    def test_inflating_factor_fabricates_no_certainty(self):
+        """#7560, the production specimen, replayed.
+
+        MotoGP Austria (`KXMOTOGPRACE-OSTE26`) 2026-09-20: Jorge Martin's served
+        chart was 52 of 53 points at exactly 100% because his blend (0.55, taken
+        from the live book) towered over his series' own last point. A rider is
+        never 100% to win a 22-rider race that has not started.
+        """
+        comp = {"name": "Jorge Martin", "probability": 0.55,
+                "history": _hist(0.11, 0.12, 0.10, 0.05)}
+        _reconcile_history_to_blend([comp])
+        probs = [p["probability"] for p in comp["history"]]
+        assert 1.0 not in probs
+        assert probs == [0.11, 0.12, 0.10, 0.55]
+
+    def test_deflating_factor_still_rescales_the_whole_series(self):
+        """The overround case this function exists for is untouched by #7560."""
+        comp = {"name": "Scottie Scheffler", "probability": 0.123,
+                "history": _hist(0.15, 0.20, 0.245)}
+        _reconcile_history_to_blend([comp])
+        probs = [p["probability"] for p in comp["history"]]
+        assert probs == [0.0753, 0.1004, 0.123]  # shape preserved, endpoint anchored
+
+    def test_inflating_factor_anchors_last_non_null_not_last_slot(self):
+        """A trailing gap must not swallow the anchor (#7560 + #1139's None case)."""
+        comp = {"name": "Gapped Up", "probability": 0.40,
+                "history": [
+                    {"timestamp": "2026-07-10T00:00:00+00:00", "probability": 0.30},
+                    {"timestamp": "2026-07-11T00:00:00+00:00", "probability": 0.10},
+                    {"timestamp": "2026-07-12T00:00:00+00:00", "probability": None},
+                ]}
+        _reconcile_history_to_blend([comp])
+        assert [p["probability"] for p in comp["history"]] == [0.30, 0.40, None]
