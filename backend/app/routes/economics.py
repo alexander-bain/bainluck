@@ -1477,70 +1477,91 @@ async def get_economics(db: AsyncSession):
         spotlight_eligible, market_row_fn=_cross_source_row_fn
     )
 
-    # Count total active markets
-    total = len(all_markets)
+    themes = {
+        "fed": {
+            "count": _fed_section_count,
+            "fomc_meetings": fomc_meetings[:8],
+            "rate_cuts": rate_cuts,
+            "side_markets": rate_side[:6],
+        },
+        "inflation": {
+            "count": len(inflation_markets),
+            "cpi_releases": cpi_releases[:6],
+            "side_markets": inflation_side[:6],
+        },
+        "jobs": {
+            "count": len(jobs_markets),
+            "markets": jobs_side[:8],
+        },
+        "recession": {
+            "count": len(recession_markets),
+            "main_prob": rec_main_prob,
+            # The question the headline number actually answers. The page
+            # renders THIS, not a literal (UX-P273 / #2674).
+            "main_q": rec_main_q,
+            "main_market_id": rec_main_market_id,
+            "gdp_quarters": gdp_quarters[:4],
+            "side_markets": rec_side[:6],
+        },
+        "markets": {
+            "count": len(markets_markets),
+            "today": today_indices[:4],
+            "stocks": stocks[:6],
+            "side_markets": markets_side[:8],
+        },
+        "energy": {
+            "count": len(energy_markets),
+            "gas": gas_markets_list[:2],
+            "oil": oil_rows[:4],
+            "side_markets": [r for m in energy_markets if (r := _market_row(m))][:8],
+        },
+        "housing": {
+            "count": len(housing_markets),
+            # The card's own question travels with its rows. `kind` tells
+            # the page whether they are a ladder (drawn raw) or a partition
+            # (drawn as a histogram); `mortgage_brackets`, the bare
+            # always-rescaled array this replaces, could say neither.
+            "mortgage_dist": mortgage_dist,
+            "markets": housing_side[:6],
+        },
+        "trade": {
+            "count": len(trade_markets),
+            "markets": trade_rows[:8],
+        },
+        "government": {
+            "count": len(gov_markets),
+            "markets": gov_rows[:8],
+            "distributions": gov_distributions[:6],
+        },
+    }
+
+    # #6978: THE HERO COUNTS WHAT THE PAGE CAN REACH, and the sections below
+    # are the only thing that knows what that is.
+    #
+    # It used to be `len(all_markets)` — the PRE-GATE pool, taken before the
+    # loop above drops a market through `should_exclude_from_featured` and
+    # before `_classify_theme` files the remainder. Measured on the served
+    # bank 2026-09-20 the hero said **1,732** while these nine sections summed
+    # to **352**: 1,380 of the markets it advertised — 80% of them — were
+    # reachable from nowhere on the page, and it called them "active".
+    #
+    # ⚠️ NOT `sum(len(v) for v in themed.values())`, which is the obvious fix
+    # and is wrong HERE. `_classify_theme` on this route always returns a
+    # theme, worst case the catch-all `"other"` (see its note above the loop),
+    # and `other` is accepted by the loop and served by NO section — there is
+    # no `/economics` equivalent of `/politics`'s Other chip. Summing `themed`
+    # would move the hero 1,732 -> ~1,700 and leave the defect intact. The
+    # served sections are the page's own answer to "what can I reach".
+    #
+    # ⚠️ Indexed, not `.get(..., 0)`. A future section with no `count` must
+    # fail loudly in the guard rather than quietly shrink the hero.
+    total = sum(t["count"] for t in themes.values())
 
     return {
         "total_markets": total,
         "updated_at": now.isoformat(),
         "cross_source": cross_source,
-        "themes": {
-            "fed": {
-                "count": _fed_section_count,
-                "fomc_meetings": fomc_meetings[:8],
-                "rate_cuts": rate_cuts,
-                "side_markets": rate_side[:6],
-            },
-            "inflation": {
-                "count": len(inflation_markets),
-                "cpi_releases": cpi_releases[:6],
-                "side_markets": inflation_side[:6],
-            },
-            "jobs": {
-                "count": len(jobs_markets),
-                "markets": jobs_side[:8],
-            },
-            "recession": {
-                "count": len(recession_markets),
-                "main_prob": rec_main_prob,
-                # The question the headline number actually answers. The page
-                # renders THIS, not a literal (UX-P273 / #2674).
-                "main_q": rec_main_q,
-                "main_market_id": rec_main_market_id,
-                "gdp_quarters": gdp_quarters[:4],
-                "side_markets": rec_side[:6],
-            },
-            "markets": {
-                "count": len(markets_markets),
-                "today": today_indices[:4],
-                "stocks": stocks[:6],
-                "side_markets": markets_side[:8],
-            },
-            "energy": {
-                "count": len(energy_markets),
-                "gas": gas_markets_list[:2],
-                "oil": oil_rows[:4],
-                "side_markets": [r for m in energy_markets if (r := _market_row(m))][:8],
-            },
-            "housing": {
-                "count": len(housing_markets),
-                # The card's own question travels with its rows. `kind` tells
-                # the page whether they are a ladder (drawn raw) or a partition
-                # (drawn as a histogram); `mortgage_brackets`, the bare
-                # always-rescaled array this replaces, could say neither.
-                "mortgage_dist": mortgage_dist,
-                "markets": housing_side[:6],
-            },
-            "trade": {
-                "count": len(trade_markets),
-                "markets": trade_rows[:8],
-            },
-            "government": {
-                "count": len(gov_markets),
-                "markets": gov_rows[:8],
-                "distributions": gov_distributions[:6],
-            },
-        },
+        "themes": themes,
         "by_source": {
             "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
             "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),

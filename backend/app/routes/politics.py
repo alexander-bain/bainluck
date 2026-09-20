@@ -1359,8 +1359,6 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
     )
     _t = _mark("cross_source", _t)
 
-    total = len(all_markets)
-
     themes = {
         "presidential": presidential,
         "congressional": {
@@ -1390,6 +1388,32 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
             "markets": build_section(themed.get("other", []), 6),
         },
     }
+    # #6978: THE HERO COUNTS WHAT THE PAGE CAN REACH, and this is the only
+    # place that knows what that is.
+    #
+    # It used to be `len(all_markets)` — the PRE-GATE pool, taken before the
+    # loop above drops a market for being off-topic, settled
+    # (`market_reads_settled`), past its stale cutoff, or a hard-excluded
+    # family (#7321). Measured on the served bank 2026-09-20: the hero said
+    # **6,965** while the page's own chips summed to **6,230**, so 735 of the
+    # markets it advertised were reachable from nowhere on the page — and it
+    # called them "active" while the route had dropped most of them for
+    # reading SETTLED, which is the opposite.
+    #
+    # Summing the served sections rather than `themed` is deliberate and is
+    # what makes this correct on `/economics` too, where the two differ: every
+    # bucket `_classify_theme` can return is a section HERE, but there the
+    # catch-all `other` bucket is accepted by the loop and served by nothing,
+    # so `sum(len(v) for v in themed.values())` would still name ~1,300
+    # markets the reader cannot get to. The section counts are the page's own
+    # answer to "what can I reach", and the All chip
+    # (`frontend/app/politics/page.tsx`, `Object.values(counts).reduce`) sums
+    # exactly these — which is why the two now agree by construction.
+    #
+    # ⚠️ Indexed, not `.get(..., 0)`. A future section with no `count` must
+    # fail loudly in the guard rather than quietly shrink the hero.
+    total = sum(t["count"] for t in themes.values())
+
     by_source = {
         "kalshi": sum(1 for m in all_markets if _source(m) == "kalshi"),
         "polymarket": sum(1 for m in all_markets if _source(m) == "polymarket"),
