@@ -273,7 +273,18 @@ describe("#7363 — the corrections log promises only what every entry carries",
     expect(section).toContain("The one-question markets we were throwing away are now scored");
 
     // Exactly as many counts as the payload supplies — two, not four.
-    expect(section.match(/[\d,]+ rows/g)).toEqual(["36,207 rows", "230 rows"]);
+    //
+    // #7599: compared as a SET, because this assertion never meant to own the
+    // sequence. It was written as an ordered equality and the order it pinned
+    // was the payload array's, which the page no longer renders — the log is
+    // sorted by date now, so the 2026-07-08 entry's "230 rows" comes first.
+    // Leaving it ordered would make this suite a second, silent owner of the
+    // reading order, and the next change to that order would redden a test
+    // about row-count coverage. Which rows carry a count, and how many, is this
+    // file's claim; where they sit is `calibrationCorrectionsAreDateOrdered7599`.
+    expect([...(section.match(/[\d,]+ rows/g) ?? [])].sort()).toEqual(
+      ["36,207 rows", "230 rows"].sort(),
+    );
 
     // And nothing stood in for the absent ones.
     expect(section).not.toContain("null");

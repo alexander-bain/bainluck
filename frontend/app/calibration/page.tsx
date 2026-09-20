@@ -28,6 +28,7 @@ import {
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
 import { describeActivityScope, describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import { orderCorrections } from "@/lib/calibrationCorrections";
 import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
 import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
 import { mceIntervalForCohort, formatMceInterval } from "@/lib/calibrationIntervalScope";
@@ -2737,7 +2738,18 @@ export default function CalibrationPage() {
                 See <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a> for the full methodology.
               </p>
               <ul className="space-y-0">
-                {data.corrections.map((c, i) => (
+                {/* #7599 — THE ORDER IS THE PAGE'S, NOT THE PAYLOAD'S.
+                    This mapped the payload array verbatim, and the intro two
+                    lines above names the date as what the log is organised by.
+                    On the live payload twelve of thirteen entries are
+                    oldest-first and the SECOND is not: 2026-07-08 sat below
+                    2026-07-09. A dated list that is monotone except for one row
+                    reads as a row that lost its place, not as an unordered list.
+                    Sorted here rather than upstream because the backend list is
+                    appended to by hand — re-sorting the rows it publishes today
+                    fixes today and not the next entry. Direction, ties and why
+                    the dates compare as strings: `lib/calibrationCorrections.ts`. */}
+                {orderCorrections(data.corrections).map((c, i) => (
                   <li
                     key={`${c.date}-${i}`}
                     className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 border-t border-surface-border py-3 first:border-0 first:pt-0"
