@@ -1203,6 +1203,34 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
     that has been through normalisation is compared on the same footing as one
     that has not.
 
+    🔴 AND THE PAIRING IS ORIENTATION-BLIND, WHICH THE FIRST SHIP LEARNED THE
+    HARD WAY. Asking home↔home AND away↔away only is the same mistake in a
+    second dimension as the ``sport_id`` screen CERT-3173 blocked: the two rows
+    come from different mints, so they disagree about which side is HOME every
+    bit as routinely as they disagree about the league key. Measured on
+    production 2026-09-20 ~20:18Z, after the arm's first passes went out:
+
+        already revived, duplicate now on the site      5   4 NHL, 1 WNBA
+        still voided, would duplicate on a later pass  13   all NHL
+        refused by the same-orientation screen alone    0   of those 18
+
+    Re-read at 20:29Z, two passes later: 9 live and 9 pending. The total holds
+    at 18 while the beat converts pending into live every ten minutes — the
+    harm curve, rather than an estimate of it.
+
+    `15302884` "Hurricanes v Panthers" was published beside `15312312`
+    "Florida Panthers v Carolina Hurricanes" — one game, same minute, adjacent
+    rows in `/api/events/search?q=hurricanes`. The containment test was never
+    the problem ("hurricanes" IS inside "carolina hurricanes"); the sides were
+    simply swapped, so the survivor could not enter the screen at all.
+
+    A REVERSED FIXTURE INSIDE ±30h IS NOT A SECOND GAME. Two clubs do not meet
+    twice at each other's rink inside thirty hours, and the measurement agrees:
+    17 of the 18 crossed pairs share their kickoff to the MINUTE. So the
+    widening costs no legitimate revival, and it errs in the direction this
+    function's own contract already argues for — wide refuses a row that stays
+    invisible (#2693 gets it), narrow puts a twin on a reader's screen.
+
     SCREEN IN SQL, VERDICT IN PYTHON — the same split the retirement arm makes,
     and here it is also what makes the read affordable. Measured 2026-09-20: the
     ±30h window alone returns up to **940** rows for a `soccer_other` candidate
@@ -1277,6 +1305,13 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
         func.coalesce(Event.away_team_normalized, Event.away_team_name)
     )
 
+    def _overlaps(col, name: str):
+        """Either string contains the other — the mint-agnostic name test."""
+        return or_(
+            func.strpos(col, name) > 0,
+            func.strpos(literal(name), col) > 0,
+        )
+
     others = (await session.execute(
         select(
             Event.id,
@@ -1294,16 +1329,23 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
             >= event.commence_time - SURVIVING_COUNTERPART_WINDOW,
             Event.commence_time
             <= event.commence_time + SURVIVING_COUNTERPART_WINDOW,
+            # Both pairings, because the two rows disagree about which side is
+            # home as routinely as they disagree about the league key.
             or_(
-                func.strpos(home_col, home) > 0,
-                func.strpos(literal(home), home_col) > 0,
-            ),
-            or_(
-                func.strpos(away_col, away) > 0,
-                func.strpos(literal(away), away_col) > 0,
+                and_(
+                    _overlaps(home_col, home),
+                    _overlaps(away_col, away),
+                ),
+                and_(
+                    _overlaps(away_col, home),
+                    _overlaps(home_col, away),
+                ),
             ),
         )
     )).all()
+
+    def _same(a: str, b: str) -> bool:
+        return a in b or b in a
 
     for row in others:
         if is_retired_event_status(row.status):
@@ -1312,9 +1354,9 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
         other_away = (row.away_team_normalized or row.away_team_name or "").lower()
         if not other_home or not other_away:
             continue
-        if (home in other_home or other_home in home) and (
-            away in other_away or other_away in away
-        ):
+        if _same(home, other_home) and _same(away, other_away):
+            return True
+        if _same(home, other_away) and _same(away, other_home):
             return True
     return False
 
