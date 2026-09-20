@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -367,6 +368,42 @@ def payload_age_seconds(payload: dict[str, Any], now: datetime | None = None) ->
 # ---------------------------------------------------------------------------
 
 
+#: #7563. Values at or above this many encoded bytes are stored zlib-compressed.
+#:
+#: This tier is the largest tenant of a 100 MB `allkeys-lru` Redis, and on
+#: `allkeys-lru` A DECLARED TTL IS NOT A RESIDENCY GUARANTEE — the evictor takes
+#: the least-recently-*used* key regardless of how long its TTL still had to run.
+#: So this module's own footprint is what decides whether OTHER tiers survive
+#: their stated lifetime, and the venue-history bank of #7351 (36 h declared,
+#: measured under 4 h, 646,869 `evicted_keys`) is the tier that was paying.
+#:
+#: Measured on five real production payloads 2026-09-20 (`/api/events/{id}/
+#: game-markets` and `/related-futures`, 3.7 KB .. 1.24 MB, 3.58 MB in total):
+#: level 1 gives **9.2x**, level 6 gives 12.3x. Level 1 is chosen because the
+#: extra 1.3x costs 2.2x the CPU (5.5 ms vs 2.5 ms to compress the 1.24 MB NFL
+#: payload) and this tier is on the read path of the event page.
+#:
+#: The read path gets FASTER, not slower: decompressing the largest payload costs
+#: 0.45 ms, against ~1.1 MB of Heroku Redis network transfer it no longer has to
+#: do. The floor exists because below it the 3-byte header and the CPU are real
+#: while the saving is not — the classes this tier actually stores are 7 MB and
+#: 7.2 MB, and they are all far above it.
+_COMPRESS_MIN_BYTES = 2048
+_COMPRESS_LEVEL = 1
+
+#: The sentinel that says "the rest of these bytes are deflate, not JSON".
+#:
+#: Sniffed rather than assumed, because BOTH shapes are live at once and neither
+#: is a migration: on the deploy that ships this, every stored value is plain
+#: JSON and must keep reading; on a rollback, every compressed value must read as
+#: a MISS rather than an exception, which it does — `decode_payload` is total and
+#: a miss costs a rebuild. An explicit prefix, not a zlib magic-byte check: JSON
+#: from `json.dumps` of a dict always begins `{`, so the two spaces cannot
+#: collide, and a sentinel a stored value could never equal is the same rule
+#: `setex_if_unchanged` already applies to its own `expected=None`.
+_COMPRESS_PREFIX = b"z1:"
+
+
 def decode_payload(raw: Any) -> dict[str, Any] | None:
     """Decode a cached value, returning None for anything unusable.
 
@@ -375,20 +412,39 @@ def decode_payload(raw: Any) -> dict[str, Any] | None:
     disarmed the client for the rest of the request — skipping a perfectly
     healthy mirror on the read side and dropping the write-back on the way out
     (Codex C224). A corrupt value is a miss, nothing more.
+
+    Reads both codecs (#7563): `_COMPRESS_PREFIX` bytes are inflated first, and
+    anything else is parsed as it always was.
     """
     if raw is None:
         return None
     try:
-        text = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
-        value = json.loads(text)
+        data = raw if isinstance(raw, (bytes, bytearray)) else str(raw).encode()
+        if bytes(data[: len(_COMPRESS_PREFIX)]) == _COMPRESS_PREFIX:
+            data = zlib.decompress(bytes(data[len(_COMPRESS_PREFIX) :]))
+        # `json.loads` takes bytes directly, so the utf-8 round trip the old
+        # `raw.decode()` did on every read is gone along with it.
+        value = json.loads(data)
     except Exception:
         logger.warning("event-concept cache: discarding undecodable cached value")
         return None
     return value if isinstance(value, dict) else None
 
 
-def encode_payload(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, default=str)
+def encode_payload(payload: dict[str, Any]) -> bytes:
+    """Encode a payload for storage. Compressed above `_COMPRESS_MIN_BYTES`.
+
+    Returns `bytes` — ONE type, on both arms. redis-py utf-8 encodes a `str`
+    before it ever reaches the socket, so a small payload stores byte-for-byte
+    what it stored before this change; returning `str` on one arm and `bytes` on
+    the other would instead hand `setex_if_unchanged` two types to compare
+    against the `bytes` that `rc.get` always returns, and that comparison decides
+    whether the 24 h mirror may be published at all.
+    """
+    raw = json.dumps(payload, default=str).encode()
+    if len(raw) < _COMPRESS_MIN_BYTES:
+        return raw
+    return _COMPRESS_PREFIX + zlib.compress(raw, _COMPRESS_LEVEL)
 
 
 # ---------------------------------------------------------------------------

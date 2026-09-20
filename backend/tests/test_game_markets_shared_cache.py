@@ -290,7 +290,7 @@ def test_the_two_tiers_do_not_share_a_redis_namespace():
 def test_stored_bytes_are_json_and_carry_the_envelope():
     rc = _FakeRedis()
     gmc.write(7, _stamped("live"), rc=rc)
-    raw = json.loads(rc.store[gmc.keys_for(7).primary].decode())
+    raw = concept_cache.decode_payload(rc.store[gmc.keys_for(7).primary])  # #7563
     assert raw[concept_cache.ENVELOPE_FIELD]["generation"] == concept_cache.GENERATION
 
 

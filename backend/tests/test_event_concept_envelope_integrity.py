@@ -104,7 +104,8 @@ async def _serve(adapter, rc):
 
 
 def _stored_envelope(rc, slot):
-    return json.loads(rc.store[slot].decode())[cache_mod.ENVELOPE_FIELD]
+    # #7563: one codec, never a second one — the stored value may be compressed.
+    return cache_mod.decode_payload(rc.store[slot])[cache_mod.ENVELOPE_FIELD]
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +333,7 @@ async def test_a_degraded_build_is_served_and_stored_as_degraded():
 
     # The private marker is build-scoped and must never reach the wire or Redis.
     assert cache_mod.BUILD_LOSS_FIELD not in out
-    assert cache_mod.BUILD_LOSS_FIELD not in json.loads(rc.store[KEYS.stale].decode())
+    assert cache_mod.BUILD_LOSS_FIELD not in cache_mod.decode_payload(rc.store[KEYS.stale])
 
 
 @pytest.mark.asyncio
