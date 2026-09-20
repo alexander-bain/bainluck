@@ -8,7 +8,7 @@ import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice, printsAPercent } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import { answerIsBareQuantity, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -943,6 +943,14 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // `FuturesCard` has printed `leader.name` under its hero all along; this row
   // is its small twin and now says the same thing. Measurement: the module.
   const answerLabel = rowAnswerLabel(leader, context);
+  // #7331 — and the label #4396 added collapses when the answer is itself a
+  // quantity: `Core CPI YoY - September 2026 · 2.4% · Resolves within a month`
+  // with `41%` in this column printed two percentages and said which was which
+  // for neither. The word goes on the number that is a probability, because that
+  // is the one a reader cannot otherwise identify — the answer is already the
+  // only other thing on the line. `answerIsBareQuantity` is the same digit-and-
+  // no-letter predicate the backend door spends on the row above this one.
+  const percentIsAmbiguous = answerIsBareQuantity(answerLabel);
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
@@ -976,7 +984,27 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
       {leader && (
         <div className="flex items-center gap-2 shrink-0">
           <MovementBadge m={leader.movement} prob={leader.probability} />
-          <span className="font-mono tabular-nums text-sm font-bold">{leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}</span>
+          {/* 🔴 THE WORD SITS UNDER THE NUMBER, NOT BESIDE IT. Inline reads fine
+              in isolation and breaks the thing a bundle is for: five rows with
+              their percentages in one right-aligned column, scannable in a
+              glance. Shot at 390px, the inline draft pushed this row's `41%`
+              80px left of the `55%` and `41%` above it, so the one row carrying
+              an extra word was also the one row out of column. Stacked, the
+              column holds and the word reads as the unit label it is — and the
+              row does not grow, because the left side is already two lines.
+
+              The text carries its own leading space so the link's accessible
+              name reads "41% chance": a margin is a gap the eye can see and the
+              reader cannot. Never printed over a `—` — there is no percentage
+              there to qualify. */}
+          <span className="flex flex-col items-end leading-none">
+            <span className="font-mono tabular-nums text-sm font-bold">
+              {leader.probability != null && leader.probability > 0 ? formatProbabilityPercent(leader.probability, { rendered: compactPercent }) : "—"}
+            </span>
+            {percentIsAmbiguous && leader.probability != null && leader.probability > 0 && (
+              <span className="mt-1 text-[10px] font-normal text-text-muted" data-testid="compact-row-chance">{" chance"}</span>
+            )}
+          </span>
         </div>
       )}
     </Link>

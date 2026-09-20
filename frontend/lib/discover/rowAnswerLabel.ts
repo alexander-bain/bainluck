@@ -112,3 +112,43 @@ export function rowAnswerLabel(
   if (captionNames(caption, name)) return null;
   return name;
 }
+
+/**
+ * #7331 — the label above is the fix for "which answer is this percentage for?",
+ * and it works while the answer is a WORD. When the answer is itself a quantity
+ * the grammar collapses. Production 2026-09-19 19:4xZ, 390px, page one, the
+ * FED & RATES bundle, verbatim from the rendered card:
+ *
+ *     Core CPI YoY - September 2026
+ *     2.4% · Resolves within a month                            41%
+ *
+ * Two percentages on one row — an inflation RATE and a PROBABILITY — with a `·`
+ * and eight inches of whitespace between them, and nothing saying which is
+ * which. The row above it reads correctly for the only reason that matters: its
+ * answer is the word `Hike 25bps`.
+ *
+ * Returning true means the row's own percentage says `chance` — the site's
+ * existing word for this (`HERO_PROBABILITY_HINT` is "chance this happens", and
+ * the served captions say "16% chance, up 1 point since Feb 19"). It is spent
+ * only where the ambiguity is real: on the same feed 5 of the 6 labelled rows
+ * name a quantity that PREFIXES A WORD (`Above 5`, `Above 45`), which states its
+ * own unit and is left byte-identical. This is a copy fix for the collapsed
+ * case, not a rewording of every row.
+ *
+ * The predicate is deliberately the same one the backend door spends on the same
+ * bundle (`leader_percent_parenthetical`, `feed_reasons.py`, #7331's other half):
+ * a digit and no letter. The two doors must not disagree about which row is
+ * ambiguous, or one bundle prints the word on one row and withholds it on the
+ * next for no reason a reader can see.
+ *
+ * NOT REPAIRED HERE, and measured rather than assumed: `FuturesCard`'s variant-A
+ * hero stacks `leader.name` under a 38px percentage and would collapse the same
+ * way, but 0 of the 76 top-level futures cards on this feed carry a bare-quantity
+ * leader. A repair with no specimen is a repair nobody can measure; it is
+ * recorded on #7331 instead.
+ */
+export function answerIsBareQuantity(label: string | null | undefined): boolean {
+  const text = (label ?? "").trim();
+  if (!text) return false;
+  return /\p{Nd}/u.test(text) && !/\p{L}/u.test(text);
+}
