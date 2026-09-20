@@ -221,6 +221,35 @@ function marginLadderLabel(teamAbbr: string, threshold: number | string): string
 }
 
 /**
+ * `BC by 7` — a margin that HAPPENED, where the rung grammar above would lie.
+ *
+ * #7380, measured on production 2026-09-19 at 390px: `/events/15304450`, Boston
+ * College 28 Rutgers 21, drew `FINAL BC by 7+` on a final margin of exactly 7,
+ * and a live card drew `ACTUAL JMU by 13+` over a scoreboard reading 13–26.
+ * "7+" means seven OR MORE; a played margin has no more left in it. The same
+ * screen already disagreed with itself twice over — the totals card one slot
+ * down prints its settled total as `49 points`, and the half rail below printed
+ * its exact margin without a suffix.
+ *
+ * The `+` is not a slip in `marginLadderLabel`: a rung IS a threshold, and
+ * `gradeMarginRung` grades it `>=` for exactly that reason. It stays on rungs,
+ * and on the PRE-GAME / PROJECTION tiles, which quote a cover line — a handicap,
+ * not a measurement. This is the other case: ACTUAL and FINAL are the scoreboard,
+ * and a scoreboard is stated.
+ *
+ * NOT `BC +7`, which is the spelling the half rail reached for and the one #2442
+ * removed from this page — a competitor abbreviation followed by a signed number
+ * is a betting line, the first of the six gambling formats Alex counted on one
+ * screen. #2442's answer was `by N` in the sport's own units; the `+` it added
+ * belonged to the rung it was fixing. So the half rail's two markers are brought
+ * here rather than copied from, and all four sites now spell one quantity one way.
+ */
+function exactMarginLabel(teamAbbr: string, margin: number): string {
+  if (margin === 0) return "Tied";
+  return `${teamAbbr} by ${Math.abs(margin)}`;
+}
+
+/**
  * #6203. How a margin rung finished, against the final margin of the scope that
  * rung belongs to — the game for the full-game rail, the half for a period one.
  *
@@ -613,7 +642,8 @@ export default function MarketMapSection({
           value: actualMargin,
           type: "actual",
           label: "Actual",
-          displayValue: formatMargin(actualMargin, actualTeam),
+          // #7380: the scoreboard, not a rung — see `exactMarginLabel`.
+          displayValue: exactMarginLabel(actualTeam, actualMargin),
         });
       }
       // #5045: ONE GUARD PER TILE, because they now hold two different
@@ -662,7 +692,8 @@ export default function MarketMapSection({
           value: finalMargin,
           type: "final",
           label: "Final",
-          displayValue: formatMargin(finalMargin, finalTeam),
+          // #7380: the scoreboard, not a rung — see `exactMarginLabel`.
+          displayValue: exactMarginLabel(finalTeam, finalMargin),
         });
       }
     }
@@ -1129,7 +1160,8 @@ export default function MarketMapSection({
             value: margin,
             type: "actual",
             label: "Actual",
-            displayValue: margin === 0 ? "Tied" : `${team} +${Math.abs(margin)}`,
+            // #7380: `JMU +13` was #2442's handicap spelling; one grammar now.
+            displayValue: exactMarginLabel(team, margin),
           });
         }
       }
@@ -1184,7 +1216,8 @@ export default function MarketMapSection({
           value: margin,
           type: "final",
           label: "Final",
-          displayValue: margin === 0 ? "Tied" : `${team} +${Math.abs(margin)}`,
+          // #7380: `JMU +13` was #2442's handicap spelling; one grammar now.
+          displayValue: exactMarginLabel(team, margin),
         });
       }
 
