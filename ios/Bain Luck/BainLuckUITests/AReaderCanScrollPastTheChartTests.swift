@@ -272,9 +272,9 @@ final class AReaderCanScrollPastTheChartTests: XCTestCase {
             throw XCTSkip(
                 """
                 The evolution chart never appeared on \(route). Nothing in this file is about \
-                #6705 unless it does. Check the market still serves >= 2 timeline points — a \
-                thin history renders "Limited price history available" and no chart at all, \
-                which is a supply fact and not this page's bug.
+                #6705 unless it does. Check the market still serves >= 2 timeline points in the \
+                CHOSEN window — a thin window renders the range chips over a counted sentence \
+                and no plot at all (#7350), which is a supply fact and not this page's bug.
                 """
             )
         }
