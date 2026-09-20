@@ -28,6 +28,7 @@ from app.utils.cross_source_matching import (
     is_resolved as _is_resolved,
     source as _source,
 )
+from app.utils.feed_market_quality import hard_excluded_family
 from app.utils.futures_liveness import market_reads_settled
 from app.utils.market_staleness import (
     expired_ladder_rungs,
@@ -1238,6 +1239,29 @@ async def get_politics(db: AsyncSession, stage_ms: dict | None = None):
         if market_reads_settled(m, now=now):
             continue
         if m.resolution_date and m.resolution_date < stale_cutoff:
+            continue
+        # #7321: the margin-of-victory / voter-turnout / vote-percent /
+        # House-district families Alex hard-excluded from Discover on
+        # 2026-06-24 (#968, #971). The ruling was written against Discover's
+        # route, so this page never inherited it: measured on the served bank
+        # 2026-09-20 04:25Z, 18 of the 60 cards rendered were these families —
+        # `other` was 6 of 6, `gubernatorial` 6 of 10, and the section's first
+        # screenful read "Nevada Governor election: Joe Lombardo vote percent —
+        # At least 56%, 2%", which tells a reader nothing about who wins.
+        #
+        # They lead rather than trail because #7251 sorts each section
+        # most-OPEN-first and `_decidedness` CLAMPS to 0 for any multi-outcome
+        # market whose leading rung sits below the flat line (100/n). A ladder
+        # whose every rung is 1-2% is therefore scored maximally open when it
+        # is in fact all but settled, so the sort promotes exactly the cards
+        # with the least to say. Suppressing the family is the fix; widening
+        # `_decidedness` is not, because these do not belong on the page at
+        # any rank.
+        #
+        # Every section renders AT its cap (10/10/12/10/12/6 against pools of
+        # 889/333/146/36/458/3961), so the slice is binding everywhere and
+        # what is dropped here backfills from the same sorted pool.
+        if hard_excluded_family(m.name, m.external_id):
             continue
         spotlight_eligible.append(m)
         theme = _classify_theme(m)
