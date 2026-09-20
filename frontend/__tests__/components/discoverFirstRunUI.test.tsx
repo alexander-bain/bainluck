@@ -151,14 +151,38 @@ describe("page wiring (source-level — the page cannot be mounted in this harne
   });
 
   it("NEVER puts the orientation state on a timer (the P3 trap)", () => {
-    // The page's only timer is the pre-existing 5s swipe-hint dismissal. If a
-    // second one appears, this fails and whoever added it has to prove it does
-    // not touch the orientation cohort.
+    // This guard used to read `toHaveLength(1)` and say: if a second timer
+    // appears, whoever added it has to prove it does not touch the orientation
+    // cohort. #7417 added one — a 250 ms throttle on the scroll-position write
+    // that lets Back return the reader to their place — so here is the proof,
+    // as an assertion rather than a smaller number.
+    //
+    // 🔴 THE COUNT IS KEPT EXACT AND THE TIMERS ARE NAMED. Relaxing this to
+    // `toBeLessThan(3)`, or deleting it, would give away the protection the
+    // test exists for: what it is really watching is that no timer can ever
+    // reach the orientation state. An enumerated list still fails on timer
+    // number three; a loosened bound waves it through.
     const timers = PAGE_SOURCE.match(/setTimeout\(/g) ?? [];
-    expect(timers).toHaveLength(1);
+    expect(timers).toHaveLength(2);
+    // 1 — the pre-existing 5s swipe-hint dismissal.
     expect(PAGE_SOURCE).toContain("window.setTimeout(dismissHint, 5000)");
+    // 2 — #7417's scroll-mark throttle. Named by its body so it cannot silently
+    // become a different timer under the same count.
+    expect(PAGE_SOURCE).toMatch(
+      /timer = window\.setTimeout\(\(\) => \{[\s\S]{0,400}?writeScrollMark\(\{[\s\S]{0,200}?\}, 250\);/,
+    );
+    // The protection itself, unchanged and now covering both timers.
     for (const symbol of ["markFirstRunEngaged", "setEngagedThisSession", "setFirstRunStorage"]) {
       expect(PAGE_SOURCE).not.toMatch(new RegExp(`setTimeout\\([^)]*${symbol}`));
+    }
+    // The new timer's whole body is orientation-free, not just its first line —
+    // the regex above bounds it, so assert the body's contents directly.
+    const throttleBody = PAGE_SOURCE.slice(
+      PAGE_SOURCE.indexOf("timer = window.setTimeout("),
+      PAGE_SOURCE.indexOf("}, 250);"),
+    );
+    for (const symbol of ["markFirstRunEngaged", "setEngagedThisSession", "setFirstRunStorage", "firstRunStorage"]) {
+      expect(throttleBody).not.toContain(symbol);
     }
   });
 

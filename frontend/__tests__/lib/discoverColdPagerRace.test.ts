@@ -203,8 +203,39 @@ describe("LAT-P172 — the second uninvited feed build, at first paint", () => {
   it("the page passes its own mount seed, not a literal that can drift", () => {
     // `initialVisibleCount` is only meaningful if it is the value `visibleCount`
     // was actually seeded with. Pin both ends: the state seed and the argument.
+    //
+    // #7417 CHANGED THE SHAPE, AND THE INVARIANT GOT STRICTER, NOT LOOSER. The
+    // argument used to be the literal `PAGE_SIZE`, which was the seed because
+    // the seed could never be anything else. A Back now restores the reader's
+    // window, so the seed is whatever they arrived holding and the literal
+    // would be a lie — it would tell the predicate that a restored reader had
+    // advanced their own window, and the auto-pager would fetch a page nobody
+    // asked for on the first commit after Back.
+    //
+    // So the pin moves from "the argument is the constant" to "the argument is
+    // state whose EVERY write is paired with the matching `setVisibleCount`".
+    // That is the property the old literal was standing in for.
     expect(PAGE_SOURCE).toMatch(/useState\(PAGE_SIZE\)/);
-    expect(PAGE_SOURCE).toMatch(/initialVisibleCount:\s*PAGE_SIZE/);
+    expect(PAGE_SOURCE).toMatch(
+      /const \[initialVisibleCount, setInitialVisibleCount\] = useState\(PAGE_SIZE\)/,
+    );
+    // Passed as the shorthand — still the page's own value, never a literal.
+    expect(PAGE_SOURCE).toMatch(/^\s*initialVisibleCount,\s*$/m);
+    expect(PAGE_SOURCE).not.toMatch(/initialVisibleCount:\s*PAGE_SIZE/);
+
+    // Every writer of one is a writer of the other, with the same expression.
+    // A `setVisibleCount` that forgets its partner is exactly the drift this
+    // test is named for, and it is now reachable in a way it was not before.
+    const visibleWrites = [...PAGE_SOURCE.matchAll(/setVisibleCount\(([^)]*)\)/g)]
+      .map((m) => m[1])
+      // The sentinel's functional update advances the window the reader is
+      // consuming; it is not a re-seed and must NOT move the seed. Matched on
+      // the leading paren rather than on `=>`, because `[^)]*` stops at the
+      // arrow function's own first `)` and never sees the arrow.
+      .filter((arg) => !arg.startsWith("("));
+    const seedWrites = [...PAGE_SOURCE.matchAll(/setInitialVisibleCount\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(visibleWrites.length).toBeGreaterThan(0);
+    expect(seedWrites).toEqual(visibleWrites);
   });
 
   it("🔴 the sentinel is not observed against the loading skeleton", () => {
