@@ -3,6 +3,7 @@
 // the D1 rule (probabilities only — never odds) is enforced in one place.
 
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "@/lib/types";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 /** The leader outcome to display (leader-pick already applied server-side): the
  *  first top_outcome with a probability. */
@@ -11,11 +12,22 @@ export function leaderOutcome(market: FuturesMarket): FuturesOutcome | null {
   return outs.length ? outs[0] : null;
 }
 
-/** "Cleveland Cavaliers 27%" — name + probability ONLY (D1: never odds). */
+/**
+ * "Cleveland Cavaliers 27%" — name + probability ONLY (D1: never odds).
+ *
+ * #7320 — ROUTED THROUGH THE CONTRACT EVEN THOUGH NOTHING CALLS IT. Measured:
+ * the only importer of this symbol is this module's own test; the card renders
+ * `leaderOutcome` directly. So this line was NOT the defect a reader hit, and
+ * fixing it repairs no screen — it is fixed because it is an EXPORTED twin of
+ * the expression that was the defect, and the next caller to reach for "the
+ * leader's label" would have inherited the bare round along with it. Stated
+ * rather than quietly bundled: the reader-facing half of #7320 is
+ * `SearchFamilyCard`, one site, and this is housekeeping riding with it.
+ */
 export function leaderLabel(market: FuturesMarket): string | null {
   const ld = leaderOutcome(market);
   if (!ld || ld.probability == null) return null;
-  return `${ld.name} ${Math.round(ld.probability * 100)}%`;
+  return `${ld.name} ${formatProbabilityPercent(ld.probability)}`;
 }
 
 /** Movement arrow only when |Δ24h| ≥ 2pts (0.02 on the 0-1 scale). */

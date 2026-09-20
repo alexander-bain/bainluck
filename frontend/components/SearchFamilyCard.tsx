@@ -11,6 +11,7 @@
 
 import Link from "next/link";
 import type { FuturesFamily, FuturesMarket } from "@/lib/types";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import {
   leaderOutcome,
   movementArrow,
@@ -111,8 +112,21 @@ function AnswerRow({
            never the answer. */
         <div className="flex items-center gap-1 min-w-0 max-w-[55%] text-sm">
           <span className="truncate text-text-primary font-medium">{ld.name}</span>
+          {/* #7320: this span used to round `ld.probability * 100` inline — a
+              second copy of the rounding rule, skipping the boundary clamp that
+              UX-P046 owns. (Spelled without the call here on purpose: the
+              inventory guard for this surface is a line scan, and a comment
+              quoting the expression verbatim would read as a live site.)
+              Production 2026-09-20 00:12Z, `/search?q=astros`: the ANSWERS card
+              printed `NRFI 100%` over a served `0.9995` on a market that closes
+              Sep 26 — certainty claimed for an open question, which is the exact
+              render `probabilityDisplay` exists to refuse. The `0%` arm was live
+              on the same expression. The `%` moves INSIDE the call because the
+              marker and the sign are one string: handed `">99"` with a literal
+              `%` after it this span would print `>99%` correctly by luck and
+              `<1%` wrongly the moment the other arm fired. */}
           <span className="flex-shrink-0 text-text-primary font-medium">
-            {Math.round(ld.probability * 100)}%
+            {formatProbabilityPercent(ld.probability)}
           </span>
           {arrow && (
             <span
