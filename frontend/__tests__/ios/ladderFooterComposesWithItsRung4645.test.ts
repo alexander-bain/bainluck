@@ -159,8 +159,16 @@ describe("#4645 — a ladder footer caption composes with its rung", () => {
    */
   it("says exactly what the web twin says — one card family", () => {
     const web = readFileSync(WEB_CARD, "utf8");
+    // #7457 — read the caption by the SHAPE it has on the card (the grey span
+    // drawn immediately beside the accented rung label), not by its exact class
+    // list. The old form pinned `className="text-[12px] text-text-secondary"`
+    // literally and went undefined the moment that span gained a `shrink-0`,
+    // failing this parity assertion on a change that touched no word either
+    // client says. Anchoring on the accent span next to it is also STRICTER:
+    // the caption now has to be sitting beside the rung label to be found at
+    // all, which is the arrangement the parity is about.
     const webCaption = web.match(
-      /<span className="text-\[12px\] text-text-secondary">([^<]*)<\/span>/,
+      /<span className="[^"]*text-text-secondary[^"]*">([^<]*)<\/span>\s*<span className="[^"]*text-accent-brand[^"]*">\{lastAbove50Label\}<\/span>/,
     )?.[1];
     expect(webCaption).toBeDefined();
 
