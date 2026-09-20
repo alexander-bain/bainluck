@@ -1233,6 +1233,16 @@ async def _compute_movers(
     return old_probs
 
 
+#: Upper bound on the historical rows one trend chart may read. The chart reads
+#: each market's WHOLE outcome column, because the de-vig denominator is the
+#: column and not the ten names we happen to draw, so this is ~3x the old
+#: top-N-only read: measured 6,090 rows for the NBA championship column and
+#: 7,019 for MLB's over 168h (2026-09-20). It is a rail, not a budget — and the
+#: read is ordered NEWEST FIRST so that hitting it drops the oldest tail rather
+#: than the current price the legend publishes.
+_TREND_ROW_CAP = 20000
+
+
 async def _build_trend_chart(
     session: AsyncSession,
     outcome_ids: list[int],
@@ -1241,29 +1251,81 @@ async def _build_trend_chart(
     top_n: int = 10,
     bucket_seconds: int = 3600,
 ) -> dict:
-    """Build trend chart data for top N outcomes.
+    """Build the grid's trend chart on the SAME basis as the grid's table.
 
-    Returns probability timeline in the same format as the futures
-    probability-timeline endpoint.
+    #7458. This function used to pool ``FuturesOddsSnapshot.probability`` across
+    every row that landed in an hour and take the median. That column is the
+    raw, vig-inclusive, per-BOOKMAKER price — see ``_compute_movers``' docstring
+    for why its name lies — so the chart published a different quantity from the
+    table beside it and the movers rail below it. On 2026-09-20 the NBA grid's
+    legend said OKC 28.17% while its own table said 21.50%, and all five leagues
+    disagreed with themselves; EPL's top NINE clubs summed to 102%, which is not
+    a probability distribution but a 21% overround.
+
+    Three defects, and the first two only look like one:
+
+    1. **Vig basis.** Each book's column is now de-vigged on its own outcome set
+       through ``odds_math.devig_consensus`` — the same helper the live path, the
+       table and ``_compute_movers`` use — carrying the same
+       ``already_normalized`` classification, so a venue that publishes a
+       probability is never re-scaled by its own column sum (#6675).
+
+    2. **Whose column.** De-vigging needs the WHOLE market column as its
+       denominator, so the read widens from the ten drawn outcomes to every
+       sibling outcome of their markets. Reading a tenth of a column and
+       dividing by its sum is #6675 with a different numerator.
+
+    3. **Which source happened to write this hour.** Venues write on their own
+       cadences: the NBA championship column takes four Odds API books together
+       at one minute and polymarket alone at another. Pooling by row let whoever
+       wrote in a bucket decide its value, and de-vigging alone would only trade
+       the resulting flat line for a sawtooth (measured: 23.3% on odds_api
+       hours, 21.5% on polymarket hours — ±1.8pt on a market that did not move).
+       Each book column is therefore carried forward into the buckets where it
+       did not write, so every point is a consensus over the same source set and
+       a change in the line is a change in the market.
+
+    Only ``outcome_names``' names are drawn; the siblings exist to make the
+    denominator honest and are dropped before the payload is built.
     """
     if not outcome_ids:
         return {"timeline": [], "outcomes": []}
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    drawn_ids = set(outcome_ids)
+
+    # The callers hand us outcome ids, not markets; the de-vig needs markets.
+    market_result = await session.execute(
+        select(FuturesOutcome.market_id)
+        .where(FuturesOutcome.id.in_(list(drawn_ids)))
+        .distinct()
+    )
+    market_ids = [m for (m,) in market_result.all() if m is not None]
+    if not market_ids:
+        return {"timeline": [], "outcomes": []}
 
     stmt = (
         select(
-            FuturesOddsSnapshot.outcome_id,
-            FuturesOddsSnapshot.captured_at,
-            FuturesOddsSnapshot.probability,
+            FuturesOutcome.id.label("outcome_id"),
+            FuturesOutcome.market_id.label("market_id"),
+            FuturesOddsSnapshot.bookmaker.label("bookmaker"),
+            FuturesOddsSnapshot.captured_at.label("captured_at"),
+            FuturesOddsSnapshot.probability.label("probability"),
+        )
+        .join(
+            FuturesOddsSnapshot,
+            FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
         )
         .where(
-            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+            FuturesOutcome.market_id.in_(market_ids),
             FuturesOddsSnapshot.captured_at >= cutoff,
             FuturesOddsSnapshot.probability.isnot(None),
         )
-        .order_by(FuturesOddsSnapshot.captured_at)
-        .limit(5000)
+        .order_by(
+            FuturesOddsSnapshot.captured_at.desc(),
+            FuturesOddsSnapshot.id.desc(),
+        )
+        .limit(_TREND_ROW_CAP)
     )
     result = await session.execute(stmt)
     rows = result.all()
@@ -1271,39 +1333,85 @@ async def _build_trend_chart(
     if not rows:
         return {"timeline": [], "outcomes": []}
 
-    # Bucket by time
-    buckets: dict[int, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    # bucket -> market -> bookmaker -> {outcome_id: raw vig-inclusive price}.
+    # Rows arrive newest-first, so the FIRST row seen for a key is that bucket's
+    # latest write and an older row may never overwrite it.
+    observed: dict[int, dict[int, dict[str, dict[int, float]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(dict))
+    )
     for row in rows:
-        ts = int(row.captured_at.timestamp())
-        bucket_ts = (ts // bucket_seconds) * bucket_seconds
-        if row.probability is not None:
-            buckets[bucket_ts][row.outcome_id].append(float(row.probability))
+        bucket_ts = (
+            int(row.captured_at.timestamp()) // bucket_seconds
+        ) * bucket_seconds
+        column = observed[bucket_ts][row.market_id][row.bookmaker or "unknown"]
+        if row.outcome_id not in column:
+            column[row.outcome_id] = float(row.probability)
 
-    # Build timeline — aggregate across outcome IDs sharing the same name
+    # A source in neither bucket is de-vigged by the default arm. That is right
+    # for a new Odds API sportsbook and WRONG for a new prediction market, and
+    # the two are indistinguishable from here — so say so once per read rather
+    # than let a whole trend line ride on it silently (#6675).
+    unknown_sources = {
+        book
+        for markets in observed.values()
+        for books in markets.values()
+        for book in books
+        if book not in _ALREADY_PROBABILITY_SOURCES
+        and book not in _DEVIGGED_AT_INGEST_SOURCES
+    }
+    if unknown_sources:
+        logger.warning(
+            "_build_trend_chart: unclassified snapshot source(s) %s de-vigged "
+            "by default — if any of them stores a probability rather than a "
+            "price, its entire trend line is re-scaled by its column sum (#6675)",
+            sorted(unknown_sources),
+        )
+
     timeline = []
-    for bucket_ts in sorted(buckets.keys()):
-        entry = {
-            "timestamp": datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat(),
-            "outcomes": {},
-        }
-        # Group all probs by golfer name (multiple outcome IDs may share a name)
-        by_name: dict[str, list[float]] = defaultdict(list)
-        for oid, probs in buckets[bucket_ts].items():
-            name = outcome_names.get(oid, str(oid))
-            by_name[name].extend(probs)
-        for name, all_probs in by_name.items():
-            entry["outcomes"][name] = _merge_probabilities(all_probs)
-        timeline.append(entry)
+    # Last column seen for each (market, bookmaker), carried into later buckets.
+    carried: dict[tuple[int, str], dict[int, float]] = {}
+    for bucket_ts in sorted(observed.keys()):
+        for market_id, books in observed[bucket_ts].items():
+            for book, column in books.items():
+                carried[(market_id, book)] = column
 
-    # Build outcomes metadata (current probability = latest timeline entry)
-    outcomes_meta = []
-    if timeline:
-        latest = timeline[-1]["outcomes"]
-        for name, prob in sorted(latest.items(), key=lambda x: x[1], reverse=True):
-            outcomes_meta.append({
-                "name": name,
-                "current_probability": prob,
-            })
+        per_market: dict[int, dict[str, dict[int, float]]] = defaultdict(dict)
+        for (market_id, book), column in carried.items():
+            per_market[market_id][book] = column
+
+        by_name: dict[str, list[float]] = defaultdict(list)
+        for market_id, book_columns in per_market.items():
+            # Keys are outcome ids; devig_consensus is key-agnostic.
+            consensus = devig_consensus(
+                book_columns,
+                method="mean",
+                already_normalized=_ALREADY_PROBABILITY_SOURCES,
+            )
+            for outcome_id, probability in consensus.items():
+                if outcome_id in drawn_ids:
+                    by_name[outcome_names.get(outcome_id, str(outcome_id))].append(
+                        probability
+                    )
+
+        if not by_name:
+            continue
+        timeline.append({
+            "timestamp": datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat(),
+            "outcomes": {
+                name: _merge_probabilities(probs) for name, probs in by_name.items()
+            },
+        })
+
+    if not timeline:
+        return {"timeline": [], "outcomes": []}
+
+    # Outcomes metadata — current probability is the latest timeline entry, so
+    # the legend can never publish a number the line it labels does not reach.
+    latest = timeline[-1]["outcomes"]
+    outcomes_meta = [
+        {"name": name, "current_probability": prob}
+        for name, prob in sorted(latest.items(), key=lambda x: x[1], reverse=True)
+    ]
 
     return {
         "hours": hours,
