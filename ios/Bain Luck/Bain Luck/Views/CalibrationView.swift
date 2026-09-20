@@ -781,13 +781,25 @@ struct CalibrationSurfaceView: View {
 
     // MARK: - Benchmark
 
-    private var benchmarkSection: some View {
+    /// Internal, not private, as the same render seam `calibrationChartSection`
+    /// opened: `CalibrationBenchmarkTests` rasterises THIS card at 390pt. The
+    /// values are pinned separately, but "the range draws as a band" and "only
+    /// one figure is coloured" are claims about drawn ink, and a replica of the
+    /// card is exactly the thing that keeps passing after the real one regresses.
+    var benchmarkSection: some View {
         cardSection("How We Compare", sub: "Our aggregate error compared to published calibration benchmarks.") {
+            // #7536: the rows and their bar geometry are values in
+            // `CalibrationBenchmarks`, which is where the rule that a published
+            // RANGE is never plotted as a point is written down and pinned. Four
+            // literals passed to a private helper is what let three web repairs
+            // to this card drift past the Swift twin unnoticed.
             VStack(spacing: 8) {
-                benchmarkRow("Bain Luck", viewModel.cohortMCE, "\(viewModel.formattedCohortOutcomes) outcomes", true)
-                benchmarkRow("Metaculus", 2.5, "Self-reported", false)
-                benchmarkRow("Iowa Electronic Markets", 1.5, "Berg et al. 2008", false)
-                benchmarkRow("Academic consensus", 3.5, "Arrow et al. 2008 (2\u{2013}5pp)", false)
+                ForEach(CalibrationBenchmarks.rows(
+                    ourMCE: viewModel.cohortMCE,
+                    ourOutcomes: viewModel.formattedCohortOutcomes,
+                    cohort: viewModel.cohortShortLabel)) { row in
+                    benchmarkRow(row)
+                }
             }
             // #7174 — this read "Most prediction markets achieve 2–5pp MCE",
             // which put the false name on somebody ELSE's numbers: the rows
@@ -809,24 +821,52 @@ struct CalibrationSurfaceView: View {
         }
     }
 
-    private func benchmarkRow(_ label: String, _ value: Double, _ detail: String, _ highlight: Bool) -> some View {
+    private func benchmarkRow(_ row: CalibrationBenchmarks.Row) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(label).font(.caption.weight(highlight ? .bold : .regular))
-                    .foregroundStyle(highlight ? .primary : .secondary)
-                Spacer()
-                Text(String(format: "%.1fpp", value)).font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(viewModel.eceColor(value))
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.label).font(.caption.weight(row.isOurs ? .bold : .regular))
+                        .foregroundStyle(row.isOurs ? .primary : .secondary)
+                    // The cohort tag, our row only. Web hangs it off the end of
+                    // the label; at phone width that pushes a 30-character
+                    // cohort name into the figure beside it, so on this surface
+                    // it sits under the name where it can take the width it
+                    // needs and still read as part of the label.
+                    if let tag = row.cohortTag {
+                        Text(tag).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                // One `Text`, two styles: the qualifier may wrap onto its own
+                // line at a big Dynamic Type size, but the figure itself never
+                // breaks — "2–5pp" split across two lines reads as two numbers.
+                (Text(row.figureText)
+                    // Only our own measured point is graded. `eceColor` is our
+                    // scale, and a verdict on a published benchmark measured
+                    // somebody else's way is one we cannot support (#7536).
+                    .foregroundColor(row.isGraded
+                        ? viewModel.eceColor(row.value ?? 0)
+                        : Color.secondary)
+                 + Text(row.figureQualifier.map { " \($0)" } ?? "")
+                    .font(.caption)
+                    .foregroundColor(.secondary))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .multilineTextAlignment(.trailing)
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3).fill(Color.systemGray5).frame(height: 6)
+                    // A band for a published range, starting at its low end; a
+                    // bar from the leading edge for a measured point. The offset
+                    // is zero on a point row, so there is one drawing path.
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(highlight ? Color.blue : Color.gray.opacity(0.5))
-                        .frame(width: min(geo.size.width, geo.size.width * value / 10), height: 6)
+                        .fill(row.isOurs ? Color.blue : Color.gray.opacity(0.5))
+                        .frame(width: geo.size.width * row.barWidthFraction, height: 6)
+                        .offset(x: geo.size.width * row.barLeadingFraction)
                 }
             }.frame(height: 6)
-            Text(detail).font(.system(size: 10)).foregroundStyle(.tertiary)
+            Text(row.detail).font(.system(size: 10)).foregroundStyle(.tertiary)
         }
     }
 
