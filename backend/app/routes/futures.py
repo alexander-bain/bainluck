@@ -5653,37 +5653,11 @@ async def get_futures_history(
         market.outcomes, lambda o: o.external_id
     )
 
-    # Get outcome IDs to fetch history for
-    if outcome_id:
-        outcome_ids = [outcome_id]
-    else:
-        # Default to top N outcomes by current probability
-        capped_n = min(top_n, 50)
-        sorted_outcomes = sorted(
-            charted_outcomes,
-            key=lambda o: o.current_probability or 0,
-            reverse=True
-        )[:capped_n]
-        outcome_ids = [o.id for o in sorted_outcomes]
-        # #225 Item 3 — settled charts show the completed journey: the graded
-        # winner's line MUST appear even when it was a longshot (low
-        # current_probability) or the market's prices went stale/None at
-        # settlement. Without this, a settled winner-field charts everyone BUT the
-        # winner (the "path to resolution" that never resolves).
-        _selected = set(outcome_ids)
-        for o in charted_outcomes:
-            if getattr(o, "is_winner", False) and o.id not in _selected:
-                outcome_ids.append(o.id)
-                _selected.add(o.id)
-        # #232 — same guarantee for the odds_api winner-field class, where the
-        # champion is known only by NAME (no is_winner grade): force its line in
-        # even if it fizzled to a longshot, so its path can resolve below.
-        if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
-            _cnorm = _norm_outcome_name(champion)
-            for o in charted_outcomes:
-                if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
-                    outcome_ids.append(o.id)
-                    _selected.add(o.id)
+    # #7546 — THE SELECTION IS MADE BELOW, AFTER THE FIELD READ, AND NOT HERE.
+    # It has no business being here any more: #4992 widened the snapshot query to
+    # the whole field, so the read no longer depends on which legs are charted,
+    # and choosing the ten before the rows arrive is what forced the choice to be
+    # made on `current_probability` alone. See the block after `field_rows`.
 
     # --- Auto-extend for sparse markets ---
     # Try the requested window first. If too few snapshots, widen to 30d then 90d.
@@ -5709,7 +5683,6 @@ async def get_futures_history(
     # rows it saw before and none of their semantics move. The sparse tiers in
     # particular ask "does this outcome have enough points to draw", and handing
     # them a 205-outcome row count would answer a different question.
-    charted_ids = set(outcome_ids)
 
     # Fetch snapshots for the initial window
     snapshot_query = (
@@ -5735,11 +5708,88 @@ async def get_futures_history(
     # what it quoted. Dropping part of it would inflate every outcome that
     # survived — a second error to cover the first.
     _history_field_ids = _exclusive_field_outcome_ids([market])
-    snapshots = _drop_unsupported_snapshot_points(
-        [r for r in field_rows if r.outcome_id in charted_ids],
-        charted_outcomes,
-        _history_field_ids,
+    _supported_field = _drop_unsupported_snapshot_points(
+        field_rows, charted_outcomes, _history_field_ids
     )
+
+    # #7546 — SPEND THE TEN SLOTS ON LEGS THAT CAN ACTUALLY DRAW.
+    #
+    # `current_probability` is not always a probability. On Kalshi's 133-leg
+    # FedEx Open de France winner board (61461681) every one of the 128 legs with
+    # `yes_bid = 0.0000` stores its ASK there — 127 of 133 have
+    # `current_probability == current_yes_ask` — and the column sums to 17.60 on a
+    # field the classifier proved single-winner. Ranking on it therefore ranks by
+    # the size of an untaken offer, so the ten slots went to the ten biggest
+    # unsupported asks and `_drop_unsupported_snapshot_points` below then refused
+    # them, exactly as the ladder does. Eight of the ten lost every point and the
+    # reader got two lines. The five legs that carry a real bid — Hovland, Pavon,
+    # Gerard, Cameron Smith, Michael Kim, the only names on the board a person
+    # could trade — rank 129th to 133rd on that column and were never candidates,
+    # while holding supported points the whole time. Measured on production
+    # 2026-09-20 19:2xZ; the served payload's 7 and 4 points reproduce exactly.
+    #
+    # THE FILTER WAS RIGHT AND STAYS UNTOUCHED. Nothing here overrides #5898 or
+    # shows a refused point: the legs below are ordered so that the slots go to
+    # legs with something honest to draw, and a leg with nothing honest to draw is
+    # demoted rather than rescued. A chart that cannot be filled honestly is still
+    # left empty.
+    #
+    # A PARTITION, NOT A NEW SCORE, so the common case cannot move. Legs are split
+    # on "does this leg keep at least one point in this window", each side keeps
+    # today's `current_probability` ordering, and the sides are concatenated. When
+    # every candidate is chartable — every healthy market — side B is empty and
+    # the resulting order is byte-for-byte today's. It can only differ on a market
+    # that was about to spend a slot on a leg that draws nothing.
+    #
+    # NO NEW QUERY AND NO SECOND PREDICATE: this reads the pass over `field_rows`
+    # already in hand, which the charted subset is then taken out of. The
+    # predicate is per row and independent of the rows beside it, so filtering the
+    # field and then subsetting is the same list as subsetting and then filtering
+    # — the identity that lets one pass serve both.
+    _chartable_ids = {r.outcome_id for r in _supported_field}
+
+    # Get outcome IDs to chart
+    if outcome_id:
+        outcome_ids = [outcome_id]
+    else:
+        # Default to top N outcomes by current probability, chartable legs first
+        capped_n = min(top_n, 50)
+        # FALLS BACK WHOLE when the window holds nothing supported at all: with no
+        # chartable leg the partition carries no information, and demoting on it
+        # would reorder a market on noise. Today's order then stands and the
+        # sparse tiers below reach further back, which is that case's own repair.
+        _prefer_chartable = bool(_chartable_ids)
+        sorted_outcomes = sorted(
+            charted_outcomes,
+            key=lambda o: (
+                _prefer_chartable and o.id in _chartable_ids,
+                o.current_probability or 0,
+            ),
+            reverse=True
+        )[:capped_n]
+        outcome_ids = [o.id for o in sorted_outcomes]
+        # #225 Item 3 — settled charts show the completed journey: the graded
+        # winner's line MUST appear even when it was a longshot (low
+        # current_probability) or the market's prices went stale/None at
+        # settlement. Without this, a settled winner-field charts everyone BUT the
+        # winner (the "path to resolution" that never resolves).
+        _selected = set(outcome_ids)
+        for o in charted_outcomes:
+            if getattr(o, "is_winner", False) and o.id not in _selected:
+                outcome_ids.append(o.id)
+                _selected.add(o.id)
+        # #232 — same guarantee for the odds_api winner-field class, where the
+        # champion is known only by NAME (no is_winner grade): force its line in
+        # even if it fizzled to a longshot, so its path can resolve below.
+        if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
+            _cnorm = _norm_outcome_name(champion)
+            for o in charted_outcomes:
+                if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
+                    outcome_ids.append(o.id)
+                    _selected.add(o.id)
+
+    charted_ids = set(outcome_ids)
+    snapshots = [r for r in _supported_field if r.outcome_id in charted_ids]
 
     # #7351 — same seam, same rules, as `get_probability_timeline` above: the
     # identity-bound venue history for this market's own contracts, read from
