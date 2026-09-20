@@ -195,6 +195,25 @@ function blockAt(html: string, testid: string, extra = ""): string | null {
   return html.slice(open, end === -1 ? close : end);
 }
 
+/**
+ * The ECE a named provider's By Source panel published, as a number, or `null`
+ * when it published none.
+ *
+ * #7422 changed WHICH figure that is — in a cohort-filtered view the panel
+ * renders the cohort's own figure rather than `by_source`'s whole-population
+ * one — so two arms below that substring-matched this fixture's payload
+ * literals ("0.9pp ECE", "36.5pp ECE") were asserting a basis neither of them
+ * is about. Reading the attribute per provider says what they actually mean:
+ * this panel published a figure, and it is not censored.
+ */
+function panelEce(html: string, provider: string): number | null {
+  const tag = (html.match(
+    new RegExp(`<[a-z]+[^>]*data-testid="calibration-provider-panel"[^>]*>`, "g")
+  ) ?? []).find(t => t.includes(`data-provider="${provider}"`));
+  const m = tag?.match(/data-panel-ece="([^"]*)"/);
+  return m && m[1] !== "" ? Number(m[1]) : null;
+}
+
 /** The text a testid renders, tags stripped, entities the page emits decoded. */
 function textAt(html: string, testid: string): string | null {
   const block = blockAt(html, testid);
@@ -315,11 +334,18 @@ describe("the panel and the table row state one population in one sentence", () 
 describe("providers with two-sided populations are completely unaffected", () => {
   const html = render("all-won");
 
-  test("Kalshi and Polymarket still publish the ECEs the payload gave them", () => {
+  test("Kalshi and Polymarket still publish an ECE each", () => {
     // If this reddens, the gate is censoring the page rather than the censored
     // population — the mutation that passes every arm above.
-    expect(html).toContain("0.9pp ECE");
-    expect(html).toContain("1.6pp ECE");
+    //
+    // Read per provider rather than as a substring of the payload's literals:
+    // since #7422 a cohort-filtered panel renders the COHORT's figure, not
+    // `by_source`'s, and this fixture's payload numbers disagree with its own
+    // buckets. Which figure it is belongs to #7422's pairing guard; what THIS
+    // arm is about is that a two-sided provider still publishes one at all.
+    expect(panelEce(html, "kalshi")).not.toBeNull();
+    expect(panelEce(html, "polymarket")).not.toBeNull();
+    expect(html).not.toContain("NaNpp ECE");
   });
 
   test("exactly ONE panel on the page is censored", () => {
@@ -356,7 +382,11 @@ describe("all-losers is censored too, and 35-of-36 is not censored at all", () =
     expect(v.censored).toBe(false);
 
     const html = render("one-loser");
-    expect(html).toContain("36.5pp ECE");
+    // A figure IS published for this population — the point of the arm. Which
+    // figure is #7422's question: in the default cohort the panel renders the
+    // cohort's own number, so the payload literal "36.5pp ECE" no longer names
+    // it and would make this arm assert a basis it is not about.
+    expect(panelEce(html, "datagolf")).not.toBeNull();
     expect(blockAt(html, "calibration-panel-censored")).toBeNull();
   });
 });

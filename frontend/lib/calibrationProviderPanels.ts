@@ -59,6 +59,38 @@
  * instead of merely discouraged. (UX-P075 proved twice in one cycle that a
  * pairing assertion beats a ban: a ban is satisfied by deleting the word.)
  *
+ * ── #7422: THE SAME RESOLUTION, FOR THE COHORT THE SERVER NEVER MEASURED ────
+ *
+ * The reasoning above was written about the Sportsbooks panel and was scoped
+ * to it, on the premise that a single-shape provider always HAS a server
+ * number to render. That premise is false under the cohort toggle.
+ * `by_source[].ece` carries no cohort dimension, so the moment a reader is in
+ * the traded cohort the payload has published no figure for the population on
+ * screen — the Sportsbooks case exactly, arriving by a different door.
+ *
+ * It printed: the traded Polymarket panel read **1.6pp ECE** (the whole
+ * population, n=264,956) directly above "79,278 outcomes", while the Source
+ * Comparison row for the same provider and the same cohort read **2.7pp**.
+ * Everything else in the frame — n, share, and the plotted curve — was
+ * cohort-filtered; only the headline number was not, so the ECE did not move
+ * when the reader flipped the toggle and its own population did.
+ *
+ * So option (3) is not a Sportsbooks carve-out; it is what this module does
+ * whenever the server has no figure for the panel's population. `publishedEce`
+ * now means "the server measured THIS population", `pooledEce` means "it did
+ * not, here is the one the page already derived", and the CALLER decides,
+ * because the caller is what knows whether a filter is on. Ruling 003 is
+ * untouched in the unfiltered cohort: the server's number is still rendered.
+ *
+ * And the pairing assertion is extended to EVERY provider panel in BOTH
+ * cohorts, which is the part that was actually missing. Scoping that guard to
+ * the `pooled` branch is why a `published` branch could disagree with the row
+ * beside it for as long as the toggle has existed. Kalshi had the identical
+ * defect the whole time and hid inside its own rounding (0.92 traded against
+ * 0.89 published, both printing "0.9pp") — a guard that only watches the arm
+ * that already behaves is how a defect gets to be invisible rather than
+ * absent.
+ *
  * Counts are summed here for the same reason `buildSourcePanels` sums them:
  * `n` and `share` are sums of published per-bucket rows — formatting the
  * evidence, not adjudicating a metric.
@@ -97,17 +129,26 @@ export interface ProviderPanelInput {
    */
   buckets: PanelBucket[];
   /**
-   * The server's published ECE. Meaningful ONLY for a single-shape provider,
-   * where provider == source key and the published number IS the panel's
-   * number. Ignored for a multi-shape provider, because the server publishes
-   * nothing at that level and silently reusing one shape's figure would be a
-   * lie about which outcomes it measures.
+   * The server's published ECE. Meaningful ONLY when this panel's population
+   * IS the population the server measured — a single-shape provider (provider
+   * == source key) with no cohort filter narrowing it. Ignored for a
+   * multi-shape provider, because the server publishes nothing at that level
+   * and silently reusing one shape's figure would be a lie about which
+   * outcomes it measures.
+   *
+   * #7422: "single-shape" alone was the wrong test. `by_source[].ece` has no
+   * cohort dimension, so under a cohort filter the server's figure describes a
+   * population this panel is not drawing. The caller is what knows whether a
+   * filter is on, so the caller decides — it supplies `pooledEce` instead, and
+   * a supplied pooled figure wins. See the module header.
    */
   publishedEce?: number | null;
   /**
-   * The pooled ECE the page already derived for Source Comparison. Used ONLY
-   * for a multi-shape provider. Never computed in this module — passing it in
-   * is what keeps the page's derivation count at one.
+   * The pooled ECE the page already derived for Source Comparison. Required
+   * for a multi-shape provider, and used for ANY provider whose population the
+   * server published no figure for — which since #7422 includes a single-shape
+   * provider under a cohort filter. Never computed in this module — passing it
+   * in is what keeps the page's derivation count at one.
    */
   pooledEce?: number | null;
 }
@@ -145,6 +186,49 @@ function toDisplay(v: number | null | undefined): number | null {
 }
 
 /**
+ * Which of the two ECE figures a provider panel is ALLOWED to use (#7422).
+ *
+ * This lived inline at the page's `buildProviderPanels` call as two ternaries
+ * keyed on `sources.length`, and that is where the defect was: shape count
+ * answers "does the server publish at this level", but the question the panel
+ * actually needs answered is "did the server measure THIS population". Under
+ * the cohort toggle those come apart, and the traded Polymarket panel printed
+ * the whole-population 1.6pp beside its own "79,278 outcomes" while the Source
+ * Comparison row said 2.7pp.
+ *
+ * Extracted and named so the rule is testable in BOTH cohorts. The page can
+ * only render the default one in a static test, so an inline rule here was
+ * a rule with an untestable half — and the untestable half is the one that
+ * shipped wrong.
+ *
+ * The returned pair is always exclusive: exactly one side can be non-null, so
+ * a call site cannot hand `buildProviderPanels` an ambiguous basis.
+ *
+ * @param sourceCount   how many source keys this provider pools
+ * @param cohortFiltered whether a cohort filter is narrowing the panel away
+ *                      from the population `by_source` measured
+ * @param serverEce     `by_source[].ece` for the provider's single source key
+ * @param pooledEce     the cohort-aware figure Source Comparison already
+ *                      derived for this provider
+ */
+export function eceInputsForPanel(
+  sourceCount: number,
+  cohortFiltered: boolean,
+  serverEce: number | null | undefined,
+  pooledEce: number | null | undefined,
+): Pick<ProviderPanelInput, "publishedEce" | "pooledEce"> {
+  // The server publishes per SOURCE KEY, over the WHOLE population. So its
+  // figure is this panel's figure only when the provider is one source key
+  // (there is a row for it) and nothing has narrowed the population (that row
+  // counts the same outcomes).
+  const serverMeasuredThisPopulation = sourceCount === 1 && !cohortFiltered;
+  return {
+    publishedEce: serverMeasuredThisPopulation ? serverEce ?? null : null,
+    pooledEce: serverMeasuredThisPopulation ? null : pooledEce ?? null,
+  };
+}
+
+/**
  * Order the provider panels and give each the numbers a shared-area layout
  * would otherwise erase.
  *
@@ -166,9 +250,23 @@ export function buildProviderPanels(
     .filter(i => i && Array.isArray(i.buckets) && Array.isArray(i.sources))
     .map(i => {
       const multi = i.sources.length > 1;
-      // The two inputs are read in mutually exclusive branches, so a caller
-      // that supplies both cannot produce a number whose basis is ambiguous.
-      const published = multi ? toDisplay(i.pooledEce) : toDisplay(i.publishedEce);
+      // #7422. WHICH input is meaningful is not a property of the provider's
+      // shape count — it is a property of whether the server measured THIS
+      // panel's population. Selecting on `multi` assumed those were the same
+      // question, and under a cohort filter they are not: `by_source[].ece` is
+      // whole-population, so the traded Polymarket panel printed 1.6pp
+      // (n=264,956) beside its own "79,278 outcomes" while the Source
+      // Comparison row one section above said 2.7pp.
+      //
+      // So a supplied `pooledEce` WINS. The caller passes one exactly when the
+      // payload published nothing for the population on screen — always for a
+      // multi-shape provider, and for a single-shape provider once a cohort
+      // filter has narrowed it. `multi ||` keeps the other invariant the
+      // header names: a multi-shape panel can never fall back to one shape's
+      // published figure, it renders no ECE instead.
+      const pooled = toDisplay(i.pooledEce);
+      const usePooled = multi || pooled !== null;
+      const published = usePooled ? pooled : toDisplay(i.publishedEce);
       // #7411. The same verdict the Source Comparison row is judged by, called
       // on the same pooled buckets the panel's own curve is drawn from — so
       // the two surfaces cannot reach opposite conclusions about one
@@ -180,7 +278,7 @@ export function buildProviderPanels(
         ? "censored"
         : ece === null
           ? "none"
-          : multi
+          : usePooled
             ? "pooled"
             : "published";
       return {
