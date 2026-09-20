@@ -26,8 +26,11 @@ sys.path.insert(
 from app.services.kalshi_api import KalshiMarket  # noqa: E402
 from app.tasks.kalshi import _exact_count_label  # noqa: E402
 from scripts.repair_7429_kalshi_count_leg_labels import (  # noqa: E402
+    bucket_event,
     classify,
     forward_fix_refusal,
+    is_rate_limited,
+    unreadable_refusal,
     wrong_app_refusal,
 )
 
@@ -43,9 +46,10 @@ def mk(ticker, yes_sub_title, status="active"):
 
 
 class _Args:
-    def __init__(self, apply=False, backup=False):
+    def __init__(self, apply=False, backup=False, allow_unreadable=False):
         self.apply = apply
         self.backup = backup
+        self.allow_unreadable = allow_unreadable
 
 
 # --------------------------------------------------------------------------
@@ -214,3 +218,196 @@ def test_producer_app_is_heavy_because_the_poll_routes_to_the_heavy_queue():
         "`heroku ps` before this repair writes anything."
     )
     assert PRODUCER_APP == "bainluck-heavy"
+
+
+# --------------------------------------------------------------------------
+# an unreadable venue is a blind spot, not a smaller population
+#
+# Every test below is a regression of one measured production run: 2026-09-20
+# 20:09Z, `run.4750` on bainluck-heavy. The probe fired 149 serial `/markets`
+# reads in 11 seconds, Kalshi 429'd from the fourth second on, and the run
+# printed REPAIR 59 / REFUSED 0 / SILENT 193 over a population that had lost
+# nothing. `RSENATESEATS-27` — the event `/futures/25923847` renders, the one
+# this repair is named for — was among the 429s, and so were both `E85`
+# control legs, which is why REFUSED read 0.
+# --------------------------------------------------------------------------
+
+
+def test_unreadable_events_block_apply():
+    """The measured run's own shape: a plan is not a plan with holes in it."""
+    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    refusal = unreadable_refusal(_Args(apply=True), unreadable, 252)
+    assert refusal is not None
+    assert "RSENATESEATS-27" in refusal
+    assert "partial" in refusal
+
+
+def test_a_clean_read_does_not_block_apply():
+    """The gate must not be a permanent stop — this is the whole point."""
+    assert unreadable_refusal(_Args(apply=True), [], 252) is None
+
+
+def test_allow_unreadable_is_the_deliberate_partial():
+    """A genuinely dead event must not block the repair forever."""
+    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    args = _Args(apply=True, allow_unreadable=True)
+    assert unreadable_refusal(args, unreadable, 252) is None
+
+
+def test_backup_alone_is_not_gated_on_readability():
+    """`--backup` writes no outcome rows, so it may run on a partial read.
+
+    Stated as a test because the refusal is CALLED on the backup path too
+    (it guards the manifest), and a gate that refused a plain `--backup`
+    would make the diagnostic run impossible on exactly the bad afternoon
+    you need it.
+    """
+    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    assert unreadable_refusal(_Args(backup=True), unreadable, 252) is None
+
+
+def test_unreadable_rows_are_not_in_the_silent_bucket():
+    """`classify` must never be the thing that reports a venue error.
+
+    The regression was one line in `run`, not in `classify`: the unreadable
+    rows were `.extend`ed onto `silent`. This pins the invariant from the
+    other side — the only reason `classify` can ever emit is `not_served`,
+    so any `venue_error` a reader sees came from the caller's own bucket.
+    """
+    venue = {}
+    _, _, silent, _ = classify(
+        [(3, "E12", "KXSPOTIFYD-26APR01-E12")], venue, _exact_count_label
+    )
+    assert [s[2] for s in silent] == ["not_served"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Client error '429 Too Many Requests' for url 'https://api.kalshi.com'",
+        "429",
+    ],
+)
+def test_rate_limit_is_recognised(message):
+    assert is_rate_limited(Exception(message))
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Client error '404 Not Found'", "connection reset", "500 Server Error"],
+)
+def test_other_failures_are_not_rate_limits(message):
+    """A 429 is retried; everything else must propagate on the first try."""
+    assert not is_rate_limited(Exception(message))
+
+
+@pytest.mark.asyncio
+async def test_paced_read_retries_a_429_and_then_succeeds():
+    """The retry is what turns the measured run's 193 blind rows back into data."""
+    from scripts import repair_7429_kalshi_count_leg_labels as mod
+
+    calls = {"n": 0}
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    class _Svc:
+        async def get_markets(self, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise Exception("Client error '429 Too Many Requests' for url 'x'")
+            return [], None
+
+        def parse_markets(self, raw):
+            return []
+
+    out = await mod._venue_labels_paced(_Svc(), "RSENATESEATS-27", sleep=fake_sleep)
+    assert out == {}
+    assert calls["n"] == 2, "the 429 was not retried"
+    assert slept[0] == mod._VENUE_BACKOFF_S, "retried without backing off"
+
+
+@pytest.mark.asyncio
+async def test_paced_read_gives_up_and_raises_rather_than_returning_empty():
+    """Exhausted retries must RAISE, so the caller buckets it unreadable.
+
+    Returning `{}` here would be the original defect wearing a fix: an empty
+    venue map classifies every leg as `not_served` — silent, not unreadable —
+    and the run would once again report a rate-limited afternoon as a purge.
+    """
+    from scripts import repair_7429_kalshi_count_leg_labels as mod
+
+    async def fake_sleep(s):
+        pass
+
+    class _Svc:
+        async def get_markets(self, **kw):
+            raise Exception("Client error '429 Too Many Requests' for url 'x'")
+
+        def parse_markets(self, raw):
+            return []
+
+    with pytest.raises(Exception, match="429"):
+        await mod._venue_labels_paced(_Svc(), "RSENATESEATS-27", sleep=fake_sleep)
+
+
+@pytest.mark.asyncio
+async def test_a_non_429_failure_is_not_retried():
+    from scripts import repair_7429_kalshi_count_leg_labels as mod
+
+    calls = {"n": 0}
+
+    async def fake_sleep(s):
+        pass
+
+    class _Svc:
+        async def get_markets(self, **kw):
+            calls["n"] += 1
+            raise Exception("Client error '404 Not Found' for url 'x'")
+
+        def parse_markets(self, raw):
+            return []
+
+    with pytest.raises(Exception, match="404"):
+        await mod._venue_labels_paced(_Svc(), "KXDEAD-1", sleep=fake_sleep)
+    assert calls["n"] == 1, "a 404 burned the retry budget meant for 429s"
+
+
+class _Row:
+    """A candidate row as `run`'s SQL hands it over."""
+
+    def __init__(self, id, name, external_id):
+        self.id = id
+        self.name = name
+        self.external_id = external_id
+
+
+def test_a_failed_venue_read_buckets_unreadable_and_never_silent():
+    """THE regression, at the exact line that had it.
+
+    `run` tagged these rows `venue_error` and then appended them to `silent`,
+    so the distinction existed in the data and died in the count. This is the
+    measured production case: `RSENATESEATS-27` 429'd, and the run reported it
+    among 193 "silent" rows as though Kalshi had purged the event.
+    """
+    rows = [_Row(1, "E45", "RSENATESEATS-27-E45")]
+    plan, refused, silent, already, unreadable = bucket_event(
+        rows, None, _exact_count_label, error=Exception("429 Too Many Requests")
+    )
+    assert unreadable == [(1, "RSENATESEATS-27-E45", "venue_error")]
+    assert silent == [], "a read we never got is being reported as the venue's answer"
+    assert (plan, refused, already) == ([], [], [])
+
+
+def test_an_answered_event_still_routes_through_the_four_venue_buckets():
+    """The other arm: `bucket_event` must not swallow a real answer."""
+    good = "KXHOUSEWINSTATE-AZD-E3"
+    gone = "KXHOUSEWINSTATE-AZD-E6"
+    rows = [_Row(1, "E3", good), _Row(3, "E6", gone)]
+    plan, refused, silent, already, unreadable = bucket_event(
+        rows, {good: mk(good, "3")}, _exact_count_label
+    )
+    assert [p[1] for p in plan] == [good]
+    assert [s[1] for s in silent] == [gone]
+    assert unreadable == [], "an answered event must contribute no blind spot"

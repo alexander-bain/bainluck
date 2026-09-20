@@ -119,6 +119,15 @@ BACKUP_TABLE = "backup_7429_outcome_names"
 #: Pages of `/markets` to follow per event before giving up. See `_venue_labels`.
 _MAX_PAGES = 10
 
+#: Courtesy gap between events, and the 429 retry budget. See
+#: `_venue_labels_paced` for why this lives here and not in `get_markets`.
+_VENUE_GAP_S = 0.25
+_VENUE_BACKOFF_S = 3.0
+_VENUE_RETRIES = 4
+
+#: Bound to the module so `_venue_labels_paced` can be handed a fake clock.
+_asyncio_sleep = asyncio.sleep
+
 #: A candidate is a Kalshi outcome whose stored name is a bare `E<n>` that its
 #: own ticker ends with. Deliberately WIDE: it is the shape the defect wears,
 #: and every one of these rows is then put to the venue. Narrowing it here
@@ -194,6 +203,53 @@ def forward_fix_refusal():
     return None
 
 
+def unreadable_refusal(args, unreadable, candidates):
+    """Why this invocation may not WRITE given an incomplete venue read.
+
+    Measured 2026-09-20 20:09Z, and this gate exists because of it: the probe
+    fired 149 serial `/markets` reads in 11 seconds, Kalshi 429'd from about
+    the fourth second on, and the run printed
+
+        corroborated -> REPAIR      59
+        refused      -> left alone  0
+        silent       -> left alone  193
+
+    which reads as "the venue has purged three quarters of this population".
+    It had purged none of it. `RSENATESEATS-27` — the event this whole repair
+    is NAMED for — was one of the 429s, so that plan would have written 59
+    rows, left `/futures/25923847` reading `E45 … E57`, and reported success.
+    Worse, both `E85` control legs 429'd too, so `refused` was 0: the one
+    bucket that proves the corroboration lock is doing anything was empty, and
+    an empty control cannot fail.
+
+    So an unreadable event is not a smaller population, it is a BLIND SPOT,
+    and the two are indistinguishable downstream (gotcha #53 — "it returned"
+    is not "it worked"). The row-level reason was always recorded; it was
+    folded into `silent` one line later and never surfaced. Fail closed.
+
+    `--allow-unreadable` is the deliberate-partial escape hatch, because a
+    genuinely dead event should not be able to block the whole repair forever.
+    It is opt-in, it is printed, and it is never what a first run should need.
+    """
+    if not args.apply:
+        return None
+    if not unreadable:
+        return None
+    if args.allow_unreadable:
+        return None
+
+    events = sorted({tkr for _, tkr, _ in unreadable})
+    return (
+        f"REFUSING --apply: {len(unreadable)} of {candidates} candidate rows "
+        f"({len(events)} events) could not be read from the venue at all. "
+        "A row we could not ask about is not a row the venue declined — "
+        "applying now writes a partial repair and reports it as a whole one. "
+        "Re-run when the venue answers; pass --allow-unreadable to write the "
+        "corroborated rows anyway and accept a partial. "
+        f"First unreadable events: {', '.join(events[:5])}"
+    )
+
+
 def wrong_app_refusal(args):
     """Why this invocation may not WRITE, or None if it may.
 
@@ -261,6 +317,28 @@ def classify(candidates, venue, label_fn):
     return plan, refused, silent, already
 
 
+def bucket_event(rows, venue, label_fn, error=None):
+    """One event's candidate rows into the FIVE buckets, including the error.
+
+    Lifted out of `run` for the same reason `classify` was, and the reason is
+    in `classify`'s own docstring: a decision buried inside a coroutine that
+    needs a database and the network is a decision no test can reach. The
+    bucketing of a failed venue read was exactly such a decision, it was
+    wrong, and nothing could see it — the rows were `.extend`ed onto `silent`
+    one line after being correctly tagged `venue_error`.
+
+    `rows` are the candidate rows for ONE event; `error` is the exception the
+    venue read raised, or None if it answered.
+    """
+    if error is not None:
+        return [], [], [], [], [(r.id, r.external_id, "venue_error") for r in rows]
+
+    plan, refused, silent, already = classify(
+        [(r.id, r.name, r.external_id) for r in rows], venue, label_fn
+    )
+    return plan, refused, silent, already, []
+
+
 async def _venue_labels(service, event_ticker):
     """Every leg the venue still serves for one event, as `KalshiMarket`s.
 
@@ -290,6 +368,60 @@ async def _venue_labels(service, event_ticker):
         raw.extend(page)
         pages += 1
     return {m.ticker: m for m in service.parse_markets(raw)}
+
+
+def is_rate_limited(exc):
+    """Is this exception the venue asking us to slow down, rather than a no?
+
+    Read as a string on purpose. `get_markets` ends a 429 with a bare
+    `raise_for_status()`, so what reaches us is httpx's `HTTPStatusError`
+    whose message is `Client error '429 Too Many Requests' for url ...`; the
+    script must not import httpx to name the type, and every sibling read in
+    `kalshi_api.py` already branches on the status code the same way.
+    """
+    return "429" in str(exc)
+
+
+async def _venue_labels_paced(service, event_ticker, sleep=None):
+    """`_venue_labels` with the venue's rate limit respected.
+
+    `get_markets` is the ONE Kalshi read with no 429 handling of its own —
+    every sibling in `kalshi_api.py` (`get_events`, the candlestick reads,
+    the settlement reads) retries with a backoff, and this one ends a 429 with
+    a bare `raise_for_status()`. Left unpaced, 149 serial events went out in
+    about seven seconds — roughly 20 requests a second — and the venue refused
+    essentially all of them after the fourth.
+
+    Fixed here rather than in `get_markets` deliberately: that method is on
+    the live poll's path (`_poll_live_prediction_market_prices` and the
+    two-minute price rail), and changing its timing or its retry budget to
+    suit a one-shot repair would be a shared-helper change whose blast radius
+    is every Kalshi price on the site. The repair is the caller that is in a
+    hurry, so the repair is where the patience belongs.
+
+    `sleep` is injected so a test can prove the backoff without spending it.
+    """
+    if sleep is None:
+        sleep = _asyncio_sleep
+
+    last = None
+    for attempt in range(_VENUE_RETRIES):
+        try:
+            labels = await _venue_labels(service, event_ticker)
+        except Exception as exc:  # noqa: BLE001 — re-raised below
+            last = exc
+            if not is_rate_limited(exc):
+                raise
+            # Backoff, not a fixed nap: a 429 means the window is already
+            # spent, so retrying at the same cadence just spends the next one.
+            await sleep(_VENUE_BACKOFF_S * (attempt + 1))
+            continue
+        # The steady-state courtesy gap. Cheap next to a 429 storm: ~150
+        # events at 0.25s is under a minute for a one-time repair.
+        await sleep(_VENUE_GAP_S)
+        return labels
+
+    raise last
 
 
 async def run(args):
@@ -328,36 +460,44 @@ async def run(args):
         )
 
         plan = []
-        refused, silent, already = [], [], []
+        refused, silent, already, unreadable = [], [], [], []
         for event_ticker in sorted(by_event):
+            venue, error = None, None
             try:
-                venue = await _venue_labels(service, event_ticker)
+                venue = await _venue_labels_paced(service, event_ticker)
             except Exception as exc:
                 # A venue error is NOT a refusal — it is an unanswered
                 # question, and folding the two would let a bad afternoon at
                 # Kalshi read as "the venue says no" (gotcha #53). Report it
                 # and repair nothing for this event.
+                #
+                # 🔴 And it is not SILENT either, which is what this list used
+                # to be appended to. "The venue no longer serves this leg" and
+                # "we never got to ask" are different facts about the world:
+                # the first is evidence, the second is a hole where evidence
+                # should be. They were distinguishable in the row reason
+                # (`venue_error` vs `not_served`) and indistinguishable in the
+                # count that anyone actually read. See `unreadable_refusal`.
                 print(f"  ! {event_ticker}: venue read failed — {exc}")
-                silent.extend(
-                    (r.id, r.external_id, "venue_error") for r in by_event[event_ticker]
-                )
-                continue
+                error = exc
 
-            p, rf, sl, ok = classify(
-                [(r.id, r.name, r.external_id) for r in by_event[event_ticker]],
-                venue,
-                _exact_count_label,
+            p, rf, sl, ok, un = bucket_event(
+                by_event[event_ticker], venue, _exact_count_label, error=error
             )
             plan.extend(p)
             refused.extend(rf)
             silent.extend(sl)
             already.extend(ok)
+            unreadable.extend(un)
 
         print("\n=== the venue's answer ===")
         print(f"  corroborated -> REPAIR      {len(plan)}")
         print(f"  refused      -> left alone  {len(refused)}")
         print(f"  silent       -> left alone  {len(silent)}")
         print(f"  already ok   -> no write    {len(already)}")
+        # Printed last and separately because it is the only one of the five
+        # that is a statement about US rather than about the venue.
+        print(f"  UNREADABLE   -> blind spot  {len(unreadable)}")
         for oid, tkr, old, new in plan[: args.show]:
             print(f"    REPAIR  {tkr:<44} {old!r} -> {new!r}")
         for oid, tkr, sub in refused[: args.show]:
@@ -370,6 +510,16 @@ async def run(args):
         if not (args.backup or args.apply):
             print("\ndry run — nothing written")
             return 0
+
+        # Before the backup, not just before the write: a backup taken from a
+        # blind-spotted plan is a manifest of the wrong set, and `--apply`
+        # checks coverage against exactly that manifest, so a later reader
+        # would find the two agreeing with each other and disagreeing with
+        # the venue.
+        refusal = unreadable_refusal(args, unreadable, len(rows))
+        if refusal:
+            print(f"\n{refusal}")
+            return 2
 
         outcome_ids = [oid for oid, _, _, _ in plan]
 
@@ -446,6 +596,12 @@ def main():
     p.add_argument("--backup", action="store_true", help="copy in-scope names")
     p.add_argument("--apply", action="store_true", help="write (needs a backup)")
     p.add_argument("--show", type=int, default=10, help="specimen lines to print")
+    p.add_argument(
+        "--allow-unreadable",
+        action="store_true",
+        help="apply the corroborated rows even though some events were "
+        "unreadable (accepts a partial repair; see unreadable_refusal)",
+    )
     args = p.parse_args()
     raise SystemExit(asyncio.run(run(args)))
 
