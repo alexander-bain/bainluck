@@ -3,6 +3,74 @@ import SwiftUI
 import UIKit
 #endif
 
+// MARK: - Team colour
+
+/// #7036 arm 4 — every place My Stuff paints a stored team colour.
+///
+/// 📌 **The logo site was filed as a FILL and is not one, which is why none of
+/// this needed a new rule.** Arm 3 deferred it as "the logo tint, same shape" as
+/// the guess card's tile. It is not the same shape: `TeamLogoView.initialsFallback`
+/// paints the same argument into `Text(...).foregroundStyle(color)` at FULL
+/// opacity — the `FUL` / `LYO` badge that stands in for a crest — and only tints
+/// the circle behind it at 0.2. So the severe half of that site is *text*, and
+/// the floor arm 3 already built is the right instrument. Read the callee before
+/// inventing a rule for the caller: the argument's name (`color`) says fill and
+/// its use says text.
+///
+/// ⭐ **Two of the four call sites below were found by a guard, not by reading.**
+/// Arm 3 named exactly one My Stuff site (`TeamLogoView(color:)`). The blanket
+/// "this file paints no stored team colour raw" assertion in
+/// `FillSitesResolveTeamColourThroughTheFloor7036Tests` immediately failed on two
+/// more in the playoff journey card — the probability capsule and the 3pt leading
+/// stripe — because they key on `journey.teamColor`, not `primaryColor`, so every
+/// grep aimed at the reported spelling had walked straight past them. The capsule
+/// is the *"Relegated bar was a white capsule on a near-white track"* in this
+/// issue's opening paragraph: reported on day one, and still unfixed three arms
+/// later because the search term was the property name.
+///
+/// 🪤 **The journey card is NOT on `Color.cardBackground`,** and that is a stated
+/// approximation rather than a hidden one. It sits on `Color.cardBackgroundDark`
+/// (`.tertiarySystemGroupedBackground`, ~`#F2F2F7`), while `TeamTextContrast`
+/// measures against pure white by construction. A surface at 0.891 luminance
+/// rather than 1.0 makes the computed ratio optimistic by ~1.12×, so a colour this
+/// floor calls 3.0:1 is really ~2.7:1 there. The error is small and one-directional
+/// — it under-flags, never repaints a club it should have left alone — and it
+/// still catches the whole reported population (a white capsule is 1.12:1 on that
+/// surface). A surface-aware floor is the honest general fix and is deliberately
+/// not smuggled into a bug fix; `cardSurfaceLuminance` is the single place it
+/// would go.
+///
+/// Of the eleven `TeamLogoView` call sites, `EventDetailView` and `EventCardView`
+/// already hand in colours floored by arms 1–2, and `OnboardingView` /
+/// `PreferencesView` pass fixed system colours that are never a team's.
+/// `LadderCardView` and `EvolutionChartView` still pass raw stored colours and are
+/// deliberately left: arm 3 named them as out of this arm's reach, and a chart
+/// line has its own surface question.
+enum MyStuffTeamColour {
+
+    /// The colour these rows already used for a team with no stored colour.
+    /// Measured 4.83:1 against the white card by arm 3, so falling back to it
+    /// can never itself be the invisible case — the failure mode that makes a
+    /// floor look wired while it swaps one unreadable colour for another.
+    static let fallbackHex = "#6b7280"
+
+    /// The stored colour when it clears the floor, otherwise this row's own
+    /// existing default.
+    ///
+    /// Returns a hex, not a `Color`, because a `Color` cannot be compared in a
+    /// test — asserting on the resolved hex is the only assertion that fails
+    /// when a call site quietly goes back to `Color(hex: stored ?? default)`,
+    /// which is the mutant this arm exists to kill.
+    static func hex(_ stored: String?) -> String {
+        TeamTextContrast.textHexOnCard(stored, fallback: fallbackHex)
+    }
+
+    /// `hex` as a `Color` — the form the rows take.
+    static func color(_ stored: String?) -> Color {
+        Color(hex: hex(stored))
+    }
+}
+
 // MARK: - View
 
 struct MyStuffView: View {
@@ -943,7 +1011,7 @@ private struct PlayoffJourneyCard: View {
                 TeamLogoView(
                     url: journey.teamLogo,
                     teamName: journey.teamName,
-                    color: Color(hex: journey.teamColor ?? "#6b7280"),
+                    color: MyStuffTeamColour.color(journey.teamColor),
                     size: 28
                 )
                 Text(journey.teamName)
@@ -984,7 +1052,7 @@ private struct PlayoffJourneyCard: View {
                                 Capsule()
                                     .fill(achieved
                                           ? Color.green
-                                          : Color(hex: journey.teamColor ?? "#6b7280").opacity(0.5))
+                                          : MyStuffTeamColour.color(journey.teamColor).opacity(0.5))
                                     .frame(width: geo.size.width * min(prob, 1.0))
                             }
                         }
@@ -1018,7 +1086,7 @@ private struct PlayoffJourneyCard: View {
         .overlay(alignment: .leading) {
             if let c = journey.teamColor {
                 UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 0, topTrailingRadius: 0)
-                    .fill(Color(hex: c))
+                    .fill(MyStuffTeamColour.color(c))
                     .frame(width: 3)
             }
         }
@@ -1168,7 +1236,7 @@ private struct TeamFuturesSection: View {
             TeamLogoView(
                 url: item.matchedTeam?.logoSmall,
                 teamName: item.matchedTeam?.name ?? "",
-                color: Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"),
+                color: MyStuffTeamColour.color(item.matchedTeam?.primaryColor),
                 size: 28
             )
 

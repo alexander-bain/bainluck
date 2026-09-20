@@ -2753,6 +2753,59 @@ enum GuessCardTeamTextColour {
     }
 }
 
+/// #7036 arm 4 — the guess card's two 36×36 team TILES, floored against the
+/// white card.
+///
+/// **This is the arm's only genuine FILL, and it is a PAIR, so it resolves
+/// through the pair helper rather than through a new rule.** Arm 3 floored this
+/// card's *text* (`GuessCardTeamTextColour`) and left the tiles, because a fill
+/// is a different contrast question from a number: an unreadable number is a
+/// lost fact, while an invisible tile is a lost *shape*. But the shape is all
+/// this tile is — it stands in for a crest the app could not load — so for a
+/// club like Fulham (`#ffffff`) the reader gets a blank 36pt square in the slot
+/// where the badge belongs, on the app's default landing surface.
+///
+/// **Why `cardColors` and not a boundary.** Painting a hairline around an
+/// invisible tile would keep the brand colour honest, and it was the tempting
+/// answer; it is rejected because this card would then be the only surface in
+/// the app that answers "your colour cannot be seen" differently from the three
+/// that already answer it (`EventCardView`, `NativeEventDiscoverCard`, the event
+/// page). A fourth dialect of one rule is how #7036 started. The sibling
+/// Discover game card took `cardColors` in arm 2; this one joins it.
+///
+/// **The swap is behaviour-preserving above the floor, and that is checked
+/// rather than assumed.** The two hardcoded defaults this replaced were
+/// `#2563eb` home and `#64748b` away, which are byte-for-byte
+/// `ProbabilityBarPalette.homeDefault` and `.awayDefault` — so a team with no
+/// stored colour at all draws exactly what it drew before, and a team that
+/// clears the floor is passed through. What changes is only the 146 clubs under
+/// 3:1, plus the palette's collision ladder, which this card never had.
+enum GuessCardTeamTileColours {
+
+    /// The away/home tile colours as HEXES, floored and collision-resolved.
+    ///
+    /// Hexes and not `Color`s, for the reason `GuessCardTeamTextColour` records
+    /// one type above: a `Color` cannot be compared in a test, so a call site
+    /// that quietly went back to `Color(hex: …primaryColor ?? …)` would leave
+    /// every assertion green. The hex is the only thing that can fail.
+    ///
+    /// Takes the event rather than two hexes for the same reason `homeHex` does:
+    /// it covers the *choice of side*, so a call site that swapped away for home
+    /// could not keep these tests green either.
+    static func hexes(_ event: FeedEventData) -> (away: String, home: String) {
+        TeamTextContrast.cardColorHexes(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor
+        )
+    }
+
+    /// `hexes` as `Color`s — the form the panel takes.
+    static func pair(_ event: FeedEventData) -> (away: Color, home: Color) {
+        let hex = hexes(event)
+        return (Color(hex: hex.away), Color(hex: hex.home))
+    }
+}
+
 private enum NativeGuessCardContent {
     case futures(FeedFuturesData)
     case event(FeedEventData)
@@ -3073,8 +3126,12 @@ struct NativeGuessCard: View {
     }
 
     private func matchupPanel(event: FeedEventData) -> some View {
-        let homeColor = Color(hex: event.homeTeamData?.primaryColor ?? "#2563eb")
-        let awayColor = Color(hex: event.awayTeamData?.primaryColor ?? "#64748b")
+        // #7036 arm 4 — floored, so a white-shirted club gets a tile a reader can
+        // see. Single-expression delegation: the rule and both defaults live in
+        // `GuessCardTeamTileColours`, which a test can drive on a real payload.
+        let tiles = GuessCardTeamTileColours.pair(event)
+        let homeColor = tiles.home
+        let awayColor = tiles.away
         // #3430 — two chips, one matchup: resolve the labels together.
         let sides = NativeGuessCardContent.pair(event)
 
