@@ -861,8 +861,34 @@ async def get_entertainment(db: AsyncSession):
     themes = {
         "music": music,
         "movies_tv": movies_tv,
+        # #7432: THE ONE SECTION COUNT A READER SEES NAMES THE ROWS IT SITS OVER.
+        #
+        # It was `len(themed["social_media"])` — the raw `_classify_theme`
+        # bucket, filled above by the loop that only applies
+        # `should_exclude_from_featured`. `_market_row` and `_is_interesting`
+        # run inside `_build_list`, AFTER that append and BEFORE the `[:15]`,
+        # so the bucket length is a PRE-GATE pool: it counts rows this route
+        # itself then refuses for reading settled, stale or uninteresting.
+        # That is #6978's defect exactly ("those heroes were `len(all_markets)`,
+        # the PRE-GATE pool, so they called rows active that the route had
+        # already dropped"), not #7423's invented literal. Measured on the
+        # served bank 2026-09-20 13:47Z: **49** printed over **15** rendered.
+        #
+        # ⚠️ TWO SURFACES, NOT ONE. #7392's note above says this is rendered in
+        # a single place; that is true of the web page and not of the field.
+        # `frontend/app/entertainment/page.tsx:1301` draws it over 15 rows and
+        # `ios/.../Views/EntertainmentView.swift:630` draws it over
+        # `markets.prefix(10)`, so the app read 49 over 10. Deriving the number
+        # here is what repairs both; a `data.markets.length` on the web would
+        # have left the app over-claiming.
+        #
+        # ⚠️ `len(tech_culture_markets)`, NOT the `15` limit beside it. The list
+        # is short whenever the gate leaves fewer than 15 survivors, and a label
+        # that reads the cap would then over-claim again on exactly the thin
+        # days it matters. `TestTheCountIsTheServedListNotTheCapAndNotTheBucket`
+        # is the arm that holds both halves of that.
         "tech_culture": {
-            "count": len(themed.get("social_media", [])),
+            "count": len(tech_culture_markets),
             "markets": tech_culture_markets,
         },
     }
