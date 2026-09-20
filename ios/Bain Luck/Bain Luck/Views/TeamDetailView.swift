@@ -1,5 +1,35 @@
 import SwiftUI
 
+/// #7036, fourth arm — the team page's own 64pt identity tile, resolved through
+/// the contrast floor.
+///
+/// The tile is `.fill(Color(hex: primaryColor))` with
+/// `.overlay(Text(abbreviation).foregroundStyle(.white))`, so the letters are
+/// WHITE and the fill is the club's. That is the same judgement as a colour
+/// painted as text on a white card and not a second one: the pair being weighed
+/// is (white, colour) in both directions, so `(1.05)/(L + 0.05)` is the same
+/// ratio and `TeamTextContrast`'s floor answers it unchanged.
+///
+/// **What this is reachable BY, measured rather than inferred (2026-09-20).** The
+/// tile is `AsyncImage`'s `placeholder:`, so it is on screen while the crest
+/// loads and stays on screen when the fetch fails — it is not the state of a
+/// club that has no crest. There are no such clubs: `teams` holds **0** rows
+/// with a `primary_color` and no logo url. So this is the FAILURE path, and what
+/// it fixes is that for the 146 clubs under 3:1 the fallback was itself blank.
+/// A fallback that exists to survive a dead image, and is invisible for one club
+/// in ten, is not a fallback. Do not restate this as "Fulham's team page is
+/// blank" — Fulham's crest returns 200.
+///
+/// `#6B7280` (4.83:1) is the fill this view already used for a team with no
+/// stored colour.
+enum TeamDetailTeamColour {
+    static let fallbackHex = "#6B7280"
+
+    static func logoTileHex(_ storedHex: String?) -> String {
+        TeamTextContrast.textHexOnCard(storedHex, fallback: fallbackHex)
+    }
+}
+
 struct TeamDetailView: View {
     let slug: String
 
@@ -43,7 +73,7 @@ struct TeamDetailView: View {
                             image.resizable().scaledToFit()
                         } placeholder: {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(hex: team.primaryColor ?? "#6B7280"))
+                                .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
                                 // #4720 — the served abbreviation still wins; the
                                 // FALLBACK was one raw character ("1" for
                                 // "1. FC Heidenheim 1846") and is now the app's badge.

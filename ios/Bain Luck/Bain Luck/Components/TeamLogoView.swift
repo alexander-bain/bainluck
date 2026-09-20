@@ -4,6 +4,34 @@ import SwiftUI
 struct TeamLogoView: View {
     let url: String?
     let teamName: String
+    /// **This is drawn as TEXT, not only as a tint — #7036, fourth arm.**
+    ///
+    /// Of this view's three states only one uses `color` as a background: the
+    /// `Circle().fill(color.opacity(0.15))` shown *while* a crest is loading.
+    /// The other two go to `initialsFallback`, which paints the badge's letters
+    /// with `Text(...).foregroundStyle(color)` over a 20%-opacity disc — and
+    /// those are the states a club reaches whenever the crest url is absent, the
+    /// fetch fails, or the ESPN fallback fails.
+    ///
+    /// **Which of those is reachable, measured 2026-09-20 rather than read off
+    /// the `if`:** not the first. `teams` holds **0** rows carrying a stored
+    /// `primary_color` and no logo url — every club with a colour has a crest.
+    /// So the letters appear when a fetch FAILS: offline, dead CDN, a load that
+    /// loses its race. That is a smaller claim than "a crest-less club draws
+    /// blank letters", and it is the true one.
+    ///
+    /// So a caller may not hand this a raw `teams.primary_color`. 146 of 1,464
+    /// stored colours are under WCAG 3:1 against the white card (26 of them are
+    /// exactly `#ffffff`), and in that failure state each one renders this
+    /// circle as a blank space where the club's initials belong — present in the
+    /// hierarchy, correct to VoiceOver, invisible to a reader. Resolve through
+    /// `TeamTextContrast.textHexOnCard(_:fallback:)` first; the call sites that
+    /// do are asserted in `BadgeLettersResolveTeamColourThroughTheFloor7036Tests`.
+    ///
+    /// The contract is stated here rather than enforced by taking a hex because
+    /// several callers legitimately pass a colour that never came from a team
+    /// row at all (`OnboardingView` passes `.blue`), and narrowing the parameter
+    /// would force those to invent a hex for a colour they already have.
     let color: Color
     var size: CGFloat = 28
     /// Optional sport key for ESPN logo fallback (e.g., "basketball_nba")

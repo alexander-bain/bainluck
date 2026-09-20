@@ -690,6 +690,27 @@ enum MyStuffTeamTextColour {
     static func probabilityHex(_ primaryColor: String?) -> String {
         TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
     }
+
+    /// #7036, fourth arm — the crest circle beside those same rows, and on the
+    /// playoff-journey card's header.
+    ///
+    /// Arm 3 left these two call sites alone on the reading that a logo tint is
+    /// colour-as-BACKGROUND — an invisible shape rather than an unreadable
+    /// number. That is true of exactly one of `TeamLogoView`'s three states. The
+    /// other two draw the badge's LETTERS in this colour
+    /// (`Text(...).foregroundStyle(color)` in `initialsFallback`) — so the tint
+    /// is text, and it belongs under the same floor as the number beside it.
+    ///
+    /// Reachable by a FAILED crest fetch, not by a crest-less club: `teams` holds
+    /// 0 rows that have a `primary_color` and no `logo_url_small` (measured
+    /// 2026-09-20). This makes the offline/dead-CDN rendering legible for the 146
+    /// clubs under 3:1; it does not change a warm render.
+    ///
+    /// Same rule and same default as `probabilityHex`, named separately so the
+    /// wiring test can anchor on the site rather than on the rule.
+    static func logoTintHex(_ primaryColor: String?) -> String {
+        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    }
 }
 
 /// Merged view of the same outcome across sources.
@@ -943,7 +964,7 @@ private struct PlayoffJourneyCard: View {
                 TeamLogoView(
                     url: journey.teamLogo,
                     teamName: journey.teamName,
-                    color: Color(hex: journey.teamColor ?? "#6b7280"),
+                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor)),
                     size: 28
                 )
                 Text(journey.teamName)
@@ -1168,7 +1189,7 @@ private struct TeamFuturesSection: View {
             TeamLogoView(
                 url: item.matchedTeam?.logoSmall,
                 teamName: item.matchedTeam?.name ?? "",
-                color: Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"),
+                color: Color(hex: MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor)),
                 size: 28
             )
 
