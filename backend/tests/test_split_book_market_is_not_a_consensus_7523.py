@@ -227,6 +227,32 @@ class TestTheWriteTheReaderSees:
         )
 
     @pytest.mark.asyncio
+    async def test_agreeing_books_below_the_floor_are_still_ruling_051s_drop(
+        self, patched_snapshots
+    ):
+        """The fourth outcome, pinned so the branch ORDER is guarded by behaviour.
+
+        The publishing branch now reads `count >= FLOOR and split is None` ahead
+        of both refusals rather than behind them (see the comment at that branch
+        — the writer-scan resolves this site by the first assignment it walks
+        to). That reorder is only safe if all four outcomes are unchanged, so
+        every one of them is asserted in this class: publish, split-drop,
+        floor-drop, and #5426's leave-alone.
+        """
+        event_data = patched_snapshots([0.62, 0.63])
+        event = _FakeEvent(
+            {"betting": {"value": 0.61, "updated_at": "2026-09-20T14:00:00Z"}},
+            status="live",
+        )
+        session = _RecordingSession(status="live")
+
+        await _ingest_event_odds(session, event, event_data, FUTURE, {})
+
+        written = session.sources_writes[0]
+        assert "betting" not in written
+        assert written["betting_book_count"] == 2
+
+    @pytest.mark.asyncio
     async def test_a_split_below_the_floor_is_still_dropped(
         self, patched_snapshots
     ):

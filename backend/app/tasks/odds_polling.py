@@ -876,6 +876,22 @@ async def _ingest_event_odds(
                 "(#5426).",
                 event_id, _book_count, BETTING_BOOK_FLOOR, betting_val,
             )
+        elif _book_count >= BETTING_BOOK_FLOOR and _split_books is None:
+            # PUBLISH ONLY WHEN BOTH REFUSALS DECLINE. The conjunction is the
+            # whole branch: enough books to be a consensus (ruling 051) AND a
+            # consensus they actually reached (#7523). Written as one condition
+            # ahead of the two refusals rather than as a third `elif` behind
+            # them, because the order is read by `test_blend_source_writer_scan
+            # _5311`: that scan resolves this site's persisted value by walking
+            # to the FIRST assignment of `_current` in the function, so the
+            # stamped reading has to be the one it reaches, or a site that does
+            # go through the stamper is reported as one that does not. The
+            # scan's blindness to the other two branches is pre-existing and is
+            # not fixed here; the branches' behaviour is pinned by tests in
+            # `test_split_book_market_is_not_a_consensus_7523` instead.
+            _current = stamp_source_reading(
+                event.win_probability_sources, "betting", betting_val
+            )
         elif _split_books is not None:
             # ── #7523: A SPLIT MARKET IS NOT A CONSENSUS EITHER ──────────────
             # Ruling 051's sentence, one case over: nothing downstream can tell
@@ -904,10 +920,6 @@ async def _ingest_event_odds(
                 "re-weights over remaining sources (#7523)",
                 event_id, _book_count, _split_books[0], _split_books[1],
                 (_split_books[1] - _split_books[0]) * 100, betting_val,
-            )
-        elif _book_count >= BETTING_BOOK_FLOOR:
-            _current = stamp_source_reading(
-                event.win_probability_sources, "betting", betting_val
             )
         else:
             # ── RULING 051: below its evidence floor a source is ABSENT ──────
