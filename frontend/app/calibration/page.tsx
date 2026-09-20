@@ -2349,8 +2349,35 @@ export default function CalibrationPage() {
       {/* Data corrections log (L2-74 §E — trust panel; L2-80 Item 3: collapsed into a
           <details> closed by default and clearly labeled technical — too detailed to
           show expanded in every view. Content unchanged.) */}
+      {/* #7363 — the intro promised a field 11 of 13 entries do not have.
+          It read "Every data-quality correction we've made — WITH DATES AND
+          ROWS AFFECTED — is on the record here", and the row count renders
+          behind `c.rows != null` two dozen lines below. On the live payload
+          (q271, generated 2026-09-15T11:16:10Z) 11 of the 13 corrections carry
+          `rows: null`, so the reader was told to expect a row count on every
+          entry and got one on two: the hockey sign-flip (36,207) and the
+          premature golf resolutions (230). Every exclusion-class correction
+          from 2026-07-09 onward has none.
+
+          The GUARD is not the defect — inventing a number for a null would be
+          worse, and the counts in the exclusions list are a different
+          population (what a rule sets aside TODAY, not what one correction
+          changed once). The SENTENCE is the defect, same shape as #7353 and
+          #7341: a universal claim this page's own payload cannot back.
+
+          So the promise shrinks to what the list always has — the date — and
+          the row count stays where it exists, as a bonus rather than an
+          advertised column. No "2 of 13" goes on screen: a coverage count is
+          exactly the diagnostic prose notice 34 removes. It travels as data
+          attributes instead, so the gap stays measurable without being read
+          (notice 34's failing-self-audit remedy). */}
       {data.corrections && data.corrections.length > 0 && (
-        <section className="bg-surface-card rounded-xl border border-surface-border">
+        <section
+          className="bg-surface-card rounded-xl border border-surface-border"
+          data-testid="calibration-corrections"
+          data-corrections={data.corrections.length}
+          data-corrections-with-rows={data.corrections.filter(c => c.rows != null).length}
+        >
           <details className="group">
             <summary className="cursor-pointer list-none p-5 flex items-center justify-between gap-3 select-none">
               <span className="flex items-baseline gap-2">
@@ -2362,7 +2389,7 @@ export default function CalibrationPage() {
             <div className="px-5 pb-5">
               <p className="text-xs text-text-muted mb-4">
                 A calibration page is only trustworthy if it fixes its own mistakes. Every data-quality
-                correction we&rsquo;ve made &mdash; with dates and rows affected &mdash; is on the record here.
+                correction we&rsquo;ve made is on the record here, dated.
                 See <a href="#methodology" className="text-accent-brand hover:underline">How We Measure This</a> for the full methodology.
               </p>
               <ul className="space-y-0">
@@ -2380,8 +2407,11 @@ export default function CalibrationPage() {
                           inside a notice-34 method note, quoting our own issue number
                           at a reader. It is quoted verbatim in the guard rather than
                           here, because this file is itself scanned for those words by
-                          `supplierWordsAreGuardedEverywhere4067`. The intro above
-                          promises "dates and rows affected" — that is what survives. */}
+                          `supplierWordsAreGuardedEverywhere4067`. The date, the
+                          title and — when the payload has one — the row count
+                          are what survives. #7363 took "rows affected" out of
+                          the intro's promise precisely because this guard is
+                          reached on 11 of 13 live entries. */}
                       <div className="text-sm font-medium text-text-primary">
                         {c.title}
                         {c.rows != null && (
