@@ -276,7 +276,17 @@ describe("#6658 — the rule has one implementation, not two", () => {
     // would be grading code nobody chose.
     expect(SDC_SOURCE).not.toMatch(/labelPosition:[^,\n]*\?/);
     expect(SDC_SOURCE).not.toMatch(/i\s*%\s*2\s*===\s*0/);
-    expect(SDC_SOURCE).toMatch(/labelPosition:\s*"insideTopLeft"/);
+    // #7371 MOVED THE LITERAL, NOT THE RULE. This used to read
+    // `toMatch(/labelPosition:\s*"insideTopLeft"/)`, and a hardcoded left anchor
+    // is exactly what that issue had to stop: a marker sitting ON the chart's
+    // last category grew its caption out of the svg and reached the page as a
+    // single glyph. The anchor is now decided by `anchorPeriodLabels` — "every
+    // label on the same side EXCEPT one with no room on that side, which flips
+    // and is spaced for the flip" — so the assertion follows it into the shared
+    // rule rather than pinning a string this file no longer owns. The first two
+    // needles are unchanged and still forbid this chart computing its own.
+    expect(SDC_SOURCE).toMatch(/anchorPeriodLabels\(/);
+    expect(SDC_SOURCE).not.toMatch(/labelPosition:\s*"inside/);
   });
 
   it("the index-decimating label cap is gone", () => {

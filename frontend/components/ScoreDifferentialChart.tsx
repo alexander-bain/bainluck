@@ -37,6 +37,7 @@ import type { PeriodBoundary } from "@/lib/periodMarkers";
 import {
   dedupePeriodLabels,
   assignPeriodLabelRows,
+  anchorPeriodLabels,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 
@@ -748,18 +749,22 @@ export default function ScoreDifferentialChart({
     // happened; there is exactly one implementation and both charts call it.
     const rowed = assignPeriodLabelRows(deduped, chartDuration);
 
-    return rowed.map((b) => ({
+    // #7371's flip, shared with the win-probability chart for the third time in
+    // this pipeline (collapse, stagger, anchor): a marker on the LAST CATEGORY
+    // has nowhere to grow a left-anchored label but out of the svg, which is how
+    // a live `T10` reached the page as a bare `T` on the chart above. This chart
+    // uses the same anchor at the same width, so it clips the same way; the rule
+    // lives once and both call it. The right rule is the last category, not
+    // `scoreSpan` — a categorical axis places a marker by index.
+    const anchored = anchorPeriodLabels(
+      rowed,
+      chartDuration,
+      parseISO(chartData[chartData.length - 1].timestamp).getTime(),
+    );
+
+    return anchored.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), labelFormat),
-      // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight, which
-      // reads like it spreads them out and does the opposite — a left-anchored
-      // label grows rightward, the next right-anchored one grows leftward, so
-      // adjacent labels grow TOWARD each other and meet in the middle. That is
-      // what printed `TB2` / `T5T6` on the Reds–Dodgers page at 390px. Anchoring
-      // every label on the same side makes the gap between two markers the space
-      // actually available to the first one's text, which is what the spacing
-      // rule assumes.
-      labelPosition: "insideTopLeft",
     }));
   }, [periodBoundaries, chartData, scoreSpan, labelFormat]);
 
@@ -1015,16 +1020,25 @@ export default function ScoreDifferentialChart({
                 return value > 0 ? `+${value}` : `${value}`;
               }}
             />
-            <ReferenceLine
-              y={0}
-              stroke="rgba(0,0,0,0.2)"
-              strokeWidth={2}
-              label={{
-                value: "0",
-                position: "right",
-                style: { fontSize: 10, fill: "rgba(0,0,0,0.4)" },
-              }}
-            />
+            {/* The tie line, DELIBERATELY WITHOUT ITS OWN CAPTION (#7371, found
+                by that issue's own guard while it was aimed at the period
+                markers above).
+
+                It carried `value: "0"` at `position: "right"`, which is #3525's
+                shape exactly — the shape that shipped a stray `5` off the right
+                edge of the win-probability chart. Measured here at 390px:
+                `x=385 anchor=start` against a plot rule at 380 and an svg that
+                ends at 390, so the glyph was drawn half outside the chart.
+                It read as a single stray digit because "0" IS one glyph; the
+                same label one character longer would have been the bare `F`
+                again.
+
+                Deleting rather than re-anchoring, for #3541's reason: the
+                y-axis already prints `0` on this exact row (its tick formatter
+                has a branch for it), so the caption was a second copy of a
+                number the reader can already see, hanging off the edge. The
+                rule itself is what carries the meaning and it stays. */}
+            <ReferenceLine y={0} stroke="rgba(0,0,0,0.2)" strokeWidth={2} />
             <Tooltip content={<CustomTooltip />} />
             <Legend
               wrapperStyle={{ fontSize: "12px" }}
