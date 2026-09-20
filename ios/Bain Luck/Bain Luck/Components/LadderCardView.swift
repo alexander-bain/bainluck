@@ -326,19 +326,47 @@ extension LadderRung {
     }
 }
 
+extension LadderRungState {
+    /// #7557 — the grid cell's declared state, mapped onto the rung's settled chrome.
+    ///
+    /// `missing` and `unavailable` are `.open`, which is the branch that prints
+    /// the honest "—". They are deliberately NOT `.clinched`/`.eliminated`:
+    /// those publish a verdict, and "we have no market" is not a verdict.
+    init(gridCell state: GridCellRenderState) {
+        switch state {
+        case .won:                          self = .clinched
+        case .eliminated:                   self = .eliminated
+        case .live, .missing, .unavailable: self = .open
+        }
+    }
+}
+
 extension LadderCardView {
     /// Build a per-team ladder card from the championship-grid models
     /// (`GridTeam` + ordered `[GridColumn]`). The last column's 24h trend becomes the
     /// headline delta ("WIN 24H"), matching the design's per-card delta.
+    ///
+    /// #7557: every cell is read through `renderState` / `publishedProbability`,
+    /// never through `mergedProbability` raw — a graded cell hands this adapter a
+    /// RESULT and no number, and reading the number alone is what printed the
+    /// no-market "—" on 53 decided MLB cells.
     init(gridTeam team: GridTeam, columns: [GridColumn], rank: Int? = nil) {
         let ordered = columns.sorted { $0.order < $1.order }
         let rungs = ordered.map { col -> LadderRung in
             let cell = team.cells[col.key]
-            return LadderRung(id: col.key, label: col.label, probability: cell?.mergedProbability)
+            // A column with no cell at all is `missing`, which renders exactly
+            // as it did before: an open rung with no number.
+            let state = cell?.renderState ?? .missing
+            return LadderRung(
+                id: col.key,
+                label: col.label,
+                probability: cell?.publishedProbability,
+                state: LadderRungState(gridCell: state)
+            )
         }
         let lastKey = ordered.last?.key
         let lastLabel = ordered.last?.label
-        let trend = lastKey.flatMap { team.cells[$0]?.trend24H }
+        let trend = lastKey.flatMap { team.cells[$0]?.publishedTrend24H }
 
         self.init(
             title: team.name,
