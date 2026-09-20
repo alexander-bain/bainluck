@@ -1196,10 +1196,27 @@ export default function CalibrationPage() {
             claim over it was the defect (same shape as #7195). The cohort
             count travels as a data attribute beside the ECE so a probe reads
             which population the number came from, not the prose (notice 34). */}
+        {/* #7573 — the VERB over the figure, after #7202 fixed the scope.
+            This read "within about {ece} percentage points", which states a
+            BOUND; `cohortECE` is ECE, the n-weighted MEAN of the ten bucket
+            errors, and the page plots its own counter-examples directly below:
+            four of the ten buckets break 0.9pp and the 70-80% bucket reads
+            2.69pp over 28,475 outcomes. The stat card ~200px down already calls
+            the same number "How far off, on average", so the page disagreed
+            with itself about what kind of statistic this is.
+
+            "about" does not repair it — it hedges the MAGNITUDE, not the KIND
+            of claim. The word used here is the card's own ("on average"), not a
+            coined one: same reason #7174 renamed the MCE column to "Bucket" and
+            #7225 put "per-bucket" beside the How We Compare figure. #7564 is
+            the twin fix on /about, the page that links here.
+
+            The figure does not move. The scope clause stays owned by the
+            partition (#7202). */}
         <p className="text-text-primary max-w-2xl mx-auto" data-testid="calibration-plain-headline"
           data-plain-ece={cohortECE} data-plain-ece-n={cohortN}>
           {cohort.plainHeadlineScope}, prices land{" "}
-          <strong>within about {cohortECE.toFixed(1)} percentage points</strong> of what actually
+          <strong>an average of {cohortECE.toFixed(1)} percentage points</strong> from what actually
           happened.
         </p>
         <details className="max-w-2xl mx-auto text-left" data-testid="calibration-show-the-math">
