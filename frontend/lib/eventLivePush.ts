@@ -57,6 +57,90 @@ export function eventRefreshInterval(
   return status === "live" ? intervals.live : intervals.scheduled;
 }
 
+/**
+ * The same cadence rule, as ONE callback whose identity never changes (#7621).
+ *
+ * ═══ WHY IDENTITY IS A CORRECTNESS PROPERTY HERE, NOT A PERFORMANCE ONE ═══
+ *
+ * `eventRefreshInterval` above was passed to swr as an inline arrow:
+ *
+ *     refreshInterval: (data) => eventRefreshInterval(data?.status, …)
+ *
+ * which is a NEW function on every render. swr@2.4.1's polling effect,
+ * verbatim from `dist/index/index.js`:
+ *
+ *     useIsomorphicLayoutEffect(() => {
+ *       let timer;
+ *       function next() {
+ *         const interval = isFunction(refreshInterval) ? refreshInterval(getCache().data) : refreshInterval;
+ *         if (interval && timer !== -1) timer = setTimeout(execute, interval);
+ *       }
+ *       …
+ *       next();
+ *       return () => { if (timer) { clearTimeout(timer); timer = -1; } };
+ *     }, [refreshInterval, refreshWhenHidden, refreshWhenOffline, key]);
+ *
+ * `refreshInterval` is IN THE DEPENDENCY ARRAY and the cleanup CLEARS THE
+ * TIMER. So a fresh function identity per render tears the pending timeout down
+ * and starts a new one from zero on every render. The event page re-renders
+ * about once a second — its countdown ring is a 100ms `setInterval` whose
+ * `setCountdown` value changes each second — so a 120,000ms timer was being
+ * destroyed and recreated roughly 120 times before it could ever fire.
+ *
+ * ═══ WHAT THAT COST A READER (the measurement, not the theory) ═══
+ *
+ * Cowboys–Commanders, production, 2026-09-20, one page held open 480s at 390px,
+ * `document.visibilityState === "visible"`, `hasFocus: true`
+ * (`tools/quiet-stall-poll-7621.mjs`):
+ *
+ *     /api/events/14781697/history        30 requests   every ~32s
+ *     /api/events/14781697/game-markets   26 requests   every ~32s
+ *     /api/feed                            9 requests   every ~60s
+ *     /api/events/14781697                 3 requests   t=1, 285, 398
+ *     /api/events/14781697/stream          3 opens      t=1, 290, 403
+ *
+ * Every sibling key on the same page polled perfectly — they pass NUMERIC
+ * literals, whose identity is stable. The one key that did not is the one key
+ * priced by a function, and its three fetches line up with the three stream
+ * reconnects, not with any cadence: the only thing refetching the event payload
+ * was the disconnect handler. That is why ux/1399 watched an NFL page read
+ * "No result reported · last score 19-23" thirteen minutes after the whistle
+ * while a fresh load of the same url in the same minute rendered Final.
+ *
+ * It is also the missing half of #4861. That issue shipped a detector for this
+ * exact silence (`eventFeedIsStalled`) and wired it to withdraw the LIVE badge
+ * and the countdown ring. Detection without recovery: the page correctly stopped
+ * PROMISING an update it was structurally incapable of making.
+ *
+ * ═══ WHY A REF ARGUMENT AND NOT A DEPENDENCY ═══
+ *
+ * A stable identity is only SAFE if the callback has nothing reactive to close
+ * over — otherwise stability is just a stale closure wearing a fix's clothes.
+ * It has nothing: `status` arrives as the argument (swr calls it with the key's
+ * current cache data), the two cadences are module constants, and liveness is
+ * read through the caller's ref, which is mutated in render and therefore
+ * always current at call time. The ref was already there for an unrelated
+ * reason — `streamConnected` derives from the very data this hook produces, so
+ * naming the state value in the config would be a use-before-declare — and it
+ * is precisely what makes a permanently-stable callback correct here.
+ *
+ * Built by a factory rather than written inline so the property is testable in
+ * a `testEnvironment: 'node'` suite with no DOM: a test can hold ONE reference,
+ * flip the ref underneath it, and assert both that the reference never changes
+ * and that its answers still track the flip.
+ */
+export function makeEventRefreshInterval(
+  streamConnectedRef: { readonly current: boolean },
+  intervals: { live: number; scheduled: number },
+): (data?: { status?: string | null } | null) => number {
+  return (data) =>
+    eventRefreshInterval(
+      data?.status,
+      streamConnectedRef.current,
+      intervals,
+    );
+}
+
 /** True while the pushed-page poll cannot itself cause a false `Stale`. */
 export function pushedRefreshIntervalIsHonest(
   pushedInterval: number,
