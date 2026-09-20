@@ -15,7 +15,10 @@ non-datetime witness out, and — the controls — that the 593,549 markets sitt
 on a past `resolution_date` and every existing freeze behaviour are untouched.
 """
 
+import ast
+import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from app.routes.futures import _apply_settled_winner_freeze
@@ -29,9 +32,62 @@ from app.utils.settlement_stamp import (
     settled_point_timestamp,
 )
 
-# A fixed clock. Every anchor below is an offset FROM it and nothing branches on
-# the real time (gotcha #44).
-NOW = datetime(2026, 9, 15, 11, 33, 24, tzinfo=timezone.utc)
+# ── THE ANCHOR, AND WHY IT IS NOT A LITERAL (#7611) ──────────────────────────
+#
+# This used to be `datetime(2026, 9, 15, 11, 33, 24, tzinfo=timezone.utc)`, with
+# the comment "a fixed clock … nothing branches on the real time (gotcha #44)".
+# The comment was half true and the half it missed turned master red.
+#
+# Nothing here branches. But `TestTheFreezeOnTheSpecimenShape` and
+# `TestControlsThatMustHoldBothSidesOfThisChange` do not call the pure ladder —
+# they call `_apply_settled_winner_freeze`, which reads the REAL clock
+# (`routes/futures.py:172`) and hands it to `settled_point_timestamp`. So those
+# cases ran against TWO clocks: their specimens were built against the frozen
+# one and graded against the moving one. Their whole subject is a
+# `resolution_date` that is still in the FUTURE — the Kalshi schedule of gotcha
+# #14 — and a future built by adding to a fixed past instant has an expiry date.
+#
+# `NOW + timedelta(days=5, hours=10)` was 2026-09-20T21:33:24Z. Real time
+# reached it, arm 1 of the ladder started matching, and
+# `test_the_champions_dot_lands_on_the_data_not_on_the_clock` failed for every
+# lane on master from that second onward — a literal in the past stays in the
+# past. `NOW + timedelta(days=6)` (four more cases) was due to detonate at
+# 2026-09-21T11:33:24Z, which is why this is fixed at the anchor and not at the
+# one assertion that happened to go first.
+#
+# Offset from the clock, no branch, no truncation — the shape gotcha #44
+# prescribes. `TestTheAnchorCannotAgeOut` below holds both halves of the rule so
+# the next edit cannot quietly re-pin it.
+
+#: The shortest FORWARD offset any specimen in this file uses — the Vuelta's
+#: `resolution_date`. Every "future schedule" case depends on the clock not
+#: having reached it, so this is the ceiling on how far back the anchor may sit.
+SHORTEST_FUTURE_OFFSET = timedelta(days=5, hours=10)
+
+#: How far behind the real clock the anchor sits. One day: comfortably under the
+#: ceiling above (so a future schedule is still ≥4d10h out whenever the suite
+#: runs) and comfortably over zero (so `NOW` reads as a past instant, which is
+#: what every backward offset and every `as_past_utc` case assumes). Change it
+#: freely — the guard is written against THIS name, not against "one day".
+ANCHOR_LAG = timedelta(days=1)
+
+#: The instant this module was imported, kept so the guard below can assert the
+#: RELATIONSHIP between it and `NOW` instead of comparing `NOW` to a clock that
+#: has moved on since.
+#:
+#: 🔴 THE FIRST DRAFT OF THAT GUARD FAILED CI ON THIS VERY BRANCH, and the
+#: failure is worth more than the guard. It read
+#: `abs((datetime.now(utc) - NOW) - ANCHOR_LAG) < 5 minutes`. Alone, that passes
+#: — the file runs in a second. Inside the real shard it ran **11 minutes after
+#: this module was imported**, because a 14,000-test shard imports its modules
+#: at collection and gets to any one test much later. So the assertion was not
+#: measuring the anchor at all; it was measuring HOW LONG THE SUITE HAD BEEN
+#: RUNNING, and the failure message accused a correct anchor of being a literal.
+#: Stamping the import instant removes the clock from the comparison entirely,
+#: so no suite duration can move it.
+_IMPORTED_AT = datetime.now(timezone.utc)
+
+NOW = _IMPORTED_AT - ANCHOR_LAG
 
 
 def _outcome(oid, name, prob=0.5, is_winner=False):
@@ -70,6 +126,142 @@ def _series(oid, name, points):
 
 def _stamp_of(entry):
     return datetime.fromisoformat(entry["history"][-1]["timestamp"])
+
+
+def _source_line(prefix: str) -> str:
+    for line in Path(__file__).read_text(encoding="utf-8").splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"no `{prefix}` assignment found in this module")
+
+
+def _anchor_source_line() -> str:
+    return _source_line("NOW = ")
+
+
+def _future_offsets_graded_against_the_real_clock() -> list[timedelta]:
+    """Every `NOW + timedelta(...)` inside a class that calls the real-clock freeze.
+
+    The distinction matters and cannot be made by eye. `TestTheLadder` passes
+    `now=NOW` into the pure ladder, so a `NOW + timedelta(minutes=5)` there is
+    five minutes after a value it also supplies — it can never expire. The
+    classes that call `_apply_settled_winner_freeze` get the REAL clock instead
+    (`routes/futures.py:172`), so every forward offset in them is a promise
+    about wall time. Only those are collected, and they are found by looking for
+    that call rather than by naming the classes, so a third such class inherits
+    the guard without anyone remembering to add it.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    offsets: list[timedelta] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        called = {
+            n.func.id
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        if "_apply_settled_winner_freeze" not in called:
+            continue
+        for n in ast.walk(node):
+            if (
+                isinstance(n, ast.BinOp)
+                and isinstance(n.op, ast.Add)
+                and isinstance(n.left, ast.Name)
+                and n.left.id == "NOW"
+                and isinstance(n.right, ast.Call)
+                and isinstance(n.right.func, ast.Name)
+                and n.right.func.id == "timedelta"
+            ):
+                offsets.append(
+                    timedelta(**{k.arg: ast.literal_eval(k.value) for k in n.right.keywords})
+                )
+    return offsets
+
+
+class TestTheAnchorCannotAgeOut:
+    """#7611 — the guard on this file's own anchor, not on the code under test.
+
+    The defect was never in an assertion; it was in `NOW`. So the guard is
+    aimed there. A test that only re-pinned the one expectation that went red
+    would have passed all day on 2026-09-20 and gone red again at 11:33Z the
+    next morning, when the four `NOW + timedelta(days=6)` cases came due.
+
+    These two assertions fail on ANY re-pinned literal within hours of it being
+    written, and they name the reason in the failure rather than leaving the
+    next reader to derive it from a datetime subtraction, which is how the
+    original cost a day of every lane's merges.
+    """
+
+    def test_the_anchor_is_derived_in_the_source_rather_than_typed_out(self):
+        """The decisive one: a literal fails this the second it is written.
+
+        The drift check below only notices a re-pinned literal once the clock
+        has moved away from it, so a datetime typed a minute ago satisfies it.
+        Reading the assignment itself closes that window.
+        """
+        stamp = _source_line("_IMPORTED_AT = ")
+        anchor = _anchor_source_line()
+        assert "datetime.now(" in stamp, (
+            f"the import instant must come from the clock; it reads `{stamp}`. "
+            "See #7611 — this file's previous anchor was a literal and master "
+            "went red for every lane the second real time reached it."
+        )
+        for line in (stamp, anchor):
+            assert not re.search(r"datetime\(\s*\d{4}", line), (
+                f"this line names an instant: `{line}`. A datetime literal in "
+                "the anchor is a dated bomb, not a fixed clock (gotcha #44). "
+                "See #7611."
+            )
+
+    def test_the_declared_ceiling_is_the_real_shortest_future_offset(self):
+        """And it is read off the specimens, so a new short one cannot slip in."""
+        offsets = _future_offsets_graded_against_the_real_clock()
+        assert offsets, (
+            "found no `NOW + timedelta(...)` specimens in the classes that call "
+            "`_apply_settled_winner_freeze` — either they were renamed or this "
+            "guard has stopped measuring anything. See #7611."
+        )
+        assert SHORTEST_FUTURE_OFFSET <= min(offsets), (
+            f"SHORTEST_FUTURE_OFFSET is {SHORTEST_FUTURE_OFFSET} but the "
+            f"shortest specimen actually used is {min(offsets)}. The ceiling "
+            "ANCHOR_LAG is checked against would then be too generous and the "
+            "shortest specimen could expire under it. See #7611."
+        )
+
+    def test_the_anchor_is_exactly_its_declared_lag_behind_the_import_instant(self):
+        """Exact, and with no clock in it — so no suite duration can move it.
+
+        The version of this that read `datetime.now(utc) - NOW` against a
+        five-minute tolerance was measuring how long the shard had been running,
+        not the anchor, and it reddened CI on a correct anchor eleven minutes
+        into the run. See the note beside `_IMPORTED_AT`.
+        """
+        assert NOW == _IMPORTED_AT - ANCHOR_LAG, (
+            f"NOW ({NOW}) must be exactly ANCHOR_LAG ({ANCHOR_LAG}) behind the "
+            f"import instant ({_IMPORTED_AT}). Any value written down by hand "
+            "misses this by the width of a datetime. See #7611."
+        )
+
+    def test_the_anchor_leaves_room_for_this_files_future_schedules(self):
+        """Pure arithmetic on the two constants — no clock, so it cannot flake."""
+        assert timedelta(0) < ANCHOR_LAG < SHORTEST_FUTURE_OFFSET, (
+            f"ANCHOR_LAG ({ANCHOR_LAG}) must sit strictly between zero and the "
+            f"shortest forward offset in this file ({SHORTEST_FUTURE_OFFSET}). "
+            "Below zero the anchor is not a past instant; above the ceiling the "
+            "`resolution_date` specimens stop being future schedules and arm 1 "
+            "of the ladder starts matching. See #7611."
+        )
+
+    def test_every_future_schedule_specimen_is_still_in_the_future(self):
+        real = datetime.now(timezone.utc)
+        assert NOW < real, "the anchor must be a past instant"
+        assert NOW + SHORTEST_FUTURE_OFFSET > real, (
+            "the `resolution_date` specimens in this file are Kalshi schedules "
+            "that have NOT yet arrived (gotcha #14) — that is the arm under "
+            "test. Once the clock passes them, arm 1 of the ladder starts "
+            "matching and the specimens stop testing what they name. See #7611."
+        )
 
 
 class TestTheLadder:
