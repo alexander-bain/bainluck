@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import EmbedAwareLink from "@/components/EmbedAwareLink";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration } from "@/lib/api";
-import { compactOutcomeCount, proofCalibrationErrorText } from "@/lib/calibrationProofFigures";
+import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
 import {
   STORY_ONE_LINER,
   STORY_ANTI_THESIS,
@@ -76,14 +76,17 @@ export default function AboutPage() {
   const loadProof = useCallback(async () => {
     try {
       const data = await fetchCalibration();
-      // #7564: the n-weighted ECE over the whole published population — the same
-      // outcomes `total_outcomes` counts, and the metric /calibration names as
-      // its headline. NOT `mce_closing_line`, which is the equal-weight bucket
-      // average over the `price_moved=true` cohort alone (39% of the rows this
-      // sentence claims), and NOT a max over per-source ECEs, which is a
-      // 36-outcome DataGolf sample (#6211). See the lib for the measurements.
-      const pts = proofCalibrationErrorText(data.buckets);
-      const out = compactOutcomeCount(data.total_outcomes);
+      // #7564: both halves of the sentence come from ONE cohort — the traded
+      // markets /calibration itself defaults to — so the count and the figure
+      // can never describe different populations. NOT `mce_closing_line` (the
+      // equal-weight bucket average over `price_moved=true` alone), NOT a max
+      // over per-source ECEs (a 36-outcome DataGolf sample, #6211), and NOT an
+      // unfiltered whole-payload aggregate, which #7486 ruled out for the page
+      // next door: if a figure is for the reader, it is for the cohort on
+      // screen. Measurements and the rounding trap are in the lib.
+      const figures = proofCohortFigures(data.buckets);
+      const pts = figures ? figures.errorPp.toFixed(1) : null;
+      const out = figures ? compactOutcomeCount(figures.outcomes) : null;
       setProof({ points: pts, outcomes: out });
     } catch {
       // keep the editorial fallback copy
@@ -208,7 +211,7 @@ export default function AboutPage() {
                   </span>{" "}
                   {proof.points && proof.outcomes ? (
                     <>
-                      across {proof.outcomes} resolved outcomes, our numbers land an average of{" "}
+                      across {proof.outcomes} traded markets, our numbers land an average of{" "}
                       <span className="text-text-primary font-semibold">
                         {proof.points} points
                       </span>{" "}
