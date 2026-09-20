@@ -31,6 +31,7 @@ import pytest
 from app.routes.playoffs import (
     _ALREADY_PROBABILITY_SOURCES,
     _build_trend_chart,
+    _collect_trend_outcomes,
 )
 
 
@@ -398,6 +399,91 @@ async def test_a_team_priced_by_two_venues_is_one_series_not_two():
     )
     # And the single line is the blend of both venues, not one of them.
     assert _legend(chart, "Oklahoma City Thunder") == pytest.approx(0.2219, abs=0.005)
+
+
+# ---------------------------------------------------------------------------
+# Which outcomes the register-backed grid hands the chart
+# ---------------------------------------------------------------------------
+
+#: One club priced by three venues, exactly as the NBA championship column is.
+_THREE_VENUE_GRID = {
+    "oklahoma city thunder": {
+        "championship": [
+            {"outcome_id": 101, "source": "odds_api"},
+            {"outcome_id": 111, "source": "polymarket"},
+            {"outcome_id": 121, "source": "kalshi"},
+        ],
+        "conference": [{"outcome_id": 131, "source": "odds_api"}],
+    },
+    "san antonio spurs": {
+        "championship": [{"outcome_id": 102, "source": "odds_api"}],
+    },
+}
+_THREE_VENUE_TEAMS = [
+    {"name": "Oklahoma City Thunder"},
+    {"name": "San Antonio Spurs"},
+]
+
+
+def test_every_venue_that_prices_a_team_is_handed_to_the_chart():
+    """The register path used to stop at the first entry (`break`)."""
+    ids, names = _collect_trend_outcomes(
+        _THREE_VENUE_TEAMS, _THREE_VENUE_GRID, "championship", top=10
+    )
+
+    assert sorted(ids) == [101, 102, 111, 121], (
+        "one outcome per team is the chart drawing one venue while the table "
+        "beside it blends three"
+    )
+    assert set(names.values()) == {"Oklahoma City Thunder", "San Antonio Spurs"}
+
+
+def test_one_clubs_outcomes_all_carry_the_clubs_display_name():
+    ids, names = _collect_trend_outcomes(
+        _THREE_VENUE_TEAMS, _THREE_VENUE_GRID, "championship", top=10
+    )
+
+    assert names[101] == names[111] == names[121] == "Oklahoma City Thunder", (
+        "labelling per outcome splits one club into several series; the "
+        "old fallback was the lowercase normalized form"
+    )
+    assert len(set(names.values())) == 2, f"expected two series, got {set(names.values())}"
+
+
+def test_only_the_championship_column_and_only_the_top_n():
+    ids, _ = _collect_trend_outcomes(
+        _THREE_VENUE_TEAMS, _THREE_VENUE_GRID, "championship", top=1
+    )
+
+    assert 131 not in ids, "the conference column is a different question"
+    assert 102 not in ids, "top=1 draws one team"
+
+
+def test_a_missing_outcome_id_is_skipped_not_published_as_none():
+    grid = {"oklahoma city thunder": {"championship": [
+        {"outcome_id": None, "source": "datagolf"},
+        {"outcome_id": 101, "source": "odds_api"},
+    ]}}
+
+    ids, names = _collect_trend_outcomes(
+        [{"name": "Oklahoma City Thunder"}], grid, "championship", top=10
+    )
+
+    assert ids == [101]
+    assert None not in names
+
+
+def test_a_repeated_outcome_id_is_carried_once():
+    grid = {"oklahoma city thunder": {"championship": [
+        {"outcome_id": 101, "source": "odds_api"},
+        {"outcome_id": 101, "source": "odds_api"},
+    ]}}
+
+    ids, _ = _collect_trend_outcomes(
+        [{"name": "Oklahoma City Thunder"}], grid, "championship", top=10
+    )
+
+    assert ids == [101], "a duplicated id would double-weight one venue"
 
 
 @pytest.mark.asyncio

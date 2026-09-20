@@ -1233,6 +1233,49 @@ async def _compute_movers(
     return old_probs
 
 
+def _collect_trend_outcomes(
+    teams: list[dict],
+    grid_raw: dict,
+    championship_col: str,
+    top: int,
+) -> tuple[list[int], dict[int, str]]:
+    """Pick the outcomes the register-backed grid's trend chart draws.
+
+    #7458, and extracted so it can be tested: this loop lived inline, and both
+    mutants of it — restoring the ``break`` and labelling per outcome — survived
+    the whole playoff test band, because the integration tests that reach this
+    path patch ``_build_trend_chart`` out.
+
+    Two rules, and the second is load-bearing only because of the first:
+
+    * **Every source that prices a team is carried**, not the one that happens
+      to sort first. The chart used to keep one outcome per team while the table
+      beside it blended all of them — half of the 6.67pt the NBA legend
+      disagreed with its own table by. This is safe only because
+      :func:`_build_trend_chart` de-vigs each venue's column and holds it across
+      the buckets that venue did not write in; pooling venues raw would draw a
+      sawtooth between two honest opinions.
+
+    * **A team's outcomes all carry the TEAM's display name**, never the
+      outcome's own. Venues spell a club differently and the old fallback was
+      the lowercase normalized form, so naming per outcome would split one club
+      into two differently-named series the moment the ``break`` came out.
+    """
+    trend_outcome_ids: list[int] = []
+    trend_outcome_names: dict[int, str] = {}
+
+    for team in teams[:top]:
+        norm_name = _normalize_team_name(team["name"])
+        for entry in grid_raw.get(norm_name, {}).get(championship_col, []):
+            outcome_id = entry.get("outcome_id")
+            if not outcome_id or outcome_id in trend_outcome_names:
+                continue
+            trend_outcome_ids.append(outcome_id)
+            trend_outcome_names[outcome_id] = team["name"]
+
+    return trend_outcome_ids, trend_outcome_names
+
+
 #: Upper bound on the historical rows one trend chart may read. The chart reads
 #: each market's WHOLE outcome column, because the de-vig denominator is the
 #: column and not the ten names we happen to draw, so this is ~3x the old
@@ -5032,30 +5075,9 @@ async def get_playoff_grid(
     # -----------------------------------------------------------------------
 
     # Collect championship outcome IDs for top N teams.
-    #
-    # #7458: this used to keep ONE outcome per team, so the chart drew whichever
-    # source happened to sort first while the table beside it blended all of
-    # them — half of the 6.67pt the NBA legend disagreed with its own table by.
-    # Every source's outcome is now carried, which is only safe because
-    # _build_trend_chart de-vigs each venue's column and holds it across the
-    # buckets that venue did not write in; pooling them raw would have drawn a
-    # sawtooth between two honest opinions.
-    #
-    # All of a team's outcomes are labelled with the TEAM's display name, never
-    # the outcome's own: sources spell a club differently, and the fallback here
-    # was the lowercase normalized form, so naming per outcome would split one
-    # team into two differently-named series the moment the break came out.
-    trend_outcome_ids = []
-    trend_outcome_names: dict[int, str] = {}
-
-    for team in teams[:top]:
-        norm_name = _normalize_team_name(team["name"])
-        for e in grid_raw.get(norm_name, {}).get(championship_col, []):
-            oid = e.get("outcome_id")
-            if not oid or oid in trend_outcome_names:
-                continue
-            trend_outcome_ids.append(oid)
-            trend_outcome_names[oid] = team["name"]
+    trend_outcome_ids, trend_outcome_names = _collect_trend_outcomes(
+        teams, grid_raw, championship_col, top
+    )
 
     trend_chart = await _build_trend_chart(
         db,
