@@ -58,6 +58,7 @@ import {
   buildOutcomeLadderRungs,
   ladderNeedsWideLabels,
   ladderOrderFor,
+  thresholdLadderTitle,
 } from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -974,10 +975,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Threshold ladder — one question, many rungs, heat-strip.
           QuantityGroup (Queue L2-118) replaced the old ThresholdGrid: a "≥ N"
           market is one continuous question, not N yes/no cards. */}
+      {/* #7398 — the map key is a SCOPE KEY, and it used to be handed straight
+          to `title`: `# OR BELOW` over the 20-rung Treasury board, `ABOVE #`
+          over the Strait of Hormuz. `thresholdLadderTitle` refuses any scope
+          key as a heading and prints the payload's own `group_title` only when
+          it says something this page's `<h1>` does not. */}
       {thresholdEntries.map(([stem, outcomes]) => (
         <QuantityGroup
           key={stem}
-          title={stem}
+          title={thresholdLadderTitle(stem, groupData?.group_title, market.name)}
           rungs={buildThresholdRungs(outcomes)}
         />
       ))}
