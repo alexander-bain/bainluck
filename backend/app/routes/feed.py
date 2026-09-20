@@ -6329,8 +6329,15 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     itself eight days old, nothing is stale, and the card keeps both. A tap
     then still turns a number into a blank, which is the exact defect #7537
     exists to close, re-entering by the back door. So the board dates the
-    board, and detail's `(o.id, o.last_updated) for o in sorted_outcomes`
-    passes the same population this does.
+    board — the detail half's own generator pairs every row in
+    `sorted_outcomes` with the raw stamp column, and that is the same
+    population this passes.
+
+    (Named in words rather than quoted as an attribute access on purpose:
+    CERT-949's guard scans this module for a per-outcome read of that column,
+    stripping `#` comments but not docstrings, so quoting detail's line here
+    reddened a shard on prose alone. The rule it protects is real and this
+    function obeys it — the stamp is read through `_outcome_observed_at`.)
 
     The priced test moves to the DROP instead, where #6256's boundary actually
     lives and where it costs nothing: this is a rule about a DIVISOR, and a leg
