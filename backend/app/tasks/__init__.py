@@ -6318,9 +6318,27 @@ celery_app.conf.beat_schedule = {
     # correction arriving from a schedule source, which is hours-scale. Cheap
     # when idle (one `to_regclass` plus one indexed recall that returns nothing
     # once the backlog is drained) and it must not sit on the 60s realtime beat.
+    #
+    # A CRONTAB AND NOT A FLOAT INTERVAL, which is a real distinction on this
+    # queue and not a spelling. `test_the_unavoidable_background_floor_is_named_
+    # and_has_not_grown` declares the interval beats that `background` can never
+    # avoid and holds them to <=180 s: an interval beat is a CONTINUOUS FLOOR the
+    # settlement sweep shares its slot with, so a 600 s float would have joined
+    # that floor while failing its own 180 s test. At `*/10` this is a co-fire
+    # instead — enumerable at known minutes, counted by the sweep's window
+    # census rather than smeared across every minute of the hour.
+    #
+    # THE MINUTES DODGE THE SETTLEMENT SWEEP'S WINDOW rather than raising its
+    # ceiling. `settlement-capture-sweep-nightly` fires 10:31 and holds a slot
+    # for `SWEEP_DEADLINE_S`, so minutes 31-44 are protected and a plain `*/10`
+    # put a fire at :40 — taking the measured co-fire count from 18 to 19. That
+    # ceiling is declared "re-derive, do not increment" (#1910), and the honest
+    # reading is that this beat has no reason to want :40: 0/10/20/30/45/55 is
+    # the same ~10 min cadence (max gap 15) entirely outside the window, so the
+    # census is left at 18 and nothing is spent.
     "revive-retired-future-starts": {
         "task": "app.tasks.revive_retired_future_starts",
-        "schedule": 600.0,
+        "schedule": crontab(minute="0,10,20,30,45,55"),
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",

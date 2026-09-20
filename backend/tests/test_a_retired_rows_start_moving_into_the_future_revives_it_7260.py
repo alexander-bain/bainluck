@@ -244,12 +244,54 @@ class TestTheArmHasItsOwnBeat:
 
         assert "app.tasks.revive_retired_future_starts" not in HEAVY_TASKS
 
-    def test_the_cadence_is_hours_scale_not_seconds(self):
+    def test_it_is_a_crontab_not_a_float_interval(self):
+        """A float interval joins `background`'s CONTINUOUS FLOOR.
+
+        `test_the_unavoidable_background_floor_is_named_and_has_not_grown` holds
+        that floor to <=180s because the settlement sweep shares its slot with
+        it. A 600s float would have joined the floor and failed its own bound;
+        a crontab is a co-fire at known minutes instead.
+        """
+        from celery.schedules import crontab
+
         from app.tasks import celery_app
 
         entry = celery_app.conf.beat_schedule["revive-retired-future-starts"]
         assert entry["task"] == "app.tasks.revive_retired_future_starts"
-        assert entry["schedule"] >= 300, "this does not belong on a fast beat"
+        assert isinstance(entry["schedule"], crontab)
+
+    def test_the_minutes_dodge_the_settlement_sweep_window(self):
+        """Minutes 31-44 are protected; a fire there costs a declared ceiling."""
+        import math
+
+        from app.tasks import celery_app
+        from app.tasks.settlement_sweep import SWEEP_DEADLINE_S
+
+        sweep = celery_app.conf.beat_schedule["settlement-capture-sweep-nightly"]
+        (start,) = set(sweep["schedule"].minute)
+        protected = set(range(start, start + math.ceil(SWEEP_DEADLINE_S / 60) + 1))
+
+        mine = set(
+            celery_app.conf.beat_schedule["revive-retired-future-starts"][
+                "schedule"
+            ].minute
+        )
+        assert not (mine & protected), (
+            f"fires at {sorted(mine & protected)} inside the sweep's protected "
+            f"window {min(protected)}-{max(protected)}"
+        )
+
+    def test_the_cadence_is_about_ten_minutes(self):
+        """Dodging the window must not quietly become an hourly beat."""
+        from app.tasks import celery_app
+
+        mine = sorted(
+            celery_app.conf.beat_schedule["revive-retired-future-starts"][
+                "schedule"
+            ].minute
+        )
+        gaps = [b - a for a, b in zip(mine, mine[1:])] + [60 - mine[-1] + mine[0]]
+        assert max(gaps) <= 15, f"a gap of {max(gaps)} min is not ~10: {mine}"
 
     def test_the_realtime_beat_did_not_inherit_the_arm(self):
         """Guards the positional-fake contract the eight suites depend on."""

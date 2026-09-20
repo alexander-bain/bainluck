@@ -1012,6 +1012,16 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     **a change touching `beat_schedule` runs `grep -rl beat_schedule tests/` in
     addition to its own band.** That selects this file by what it READS, which
     is the only property a beat change can know in advance.
+
+    **2026-09-20 (live/458, #7260 rebased over authority/871's #7501): the
+    literals in THIS function are the more dangerous half of the pair.** Both
+    lanes added a background beat the same morning against the same base and
+    both honestly wrote `82` here — byte-identical text, so unlike
+    `BACKGROUND_BEAT_COUNT` (whose neighbouring comment blocks collided and made
+    the desk look) these assertions can NEVER produce a conflict. The composed
+    truth was 83. Nothing textual defends this line; only re-running the census
+    on the composed tree does. So the rule above gains a clause: a beat change
+    re-derives these three numbers AFTER its rebase, not before it.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -1028,9 +1038,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 82, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 83, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 125
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 126
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
