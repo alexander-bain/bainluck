@@ -6374,7 +6374,10 @@ def _format_market_detail(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
-    from app.utils.market_staleness import expired_ladder_rungs
+    from app.utils.market_staleness import (
+        expired_ladder_rungs,
+        stale_observation_keys,
+    )
     from app.utils.outcome_display import (
         assign_display_ranks,
         is_placeholder_outcome_name,
@@ -6692,6 +6695,64 @@ def _format_market_detail(
     # hero pick and the default sort read `probability ?? 0`, so a withheld row
     # can never be crowned leader and sinks to the bottom of the board on its own.
     withheld = unsupported_price_outcome_ids or set()
+
+    # 🔴 #7537 — AND ONE MORE CLASS OF ROW JOINS THAT SET, FOR A REASON THE
+    # RULES ABOVE STRUCTURALLY CANNOT REACH.
+    #
+    # WHAT A READER SAW. `/futures/3971707` (*Super League Rugby Championship*)
+    # printed `Leeds Rhinos 30%` in its hero and its All Outcomes table while
+    # the Probability Trend chart between them drew that same outcome at
+    # **39.5%** — one screen, one stamp (`14:53:14`), two numbers. Fourteen legs
+    # summing to 1.7200 entered this divisor and exactly THREE had been observed
+    # that day; the other eleven were last written on 2026-09-06, all eleven at
+    # one microsecond. So three genuinely-quoted prices were squeezed by the 41%
+    # of probability mass held by rows nobody had repriced in a fortnight.
+    #
+    # THE CHART IS THE HONEST SIDE, which is why nothing below touches it. 0.395
+    # is Kalshi's own midpoint (`yes_bid 0.3300 / yes_ask 0.4600`, read at the
+    # venue); 0.302 is manufactured here. The comment on the chart's own call
+    # into this function already said where the fix belongs — "the honest fix
+    # for that is the board not being squeezed (#7274), not a second fiction
+    # here" — and this is that fix.
+    #
+    # WHY THE EVIDENCE RULES ABOVE ACQUIT THESE ROWS. They read the leg's own
+    # bid/ask/last, and on a fossil every one of those columns is frozen at the
+    # same stale instant: Hull Kingston Rovers presents `0.1900 / 0.4700` and
+    # reads as a healthy two-sided book, while the venue's live answer for
+    # `KXSLRCHAMP-26-HKR` is `yes_bid 0.0000 / yes_ask 0.9600 / last 0.0000 /
+    # volume_24h 0`. The rules are not wrong; they are being shown stale
+    # evidence and acquitting it correctly. Nothing shipped asks whether the
+    # evidence is CURRENT.
+    #
+    # NOT A DELISTING CLAIM. All fourteen tickers read `status = active`. The
+    # predicate says only "this row was not observed when its siblings were",
+    # which is Codex's ruling of 2026-09-20 — freshness as a display policy with
+    # UNKNOWN behaviour, never proof a venue stopped quoting — and it is
+    # measured WITHIN the board, so an ingestion outage that ages every leg
+    # together withholds nothing.
+    #
+    # WITHHELD RATHER THAN DROPPED, and the difference is load-bearing twice
+    # over. `WITHHELD_PRICE_FIELDS` nulls `probability`, and
+    # `normalize_display_probs` reads an absent value as 0, so the row leaves the
+    # DIVISOR without leaving the BOARD: the reader still sees every team, each
+    # unpriced row prints "-" (`formatProbability(null)`), `len(outcomes)` does
+    # not move so `concept_outcome_count` needs no add-back the way #7274's drop
+    # did, and — the one that would have bitten — the chart's `canonical_board`
+    # filter a few thousand lines up drops any row this list drops, so dropping
+    # would have pulled the three honest lines' own board out from under them.
+    #
+    # OPEN MARKETS ONLY, for #7274's reason stated in its block above: a settled
+    # board is a RESULT, and a result shows what ran.
+    #
+    # Measured on production 2026-09-20 over the 7,933 open tier-1/2
+    # mutually-exclusive boards: 758 carry at least one such leg, 100 of those
+    # are squeezed today and change what a reader sees (48 stop being squeezed
+    # at all, 52 are squeezed less), and 0 have every leg stale.
+    if getattr(market, "status", None) == "open":
+        withheld = withheld | stale_observation_keys(
+            (o.id, o.last_updated) for o in sorted_outcomes
+        )
+
     prices_withheld = 0
     if withheld:
         for o in outcomes:
