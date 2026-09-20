@@ -3015,6 +3015,86 @@ jobs:
           print("#7284 chart-route real-session guard GREEN on all", t, "tests")
           PY
 
+      - name: "#7147 a settled ESPN final survives a real scores pass (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a finished game keeps the score it finished with.
+        #
+        # `c4e6070eb` narrowed the clockless feed's carve-out so the Odds API
+        # scores pass can LAND a final but not OVERWRITE one an ESPN-anchored
+        # row already holds. Production is why: event 15313146 was repaired to
+        # ESPN's 7-3 at 22:37Z on 2026-09-19 and was serving 7-2 again by
+        # 23:15:07Z, with a fresh snapshot row to match.
+        #
+        # Its own guards are a unit suite over the predicate plus `ast` and
+        # `inspect.getsource` assertions that `_poll_all_odds` consults it.
+        # Those are statements about the TEXT of the writer, and NOTHING in this
+        # repository executed that writer — all five files naming
+        # `_poll_all_odds` read its source or its beat entry. Between the
+        # judgement and the reader's row sit `sports_needing_scores`,
+        # `_get_espn_covered_sports()`, #1981's `external_id_currency` and two
+        # separate write statements against two real tables. A guard that is
+        # right about a row the loop never reaches protects nothing, and a
+        # refusal that is computed and then written anyway is invisible to a
+        # source assertion.
+        #
+        # So this step drives one real pass over ten seeded rows and reads the
+        # tables back. Six mutants were measured dead against it, including the
+        # two no text assertion can see: judging the payload instead of the pair
+        # the row will hold, and dropping the settled gate (which would freeze
+        # the score of every delayed game ESPN covers — `SUSPENDED_FUTURE` is
+        # the only row that kills it).
+        #
+        # It shares `bl_searchtest` with every step above, so it is LAST in the
+        # job and its double answers a payload for `baseball_mlb` only: a
+        # leftover row in another sport adds a loop iteration, and re-feeding
+        # this file's own globally-unique external ids a second time would make
+        # a correct guard count six refusals instead of three. Measured, not
+        # assumed — the unhardened form reads 18 updates / 6 refusals.
+        #
+        # Same three refusals as the two steps above: a SKIP is what this suite
+        # does when it cannot see its database and reads exactly like a pass,
+        # ZERO collected is a collection error wearing a green hat, and a short
+        # count means something was deselected. The exit code is read for its
+        # VALUE (gotcha #54) — 1 is a result, anything else is a harness story.
+        run: |
+          # `set +e` on purpose: the step runs under `bash -e`, so a red suite
+          # would abort HERE and the refusals below would never execute.
+          set +e
+          python -m pytest \
+            tests/integration/test_completed_espn_final_is_not_repoisoned_7147_pg.py \
+            -p no:cacheprovider -rA -s --tb=short \
+            --junitxml=/tmp/repoison7147-junit.xml 2>&1 | tee /tmp/repoison7147.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          grep -E "^#7147 PG PASS" /tmp/repoison7147.txt || {
+            echo "::error::no #7147 PG PASS line — the pass summary cannot be quoted"
+            exit 1
+          }
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          EXPECTED = 14
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/repoison7147-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#7147 PG guard produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#7147 PG guard collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#7147 PG guard SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#7147 PG guard ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#7147 PG guard RED: {f} failed, {e} errors")
+          print("#7147 settled-final write gate GREEN on all", t, "tests")
+          PY
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
