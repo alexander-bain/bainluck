@@ -2607,7 +2607,33 @@ export default function CalibrationPage() {
       <section id="methodology" className="bg-surface-card rounded-xl p-5 border border-surface-border scroll-mt-4">
         <h2 className="text-title-3 text-text-primary mb-3">How We Measure This</h2>
         <ul className="space-y-3 text-sm text-text-secondary">
-          <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
+          {/* #7482. This sentence said "by its opening probability", and the bullet
+              two below it — headed "Which probability do we use?" — says closing
+              line prices for anything with a known start time. Both were on the
+              screen at once, naming different bases for the same curve, and the
+              wrong one was the one a reader met first.
+
+              The second one is right. The curve price is
+              COALESCE(calibration_probability, opening_probability) — closing
+              preferred, opening as the FALLBACK (ruling 103 / gotcha #144).
+              `_BOOKMAKER_CHUNK_SQL` (backfill_winners.py:9701) takes the last
+              snapshot before `commence_time` per (event, sportsbook), so all
+              106,030 `odds_api_bookmaker` outcomes on q271 are a closing line by
+              the query's own construction; and `closing_line_coverage` reads
+              17,077 of 20,145 on the events path.
+
+              But it does not become "closing", because the basis genuinely
+              VARIES: the bullet below splits fixed-start-time markets (closing)
+              from no-fixed-start-time ones such as elections and economics
+              (opening after initial trading settles). One definitional clause
+              cannot carry that split and does not need to — the bullet headed
+              "Which probability do we use?" exists to answer exactly this
+              question, so the definition names NO basis and hands it over.
+
+              No number goes here (notice 34 / D102): the payload carries no
+              figure this sentence would need, and the space is left empty
+              rather than explained. */}
+          <li data-testid="calibration-curve-definition"><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by the probability it carried before the outcome was known (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
           {/* #7368. This bullet used to answer the question with "a market's final
               price settles at $1.00 or $0.00", which is the one kind of evidence the
               curve refuses: `truth_evidence.rule` grades a forecast only on a winner
