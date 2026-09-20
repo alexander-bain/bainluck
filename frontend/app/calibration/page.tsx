@@ -91,6 +91,7 @@ import {
 } from "@/lib/calibrationContract";
 import {
   decideCalibrationStaleness,
+  methodologyRefreshClause,
   stalenessHeadline,
   stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
@@ -769,6 +770,10 @@ export default function CalibrationPage() {
   // `data-units-banked`, and the function is kept (with its tests) rather than
   // deleted because reversing this is one line if Alex rules the other way.
   const scheduleClause = staleness ? stalenessScheduleClause(staleness) : null;
+
+  // #7612: the methodology card's own copy of the hourly promise. Same payload,
+  // same rule, one card further down — see `methodologyRefreshClause`.
+  const refreshClause = methodologyRefreshClause(staleness);
 
   // #7190. The three biggest categories IN THE COHORT ON SCREEN, read off the
   // same `categoryMetrics` the Category Breakdown table renders — so the card
@@ -2960,7 +2965,7 @@ export default function CalibrationPage() {
               different words, so it passed every arm. The guard added beside
               those bans the CLAIM SHAPE and is keyed on the payload, so it goes
               quiet only if the asymmetry is actually closed. */}
-          <li data-population-sources={populationProviderNames}><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""}{populationProviderNames ? ` across ${populationProviderNames}` : ""}. That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted. Data refreshes hourly.</li>
+          <li data-population-sources={populationProviderNames}><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""}{populationProviderNames ? ` across ${populationProviderNames}` : ""}. That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted.{refreshClause ? ` ${refreshClause}` : ""}</li>
           {/* CAL-P1217 — the exclusions stop being a handful of named rules and
               become an accounting a reader can add up.
               *

@@ -15,6 +15,7 @@
 
 import {
   decideCalibrationStaleness,
+  methodologyRefreshClause,
   stalenessDriftClause,
   stalenessHeadline,
   stalenessScheduleClause,
@@ -448,6 +449,65 @@ describe("stalenessDriftClause", () => {
     expect(stalenessDriftClause(notice({ units_drifted: 0, units_banked: 128, units_drift_unknown: 4 }))).toBe(
       "0 of 128 units have drifted since (4 more couldn't be checked)",
     );
+  });
+});
+
+describe("methodologyRefreshClause — #7612, the same promise one card down", () => {
+  // Production 2026-09-20 21:45Z. The banner read "130 hourly rebuilds have
+  // come and gone without a new snapshot"; the methodology card, in the same
+  // view, ended "Data refreshes hourly."
+  const PRODUCTION_STALE = {
+    availability: "stale",
+    staged: { measured: false, reason: "served_bank_empty" },
+    producer: { stalled: true, beats_missed: 130 },
+    cache: { status: "stale", reason: "main_key_absent_durable", age_s: 469_772 },
+  };
+
+  it("prints the cadence when the server declared the payload fresh", () => {
+    // The point of the gate is that it is a gate, not a deletion: on a fresh
+    // page the sentence is supported and the reader keeps it.
+    expect(decideCalibrationStaleness({ availability: "fresh" })).toBeNull();
+    expect(methodologyRefreshClause(decideCalibrationStaleness({ availability: "fresh" }))).toBe(
+      "Data refreshes hourly.",
+    );
+  });
+
+  it("withholds it over the payload that shipped the contradiction", () => {
+    const notice = decideCalibrationStaleness(PRODUCTION_STALE)!;
+    expect(notice.kind).toBe("last-good");
+    expect(methodologyRefreshClause(notice)).toBeNull();
+  });
+
+  it("never contradicts the banner: whenever one renders, the promise does not", () => {
+    // The relationship, not two coincidences. Every shape that produces a
+    // banner must silence the sentence, including the two the `last-good`
+    // fixture above does not reach.
+    const withBanner = [
+      PRODUCTION_STALE,
+      // frozen-inputs: the producer is PROVEN healthy and the banner still
+      // says "The data behind it is older" — which is this sentence's subject.
+      {
+        availability: "stale",
+        staged: { measured: true, frozen_over_drift: true, staged_at: "2026-09-15T11:16:10Z" },
+        producer: { stalled: false, beats_missed: 0 },
+      },
+      // undisclosed: the server refused `fresh` and would not say why.
+      { availability: "stale", staged: null, producer: null },
+    ];
+    for (const payload of withBanner) {
+      const notice = decideCalibrationStaleness(payload)!;
+      expect(notice).not.toBeNull();
+      expect(stalenessHeadline(notice).length).toBeGreaterThan(0);
+      expect(methodologyRefreshClause(notice)).toBeNull();
+    }
+    // All three kinds are covered, so this is the whole relation and not a
+    // sample of it.
+    expect(new Set(withBanner.map(p => decideCalibrationStaleness(p)!.kind)).size).toBe(3);
+  });
+
+  it("is total: a missing notice is the fresh reading, an undefined one too", () => {
+    expect(methodologyRefreshClause(null)).toBe("Data refreshes hourly.");
+    expect(methodologyRefreshClause(undefined)).toBe("Data refreshes hourly.");
   });
 });
 
