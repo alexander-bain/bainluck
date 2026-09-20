@@ -1864,6 +1864,59 @@ _RUSSIA_WAR_TERRITORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #7494 — the three halves of the `story:macro_rates` predicate, split out so the
+# jurisdiction rule is readable at the call site (`_story_key`).
+#
+# The US central bank by name. Unambiguous, so it admits a market outright.
+# `\bfed\b` does not match "feds" or "federal", which is why "federal" is absent:
+# on this corpus it is student loans, federal courts and the federal government.
+#
+# DELIBERATELY NOT WIDENED, though the gap is real and measured: `fomc`,
+# `federal reserve`, `pce` and `rate hikes?` would admit 14 more open markets
+# (2026-09-20), and five of them are Fed-GOVERNANCE questions ("Will Trump end
+# the Federal Reserve?") that would import a fresh caption mismatch — the very
+# thing this change removes. Widening is additive and is its own ship; the claim
+# here is one axis only, so that the before/after is a set of evictions and
+# nothing else.
+_US_CENTRAL_BANK_RE = re.compile(r"\bfed\b", re.IGNORECASE)
+
+# The jurisdiction-blind price/rate vocabulary — unchanged from the single regex
+# this replaced, except that `ecb` has moved to the exclusion list below, where a
+# euro-area institution belongs. Every country on earth prints a CPI, so this may
+# only admit a market once the negative test has passed.
+_MACRO_PRICE_RATE_RE = re.compile(
+    r"\b(rate cuts?|interest rates?|inflation|cpi|ppi)\b",
+    re.IGNORECASE,
+)
+
+# Jurisdictions and central banks that are NOT the Fed. Drawn from the 206 open
+# markets the predicate above actually matches on production (2026-09-20), not
+# guessed: Argentina, Brazil, Canada, China, Colombia, the ECB/Euro Area,
+# India, Japan, Mexico, Singapore, South Africa, South Korea and the UK all have
+# live inflation or policy-rate markets. The rest of the list is the same class of
+# publisher and costs nothing to name in advance. A market that says "US" as well
+# as a foreign country ("Will US core inflation be above UK core inflation?") is a
+# cross-country comparison, not an answer to "What does the Fed do next?", so it
+# is excluded on purpose.
+_NON_US_JURISDICTION_RE = re.compile(
+    r"\b("
+    r"ecb|european central bank|euro ?area|eurozone|lagarde|"
+    r"boe|bank of england|bank of canada|boc|bank of japan|boj|"
+    r"rbnz|reserve bank of (new zealand|australia|india)|rba|rbi|snb|riksbank|"
+    r"pboc|people'?s bank of china|"
+    r"argentina|argentine|brazil|brazilian|canada|canadian|chile|chilean|"
+    r"china|chinese|colombia|colombian|egypt|france|french|germany|german|"
+    r"greece|hungary|india|indian|indonesia|ireland|israel|italy|italian|"
+    r"japan|japanese|kenya|malaysia|mexico|mexican|netherlands|new zealand|"
+    r"nigeria|norway|pakistan|peru|philippines|poland|portugal|russia|russian|"
+    r"saudi|singapore|south africa|south korea|korea|korean|spain|spanish|"
+    r"sweden|switzerland|swiss|taiwan|thailand|turkey|t[uü]rkiye|"
+    r"u\.?k\.?|uk|united kingdom|britain|british|england|scotland|"
+    r"ukraine|venezuela|vietnam"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _STOPWORDS = {
     "will",
     "the",
@@ -2100,7 +2153,32 @@ def _story_key(name: str, category: str) -> str | None:
     if re.search(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", lower):
         return "story:regional_us_elections"
 
-    if re.search(r"\b(fed|rate cuts?|interest rates?|inflation|cpi|ppi|ecb)\b", lower):
+    # #7494. TWO ARMS, because the container this key feeds is US-specific by
+    # construction: `discover_bundles.py` titles it "Fed & Rates" and prints
+    # "What does the Fed do next?" over the members. A bare `inflation`/`cpi`/
+    # `ppi`/`interest rate` is jurisdiction-blind, so the membership rule was one
+    # jurisdiction wider than the sentence the card puts above it, and Argentina's
+    # monthly CPI sat third under a question it does not answer (production
+    # 2026-09-20 13:29Z) — displacing a real Fed/US-rates row, because the story
+    # cap is 3. `ecb` was inside the same alternation, so an ECB decision landed
+    # there by the same route: the defect is the predicate, not the country.
+    #
+    # Arm 1 is the Fed itself, and it wins outright — "Will the Fed cut before the
+    # ECB?" IS a Fed question. Arm 2 is the jurisdiction-blind price/rate
+    # vocabulary, admitted only when no OTHER jurisdiction is named. Deliberately
+    # a negative test and not a positive US anchor: the issue recommended
+    # requiring `\bus\b`, but measured against the 206 open markets this predicate
+    # actually sees, that would evict "Core CPI YoY - September 2026", "CPI core
+    # in October" and ~30 more unprefixed US prints, which are the card's real
+    # members. A foreign print is named; a US one usually is not.
+    #
+    # An excluded market keeps no story key and falls through the cascade. It is
+    # not re-homed into a container we have not authored a sentence for, and it is
+    # still capped as a card by `_quality_family_key`.
+    if _US_CENTRAL_BANK_RE.search(lower):
+        return "story:macro_rates"
+
+    if _MACRO_PRICE_RATE_RE.search(lower) and not _NON_US_JURISDICTION_RE.search(lower):
         return "story:macro_rates"
 
     if re.search(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b", lower) or re.search(
