@@ -5,6 +5,7 @@ Pulled out of the 950-line `_sync_espn_live_events` god function in
 `app/tasks/espn_sync.py` to keep the orchestrator thin and each helper testable.
 """
 
+import dataclasses as _dataclasses
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -861,6 +862,172 @@ def match_event_to_espn(event, espn_events, espn_by_id, claimed_espn_ids, espn_n
 
 
 # ---------------------------------------------------------------------------
+# Orientation — which of OUR sides is ESPN's `home` competitor standing on?
+# ---------------------------------------------------------------------------
+
+ESPN_ORIENTATION_ALIGNED = "aligned"
+ESPN_ORIENTATION_SWAPPED = "swapped"
+ESPN_ORIENTATION_UNRESOLVED = "unresolved"
+
+
+def espn_row_name_variations(event) -> tuple[list[str], list[str]]:
+    """Every name our row offers for each side, read defensively.
+
+    Deliberately a mirror of ``espn_sync.get_event_name_variations`` rather than
+    a call to it, for two reasons. It is read here on the LIVE write path, where
+    a row that cannot be read must degrade to "I cannot tell" rather than raise:
+    that helper reaches straight through ``event.home_team_normalized``, so any
+    caller holding a partial row — every test stand-in in this suite, and any
+    future reduced projection — would take an ``AttributeError`` inside a
+    writer whose failure mode should be silence. And it keeps a leaf-ish helper
+    out of a function-local import of ``app.tasks.espn_sync``.
+
+    ``test_the_two_name_readers_agree_on_a_real_event_7338`` pins the two
+    against a real ``Event`` in both directions, so the mirror cannot drift.
+    """
+    home_names = [
+        n for n in (
+            getattr(event, "home_team_name", None),
+            getattr(event, "home_team_normalized", None),
+        ) if n
+    ]
+    away_names = [
+        n for n in (
+            getattr(event, "away_team_name", None),
+            getattr(event, "away_team_normalized", None),
+        ) if n
+    ]
+    home_names.extend(n for n in (getattr(event, "home_team_alt_names", None) or []) if n)
+    away_names.extend(n for n in (getattr(event, "away_team_alt_names", None) or []) if n)
+    return home_names, away_names
+
+
+def espn_orientation_verdict(event, ee) -> str:
+    """Does ESPN's ``homeAway="home"`` competitor sit on OUR home side?
+
+    🔴 **AN ESPN ID PROVES THE SAME GAME, NEVER THE SAME ORIENTATION (#7338).**
+    ``match_event_to_espn`` arm 2 compares home-to-home AND away-to-away, so a
+    name-matched row is oriented by construction. **Arm 1 compares nothing** —
+    its docstring says "an id-anchored hit already carries ESPN's own identity",
+    which is true of the *fixture* and false of the *sides*. Everything
+    downstream then copies by ESPN's slot (``home_score=ee.home_score``), so
+    when the two disagree every score and the ESPN probability leg land on the
+    wrong team, silently.
+
+    **A neutral-site game is where they disagree**, because there is no true
+    home side for the two providers to agree about: whoever minted our row (the
+    Odds API, here) is free to nominate the opposite side to ESPN. Measured on
+    production 2026-09-19 over today's NCAAF, 70 rows whose ``espn_id`` ESPN
+    also serves: 62 aligned, 7 unjudgeable on spelling, **1 swapped — and that
+    one is the only judgeable neutral-site game in the window** (0 of 61
+    non-neutral rows are swapped). Event 15308929 printed *Virginia 28 · West
+    Virginia 21* on Discover page one while West Virginia was winning 28–21, and
+    handed the team it showed losing a 58% chance on the same card. Bowl games,
+    neutral-site openers, NFL international games and cup finals at a neutral
+    ground are the population.
+
+    Identity, not slot, is the question, so this asks
+    :func:`espn_identity_corresponds` — the file's own primitive, which carries
+    the cross-town-rival veto that makes ``names_match`` alone unsafe for
+    deciding an identity (CERT-2881: it calls Manchester United/Manchester City
+    a match).
+
+    **BOTH DIRECTIONS ARE TESTED AND AMBIGUITY IS NOT A VERDICT.** A payload
+    that corresponds to our home on *both* of its competitors has told us
+    nothing, and a row we cannot read at all is not evidence of a swap. Both
+    return ``UNRESOLVED``, which leaves the write exactly as it is today — this
+    function only ever moves a row it can positively show is reversed.
+    """
+    # `getattr` throughout, never attribute access: a board row carrying no
+    # competitor objects cannot be shown to be reversed, and neither can a row
+    # that does not expose its own naming surface. Both are UNRESOLVED, which
+    # changes nothing — this function is only ever allowed to move a row it can
+    # positively read.
+    espn_home = getattr(ee, "home_team", None)
+    espn_away = getattr(ee, "away_team", None)
+    if espn_home is None or espn_away is None:
+        return ESPN_ORIENTATION_UNRESOLVED
+
+    home_names, away_names = espn_row_name_variations(event)
+    if not home_names or not away_names:
+        return ESPN_ORIENTATION_UNRESOLVED
+
+    def _corresponds(ours, espn_team) -> bool:
+        return espn_identity_corresponds(ours[0], ours[1:], espn_team)
+
+    aligned = (
+        _corresponds(home_names, espn_home)
+        and _corresponds(away_names, espn_away)
+    )
+    swapped = (
+        _corresponds(home_names, espn_away)
+        and _corresponds(away_names, espn_home)
+    )
+
+    if aligned and not swapped:
+        return ESPN_ORIENTATION_ALIGNED
+    if swapped and not aligned:
+        return ESPN_ORIENTATION_SWAPPED
+    return ESPN_ORIENTATION_UNRESOLVED
+
+
+def orient_espn_event_to_row(event, ee, stats=None):
+    """Return ``ee`` re-oriented onto THIS row's sides, or ``ee`` unchanged.
+
+    Called at the top of every function that copies ESPN's home/away values
+    onto our row, so the ~15 individual ``ee.home_score`` reads below each of
+    them become correct together. Patching the copy sites one at a time is how
+    a sibling site spelling the same concept differently survives the fix.
+
+    The swap is total and the probability is complemented with it: a leg stored
+    as "ESPN says the home team wins with p" is, on the other side, ``1 - p``.
+    Leaving ``home_win_probability`` alone while moving the teams would replace
+    a swapped blend with an inverted one.
+
+    ``stats`` is passed ONLY by :func:`update_event_fields_from_espn`, which
+    runs first and unconditionally for every event on the live path, so a
+    corrected game is counted once per poll rather than once per write site.
+    Counting is bookkeeping: the correction does not depend on it.
+    """
+    verdict = espn_orientation_verdict(event, ee)
+
+    if stats is not None and verdict != ESPN_ORIENTATION_ALIGNED:
+        _key = f"espn_orientation_{verdict}"
+        stats[_key] = stats.get(_key, 0) + 1
+
+    if verdict != ESPN_ORIENTATION_SWAPPED:
+        # UNRESOLVED deliberately writes what it writes today. Refusing here
+        # would stop live scores for every row whose names we merely cannot
+        # read, which is a far larger population than the one being repaired —
+        # so the silence ends with a counter first, and the counter is what a
+        # later refusal gets to be argued from.
+        return ee
+
+    logger.warning(
+        "ESPN orientation SWAPPED for event %s (%s @ %s): ESPN's home is %s "
+        "(#7338). Re-orienting scores and the ESPN probability leg onto our "
+        "sides rather than writing them by ESPN's slot.",
+        getattr(event, "id", "?"),
+        getattr(event, "away_team_name", "?"),
+        getattr(event, "home_team_name", "?"),
+        getattr(ee.home_team, "display_name", None) or getattr(ee.home_team, "name", "?"),
+    )
+
+    return _dataclasses.replace(
+        ee,
+        home_team=ee.away_team,
+        away_team=ee.home_team,
+        home_score=ee.away_score,
+        away_score=ee.home_score,
+        home_win_probability=(
+            1.0 - ee.home_win_probability
+            if ee.home_win_probability is not None
+            else None
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Live event field updates
 # ---------------------------------------------------------------------------
 
@@ -870,6 +1037,10 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     Returns True if any field changed.
     """
     from app.models.models import Event
+
+    # #7338, BEFORE the first read of `ee`: an id-anchored match proves the
+    # fixture, not which side is which. Everything below copies by ESPN's slot.
+    ee = orient_espn_event_to_row(event, ee, stats)
 
     changed = False
 
@@ -1258,6 +1429,11 @@ async def write_espn_win_probability(session, event, ee, match_method, claimed_e
     """
     from app.models.models import Event, ESPNSnapshot
 
+    # #7338, before the probability is read: on a swapped row ESPN's
+    # `homeWinPercentage` is our AWAY team's chance. Stamping it as the home leg
+    # points the blend's ESPN source at the opposite team from its venue legs.
+    ee = orient_espn_event_to_row(event, ee)
+
     if ee.home_win_probability is None:
         return False
 
@@ -1406,6 +1582,11 @@ async def compute_and_write_stat_model(session, event, ee, sport_key, stats):
     Returns True if stat_model was computed and written.
     """
     from app.models.models import Event
+
+    # #7338: the model is fed `home_score`/`away_score` and returns a HOME win
+    # probability, so a swapped feed inverts it one step downstream — the
+    # specimen read `stat_model` 0.0762 for a team up 7 in the 4th.
+    ee = orient_espn_event_to_row(event, ee)
 
     has_game_progress = ee.clock or sport_key.startswith("baseball_")
     if ee.status != "in" or ee.home_score is None or ee.away_score is None or not has_game_progress:
