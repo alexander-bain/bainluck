@@ -564,13 +564,40 @@ def shared_token_rivals(name_a: str, name_b: str) -> bool:
     `Sporting Lisbon`/`Sporting CP`. The repair is attended, plans before it
     applies and banks a restore, so an operator sees those two in the plan.
 
+    ═══ EXPAND ABBREVIATIONS FIRST, OR THE VETO REFUSES A CLUB ITS OWN NAME ═══
+
+    The veto reads the SAME SCALE as the matcher it sits in front of, so it runs
+    `_expand_abbreviations` exactly as :func:`token_overlap_score` does. Without
+    it the two functions tokenise differently and the veto calls `LA Clippers`
+    and `Los Angeles Clippers` rivals — a club against itself.
+
+    `_token_stems_agree` cannot stand in for the expansion, and that is
+    STRUCTURAL rather than a gap in its word list: it relates ONE token to ONE
+    token, while 15 of the city abbreviations expand into TWO (`la` ->
+    `los angeles`, `kc` -> `kansas city`, `okc` -> `oklahoma city`, `tb` ->
+    `tampa bay`, ...). No subsequence test can ever discount `la` against the
+    PAIR `los`/`angeles`. Eight more are single-token but still out of its reach
+    (`dc` -> `washington`, `jax` -> `jacksonville`, `st.` -> `state`), because an
+    abbreviation is not required to be a subsequence of what it abbreviates.
+
+    Measured on the pairs above: expanding costs NONE of the rivalries this
+    function exists for — `Manchester United`/`Manchester City`,
+    `Real Madrid`/`Real Sociedad`, `New York Jets`/`New York Giants`,
+    `Lakers`/`Clippers` and the holdout's `Qarabag FK`/`Viking FK` all stay
+    rivals, because expansion adds tokens to BOTH sides and each keeps a
+    distinctive one. It only ever removes a false rivalry between two spellings
+    of one club.
+
     KNOWN RESIDUE, so nobody reads this as complete: two clubs whose names share
     no token are invisible here (`Fluminense` wearing `Arsenal` is caught by
-    `names_match` returning False, not by this), and a rival pair distinguished
-    only by an institution-type word would be missed by construction.
+    `names_match` returning False, not by this); a rival pair distinguished only
+    by an institution-type word would be missed by construction; and an
+    abbreviation absent from both abbreviation maps is still read as a
+    distinctive token, so `UMass Minutemen` and `Massachusetts Minutemen` remain
+    false rivals here. The fix for that class is a map entry, not a looser rule.
     """
-    tokens_a = set(normalize_name(name_a or "").split())
-    tokens_b = set(normalize_name(name_b or "").split())
+    tokens_a = set(_expand_abbreviations(normalize_name(name_a or "")).split())
+    tokens_b = set(_expand_abbreviations(normalize_name(name_b or "")).split())
     if not tokens_a or not tokens_b or not (tokens_a & tokens_b):
         return False
 
