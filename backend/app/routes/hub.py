@@ -55,7 +55,10 @@ from app.utils.event_tennis import (
     list_tennis_tournament_concepts,
 )
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
-from app.utils.grouped_field_legs import drop_legs_of_a_rendered_field
+from app.utils.grouped_field_legs import (
+    drop_legs_of_a_rendered_field,
+    move_parents_to_their_legs_section,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +716,19 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
     # the MMA hub holds 39 futures answers where it holds 17 questions, and it
     # would leave the section chip reading "25" over eleven cards (the chip is
     # `markets.length` on the rows served). One question, one card, one count.
+    # ── #7437: the same question under TWO headings ──
+    #
+    # The rule below is scoped to one list by construction, so a family whose
+    # field sits under MORE MARKETS and whose rows sit under PROPS was invisible
+    # to it. Measured on production 2026-09-20, `/hub/tennis` PROPS was 64 rows
+    # of 64 legs belonging to two fields one heading up (`polymarket:766238`, 37
+    # outcomes / 33 legs; `polymarket:768652`, 31 / 31).
+    #
+    # Carrying the field DOWN to its rows — rather than widening the collapse
+    # page-wide, which would empty that rendered PROPS heading — makes the
+    # existing rule true of them, so no new collapse predicate exists. This must
+    # run FIRST: it is what gives the rule below a family to see.
+    sections = move_parents_to_their_legs_section(sections)
     sections = drop_legs_of_a_rendered_field(sections)
 
     # ── UX-P061 (#1742, epic #1741): the entity envelope ──
