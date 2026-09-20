@@ -553,6 +553,11 @@ def format_event_data(
         by_source=prematch_by_source,
         books_home=opening_home_prob,
         books_away=opening_away_prob,
+        # #7514 — on a draw-priced sport the books rung has no draw to offer as
+        # evidence, so without the sport it re-complements and the away team
+        # inherits the whole draw. Measured 2026-09-20: three finished soccer
+        # cards rendering the away side 20-26 points high, all of them this rung.
+        sport=sport_key,
     )
     if prematch is not None:
         # UX-P114's rule, third instance: the settled card prints BOTH of these

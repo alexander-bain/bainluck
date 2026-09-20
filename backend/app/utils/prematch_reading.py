@@ -62,6 +62,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+# #7514 — the same two predicates the served duel is withheld on (#6238), so the
+# payload and the pre-match row cannot disagree about which away figures are a
+# real price. `draw_priced_winner` imports only `graded_card`, which is stdlib
+# only, so this adds no cycle.
+from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
+
 # The two prediction-market rungs, in Alex's order. Source ids as the payload and
 # `win_prob_snapshots.source` spell them — never a display name; those are the
 # renderer's business and ruling 141 keeps venue names out of narrative copy.
@@ -126,7 +132,9 @@ def _as_probability(value: Any) -> Optional[float]:
     return number
 
 
-def _pair(home: Any, away: Any, draw: Any = None) -> Optional[tuple[float, float]]:
+def _pair(
+    home: Any, away: Any, draw: Any = None, sport: Any = None
+) -> Optional[tuple[float, float]]:
     """``(home, away)`` as a coherent pair, anchored on home.
 
     ── WHY A THREE-WAY READING IS NOT RE-COMPLEMENTED (#6277) ──────────────────
@@ -148,6 +156,42 @@ def _pair(home: Any, away: Any, draw: Any = None) -> Optional[tuple[float, float
     two-way source, and every row written before #6277 shipped) the old rule
     applies unchanged — which is the whole reason this is safe to land while the
     table is still almost entirely two-way.
+
+    ── AND WHEN THERE IS NO DRAW TO OFFER AS EVIDENCE (#7514) ──────────────────
+    #6277 closed the arm above for the rungs that CAN carry a draw, and named the
+    one that cannot as out of scope: "the books rung … never carries one:
+    ``Event.opening_*`` has no draw column, which is #1011 and is not this fix"
+    (:func:`resolve_prematch_reading`). On a draw-priced sport that made the
+    fall-through unconditional, so the books rung re-complemented every time and
+    #6277's repair was inert on exactly the rung that answers in production.
+
+    Measured on production 2026-09-20 14:00Z, ``GET /api/feed?mode=sports``, the
+    eight finished soccer cards carrying a usable pair — the answering rung is
+    the whole variable:
+
+        kalshi (carries a draw)   5 cards   worst gap  1.3pt
+        books  (no draw column)   3 cards   worst gap 26.0pt
+
+    FC Seoul's own de-vigged pre-match price was .545 and the card rendered 81%;
+    St. Pauli .455 rendered 70%; Gwangju .129 rendered 33%.
+
+    So ``sport`` is the SECOND kind of evidence, used only where the first is
+    structurally unavailable. It is not a wider licence: it is the existing,
+    already-measured :func:`away_is_the_complement`, which is the same predicate
+    the served duel is withheld on (#6238), so the payload and this row now agree
+    about which away figures are real. Three properties make it safe:
+
+    * It is checked AFTER the ``draw`` arm, so a rung that offers real evidence
+      still wins and the five kalshi cards above never reach it.
+    * ``away_is_the_complement`` answers False for every two-way sport by its own
+      first line, so ``sport_prices_a_draw`` is tested explicitly here. Without
+      that gate this arm would keep a stale MLB away and delete the coherence
+      guard outright — the single most important line in this function.
+    * An away that IS the complement still falls through and is rebuilt, which is
+      a no-op on the value and keeps the withholding story of #6238 intact.
+
+    ``sport`` absent (the default, and every caller that has not been wired) is
+    byte-identical to the behaviour before this change.
     """
     home_prob = _as_probability(home)
     if home_prob is None:
@@ -161,6 +205,14 @@ def _pair(home: Any, away: Any, draw: Any = None) -> Optional[tuple[float, float
     if (
         draw_prob is not None
         and abs(home_prob + away_prob + draw_prob - 1.0) <= _PARTITION_TOLERANCE
+    ):
+        return home_prob, away_prob
+    # #7514 — the draw-priced arm, reached only when no draw was offered above.
+    # The `sport_prices_a_draw` gate is load-bearing: `away_is_the_complement`
+    # returns False for every two-way sport, so without it this would keep a
+    # stale two-way away and the guard below would never run again.
+    if sport_prices_a_draw(sport) and not away_is_the_complement(
+        away_prob, home_prob, sport
     ):
         return home_prob, away_prob
     return home_prob, round(1.0 - home_prob, 6)
@@ -263,6 +315,7 @@ def resolve_prematch_reading(
     books_home: Any = None,
     books_away: Any = None,
     ladder: Iterable[str] = PREMATCH_LADDER,
+    sport: Any = None,
 ) -> Optional[dict]:
     """The first rung of the ladder that has a coherent pre-match pair.
 
@@ -273,7 +326,18 @@ def resolve_prematch_reading(
     are a genuine sub-unit pair; see :func:`_pair`. The books rung is passed
     separately because it lives on the event row rather than in the snapshot
     table, and it never carries one: ``Event.opening_*`` has no draw column,
-    which is #1011 and is not this fix.
+    which is #1011.
+
+    ``sport`` is how the books rung is answered anyway (#7514). Because it can
+    never carry a draw, the sentence above used to end "and is not this fix", and
+    the consequence was that #6277's repair never reached the rung that actually
+    answers in production: all three wrong finished soccer cards measured
+    2026-09-20 14:00Z were ``source: "books"``, each overstating the away side by
+    20–26 points, while all five ``kalshi`` cards in the same read were correct
+    inside 1.3pt. The sport is evidence of last resort, applied only where the
+    draw is structurally unavailable; :func:`_pair` carries the argument and the
+    gate that keeps every two-way sport untouched. Absent, every caller behaves
+    exactly as it did before.
 
     Returns ``{"home_probability", "away_probability", "source"}``, or ``None``
     when no rung has a reading. ``None`` means "we hold nothing", which is the
@@ -282,20 +346,23 @@ def resolve_prematch_reading(
     readings = dict(by_source or {})
     for source in ladder:
         if source == BOOKS_SOURCE:
-            pair = _pair(books_home, books_away)
+            pair = _pair(books_home, books_away, sport=sport)
         else:
             served = readings.get(source)
             if served is None:
                 continue
             if isinstance(served, Mapping):
                 pair = _pair(
-                    served.get("home"), served.get("away"), served.get("draw"),
+                    served.get("home"),
+                    served.get("away"),
+                    served.get("draw"),
+                    sport=sport,
                 )
             else:
                 # Padded to THREE so a two-element tuple — every caller before
                 # #6277, and every two-way source after it — unpacks unchanged.
                 home, away, draw = (list(served) + [None, None, None])[:3]
-                pair = _pair(home, away, draw)
+                pair = _pair(home, away, draw, sport=sport)
         if pair is None:
             continue
         return {

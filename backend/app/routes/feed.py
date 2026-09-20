@@ -9720,6 +9720,11 @@ async def _score_events(
                 by_source=prematch_by_event.get(event.id),
                 books_home=opening_home_prob,
                 books_away=opening_away_prob,
+                # #7514 — the same sport the caption above is already given, for
+                # the same reason: this row and that sentence are one answer
+                # (#6181), so they have to agree about which away figure is a
+                # real price rather than `1 - home`.
+                sport=event.sport.key if event.sport else "",
             )
             _prematch_percents = (
                 duel_percents_by_side(
