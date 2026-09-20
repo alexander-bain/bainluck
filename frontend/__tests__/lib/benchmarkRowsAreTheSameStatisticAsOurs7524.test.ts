@@ -101,8 +101,9 @@ describe("#7524 the benchmark list plots no vote-share forecast error", () => {
 
   it("carries no 1.5pp figure", () => {
     // The label could be reworded; the number is the defect. Distinct from
-    // every other literal in the list (2.5, and the range's 2 and 5), so this
-    // cannot pass or fail for a neighbouring row's reasons.
+    // every other literal in the list (#7531 made Metaculus a 2-3 range, so the
+    // list now holds 2, 3, 2 and 5), so this cannot pass or fail for a
+    // neighbouring row's reasons.
     expect(benchmarkList()).not.toMatch(/mce:\s*1\.5\b/);
   });
 
