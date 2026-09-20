@@ -12,7 +12,10 @@ number under every treatment is green for reasons unrelated to its claim).
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -22,7 +25,9 @@ from scripts.calibration_scorecard import (
     CLASS_B,
     CLASS_BARS_PP,
     CLASS_C,
+    DEFAULT_HISTORY,
     MIN_CELL_N,
+    REPO_ROOT,
     SIGMA_GATE,
     VERDICT_EXEMPT,
     VERDICT_PASS,
@@ -405,3 +410,57 @@ class TestHistoryCannotFakeATrend:
         banked = json.loads(path.read_text().strip())
         assert "kalshi/tiny" not in banked["material_cells"]
         assert "kalshi/c" in banked["material_cells"]
+
+
+class TestDefaultHistoryIsRepoRootAnchored:
+    """#2967 — the default series must not fork when the CWD changes.
+
+    The trap this class is written around: a RELATIVE ``Path`` compares EQUAL to
+    itself under every working directory, because it carries no CWD. So a test
+    that chdirs twice and compares ``DEFAULT_HISTORY`` to itself is green with
+    the defect fully present. What varies is the RESOLUTION, so that is what is
+    asserted — the CAL-P105 lesson at the top of this file, applied to a path.
+    """
+
+    def _resolved_from(self, cwd) -> Path:
+        old = os.getcwd()
+        os.chdir(cwd)
+        try:
+            return Path(DEFAULT_HISTORY).resolve()
+        finally:
+            os.chdir(old)
+
+    def test_resolution_is_identical_from_repo_root_and_from_backend(self):
+        backend = REPO_ROOT / "backend"
+        assert backend.is_dir(), "fixture assumes the script's own repo layout"
+
+        from_root = self._resolved_from(REPO_ROOT)
+        from_backend = self._resolved_from(backend)
+
+        # With the defect, this is the fork: <root>/artifacts/... vs
+        # <root>/backend/artifacts/..., two series, no error, exit 0.
+        assert from_root == from_backend
+
+    def test_default_lands_on_the_canonical_repo_root_series(self):
+        canonical = REPO_ROOT / "artifacts" / "calibration-scorecard" / "history.jsonl"
+        expected = canonical.resolve()
+        assert Path(DEFAULT_HISTORY).resolve() == expected
+        assert Path(DEFAULT_HISTORY).is_absolute()
+        assert (REPO_ROOT / "backend") not in Path(DEFAULT_HISTORY).resolve().parents
+
+    def test_explicit_history_still_wins_and_stays_cwd_relative(self, tmp_path):
+        """An explicit ``--history`` is an attended choice and is NOT anchored."""
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--history", default=str(DEFAULT_HISTORY))
+
+        assert Path(ap.parse_args([]).history).is_absolute()
+
+        chosen = ap.parse_args(["--history", "scratch.jsonl"]).history
+        assert chosen == "scratch.jsonl"
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            assert Path(chosen).resolve() == (tmp_path / "scratch.jsonl").resolve()
+        finally:
+            os.chdir(old)
+

@@ -71,8 +71,10 @@ Usage::
     python3 backend/scripts/calibration_scorecard.py --payload artifacts/x.json
     python3 backend/scripts/calibration_scorecard.py --live --markdown
 
-``--record`` appends the run to ``artifacts/calibration-scorecard/history.jsonl``,
-keyed on ``(the payload's own generated_at, the class bars it was scored at)``.
+``--record`` appends the run to ``artifacts/calibration-scorecard/history.jsonl``
+*resolved against the repo root, not the working directory* (see
+:data:`DEFAULT_HISTORY`), keyed on
+``(the payload's own generated_at, the class bars it was scored at)``.
 Re-running against a STALE payload (the producer has been stalling — see
 ``producer.stalled``) therefore cannot mint a second datapoint for the same
 curve at the same bars, which would otherwise draw a flat trend line out of one
@@ -199,7 +201,19 @@ CLASS_RATIONALE: dict[str, str] = {
 }
 
 
-DEFAULT_HISTORY = Path("artifacts/calibration-scorecard/history.jsonl")
+#: Repo root, anchored on this file rather than on the working directory:
+#: ``backend/scripts/calibration_scorecard.py`` → ``parents[2]``.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The canonical scorecard series. ABSOLUTE by construction (#2967): while this
+#: was ``Path("artifacts/...")`` the natural invocation ``cd backend && python3
+#: scripts/calibration_scorecard.py --live --record`` silently minted a SECOND
+#: series at ``backend/artifacts/...`` and exited 0, and the canonical file went
+#: un-appended. It cost datapoints twice — the second time the forked file held
+#: the most recent scorecard measurement in existence, one ``git rm`` from being
+#: deleted as evidence noise. ``--history`` is unchanged and still resolves
+#: against the CWD: an explicit path is an attended choice, this is the default.
+DEFAULT_HISTORY = REPO_ROOT / "artifacts" / "calibration-scorecard" / "history.jsonl"
 
 # --------------------------------------------------------------------------
 # Self-check — the instrument's warrant
