@@ -44,6 +44,25 @@ export const GRID_CELL_STATE_LABEL: Record<GridCellState, string> = {
   unavailable: "Unavailable",
 };
 
+/**
+ * The glyph a terminal cell renders instead of a number, in every grid.
+ *
+ * Lives here rather than in a component because THREE surfaces render it — the
+ * two championship grids through `TournamentProgressionTable`, and the team
+ * page's Division Race (#7522) — and notice 35 says one card family everywhere:
+ * a reader must not learn one mark for "clinched" on the league grid and a
+ * different one on the club's own page.
+ */
+export const GRID_CELL_TERMINAL_GLYPH: Record<"clinched" | "eliminated", string> = {
+  clinched: "✓",
+  eliminated: "✕",
+};
+
+/** True for the two states that carry a RESULT and therefore never a number. */
+export function isTerminalStatus(status: ProgressionCellStatus): boolean {
+  return status === "clinched" || status === "eliminated";
+}
+
 export interface RenderedGridCell {
   state: GridCellState;
   /** Non-null ONLY when state === "live". */

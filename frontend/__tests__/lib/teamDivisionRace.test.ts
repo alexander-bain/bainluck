@@ -1,5 +1,6 @@
 // L2-162: division-race projection from the league championship grid.
 import { buildDivisionRace, sortDivisionRows } from "../../lib/teamDivisionRace";
+import type { DivisionRaceRow } from "../../lib/teamDivisionRace";
 import type { ChampionshipGridResponse, ChampionshipGridTeam } from "../../lib/types";
 
 function cell(p: number) {
@@ -277,14 +278,139 @@ describe("buildDivisionRace — the pool is (conference, division) [#6992]", () 
   });
 });
 
+function row(overrides: Partial<DivisionRaceRow>): DivisionRaceRow {
+  return {
+    teamId: null,
+    name: "Row",
+    shortName: "R",
+    color: null,
+    logoUrl: null,
+    isTeam: false,
+    division: null,
+    playoffs: null,
+    championship: null,
+    divisionStatus: null,
+    playoffsStatus: null,
+    championshipStatus: null,
+    ...overrides,
+  };
+}
+
 describe("sortDivisionRows", () => {
   const rows = [
-    { teamId: 1, name: "A", shortName: "A", color: null, logoUrl: null, isTeam: false, division: 0.1, playoffs: 0.5, championship: 0.02 },
-    { teamId: 2, name: "B", shortName: "B", color: null, logoUrl: null, isTeam: false, division: 0.4, playoffs: null, championship: 0.2 },
+    row({ teamId: 1, name: "A", shortName: "A", division: 0.1, playoffs: 0.5, championship: 0.02 }),
+    row({ teamId: 2, name: "B", shortName: "B", division: 0.4, playoffs: null, championship: 0.2 }),
   ];
 
   test("sorts by the chosen column descending, nulls last", () => {
     expect(sortDivisionRows(rows, "division").map((r) => r.name)).toEqual(["B", "A"]);
     expect(sortDivisionRows(rows, "playoffs").map((r) => r.name)).toEqual(["A", "B"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #7522 — a settled cell is a RESULT, not a missing number.
+//
+// #7387 stopped the grid deleting graded legs, so `/api/playoffs/{league}` now
+// publishes `{"merged_probability": null, "state": "won"|"eliminated"}`. Every
+// assertion below was RED against the pre-#7522 projection, which read
+// `merged_probability` alone and could not tell "we are certain" from "we have
+// nothing". The shapes are the live payload's, not invented: on 2026-09-20 the
+// MLB grid carried 5 `won` and 11 `eliminated` make_playoffs cells.
+// ---------------------------------------------------------------------------
+describe("terminal cells on the Division Race [#7522]", () => {
+  const wonCell = { merged_probability: null, state: "won", sources: [], trend_24h: null };
+  const outCell = { merged_probability: null, state: "eliminated", sources: [], trend_24h: null };
+
+  /** Rays clinched; Jays are out; Sox and Yanks still trading. */
+  const SETTLING_AL_EAST = [
+    team({
+      name: "Tampa Bay Rays", short_name: "TB", team_id: 139, division: "AL East",
+      cells: { division: cell(0.96), make_playoffs: wonCell, championship: cell(0.09) },
+    }),
+    team({
+      name: "Toronto Blue Jays", short_name: "TOR", team_id: 141, division: "AL East",
+      cells: { division: outCell, make_playoffs: outCell, championship: outCell },
+    }),
+    team({
+      name: "Boston Red Sox", short_name: "BOS", team_id: 111, division: "AL East",
+      cells: { division: cell(0.003), make_playoffs: cell(0.99), championship: cell(0.055) },
+    }),
+    team({
+      name: "New York Yankees", short_name: "NYY", team_id: 147, division: "AL East",
+      cells: { division: cell(0.038), make_playoffs: wonCell, championship: cell(0.1) },
+    }),
+  ];
+
+  test("a clinched club carries the result, not a null that reads as no data", () => {
+    const race = buildDivisionRace(grid(SETTLING_AL_EAST), 111, "Boston Red Sox")!;
+    const rays = race.rows.find((r) => r.name === "Tampa Bay Rays")!;
+    expect(rays.playoffsStatus).toBe("clinched");
+    // The number is absent BY CONTRACT — the point is that the status says why.
+    expect(rays.playoffs).toBeNull();
+  });
+
+  test("an eliminated club is told apart from a club with no market", () => {
+    const race = buildDivisionRace(grid(SETTLING_AL_EAST), 111, "Boston Red Sox")!;
+    const jays = race.rows.find((r) => r.name === "Toronto Blue Jays")!;
+    expect(jays.playoffsStatus).toBe("eliminated");
+    // 🔴 The whole defect in one line: before #7522 both of these were `null`
+    // and the page printed the same "—" for each.
+    const noMarket = buildDivisionRace(
+      grid([
+        team({ name: "X", team_id: 1, division: "D", cells: { division: cell(0.5) } }),
+        team({ name: "Y", team_id: 2, division: "D", cells: { division: cell(0.5) } }),
+      ]),
+      1,
+      "X",
+    )!.rows[0];
+    expect(noMarket.playoffsStatus).toBeNull();
+    expect(noMarket.playoffs).toBeNull();
+    expect(jays.playoffsStatus).not.toBe(noMarket.playoffsStatus);
+  });
+
+  test("a live cell is untouched — number kept, no status invented", () => {
+    const race = buildDivisionRace(grid(SETTLING_AL_EAST), 111, "Boston Red Sox")!;
+    const sox = race.rows.find((r) => r.name === "Boston Red Sox")!;
+    expect(sox.playoffs).toBeCloseTo(0.99);
+    expect(sox.playoffsStatus).toBeNull();
+    expect(sox.division).toBeCloseTo(0.003);
+  });
+
+  test("a clinched club sorts as certainty, not below every longshot", () => {
+    const race = buildDivisionRace(grid(SETTLING_AL_EAST), 111, "Boston Red Sox")!;
+    const order = sortDivisionRows(race.rows, "playoffs").map((r) => r.name);
+    // Both clinched clubs above the 99% live cell; the eliminated club last.
+    expect(order.slice(0, 2).sort()).toEqual(["New York Yankees", "Tampa Bay Rays"]);
+    expect(order[2]).toBe("Boston Red Sox");
+    expect(order[3]).toBe("Toronto Blue Jays");
+  });
+
+  test("a column that is ALL result keeps its place on the page", () => {
+    // 🔴 The trap the number-only test walked into: a race that is over carries
+    // a probability nowhere, so `rows.some(r => r.division !== null)` went false
+    // and the column disappeared at the exact moment it became certain.
+    const decided = [
+      team({ name: "Champ", team_id: 1, division: "D", cells: { division: wonCell } }),
+      team({ name: "Rest", team_id: 2, division: "D", cells: { division: outCell } }),
+    ];
+    const race = buildDivisionRace(grid(decided), 1, "Champ")!;
+    expect(race.hasDivision).toBe(true);
+    expect(race.rows.every((r) => r.division === null)).toBe(true);
+  });
+
+  test("an absent column still hides, and an unreadable cell is never a result", () => {
+    // Fail-closed, both directions: no column at all must not become a verdict,
+    // and a cell the register cannot vouch for must not be dressed up as one.
+    const junk = [
+      team({ name: "P", team_id: 1, division: "D", cells: { division: cell(0.5), make_playoffs: { merged_probability: null, state: "nonsense", sources: [], trend_24h: null } } }),
+      team({ name: "Q", team_id: 2, division: "D", cells: { division: cell(0.5) } }),
+    ];
+    const race = buildDivisionRace(grid(junk), 1, "P")!;
+    expect(race.hasChampionship).toBe(false); // absent everywhere
+    expect(race.hasPlayoffs).toBe(false); // present but unreadable — not a result
+    const p = race.rows.find((r) => r.name === "P")!;
+    expect(p.playoffsStatus).toBe("unavailable");
+    expect(p.playoffs).toBeNull();
   });
 });
