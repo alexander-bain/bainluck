@@ -24,6 +24,14 @@ import {
   sportPagePath,
 } from "@/lib/eventKey";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
+import FuturesTrendRangeControls from "@/components/futures/FuturesTrendRangeControls";
+import FuturesTrendEmptyState from "@/components/futures/FuturesTrendEmptyState";
+import {
+  defaultFuturesRange,
+  futuresRangeHours,
+  isFuturesRangeKey,
+  type FuturesRangeKey,
+} from "@/lib/futuresHistoryRange";
 import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
 import ErrorMessage from "@/components/ErrorMessage";
 import { usePinnedFutures } from "@/hooks";
@@ -120,6 +128,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [trendView, setTrendView] = useState<"evolution" | "progression">("evolution");
 
+  // #7545 — the reader's chosen history rung. `null` means "not chosen yet", which
+  // is NOT the same as 1W: until the market loads we cannot tell whether its
+  // default is a week, a month or its whole life, and defaulting to a week first
+  // would fire a throwaway 168h fetch on every settled market.
+  const rangeParam = searchParams.get("range");
+  const [pickedRange, setPickedRange] = useState<FuturesRangeKey | null>(
+    isFuturesRangeKey(rangeParam) ? rangeParam : null
+  );
+
   // Pinned futures
   const { isPinned, togglePin, isMaxReached } = usePinnedFutures();
   const marketIsPinned = isPinned(marketId);
@@ -135,30 +152,44 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     { refreshInterval: 60000, keepPreviousData: true, revalidateOnFocus: false }
   );
 
-  // Request more history for markets that haven't been updated recently,
-  // so the chart isn't empty when the last poll was days ago.
-  const historyHours = useMemo(() => {
-    // L2-156 Item 4 — settled markets show the FULL life (open → resolution).
-    // Anchor the window to the market's open (created_at) so the whole trend is
-    // visible; otherwise a settled market's movement predates the trailing
-    // default window and the chart looks flat (exhibit market 37094267).
-    const isSettledMarket =
-      market?.status === "resolved" ||
-      (market?.resolution_date != null && new Date(market.resolution_date) < new Date());
-    if (isSettledMarket && market?.created_at) {
-      const hoursSinceOpen =
-        (Date.now() - new Date(market.created_at).getTime()) / (1000 * 60 * 60);
-      // Reach back to the open (+ a small buffer), floored at 7d, capped at ~180d.
-      return Math.min(Math.max(Math.ceil(hoursSinceOpen + 24), 168), 4320);
-    }
-    if (!market?.updated_at) return 168; // 7 days default
-    const hoursSinceUpdate = (Date.now() - new Date(market.updated_at).getTime()) / (1000 * 60 * 60);
-    // If last update was >3 days ago, expand the window to cover it
-    if (hoursSinceUpdate > 72) {
-      return Math.min(Math.ceil(hoursSinceUpdate + 48), 720); // up to 30 days
-    }
-    return 168; // 7 days
-  }, [market?.status, market?.resolution_date, market?.created_at, market?.updated_at]);
+  // #7545 — the history window is a RUNG THE READER CAN SEE AND MOVE, not a
+  // number derived behind the chart.
+  //
+  // What this replaces: the page used to compute one `historyHours` on mount —
+  // 168h, or up to 720h for a market that had gone quiet, or up to 4320h for a
+  // settled one — fetch it once, and offer no control. Two costs, both measured
+  // on production 2026-09-20 and both recorded in `lib/futuresHistoryRange.ts`:
+  // months of real history the reader could not reach (112921 served 161 points
+  // at the default and 4,527 at `hours=8760`), and a span that moved on its own
+  // as the backend's sparse-window extension tripped in and out.
+  //
+  // The rung the page OPENS on still honours all three of those intents — see
+  // `defaultFuturesRange` — but it is now a named rung with a lit chip, and the
+  // reader can leave it.
+  const effectiveRange: FuturesRangeKey = pickedRange ?? defaultFuturesRange(market);
+
+  // `created_at` sizes "All", so "All" reaches the market's own open instead of
+  // the 4320h constant that truncated 112921 at 180 days with 213 available.
+  const historyHours = useMemo(
+    () => futuresRangeHours(effectiveRange, market?.created_at),
+    [effectiveRange, market?.created_at]
+  );
+
+  // Put the choice in the URL so it survives a refresh and travels in a shared
+  // link. `history.replaceState` rather than `router.replace`: this is the same
+  // page with a different chip lit, so it should not push a navigation, refetch
+  // the route, or move the reader's scroll position away from the chart they
+  // just tapped under.
+  const selectRange = (next: FuturesRangeKey) => {
+    setPickedRange(next);
+    // No `track()` here: the analytics taxonomy in `lib/analytics/types.ts` is a
+    // governed vocabulary with its own sanitize layer, and inventing an event
+    // name for it is a separate change from this one.
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("range", next);
+    window.history.replaceState(window.history.state, "", url.toString());
+  };
 
   const {
     data: historyData,
@@ -166,7 +197,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     isLoading: historyLoading,
   } = useSWR(
     market ? ["futures-history", marketId, historyHours] : null,
-    () => fetchFuturesHistory(marketId, historyHours)
+    () => fetchFuturesHistory(marketId, historyHours),
+    // #7545 — hold the previous rung's chart on screen while the next one loads.
+    // Without this the card unmounts on every chip tap, which takes the CHIPS
+    // down with it: the reader's own tap removes the control they just used, and
+    // a wide "All" fetch (1.18 MB on /futures/1) leaves them looking at an empty
+    // slot for the whole request. Keyed by hours, so the return trip to an
+    // already-loaded rung is served from cache with no flash at all.
+    { keepPreviousData: true }
   );
   const historyOutcomes = Array.isArray(historyData?.outcomes)
     ? historyData.outcomes
@@ -880,21 +918,19 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 <span>📈</span>
                 Probability Trend
               </h2>
-              {historyData.sparse && (
-                <p className="text-xs text-text-muted mt-1">
-                  Showing all available data
-                  {historyData.auto_extended && historyData.actual_hours
-                    ? ` (${Math.round(historyData.actual_hours / 24)}d window)`
-                    : ""}
-                  {" · "}
-                  {priceCadenceNote(isResolved)}
-                </p>
-              )}
-              {!historyData.sparse && historyData.auto_extended && historyData.actual_hours && (
-                <p className="text-xs text-text-muted mt-1">
-                  Extended to {Math.round(historyData.actual_hours / 24)} days for more data
-                </p>
-              )}
+              {/* #7545 — the rung the reader is on, and one line reconciling it
+                  with what came back. This replaces two captions that could only
+                  describe a window the reader never chose ("Extended to 30 days
+                  for more data"): the chip now says what was asked for, and
+                  `rangeCoverageNote` says what arrived when they differ. */}
+              <FuturesTrendRangeControls
+                className="mt-2"
+                range={effectiveRange}
+                onSelect={selectRange}
+                requestedHours={historyHours}
+                actualHours={historyData.actual_hours}
+                cadenceNote={historyData.sparse ? priceCadenceNote(isResolved) : null}
+              />
             </div>
             {/* Tab toggle: Over Time / By Stage */}
             {hasProgression && (
@@ -969,19 +1005,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
 
       {/* Honest empty/sparse state: market loaded but no usable price history.
           Never render a broken/degenerate chart — say so plainly. (#883 L2-49) */}
+      {/* #7545 — WHICH emptiness this is, and a way out of it. See
+          FuturesTrendEmptyState: once the reader picks the window, an empty
+          payload no longer means "this market has no history". */}
       {!historyLoading && !historyError && historyOutcomes.length === 0 && (
-        <div className="bg-surface-card rounded-card shadow-card p-6">
-          <h2 className="text-title-3 font-semibold text-text-primary flex items-center gap-2 mb-3">
-            <span>📈</span>
-            Probability Trend
-          </h2>
-          <div className="h-24 flex flex-col items-center justify-center gap-1.5 text-sm text-text-secondary">
-            <span>Not enough price history yet</span>
-            <span className="text-xs text-text-muted">
-              The trend line appears once this market has a few price points.
-            </span>
-          </div>
-        </div>
+        <FuturesTrendEmptyState
+          range={effectiveRange}
+          onSelect={selectRange}
+          requestedHours={historyHours}
+          actualHours={historyData?.actual_hours}
+          createdAt={market?.created_at}
+        />
       )}
 
       {/* Threshold ladder — one question, many rungs, heat-strip.

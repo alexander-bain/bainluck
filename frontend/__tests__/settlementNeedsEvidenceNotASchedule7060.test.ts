@@ -184,14 +184,26 @@ describe("#7060 the page cannot say it another way", () => {
     const gate = /new Date\(market\??\.?resolution_date\)\s*<\s*new Date\(\)/g;
     const hits = [...source.matchAll(gate)];
 
-    // Exactly one survives, and it is NOT a claim to the reader: `historyHours`
-    // widens the chart's fetch window for a market that is probably over. It is
-    // named rather than banned because it was measured — these markets were
-    // created days ago, so that window floors at 168h either way.
-    expect(hits).toHaveLength(1);
+    // This used to require EXACTLY ONE. The one it allowed was `historyHours`,
+    // which is not a claim to the reader — it widened the chart's fetch window
+    // for a market that is probably over — and was named rather than banned
+    // because it had been measured harmless.
+    //
+    // #7545 moved that derivation off the page entirely, into
+    // `defaultFuturesRange` in `lib/futuresHistoryRange.ts`, where it picks
+    // which history rung the page opens on. So the count is now ZERO, which is
+    // this test's invariant satisfied more completely rather than less: the page
+    // derives NOTHING from `resolution_date < now`, rendered or otherwise.
+    //
+    // Kept as an exact-count assertion, not `toBeLessThanOrEqual(1)`: the whole
+    // point is that a new occurrence has to be argued for, and a loosened bound
+    // would let one back in silently.
+    expect(hits).toHaveLength(0);
 
+    // The JSX landmark is still checked, because the arms above are absence
+    // claims over `source` and they would all pass just as well on a file that
+    // had stopped parsing as this page.
     const jsxStart = source.indexOf('  return (\n    <div className="space-y-6">');
     expect(jsxStart).toBeGreaterThan(0);
-    expect(hits[0].index).toBeLessThan(jsxStart);
   });
 });
