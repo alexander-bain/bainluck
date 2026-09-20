@@ -25,6 +25,54 @@ private let kindAccent: [String: Color] = [
     "binary": DS.purple,
 ]
 
+// MARK: - Section Rows (#7512)
+
+/// The rows a flat entertainment section draws — and therefore the number its
+/// heading is allowed to print.
+///
+/// **The defect this exists to make impossible.** Two of this page's sections
+/// took their heading count from one place and their cards from another:
+///
+/// | section | heading printed | grid drew |
+/// |---|---|---|
+/// | Tech & Culture | `themes.tech_culture.count` — **49** on the bank served 2026-09-20 14:05Z | `markets.prefix(10)` — **10** |
+/// | Pop culture feed | `markets.count` — **20** | `markets.prefix(12)` — **12** |
+///
+/// So a reader saw a number over a shorter list and had no way to tell whether
+/// the rest were loading, filtered, or never there. Routing both halves through
+/// one array is what stops the two numbers being able to disagree again; a fix
+/// that only corrected the arithmetic would leave the second source in place.
+///
+/// ⭐ **The view's caps are gone rather than mirrored into the label, because
+/// the producer already bounds these lists and the caps were a second bound on
+/// top of the first.** `entertainment.py` serves `_build_list(social_media, 15)`
+/// and `_build_cultural(...)[:20]`, so "draw what the payload serves" is bounded
+/// by the producer's own choice. It is also what the web twin does —
+/// `CulturalMoments` maps every row and the tech section renders all 15 — so
+/// this removes a native-only divergence rather than inventing a policy.
+///
+/// ⭐ **This does not wait on #7432.** ux's producer fix makes
+/// `tech_culture.count` name the served list (49 → 15); this stops the heading
+/// reading that field at all, so the app is right on today's bank and on
+/// tomorrow's. The two halves are independent by construction, which is the
+/// point of the seam.
+enum EntertainmentSectionRows {
+
+    /// Tech & Culture. `markets` is optional on the wire; absent means no
+    /// section, which is a heading of zero and no grid — never a heading of 49
+    /// over nothing.
+    static func techCulture(_ data: EntThemeTechCulture) -> [EntMarketRow] {
+        data.markets ?? []
+    }
+
+    /// Pop culture feed. Identity today, and named anyway: the heading and the
+    /// grid must read the same expression, and a shared name is what makes a
+    /// later `prefix` land in one place instead of two.
+    static func cultural(_ markets: [EntMarketRow]) -> [EntMarketRow] {
+        markets
+    }
+}
+
 // MARK: - View
 
 struct EntertainmentView: View {
@@ -528,10 +576,13 @@ struct EntertainmentView: View {
     // MARK: - Cultural Moments
 
     private func culturalSection(_ markets: [EntMarketRow]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // #7512 — the same one-array rule as Tech & Culture above. This section
+        // printed 20 over 12 cards on the payload served 2026-09-20 14:05Z.
+        let shown = EntertainmentSectionRows.cultural(markets)
+        return VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 SectionKicker(text: "Cultural moments")
-                SectionTitle(title: "Pop culture feed", count: markets.count)
+                SectionTitle(title: "Pop culture feed", count: shown.count)
             }
             .padding(.horizontal)
 
@@ -539,7 +590,7 @@ struct EntertainmentView: View {
                 columns: [GridItem(.adaptive(minimum: isCompact ? 300 : 280, maximum: 400))],
                 spacing: 12
             ) {
-                ForEach(markets.prefix(12)) { m in
+                ForEach(shown) { m in
                     NavigationLink(value: Route.futuresDetail(id: m.marketId)) {
                         culturalCard(m)
                     }
@@ -624,15 +675,18 @@ struct EntertainmentView: View {
     // MARK: - Tech & Culture Section
 
     private func techCultureSection(_ data: EntThemeTechCulture) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // #7512 — ONE array feeds the heading and the grid. See
+        // `EntertainmentSectionRows.techCulture` for what was wrong with two.
+        let shown = EntertainmentSectionRows.techCulture(data)
+        return VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 SectionKicker(text: "Tech & Culture")
-                SectionTitle(title: "Platform bets & social", count: data.count)
+                SectionTitle(title: "Platform bets & social", count: shown.count)
             }
             .padding(.horizontal)
 
-            if let markets = data.markets {
-                marketGrid(Array(markets.prefix(10)))
+            if !shown.isEmpty {
+                marketGrid(shown)
             }
         }
     }
