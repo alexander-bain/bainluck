@@ -62,8 +62,13 @@ const FOOTER: string = (() => {
 describe("#4339 — the sentence a reader gets", () => {
   test("a cohort subtotal is named against the whole", () => {
     // The production numbers, as measured above.
+    // #7496 — the qualifier's WORD moved, its job did not. `fullN` is the
+    // measured population (what survives the exclusion rules), and the
+    // "What's included?" card this line reconciles with says so itself, so
+    // "of N total" was the one claim in this sentence that was not true. Naming
+    // the whole beside the cohort — the whole of #4339 — is unchanged.
     expect(footerPopulationPhrase(438_845, 755_817)).toBe(
-      `${(438_845).toLocaleString()} resolved outcomes of ${(755_817).toLocaleString()} total`
+      `${(438_845).toLocaleString()} resolved outcomes of ${(755_817).toLocaleString()} measured`
     );
   });
 
@@ -116,7 +121,8 @@ describe("#4339 — the acceptance: the footer's number and the card's number", 
     const phrase = footerPopulationPhrase(cohortN, fullN);
     expect(phrase).toContain(cohortN.toLocaleString());
     expect(phrase).toContain(PROD_TOTAL_OUTCOMES.toLocaleString());
-    expect(phrase).toMatch(/resolved outcomes of .* total$/);
+    expect(phrase).toMatch(/resolved outcomes of [\d,]+ measured$/); // #7496
+    expect(phrase).not.toMatch(/\btotal\b/);
   });
 });
 

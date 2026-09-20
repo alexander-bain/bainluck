@@ -735,3 +735,135 @@ describe("the calibration page renders these strings and not its own", () => {
     expect(block).toContain("data-not-applicable-n=");
   });
 });
+
+// ===========================================================================
+// #7496 — the population these strings compare against is MEASURED, not total
+// ===========================================================================
+//
+// The hero read:
+//
+//   We analyzed 449,027 resolved predictions — every outcome except the
+//   298,001 untraded ones, whose price never moved off its opening line
+//   (747,028 in total) across Kalshi, Polymarket, and sportsbook odds.
+//
+// and the RESOLVED OUTCOMES card under it read "excludes 298,001 untraded ·
+// 747,028 total". Two completeness claims over `fullN`, in the first sentence
+// and the first card, both contradicted nine screens below by the page's own
+// "What's included?" bullet: "that published total is lower than the raw
+// resolved-outcome count because we exclude markets that can't form an honest
+// prediction". The eight folded rules alone set aside 147,721 outcomes.
+//
+// The arithmetic was never wrong — 449,027 + 298,001 = 747,028 exactly — so
+// every count assertion in this file passed on the defect. What was wrong was
+// one word over the number, which is why this guard reads the emitted STRINGS
+// and bans the claim rather than checking any figure.
+describe("no reader string calls the measured population the total (#7496)", () => {
+  const partition = partitionByActivity(PROD_BUCKETS);
+  const dflt = describeCohort(partition, PROD.fullN, false);
+  const all = describeCohort(partition, PROD.fullN, true);
+
+  /** The two strings that print `fullN` beside the cohort count. */
+  const populationStrings = (c: ReturnType<typeof describeCohort>): string[] => [
+    c.heroClause,
+    c.statDetail,
+  ];
+
+  /**
+   * Phrases that assert the curve holds everything.
+   *
+   * "in all" is deliberately NOT here: it is banned only unqualified, which the
+   * scope assertion below covers, and banning it outright would forbid the
+   * phrase that fixed this ("747,028 measured in all").
+   */
+  const TOTALITY_CLAIMS: ReadonlyArray<[RegExp, string]> = [
+    [/\bin total\b/i, '"in total"'],
+    [/\btotals?\b/i, 'the bare word "total"'],
+    [/\ball outcomes\b/i, '"all outcomes"'],
+    [/\bevery outcome except\b/i, '"every outcome except" — names one cut as the only cut'],
+    [/\bevery resolved outcome\b/i, '"every resolved outcome"'],
+  ];
+
+  test.each([
+    ["traded", () => dflt],
+    ["all markets", () => all],
+  ])("the %s cohort claims no completeness over fullN", (_name, get) => {
+    for (const s of populationStrings(get())) {
+      for (const [claim, why] of TOTALITY_CLAIMS) {
+        expect({ string: s, banned: why }).toEqual({
+          string: expect.not.stringMatching(claim),
+          banned: why,
+        });
+      }
+    }
+  });
+
+  test("every string that prints fullN as a DENOMINATOR scopes it", () => {
+    // Deleting the banned word without scoping the number — "(747,028)" —
+    // passes the bans above and is the same claim by omission.
+    const denominators = [dflt.heroClause, dflt.statDetail, all.statDetail];
+    // All three print it today; a state that stops printing it is a different
+    // defect, so fail rather than pass vacuously.
+    expect(denominators.filter(s => s.includes("652,407"))).toHaveLength(3);
+    for (const s of denominators) expect(s).toMatch(/measured/i);
+  });
+
+  test("the all-markets hero is the one place fullN needs no scope", () => {
+    // There it is the COHORT, not the denominator: "We analyzed 652,407
+    // resolved predictions across …" claims nothing about what was left out,
+    // and adding "measured" would be noise rather than honesty. Pinned so the
+    // rule above is read as "scope a denominator", never as "say measured
+    // everywhere".
+    expect(all.heroClause).toBe("652,407 resolved predictions");
+  });
+
+  test("the scoping word survives being read on its own, beside the number", () => {
+    // A reader skims the parenthetical alone. "(652,407 in all)" read out of
+    // its sentence is the claim again, with the qualifier out of sight — so the
+    // scope has to sit inside the parenthesis, not upstream of it.
+    const paren = dflt.heroClause.match(/\(([^)]*652,407[^)]*)\)/);
+    expect(paren).not.toBeNull();
+    expect(paren![1]).toMatch(/measured/i);
+  });
+
+  test("the page's own Population line does not regrow the word beside fullN", () => {
+    // `Show the math` → "Population: 449,027 resolved outcomes of 747,028
+    // total" is a literal in page.tsx, one tap down, printing the same two
+    // numbers as the hero this module owns. The module's guards cannot see it,
+    // which is exactly how it survived the hero fix long enough to need its own
+    // assertion. Comments are stripped: this file explains the retired claim on
+    // purpose.
+    const SOURCE = fs.readFileSync(
+      path.join(__dirname, "..", "..", "app", "calibration", "page.tsx"),
+      "utf8"
+    );
+    const RENDERED = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const i = RENDERED.indexOf("Population: <span");
+    expect(i).toBeGreaterThan(-1);
+    const line = RENDERED.slice(i, i + 400);
+    expect(line).toContain("{fullN.toLocaleString()}");
+    expect(line).toMatch(/measured/);
+    expect(line).not.toMatch(/<\/span>\s*total/);
+  });
+
+  test("the counts and the untraded predicate survive the rewording", () => {
+    // The fix is one word over the numbers; losing a number to it would be a
+    // worse page than the one it repairs.
+    expect(dflt.heroClause).toContain("389,385");
+    expect(dflt.heroClause).toContain("263,022");
+    expect(dflt.heroClause).toContain("652,407");
+    expect(dflt.heroClause).toContain("whose price never moved off its opening line");
+    expect(dflt.statDetail).toContain("263,022");
+    expect(all.statDetail).toContain("652,407");
+  });
+
+  test("a payload with nothing untraded still says nothing about a total", () => {
+    // The `unchangedN === 0` branch takes a different string in both fields,
+    // and it carried "all outcomes · N total" too.
+    const c = describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false);
+    for (const [claim] of TOTALITY_CLAIMS) {
+      expect(c.statDetail).not.toMatch(claim);
+      expect(c.heroClause).not.toMatch(claim);
+    }
+    expect(c.statDetail).toMatch(/measured/i);
+  });
+});
