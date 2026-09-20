@@ -341,12 +341,24 @@ describe("#7225 — our benchmark row names which average it is", () => {
   test("no number moved — it is a label change", () => {
     const html = render();
     const ours = benchmarkRows(html).find(r => r.highlighted)!;
-    // Our row still prints the per-bucket mean and its CI and its population.
+    // Our row still prints the per-bucket mean and its population.
     expect(text(ours.html)).toContain(BENCHMARK_MCE_TEXT);
-    expect(text(ours.html)).toContain("95% CI: 0.3-1.2pp");
     expect(text(ours.html)).toContain("440,000 outcomes");
     // The hero is untouched: still the n-weighted figure, still unqualified.
     expect(html).toContain(`data-plain-ece="${parseFloat(HERO_ECE_TEXT)}`);
+  });
+
+  test("#7374 — and the row carries no interval to be confused with", () => {
+    // This assertion used to read `toContain("95% CI: 0.3-1.2pp")`, and that
+    // interval was the other half of the confusion #7225 is about: it is
+    // bootstrapped n-weighted (`_bootstrap_mce_ci`, "n-weighted to match the
+    // #137 weighted point estimate"), so it is an interval on the HERO's
+    // statistic, and it sat inside this row's value span qualifying the
+    // equal-weighted one. It is also a single payload scalar over the full
+    // population, and this fixture's row is a 440,000-outcome traded cohort.
+    // Both reasons point the same way: not here.
+    const ours = benchmarkRows(render()).find(r => r.highlighted)!;
+    expect(text(ours.html)).not.toContain("95% CI");
   });
 
   test("the three published benchmarks make no claim about their own method", () => {

@@ -903,16 +903,21 @@ describe("CAL-P1261 — 'How We Compare' only claims what it can support", () =>
     // span wraps (it must — our row is three fragments long) and a hyphen is a
     // break opportunity. A number split across two lines is a different number
     // to a reader. So each figure is its own `whitespace-nowrap` token and the
-    // wraps happen BETWEEN fragments. The CI clause carries the same hyphen
-    // ("0.3-1.2pp") and is covered by the same rule.
+    // wraps happen BETWEEN fragments.
+    //
+    // #7374: the CI clause used to be the second hyphenated figure here
+    // ("0.3-1.2pp") and is gone from this row — it was an interval on the
+    // n-weighted statistic printed beside the equal-weighted one, over a
+    // population this row is not always showing. The range is the remaining
+    // hyphenated figure and the rule is unchanged for it.
     const value = SECTION.slice(
       SECTION.indexOf("tabular-nums text-xs font-semibold"),
       SECTION.indexOf("h-2 bg-surface-secondary")
     );
     expect(value.length).toBeGreaterThan(200); // anti-vacuity: the slice is real
     expect(value).toContain("rangeLow}-${row.rangeHigh}pp");
-    // Both hyphenated figures — the range and the CI — sit inside a nowrap span.
-    for (const figure of ["rangeLow}-${row.rangeHigh}pp", "(95% CI: ${row.ci})"]) {
+    expect(value).not.toContain("95% CI");
+    for (const figure of ["rangeLow}-${row.rangeHigh}pp"]) {
       const at = value.indexOf(figure);
       expect(at).toBeGreaterThan(-1);
       const opener = value.lastIndexOf('<span className="whitespace-nowrap">', at);
