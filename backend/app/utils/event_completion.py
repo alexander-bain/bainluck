@@ -758,6 +758,88 @@ def suspended_row_is_unreachable(
     return commence_time < now - floor
 
 
+#: How far into the future a retired row's start must move before the evidence
+#: that retired it is agreed to be refuted. Same hour
+#: :func:`~app.tasks.espn_sync._is_bogus_future_settled` uses, and for the same
+#: reason it gives: it absorbs a settlement/refinement race that nudges a clock
+#: forward by minutes. A row this arm revives is dated DAYS out, so the
+#: tolerance is never the thing deciding the answer.
+RETIRED_REVIVAL_TOLERANCE = timedelta(hours=1)
+
+
+def retired_row_start_moved_into_future(
+    status,
+    commence_time,
+    now,
+    *,
+    retired_by_the_arm,
+    has_surviving_counterpart,
+    tolerance=RETIRED_REVIVAL_TOLERANCE,
+) -> bool:
+    """Has the evidence that retired this row been refuted by the clock? (#7260)
+
+    :func:`suspended_row_is_unreachable` asks "can anything ever reach this row
+    again?" and writes :data:`UNREACHABLE_SUSPENDED_TERMINAL` when the answer is
+    no. **That answer was correct when it was given and is not in dispute here.**
+    Measured over the arm's own record (``backup_unreachable_suspended_5532``,
+    production 2026-09-19): of 13,588 retirements, ``future_dated`` at retirement
+    was **0** — every row was genuinely past its own start at the instant it was
+    written. This predicate does not second-guess the retirement; it asks the
+    only question that arm cannot ask, because the fact it turns on had not
+    happened yet: **the start time has since moved into the future.**
+
+    The chain (#4590's class) is that ``commence_time`` was minted as the ingest
+    clock rather than the kickoff — the retirement-time values carry non-zero
+    seconds (``15:30:20``, ``05:48:19``) where real kickoffs land on ``:00``/
+    ``:30`` — so the row was instantly "past", went ``suspended``, and was retired
+    by a rule it satisfied on a start that was never a start. A real schedule
+    source later corrected the clock. Nothing re-examined the row, because
+    ``voided`` is terminal and absorbing, so the correction landed where no
+    reader could reach it.
+
+    🔴 ``retired_by_the_arm`` IS A FENCE, NOT BOOKKEEPING, AND THE NUMBER IS IN
+    :data:`~app.tasks.espn_sync.UNREACHABLE_SUSPENDED_BACKUP_TABLE`'S OWN
+    DOCSTRING. Of 4,320 rows already ``voided`` for entirely unrelated reasons,
+    2,544 match the retirement predicate exactly. A revival keyed on the
+    predicate — or on ``status == 'voided'`` plus a future clock — would reach
+    into that population and resurrect rows this arm never touched, which is a
+    bigger defect than the one being undone and would look like a clean rollback
+    while doing it. Membership of the arm's own backup table is the only honest
+    scope, and the caller establishes it by joining that table rather than by
+    re-deriving the rule.
+
+    🔴 ``has_surviving_counterpart`` IS WHERE THIS ARM STOPS AND #2693 STARTS.
+    ``test_market_anchored_rows_are_never_retired_6927`` records the standing
+    deferral: un-retiring the written rows "is #2693's, and it needs the anchor
+    channel (#1946)". That deferral is about rows whose fixture ALSO has a living
+    row — there, un-retiring mints a second row for one game (gotcha #32's harm)
+    and something has to decide which is canonical, which is exactly what the
+    anchor channel is for. **An orphan poses no such question.** With no
+    surviving row there is nothing to reconcile against, no canonical choice to
+    get wrong, and no twin to create; the fixture is simply absent from the site.
+    So this predicate refuses every row with a counterpart and leaves that
+    population wholly to lane1 (D39), rather than widening into it.
+
+    Revival is to ``scheduled`` and that is a deliberately BIGGER claim than
+    "undo the void", stated rather than slipped in: ``previous_status`` in the
+    backup table is ``suspended`` for every one of these rows, and ``suspended``
+    is itself off the schedule shelf (#7186), so restoring it would satisfy the
+    letter of an undo and leave the games exactly as invisible. The caller owns
+    that write; this predicate owns whether it is allowed.
+
+    Fails closed on every input, in the order the cheapest test comes first.
+    """
+    if status != UNREACHABLE_SUSPENDED_TERMINAL:
+        return False
+    if not retired_by_the_arm:
+        return False
+    if has_surviving_counterpart:
+        return False
+    if commence_time is None:
+        return False
+    return commence_time > now + tolerance
+
+
 def is_retired_event_status(status) -> bool:
     """Has this row been taken off the schedule without being deleted?
 

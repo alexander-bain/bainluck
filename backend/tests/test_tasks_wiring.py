@@ -268,6 +268,7 @@ class TestBeatScheduleCompleteness:
         "turbo-collapse-futures",
         "turbo-collapse-odds",
         "transition-event-statuses",
+        "revive-retired-future-starts",
         "track-statpal-usage",
         "snapshot-golf-leaderboard-daily",
         "enrich-market-hooks",

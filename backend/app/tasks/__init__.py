@@ -750,6 +750,12 @@ celery_app.conf.task_routes = {
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
+    # #7260. Declared rather than left to `task_default_queue` — a default is not
+    # a decision. `background` and NOT `realtime`, where its sibling repairs run:
+    # what it watches is a `commence_time` correction from a schedule source,
+    # which is hours-scale, and it does a join plus a per-row twin screen that
+    # has no business on a 60s beat. Idle cost is two indexed reads per 10 min.
+    "app.tasks.revive_retired_future_starts": {"queue": "background"},
     # #3765 (LAT-P179, Fable D51). BACK ON `realtime`, where #2236 (LAT-P101) put
     # it. D68-next (#3060, L1B-050) moved it to `heavy` on a real measurement;
     # this moves it back on another one, and the honest summary is that NEITHER
@@ -5958,6 +5964,26 @@ def transition_event_statuses():
     return _tracked_run("transition_statuses", _transition_event_statuses_impl())
 
 
+@celery_app.task(name="app.tasks.revive_retired_future_starts")
+def revive_retired_future_starts():
+    """Give back a #5532-retired row whose start has moved into the future (#7260).
+
+    ``voided`` is terminal and absorbing, so when a real schedule source later
+    corrects a `commence_time` that was minted as an ingest clock (#4590), the
+    correction lands on a row no reader can reach. 135 upcoming games — the NHL's
+    whole opening week among them — are absent from the site for this reason.
+
+    Deliberately its own beat rather than an arm of `transition_event_statuses`:
+    the population moves on the timescale of schedule corrections, not seconds.
+    See `_revive_retired_future_starts_impl` for why, and for the two fences
+    (the backup-table scope and the twin screen) that bound it.
+    """
+    from app.tasks.espn_sync import _revive_retired_future_starts_impl
+    return _tracked_run(
+        "revive_retired_future_starts", _revive_retired_future_starts_impl()
+    )
+
+
 # =============================================================================
 # Beat schedule
 # =============================================================================
@@ -6295,6 +6321,32 @@ celery_app.conf.beat_schedule = {
     "transition-event-statuses": {
         "task": "app.tasks.transition_event_statuses",
         "schedule": 60.0,
+    },
+    # #7260 — every 10 min. Sized on what it watches: a `commence_time`
+    # correction arriving from a schedule source, which is hours-scale. Cheap
+    # when idle (one `to_regclass` plus one indexed recall that returns nothing
+    # once the backlog is drained) and it must not sit on the 60s realtime beat.
+    #
+    # A CRONTAB AND NOT A FLOAT INTERVAL, which is a real distinction on this
+    # queue and not a spelling. `test_the_unavoidable_background_floor_is_named_
+    # and_has_not_grown` declares the interval beats that `background` can never
+    # avoid and holds them to <=180 s: an interval beat is a CONTINUOUS FLOOR the
+    # settlement sweep shares its slot with, so a 600 s float would have joined
+    # that floor while failing its own 180 s test. At `*/10` this is a co-fire
+    # instead — enumerable at known minutes, counted by the sweep's window
+    # census rather than smeared across every minute of the hour.
+    #
+    # THE MINUTES DODGE THE SETTLEMENT SWEEP'S WINDOW rather than raising its
+    # ceiling. `settlement-capture-sweep-nightly` fires 10:31 and holds a slot
+    # for `SWEEP_DEADLINE_S`, so minutes 31-44 are protected and a plain `*/10`
+    # put a fire at :40 — taking the measured co-fire count from 18 to 19. That
+    # ceiling is declared "re-derive, do not increment" (#1910), and the honest
+    # reading is that this beat has no reason to want :40: 0/10/20/30/45/55 is
+    # the same ~10 min cadence (max gap 15) entirely outside the window, so the
+    # census is left at 18 and nothing is spent.
+    "revive-retired-future-starts": {
+        "task": "app.tasks.revive_retired_future_starts",
+        "schedule": crontab(minute="0,10,20,30,45,55"),
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",

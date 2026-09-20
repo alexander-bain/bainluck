@@ -1761,7 +1761,55 @@ def free_background_slots(
 #: background beat this week writes the identical `BACKGROUND_BEAT_COUNT = 125`
 #: against a base of 124, and the composed tree is 126 with no textual
 #: conflict. Re-run the census after any rebase.
-BACKGROUND_BEAT_COUNT = 125
+#:
+#: 🔴 THAT HAZARD THEN FIRED, and the record is worth more than the number:
+#: this block and the one above were written the same morning against the same
+#: base of 124, each honestly saying 124 → 125. They collided ONLY because both
+#: lanes happened to write a paragraph in the same place. The assignment line
+#: itself was textually common to both sides and sat OUTSIDE the conflict
+#: markers, so a tidier pair of diffs would have merged silently at 125 on a
+#: tree whose true count is 126. The comment block is not decoration here — it
+#: is the only thing that made the collision visible.
+#:
+#: 🔴 RE-DERIVED at live/455, RE-DERIVED AGAIN after the rebase at live/458
+#: (2026-09-20, #7260): against the new base of 125 this is 125 → **126**,
+#: explicit 82 → **83**, fall-through UNMOVED at 43. One beat added,
+#: `revive-retired-future-starts` at `crontab(minute="0,10,20,30,45,55")` — the
+#: arm that gives back a #5532-retired row whose start has since moved into the
+#: future, so 135 upcoming games (the NHL's opening week among them) stop being
+#: absent from the site. RE-DERIVED by RUNNING the census over the assembled
+#: `beat_schedule` on the REBASED tree, which printed
+#: `explicit 83 implicit 43 total 126` — not by adding 1 to 125, and not by
+#: copying the number the desk measured in its own scratch tree (#1910). The
+#: fall-through half is unmoved because the beat names its queue in
+#: `task_routes` rather than defaulting into it, which is the benign direction
+#: this guard reserves.
+#:
+#: ITS COST, declared here because this is where costs are declared: when the
+#: backlog is drained — which it is, permanently, a few hours after this ships —
+#: a pass is ONE `to_regclass` catalogue lookup plus ONE indexed recall that
+#: returns zero rows, and then it returns. No HTTP, no LLM, no scan. While the
+#: backlog drains it also runs, per candidate and capped at 25 a pass, one
+#: bounded `events` read narrowed in SQL to the ±30h window AND the name
+#: containment (measured: the window alone would return up to 940 rows for a
+#: `soccer_other` candidate, which is why the containment is in the WHERE clause
+#: and not only in Python). A revived row leaves the population for good, so the
+#: cost is a one-off drain and then near-nothing.
+#:
+#: WHY THESE MINUTES rather than `*/10`: `settlement-capture-sweep-nightly`
+#: fires 10:31 and holds a background slot for `SWEEP_DEADLINE_S`, so minutes
+#: 31-44 are protected and a plain `*/10` put a fire at `:40`, taking the
+#: sweep's measured co-fire count from 18 to 19 against a ceiling declared
+#: "re-derive, do not increment". This beat has no reason to want `:40`, so it
+#: dodges the window instead and the ceiling is left untouched at 18.
+#:
+#: ⚠️ The merge hazard applies to THIS line in turn — and having now fired
+#: once, it is a measured risk rather than a theoretical one: another lane
+#: adding a background beat this week writes the identical
+#: `BACKGROUND_BEAT_COUNT = 126` against a base of 125 while this branch writes
+#: 126, and the composed tree is 127. Re-run the census after any rebase; a
+#: clean merge is NOT evidence the number survived it.
+BACKGROUND_BEAT_COUNT = 126
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
