@@ -626,8 +626,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // scale, and made this fix impossible to measure.
   const movementPts = movementPoints(movementVal);
   const movementDisplay = formatMovementPoints(movementVal);
+  // #5659 — ` pts` on the VISIBLE string. `movementTitle` below has always said
+  // "points"; the eye got "↑ 9.7" beside a 38px percentage, which is the same
+  // aria-says-one-thing/eye-says-another split #4066 fixed one card over. Both
+  // render sites (the hero and the photo-scrim variant) read this one string.
   const movementStr = movementPts != null && Math.abs(movementPts) >= HERO_MIN_MOVEMENT_POINTS && !probIsPlaceholder
-    ? `${movementUp ? "↑" : "↓"} ${movementDisplay}`
+    ? `${movementUp ? "↑" : "↓"} ${movementDisplay} pts`
     : null;
   // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
   const movementTitle = movementDisplay != null

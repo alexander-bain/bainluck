@@ -202,10 +202,23 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
    * site spelling the unit itself — still fails here. What is given up is
    * noticing a stale entry, so #5686 carries the instruction to delete it.
    */
-  const KNOWN_REMAINING = [
-    // ux's by notice 41, filed and routed as #5686 — not edited by this lane.
-    "components/futures/OutcomeRow.tsx",
-  ];
+  /**
+   * EMPTY, and that is the whole point — #5659 (ux/1369) executing the deletion
+   * this list was created carrying.
+   *
+   * `components/futures/OutcomeRow.tsx` was the single entry, routed to ux as
+   * #5686 under notice 41. #5686 merged as `c356d1e1c` and its after-LOOK was
+   * paid on production on 2026-09-12; the file has printed
+   * `{formatMovementPoints(change as number)} pts` ever since. The entry then
+   * sat here for a week permitting an offender that no longer existed — exactly
+   * the stale entry the SUBSET climbdown above admits it can no longer notice.
+   *
+   * With the list empty, SUBSET and exact equality coincide, so the scan is now
+   * as strict as the first draft wanted to be, with none of the cross-lane
+   * tripwire that made strictness wrong at the time: the file it would have
+   * tripped is repaired, and it is this lane's own.
+   */
+  const KNOWN_REMAINING: string[] = [];
 
   test("every remaining '%'-against-points site is the one known file routed to ux", () => {
     const offenders: string[] = [];
@@ -244,6 +257,99 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
       expect(PCT_AGAINST_POINTS.test(src)).toBe(false);
       expect(src).toContain(expected);
     }
+  });
+
+  /**
+   * ── #5659: THE HOLE THIS SCAN HAD, AND WHY A TENTH SURFACE GOT THROUGH ──
+   *
+   * `PCT_AGAINST_POINTS` matches the formatter's output with a `%` NEXT TO IT.
+   * Every surface in the family above spelled the unit WRONG, so that pattern
+   * described all six of them and the file concluded the family was closed.
+   *
+   * It cannot see a surface that spells no unit AT ALL, and a bare number is
+   * the one variant where the reader cannot even guess: `▲45.0` in a column
+   * between a label and `89%`. Three such sites were live when #5659 was
+   * measured — `QuantityGroup` (filed), `TeamChampionshipPath` and
+   * `FuturesCard` (found by this scan, never filed) — and all three sat in the
+   * scanned population the whole time, green.
+   *
+   * So the family's real invariant was never "no percent against the
+   * formatter". It is: THE FORMATTER'S OUTPUT IS NEVER RENDERED WITHOUT ITS
+   * UNIT. That is what this scans, and it subsumes the `%` arm — a `%` is not
+   * in `UNIT`, so a regression to `{formatMovementPoints(x)}%` fails here too.
+   *
+   * BOUND SITES ARE THIS SCAN'S OWN BLIND SPOT, AND ARE NAMED RATHER THAN
+   * ASSUMED. A call site that binds the result first
+   * (`const delta = formatMovementPoints(...)`) renders the IDENTIFIER, on a
+   * line this pattern never sees — which is how `FuturesCard`'s `↑ 9.7` hid
+   * from a text scan for a whole family's worth of repairs. They are excluded
+   * here and pinned individually below, and the exclusion is asserted to be
+   * exactly two files, so a third bound site cannot appear silently.
+   */
+  const RENDERS_FORMATTER = /formatMovementPoints\(/;
+  const BINDS_FORMATTER = /(?:const|let|var)\s+\w+\s*=\s*formatMovementPoints\(/;
+  /** The call's `)`, an optional closing `}`, then the unit. */
+  const UNIT_AFTER_CALL = /formatMovementPoints\([^)]*\)[^)]*\)?\s*\}?\s*(?:pts|points?)\b/;
+
+  test("no surface renders the points formatter without a unit", () => {
+    const offenders: string[] = [];
+    const bound: string[] = [];
+    for (const f of files) {
+      fs.readFileSync(f, "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (!RENDERS_FORMATTER.test(line)) return;
+          const at = `${path.relative(ROOT, f)}:${i + 1}  ${line.trim()}`;
+          if (BINDS_FORMATTER.test(line)) return void bound.push(at);
+          if (!UNIT_AFTER_CALL.test(line)) offenders.push(at);
+        });
+    }
+    expect(offenders).toEqual([]);
+    // The blind spot stays exactly as wide as the two sites pinned below.
+    expect(bound.map((b) => b.split(":")[0]).sort()).toEqual([
+      "components/discover/FuturesCard.tsx",
+      "components/golf/MoversStrip.tsx",
+    ]);
+  });
+
+  test("the scan has unit-bearing render sites to judge, so it is not vacuously green", () => {
+    // gotcha #43 / the vacuity arm: every assertion above is satisfied by a
+    // population in which nothing renders the formatter at all.
+    const rendering = files.filter((f) =>
+      fs
+        .readFileSync(f, "utf8")
+        .split("\n")
+        .some((l) => RENDERS_FORMATTER.test(l) && !BINDS_FORMATTER.test(l)),
+    );
+    expect(rendering.length).toBeGreaterThanOrEqual(6);
+  });
+
+  test("UNIT_AFTER_CALL rejects the three shapes #5659 was actually made of", () => {
+    // The pattern is the instrument; an instrument that cannot fail is not one.
+    // These are the literal pre-fix lines from the three repaired files.
+    expect(UNIT_AFTER_CALL.test("{formatMovementPoints(entry.movement)}")).toBe(false);
+    expect(
+      UNIT_AFTER_CALL.test('`${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)}`'),
+    ).toBe(false);
+    expect(UNIT_AFTER_CALL.test("{formatMovementPoints(x)}%")).toBe(false);
+    // ...and accepts the repaired shapes, including the two that carry trailing
+    // prose and the aria-label that spells the unit out in full.
+    expect(UNIT_AFTER_CALL.test("{formatMovementPoints(entry.movement)} pts")).toBe(true);
+    expect(UNIT_AFTER_CALL.test("{formatMovementPoints(headline.movement)} pts today")).toBe(true);
+    expect(UNIT_AFTER_CALL.test("{formatMovementPoints(change as number)} pts")).toBe(true);
+    expect(UNIT_AFTER_CALL.test("`${formatMovementPoints(rung.movement)} points`")).toBe(true);
+  });
+
+  test("the two BOUND sites render their identifier with the unit", () => {
+    // What earns the exclusion above. Asserted on the rendered string each file
+    // builds, not on the binding — the binding was never the defect.
+    const strip = fs.readFileSync(path.join(ROOT, "components/golf/MoversStrip.tsx"), "utf8");
+    expect(strip).toContain("const delta = formatMovementPoints(mover.movement_24h);");
+    expect(strip).toContain("{delta} pts");
+
+    const card = fs.readFileSync(path.join(ROOT, "components/discover/FuturesCard.tsx"), "utf8");
+    expect(card).toContain("const movementDisplay = formatMovementPoints(movementVal);");
+    expect(card).toContain('${movementDisplay} pts`');
   });
 
   test("MoversStrip's `delta` really is the points formatter, so its ' pts' is not a coincidence", () => {
