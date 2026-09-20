@@ -59,8 +59,16 @@ type Payload = {
   event_id: number;
   home_team: string;
   away_team: string;
-  home_team_futures: { market_name: string; display_category: string }[];
-  away_team_futures: { market_name: string; display_category: string }[];
+  home_team_futures: {
+    market_name: string;
+    display_category: string;
+    resolution_date?: string | null;
+  }[];
+  away_team_futures: {
+    market_name: string;
+    display_category: string;
+    resolution_date?: string | null;
+  }[];
 };
 
 const ONLY = ownQuestionOnly as unknown as Payload;
@@ -112,6 +120,46 @@ function headings(html: string, label: string): number {
  * The rows in a capture that ARE the bare matchup, derived from the fixture rather than
  * transcribed — so this file cannot drift from the payload it ships with.
  */
+/**
+ * int461 / master-red 2026-09-20 — AN INSTANT THIS FILE CONTROLS, DERIVED FROM THE FIXTURE.
+ *
+ * The `games` bucket drops rows whose `resolution_date` is before the START OF TODAY
+ * (`isPastDate`, `components/RelatedFutures.tsx`, `now.setHours(0,0,0,0)`). The fixtures here
+ * are FROZEN production payloads — `relatedFutures15314525` carries
+ * `resolution_date 2026-09-19T06:10:00+00:00` — so the one arm below that routes rows through
+ * that bucket was valid only while the wall clock read 2026-09-19. At 2026-09-20T00:00:00Z it
+ * began rendering an empty string, asserted nothing, and reddened master on every run
+ * thereafter. It was green in CI at 22:48Z and red by 00:20Z; that is a boundary, not a flake.
+ *
+ * A frozen payload cannot be guarded by the wall clock, so the instant is a PARAMETER — and it is
+ * read OFF THE FIXTURE (one hour before the payload's own earliest `resolution_date`) in the same
+ * spirit as `bareMatchupRows` above: derived, not transcribed. It is therefore inside
+ * `isPastDate`'s window BY CONSTRUCTION, in any timezone the runner happens to use, and it stays
+ * inside it if the fixture is ever recaptured with different dates. This file cannot expire again.
+ *
+ * What this is NOT: the fixture is not re-dated, no assertion is relaxed, and the production
+ * predicate is untouched. Freezing the clock restores the arm to the question it was written to
+ * ask; it does not answer it.
+ */
+function instantInsideFixtureWindow(p: Payload): Date {
+  const dates = [...p.home_team_futures, ...p.away_team_futures]
+    .map((r) => r.resolution_date)
+    .filter((d): d is string => !!d)
+    .map((d) => new Date(d).getTime())
+    .filter((t) => Number.isFinite(t));
+
+  // A fixture with no dated row would make the freeze meaningless rather than wrong — say so
+  // loudly instead of silently freezing to the epoch.
+  if (dates.length === 0) {
+    throw new Error(
+      "relatedFutures fixture carries no resolution_date — the instant below cannot be derived " +
+        "from it, so the `games`-bucket arm would be asserting against an uncontrolled clock.",
+    );
+  }
+
+  return new Date(Math.min(...dates) - 60 * 60 * 1000);
+}
+
 function bareMatchupRows(p: Payload): string[] {
   const sides = [p.home_team, p.away_team].map((s) => s.toLowerCase());
   return [...p.home_team_futures, ...p.away_team_futures]
@@ -186,7 +234,16 @@ describe("C · a rail that holds the question AND other markets loses only the q
       away_team_futures: ONLY.away_team_futures.map((r) => ({ ...r, display_category: "other" })),
     };
 
-    const html = render(asGames as Payload);
+    // This is the one arm that reaches `isPastDate`, so it is the one arm that needs an
+    // instant of its own. See `instantInsideFixtureWindow`.
+    const frozen = instantInsideFixtureWindow(ONLY);
+    let html: string;
+    jest.useFakeTimers().setSystemTime(frozen);
+    try {
+      html = render(asGames as Payload);
+    } finally {
+      jest.useRealTimers();
+    }
 
     // The `games` bucket draws its own card shape — an "Upcoming games" grid keyed on the
     // opponent — so the reading is that both rows still reach a card, not that the market
