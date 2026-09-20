@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import type { ProgressionResponse, ProgressionParticipant, ProgressionStage } from "@/lib/types";
 import type { ProgressionCellStatus } from "@/lib/gridCellState";
-import { progressionSortValue } from "@/lib/gridCellState";
+import { GRID_CELL_TERMINAL_GLYPH, progressionSortValue } from "@/lib/gridCellState";
 import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDisplay";
 import { legendName } from "@/lib/contenderChart";
 import TeamNameLink from "./TeamNameLink";
@@ -290,12 +290,12 @@ function cellDisplay(
 ): { text: string; label: string } {
   switch (status) {
     case "clinched":
-      return { text: "✓", label: "Clinched" };
+      return { text: GRID_CELL_TERMINAL_GLYPH.clinched, label: "Clinched" };
     case "eliminated":
       // A legacy producer may still send a probability alongside the status;
       // keep showing it (struck through) rather than dropping information.
       return probability === null
-        ? { text: "✕", label: "Eliminated" }
+        ? { text: GRID_CELL_TERMINAL_GLYPH.eliminated, label: "Eliminated" }
         : { text: formatProb(probability), label: "Eliminated" };
     case "missing":
       return { text: "—", label: "No market" };

@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import type { DivisionRace, DivisionRaceSortKey } from "@/lib/teamDivisionRace";
-import { sortDivisionRows } from "@/lib/teamDivisionRace";
+import type { DivisionRace, DivisionRaceRow, DivisionRaceSortKey } from "@/lib/teamDivisionRace";
+import { DIVISION_RACE_STATUS_KEY, sortDivisionRows } from "@/lib/teamDivisionRace";
+import { GRID_CELL_TERMINAL_GLYPH } from "@/lib/gridCellState";
 
 // ---------------------------------------------------------------------------
 // Division-race grid (L2-162). Compact rivals × (Division / Playoffs / Champion)
@@ -13,6 +14,48 @@ import { sortDivisionRows } from "@/lib/teamDivisionRace";
 
 function pct(v: number | null): string {
   return v === null ? "—" : `${Math.round(v * 100)}%`;
+}
+
+/**
+ * What one column of one row shows, and what a screen reader hears (#7522).
+ *
+ * "Settled means settled": a club that has clinched shows the same ✓ the
+ * championship grids show, and one that is out shows the same ✕ — never a
+ * number, and never the "—" that means "we have nothing". The em-dash is
+ * reserved for exactly that: no market, or a cell we cannot vouch for.
+ *
+ * The glyph carries its meaning in `aria-label`/`title` rather than in text
+ * beside it: the column is 3.5rem wide at every breakpoint (#7023 measured what
+ * happens when something widens it), so "✓ Clinched" would wrap the header and
+ * re-flow every number on the row.
+ */
+function cellContent(
+  row: DivisionRaceRow,
+  key: DivisionRaceSortKey,
+): { text: string; label: string | null; tone: string } {
+  const status = row[DIVISION_RACE_STATUS_KEY[key]];
+  if (status === "clinched") {
+    return {
+      text: GRID_CELL_TERMINAL_GLYPH.clinched,
+      label: "Clinched",
+      tone: "text-emerald-600",
+    };
+  }
+  if (status === "eliminated") {
+    return {
+      text: GRID_CELL_TERMINAL_GLYPH.eliminated,
+      label: "Eliminated",
+      tone: "text-text-secondary/40",
+    };
+  }
+  const value = row[key];
+  return {
+    text: pct(value),
+    label: value === null ? "No market" : null,
+    // Same tones the championship grids use for the same states, so an "—" we
+    // have nothing for cannot read as LOUDER than a result we are sure of.
+    tone: value === null ? "text-text-secondary/40" : "text-text-primary",
+  };
 }
 
 // #7023: the sort marker used to be a trailing "↓" INSIDE the label. It only ever
@@ -66,8 +109,15 @@ export function TeamDivisionRace({
   // decided, the grid is graded. Crown the champion (championship === 1) and mark
   // the header FINAL instead of framing it as a live race.
   const isSettled = race.championshipResolved;
+  // #7522 — the champion used to be found by `championship >= 0.999`. A won cell
+  // publishes NO number by contract, so the moment the producer started sending
+  // real results (#7387) the crown would have gone to nobody on exactly the
+  // grids that had a champion to crown. Read the result first, keep the numeric
+  // test for producers that still send 1.0 without a state.
   const championName = isSettled
-    ? rows.find((r) => (r.championship ?? 0) >= 0.999)?.name ?? null
+    ? rows.find(
+        (r) => r.championshipStatus === "clinched" || (r.championship ?? 0) >= 0.999,
+      )?.name ?? null
     : null;
   // L2-164: the name column used to be `minmax(120px,1fr)`, so on a wide card it
   // flex-grew to absorb ALL leftover width — shoving the number columns to the far
@@ -164,14 +214,18 @@ export function TeamDivisionRace({
                   </span>
                 )}
               </div>
-              {shown.map((c) => (
-                <span
-                  key={c.key}
-                  className="text-right font-mono font-bold text-sm text-text-primary tabular-nums"
-                >
-                  {pct(row[c.key])}
-                </span>
-              ))}
+              {shown.map((c) => {
+                const cell = cellContent(row, c.key);
+                return (
+                  <span
+                    key={c.key}
+                    className={`text-right font-mono font-bold text-sm tabular-nums ${cell.tone}`}
+                    {...(cell.label ? { title: cell.label, "aria-label": cell.label } : {})}
+                  >
+                    {cell.text}
+                  </span>
+                );
+              })}
             </div>
           ))}
         </div>

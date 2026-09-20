@@ -13,8 +13,26 @@
  * across MLB/NBA/NFL/NHL without any league-specific branching.
  */
 import type { ChampionshipGridResponse, ChampionshipGridTeam } from "./types";
+import type { ProgressionCellStatus } from "./gridCellState";
+import {
+  isTerminalStatus,
+  progressionSortValue,
+  progressionStatusFor,
+  renderGridCell,
+} from "./gridCellState";
 
 export type DivisionRaceSortKey = "division" | "playoffs" | "championship";
+export type DivisionRaceStatusKey =
+  | "divisionStatus"
+  | "playoffsStatus"
+  | "championshipStatus";
+
+/** The status field that belongs to each probability field. */
+export const DIVISION_RACE_STATUS_KEY: Record<DivisionRaceSortKey, DivisionRaceStatusKey> = {
+  division: "divisionStatus",
+  playoffs: "playoffsStatus",
+  championship: "championshipStatus",
+};
 
 export interface DivisionRaceRow {
   teamId: number | null;
@@ -23,10 +41,23 @@ export interface DivisionRaceRow {
   color: string | null;
   logoUrl: string | null;
   isTeam: boolean;
-  /** 0–1 merged probabilities; null when the column is absent for this team. */
+  /**
+   * 0–1 merged probabilities; null when the column is absent for this team AND
+   * null, by contract, whenever the paired status is terminal — a settled cell
+   * states a result and publishes no number. Read the status before concluding
+   * a null here means "no data" (#7522).
+   */
   division: number | null;
   playoffs: number | null;
   championship: number | null;
+  /**
+   * The render state of each column, from the same `renderGridCell` the two
+   * championship grids use. `null` is the live/no-state default, so a payload
+   * that predates the register behaves exactly as it did before.
+   */
+  divisionStatus: ProgressionCellStatus;
+  playoffsStatus: ProgressionCellStatus;
+  championshipStatus: ProgressionCellStatus;
 }
 
 export interface DivisionRace {
@@ -50,10 +81,32 @@ function normName(s: string | null | undefined): string {
   return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function cellProb(team: ChampionshipGridTeam, key: string): number | null {
-  const cell = team.cells?.[key];
-  if (!cell || typeof cell.merged_probability !== "number") return null;
-  return cell.merged_probability;
+/**
+ * Project one payload cell onto the row's (probability, status) pair.
+ *
+ * #7522 — this used to read `merged_probability` and nothing else. A terminal
+ * cell carries `{"merged_probability": null, "state": "won"}` by contract, so a
+ * club that had CLINCHED landed on the same null as "no market" and the page
+ * printed "—" for it: the strongest answer we had, rendered as the absence of
+ * one. Routing through `renderGridCell` — the single place the web app turns a
+ * raw cell into a render decision, already used by both championship grids —
+ * keeps the number for live cells and carries the result for settled ones, so
+ * the three grids cannot say different things about the same cell.
+ */
+function cellOf(
+  team: ChampionshipGridTeam,
+  key: string,
+): { probability: number | null; status: ProgressionCellStatus } {
+  const raw = team.cells?.[key];
+  // An absent column is not an honest "no market" verdict about this club — it
+  // is simply a column this grid does not project. Keep the pre-register
+  // behaviour (a bare null, no status) so `hasDivision` & co. still hide it.
+  if (raw === undefined) return { probability: null, status: null };
+  const cell = renderGridCell(raw);
+  return {
+    probability: cell.state === "live" ? cell.probability : null,
+    status: progressionStatusFor(cell.state),
+  };
 }
 
 /** Locate the current team within the grid by id first, then normalized name. */
@@ -108,6 +161,9 @@ export function buildDivisionRace(
     const isTeam =
       (meId != null && t.team_id === meId) ||
       (meId == null && normName(t.name) === meNorm);
+    const division = cellOf(t, "division");
+    const playoffs = cellOf(t, "make_playoffs");
+    const championship = cellOf(t, "championship");
     return {
       teamId: t.team_id,
       name: t.name,
@@ -115,9 +171,12 @@ export function buildDivisionRace(
       color: t.primary_color,
       logoUrl: t.logo_url,
       isTeam,
-      division: cellProb(t, "division"),
-      playoffs: cellProb(t, "make_playoffs"),
-      championship: cellProb(t, "championship"),
+      division: division.probability,
+      playoffs: playoffs.probability,
+      championship: championship.probability,
+      divisionStatus: division.status,
+      playoffsStatus: playoffs.status,
+      championshipStatus: championship.status,
     };
   });
 
@@ -137,24 +196,42 @@ export function buildDivisionRace(
     // chip stays hidden rather than rendering a blank pill.
     season: typeof grid.season === "string" && grid.season.trim() ? grid.season.trim() : null,
     rows: sorted,
-    hasDivision: rows.some((r) => r.division !== null),
-    hasPlayoffs: rows.some((r) => r.playoffs !== null),
-    hasChampionship: rows.some((r) => r.championship !== null),
+    // #7522 — a column counts as present when ANY row has a number OR a result.
+    // Testing the number alone was safe only while terminal cells were being
+    // deleted upstream; now that they are published, a division whose race is
+    // over carries a number nowhere and the whole column would have vanished
+    // from the page at the exact moment it became certain.
+    hasDivision: columnHasContent(rows, "division"),
+    hasPlayoffs: columnHasContent(rows, "playoffs"),
+    hasChampionship: columnHasContent(rows, "championship"),
     championshipResolved,
   };
 }
 
-/** Sort rows by a column descending; nulls sink to the bottom. Stable enough. */
+/** True when any row in this column carries a number or a settled result. */
+function columnHasContent(rows: DivisionRaceRow[], key: DivisionRaceSortKey): boolean {
+  const statusKey = DIVISION_RACE_STATUS_KEY[key];
+  return rows.some((r) => r[key] !== null || isTerminalStatus(r[statusKey]));
+}
+
+/**
+ * Sort rows by a column descending; cells with nothing to say sink to the
+ * bottom. Stable enough.
+ *
+ * #7522 — a clinched cell has no number, so sorting on the number alone filed
+ * the one club that had already won the thing BELOW every longshot still
+ * quoting 0.1%. `progressionSortValue` is the same weighting the championship
+ * grids use: clinched sorts as certainty, eliminated/missing/unavailable sort
+ * where a null already sorted. Live rows are untouched.
+ */
 export function sortDivisionRows(
   rows: DivisionRaceRow[],
   sortKey: DivisionRaceSortKey,
 ): DivisionRaceRow[] {
-  return [...rows].sort((a, b) => {
-    const av = a[sortKey];
-    const bv = b[sortKey];
-    if (av === null && bv === null) return 0;
-    if (av === null) return 1;
-    if (bv === null) return -1;
-    return bv - av;
-  });
+  const statusKey = DIVISION_RACE_STATUS_KEY[sortKey];
+  return [...rows].sort(
+    (a, b) =>
+      progressionSortValue(b[sortKey], b[statusKey]) -
+      progressionSortValue(a[sortKey], a[statusKey]),
+  );
 }
