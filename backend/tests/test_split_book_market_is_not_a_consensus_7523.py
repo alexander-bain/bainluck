@@ -130,6 +130,42 @@ class TestTheWriteTheReaderSees:
         assert written["betting_book_count"] == 6
         assert written["kalshi"]["value"] == 0.84
 
+    def test_and_the_reader_then_sees_kalshis_verified_84(self):
+        """The ship's claim, asserted instead of described.
+
+        Dropping a source is only the right repair if what is left is better
+        than what went. Both bags below are the ones production actually served
+        at 14:46Z — the defect bag verbatim, and the same bag with `betting`
+        removed the way the writer above removes it — so this is a replay of the
+        row, not a call with invented inputs (notice 37).
+        """
+        from app.utils.aggregation import compute_aggregate_probability
+
+        class _Row:
+            status = "live"
+            home_score, away_score = 2, 1
+            completed_at = None
+            espn_win_prob_home = None
+            opening_home_probability, opening_away_probability = 0.3178, 0.4078
+            win_probability_sources: dict = {}
+
+        served = _Row()
+        served.win_probability_sources = {
+            "kalshi": {"value": 0.84, "updated_at": "2026-09-20T14:41:57+00:00"},
+            "betting": {"value": 0.5005, "updated_at": "2026-09-20T14:41:30+00:00"},
+            "betting_book_count": 6,
+        }
+        assert compute_aggregate_probability(served) == pytest.approx(0.5005), (
+            "the defect, reproduced: the served blend WAS the invented midpoint"
+        )
+
+        repaired = _Row()
+        repaired.win_probability_sources = {
+            "kalshi": {"value": 0.84, "updated_at": "2026-09-20T14:41:57+00:00"},
+            "betting_book_count": 6,
+        }
+        assert compute_aggregate_probability(repaired) == pytest.approx(0.84)
+
     @pytest.mark.asyncio
     async def test_agreeing_books_still_publish_their_median(
         self, patched_snapshots
