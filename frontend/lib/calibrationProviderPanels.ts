@@ -64,18 +64,38 @@
  * evidence, not adjudicating a metric.
  */
 
-import type { CalibrationErrorBucket } from "./calibrationMath";
+import type { PanelBucket } from "./calibrationMath";
+import { censoringVerdict } from "./calibrationSourceRows";
 
-/** Where a panel's ECE came from. Published beside the number, never inferred. */
-export type EceBasis = "published" | "pooled" | "none";
+/**
+ * Where a panel's ECE came from, or why there is none.
+ *
+ * `"censored"` is not a third provenance — it is the one case where a number
+ * EXISTS and we decline to publish it, which is a different fact about the
+ * panel than `"none"` ("the server published nothing"). The page renders it as
+ * `data-ece-basis`, so keeping them apart is what lets a rail tell a refusal
+ * from an absence without reading our prose (#7411).
+ */
+export type EceBasis = "published" | "pooled" | "none" | "censored";
 
 export interface ProviderPanelInput {
   provider: string;
   label: string;
   /** Source keys pooled into this provider, in the order the grouper returned. */
   sources: string[];
-  /** The provider's POOLED buckets, as the curve draws them. */
-  buckets: CalibrationErrorBucket[];
+  /**
+   * The provider's POOLED buckets, as the curve draws them.
+   *
+   * `winners` is REQUIRED, not optional, and #7411's own fail-closed direction
+   * is why: `censoringVerdict` floors a missing `winners` to 0, which reads as
+   * an all-losers population and withholds the ECE. On the table that is the
+   * right way to be wrong. Silently applied to every panel on the page it
+   * would read as a site-wide regression, so the compiler is made to prove the
+   * field is supplied instead. The page already supplies it — `aggregateBuckets`
+   * returns `AggBucket`, which has carried `n` and `winners` since
+   * `calibrationParity.ts`; only this type narrowed it away.
+   */
+  buckets: PanelBucket[];
   /**
    * The server's published ECE. Meaningful ONLY for a single-shape provider,
    * where provider == source key and the published number IS the panel's
@@ -101,10 +121,20 @@ export interface ProviderPanel {
   n: number;
   /** This provider's share of the panelled population, 0-1. */
   share: number;
-  /** The ECE to render, pp, or `null` when there is honestly none. */
+  /**
+   * The ECE to render, pp, or `null` when there is honestly none — either
+   * because the payload published none, or because the population is censored
+   * and the figure would measure that censoring rather than the provider.
+   */
   ece: number | null;
-  /** Which of the two kinds of number `ece` is. `"none"` when it is null. */
+  /** Which of the two kinds of number `ece` is, or why there is none. */
   eceBasis: EceBasis;
+  /**
+   * Winners pooled across this panel's buckets, on a CENSORED panel only;
+   * `null` otherwise. Mirrors `SourceRow.winners` so the two surfaces state
+   * one population from one field.
+   */
+  winners: number | null;
   /** True when this panel owes a shape breakdown (more than one source key). */
   hasShapeBreakdown: boolean;
 }
@@ -138,9 +168,21 @@ export function buildProviderPanels(
       const multi = i.sources.length > 1;
       // The two inputs are read in mutually exclusive branches, so a caller
       // that supplies both cannot produce a number whose basis is ambiguous.
-      const ece = multi ? toDisplay(i.pooledEce) : toDisplay(i.publishedEce);
-      const eceBasis: EceBasis =
-        ece === null ? "none" : multi ? "pooled" : "published";
+      const published = multi ? toDisplay(i.pooledEce) : toDisplay(i.publishedEce);
+      // #7411. The same verdict the Source Comparison row is judged by, called
+      // on the same pooled buckets the panel's own curve is drawn from — so
+      // the two surfaces cannot reach opposite conclusions about one
+      // population. Read BEFORE the `n > 0` drop below, because a censored
+      // provider has outcomes (DataGolf had 36) and survives that filter.
+      const verdict = censoringVerdict(i.buckets);
+      const ece = verdict.censored ? null : published;
+      const eceBasis: EceBasis = verdict.censored
+        ? "censored"
+        : ece === null
+          ? "none"
+          : multi
+            ? "pooled"
+            : "published";
       return {
         provider: i.provider,
         label: i.label,
@@ -148,6 +190,11 @@ export function buildProviderPanels(
         n: i.buckets.reduce((s, b) => s + b.n, 0),
         ece,
         eceBasis,
+        // Which side the population fell on, so the panel can state it without
+        // pooling the buckets a second time. `null` on a measured panel: there
+        // is no censoring to describe, and a number here would invite a caller
+        // to render one.
+        winners: verdict.censored ? verdict.winners : null,
         hasShapeBreakdown: multi,
       };
     })

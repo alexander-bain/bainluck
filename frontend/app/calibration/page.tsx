@@ -61,6 +61,7 @@ import {
 // UX-P128: which Source Comparison rows are measurements, in what order, and
 // the sentence By Source owes for the ones the cohort emptied.
 import {
+  censoredPopulationText,
   censoredSourceRows,
   orderSourceRows,
   sourceRowsExcludedFromRollup,
@@ -1914,6 +1915,22 @@ export default function CalibrationPage() {
                 <div className="text-xs text-text-muted mb-2 tabular-nums">
                   {p.n.toLocaleString()} outcomes &middot; {(p.share * 100).toFixed(1)}% of the curve
                 </div>
+                {/* #7411. Where the withheld figure's reason goes. The header
+                    slot above is right-aligned beside the label and a sentence
+                    wraps badly there at 390px, so the fact takes its own line
+                    under the count it is about — the count stays, the curve
+                    stays, and the flat line at 100% IS the alarm #6211 item 3
+                    refuses to delete. One line, the fact only: notice 34. */}
+                {p.eceBasis === "censored" && (
+                  <div
+                    className="text-xs text-text-muted mb-2"
+                    data-testid="calibration-panel-censored"
+                    data-provider={p.provider}
+                    data-panel-winners={p.winners ?? ""}
+                  >
+                    {censoredPopulationText(p.n, p.winners)}
+                  </div>
+                )}
                 <CalibrationChart
                   series={[{ data: p.data, color: p.color, label: p.label }]}
                   width={330}
@@ -1964,6 +1981,20 @@ export default function CalibrationPage() {
                           <div className="text-xs text-text-muted mb-2 tabular-nums">
                             {sp.n.toLocaleString()} outcomes
                           </div>
+                          {/* #7411, same gate one level down. No shape is
+                              censored on today's payload; the point of wiring
+                              it here is that the next one does not have to be
+                              found by walking the page. */}
+                          {sp.censored && (
+                            <div
+                              className="text-xs text-text-muted mb-2"
+                              data-testid="calibration-panel-censored"
+                              data-source={sp.source}
+                              data-panel-winners={sp.winners ?? ""}
+                            >
+                              {censoredPopulationText(sp.n, sp.winners)}
+                            </div>
+                          )}
                           <CalibrationChart
                             series={[{ data: sp.data, color: sp.color, label: sourceLabel(sp.source) }]}
                             width={300}
