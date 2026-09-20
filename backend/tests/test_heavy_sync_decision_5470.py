@@ -1135,9 +1135,17 @@ def _extract_wait_loop() -> str:
     return "\n".join(ln[10:] for ln in lines[start:end + 1])
 
 
-def _run_wait_loop(tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=False):
+def _run_wait_loop(
+    tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=False, age=""
+):
     """Run the workflow's wait loop against a scripted fleet. Returns
-    (INFLIGHT exit code, curl calls, sleeps)."""
+    (INFLIGHT exit code, curl calls, sleeps).
+
+    ``age`` is `HEAVY_AGE_MIN` as `read_facts` stamped it — the fact the veto's
+    expiry is asked about at the edge (#5886). It defaults to the empty string,
+    which is UNREADABLE and holds, so every test written before the expiry
+    existed keeps the behaviour it was written against.
+    """
     stub = tmp_path / "stub"
     stub.mkdir(parents=True)
     state = tmp_path / "state"
@@ -1181,8 +1189,9 @@ def _run_wait_loop(tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=
         f'INSPECT_JSON="{tmp_path}/inspect.json"\n'
         'ADMIN_TOKEN="token"\n'
         f'DISPATCH_FLAG="{"--dispatched" if dispatched else ""}"\n'
+        f'HEAVY_AGE_MIN="{age}"\n'
         + _extract_wait_loop()
-        + '\necho "INFLIGHT=$INFLIGHT"\n'
+        + '\necho "INFLIGHT=$INFLIGHT VETO_EXPIRED=[$VETO_EXPIRED]"\n'
     )
     proc = subprocess.run(
         ["bash", str(script)],
@@ -1191,10 +1200,16 @@ def _run_wait_loop(tmp_path, *, bodies, deadlines, dispatched=False, curl_fails=
         timeout=60,
     )
     assert "INFLIGHT=" in proc.stdout, proc.stdout + proc.stderr
-    code = int(proc.stdout.rsplit("INFLIGHT=", 1)[1].split()[0])
+    tail = proc.stdout.rsplit("INFLIGHT=", 1)[1]
+    code = int(tail.split()[0])
+    # Read from the shell variable rather than inferred from `code`, because the
+    # whole point of the flag is that code 0 no longer means one thing: the two
+    # ways to reach it — a clear fleet and a cycled one — must stay tellable
+    # apart by anything that reads this loop, the log summary included.
+    veto_expired = tail.split("VETO_EXPIRED=[", 1)[1].split("]", 1)[0] != ""
     reads = int((state / "curls").read_text()) if (state / "curls").exists() else 0
     sleeps = int((state / "sleeps").read_text()) if (state / "sleeps").exists() else 0
-    return code, reads, sleeps
+    return code, reads, sleeps, veto_expired
 
 
 def test_a_busy_worker_is_waited_out_and_the_idle_moment_is_taken(tmp_path):
@@ -1203,7 +1218,7 @@ def test_a_busy_worker_is_waited_out_and_the_idle_moment_is_taken(tmp_path):
     The idle now has to be seen TWICE before the push (#5886), so the run that
     used to end on read 3 ends on read 4 — the same verdict, one poll later.
     """
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path,
         bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
         deadlines=[600, 540, 480],
@@ -1215,7 +1230,7 @@ def test_a_busy_worker_is_waited_out_and_the_idle_moment_is_taken(tmp_path):
 def test_the_wait_stops_at_the_bands_edge_and_holds(tmp_path):
     """Waiting may cost the run; it may never cost the rebuild. At the edge the
     verdict is still BUSY, which the step below turns into a green HOLD."""
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path, bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY], deadlines=[600, 30]
     )
     assert code == 1
@@ -1227,7 +1242,7 @@ def test_an_unreadable_deadline_stops_the_wait_rather_than_licensing_it(tmp_path
     """`[ "" -le 56 ]` exits 2, which an `if` reads as false — i.e. as
     permission to sleep again. Anything but digits must mean stop."""
     for bad in ("", "unreadable", "-1"):
-        code, reads, sleeps = _run_wait_loop(
+        code, reads, sleeps, _ = _run_wait_loop(
             tmp_path / bad.replace("-", "neg") if bad else tmp_path / "empty",
             bodies=[BUSY_BODY, IDLE_BODY], deadlines=[bad],
         )
@@ -1242,7 +1257,7 @@ def test_one_idle_reading_is_not_enough_to_push(tmp_path):
     measured broadcast, two retries — so one reading cannot see a job that
     started inside it. An idle fleet now costs exactly one poll to confirm.
     """
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path, bodies=[IDLE_BODY, IDLE_BODY], deadlines=[600, 540]
     )
     assert (code, reads, sleeps) == (0, 2, 1)
@@ -1255,7 +1270,7 @@ def test_a_job_the_first_snapshot_could_not_see_is_caught_by_the_second(tmp_path
     the job. The loop must NOT have pushed on read 1, and having found a busy
     fleet it goes back to waiting — the streak resets.
     """
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path,
         bodies=[IDLE_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
         deadlines=[600, 540, 480, 420],
@@ -1268,7 +1283,7 @@ def test_a_job_the_first_snapshot_could_not_see_is_caught_by_the_second(tmp_path
 def test_a_busy_reading_resets_the_streak_rather_than_counting_toward_it(tmp_path):
     """Two idle readings with a busy one between them are not a confirmation —
     they are two first readings. Only the band may end the wait early."""
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path,
         bodies=[IDLE_BODY, BUSY_BODY, IDLE_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
         deadlines=[600, 540, 480, 420, 360, 300],
@@ -1291,7 +1306,7 @@ def test_the_confirm_degrades_to_a_single_read_at_the_edge(tmp_path):
     are now swept across the turn, and the first of them is that specimen.
     """
     for deadline in (1, 30, 36, sync.CONFIRM_SEPARATION_SECONDS):
-        code, reads, sleeps = _run_wait_loop(
+        code, reads, sleeps, _ = _run_wait_loop(
             tmp_path / f"d{deadline}", bodies=[IDLE_BODY, IDLE_BODY],
             deadlines=[deadline],
         )
@@ -1304,7 +1319,7 @@ def test_the_confirm_degrades_to_a_single_read_at_the_edge(tmp_path):
     # And the reverse population, or the assertion above is satisfiable by a
     # loop that never confirms at all: one second past a whole turn, there is
     # room to confirm and the confirm happens.
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path / "affordable",
         bodies=[IDLE_BODY, IDLE_BODY],
         deadlines=[sync.CONFIRM_SEPARATION_SECONDS + 1],
@@ -1380,7 +1395,7 @@ def test_the_confirm_poll_can_never_be_served_two_copies_of_one_snapshot():
 def test_an_attended_run_never_waits(tmp_path):
     """`--dispatched` BYPASSES the veto, so there is nothing to wait for; a wait
     here would make an attended run slower than the unattended one."""
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path, bodies=[BUSY_BODY], deadlines=[600], dispatched=True
     )
     assert (code, reads, sleeps) == (0, 1, 0)
@@ -1398,7 +1413,7 @@ def test_an_unknown_reading_is_never_confirmed_because_it_is_not_an_idle_one(tmp
     fleet, and it is indistinguishable from one by exit code alone.
     """
     no_worker = json.dumps({"_cache": {"age": 0.0}})
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path, bodies=[no_worker, IDLE_BODY], deadlines=[600, 540]
     )
     assert (code, reads, sleeps) == (0, 1, 0)
@@ -1408,13 +1423,13 @@ def test_a_failed_read_still_proceeds_and_is_never_served_a_stale_payload(tmp_pa
     """The cost-gate polarity, unchanged by the loop: an unreadable fact
     PROCEEDS. And because the payload is removed before each read, a read that
     fails cannot be judged on the previous iteration's fleet."""
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path, bodies=[BUSY_BODY], deadlines=[600], curl_fails=True
     )
     assert (code, reads, sleeps) == (0, 1, 0)
     # And the stale-payload half, directly: a busy read followed by a failed one
     # must not keep holding on the body that is no longer there.
-    code, reads, sleeps = _run_wait_loop(
+    code, reads, sleeps, _ = _run_wait_loop(
         tmp_path / "second", bodies=[BUSY_BODY], deadlines=[600, 540]
     )
     assert code == 0  # iteration 2's curl has no body left, so it fails -> UNKNOWN
@@ -3011,3 +3026,292 @@ def test_a_wait_that_did_not_parse_is_not_a_licence_to_sleep(tmp_path, answer):
     )
     assert (ended, reads, sleeps) == (A, 1, [])
     assert "integer expression" not in stderr, stderr
+
+
+# ── #5886, THE INVERSION: the in-flight veto expires ───────────────────────────
+#
+# The gate was built to stop a release killing a heavy job mid-run, and priced
+# that kill at "one lost pass" in its own docstring. Censused over ~24 h of this
+# workflow's run logs (latency/748): 106 BUSY / 6 IDLE / 0 UNKNOWN in-flight
+# readings, no minute of the band clearing, and 6 of the 8 runs that reached PUSH
+# killed by the gate. `bainluck-heavy` reached 5h16m against a 180-min floor.
+#
+# A cost gate with no expiry is a veto, so the veto now expires — at the band's
+# closing edge only, on a run that has already spent the band looking for the
+# idle moment the gate wants.
+
+#: Every heavy-release interval since v17, in minutes, read from
+#: `heroku releases -a bainluck-heavy` on 2026-09-20 (53 releases total; v8..v16
+#: are the pre-`workflow_run` design and are excluded deliberately — they are not
+#: the population this clause is tuned against). The body of the distribution is
+#: the floor plus at most one band; the four-value tail is what the expiry
+#: truncates, and it is the only part of the record that must move.
+OBSERVED_HEAVY_INTERVALS_MIN = (
+    185.6, 240.8, 246.0, 227.0, 195.5, 224.6, 185.0, 240.0, 190.2, 225.8,
+    183.9, 236.3, 239.8, 193.8, 284.4, 196.1, 223.8, 183.0, 188.6, 183.9,
+    226.4, 194.5, 285.5, 194.1, 239.8, 239.2, 227.9, 184.4, 188.9, 225.7,
+    184.7, 240.1, 189.1, 227.0, 182.4, 190.6, 286.2, 244.3, 190.2, 225.5,
+    185.8, 238.0, 310.5, 238.6,
+)
+
+
+def test_the_veto_expiry_is_the_floor_plus_its_licensed_band():
+    """Derived from the two things it is made of, never typed in."""
+    assert sync.veto_expiry_min() == (
+        sync.min_cycle_interval_min() + sync.VETO_BUDGET_BANDS * sync.BAND_PERIOD_MIN
+    )
+    # And it is strictly later than the moment a sync first becomes permissible,
+    # or the veto would have no licence at all and the gate would be deleted
+    # rather than bounded.
+    assert sync.veto_expiry_min() > sync.min_cycle_interval_min()
+
+
+def test_moving_the_accepted_budget_moves_the_veto_expiry(monkeypatch):
+    """The floor and the expiry are one number and a licence, not two numbers.
+
+    Halving the accepted cycle rate doubles the floor, and the expiry has to
+    follow it — a literal 240 would silently become "the floor minus 120".
+    """
+    monkeypatch.setattr(sync, "ACCEPTED_CYCLES_PER_DAY", 4)
+    assert sync.min_cycle_interval_min() == 360
+    assert sync.veto_expiry_min() == 360 + sync.BAND_PERIOD_MIN
+
+
+def test_the_licence_is_one_band_and_not_a_free_number(monkeypatch):
+    """`VETO_BUDGET_BANDS` is counted in BANDS because that is the unit the
+    veto's own message promises in ("the next trigger re-reads and re-judges").
+    Two bands is a different claim and must read as one."""
+    monkeypatch.setattr(sync, "VETO_BUDGET_BANDS", 2)
+    assert sync.veto_expiry_min() == sync.min_cycle_interval_min() + 120
+
+
+def test_the_expiry_is_silent_on_the_body_of_the_release_record():
+    """CHECKED AGAINST THE WORLD, NOT ONLY AGAINST ITSELF.
+
+    A clause that fires on every cycle has not bounded the veto, it has removed
+    it — and the gate protects something real. So the measured record decides:
+    the normal interval must sit inside the licence and only the tail outside it.
+    """
+    expiry = sync.veto_expiry_min()
+    fires = [g for g in OBSERVED_HEAVY_INTERVALS_MIN if g >= expiry]
+    quiet = [g for g in OBSERVED_HEAVY_INTERVALS_MIN if g < expiry]
+    # The tail, and today's 310.5 is in it. The four intervals that sit within
+    # a tenth of a minute of the expiry (240.0, 240.1, 240.8, 244.3) are in the
+    # list too and were NOT in the first draft of it — the expiry is inclusive,
+    # and a hand-written expectation is how that gets forgotten.
+    assert sorted(fires) == [
+        240.0, 240.1, 240.8, 244.3, 246.0, 284.4, 285.5, 286.2, 310.5
+    ], fires
+    # Fires on a minority, so the gate still does its job on the common cycle.
+    assert len(fires) / len(OBSERVED_HEAVY_INTERVALS_MIN) < 0.25
+    # And it is not vacuous in the other direction: the clause has to have
+    # something to bite on, or it is prose.
+    assert fires and max(quiet) < expiry
+
+
+def test_the_starved_episode_this_clause_exists_for_would_have_fired():
+    """v59 -> v60 ran 310.5 min, and today's open interval passed 300 min with
+    run 35526966041 reading `heavy release age: 300 min` and holding on BUSY."""
+    assert sync.veto_expired(300).code == sync.IDLE
+    assert sync.veto_expired(300).verdict == "EXPIRED"
+    assert sync.veto_expired(310).code == sync.IDLE
+
+
+@pytest.mark.parametrize("age", [0, 1, 179, 180, 200, 239])
+def test_a_run_inside_the_licence_keeps_the_veto(age):
+    """Everything short of the expiry holds, floor included: clearing the floor
+    is what makes a sync PERMITTED, never what makes the veto spent."""
+    decision = sync.veto_expired(age)
+    assert decision.code == sync.BUSY
+    assert decision.verdict == "LICENSED"
+
+
+def test_the_boundary_is_inclusive_and_the_minute_below_it_is_not():
+    """The two adjacent inputs, because a `>` here is a whole extra band of
+    drift and reads identically in every other test."""
+    assert sync.veto_expired(sync.veto_expiry_min()).code == sync.IDLE
+    assert sync.veto_expired(sync.veto_expiry_min() - 1).code == sync.BUSY
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "unreadable", "300min", None])
+def test_an_unreadable_age_holds_and_is_the_one_cost_gate_that_does(raw):
+    """THE POLARITY INVERSION, ASSERTED RATHER THAN COMMENTED.
+
+    Every other cost gate in this file proceeds on a fact it cannot read, because
+    proceeding is the ship. This one cannot: proceeding here means cycling the
+    dyno on top of a job we can SEE running, so the escalation has to prove its
+    premise. An age we could not read proves nothing.
+
+    Asserted against `decide`'s opposite answer on the SAME unreadable input, so
+    the test cannot pass by both gates quietly agreeing.
+    """
+    parsed = sync._age_arg(raw)
+    assert parsed is None
+    assert sync.veto_expired(parsed).code == sync.BUSY
+    assert sync.veto_expired(parsed).verdict == "LICENSED"
+    # The contrast: the cycle floor, given the same unreadable age, PUSHes.
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=parsed, now=_at(sync.window_bounds()[0]),
+    ).code == PUSH
+
+
+def test_the_veto_cli_exit_codes_are_the_ones_the_workflow_branches_on():
+    """0 = expired (cycle it), 1 = still licensed (hold). The workflow reads the
+    VALUE, so a third code must never appear from a legitimate input."""
+    for age, expected in (("300", 0), ("239", 1), ("", 1), ("junk", 1)):
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "veto-expired", "--heavy-release-age-min", age],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert proc.returncode == expected, (age, proc.stdout, proc.stderr)
+        # The verdict is the first token, which is how the workflow reads it.
+        assert proc.stdout.split(":", 1)[0] in {"EXPIRED", "LICENSED"}, proc.stdout
+
+
+def test_the_expiry_is_only_ever_asked_at_the_edge():
+    """STRUCTURAL, and the property the whole design rests on.
+
+    The clause may only decide what happens to a band that is already lost. If
+    `veto-expired` were consulted anywhere else in the loop, a run would cycle a
+    busy fleet at :39 with twenty minutes of band left in which the fleet might
+    have gone idle by itself — which is the gate, deleted.
+    """
+    loop = _extract_wait_loop()
+    assert loop.count("veto-expired") == 1, loop
+    edge = loop.split(f'"$BAND_LEFT" -le {sync.CONFIRM_SEPARATION_SECONDS} ]', 1)
+    assert len(edge) == 2, "the edge branch moved; this guard is now aimed at nothing"
+    before, after = edge
+    assert "veto-expired" not in before
+    # ...and inside the edge's own BUSY arm, not its idle one: an idle reading at
+    # the edge already pushes, so asking there would be dead code that reads like
+    # a policy.
+    assert "veto-expired" in after.split("break", 1)[0]
+
+
+def test_the_expiry_is_asked_only_of_a_busy_reading():
+    """It is an escalation of the BUSY verdict. Reaching it from the idle arm
+    would make an idle push claim it cycled a running job."""
+    loop = _extract_wait_loop()
+    idle_arm, busy_arm = loop.split('if [ "$INFLIGHT" -eq 0 ]; then', 1)[1].split("else", 1)
+    assert "veto-expired" not in idle_arm
+    assert "veto-expired" in busy_arm
+
+
+def test_a_starved_run_cycles_the_busy_fleet_at_the_edge(tmp_path):
+    """END TO END, through the real script: run 35525028003, replayed.
+
+    It reached PUSH with `heavy release age: 280 min`, polled the entire band,
+    found every reading busy, and exited HOLD. With the expiry it pushes.
+    """
+    code, reads, sleeps, veto = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY, BUSY_BODY], deadlines=[600, 30], age="280"
+    )
+    assert (code, reads, sleeps) == (0, 2, 1)
+    assert veto is True
+
+
+def test_the_same_run_inside_the_licence_still_holds(tmp_path):
+    """The reverse population, or the test above is satisfied by a loop that
+    pushes on every busy fleet. 220 min is run 35520366305 — 22 polls, 22 busy —
+    and it must STILL hold, because its next trigger genuinely has a band left
+    to try in.
+    """
+    code, reads, sleeps, veto = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY, BUSY_BODY], deadlines=[600, 30], age="220"
+    )
+    assert (code, reads, sleeps) == (1, 2, 1)
+    assert veto is False
+
+
+def test_a_starved_run_still_prefers_an_idle_moment_inside_the_band(tmp_path):
+    """THE CLAUSE TAKES NOTHING AWAY, which is the claim that makes it safe.
+
+    A starved run does not push on the first busy reading — it spends the whole
+    band exactly as before, and takes an idle moment the instant it appears. The
+    expiry is the fallback for the band it was going to lose, never a shortcut
+    through it.
+    """
+    code, reads, sleeps, veto = _run_wait_loop(
+        tmp_path,
+        bodies=[BUSY_BODY, BUSY_BODY, IDLE_BODY, IDLE_BODY],
+        deadlines=[600, 540, 480],
+        age="600",
+    )
+    assert (code, reads, sleeps) == (0, 4, 3)
+    # It pushed on a CONFIRMED IDLE fleet, not on the expiry.
+    assert veto is False
+
+
+def test_a_starved_run_with_an_unreadable_age_holds_end_to_end(tmp_path):
+    """The workflow passes `${HEAVY_AGE_MIN:-}`, which is empty whenever the
+    Platform API read failed. Through the loop, that is still a hold."""
+    code, reads, sleeps, veto = _run_wait_loop(
+        tmp_path, bodies=[BUSY_BODY, BUSY_BODY], deadlines=[600, 30], age=""
+    )
+    assert (code, reads, sleeps) == (1, 2, 1)
+    assert veto is False
+
+
+def test_the_stamped_age_understates_the_drift_at_the_edge():
+    """WHICH DIRECTION THE STALE FACT ERRS IN, asserted rather than assumed.
+
+    `HEAVY_AGE_MIN` is stamped by `read_facts` before the loop and is not
+    re-read, so by the time the edge is reached it is up to a whole band old. An
+    age that is too LOW can only hold a veto that should have expired — never
+    expire one that should have held — so the staleness is safe in the one
+    direction that matters, and this pins that rather than the comment.
+    """
+    band_width_min = sync.window_bounds()[1] - sync.window_bounds()[0]
+    true_age = sync.veto_expiry_min() + band_width_min - 1
+    stamped = true_age - band_width_min
+    assert sync.veto_expired(stamped).code == sync.BUSY, (
+        "the stale age must be able to under-fire — that is the safe direction"
+    )
+    assert sync.veto_expired(true_age).code == sync.IDLE, (
+        "and the fresh age must fire, or the staleness is not the reason"
+    )
+
+
+def test_the_summary_line_cannot_claim_a_clear_fleet_on_a_cycled_one():
+    """A cycled-anyway run and a genuinely idle one both leave `INFLIGHT=0`, so
+    the log line after the loop has to read the flag. Without this the run that
+    knowingly killed a job prints "clear to cycle worker-heavy", and the next
+    reader of #5886 cannot tell the two apart in a log."""
+    code = _workflow_code()
+    body = code.split('case "$INFLIGHT" in', 1)[1]
+    assert 'if [ -n "$VETO_EXPIRED" ]; then' in body.split("esac", 1)[0]
+    # And the variable is initialised in the block the loop lives in, so `set -u`
+    # cannot be what discovers it.
+    assert "VETO_EXPIRED=" in code.split("while true; do", 1)[0].rsplit("IDLE_STREAK=0", 1)[1]
+    # THE WRITE, NOT ONLY THE READ. Deleting `VETO_EXPIRED=1` from the expiry
+    # branch leaves every assertion above true and the summary line silently
+    # wrong again — the mutant that survived this guard until it was widened,
+    # and the reason it is worth writing twice. It is killed end to end by
+    # `test_a_starved_run_cycles_the_busy_fleet_at_the_edge`; this states why.
+    expiry_branch = _extract_wait_loop().split("veto-expired", 1)[1].split("break", 1)[0]
+    assert "VETO_EXPIRED=1" in expiry_branch, expiry_branch
+
+
+def test_the_expiry_never_reaches_past_the_band_or_the_never_backwards_guard():
+    """WHAT IT IS EXEMPT FROM IS EXACTLY ONE GATE.
+
+    The final band check and the ancestry refusal both sit after the wait loop
+    and are not conditioned on the flag, so a starved run still cannot push
+    outside the band or rewind heavy.
+    """
+    code = _workflow_code()
+    after_esac = code.split('case "$INFLIGHT" in', 1)[1].split("esac", 1)[1]
+    assert "band-seconds-left" in after_esac, "the final band check is gone"
+    assert "VETO_EXPIRED" not in after_esac.split("BEHIND=", 1)[0], (
+        "the final band check learned about the expiry — it must not"
+    )
+    # And the push itself is still the plain one. Read off the PUSH COMMAND and
+    # not the file: the file legitimately contains the string in the echo that
+    # explains why a rejection is never retried with it, so `"--force" not in
+    # code` fails on a correct workflow — the trap `_workflow_code`'s own
+    # docstring names, met again one layer down.
+    push = next(
+        line for line in code.splitlines() if "git push heroku-heavy" in line
+    )
+    assert "--force" not in push and "-f " not in push, push
