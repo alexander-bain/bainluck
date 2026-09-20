@@ -262,7 +262,13 @@ export default function CalibrationPage() {
     return data.buckets.map(b => ({ ...b, category: normalizeCat(b.category) }));
   }, [data]);
 
-  const overallBrier = useMemo(() => normalized ? brierScore(normalized) : 0, [normalized]);
+  // #7486 removed `overallBrier` — an UNFILTERED `brierScore(normalized)` whose
+  // one consumer was the "What's a Brier score?" bullet. Every other Brier on
+  // this page is `cohortBrier`, so the bullet printed "Ours is 0.17" (747,028
+  // outcomes) four screens under a card reading 0.1763 (449,027), and did not
+  // move when the reader toggled the cohort. It is declared below, beside the
+  // cohort figures it belongs with. Do not reintroduce an unfiltered aggregate
+  // here: if a figure is for the reader, it is for the cohort on screen.
 
   // CAL-P1217. `null` until the out-of-band walk has been proved to describe
   // the payload being served, which is most of the time — the methodology
@@ -329,6 +335,13 @@ export default function CalibrationPage() {
   const cohortN = useMemo(() =>
     normalized ? normalized.filter(b => !cohortFilter || cohortFilter(b)).reduce((s, b) => s + b.n, 0) : 0,
     [normalized, cohortFilter]);
+  // #7486 — ONE rendered string for the Brier score, shared by every place that
+  // prints it: the stat card, the "show the math" line, the cohort table and
+  // the methodology bullet. Four `.toFixed(4)` call sites over one value cannot
+  // disagree, but four call sites over two values did, for as long as the
+  // cohort toggle has existed. The formatting lives here so that a later
+  // precision change cannot reopen the gap either.
+  const cohortBrierText = useMemo(() => cohortBrier.toFixed(4), [cohortBrier]);
 
   // #7374 — the published bootstrap interval, if the active cohort is the one it
   // was bootstrapped over. Derived here, once, from the same `cohortN`/`fullN`
@@ -1187,7 +1200,7 @@ export default function CalibrationPage() {
               )}
               Per-bucket error, the ten buckets averaged with equal weight{" "}
               <span className="tabular-nums text-text-secondary">{cohortMCE.toFixed(1)}pp</span>;
-              Brier <span className="tabular-nums text-text-secondary">{cohortBrier.toFixed(4)}</span>.
+              Brier <span className="tabular-nums text-text-secondary">{cohortBrierText}</span>.
             </p>
             <p>
               Population: <span className="tabular-nums text-text-secondary">{cohortN.toLocaleString()}</span>{" "}
@@ -1271,7 +1284,7 @@ export default function CalibrationPage() {
             measures, which is the shape of every metric label this page has
             been walking back (ruling 044 — rendered-green is not
             communicates-green; banked against this page by name). */}
-        <StatCard label="Brier Score" value={cohortBrier.toFixed(4)}
+        <StatCard label="Brier Score" value={cohortBrierText}
           testId="calibration-stat-brier"
           detail={BRIER_ONE_LINER} />
         {/* UX-P080 item 2: counts PROVIDERS, from the same `providerGroups` the
@@ -1441,7 +1454,7 @@ export default function CalibrationPage() {
                 <td className="py-2.5 pr-1 sm:pr-4 text-right tabular-nums text-text-muted">
                   {cohortMCE.toFixed(1)}pp
                 </td>
-                <td className="py-2.5 text-right tabular-nums">{cohortBrier.toFixed(4)}</td>
+                <td className="py-2.5 text-right tabular-nums">{cohortBrierText}</td>
               </tr>
             </tbody>
           </table>
@@ -2735,7 +2748,16 @@ export default function CalibrationPage() {
               where it does not. A closing line is the stronger test.
             </li>
           )}
-          <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>
+          {/* #7486 — "Ours is" reads `cohortBrierText`, the SAME string the
+              Brier Score stat card prints, not a second figure at a second
+              precision. It used to be `overallBrier.toFixed(2)`: the
+              all-markets aggregate, rendered "0.17" under a card reading
+              "0.1763", and 0.1763 does not round to 0.17 — it rounds to 0.18,
+              so it never even read as a shortening. The tell was that this was
+              the one Brier on the page that did not move with the cohort
+              toggle, which is to say it was correct only in the cohort the
+              reader is not in by default. */}
+          <li data-testid="calibration-brier-bullet" data-brier={cohortBrierText}><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {cohortBrierText}.</li>
           {/* #7341 — this card used to close on "We only include markets where
               real trading occurred — outcomes with zero bids or no trading
               volume are excluded". That is a UNIVERSAL claim, and the page
