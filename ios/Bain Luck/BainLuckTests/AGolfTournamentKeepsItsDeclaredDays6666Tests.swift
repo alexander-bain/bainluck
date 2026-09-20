@@ -304,7 +304,78 @@ final class AGolfTournamentKeepsItsDeclaredDays6666Tests: XCTestCase {
         XCTAssertNil(tournamentRoundNumber(start: "not a date", now: date("2026-09-18T17:00:00Z")))
     }
 
+    // MARK: - The card itself, not just the rule it calls
+
+    /// 🔴 THE CALL-SITE GUARD. Every assertion above passes against a perfect
+    /// pair of helpers that the card does not call — which is exactly the state
+    /// this file was in before the card's two rules were made reachable. The
+    /// hero is the surface the Biltmore screenshot was taken of.
+    func test_the_hero_card_draws_the_declared_range_and_the_right_round() throws {
+        let card = try inZone(pacific) {
+            TournamentHeroCard(
+                tournament: try biltmoreTournament(),
+                now: date("2026-09-20T17:00:00Z")   // Sun 10:00 PDT, final round
+            )
+        }
+        try inZone(pacific) {
+            XCTAssertEqual(card.formattedDateRange, "Sep 17\u{2013}20")
+            XCTAssertEqual(card.currentRound, 4)
+        }
+    }
+
+    /// The same card the evening before the tournament: no round is lit, and
+    /// the range still names the days the server declared.
+    func test_the_hero_card_lights_no_round_before_the_first_tee() throws {
+        let card = try inZone(pacific) {
+            TournamentHeroCard(
+                tournament: try biltmoreTournament(),
+                now: date("2026-09-17T01:00:00Z")   // Wed 18:00 PDT
+            )
+        }
+        try inZone(pacific) {
+            XCTAssertNil(card.currentRound)
+            XCTAssertEqual(card.formattedDateRange, "Sep 17\u{2013}20")
+        }
+    }
+
     // MARK: - The day question itself
+
+    /// A range whose ends share a month but not a YEAR is not one month.
+    /// Without the year clause this prints "Sep 17–20" for two tournaments a
+    /// year apart — a plausible-looking string, which is the dangerous kind.
+    func test_a_year_apart_is_not_the_same_month() {
+        inZone(pacific) {
+            XCTAssertEqual(
+                formatDateRange(
+                    start: "2026-09-17T00:00:00+00:00",
+                    end: "2027-09-20T00:00:00+00:00",
+                    localZone: pacific
+                ),
+                "Sep 17 \u{2013} Sep 20"
+            )
+        }
+    }
+
+    /// 🔴 THE SEAM IS REAL OR IT IS DECORATION. Every other case here pins the
+    /// process zone to the same zone it passes in, so an implementation reading
+    /// `.current` and ignoring `localZone:` would pass all of them — and the
+    /// parameter's whole purpose is to keep these guards non-vacuous under a UTC
+    /// harness, which is precisely the case where the two differ. So this one
+    /// runs the process in UTC and asks for Pacific.
+    func test_the_instant_branch_honours_the_zone_it_is_given_not_the_one_it_runs_in() {
+        inZone(TimeZone(identifier: "UTC")!) {
+            XCTAssertEqual(
+                formatDateRange(start: "2026-09-18T02:00:00+00:00", end: nil, localZone: pacific),
+                "Sep 17",
+                "the argument decides, not the process"
+            )
+            XCTAssertEqual(
+                CalendarDeadline.displayDay("2026-09-18T02:00:00+00:00", localZone: pacific)?.day,
+                17
+            )
+        }
+    }
+
 
     func test_the_day_offset_counts_calendar_days_not_elapsed_hours() {
         // One minute apart, either side of local midnight: one day, not zero.
@@ -366,11 +437,18 @@ final class AGolfTournamentKeepsItsDeclaredDays6666Tests: XCTestCase {
     }
     """
 
-    private func biltmorePresentation() throws -> GolfTournamentPresentation {
+    private func biltmoreResponse() throws -> GolfTournamentDetailResponse {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
-        let response = try decoder.decode(
+        return try decoder.decode(
             GolfTournamentDetailResponse.self, from: Data(Self.biltmorePayload.utf8))
-        return GolfTournamentPresentation(response: response)
+    }
+
+    private func biltmorePresentation() throws -> GolfTournamentPresentation {
+        GolfTournamentPresentation(response: try biltmoreResponse())
+    }
+
+    private func biltmoreTournament() throws -> GolfTournamentData {
+        try biltmoreResponse().tournament
     }
 }

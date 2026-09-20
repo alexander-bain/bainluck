@@ -3,6 +3,12 @@ import SwiftUI
 nonisolated struct TournamentHeroCard: View {
     let tournament: GolfTournamentData
 
+    /// The instant the round strip is read against, captured when the card is
+    /// built. Defaulted, so no call site passes it; a guard passes it because
+    /// the alternative is asserting against whatever today happens to be, which
+    /// is a test that changes its mind four times a tournament (gotcha #44).
+    var now: Date = Date()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
@@ -115,8 +121,8 @@ nonisolated struct TournamentHeroCard: View {
     /// body, `Date()` can only be tested against whatever today happens to be.
     ///
     /// `roundCount` defaults to the four rounds `roundProgressView` draws.
-    private var currentRound: Int? {
-        tournamentRoundNumber(start: tournament.startDate, now: Date())
+    var currentRound: Int? {
+        tournamentRoundNumber(start: tournament.startDate, now: now)
     }
 
     @ViewBuilder
@@ -138,7 +144,7 @@ nonisolated struct TournamentHeroCard: View {
         }
     }
 
-    private var formattedDateRange: String? {
+    var formattedDateRange: String? {
         // Uses the shared acronym/ISO-aware formatter so full ISO timestamps
         // ("2026-09-24T00:00:00+00:00") render as "Sep 24-27", never raw.
         formatDateRange(start: tournament.startDate, end: tournament.endDate)
