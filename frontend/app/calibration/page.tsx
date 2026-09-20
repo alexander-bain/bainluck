@@ -27,7 +27,7 @@ import {
   monthYear,
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
-import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
+import { describeActivityScope, describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
 import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
 import { mceIntervalForCohort, formatMceInterval } from "@/lib/calibrationIntervalScope";
@@ -369,6 +369,14 @@ export default function CalibrationPage() {
   const cohort = useMemo(() =>
     describeCohort(partition, fullN, includeNeverMoved),
     [partition, fullN, includeNeverMoved]);
+  // #7519. Deliberately NOT keyed on `includeNeverMoved`: the matched-bucket
+  // section draws from both sides of the price-moved split whatever the toggle
+  // says, so its scope disclosure is a fact about the payload, not about the
+  // active cohort. The section's own heading tag says the same thing
+  // (`CohortTag scope="comparison"`), and the probe confirms the table renders
+  // byte-identical in both toggle states.
+  const activityScope = useMemo(() =>
+    describeActivityScope(partition), [partition]);
 
   const sources = useMemo(() => {
     if (!normalized) return [];
@@ -1642,6 +1650,23 @@ export default function CalibrationPage() {
               caption that makes the table legible. */}
           <p className="text-xs text-text-muted mb-3">
             Same-probability rows only, so the two groups are compared like with like.
+            {/* #7519. The column headings say "Traded"/"Untraded" — the page's
+                one vocabulary since #7335 — over a partition that is `price_moved`
+                true vs false. The 155,127 flagless sportsbook rows are in neither,
+                and everywhere else on this page they are counted IN the traded
+                cohort (UX-P080 item 3). So the heading alone tells the reader the
+                column holds 449,027 when it holds 293,900. The sentence that
+                closes that gap is body copy, not a fold: it is the one thing a
+                reader must know to read the column correctly, and `activityScope`
+                derives it from the same partition the columns are built from. */}
+            {activityScope ? (
+              <>
+                {" "}
+                <span data-testid="calibration-activity-scope-note">
+                  {activityScope.caption}
+                </span>
+              </>
+            ) : null}
           </p>
           <CalibrationCardNote label="What “traded” means here">
             <p className="text-xs text-text-muted">
@@ -1653,6 +1678,21 @@ export default function CalibrationPage() {
               gap between their overall figures is partly a difference in what they contain rather
               than in how they behaved.
             </p>
+            {/* #7519, the arithmetic half. The reader's real question is "is this
+                the same Traded I read two screens up?" — answered only by putting
+                the column's total and the page's total in one sentence. It is a
+                method note, so it folds, beside the proxy note it belongs with. */}
+            {activityScope ? (
+              <p
+                className="text-xs text-text-muted mt-2"
+                data-testid="calibration-activity-scope-reconciliation"
+                data-moved-n={partition.movedN}
+                data-unchanged-n={partition.unchangedN}
+                data-not-applicable-n={partition.notApplicableN}
+              >
+                {activityScope.reconciliation}
+              </p>
+            ) : null}
           </CalibrationCardNote>
 
           {/* CAL-P025 / exit-exam item 2. The section used to lead with two
