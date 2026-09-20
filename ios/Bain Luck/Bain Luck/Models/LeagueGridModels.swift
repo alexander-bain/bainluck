@@ -45,10 +45,30 @@ nonisolated struct GridTeam: Decodable, Sendable, Identifiable {
 }
 
 /// Probability cell for a team at one championship stage.
+///
+/// `state` is the register's declared reader state (#7387 / L2-227). It is the
+/// only field that can tell a GRADED cell from a cell with no market: both
+/// carry `merged_probability: null`, so without it the app printed "—" on 53
+/// already-decided MLB cells. Read it through `GridCell.renderState`
+/// (`Utilities/GridCellRenderState.swift`) — never raw — so the fail-closed
+/// rules stay in one place and match the web twin's.
 nonisolated struct GridCell: Decodable, Sendable {
     let mergedProbability: Double?
     let sources: [GridCellSource]?
     let trend24H: Double?
+    let state: String?
+
+    init(
+        mergedProbability: Double?,
+        sources: [GridCellSource]?,
+        trend24H: Double?,
+        state: String? = nil
+    ) {
+        self.mergedProbability = mergedProbability
+        self.sources = sources
+        self.trend24H = trend24H
+        self.state = state
+    }
 }
 
 /// Source-specific probability inside a championship grid cell.
