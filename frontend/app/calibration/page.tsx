@@ -29,6 +29,7 @@ import {
 } from "@/lib/calibrationMath";
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
+import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
 import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
@@ -257,6 +258,12 @@ export default function CalibrationPage() {
     () => (data ? readCoverageAccounting(data.calibration_coverage_census) : null),
     [data]
   );
+
+  // #7353. Reads the WHOLE payload, not a named field: the point of this one is
+  // the rules nobody wired up, so a call site that had to list them would
+  // reproduce the omission it exists to fix. The module owns which keys are
+  // already bulleted and which it can name.
+  const namedExclusions = useMemo(() => (data ? readNamedExclusions(data) : null), [data]);
 
   const movedBuckets = useMemo(() =>
     normalized ? aggregateBuckets(normalized, b => b.price_moved === true) : [], [normalized]);
@@ -1088,7 +1095,22 @@ export default function CalibrationPage() {
               <a href="#methodology" className="text-accent-brand hover:underline">
                 How we measure this
               </a>{" "}
-              covers which price we use, who we count as the winner, and every exclusion.
+              {/* #7353 — this said "and every exclusion", and the page could not
+                  keep that promise. The methodology names six exclusion rules in
+                  full; the payload carries nine more `*_filter` blocks (eight
+                  non-zero, 147,721 outcomes on 2026-09-20), plus a price-derived
+                  truth rung and a field-incomplete rung measured over a different
+                  population again. The folded "Other exclusion rules" bullet now
+                  names the eight, which is a real gain — but the last two cannot
+                  be listed beside them without putting two denominators under one
+                  column, and the accounting that WOULD cover everything
+                  (`calibration_coverage_census`) reads `unavailable` in
+                  production. So the sentence stops quantifying and says what the
+                  section actually delivers. It is the same fix as #7341 one
+                  section down: the page had a completeness word its own payload
+                  falsified. */}
+              covers which price we use, who we count as the winner, and why the published
+              total is lower than the raw count.
             </p>
           </div>
         </details>
@@ -2709,6 +2731,59 @@ export default function CalibrationPage() {
                     sentence outlives the fix, the exclusion is the thing that is wrong.
                   </span>
                 )}
+            </li>
+          )}
+          {/* #7353 — the eight rules that set outcomes aside and were named
+              nowhere on this page.
+              *
+              * FOLDED, for the same reason the coverage accounting is (notice 34
+              * / D102: present, openable, no real estate when closed). Eight more
+              * grey paragraphs under the six above would be exactly the wall Alex
+              * called madness; eight label-and-count rows behind one line are the
+              * "Untraded props (3)" shape he ruled instead.
+              *
+              * LABEL AND COUNT ONLY, and the labels are the module's own words —
+              * never `{filter.rule}`, which on these nine blocks carries series
+              * tickers, raw column names and issue numbers (#4067 / CERT-2295).
+              *
+              * THE OVERLAP SENTENCE IS NOT DECORATION. These cohorts intersect
+              * each other and the bullets above, so a reader handed eight numbers
+              * in a column will add them, and the sum would be wrong. The writer
+              * bar carries the same clause for the same reason. */}
+          {namedExclusions && (
+            <li
+              data-testid="calibration-other-exclusions"
+              data-rules={namedExclusions.rows.length}
+              data-empty-rules={namedExclusions.emptyRules}
+              data-unlisted-rules={namedExclusions.unlistedRules}
+            >
+              <details>
+                <summary className="cursor-pointer">
+                  <strong className="text-text-primary">Other exclusion rules</strong>{" "}
+                  <span className="text-text-muted">({namedExclusions.rows.length} more)</span>
+                </summary>
+                <ul className="mt-2 space-y-1">
+                  {namedExclusions.rows.map(row => (
+                    <li key={row.key} className="flex justify-between gap-4" data-rule={row.key}>
+                      <span>{row.label}</span>
+                      <span className="tabular-nums">{row.outcomes.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-text-muted">
+                  Each count is that rule&rsquo;s own. The rules overlap with each other and with
+                  the ones above &mdash; one outcome can fail more than one of them &mdash; so they
+                  are not a column to add up.
+                  {namedExclusions.emptyRules > 0 && (
+                    <>
+                      {" "}
+                      {namedExclusions.emptyRules} further{" "}
+                      {namedExclusions.emptyRules === 1 ? "rule" : "rules"} set aside nothing at
+                      all.
+                    </>
+                  )}
+                </p>
+              </details>
             </li>
           )}
           {data.exclusion_symmetry && (

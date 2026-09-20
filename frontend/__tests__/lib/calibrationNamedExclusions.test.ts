@@ -1,0 +1,268 @@
+/**
+ * #7353 — the exclusion rules the accuracy page publishes but never named.
+ *
+ * The defect was an absence, so this suite is built around the two ways an
+ * absence-guard lies: it can pass because the predicate never fired, and it can
+ * pass on a fixture that could not have contained the defect. Both are answered
+ * with positive controls that run the SAME function over payloads that must
+ * produce the opposite answer.
+ *
+ * THE FIXTURE IS THE LIVE PAYLOAD'S BLOCKS, NOT A SKETCH. Every count and every
+ * shape below was read from `https://api.bainluck.com/api/calibration` on
+ * 2026-09-20 ~03:00Z. That matters twice over:
+ *
+ *   - `heuristic_filter` publishes NO flat `excluded` field — only
+ *     `excluded_by_source` — and it is the LARGEST of the nine at 66,921. A
+ *     module that reads `excluded` alone drops the biggest rule it exists to
+ *     surface, and a hand-written fixture that gave every block an `excluded`
+ *     would never have noticed. It is the one shape this suite would have got
+ *     wrong by guessing.
+ *   - `orphan_partition_filter` is a real, measured ZERO. "Fired zero times" and
+ *     "not measured" are different answers and the fixture carries the first.
+ */
+
+import {
+  readNamedExclusions,
+  NAMED_EXCLUSION_LABELS,
+  EXCLUSIONS_WITH_THEIR_OWN_BULLET,
+} from "@/lib/calibrationNamedExclusions";
+
+/** The six that already have their own sentence on the page, with live counts. */
+const ALREADY_BULLETED = {
+  liquidity_filter: { applies_to: "kalshi", rule: "…yes_bid > 0…", kalshi_included: 632_525, kalshi_excluded: 43_235 },
+  writer_bar_filter: { applies_to: "kalshi", rule: "…", included: 473_290, excluded: 202_470 },
+  esports_multi_bundle_filter: { applies_to: "all", rule: "…", excluded: 187_263 },
+  soccer_2way_filter: { applies_to: "soccer", rule: "…Soccer h2h is 3-way…", excluded: 67_915 },
+  void_filter: { applies_to: "golf", rule: "…did_not_play / withdrew…", excluded: 16_269 },
+  nonexclusive_bundle_filter: { applies_to: "all", rule: "…", excluded: 203_906 },
+};
+
+/** The nine that were named nowhere in `frontend/` before this change. */
+const THE_NINE = {
+  heuristic_filter: {
+    applies_to: "polymarket",
+    rule: "Outcomes resolved by legacy heuristic passes (pass2_guess, pass2_loser, all_losers)…",
+    excluded_by_source: { kalshi: 22_480, polymarket: 44_441 },
+  },
+  kalshi_prop_threshold_filter: {
+    applies_to: "kalshi",
+    rule: "Excludes the corrupt slice of Kalshi player-prop threshold outcomes… llm_sport_category='hockey'…",
+    excluded: 45_102,
+  },
+  poly_placeholder_filter: {
+    applies_to: "polymarket",
+    rule: "Excludes Polymarket outcomes near 0.50 (cp in [0.45, 0.55]) that never showed a real bid…",
+    excluded: 19_697,
+    included: 411_705,
+  },
+  no_winner_filter: {
+    applies_to: "all",
+    rule: "…is_winner has a False default…",
+    excluded: 12_237,
+    excluded_markets: 1_653,
+  },
+  draw_authority_filter: {
+    applies_to: "cricket, soccer",
+    rule: "…#1011: 7-18pp over-prediction…",
+    excluded: 1_805,
+    excluded_markets: 967,
+  },
+  golf_placeholder_filter: {
+    applies_to: "golf",
+    rule: "…mex probabilities can't have two 80%+ outcomes…",
+    excluded: 1_707,
+  },
+  malformed_binary_filter: {
+    applies_to: "all",
+    rule: "…",
+    excluded: 158,
+    both_false_excluded: 154,
+    both_winner_excluded: 4,
+  },
+  weather_wide_spread_filter: {
+    applies_to: "kalshi (weather only)",
+    rule: "…yes_ask - yes_bid >= 0.50…",
+    excluded: 94,
+  },
+  orphan_partition_filter: {
+    applies_to: "all (field shape only)",
+    rule: "…",
+    excluded: 0,
+    excluded_markets: 0,
+  },
+};
+
+/** The live payload, near enough: the fifteen filter blocks plus noise around them. */
+const LIVE = {
+  total_outcomes: 747_028,
+  exclusion_symmetry: { poly_never_traded_in_curve: 19_805 },
+  ...ALREADY_BULLETED,
+  ...THE_NINE,
+};
+
+/** Live counts, largest first — this file's expectation, not the module's output. */
+const EXPECTED_ORDER: ReadonlyArray<readonly [string, number]> = [
+  ["heuristic_filter", 66_921],
+  ["kalshi_prop_threshold_filter", 45_102],
+  ["poly_placeholder_filter", 19_697],
+  ["no_winner_filter", 12_237],
+  ["draw_authority_filter", 1_805],
+  ["golf_placeholder_filter", 1_707],
+  ["malformed_binary_filter", 158],
+  ["weather_wide_spread_filter", 94],
+];
+
+describe("the live payload's nine unnamed rules", () => {
+  test("every one of the eight non-zero rules becomes a row, largest first", () => {
+    const out = readNamedExclusions(LIVE);
+    expect(out).not.toBeNull();
+    expect(out!.rows.map(r => [r.key, r.outcomes])).toEqual(
+      EXPECTED_ORDER.map(([k, n]) => [k, n])
+    );
+  });
+
+  test("the measured zero is a checked zero, not a row and not a silence", () => {
+    const out = readNamedExclusions(LIVE)!;
+    expect(out.rows.some(r => r.key === "orphan_partition_filter")).toBe(false);
+    expect(out.emptyRules).toBe(1);
+    expect(out.unlistedRules).toBe(0);
+  });
+
+  test("the largest rule publishes no flat count and is summed from its sources", () => {
+    // The shape trap, asserted as a shape: if `heuristic_filter` ever grows an
+    // `excluded` field this test still passes, but the fixture proves the module
+    // works on the payload as it is TODAY, where the field does not exist.
+    expect("excluded" in THE_NINE.heuristic_filter).toBe(false);
+    const row = readNamedExclusions(LIVE)!.rows.find(r => r.key === "heuristic_filter");
+    expect(row!.outcomes).toBe(22_480 + 44_441);
+    // …and it is the biggest one, so reading `excluded` alone loses the most.
+    expect(readNamedExclusions(LIVE)!.rows[0].key).toBe("heuristic_filter");
+  });
+
+  test("four of them are bigger than a rule the page already spells out in full", () => {
+    // The reason this is a defect rather than housekeeping: the silence was not
+    // about small rules. If a future payload makes that false, the claim in the
+    // issue and the PR is no longer true and someone should reread it.
+    const voidExcluded = ALREADY_BULLETED.void_filter.excluded;
+    const bigger = EXPECTED_ORDER.filter(([, n]) => n > voidExcluded);
+    expect(bigger.map(([k]) => k)).toEqual([
+      "heuristic_filter",
+      "kalshi_prop_threshold_filter",
+      "poly_placeholder_filter",
+    ]);
+    expect(EXPECTED_ORDER[0][1]).toBeGreaterThan(ALREADY_BULLETED.liquidity_filter.kalshi_excluded);
+  });
+});
+
+describe("it never prints a count that already has its own bullet", () => {
+  test.each([...EXCLUSIONS_WITH_THEIR_OWN_BULLET])("%s is not a row", key => {
+    const out = readNamedExclusions(LIVE)!;
+    expect(out.rows.some(r => r.key === key)).toBe(false);
+  });
+
+  test("and the exclusion is by NAME, not by accident of having no label", () => {
+    // Positive control for the skip: every bulleted filter is present in the
+    // fixture with a large, readable count, so the only thing keeping them out
+    // is the set. Were the skip deleted, they would become rows — not be
+    // counted as unlistable — and `unlistedRules` would stay 0 either way.
+    const out = readNamedExclusions(LIVE)!;
+    expect(out.unlistedRules).toBe(0);
+    for (const key of EXCLUSIONS_WITH_THEIR_OWN_BULLET) {
+      expect(NAMED_EXCLUSION_LABELS[key]).toBeUndefined();
+      expect(LIVE).toHaveProperty(key);
+    }
+  });
+});
+
+describe("a rule the module cannot name is counted, never rendered and never dropped", () => {
+  test("an unknown *_filter lands in unlistedRules", () => {
+    const out = readNamedExclusions({
+      ...LIVE,
+      some_new_filter: { applies_to: "all", rule: "…", excluded: 5_000 },
+    })!;
+    expect(out.rows.some(r => r.key === "some_new_filter")).toBe(false);
+    expect(out.unlistedRules).toBe(1);
+    expect(out.rows).toHaveLength(EXPECTED_ORDER.length);
+  });
+
+  test("a named rule whose count is unreadable lands there too", () => {
+    for (const bad of [{ excluded: "1,805" }, { excluded: -1 }, { excluded: 1.5 }, {}]) {
+      const out = readNamedExclusions({
+        ...LIVE,
+        draw_authority_filter: { applies_to: "soccer", rule: "…", ...bad },
+      })!;
+      expect(out.rows.some(r => r.key === "draw_authority_filter")).toBe(false);
+      expect(out.unlistedRules).toBe(1);
+    }
+  });
+
+  test("a per-source breakdown with a bad member is not half-summed", () => {
+    const out = readNamedExclusions({
+      ...LIVE,
+      heuristic_filter: { excluded_by_source: { kalshi: 22_480, polymarket: null } },
+    })!;
+    expect(out.rows.some(r => r.key === "heuristic_filter")).toBe(false);
+    expect(out.unlistedRules).toBe(1);
+  });
+
+  test("an absent or null block is neither a row nor an unlisted rule", () => {
+    // A payload banked before a rule existed must read as "this artifact
+    // predates the rule", never as a rule the page failed to name.
+    const out = readNamedExclusions({ ...LIVE, weather_wide_spread_filter: null })!;
+    expect(out.unlistedRules).toBe(0);
+    expect(out.rows).toHaveLength(EXPECTED_ORDER.length - 1);
+  });
+});
+
+describe("it renders nothing rather than an empty fold", () => {
+  test.each([
+    ["no payload at all", null],
+    ["a non-object", 7],
+    ["a payload with no filters", { total_outcomes: 10 }],
+    ["only bulleted filters", ALREADY_BULLETED],
+    ["every remaining rule at zero", { orphan_partition_filter: { excluded: 0 } }],
+  ])("%s gives null", (_name, payload) => {
+    expect(readNamedExclusions(payload)).toBeNull();
+  });
+});
+
+describe("the labels are this module's words, not the payload's", () => {
+  test("no label repeats any phrase from the rule string beside it", () => {
+    // #4067 / CERT-2295: the failure mode is not a banned WORD, it is rendering
+    // prose the page does not own. So the test is structural — no six-word run
+    // of a payload `rule` may appear in the label the page shows instead of it.
+    for (const [key, block] of Object.entries(THE_NINE)) {
+      const label = NAMED_EXCLUSION_LABELS[key];
+      expect(typeof label).toBe("string");
+      const words = (block as { rule: string }).rule.split(/\s+/);
+      for (let i = 0; i + 6 <= words.length; i += 1) {
+        expect(label).not.toContain(words.slice(i, i + 6).join(" "));
+      }
+    }
+  });
+
+  test("and carry none of the auditor vocabulary those rules are written in", () => {
+    const AUDITOR = [
+      "yes_bid", "yes_ask", "is_winner", "llm_sport_category", "cp ", "mex",
+      "#", "Queue", "gotcha", "census", "pass2", "condition_id", "h2h",
+    ];
+    for (const label of Object.values(NAMED_EXCLUSION_LABELS)) {
+      for (const token of AUDITOR) expect(label.toLowerCase()).not.toContain(token.toLowerCase());
+    }
+  });
+
+  test("the predicate above can fire", () => {
+    // The control: run the same two checks over a label that IS the payload's
+    // prose. Both must fail, or neither test above is worth anything.
+    const stolen = THE_NINE.poly_placeholder_filter.rule;
+    const words = stolen.split(/\s+/);
+    expect(stolen).toContain(words.slice(0, 6).join(" "));
+    expect(stolen.toLowerCase()).toContain("cp ");
+  });
+
+  test("every listable rule has a label and every label is listable", () => {
+    // Keeps the closed map closed: a label with no rule behind it is dead copy,
+    // a rule with no label is the omission this whole issue is about.
+    expect(Object.keys(NAMED_EXCLUSION_LABELS).sort()).toEqual(Object.keys(THE_NINE).sort());
+  });
+});
