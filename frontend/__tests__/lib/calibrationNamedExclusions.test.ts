@@ -9,7 +9,9 @@
  *
  * THE FIXTURE IS THE LIVE PAYLOAD'S BLOCKS, NOT A SKETCH. Every count and every
  * shape below was read from `https://api.bainluck.com/api/calibration` on
- * 2026-09-20 ~03:00Z. That matters twice over:
+ * 2026-09-20 ~03:00Z — with one deliberate exception, `identity_quarantine_
+ * filter`, which that response does not contain and which is the subject of
+ * #7627; see its own note in `ALREADY_BULLETED`. That matters twice over:
  *
  *   - `heuristic_filter` publishes NO flat `excluded` field — only
  *     `excluded_by_source` — and it is the LARGEST of the nine at 66,921. A
@@ -21,11 +23,53 @@
  *     "not measured" are different answers and the fixture carries the first.
  */
 
+import { readFileSync } from "fs";
+import { join } from "path";
+
 import {
   readNamedExclusions,
   NAMED_EXCLUSION_LABELS,
   EXCLUSIONS_WITH_THEIR_OWN_BULLET,
 } from "@/lib/calibrationNamedExclusions";
+
+/**
+ * #7627 — the payload builder's own source, which is the only honest answer to
+ * "which `*_filter` blocks exist".
+ *
+ * Reading the SERVED payload instead is what put this suite one block short for
+ * five days: `precompute_calibration_main` is a HEAVY_TASK and `bainluck-heavy`
+ * runs behind master (notice 48), so `api.bainluck.com/api/calibration` is a
+ * lagging view of this file and a key master grew on the 14th was still absent
+ * from the response on the 20th.
+ *
+ * Deliberately NOT guarded with a try/catch or a conditional skip: a missing
+ * backend file must turn this suite red and say which path it wanted, because
+ * the failure a soft read produces is a green closure test over an empty
+ * universe — the same fail-open this test exists to close. Precedent for a jest
+ * test reading backend source: `__tests__/ios/conceptAdmissionParity.test.ts`.
+ */
+const PAYLOAD_BUILDER = join(
+  __dirname, "..", "..", "..", "backend", "app", "tasks", "precompute_calibration.py"
+);
+
+function readBackendPayloadSource(): string {
+  return readFileSync(PAYLOAD_BUILDER, "utf8");
+}
+
+/**
+ * Every `*_filter` key the payload dict literal declares.
+ *
+ * Anchored to the eight-space indent of `response = {`'s own members, so a
+ * `relation_to_liquidity_filter` string nested one level deeper is not mistaken
+ * for a block. The character class INCLUDES DIGITS — without them the pattern
+ * silently drops `soccer_2way_filter`, which is the sort of near-miss that makes
+ * a completeness check read complete.
+ */
+function backendFilterKeys(): string[] {
+  const src = readBackendPayloadSource();
+  const found = [...src.matchAll(/^ {8}"([a-z0-9_]+_filter)":/gm)].map(m => m[1]);
+  return [...new Set(found)].sort();
+}
 
 /** The six that already have their own sentence on the page, with live counts. */
 const ALREADY_BULLETED = {
@@ -35,6 +79,21 @@ const ALREADY_BULLETED = {
   soccer_2way_filter: { applies_to: "soccer", rule: "…Soccer h2h is 3-way…", excluded: 67_915 },
   void_filter: { applies_to: "golf", rule: "…did_not_play / withdrew…", excluded: 16_269 },
   nonexclusive_bundle_filter: { applies_to: "all", rule: "…", excluded: 203_906 },
+  // #7627 — the seventh, and the ONLY block here whose count is not a live
+  // reading, because there is no live reading to take: the served payload has
+  // never carried this block (`bainluck-heavy` is behind master, notice 48),
+  // which is precisely how it went missing from the map. The shape is
+  // transcribed from `precompute_calibration.py`'s `identity_quarantine_filter`
+  // literal; the count is a stand-in and NOTHING asserts its magnitude —
+  // `identity_quarantine_filter is skipped at any count` runs the same payload
+  // at zero and non-zero so a future real number cannot change an answer here.
+  identity_quarantine_filter: {
+    applies_to: "all",
+    rule: "…identity-disputed rows held out pending review…",
+    excluded: 1_234,
+    excluded_markets: 56,
+    excluded_cells: [["kalshi", "politics"]],
+  },
 };
 
 /** The nine that were named nowhere in `frontend/` before this change. */
@@ -92,7 +151,7 @@ const THE_NINE = {
   },
 };
 
-/** The live payload, near enough: the fifteen filter blocks plus noise around them. */
+/** The payload, near enough: the sixteen filter blocks plus noise around them. */
 const LIVE = {
   total_outcomes: 747_028,
   exclusion_symmetry: { poly_never_traded_in_curve: 19_805 },
@@ -158,6 +217,52 @@ describe("it never prints a count that already has its own bullet", () => {
   test.each([...EXCLUSIONS_WITH_THEIR_OWN_BULLET])("%s is not a row", key => {
     const out = readNamedExclusions(LIVE)!;
     expect(out.rows.some(r => r.key === key)).toBe(false);
+  });
+
+  test("identity_quarantine_filter is skipped at any count, and never counted as unnamed", () => {
+    // #7627. This one is skipped because the page prints it in full in its own
+    // "Held out, under review" section — so the assertion that matters is that
+    // the answer does not depend on the number, which the fixture cannot supply
+    // honestly. Both ends, plus the middle:
+    for (const excluded of [0, 1, 1_234, 500_000]) {
+      const out = readNamedExclusions({
+        ...LIVE,
+        identity_quarantine_filter: { applies_to: "all", rule: "…", excluded },
+      })!;
+      expect(out.rows.some(r => r.key === "identity_quarantine_filter")).toBe(false);
+      expect(out.unlistedRules).toBe(0);
+      // Not a folded row AND not a "further rule that set aside nothing":
+      // the section below the fold is where a reader is told either way, so
+      // crediting a checked zero here would be the double-naming again.
+      expect(out.emptyRules).toBe(1); // orphan_partition_filter, and only it
+    }
+  });
+
+  test("the skip above would be a silent drop if it were not for the count it shares", () => {
+    // The whole argument for own-bullet status is that the section which DOES
+    // print this count renders on exactly the same condition. In the payload
+    // builder both read one variable: `identity_quarantine_filter.excluded` is
+    // `identity_disputed_excluded`, and `quarantine` is a row when that same
+    // name is `> 0`. If those two ever come apart, a non-zero quarantine can
+    // render nothing anywhere and the skip becomes the silent drop Alex's
+    // #6275/#1902 ruling is against — so this is pinned at the source rather
+    // than argued in a comment.
+    const src = readBackendPayloadSource();
+
+    // `indexOf` returns -1 on a miss and `slice(-1)` would hand the assertions a
+    // one-character string that fails for the wrong reason, so each offset is
+    // checked before it is used. A generous fixed window, not a brace matcher:
+    // this is a coupling check, not a parser.
+    const quarantineAt = src.indexOf('"quarantine": (');
+    expect(quarantineAt).toBeGreaterThan(-1);
+    const quarantineBlock = src.slice(quarantineAt, quarantineAt + 1_200);
+    expect(quarantineBlock).toContain('"outcomes": identity_disputed_excluded');
+    expect(quarantineBlock).toContain("if identity_disputed_excluded > 0");
+
+    const filterAt = src.indexOf('"identity_quarantine_filter": {');
+    expect(filterAt).toBeGreaterThan(-1);
+    const filterBlock = src.slice(filterAt, filterAt + 2_000);
+    expect(filterBlock).toContain('"excluded": identity_disputed_excluded');
   });
 
   test("and the exclusion is by NAME, not by accident of having no label", () => {
@@ -264,5 +369,77 @@ describe("the labels are this module's words, not the payload's", () => {
     // Keeps the closed map closed: a label with no rule behind it is dead copy,
     // a rule with no label is the omission this whole issue is about.
     expect(Object.keys(NAMED_EXCLUSION_LABELS).sort()).toEqual(Object.keys(THE_NINE).sort());
+  });
+});
+
+describe("the map is closed over the BACKEND, not over this file's fixture (#7627)", () => {
+  // The test above closes the map against `THE_NINE`, and `THE_NINE` was
+  // transcribed from the served payload — so for five days the map, the fixture
+  // and the test that checked one against the other were all short the same
+  // block, and agreed with each other perfectly. The universe has to come from
+  // somewhere neither the map nor the fixture can be wrong about.
+
+  test("the key scan finds a real set, not an empty one", () => {
+    // Every assertion below is of the form "this set is covered", and an empty
+    // set is covered by anything. A regex that stops matching — the file is
+    // reformatted, the dict is renamed, the indent changes — would turn the two
+    // tests after this one green while covering nothing. So the scan is checked
+    // for plausibility BEFORE it is used as an authority.
+    const keys = backendFilterKeys();
+    expect(keys.length).toBeGreaterThanOrEqual(15);
+    // Three specimens the scan must find, chosen for what each one proves:
+    // a plain key, the digit-bearing key a naive `[a-z_]` class drops, and the
+    // key whose absence from the served payload is this issue.
+    expect(keys).toContain("heuristic_filter");
+    expect(keys).toContain("soccer_2way_filter");
+    expect(keys).toContain("identity_quarantine_filter");
+    // …and it must not be scooping up nested members: `relation_to_liquidity_
+    // filter` lives inside `writer_bar_filter` at a deeper indent and is a
+    // sentence, not a block.
+    expect(keys).not.toContain("relation_to_liquidity_filter");
+  });
+
+  test("every *_filter the payload builder emits is either labelled or bulleted", () => {
+    const unnamed = backendFilterKeys().filter(
+      key => NAMED_EXCLUSION_LABELS[key] === undefined
+        && !EXCLUSIONS_WITH_THEIR_OWN_BULLET.has(key)
+    );
+    // Named in the message because the next person to see this red will be
+    // adding a rule, and the fix is one line in one of two places.
+    expect({ unnamedInFrontend: unnamed }).toEqual({ unnamedInFrontend: [] });
+  });
+
+  test("and nothing in the frontend names a rule the payload builder does not emit", () => {
+    // The other direction, which the served payload could never have caught
+    // either: a label left behind by a removed rule is copy for a row that can
+    // never render, and the page would keep promising to explain it.
+    const emitted = new Set(backendFilterKeys());
+    const dead = [
+      ...Object.keys(NAMED_EXCLUSION_LABELS),
+      ...EXCLUSIONS_WITH_THEIR_OWN_BULLET,
+    ].filter(key => !emitted.has(key)).sort();
+    expect({ namedButNeverEmitted: dead }).toEqual({ namedButNeverEmitted: [] });
+  });
+
+  test("the two checks above can fail", () => {
+    // Positive control. Both run over `backendFilterKeys()`, so neither can be
+    // exercised by a fixture — this re-runs the same two set operations against
+    // a universe with one extra member and one missing one, and requires each
+    // to report it. Without this, a refactor that made either filter always
+    // return [] would look like a clean bill of health forever.
+    const emitted = new Set([...backendFilterKeys(), "brand_new_filter"]);
+    const unnamed = [...emitted].filter(
+      key => NAMED_EXCLUSION_LABELS[key] === undefined
+        && !EXCLUSIONS_WITH_THEIR_OWN_BULLET.has(key)
+    );
+    expect(unnamed).toEqual(["brand_new_filter"]);
+
+    const shrunk = new Set(backendFilterKeys());
+    shrunk.delete("void_filter");
+    const dead = [
+      ...Object.keys(NAMED_EXCLUSION_LABELS),
+      ...EXCLUSIONS_WITH_THEIR_OWN_BULLET,
+    ].filter(key => !shrunk.has(key)).sort();
+    expect(dead).toEqual(["void_filter"]);
   });
 });
