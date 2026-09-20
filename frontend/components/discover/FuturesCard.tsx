@@ -24,7 +24,7 @@ import { forYouCue } from "@/lib/discover/forYouCue";
 import QuantityGroup from "../QuantityGroup";
 import type { ActionBarProps, CardActionCallbacks } from "./types";
 import { HERO_PROBABILITY_HINT } from "@/lib/discoverFirstRun";
-import { probabilityAuthorityClass } from "@/lib/confidence";
+import { normalizeTier, probabilityAuthorityClass } from "@/lib/confidence";
 
 // Deterministic exposure hash — the same char-fold the card has always used,
 // factored out so the SSR/first-render seed and the post-mount session
@@ -221,6 +221,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     const shownCells = heatmapRows.slice(0, 8);
     const above50 = shownCells.filter((r) => (r.probability ?? 0) >= 0.5);
     const lastAbove50Label = above50.length > 0 ? above50[above50.length - 1].label : null;
+    // #7457 — whether the confidence glyph will actually DRAW, not whether the
+    // payload carried a string. `SignalBars` returns null for a tier it doesn't
+    // recognise, so a separator gated on the raw field prints a lone "·" beside
+    // nothing on a card whose tier is a typo or a new backend value.
+    const drawsConfidenceGlyph = normalizeTier(data.confidence_tier) != null;
     // UX-1052 item 4 — the leader is the highest-probability rung, marked in
     // place. On a date ladder the rows are chronological, so "the answer" is
     // not the top row and had nothing pointing at it.
@@ -265,7 +270,20 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           <div className={`flex flex-wrap items-center gap-1.5 mb-1 ${dismissCornerPad(onDismiss)}`}>
             <span className="text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted">{catStyle.emoji} {category}</span>
             {trending && <TrendBadge inFlow />}
-            <span className="ml-auto text-[11px] text-text-muted">{resolveText}</span>
+            {/* #7457 — the confidence glyph rides the header's right cluster,
+                the way its leaderboard sibling does (L2-160), instead of the
+                summary footer below. L2-183 put it in that footer, and the
+                footer only exists when some rung is over 50%: a ladder whose
+                rungs are all long shots is exactly the card that has no
+                summary, so the glyph vanished on the subset — and whether a
+                reader saw the how-well-sourced signal turned on a property of
+                the market that has nothing to do with sourcing. Here it is
+                unconditional, and the footer is free to be only the summary. */}
+            <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
+              {resolveText && <span>{resolveText}</span>}
+              {drawsConfidenceGlyph && resolveText && <span>·</span>}
+              <SignalBars tier={data.confidence_tier} />
+            </span>
           </div>
           <Link href={detailHref} onClick={onDetailClick} className="block group">
             <h3 className={`text-[15px] font-semibold leading-snug text-text-primary group-hover:text-accent-brand transition-colors ${cue ? "mb-1.5" : "mb-4"}`}>{data.name}</h3>
@@ -312,11 +330,20 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
           />
 
           {/* Summary footer — orphan-free: "All below 50%" is dropped (it read as
-              a context-less phrase). L2-183: the confidence glyph joins the right
-              cluster so this multi-candidate kernel matches its ComparisonCard
-              sibling. Queue 309: the volume figure that used to sit beside the
-              glyph is gone, so the row renders only when something is left in it. */}
-          {(lastAbove50Label || data.confidence_tier) && (
+              a context-less phrase). Queue 309 took the volume figure out; L2-183's
+              confidence glyph moved to the header under #7457, so the summary is
+              all that is left and the row is gated on the summary alone.
+              #7457: it used to be gated on `lastAbove50Label || confidence_tier`,
+              which was written when the glyph lived here and read as "render if
+              anything is left". With the label gone the `||` still admitted the
+              row on the tier, and the reader got a 60px top-bordered band holding
+              one small glyph at the far right and nothing else — on production,
+              between the ladder and the action bar of "Will Trump buy at least
+              part of Greenland?" (4% / 11%), reading as a caption that failed to
+              load. A ladder whose rungs are all long shots is exactly the ladder
+              with no summary, so the two conditions coincided rather than being
+              independent, and the `||` could only ever fire on the empty case. */}
+          {lastAbove50Label && (
             <div className="flex items-center gap-1.5 mt-3.5 pt-3 border-t border-surface-border">
               {/* #4645 — the caption composes with the rung's own words instead
                   of prefixing them. "Above 50% through" was written for the DATE
@@ -328,15 +355,21 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                   quantities (50, 67) in six words. The thing worth saying is the
                   same for both ladders: this is the furthest rung the market
                   still calls better than even. */}
-              {lastAbove50Label && (
-                <>
-                  <span className="text-[12px] text-text-secondary">More likely than not:</span>
-                  <span className="font-mono font-bold text-[13px] text-accent-brand">{lastAbove50Label}</span>
-                </>
-              )}
-              <span className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
-                <SignalBars tier={data.confidence_tier} />
-              </span>
+              {/* #7457 — the rung label is a LABEL, not a figure, so it is set
+                  in the card's own face. The mono face reads right on the rung
+                  labels it was chosen for ("Above 67", "$90K+") and wrong on
+                  the ones that are a phrase: at 390px mono's wide advance broke
+                  "Above 22 million short tons" over two lines and dragged the
+                  caption onto two lines with it, on a card whose own ladder
+                  sets that same label in `text-[12px] font-semibold` sans
+                  (QuantityGroup, wideLabels). `shrink-0` keeps the caption
+                  whole and `min-w-0` lets the label wrap under it rather than
+                  push: the ladder gives the label a fixed 45% slot, the footer
+                  gives it the rest of a line, and neither may cut it — the
+                  same call #7427 makes one component over, for the same
+                  reason (on these labels the tail is the load-bearing token). */}
+              <span className="shrink-0 text-[12px] text-text-secondary">More likely than not:</span>
+              <span className="min-w-0 font-semibold text-[13px] text-accent-brand">{lastAbove50Label}</span>
             </div>
           )}
 
