@@ -118,10 +118,16 @@ async def run(args) -> int:
         # column ever round-trips through an untyped bind (CERT-932's contract,
         # guarded by tests/test_restore_jsonb_bind_contract.py for the restores
         # that carry jsonb).
+        #
+        # `AS e` rather than a bare `e`: both spellings are valid Postgres, but
+        # only this one is also valid on the sqlite rail the tests drive, so the
+        # undo's apply path is covered by a guard instead of being the branch
+        # that production is the first to execute. Nothing about the statement's
+        # meaning changes.
         done = (
             await s.execute(
                 text(
-                    f"UPDATE events e SET status = b.status_before "
+                    f"UPDATE events AS e SET status = b.status_before "
                     f"FROM {BANK_TABLE} b "
                     "WHERE e.id = b.event_id AND e.status = b.status_after"
                 )

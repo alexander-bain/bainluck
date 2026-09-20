@@ -63,6 +63,23 @@ moved on (a game that has since gone ``live``, a re-void by any other arm) is
 skipped and reported by id rather than overwritten. Nothing else on the row is
 touched: no score, no blend, no ``commence_time``.
 
+🔴 THE SWAP IS THE CLAIM, SO THE BANK IS WRITTEN AFTER IT AND ONLY ON A WIN.
+The UPDATE goes first; the bank row is inserted only when it matched. Both are
+in one transaction, so banking first buys nothing for durability — neither can
+commit without the other — and it costs correctness here, because on this cohort
+the race is not hypothetical. These are upcoming games and the kickoff arm is
+firing continuously; losing the swap under the old order left a bank row
+asserting a ``status_after`` this script never wrote. ``restore_…`` keys on
+``e.status = b.status_after``, so the day any other arm moved that event to the
+terminal status the undo would have matched a row it never touched and put it
+back on ``scheduled`` — re-publishing the duplicate on a claim nobody earned.
+
+A lost swap is also the one outcome the pass's own read-back cannot see: rows
+that lose it lose it *because* something moved them out of ``scheduled``, which
+is the column ``candidates()`` filters on. Those ids are therefore carried out of
+the loop and re-read by id, and the run prints ``NOT CLEAN`` — otherwise the
+worst result of the pass reports as ``0 revived rows remain``.
+
 Scope is the #7260 arm's OWN record — the join to
 ``backup_unreachable_suspended_5532`` — for the reason
 :func:`retired_row_start_moved_into_future` gives at length about the revival
@@ -211,7 +228,7 @@ async def candidates(s):
 
 
 async def run(args) -> int:
-    from sqlalchemy import text
+    from sqlalchemy import bindparam, text
 
     from app.models.models import Event
     from app.tasks.base import get_task_session
@@ -247,7 +264,7 @@ async def run(args) -> int:
         ids = await candidates(s)
         print(f"{len(ids)} revived rows are still ahead of their kickoff")
 
-        taken, skipped, kept = [], [], 0
+        taken, skipped, lost, kept = [], [], [], 0
         for event_id in ids:
             event = await s.get(Event, event_id)
             if event is None:
@@ -265,21 +282,28 @@ async def run(args) -> int:
                 f"{event.commence_time}"
             )
             before = event.status
-            # Banked only when the bank exists. A bare plan is allowed to run
-            # without `--backup` (that is what makes it readable before anything
-            # is authorised), and an INSERT into a table no one has created yet
-            # would fail the whole pass with `undefined_table` — turning the
-            # safest invocation into the only one that errors.
-            if args.backup:
-                await s.execute(
-                    text(
-                        f"INSERT INTO {BANK_TABLE} "
-                        "(event_id, status_before, status_after, taken_at) "
-                        "VALUES (:i, :b, :a, now()) "
-                        "ON CONFLICT (event_id) DO NOTHING"
-                    ),
-                    {"i": event.id, "b": before, "a": UNREACHABLE_SUSPENDED_TERMINAL},
-                )
+            # 🔴 THE WRITE IS THE CLAIM ON THE ROW, AND THE BANK RECORDS ONLY
+            # WHAT THAT CLAIM WON. The compare-and-swap is issued FIRST and the
+            # bank entry is written only on `rowcount > 0`.
+            #
+            # It used to be the other way round, on the reasoning that a bank
+            # entry preceding its write is what makes the write reversible. Both
+            # statements are in one transaction, so that ordering buys nothing
+            # for durability — neither can commit without the other — and it
+            # costs correctness on the race this cohort is most exposed to.
+            # These are upcoming games, and the arm that moves `scheduled` to
+            # `live` is firing continuously. Lose that race and the old order
+            # committed a bank row for a write that never happened: the UPDATE
+            # matched nothing, the row was reported skipped, and the bank still
+            # claimed we had put the event on `status_after`.
+            #
+            # That orphan is not inert. `restore_…` restores on
+            # `e.status = b.status_after` — what WE wrote — so the day any other
+            # arm legitimately moves that event to the terminal status, the undo
+            # matches a row it never touched and drags it back to `scheduled`,
+            # re-publishing a duplicate on a claim this repair never earned.
+            # Banking after the swap makes that unrepresentable rather than
+            # merely unlikely.
             moved = (
                 await s.execute(
                     text(
@@ -294,10 +318,31 @@ async def run(args) -> int:
                 )
             ).rowcount
             if moved:
+                # Banked only when the bank exists. A bare plan is allowed to run
+                # without `--backup` (that is what makes it readable before
+                # anything is authorised), and an INSERT into a table no one has
+                # created yet would fail the whole pass with `undefined_table` —
+                # turning the safest invocation into the only one that errors.
+                if args.backup:
+                    await s.execute(
+                        text(
+                            f"INSERT INTO {BANK_TABLE} "
+                            "(event_id, status_before, status_after, taken_at) "
+                            "VALUES (:i, :b, :a, now()) "
+                            "ON CONFLICT (event_id) DO NOTHING"
+                        ),
+                        {
+                            "i": event.id,
+                            "b": before,
+                            "a": UNREACHABLE_SUSPENDED_TERMINAL,
+                        },
+                    )
                 taken.append(label)
             else:
                 # Compare-and-swap lost: something moved this row between the
-                # read and the write. Reported by id, never overwritten.
+                # read and the write. Reported by id, never overwritten, and
+                # NOT banked — see above.
+                lost.append(event.id)
                 skipped.append(label)
             # Flush so the next row's screen sees this one as retired.
             await s.flush()
@@ -341,6 +386,51 @@ async def run(args) -> int:
             f"done: took back {len(taken)}, skipped {len(skipped)}, kept {kept} "
             f"orphans; {left} revived rows remain ahead of their kickoff"
         )
+
+        # 🔴 `left` IS NOT A CLEANLINESS SCORE, AND ON ITS OWN IT LIES ABOUT
+        # EXACTLY THE ROWS THIS PASS FAILED ON. `candidates()` selects
+        # `status = 'scheduled' AND commence_time > now()`. A row that lost the
+        # compare-and-swap lost it BECAUSE something moved it out of
+        # `scheduled` — usually the kickoff arm — so it is no longer counted by
+        # the very query used to report what is left. Skip the report below and
+        # the worst outcome of the pass prints as `0 revived rows remain` while
+        # the duplicate is still on the site, now as a live card.
+        #
+        # It cannot be fixed by widening the read-back's predicate either: once
+        # the game has started the row fails `commence_time > now()` too. So the
+        # lost ids are carried out of the loop and re-read BY ID, which no
+        # population predicate can hide.
+        if lost:
+            # An expanding bindparam rather than `= ANY(:ids)`: the same
+            # statement then runs on Postgres and on the sqlite rail the race
+            # test drives the real loop over, so the reporting path a lost race
+            # depends on is covered by a test instead of being the one branch
+            # that only production ever executes.
+            now_status = dict(
+                (
+                    await s.execute(
+                        text("SELECT id, status FROM events WHERE id IN :ids").bindparams(
+                            bindparam("ids", expanding=True)
+                        ),
+                        {"ids": lost},
+                    )
+                ).all()
+            )
+            print(
+                f"NOT CLEAN: {len(lost)} row(s) moved under this pass and were "
+                f"NOT taken back. They are absent from the {left} above because "
+                "they are no longer 'scheduled'."
+            )
+            for event_id in lost:
+                print(f"  {event_id} is now '{now_status.get(event_id, '?')}'")
+            print(
+                "These have left this repair's population by its own definition "
+                "(revived AND still ahead of kickoff), so re-running will not "
+                "reach them — a started game is not taken off the site by this "
+                "script, and voiding a live fixture is not in this ship. The "
+                "forward #7594 guard stops new ones; an already-live duplicate "
+                "is #2693's. Report these ids there rather than re-running."
+            )
         return 0
 
 

@@ -22,7 +22,7 @@ import importlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine, event as sa_event
+from sqlalchemy import create_engine, event as sa_event, text as sa_text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -151,6 +151,13 @@ class _AsyncShim:  # pragma: no cover - test rail
 START = datetime(2026, 10, 7, 23, 30, tzinfo=timezone.utc)
 
 
+#: What `now()` answers on the sqlite rail. Before `START`, so the fixtures are
+#: upcoming games and `candidates()`'s `commence_time > now()` admits them.
+#: SQLAlchemy stores sqlite DATETIME as `YYYY-MM-DD HH:MM:SS.ffffff`, which
+#: orders lexicographically, so a string of the same shape compares correctly.
+NOW = "2026-10-07 20:00:00.000000"
+
+
 def _database():
     from app.models.models import Base, Event, Sport, Team
 
@@ -163,11 +170,45 @@ def _database():
             2,
             lambda haystack, needle: (haystack or "").find(needle or "") + 1,
         )
+        # `now()` and `to_regclass()` are Postgres. They are registered here
+        # rather than in a second rail so that the tests which drive the whole
+        # of `run()` use the SAME database as the screen tests above — one rail
+        # per file, so a divergence between them cannot hide a defect.
+        dbapi_conn.create_function("now", 0, lambda: NOW)
+        dbapi_conn.create_function(
+            "to_regclass",
+            1,
+            lambda name: _regclass(name),
+        )
 
     Base.metadata.create_all(
         engine, tables=[Sport.__table__, Team.__table__, Event.__table__]
     )
     return Session(engine, expire_on_commit=False)
+
+
+#: Tables `to_regclass` should answer for on the rail. `run()` asks it whether
+#: the #7260 arm's ledger exists; the tests that want the "arm published
+#: nothing" branch drop the name from this set instead of faking a result.
+_REGCLASS_PRESENT: set[str] = set()
+
+
+def _regclass(name):  # pragma: no cover - test rail
+    bare = (name or "").split(".")[-1]
+    return bare if bare in _REGCLASS_PRESENT else None
+
+
+@pytest.fixture(autouse=True)
+def _reset_regclass():
+    """Module-level state is per-test state, or the order of the file decides.
+
+    `_ledger` adds names to `_REGCLASS_PRESENT` and nothing removed them, so a
+    later test asking for the "the arm published nothing here" branch would have
+    silently got the opposite answer depending on which tests ran before it.
+    """
+    _REGCLASS_PRESENT.clear()
+    yield
+    _REGCLASS_PRESENT.clear()
 
 
 def _world(*rows):
@@ -402,9 +443,18 @@ class TestWhatThePassIssues:
         _code, rec = await _run_with(repair, monkeypatch, _args())
         assert len(rec.updates()) == 1
 
-    async def test_an_apply_banks_before_it_writes_and_commits(
+    async def test_an_apply_banks_after_the_swap_it_won_and_commits(
         self, repair, monkeypatch
     ):
+        """The bank follows the write, because the write is the claim.
+
+        This assertion used to run the other way, on the reasoning that a bank
+        entry preceding its write is what makes the write reversible. Both
+        statements are in one transaction, so that ordering buys nothing —
+        neither can commit without the other — and banking first is what let a
+        lost compare-and-swap commit a bank row for a write that never landed
+        (see `TestALostRaceBanksNothingAndIsNotReportedClean`).
+        """
         code, rec = await _run_with(
             repair, monkeypatch, _args(apply=True, backup=True)
         )
@@ -413,8 +463,7 @@ class TestWhatThePassIssues:
         assert rec.rolled_back == 0
         banked = rec.inserts_into_bank(repair.BANK_TABLE)
         assert len(banked) == 1
-        # The bank entry precedes the write it makes reversible.
-        assert rec.sql.index(banked[0]) < rec.sql.index(rec.updates()[0])
+        assert rec.sql.index(banked[0]) > rec.sql.index(rec.updates()[0])
 
     async def test_the_write_is_a_compare_and_swap_on_the_status_read(
         self, repair, monkeypatch
@@ -458,3 +507,266 @@ class TestAPairThatIsEntirelyOursKeepsOneRow:
 
         # The second is now the only row a reader can reach, and is kept.
         assert await _screen(session, second) is False
+
+
+# ─── the whole pass, over a real database, through a real lost race ──────────
+# CERT-3194 required the run path be exercised "through `scheduled -> live`
+# without a false-clean result". It cannot be done on `_Recorder`: that fake
+# answers `rowcount=1` to every UPDATE, so a lost compare-and-swap is not
+# representable on it and a test written there would pass against the defect.
+# These drive `run()` over the sqlite rail, where the CAS is a real statement
+# whose rowcount is whatever the data says.
+
+
+class _AsyncSession:  # pragma: no cover - test rail
+    """The async surface `run()` expects, over a session that really executes.
+
+    `before_update` is invoked once, immediately before the first
+    `UPDATE events` reaches the database — the instant a competing writer would
+    land in production. It fires inside this transaction rather than a second
+    connection because sqlite serialises writers; what the test needs is that
+    the row's status has changed between the read and the compare-and-swap, and
+    that is exactly what this produces.
+    """
+
+    def __init__(self, session, before_update=None):
+        self._s = session
+        self._before_update = before_update
+        self.sql: list[str] = []
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.sql.append(sql)
+        if sql.strip().upper().startswith("UPDATE EVENTS") and self._before_update:
+            hook, self._before_update = self._before_update, None
+            hook(self._s)
+        return self._s.execute(statement, params if params is not None else {})
+
+    async def get(self, model, pk):
+        return self._s.get(model, pk)
+
+    async def flush(self):
+        self._s.flush()
+
+    async def commit(self):
+        self._s.commit()
+
+    async def rollback(self):
+        self._s.rollback()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _ledger(session, repair, ids):
+    """Create the #7260 arm's ledger and record the ids it revived."""
+    table = repair.UNREACHABLE_SUSPENDED_BACKUP_TABLE
+    session.execute(sa_text(f"CREATE TABLE {table} (event_id INTEGER)"))
+    for event_id in ids:
+        session.execute(
+            sa_text(f"INSERT INTO {table} (event_id) VALUES (:i)"), {"i": event_id}
+        )
+    session.flush()
+    _REGCLASS_PRESENT.add(table)
+    _REGCLASS_PRESENT.add(repair.BANK_TABLE)
+
+
+def _a_revived_twin_and_its_canonical_row():
+    """The production shape: one game, two cards, sides reversed."""
+    return _world(
+        ("icehockey_other", "Penguins", "Capitals", "scheduled", timedelta()),
+        (
+            "icehockey_nhl",
+            "Washington Capitals",
+            "Pittsburgh Penguins",
+            "scheduled",
+            timedelta(),
+        ),
+    )
+
+
+async def _drive(module, monkeypatch, session, args, before_update=None):
+    """Run a script's real `run()` over `session`, returning the async wrapper.
+
+    `module` is the repair or the restore. The producer app is read off the
+    repair either way, because the restore deliberately owns no copy of it — it
+    imports `wrong_app_refusal`, which is the point of
+    `test_the_undo_earns_the_same_gate_by_importing_it`.
+    """
+    import app.tasks.base as base
+
+    producer = importlib.import_module(
+        "scripts.repair_7594_revoid_published_reversed_twins"
+    ).PRODUCER_APP
+
+    shim = _AsyncSession(session, before_update=before_update)
+    monkeypatch.setenv("HEROKU_APP_NAME", producer)
+    monkeypatch.setattr(base, "get_task_session", lambda: shim)
+    code = await module.run(args)
+    return code, shim
+
+
+def _bank_rows(session, repair):
+    return session.execute(
+        sa_text(f"SELECT event_id, status_before, status_after FROM {repair.BANK_TABLE}")
+    ).all()
+
+
+def _status(session, event_id):
+    return session.execute(
+        sa_text("SELECT status FROM events WHERE id = :i"), {"i": event_id}
+    ).scalar()
+
+
+@pytest.mark.asyncio
+class TestALostRaceBanksNothingAndIsNotReportedClean:
+    """CERT-3194's required repair, 7594-CONCURRENT-TAKEBACK-CANNOT-STRAND-OR-MISBANK."""
+
+    async def test_the_control_a_clean_pass_really_does_bank_and_void(
+        self, repair, monkeypatch, capsys
+    ):
+        """THE STRAWMAN GUARD. Without this the race tests prove nothing.
+
+        Every assertion below is of the form "the bank is empty" / "the status
+        did not move". A rig that silently selected no rows at all would satisfy
+        all of them. This is the same rig with no competing writer, and it must
+        take the row back and bank exactly one row.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+        )
+
+        assert code == 0
+        assert _status(session, revived.id) == UNREACHABLE_SUSPENDED_TERMINAL
+        assert _bank_rows(session, repair) == [
+            (revived.id, "scheduled", UNREACHABLE_SUSPENDED_TERMINAL)
+        ]
+        out = capsys.readouterr().out
+        assert "took back 1" in out
+        assert "NOT CLEAN" not in out
+
+    async def test_a_row_that_goes_live_under_the_pass_is_not_banked(
+        self, repair, monkeypatch, capsys
+    ):
+        """The misbank. The whole defect in one assertion.
+
+        Under the old order the INSERT preceded the UPDATE, so this pass
+        committed a bank row asserting a `status_after` it never wrote.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def kickoff(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
+                {"i": revived.id},
+            )
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=kickoff,
+        )
+
+        assert code == 0
+        # The compare-and-swap correctly refused to overwrite the live row...
+        assert _status(session, revived.id) == "live"
+        # ...and nothing was banked for a write that never happened.
+        assert _bank_rows(session, repair) == []
+        assert "SKIPPED, moved under us" in capsys.readouterr().out
+
+    async def test_the_lost_row_is_not_reported_as_a_clean_sweep(
+        self, repair, monkeypatch, capsys
+    ):
+        """The false clean.
+
+        `candidates()` filters `status = 'scheduled'`, and this row lost the
+        swap precisely because something moved it out of `scheduled`. So the
+        read-back counts zero and the pass's worst outcome would otherwise print
+        as `0 revived rows remain ahead of their kickoff`.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def kickoff(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
+                {"i": revived.id},
+            )
+
+        await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=kickoff,
+        )
+
+        out = capsys.readouterr().out
+        # The misleading line is still printed — it is a true statement about
+        # the `scheduled` population — but it is no longer the last word.
+        assert "0 revived rows remain" in out
+        assert "NOT CLEAN" in out
+        # Named by id, and by where it actually went, which no population
+        # predicate can hide.
+        assert f"{revived.id} is now 'live'" in out
+
+    async def test_the_undo_cannot_later_claim_a_row_the_repair_never_wrote(
+        self, repair, restore, monkeypatch, capsys
+    ):
+        """The consequence CERT-3194 named, closed end to end.
+
+        An orphan bank row is not inert. `restore_…` matches on
+        `e.status = b.status_after` — what WE wrote — so once any other arm
+        moves that event to the terminal status, an undo would match a row this
+        repair never touched and put it back on `scheduled`, re-publishing the
+        duplicate. With nothing banked there is nothing for it to match.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def kickoff(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
+                {"i": revived.id},
+            )
+
+        await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=kickoff,
+        )
+        capsys.readouterr()
+
+        # Some other arm now legitimately retires the event — the state the
+        # orphan bank row would have falsely claimed the repair had written.
+        session.execute(
+            sa_text("UPDATE events SET status = :s WHERE id = :i"),
+            {"s": UNREACHABLE_SUSPENDED_TERMINAL, "i": revived.id},
+        )
+        session.flush()
+
+        code, _shim = await _drive(
+            session=session,
+            module=restore,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True),
+        )
+
+        assert code == 0
+        # NOT dragged back to `scheduled`.
+        assert _status(session, revived.id) == UNREACHABLE_SUSPENDED_TERMINAL
+        assert "restored 0" in capsys.readouterr().out
