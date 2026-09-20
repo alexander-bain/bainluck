@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, distinct, and_, or_, func
+from sqlalchemy import select, distinct, and_, or_, func, literal
 from sqlalchemy.orm import selectinload
 
 from app.models import Event, Sport
@@ -1093,6 +1093,25 @@ UNREACHABLE_SUSPENDED_INFLIGHT_KEY = "events:unreachable_suspended_inflight"
 #: the gap against the configured limit, so the two cannot drift into a hole.
 UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
 
+#: Per-pass ceiling on the #7260 revival arm.
+#:
+#: SIZED ON THE CADENCE, NOT ON THE BACKLOG. `revive_retired_future_starts` fires
+#: every 10 minutes, so 25 drains the 135 rows measured on 2026-09-20 inside an
+#: hour while keeping each pass's twin screen — one bounded read per candidate —
+#: cheap. It is a blast-radius bound rather than a throttle: the steady state
+#: after the first drain is a recall that returns nothing, because a revived row
+#: leaves the population for good (`scheduled` is not `voided`, and the
+#: retirement arm selects only `suspended` rows whose start is already past, so
+#: neither can re-select it and the two cannot oscillate).
+#:
+#: Deliberately NOT behind the Redis door the retirement arm uses. That door
+#: exists because that arm writes a TERMINAL; this one writes a row back onto the
+#: schedule, per-row screened and trivially undone, which is the same argument
+#: `_is_bogus_future_settled`'s two siblings above already run on with no door at
+#: all. A door here would also defeat the ship: an arm that needs an attended
+#: enable leaves the games invisible until somebody remembers to turn it on.
+UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS = 25
+
 
 def unreachable_suspended_floor():
     """How long past kick-off before the last door is agreed to be shut? (#6347)
@@ -1149,6 +1168,109 @@ async def _row_has_market_anchor(session, event_id) -> bool:
             )
         ).scalar()
     )
+
+
+#: How far apart two rows for one fixture may sit and still be the same fixture.
+#:
+#: The window is wide because the whole population this screens is rows whose
+#: clock was WRONG (#4590: `commence_time` minted as the ingest clock). A tight
+#: window would ask the twin test to trust the very field whose unreliability
+#: created the defect — it would read "no survivor" for a genuine duplicate whose
+#: own clock is off by a day and revive straight into the harm the screen exists
+#: to prevent. 30h spans a date-line slip plus a postponement to the next
+#: evening; erring wide costs a refusal (a row stays invisible, and #2693 gets
+#: it), erring narrow costs a twin.
+SURVIVING_COUNTERPART_WINDOW = timedelta(hours=30)
+
+
+async def _row_has_surviving_counterpart(session, event) -> bool:
+    """Does a row a reader can still reach hold this same fixture? (#7260)
+
+    The revival verdict's ``has_surviving_counterpart`` argument, and the line
+    between this arm and #2693's twin authority (D39). Kept a separate read for
+    the reason :func:`_row_has_market_anchor` gives: a boolean smuggled out of a
+    WHERE clause is a rule no test can put a counter-example to.
+
+    "Reachable" is spelled as NOT retired rather than as an allowlist of live
+    statuses. A `completed` sibling is every bit as much a second row for one
+    game as a `scheduled` one — the harm in gotcha #32 is two rows, not two
+    upcoming rows — and an allowlist would silently stop screening the day a
+    status is added to the vocabulary, which is exactly how #4114 happened.
+
+    Name containment runs BOTH directions because the two rows come from
+    different mints and one is routinely the other's prefix ("Maple Leafs" vs
+    "Toronto Maple Leafs"). Matched on ``COALESCE(normalized, name)`` so a row
+    that has been through normalisation is compared on the same footing as one
+    that has not.
+
+    SCREEN IN SQL, VERDICT IN PYTHON — the same split the retirement arm makes,
+    and here it is also what makes the read affordable. Measured 2026-09-20: the
+    ±30h window alone returns up to **940** rows for a `soccer_other` candidate
+    (881 on average), and this runs per candidate. Pushing the containment into
+    the WHERE clause cuts that to the handful that could possibly match, while
+    the Python pass below re-asks the same question so the rule still has a place
+    a test can put a counter-example to.
+
+    THE STATUS TEST IS DELIBERATELY NOT IN THE SCREEN. :data:`RETIRED_STATUSES`
+    is documented as a membership set that is never spent on an ``IN`` — "the
+    surfaces that emit SQL are allowlists and must stay allowlists" — so it is
+    asked in Python, where it is a frozenset lookup, and the screen stays a pure
+    narrowing.
+    """
+    from app.utils.event_completion import is_retired_event_status
+
+    home = (event.home_team_normalized or event.home_team_name or "").lower()
+    away = (event.away_team_normalized or event.away_team_name or "").lower()
+    if not home or not away:
+        # FAIL CLOSED. A row with no usable name cannot be shown to be an
+        # orphan, and the cost of guessing wrong is a twin.
+        return True
+
+    home_col = func.lower(
+        func.coalesce(Event.home_team_normalized, Event.home_team_name)
+    )
+    away_col = func.lower(
+        func.coalesce(Event.away_team_normalized, Event.away_team_name)
+    )
+
+    others = (await session.execute(
+        select(
+            Event.id,
+            Event.status,
+            Event.home_team_normalized,
+            Event.home_team_name,
+            Event.away_team_normalized,
+            Event.away_team_name,
+        ).where(
+            Event.id != event.id,
+            Event.sport_id == event.sport_id,
+            Event.commence_time
+            >= event.commence_time - SURVIVING_COUNTERPART_WINDOW,
+            Event.commence_time
+            <= event.commence_time + SURVIVING_COUNTERPART_WINDOW,
+            or_(
+                func.strpos(home_col, home) > 0,
+                func.strpos(literal(home), home_col) > 0,
+            ),
+            or_(
+                func.strpos(away_col, away) > 0,
+                func.strpos(literal(away), away_col) > 0,
+            ),
+        )
+    )).all()
+
+    for row in others:
+        if is_retired_event_status(row.status):
+            continue
+        other_home = (row.home_team_normalized or row.home_team_name or "").lower()
+        other_away = (row.away_team_normalized or row.away_team_name or "").lower()
+        if not other_home or not other_away:
+            continue
+        if (home in other_home or other_home in home) and (
+            away in other_away or other_away in away
+        ):
+            return True
+    return False
 
 
 def _unreachable_suspended_budget() -> int:
@@ -4184,6 +4306,131 @@ _WP_BACKFILL_DURATION_HOURS = {
     "mma": 3.5,
 }
 _WP_BACKFILL_DEFAULT_HOURS = 3.0
+
+
+async def _revive_retired_future_starts_impl() -> dict:
+    """Give back a #5532-retired row whose start has moved into the future (#7260).
+
+    WHAT A READER SEES WITHOUT THIS. 135 upcoming games are absent from the site,
+    the NHL's whole opening week among them, because the only row we hold for
+    each is ``voided`` — which every list surface excludes by allowlist and the
+    by-id read hides. ``/search?q=maple leafs`` renders the question "Predators
+    vs. Maple Leafs — Maple Leafs 53% — Oct 6" and the game behind it has no
+    page. We show the question and hide the game.
+
+    Measured on production 2026-09-20: 163 rows are ``voided`` with a future
+    start (114 ``soccer_other``, 42 ``icehockey_other``, 7 ``basketball_other``),
+    up from 75 the day before — the population ACCRUES — and 135 of them are
+    orphans. All 163 were retired by the #5532 arm.
+
+    THE VOID WAS CORRECT WHEN IT FIRED and this task does not second-guess it;
+    ``retired_row_start_moved_into_future`` carries that argument in full, along
+    with why a guard on the retire decision is inert (``future_dated`` at
+    retirement is 0 across all 13,588 retirements) and why the scope is the
+    backup table's id list rather than the retirement predicate (2,544 unrelated
+    ``voided`` rows match that predicate).
+
+    NOT AN ARM OF ``_transition_event_statuses_impl``, though its siblings there
+    are the same shape of repair. That task is the 60s ``realtime`` beat and
+    every arm in it is an O(small) single-table select; this one joins the backup
+    table and then asks a per-row twin screen, and the population it serves moves
+    on the timescale of SCHEDULE CORRECTIONS — hours, not seconds. Running it
+    1,440 times a day to do nothing 1,439 of them would be paying a realtime
+    budget for a background job. Its own beat also keeps it out of that
+    function's select sequence, which its tests pin positionally.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.event_completion import (
+        RETIRED_REVIVAL_TOLERANCE,
+        UNREACHABLE_SUSPENDED_TERMINAL,
+        retired_row_start_moved_into_future,
+    )
+
+    stats = {
+        "candidates": 0,
+        "revived": 0,
+        "refused_surviving_twin": 0,
+        "backup_table_present": False,
+    }
+
+    async with get_task_session() as session:
+        now = datetime.now(timezone.utc)
+
+        # THE JOIN IS THE SCOPE AND THE TABLE'S ABSENCE IS A NO-OP, NOT AN ERROR.
+        # No backup table ⇒ this arm never retired anything ⇒ there is nothing to
+        # give back. But the JOIN would RAISE rather than return empty, so the
+        # existence check comes first — the same `to_regclass` gate the
+        # retirement arm puts ahead of its own write, for the same reason.
+        stats["backup_table_present"] = bool(
+            (await session.execute(
+                _sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+                {"t": f"public.{UNREACHABLE_SUSPENDED_BACKUP_TABLE}"},
+            )).scalar()
+        )
+        if not stats["backup_table_present"]:
+            logger.info(
+                "#7260 revival skipped: %s does not exist, so this arm has "
+                "retired nothing to give back.",
+                UNREACHABLE_SUSPENDED_BACKUP_TABLE,
+            )
+            return stats
+
+        # Oldest first: the soonest kickoff is the one a reader is most likely to
+        # be looking for tonight, and draining in arrival order starves the tail
+        # (gotcha #41). The population is not expiring — a future-dated row only
+        # becomes more urgent as its start approaches — so oldest-first under a
+        # cap is the whole ordering question here.
+        candidate_ids = (await session.execute(
+            _sql_text(
+                "SELECT e.id FROM events e JOIN "
+                f"{UNREACHABLE_SUSPENDED_BACKUP_TABLE} b ON b.event_id = e.id "
+                "WHERE e.status = :terminal AND e.commence_time > :cutoff "
+                "ORDER BY e.commence_time ASC LIMIT :cap"
+            ),
+            {
+                "terminal": UNREACHABLE_SUSPENDED_TERMINAL,
+                "cutoff": now + RETIRED_REVIVAL_TOLERANCE,
+                "cap": UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS,
+            },
+        )).scalars().all()
+        stats["candidates"] = len(candidate_ids)
+
+        for event_id in candidate_ids:
+            event = await session.get(Event, event_id)
+            if event is None:
+                continue
+            # The twin screen is ASKED PER ROW and it is a JOIN, not a column, so
+            # the recall cannot carry it — the same reason `market_anchored` is
+            # handed to the retirement verdict rather than left in its WHERE
+            # clause. Measured 2026-09-20: 28 of the 163 have a survivor and
+            # every one is `soccer_other`; all 42 NHL and all 7 WNBA rows are
+            # orphans, so the marquee population this ship exists for carries no
+            # twin risk at all.
+            has_twin = await _row_has_surviving_counterpart(session, event)
+            if not retired_row_start_moved_into_future(
+                event.status,
+                event.commence_time,
+                now,
+                retired_by_the_arm=True,
+                has_surviving_counterpart=has_twin,
+            ):
+                if has_twin:
+                    stats["refused_surviving_twin"] += 1
+                continue
+            event.status = "scheduled"
+            stats["revived"] += 1
+            logger.info(
+                "#7260 revived event %s (%s vs %s) %s→scheduled: retired by the "
+                "#5532 arm, start has since moved to %s (%.0fh from now) and no "
+                "surviving row holds this fixture.",
+                event.id, event.home_team_name, event.away_team_name,
+                UNREACHABLE_SUSPENDED_TERMINAL,
+                event.commence_time,
+                (event.commence_time - now).total_seconds() / 3600,
+            )
+
+    return stats
 
 
 def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):

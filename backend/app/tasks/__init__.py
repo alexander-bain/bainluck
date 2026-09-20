@@ -750,6 +750,12 @@ celery_app.conf.task_routes = {
     "app.tasks.stamp_mlb_statpal_fixtures": {"queue": "background"},
     "app.tasks.heartbeat": {"queue": "realtime"},
     "app.tasks.transition_event_statuses": {"queue": "realtime"},
+    # #7260. Declared rather than left to `task_default_queue` — a default is not
+    # a decision. `background` and NOT `realtime`, where its sibling repairs run:
+    # what it watches is a `commence_time` correction from a schedule source,
+    # which is hours-scale, and it does a join plus a per-row twin screen that
+    # has no business on a 60s beat. Idle cost is two indexed reads per 10 min.
+    "app.tasks.revive_retired_future_starts": {"queue": "background"},
     # #3765 (LAT-P179, Fable D51). BACK ON `realtime`, where #2236 (LAT-P101) put
     # it. D68-next (#3060, L1B-050) moved it to `heavy` on a real measurement;
     # this moves it back on another one, and the honest summary is that NEITHER
@@ -5950,6 +5956,26 @@ def transition_event_statuses():
     return _tracked_run("transition_statuses", _transition_event_statuses_impl())
 
 
+@celery_app.task(name="app.tasks.revive_retired_future_starts")
+def revive_retired_future_starts():
+    """Give back a #5532-retired row whose start has moved into the future (#7260).
+
+    ``voided`` is terminal and absorbing, so when a real schedule source later
+    corrects a `commence_time` that was minted as an ingest clock (#4590), the
+    correction lands on a row no reader can reach. 135 upcoming games — the NHL's
+    whole opening week among them — are absent from the site for this reason.
+
+    Deliberately its own beat rather than an arm of `transition_event_statuses`:
+    the population moves on the timescale of schedule corrections, not seconds.
+    See `_revive_retired_future_starts_impl` for why, and for the two fences
+    (the backup-table scope and the twin screen) that bound it.
+    """
+    from app.tasks.espn_sync import _revive_retired_future_starts_impl
+    return _tracked_run(
+        "revive_retired_future_starts", _revive_retired_future_starts_impl()
+    )
+
+
 # =============================================================================
 # Beat schedule
 # =============================================================================
@@ -6287,6 +6313,14 @@ celery_app.conf.beat_schedule = {
     "transition-event-statuses": {
         "task": "app.tasks.transition_event_statuses",
         "schedule": 60.0,
+    },
+    # #7260 — every 10 min. Sized on what it watches: a `commence_time`
+    # correction arriving from a schedule source, which is hours-scale. Cheap
+    # when idle (one `to_regclass` plus one indexed recall that returns nothing
+    # once the backlog is drained) and it must not sit on the 60s realtime beat.
+    "revive-retired-future-starts": {
+        "task": "app.tasks.revive_retired_future_starts",
+        "schedule": 600.0,
     },
     "match-prediction-markets": {
         "task": "app.tasks.match_prediction_markets",
