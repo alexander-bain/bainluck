@@ -29,9 +29,32 @@ from app.utils.settlement_stamp import (
     settled_point_timestamp,
 )
 
-# A fixed clock. Every anchor below is an offset FROM it and nothing branches on
-# the real time (gotcha #44).
-NOW = datetime(2026, 9, 15, 11, 33, 24, tzinfo=timezone.utc)
+# A clock anchored to the RUN, not to a calendar date (gotcha #44).
+#
+# It used to read `datetime(2026, 9, 15, 11, 33, 24, tzinfo=timezone.utc)` — the
+# instant of the production observation in the docstring above. That is a fine
+# anchor for a test that only looks backwards, and every `NOW - …` specimen here
+# is one. But the specimens this file exists for look FORWARDS: the whole defect
+# is a settled market whose `resolution_date` sits in the FUTURE (gotcha #14),
+# and `_apply_settled_winner_freeze` reads the REAL clock to decide that. A
+# calendar-pinned anchor therefore gives every `NOW + …` specimen an expiry date,
+# and the ladder silently starts answering from a different arm once it passes.
+#
+# They expired. `NOW + timedelta(days=5, hours=10)` — the Vuelta specimen — came
+# due at 2026-09-20 21:33:24Z and took master red on a tree whose four backend
+# shards had all passed 35 minutes earlier; the failure printed that exact
+# instant as the champion's dot. The four `NOW + timedelta(days=6)` controls
+# below were due the next morning, and those fail QUIETLY: a control that stops
+# describing a future schedule still passes, it just stops guarding the arm it
+# names.
+#
+# So the anchor floats and the offsets are literal: every `NOW + …` is genuinely
+# ahead of the real clock and every `NOW - …` genuinely behind it, at any run
+# time. Nothing below branches on the real time — offset first, then truncate —
+# and no assertion compares against an absolute date. Proven over 12 faked
+# clocks (including the far-future points that catch calendar-expiring fixtures)
+# by `backend/scripts/clock_sweep.py`.
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def _outcome(oid, name, prob=0.5, is_winner=False):
@@ -165,8 +188,8 @@ class TestTheFreezeOnTheSpecimenShape:
         rider = _outcome(229691386, "Tadej Pogacar", prob=0.0)
         market = _market(
             [champ, rider],
-            resolution_date=NOW + timedelta(days=5, hours=10),   # 2026-09-20
-            settled_at=NOW - timedelta(hours=24),                # 2026-09-14
+            resolution_date=NOW + timedelta(days=5, hours=10),   # the schedule, still ahead
+            settled_at=NOW - timedelta(hours=24),                # the settlement, a day back
         )
         # The champion carries NO charted snapshots — the synthesize branch.
         oh = {
