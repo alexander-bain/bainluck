@@ -146,15 +146,44 @@ function ourBenchmarkRow(html: string): string {
   return html.slice(start, next);
 }
 
-/** Visible text: tags dropped, the entities this page emits decoded. */
-function text(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&ndash;/g, "–")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
+/** The entities `renderToStaticMarkup` emits on this page, in ONE table. */
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#x27;": "'",
+  "&#39;": "'",
+  "&nbsp;": " ",
+  "&ndash;": "–",
+};
+
+/**
+ * Visible text of a markup fragment: tags dropped, entities decoded, whitespace
+ * collapsed.
+ *
+ * A SCAN and a single-pass decode, deliberately — and the first draft of this
+ * file was neither. It was `.replace(/<[^>]*>/g, "")` followed by five more
+ * `.replace` calls, and CodeQL failed the PR for it with the same two HIGH
+ * alerts `benchmarkRowCarriesItsPerBucketWord7225.test.tsx` already records
+ * against the identical first draft: `js/incomplete-multi-character-sanitization`
+ * and `js/double-escaping`. Both are real rather than test-only noise — a
+ * one-pass `<...>` delete is an HTML sanitizer's exact shape and is wrong on
+ * nested angle brackets, and decoding `&amp;` in its own pass lets an earlier
+ * pass's output be re-read by a later one. The scan cannot mis-handle a nested
+ * bracket; the decode is one regex over one table, so no replacement's output is
+ * ever re-processed. See that file's `text()` for the longer note.
+ */
+function text(fragment: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out
+    .replace(/&(?:amp|lt|gt|quot|nbsp|ndash|#x27|#39);/g, m => ENTITIES[m])
     .replace(/\s+/g, " ")
     .trim();
 }
