@@ -94,6 +94,8 @@ final class AReaderCanReachOlderPricesFromASparseChart7350Tests: XCTestCase {
             "one observation is not a line; the plot must not be drawn through a single price"
         )
 
+        add(Self.shot(app, "7350-1-sparse-7d-with-chips"))
+
         // ═══ THE WAY OUT ═══
         widest.tap()
 
@@ -110,6 +112,7 @@ final class AReaderCanReachOlderPricesFromASparseChart7350Tests: XCTestCase {
             counted.exists,
             "the sparse sentence must go away once its window has a chart in it"
         )
+        add(Self.shot(app, "7350-2-widest-range-plots-the-older-history"))
 
         // And back: the chips still work in the other direction, so the reader is
         // not one-way-doored into the widest window.
@@ -121,6 +124,17 @@ final class AReaderCanReachOlderPricesFromASparseChart7350Tests: XCTestCase {
                 .waitForExistence(timeout: UITestLaunch.contentTimeout),
             "returning to 7d must return to the counted sentence, not to a stale chart"
         )
+        add(Self.shot(app, "7350-3-back-to-7d"))
+    }
+
+    /// Three frames, kept always: the state Alex photographed (now with chips), the
+    /// history one tap reaches, and the way back. An assertion says the chart
+    /// EXISTS; only a frame says what a reader is looking at.
+    private static func shot(_ app: XCUIApplication, _ name: String) -> XCTAttachment {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        return attachment
     }
 }
 

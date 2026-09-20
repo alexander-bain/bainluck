@@ -590,7 +590,14 @@ struct EvolutionChartView: View {
     static func sparseCopy(
         windowInstants: Int, totalInstants: Int, windowWord: String
     ) -> SparseCopy {
-        let seen = max(0, totalInstants)
+        // ONE clamp, not two: `guard seen > 0` below already sends every
+        // non-positive total to the honest sentence, so wrapping this in
+        // `max(0,)` as well was a second copy of the same rule — measured
+        // equivalent over every input pair in -50...50 by native/260's
+        // mutation run, which is exactly how a redundant guard shows up.
+        // The clamp on `inWindow` is NOT redundant and stays: it is what
+        // stops a negative window count inflating `earlier`.
+        let seen = totalInstants
         let inWindow = max(0, min(windowInstants, seen))
         let earlier = seen - inWindow
 
