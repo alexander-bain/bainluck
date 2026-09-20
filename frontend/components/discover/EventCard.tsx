@@ -386,11 +386,34 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
             {data.home_score != null && data.away_score != null && data.home_score !== data.away_score && (
               <span className="text-sm font-semibold text-text-primary">
                 {/* UX-1065 (#2936): the winner is named by the pair-aware short
-                    name, so this sentence can never read "FC won". */}
+                    name, so this sentence can never read "FC won".
+                    #7540 — and NO abbreviation is passed, which is the whole of
+                    that issue. The helper's abbreviation branch is a PAIR-
+                    SYMMETRY rescue: its own docstring keeps it for the case
+                    where one side has given up on the last-word rule and the
+                    card would otherwise read "IPS vs Liverpool", and it fires
+                    only when BOTH sides carry a code. This slot renders ONE
+                    name in a prose sentence, so there is no pair on screen to
+                    keep symmetric and it collects none of that benefit — only
+                    the cost. Production 2026-09-20 15:57Z, page one slot 11:
+                    a card titled "Sunderland @ Manchester City" said "MNC won",
+                    because "City" is a club-type token, `teamShortName`
+                    correctly declined to shorten, and `gaveUp` read that
+                    perfectly good FULL NAME as a failure. Measured over all 590
+                    settled-and-decided events of the previous 7 days, 24 (4.1%)
+                    printed a code where a club name was in hand — including
+                    "EVE won" for Ipswich Town @ Everton, where the WINNER is
+                    coded only because its opponent is called "Ipswich Town".
+                    `lib/eventOutcome.ts` withholds the abbreviation at its own
+                    winner slot for this reason and says so; this is the same
+                    decision at the other one. The pair FORM stays: it is what
+                    sees two sides shortening to one word (Real Madrid v
+                    Atlético Madrid), and with no code in hand that branch
+                    returns both FULL names, which is the reading we want. */}
                 {(() => {
                   const pair = teamShortNames(
-                    { name: data.home_team, abbreviation: data.home_team_data?.abbreviation },
-                    { name: data.away_team, abbreviation: data.away_team_data?.abbreviation },
+                    { name: data.home_team },
+                    { name: data.away_team },
                   );
                   return data.home_score > data.away_score ? pair.home : pair.away;
                 })()} won
