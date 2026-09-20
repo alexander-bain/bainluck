@@ -1535,10 +1535,37 @@ export default function CalibrationPage() {
               3.5 — a midpoint that appears nowhere on the page, and one whose
               green said "excellent" for a range whose top half the footnote
               itself excluded. A range is drawn as a band between its ends. */}
+          {/* #7524. A fourth row was here: "Iowa Electronic Markets (Berg et al.
+              2008) — 1.5pp", plotted grey at 15% of this section's 0-10pp axis
+              beside our blue 1.0pp. It is not a calibration figure. Further
+              Reading, 5,500px down the same page, is where our 1.5pp comes from
+              and says what it is in our own words: "The Iowa Electronic Markets
+              predicted presidential outcomes within 1.5pp, outperforming 74% of
+              polls" — an absolute error on predicted vote SHARE. Ours is a
+              per-bucket calibration error: bin the forecasts by the probability
+              they carried, ask how often they came true, average the ten gaps.
+              Two different quantities that share a unit, published as one.
+
+              No reading of the paper is needed to see it; our own attribution
+              under our own DOI link settles it. CAL-P1261's three repairs above
+              are all about how a row is DRAWN — the cohort tag, the grading, the
+              midpoint. Whether a row is the same STATISTIC as ours is the prior
+              question, and nothing asked it.
+
+              Naming the statistic in the row was the other option and is worse:
+              the bar would still be drawn at 15% of a calibration axis, and a
+              bar on a shared axis is a ranking device whatever the footnote
+              says — which is why the footnote's existing hedge ("other domains
+              and eras — reference points, not a ranking") does not reach this.
+              Notice 34 / D102: a number that cannot be shown honestly is left
+              out, not explained in a caption. Berg stays in Further Reading,
+              described correctly, one tap from its DOI.
+
+              Deliberately narrow. The Arrow et al. "Academic consensus range"
+              row's provenance is a separate question this does not settle. */}
           {([
             { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true },
             { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
-            { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
             { label: "Academic consensus range (Arrow et al. 2008)", rangeLow: 2, rangeHigh: 5, n: null, highlight: false },
           ] as BenchmarkRow[]).map(row => {
             const isRange = row.rangeLow !== undefined && row.rangeHigh !== undefined;
