@@ -497,7 +497,7 @@ async def _run_impl(session, now=NOW):
     import contextlib
     from unittest.mock import patch
 
-    import app.tasks.espn_sync as mod
+    from app.tasks import espn_sync as mod
 
     @contextlib.asynccontextmanager
     async def _fake_session():
