@@ -886,7 +886,7 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
     if apply:
         print(f"\nCOMMITTED events={res['repaired']} "
               f"rows: {res['rows_written']} backup_refused={res['backup_refused']}")
-        print(f"UNDO: python3 scripts/restore_7354_settled_orientation_swap.py --apply")
+        print("UNDO: python3 scripts/restore_7354_settled_orientation_swap.py --apply")
         if res["remaining"]:
             print(f"Re-run with --offset {res['next_offset']} "
                   f"({res['remaining']} rows remaining).")
