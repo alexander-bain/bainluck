@@ -196,6 +196,7 @@ def test_the_whole_card_replays_from_the_venues_own_bytes():
         ("KXDSENATESEATS-29-A56", "Above 56", "not a count leg; step 3 handles it"),
         ("KXDSENATESEATS-29-E52", "", "no label at all"),
         ("KXDSENATESEATS-29-E52", "052", "same value, not the same string"),
+        ("KXHOUSEWINSTATE-E52-FLD", "52", "`-E<n>` mid-ticker is not the LEG"),
     ],
 )
 def test_the_venue_must_say_the_same_number_twice(ticker, label, why):
