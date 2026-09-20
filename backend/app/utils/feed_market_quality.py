@@ -1468,6 +1468,53 @@ _PAYROLLS_RE = re.compile(r"\bnonfarm\s+payrolls?\b", re.IGNORECASE)
 _PAYROLLS_TICKER_RE = re.compile(r"KXPAYROLLS")
 
 
+def hard_excluded_family(
+    market_name: str | None, external_id: str | None = None
+) -> str | None:
+    """Name the hard-excluded family this market belongs to, else ``None``.
+
+    These are the five mechanical families Alex hard-excluded on 2026-06-24
+    (#968, #971) — "hard to imagine a time when these would ever be interesting
+    to any audience" — and they are the ``suppress`` arms above that are about
+    the FAMILY rather than about legibility (anonymized outcomes) or settlement
+    (resolved sports). Categorising by family is what lets a second surface ask
+    the question without inheriting the rest of the ``suppress`` class.
+
+    Why this exists next to ``classify_market_quality`` rather than inside it:
+    the ruling was written against Discover's route, so ``/politics`` never
+    inherited it and rendered 18 of its 60 cards from these families (#7321).
+    The fix needs the FAMILY test alone — a category page must not also drop a
+    market for being "obscure" or "low signal", which are Discover-ranking
+    judgements, not statements that a card is unreadable.
+
+    It reads the same compiled patterns the classifier reads, so the two cannot
+    disagree about what a family IS.  ``TestHardExcludedFamilyAgreesWithClassifier``
+    is what notices if the boolean composition ever drifts.
+
+    Pure, name + ticker only: no outcomes needed, so a caller can gate a large
+    pool without hydrating them.
+    """
+    name = market_name or ""
+    ticker = external_id or ""
+
+    margin_turnout = (
+        bool(_ELECTION_MARGIN_RE.search(name))
+        or bool(_VOTER_TURNOUT_RE.search(name))
+        or bool(_MARGIN_TURNOUT_TICKER_RE.search(ticker))
+    )
+    if margin_turnout and not _is_us_presidential_turnout(name):
+        return "margin_turnout_excluded"
+    if _STREAM_COUNT_RE.search(name) or _STREAM_COUNT_TICKER_RE.search(ticker):
+        return "stream_count_excluded"
+    if _VOTE_PERCENT_RE.search(name) or _VOTE_PERCENT_TICKER_RE.search(ticker):
+        return "vote_percent_excluded"
+    if _HOUSE_DISTRICT_RE.search(name) or _HOUSE_DISTRICT_TICKER_RE.search(ticker):
+        return "house_district_excluded"
+    if _PAYROLLS_RE.search(name) or _PAYROLLS_TICKER_RE.search(ticker):
+        return "payrolls_excluded"
+    return None
+
+
 _LOW_SIGNAL_SPORT_RE = re.compile(
     r"\b(table tennis|ping pong|wtt|badminton|snooker|darts|"
     r"esports|counter.?strike|cs2|csgo|valorant|league of legends|"
