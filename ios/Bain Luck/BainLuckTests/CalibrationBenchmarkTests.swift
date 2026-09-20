@@ -21,6 +21,16 @@ import XCTest
 /// passing when a later edit reverts to a midpoint by a different route. The
 /// rows are pinned as values AND the card is rasterised, because "a range draws
 /// as a band" is a claim about ink.
+///
+/// #7531 ADDED THE FOURTH REPAIR AND TOOK A SPECIMEN AWAY. Metaculus's 2.5pp was
+/// the midpoint of its published ~2–3pp; it is a range now, which leaves the card
+/// with exactly one point value and it is ours. An assertion here used to lean on
+/// that row being a published POINT under our green threshold — the only input
+/// that distinguishes `isGraded == isOurs && !isRange` from `isGraded == !isRange`
+/// — so it constructs its specimen instead of reading the shipped list. MEASURED,
+/// not asserted: with that test removed, the mutant dropping the `isOurs` conjunct
+/// passes this whole class, 14 tests, 0 failures. When a fix empties a shipped
+/// list of the case a guard was standing on, the guard goes quiet, not red.
 @MainActor
 final class CalibrationBenchmarkTests: XCTestCase {
 
@@ -106,12 +116,84 @@ final class CalibrationBenchmarkTests: XCTestCase {
     /// threshold, so the grading bug and a correctly-graded card looked identical.
     /// This pins the property that hid it: ungraded means ungraded whatever the
     /// number would have scored.
-    func testABenchmarkUnderOurGreenThresholdIsStillNotGraded() throws {
-        let metaculus = try row("Metaculus")
-        XCTAssertEqual(metaculus.value, 2.5)
-        XCTAssertLessThan(try XCTUnwrap(metaculus.value), 4,
+    ///
+    /// 🪤 THE SPECIMEN IS CONSTRUCTED, AND HAS TO BE. This test used to read the
+    /// shipped Metaculus row, whose 2.5 was the figure that printed green. #7531
+    /// made that row a range, so the shipped list holds exactly one point value
+    /// and it is ours. `isGraded` is `isOurs && !isRange`, and over a list like
+    /// that the `isOurs` conjunct is dead weight: the mutant `isGraded = !isRange`
+    /// grades our point, refuses both ranges, and passes every assertion that only
+    /// ever looks at the three rows we ship — measured, 14 tests, 0 failures, with
+    /// this test deleted. A row that is a point and is NOT ours is the only input
+    /// that tells the two rules apart, and after #7531 nothing on the card is one.
+    func testAPointBenchmarkThatIsNotOursIsNotGradedHoweverWellItWouldScore() throws {
+        let published = CalibrationBenchmarks.Row.point("Someone else", 2.5, detail: "")
+        XCTAssertLessThan(try XCTUnwrap(published.value), 4,
                           "the figure that used to print green")
+        XCTAssertFalse(published.isRange)
+        XCTAssertFalse(published.isGraded,
+                       "a published POINT is still somebody else's number measured "
+                       + "somebody else's way; only `isOurs` may unlock our colours")
+        XCTAssertNil(published.figureQualifier,
+                     "and we cannot say how it was averaged either")
+
+        // The other conjunct, from the same seam: ours, but a range, is not
+        // graded either — there is no point value to grade.
+        let ourRange = CalibrationBenchmarks.Row(
+            label: "Bain Luck", cohortTag: nil, value: nil, rangeLow: 2, rangeHigh: 3,
+            detail: "", isOurs: true)
+        XCTAssertFalse(ourRange.isGraded)
+
+        // And ours as a point IS graded, or the three assertions above pass on a
+        // constant `false`.
+        XCTAssertTrue(CalibrationBenchmarks.Row.point("Bain Luck", 2.5, detail: "",
+                                                      isOurs: true).isGraded)
+    }
+
+    // MARK: - #7531 — Metaculus is published as a range too
+
+    /// Web's half landed at `4221a4705`, 45 minutes after this branch was gated;
+    /// this is the surface it left behind.
+    ///
+    /// The row read `2.5pp` and drew a solid bar from zero to a quarter of the
+    /// axis. 2.5 is the midpoint of the ~2–3pp Metaculus publishes about itself,
+    /// and it is the exact construction CAL-P1261 took off the Arrow row. On web
+    /// the derived number could at least be traced to a Further Reading sentence
+    /// on the same page; this app has no Further Reading section, so the figure
+    /// was sourced nowhere a reader of the app could reach.
+    func testTheMetaculusFigureIsItsPublishedRangeAndNeverItsMidpoint() throws {
+        let metaculus = try row("Metaculus")
+        XCTAssertTrue(metaculus.isRange)
+        XCTAssertEqual(metaculus.rangeLow, 2)
+        XCTAssertEqual(metaculus.rangeHigh, 3)
+        XCTAssertNil(metaculus.value,
+                     "#7531: a benchmark published as a RANGE has no point value")
+        XCTAssertEqual(metaculus.figureText, "2\u{2013}3pp")
         XCTAssertFalse(metaculus.isGraded)
+
+        // The defect, named: a solid bar from the leading edge to 25% of the axis.
+        XCTAssertEqual(metaculus.barLeadingFraction, 0.2, accuracy: 1e-9,
+                       "#7531: the band starts at its LOW end, not at zero")
+        XCTAssertEqual(metaculus.barWidthFraction, 0.1, accuracy: 1e-9)
+        XCTAssertNotEqual(metaculus.barWidthFraction, 0.25, accuracy: 1e-9,
+                          "#7531: 0.25 is the bar the invented 2.5 drew")
+        XCTAssertFalse(metaculus.figureText.contains("2.5"))
+    }
+
+    /// The general rule both repairs are instances of, over whatever the card
+    /// ships: no published benchmark carries a point value at all. Our own row is
+    /// the exception and the only one — it is a figure we measured, over a cohort
+    /// the reader chose, and it is the one number here we can source.
+    func testNoPublishedBenchmarkCarriesAPointValue() {
+        for r in rows() where !r.isOurs {
+            XCTAssertNil(r.value,
+                         "\(r.label) publishes a point figure. If the source really "
+                         + "published one number, say so here; if it published a range, "
+                         + "draw the range (#6278 item 3, #7531)")
+            XCTAssertTrue(r.isRange, r.label)
+        }
+        XCTAssertEqual(rows().filter { !$0.isOurs }.count, 2,
+                       "Metaculus and the Arrow range")
     }
 
     // MARK: - #6278 item 1 — our row names the cohort it moves with

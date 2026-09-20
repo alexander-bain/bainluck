@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """native/269 — mutation run for #7536 (the "How We Compare" card's five defects).
 
-Ten mutants. Restoring each of the shipped defects is only half of them; the
+Twelve mutants. Restoring each of the shipped defects is only half of them; the
 rest are the ways this particular guard suite could stop meaning anything:
 
   * 1-4 are the four defects as they shipped: the 2-5pp range plotted as a solid
@@ -21,6 +21,21 @@ rest are the ways this particular guard suite could stop meaning anything:
     raster measures size, not hue), so they are killed by the jest source scan,
     which is also the only half of this ship CI can reach — CI compiles no
     Swift, and that is how three web repairs drifted past this card.
+  * 11 and 12 are #7531, added by native/270 when web's half landed under this
+    branch: Metaculus back to the 2.5 midpoint of its published ~2-3pp, and the
+    subtler one — a range with the WRONG far end, which prints a range, draws a
+    band, satisfies every structural assertion and disagrees with the other
+    surface by 1pp.
+
+🪤 MUTANT 3 IS THE ONE TO WATCH, AND IT IS WHY THIS FILE WAS RE-RUN RATHER THAN
+TRUSTED. `isGraded` is `isOurs && !isRange`. Before #7531 the card shipped a
+published POINT (Metaculus, 2.5) and the shipped list distinguished that rule
+from `!isRange`. #7531 made that row a range, leaving one point value on the
+card and it is ours — so the mutant that drops the `isOurs` conjunct grades
+exactly the same three rows, and every assertion reading only the shipped list
+goes quiet. `testAPointBenchmarkThatIsNotOursIsNotGradedHoweverWellItWouldScore`
+constructs the specimen the card no longer has. A fix that empties a shipped
+list of the case a guard was standing on silently disarms that guard.
 
 A mutant that SURVIVES is a hole in the guard suite, not a curiosity.
 
@@ -66,6 +81,10 @@ ARROW_WIRED = '''            .range("Academic consensus", low: 2, high: 5, detai
 ARROW_MIDPOINT = '''            .point("Academic consensus", 3.5, detail: "Arrow et al. 2008 (2\\u{2013}5pp)"),'''
 ARROW_PLUS_IEM = '''            .point("Iowa Electronic Markets", 1.5, detail: "Berg et al. 2008"),
             .range("Academic consensus", low: 2, high: 5, detail: "Arrow et al. 2008"),'''
+
+METACULUS_WIRED = '''            .range("Metaculus", low: 2, high: 3, detail: "Self-reported"),'''
+METACULUS_MIDPOINT = '''            .point("Metaculus", 2.5, detail: "Self-reported"),'''
+METACULUS_WRONG_END = '''            .range("Metaculus", low: 2, high: 4, detail: "Self-reported"),'''
 
 GRADED_WIRED = '''        var isGraded: Bool { isOurs && !isRange }'''
 GRADED_EVERY_ROW = '''        var isGraded: Bool { !isRange }'''
@@ -142,6 +161,16 @@ MUTANTS = [
     ("10-the-view-never-draws-the-cohort-tag", VIEW, TAG_WIRED, TAG_NEVER_DRAWN, "jest",
      "the same hole for item 1: the tag is carried, computed, asserted — and "
      "not on screen"),
+
+    ("11-metaculus-goes-back-to-its-midpoint", ROWS, METACULUS_WIRED, METACULUS_MIDPOINT, "both",
+     "#7531, and the state this branch was actually IN when web's half merged "
+     "underneath it. 2.5 is the midpoint of the ~2-3pp Metaculus publishes, and "
+     "this app has no Further Reading section, so it was sourced nowhere at all"),
+
+    ("12-the-range-has-the-wrong-far-end", ROWS, METACULUS_WIRED, METACULUS_WRONG_END, "both",
+     "prints a range, draws a band, is a range, passes every structural "
+     "assertion — and says 2-4pp where the source says 2-3. Only a guard that "
+     "names the ENDS, and the cross-surface comparison, can see it"),
 ]
 
 # TRAP (banked by native/234): on a FAILING test run xcodebuild runs

@@ -167,6 +167,38 @@ describe("#7536 — the Accuracy card's benchmarks are the same on both surfaces
   });
 
   /**
+   * #7531, and the general form of the rule both it and #6278 item 3 are
+   * instances of. Metaculus's 2.5pp was the midpoint of the ~2–3pp it publishes
+   * about itself, and web repaired it 45 minutes after the iOS card was gated on
+   * a master that still read 2.5 — which is the drift this suite exists to catch,
+   * caught by this suite.
+   *
+   * Two assertions, because either alone is weak: the named row, so a surface
+   * quietly reverting to a point reddens here; and the general walk, so the NEXT
+   * benchmark published as a range does not have to be found by a person. The
+   * general one is derived from whichever ranges the surfaces ship, so it cannot
+   * pass by knowing today's answer — and `reads a real list off each surface`
+   * above is what stops an empty walk standing in for it.
+   */
+  it("plots no published range's midpoint as a point value on either surface", () => {
+    for (const surface of [web, ios]) {
+      const metaculus = surface.published.find((b) => /Metaculus/.test(b.label));
+      expect(metaculus).toBeDefined();
+      expect(metaculus!.kind).toBe("range");
+      expect(metaculus).toMatchObject({ low: 2, high: 3 });
+    }
+
+    const midpoints = [...web.published, ...ios.published]
+      .filter((b): b is Extract<Benchmark, { kind: "range" }> => b.kind === "range")
+      .map((b) => (b.low + b.high) / 2);
+    expect(midpoints.length).toBeGreaterThan(0);
+    for (const b of [...web.published, ...ios.published]) {
+      if (b.kind !== "point") continue;
+      expect(midpoints).not.toContain(b.value);
+    }
+  });
+
+  /**
    * #7524. Berg et al.'s 1.5pp is an absolute error on predicted vote share,
    * and our figure is a per-bucket calibration error — two quantities that
    * share a unit. It stays in Further Reading, where it is described correctly.

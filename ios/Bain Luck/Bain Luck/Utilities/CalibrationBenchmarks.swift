@@ -91,7 +91,12 @@ enum CalibrationBenchmarks {
         /// on it is one we cannot support; a range has no point to grade.
         var isGraded: Bool { isOurs && !isRange }
 
-        /// A point row: `Bain Luck`, `Metaculus`.
+        /// A point row: our own measured figure. Every published benchmark on
+        /// this card is a range (#7531 moved the last one), so a point row that
+        /// is not ours is a claim we can make about somebody else's forecasting
+        /// to one decimal place — check the source says exactly that before
+        /// adding one. `CalibrationBenchmarkTests` keeps the ungraded-point case
+        /// alive with a constructed row, since the shipped list no longer has one.
         static func point(
             _ label: String, _ value: Double, detail: String,
             cohortTag: String? = nil, isOurs: Bool = false
@@ -179,14 +184,30 @@ enum CalibrationBenchmarks {
             .point("Bain Luck", ourMCE, detail: "\(ourOutcomes) outcomes",
                    cohortTag: cohort, isOurs: true),
 
-            // 🪤 #7531 — 2.5 is the MIDPOINT of the ~2-3pp range Metaculus
-            // publishes, and this page sources it as a range itself in Further
-            // Reading. It is the one defect on this card that is not iOS
-            // lagging web: web plots the same midpoint and #7531 is open on
-            // both surfaces. Left in step deliberately — the range path above
-            // is what its fix needs, and both halves flip together so the two
-            // surfaces never disagree about a published figure.
-            .point("Metaculus", 2.5, detail: "Self-reported"),
+            // #7531 — this read `.point("Metaculus", 2.5)` and drew a solid bar
+            // from the leading edge to a quarter of the axis: a measured point
+            // value. 2.5 is the MIDPOINT of the ~2–3pp Metaculus publishes about
+            // itself, which is the construction CAL-P1261 removed from the Arrow
+            // row below and the rule `Row` was given a docstring for.
+            //
+            // 🪤 IT WAS WORSE HERE THAN ON WEB, for a reason worth keeping: web
+            // at least publishes "~2-3pp mean calibration error" in its Further
+            // Reading section, 5,500px down the same page, so a determined
+            // reader could find the number the bar was derived from. **This app
+            // has no Further Reading section at all** — grep `ios/**` for
+            // "Metaculus" and this row is the only hit outside its own
+            // commentary. So on the phone the 2.5 was sourced nowhere, agreed
+            // with nothing, and could only be checked against a surface the
+            // reader was not on.
+            //
+            // The range is what Metaculus publishes, and that self-reported
+            // provenance is also why the row is not colour-graded on our
+            // thresholds (`isGraded`). Not #7524: that row left the card because
+            // its figure was a different STATISTIC (an absolute error on
+            // predicted vote share). Metaculus's figure IS ours — a mean
+            // calibration error off a published curve — so only its shape was
+            // wrong. Two repairs; never collapse them.
+            .range("Metaculus", low: 2, high: 3, detail: "Self-reported"),
 
             // #7524's row was here: "Iowa Electronic Markets", 1.5, "Berg et
             // al. 2008". Berg's 1.5pp is an absolute error on predicted vote
