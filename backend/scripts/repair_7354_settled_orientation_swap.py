@@ -57,8 +57,22 @@ Hence this rail writes up to four stores in ONE transaction per event:
 sweep reached the specimen inside the 6h window: it corrected ``events`` to
 38-27 and appended one correctly-oriented ``score_snapshots`` row, while
 ``espn_snapshots`` stayed frozen at 102 swapped rows and the ESPN probability
-leg stayed at 0.0 for the side that won. That residual is what still renders
-"Bigger Picture: Cavaliers" over a game West Virginia won.
+leg stayed at 0.0 for the side that won.
+
+WHAT THAT RESIDUAL PUTS ON THE PAGE (measured 2026-09-20, `+ 5 sources`
+expanded on /events/15308929): the ESPN line runs BACKWARDS for the whole game.
+``win_prob_snapshots`` for ``source='espn'`` is inverted across all 80 rows —
+our ``home_win_probability`` holds ESPN's HOME (Virginia) number. At kickoff
+kalshi, polymarket and stat_model all read 0.22 for our home side and ESPN
+reads 0.8339; stat_model's row and ESPN's are one minute apart. West Virginia
+were a 22% underdog and won 38-27, and the hero prints "Upset · 22% pregame" on
+the same screen as a dashed orange line starting at 88%.
+
+🔴 NOT this: "Bigger Picture — Season context: Cavaliers". An earlier read of
+this rail blamed the legs for that card. It is wrong — ``RelatedFutures.tsx``
+gates the season-context cards per side on playoff-path OR awards OR standings
+(#3775) and no probability enters it. Only Virginia has championship futures,
+so only Virginia's card draws. Do not scope that card into this rail.
 
 The first cut of this rail had ONE global gate keyed on ``events.home_score``,
 so it read that row as "not slot copied" and walked away from the half still on
@@ -340,6 +354,16 @@ _SWAP_SCORE_SNAPSHOTS_SQL = """
      WHERE event_id = :event_id
 """
 
+#: The whole ESPN series, not its tail: the slot copy wrote every row, so every
+#: row is inverted (measured on ev15308929 — all 80 rows, 0.8339 at kickoff for
+#: a side the other three sources had at 0.22).
+#:
+#: A row with one column NULL swaps to the other column NULL. On the specimen
+#: the last row is ``(0.0000, NULL)`` and becomes ``(NULL, 0.0000)`` — a point
+#: that was wrong-and-plotted becomes unknown-and-unplotted, and the line ends
+#: on the 02:52Z point at 0.9988 for the side that won. That is the honest
+#: outcome: we know the pair was written backwards, and we do not know what
+#: ESPN's missing half was. Filling it in would be inventing a number.
 _SWAP_ESPN_LEG_SQL = """
     UPDATE win_prob_snapshots
        SET home_win_probability = away_win_probability,
