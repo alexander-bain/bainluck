@@ -3,6 +3,7 @@
 import type { LeagueGameBrief } from "@/lib/api";
 import { leagueGameToEvent } from "@/lib/leagueCards";
 import EventCard from "./EventCard";
+import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 
 /**
  * The league page's games rails (UX-P062 / #1743, Alex's 2026-08-11 amendment).
@@ -65,21 +66,28 @@ export default function LeagueGameRail({
     ) : null;
   }
 
+  // #7529 — the cue is decided over the WHOLE rail, so it has to be one array
+  // the rail both measures and renders. A split-squad home-and-home lands two
+  // cards here that differ in nothing a reader can see but row order.
+  const events = games.map(leagueGameToEvent);
+  const hostCues = hostCuesForEvents(events);
+
   return (
     <section data-section-key={settled ? "results" : "games"}>
       <h2 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
         {title}
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {games.map((g, i) => (
+        {events.map((event, i) => (
           <EventCard
-            key={g.id}
-            event={leagueGameToEvent(g)}
+            key={event.id}
+            event={event}
             // The league page IS the league context — repeating "MLB" on eight
             // cards is the chrome the entity-page grammar makes pages earn.
             showSport={false}
             sourceSection="sport_category"
             positionIndex={i}
+            hostCue={hostCues.get(event.id) ?? null}
           />
         ))}
       </div>
