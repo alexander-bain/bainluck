@@ -129,11 +129,6 @@ struct WelcomeView: View {
             .padding(20)
             .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
 
-            Text("474K resolved outcomes, 5.7pp average calibration error")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-
             Spacer()
             Spacer()
         }
