@@ -3115,7 +3115,10 @@ jobs:
           # gained its coherent-captures case, its missing-companion case and
           # (so the gate cannot pass by refusing everything) its ADMITTED case,
           # and the settled failed/degraded/pre-settlement lifecycle gained four.
-          EXPECTED = 41
+          # 43 with CERT-3152's required repair: B11 (an empty post-settlement
+          # fill is not answered by the series it carried) and B12 (the ceiling
+          # that keeps that repair from asking a purged venue forever).
+          EXPECTED = 43
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()
