@@ -192,6 +192,7 @@ __all__ = [
     "price_is_unsupported",
     "price_refuted_by_live_book",
     "snapshot_price_is_unsupported",
+    "trade_print_refuted_by_own_book",
 ]
 
 
@@ -941,6 +942,73 @@ def midpoint_refuted_by_last_trade(
     return abs(float(last_price) - float(probability)) >= _DISPLAY_ROUNDING
 
 
+#: How close a stored snapshot ``probability`` must sit to its own ``last_price``
+#: for the row to be read as "the writer stored the last trade" (#7548). It is the
+#: storage grain, not a tuned band: ``probability`` is ``Numeric(7,6)`` and
+#: ``last_price`` is ``Numeric(5,4)``, so one number written to both columns can
+#: differ by at most half a unit in the fourth place.
+_SAME_WRITE_GRAIN = 0.00005
+
+
+def trade_print_refuted_by_own_book(
+    bookmaker: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+) -> bool:
+    """True when a Polymarket snapshot IS its last trade and its own book prices that out (#7548).
+
+    WHAT A READER SAW. ``/futures/56947465`` drew Kyle Larson at **98.9%** for one
+    stamp (2026-09-19T20:31:08Z) among ~19-25%, on the Probability Trend and on the
+    hero sparkline, which reads the same ``/history`` payload. The venue's tape
+    shows one ~$45 print at 0.989 twenty minutes earlier on an ask side a bot had
+    just walked empty; the venue's own minute series never passed 0.586 that day.
+    The writer half of this fix (``polymarket._last_trade_survives_own_book``)
+    stops the next one being written. A refusal there is a SKIP, so — as with every
+    other arm in this module — the guard that stops a new fabrication is exactly
+    what guarantees the old one survives. This is the read half.
+
+    WHY ``price_refuted_by_live_book`` WAS NOT SIMPLY WIDENED. That arm is scoped to
+    Kalshi on purpose and says why: "a Polymarket price legitimately sits above its
+    own ask whenever the last trade did", because gotcha #19 sends a wide book to
+    ``lastTradePrice``. #7548 is the measurement that the sentence is false in the
+    one case the writer now refuses, and ONLY that case is taken here:
+
+    * **the row must BE its last trade** — ``probability == last_price`` at the
+      storage grain. A price that came from ``outcome_prices`` or a computed
+      midpoint is a different instrument and is never asked. This is what keeps a
+      genuine extreme move: a leg really quoted 0.989 stores 0.989 beside a last
+      trade that is almost never the same four digits, and beside a book that is up
+      there with it.
+    * **its own book must refute it** — ``book_refutes_price``, #5121's shipped
+      predicate, imported with its tolerance and its empty-book carve-out. An ask
+      of 1.0, or no ask at all, cannot be exceeded, so a cleared blowout book
+      (gotcha #19's actual case) keeps every point.
+    * **ungraded only**, the narrower Polymarket grade test this module already
+      uses in :func:`needs_trade_disconfirmation`, for the reason given there. A
+      settled journey is not edited.
+
+    THREE COLUMNS OF ONE INSERT. The module's usual argument in its tightest form:
+    our stored value against two other fields of the same write, never against
+    what the venue says today. No field total, no neighbour, no smoothing, no clip:
+    a point is withheld only when the row contradicts itself.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21). The stamp becomes a gap in one line.
+    Nothing is interpolated and no other outcome's point at that stamp moves.
+    """
+    if (bookmaker or "").strip().lower() != POLYMARKET_BOOKMAKER:
+        return False
+    if resolution_source is not None:
+        return False
+    if probability is None or last_price is None:
+        return False
+    if abs(float(probability) - float(last_price)) > _SAME_WRITE_GRAIN:
+        return False
+    return book_refutes_price(yes_bid, yes_ask, float(probability))
+
+
 def snapshot_price_is_unsupported(
     bookmaker: Optional[str],
     resolution_source: Optional[str],
@@ -1069,7 +1137,7 @@ def snapshot_price_is_unsupported(
         yes_ask,
     ):
         return True
-    return midpoint_refuted_by_last_trade(
+    if midpoint_refuted_by_last_trade(
         bookmaker,
         resolution_source,
         probability,
@@ -1077,4 +1145,12 @@ def snapshot_price_is_unsupported(
         yes_ask,
         last_price,
         has_trade_evidence=has_trade_evidence,
+    ):
+        return True
+    # #7548 — the fourth arm, and snapshot-only on purpose: it needs the price and
+    # the trade to be columns of ONE insert, which is true of a snapshot row and is
+    # not established for `futures_outcomes`, whose book and price columns have
+    # more than one writer.
+    return trade_print_refuted_by_own_book(
+        bookmaker, resolution_source, probability, yes_bid, yes_ask, last_price
     )
