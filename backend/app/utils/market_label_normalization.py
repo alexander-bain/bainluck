@@ -895,3 +895,56 @@ def compute_market_tier(market_name: str, category: Optional[str] = None,
     # Default to tier 5 instead of trusting the category blindly
     logger.debug("Unclassified market (tier=5): name=%r category=%r", market_name, category)
     return 5
+
+
+# The three tiers whose name is a rung of a SPORTS hierarchy, taken from
+# :func:`compute_market_tier`'s own docstring: "Championship / title winner",
+# "Conference winner", "Division winner". Tier 3 ("Awards / MVP / individual
+# honors") and tier 5 ("Props / other") are deliberately absent — those nouns
+# stay true off the field, so an Oscar reading "Award" is not a defect and is
+# left exactly as it is.
+_SPORTS_HIERARCHY_TIERS = frozenset({1, 2, 4})
+
+
+def non_sport_topic_label(
+    market_tier: Optional[int],
+    category: Optional[str] = None,
+    sport_category: Optional[str] = None,
+) -> Optional[str]:
+    """The topic word for a non-sport row whose tier label would lie, else ``None``.
+
+    #7369. Tier 2 is TWO populations, and :func:`compute_market_tier` says so in
+    its own docstring — "Conference winner / **non-sports top-level**", because
+    non-sport markets "have no championship/conference hierarchy". Both search
+    serializers then print one word for the whole rung, so on production
+    `typeahead?q=trump` answered **Conference** on "Will Trump acquire Greenland
+    before 2027?", and `q=fed` answered **Conference** on "What will Levi's say
+    during their next earnings call?" — an earnings *call* badged a *conference*.
+    Measured 2026-09-20: 13,542 open rows on tiers 1/2/4 carry a non-sport
+    category (11,766 "Conference", 1,745 "Championship", 31 "Division").
+
+    THE PREDICATE IS THE CATEGORY, NOT THE FK. `routes/events.py` already had the
+    right replacement written (`llm_sport_category or category`, title-cased) but
+    gated it on ``market.sport_id is None``, and those two disagree on **1,224**
+    open rows of this population — rows with no sport FK but a real sport
+    category, such as `SearchProdFixture.swift`'s "Will Jasmine Paolini advance to
+    the Quarterfinals … 2026 US Open?" (`llm_sport_category: tennis`, `sport:
+    null`). Keying on the FK would have relabelled those 1,224 tennis and soccer
+    rows "Tennis"/"Soccer". So this asks the EXACT question that assigned the tier
+    — ``(sport_category or category) in _NON_SPORT_CATEGORIES``, the same
+    `effective_category` expression `compute_market_tier` uses two functions up —
+    and the label can only undo the arm that created it.
+
+    Returns ``None`` — not a label — for every other row, so each call site keeps
+    its own existing fallback chain byte-for-byte (the typeahead's NULL-tier
+    `sport_id` arm included). One literal, one place; same shape as
+    :func:`game_prop_category`.
+    """
+    if market_tier not in _SPORTS_HIERARCHY_TIERS:
+        return None
+    raw = sport_category or category or ""
+    if raw.lower() not in _NON_SPORT_CATEGORIES:
+        return None
+    # Never return "" — a blank second line is a worse row than the wrong word,
+    # and the caller's `or` chain must be able to fall through.
+    return raw.replace("_", " ").title() or None
