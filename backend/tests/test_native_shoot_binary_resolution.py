@@ -89,7 +89,17 @@ def shoot(derived, *args, src_root, env_extra=None):
         ["bash", str(src_root / "tools" / "native-shoot.sh"), "probe", "", "--resolve-only", *args],
         capture_output=True, text=True, timeout=120, env=env,
     )
-    return p.returncode, p.stdout + p.stderr
+    out = p.stdout + p.stderr
+    # AN INCOMPLETE TREE IS A FIXTURE FAULT, NOT A RESULT. The script has no
+    # `set -e`: a sibling it sources that the fixture did not copy prints
+    # "No such file" and "command not found" to stderr and the run CARRIES ON,
+    # so a test asserting on resolution output can pass over a tree that never
+    # loaded the guard. This is the failure of 2026-09-18 made loud at its cause.
+    for tell in ("No such file or directory", "command not found"):
+        assert tell not in out, (
+            f"the synthetic tree is incomplete — the script reported {tell!r}:\n{out}"
+        )
+    return p.returncode, out
 
 
 def _tree_with_script(tmp_path, src_mtime):
