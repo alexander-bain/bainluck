@@ -301,6 +301,8 @@ def normalize_display_probs(
     outcomes: list[dict],
     key: str = "probability",
     mutually_exclusive: bool = True,
+    *,
+    field_complete: bool = True,
 ) -> bool:
     """#23: normalize the displayed distribution in place when independent binary
     outcomes sum >100%. Reuses the SINGLE politics normalizer (percentage-scale)
@@ -323,6 +325,35 @@ def normalize_display_probs(
     vig) field gets the #23 squeeze; the overrounded field keeps its raw prices.
     This mirrors the event_cycling concept-adapter guard and now also protects the
     raw /api/futures/{id} detail + search surfaces that only had the flag gate.
+
+    #7103: ``field_complete=False`` REFUSES THE SQUEEZE, because a field with
+    withheld members is not a proved-complete distribution. The squeeze's whole
+    premise is that the legs it can see ARE the one-winner field, so dividing by
+    their sum is dividing by 1. Once a caller has withheld legs because their
+    price is UNKNOWN, that premise is false and this function cannot tell:
+    ``o.get(key) or 0`` reads an absent price as ZERO, so a withheld leg silently
+    asserts that its candidate cannot win. On `/api/futures/2951423` (*WBC
+    Heavyweight Title*) eleven withheld legs dropped the field from a raw 2.995 —
+    above ``_FIELD_SUM_MAX``, where #1200 left it alone — to 1.135, INTO this
+    band, and the squeeze restated Agit Kabayel's honest 0.870 as 0.767: a
+    10.3-point move on the one leg whose book actually bounded something.
+
+    Withholding therefore changes WHETHER the squeeze fires at all, not merely
+    what it divides by, and that is why the gate belongs here rather than in the
+    arithmetic. Ruling 051's sentence one case over: absent is not zero, and
+    nothing downstream can tell "this candidate is priced at nothing" from "we
+    have no price for this candidate".
+
+    The survivors print RAW, so a gated field can sum past 100%. That is not a
+    new reader experience — #1200 already prints raw overrounded fields summing
+    to several multiples of 100% — and it is the call
+    ``drop_incoherent_near_certain`` already makes for its own drop, deliberately
+    not re-normalizing what it leaves behind (`routes/futures.py`). Four honest
+    numbers summing to 109% beat a coherent 99% built on eleven fighters we have
+    quietly declared cannot win.
+
+    Default True preserves every existing caller, exactly as ``mutually_exclusive``
+    does; only a caller that KNOWS it withheld legs passes False.
 
     #5835: RETURNS WHETHER THE PRINTED COLUMN ACTUALLY MOVED, because a caller that
     prints a SECOND column of un-squeezed prices beside this one needs to know. The
@@ -360,6 +391,13 @@ def normalize_display_probs(
         if kept:
             outcomes[:] = kept  # drop the untraded-midpoint placeholders in place
 
+    # #7103, and BELOW the #1201 strip on purpose. That strip mutates the
+    # caller's list in place — it is what takes a run of untraded 0.5
+    # placeholders off the page — so returning above it would change WHICH ROWS
+    # ARE SERVED on a withheld-bearing field, not just whether they are scaled.
+    # The only behaviour this gate may change is whether the squeeze fires.
+    if not field_complete:
+        return False  # withheld members — the visible legs are not the field
     raw_sum = sum((o.get(key) or 0) for o in outcomes)
     if raw_sum > _FIELD_SUM_MAX:
         return False  # independent-binary overround — raw YES price is the honest prob
