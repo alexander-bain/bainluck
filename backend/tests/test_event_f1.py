@@ -6,11 +6,14 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 from app.utils.event_f1 import (
+    _MOTORSPORT_TICKER_LABELS,
     is_gp_winner_market,
     gp_tokens,
+    gp_sport_label,
     shares_gp,
     f1_status,
     list_f1_gp_concepts,
+    ticker_sport_label,
 )
 
 NOW = datetime(2026, 7, 9, tzinfo=timezone.utc)
@@ -103,11 +106,11 @@ class TestListF1GpConcepts:
         # One British GP: winner market anchors; sub-markets fold into entry_count.
         soon = datetime.now(timezone.utc) + timedelta(days=3)
         rows = [
-            (1, "British Grand Prix: Driver Winner", "open", soon),
-            (2, "British Grand Prix: Driver Pole Position", "open", soon),
-            (3, "British Grand Prix: Constructor Fastest Lap", "open", soon),
+            (1, "KXF1RACE-GBRGP26", "British Grand Prix: Driver Winner", "open", soon),
+            (2, "KXF1RACE-GBRGP26", "British Grand Prix: Driver Pole Position", "open", soon),
+            (3, "KXF1RACE-GBRGP26", "British Grand Prix: Constructor Fastest Lap", "open", soon),
             # A different GP, further out.
-            (4, "Hungarian Grand Prix Winner", "open", soon + timedelta(days=14)),
+            (4, "KXF1RACE-HUNGP26", "Hungarian Grand Prix Winner", "open", soon + timedelta(days=14)),
         ]
         concepts = await list_f1_gp_concepts(_MockDB(rows))
         # British (soonest) first.
@@ -124,7 +127,7 @@ class TestListF1GpConcepts:
 
     async def test_season_championship_is_not_a_gp_concept(self):
         # "F1 Drivers Champion" has no winner/to-win token → not a GP concept.
-        rows = [(1, "F1 Drivers Champion", "open", None)]
+        rows = [(1, "KXF1WDC-26", "F1 Drivers Champion", "open", None)]
         assert await list_f1_gp_concepts(_MockDB(rows)) == []
 
     async def test_non_grand_prix_winner_market_excluded(self):
@@ -133,8 +136,8 @@ class TestListF1GpConcepts:
         # Grand-Prix-scoped.
         soon = datetime.now(timezone.utc) + timedelta(days=3)
         rows = [
-            (1, "Any Group Winner to Finish with Fewer than 6 Points", "open", soon),
-            (2, "British Grand Prix Winner", "open", soon),
+            (1, "KXWCGROUPPTS-26", "Any Group Winner to Finish with Fewer than 6 Points", "open", soon),
+            (2, "KXF1RACE-GBRGP26", "British Grand Prix Winner", "open", soon),
         ]
         concepts = await list_f1_gp_concepts(_MockDB(rows))
         assert [c["name"] for c in concepts] == ["British Grand Prix Winner"]
@@ -153,7 +156,7 @@ class TestListF1GpConcepts:
         # `now` taken first — never a literal date that would branch on the clock
         # (gotcha #44). Four days out reproduces Wednesday; two hours out is Sunday.
         now = datetime.now(timezone.utc)
-        rows = [(1, "Italian Grand Prix: Driver Winner", "open", now + timedelta(days=4))]
+        rows = [(1, "KXF1RACE-ITAGP26", "Italian Grand Prix: Driver Winner", "open", now + timedelta(days=4))]
         concepts = await list_f1_gp_concepts(_MockDB(rows))
 
         assert len(concepts) == 1, "the card must survive the demotion, not vanish"
@@ -162,7 +165,7 @@ class TestListF1GpConcepts:
         assert _concept_headline(c, now) == "This week"
 
         # Race day, same market: the badge comes back and so does the bonus.
-        live_rows = [(1, "Italian Grand Prix: Driver Winner", "open", now + timedelta(hours=2))]
+        live_rows = [(1, "KXF1RACE-ITAGP26", "Italian Grand Prix: Driver Winner", "open", now + timedelta(hours=2))]
         live = (await list_f1_gp_concepts(_MockDB(live_rows)))[0]
         assert live["status"] == "live"
         assert _concept_headline(live, now) == "Live"
@@ -170,10 +173,151 @@ class TestListF1GpConcepts:
 
     async def test_far_off_gp_excluded_by_status(self):
         far = datetime.now(timezone.utc) + timedelta(days=40)
-        rows = [(1, "Singapore Grand Prix Winner", "open", far)]
+        rows = [(1, "KXF1RACE-SGPGP26", "Singapore Grand Prix Winner", "open", far)]
         # Default statuses are (upcoming, live); a 40-day-out GP is "upcoming" and
         # DOES surface — assert the descriptor is well-formed.
         concepts = await list_f1_gp_concepts(_MockDB(rows))
         assert len(concepts) == 1
         assert concepts[0]["status"] == "upcoming"
         assert concepts[0]["start_date"] == far.isoformat()
+
+
+class TestTickerSportLabel:
+    """#7541 — the pure helper, per ticker family."""
+
+    def test_the_two_production_specimens_are_told_apart(self):
+        # Read off `futures_markets` 2026-09-20: the two rows that sat one card
+        # apart on the sports feed, both `llm_sport_category = 'motorsports'`,
+        # both matching the lister's "grand prix" filter.
+        assert ticker_sport_label("KXF1RACE-AZEGP26") == "F1"
+        assert ticker_sport_label("KXMOTOGPRACE-OSTE26") == "MotoGP"
+
+    def test_case_and_whitespace_are_not_the_discriminator(self):
+        assert ticker_sport_label("  kxmotogprace-oste26  ") == "MotoGP"
+
+    def test_longest_prefix_wins(self):
+        """`kxf1` and `kxmotogp` are both prefixes of longer families, so the
+        map is length-ordered. A dict iterated in source order would let
+        `kxf1` answer for a `KXF1RACE` row — harmless today, and exactly the
+        kind of ordering bug that only shows up once a family is added."""
+        assert ticker_sport_label("KXNASCARRACE-26") == "NASCAR"
+        assert ticker_sport_label("KXNASCAR-CUP26") == "NASCAR"
+        assert [p for p, _ in _MOTORSPORT_TICKER_LABELS] == sorted(
+            [p for p, _ in _MOTORSPORT_TICKER_LABELS], key=len, reverse=True
+        )
+
+    def test_no_evidence_is_none_not_a_guess(self):
+        # A Polymarket id, an unknown family, and nothing at all. `None` means
+        # the chip keeps the domain fallback — never a blank chip.
+        assert ticker_sport_label("0x8f3a91bd2c") is None
+        assert ticker_sport_label("KXDRONERACE-26") is None
+        assert ticker_sport_label("") is None
+        assert ticker_sport_label(None) is None
+
+
+class TestGpSportLabel:
+    """#7541 — the group-level rule: unanimity, or silence."""
+
+    def test_a_unanimous_group_is_labelled(self):
+        assert gp_sport_label(["KXMOTOGPRACE-OSTE26", "KXMOTOGPRACE-OSTE26"]) == "MotoGP"
+
+    def test_rows_with_no_ticker_do_not_veto_the_ones_that_have_one(self):
+        """A GP grouped across venues: Kalshi carries the family, Polymarket
+        does not. The Kalshi evidence still decides — otherwise adding a
+        Polymarket row to a correctly-labelled GP would silently blank it."""
+        assert gp_sport_label(["KXF1RACE-AZEGP26", "0x8f3a91bd2c", None]) == "F1"
+
+    def test_a_group_that_straddles_two_championships_says_nothing(self):
+        """Two championships under one GP token means our GROUPING is wrong,
+        and the honest answer is silence, not a coin flip. `sorted` on the
+        input must not decide which chip a reader sees."""
+        mixed = ["KXF1RACE-AZEGP26", "KXMOTOGPRACE-OSTE26"]
+        assert gp_sport_label(mixed) is None
+        assert gp_sport_label(list(reversed(mixed))) is None
+
+    def test_no_evidence_at_all_is_none(self):
+        assert gp_sport_label([]) is None
+        assert gp_sport_label(None) is None
+        assert gp_sport_label(["0xabc", None]) is None
+
+
+@pytest.mark.asyncio
+class TestAMotoGpRaceDoesNotWearAnF1Chip:
+    """#7541 — the defect, end to end through the lister.
+
+    Production 2026-09-20 16:05Z, `/sports`, card 5 of Live Now:
+
+        🏎 F1 — Motorrad Grand Prix von Osterreich Winner — Marc Marquez 60%
+
+    "Motorrad Grand Prix von Osterreich" is the MotoGP Austrian Grand Prix.
+    The lister admitted it because its only sport guard is the phrase "grand
+    prix", which MotoGP, Formula E and IndyCar all use, and then served no
+    `sport_label` — so `conceptDomainLabel` fell through to `domain.upper()`.
+    """
+
+    # The row as production held it, name included (un-umlauted, as Kalshi
+    # writes it) — the fixture is the specimen, not a paraphrase of it.
+    MOTOGP = (61497311, "KXMOTOGPRACE-OSTE26", "Motorrad Grand Prix von Osterreich Winner")
+    F1 = (61495797, "KXF1RACE-AZEGP26", "Azerbaijan Grand Prix Winner")
+
+    async def test_the_motogp_race_is_labelled_motogp(self):
+        soon = datetime.now(timezone.utc) + timedelta(hours=2)
+        mid, ext, name = self.MOTOGP
+        concepts = await list_f1_gp_concepts(_MockDB([(mid, ext, name, "open", soon)]))
+
+        assert len(concepts) == 1, "the card must be RELABELLED, never suppressed"
+        assert concepts[0]["sport_label"] == "MotoGP"
+        # The routing token is untouched: `domain` keys the adapter registry and
+        # the event URL, and renaming it would break both.
+        assert concepts[0]["domain"] == "f1"
+
+    async def test_the_f1_race_still_says_f1_now_from_evidence(self):
+        """The control. The Azerbaijan card read `F1` before this change too —
+        from the routing token, which happened to be right. It must still read
+        `F1`, or the fix has traded one wrong chip for a missing one."""
+        soon = datetime.now(timezone.utc) + timedelta(hours=2)
+        mid, ext, name = self.F1
+        concepts = await list_f1_gp_concepts(_MockDB([(mid, ext, name, "open", soon)]))
+        assert concepts[0]["sport_label"] == "F1"
+
+    async def test_both_races_on_one_feed_get_their_own_chip(self):
+        """Both rows were open, `motorsports`, and "grand prix" on the same day.
+        They are separate GP token groups, so they must not pool evidence."""
+        soon = datetime.now(timezone.utc) + timedelta(hours=2)
+        rows = [
+            (mid, ext, name, "open", soon) for mid, ext, name in (self.MOTOGP, self.F1)
+        ]
+        by_name = {c["name"]: c for c in await list_f1_gp_concepts(_MockDB(rows))}
+        assert by_name["Motorrad Grand Prix von Osterreich Winner"]["sport_label"] == "MotoGP"
+        assert by_name["Azerbaijan Grand Prix Winner"]["sport_label"] == "F1"
+
+    async def test_an_unlabelled_gp_omits_the_key_rather_than_serving_null(self):
+        """`sport_label: None` on the wire would satisfy a consumer's presence
+        test and render a BLANK chip — worse than the wrong one. The key is
+        absent, so `conceptDomainLabel` takes its domain fallback and an older
+        client is untouched."""
+        soon = datetime.now(timezone.utc) + timedelta(hours=2)
+        rows = [(9, "0xpolymarketonly", "Monaco Grand Prix: Driver Winner", "open", soon)]
+        concepts = await list_f1_gp_concepts(_MockDB(rows))
+        assert len(concepts) == 1
+        assert "sport_label" not in concepts[0]
+
+    async def test_a_foreign_row_sharing_a_name_token_gets_no_vote_on_the_chip(self):
+        """`entry_count` groups on ANY shared name token, deliberately loosely.
+        The chip may not: evidence is only ever the winner anchors the card is
+        built from. Here an Austrian F1 sub-market shares the token `osterreich`
+        with nothing, but a same-token MotoGP sprint would otherwise be counted —
+        so assert the chip survives a weekend market that carries a foreign
+        ticker."""
+        soon = datetime.now(timezone.utc) + timedelta(hours=2)
+        mid, ext, name = self.MOTOGP
+        rows = [
+            (mid, ext, name, "open", soon),
+            # Folds into entry_count (shared token), carries an F1 ticker, and is
+            # not a winner market — it must not turn the chip off.
+            (7, "KXF1RACE-AUTGP26", "Motorrad Grand Prix Main Race: Fastest Lap", "open", soon),
+        ]
+        concepts = await list_f1_gp_concepts(_MockDB(rows))
+        assert len(concepts) == 1
+        assert concepts[0]["entry_count"] == 2, "the size proxy still counts it"
+        assert concepts[0]["sport_label"] == "MotoGP", "but it does not vote"
