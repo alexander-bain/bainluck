@@ -97,8 +97,11 @@ async def run(args) -> int:
             return 2
         if not restorable:
             print(
-                "Nothing to do: every backed-up side has since been re-bound by "
-                "something else. Leaving them alone (see this file's header)."
+                "Nothing to do: no backed-up side still carries the value the "
+                "repair wrote. Either they were re-bound by something else, or "
+                "they were banked and never written — `team_id_after IS NULL` is "
+                "the repair having stopped before the apply, and there is nothing "
+                "to undo. Leaving them alone (see this file's header)."
             )
             return 0
 

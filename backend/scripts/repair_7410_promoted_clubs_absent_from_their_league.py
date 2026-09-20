@@ -140,9 +140,49 @@ Nothing asserts that invariant anywhere; that is worth a guard and it is not
 this script.
 
 ------------------------------------------------------------------------------
+🔴 THE BANK IS THE PLAN, AND IT IS WRITTEN BEFORE THE MINT (CERT-3166)
+------------------------------------------------------------------------------
+The first version of this script derived its plan freshly on every run and
+minted the clubs before banking anything. Both halves of that were wrong, and
+together they made the runbook below **unable to reach its third line**:
+
+* clause 3 selects sides with **no club of their own name in the league**. The
+  `--backup` run creates exactly such a club. So the `--backup --apply` run
+  re-derived, matched zero sides, and hit the empty-plan refusal — the apply
+  could never happen;
+* and any crash between the mint's commit and anything after it left the same
+  unrecoverable state, because the evidence of what was about to be repaired
+  lived only in the dead process's memory.
+
+The population is therefore derived EXACTLY ONCE, before anything is created,
+and persisted in `backup_7410_promoted_club_binding` — which already had to hold
+every field a plan needs, because it is what the undo reads. Two consequences:
+
+1. **The bank is written first**, with `team_id_after` NULL, and filled in once
+   the mint commits. There is no window in which a club exists and the plan that
+   justified it does not. A NULL `team_id_after` is a row the repair never wrote,
+   and the undo's `= team_id_after` join skips it, which is the correct reading.
+2. **A run that finds a bank reconstructs its plan from it and never re-derives.**
+   Reconstruction is not trust: every banked row is re-read against the live
+   side and dropped unless the side still carries the banked name, is still bound
+   to the banked before-id, still reads as `CROSS_CLUB`, and is still named by
+   ESPN's directory. A side already carrying the repair is counted as done, not
+   rewritten; anything else is an anomaly printed by id and left alone.
+
+This is why the fix is NOT "widen clause 3 to also admit a single name match".
+That spelling would make the population the #1798 rail's — the 25-writes-to-
+make-10 shape this script exists to avoid (see above) — and it would do it
+silently, on the retry path, where nobody is reading the plan a third time.
+
+The mint is also tied to the bank: if `upsert_team` resolves a club to an id
+other than the one already banked as `team_id_after`, the run refuses. Writing a
+different id would leave rows the undo cannot reach.
+
+------------------------------------------------------------------------------
 RUNBOOK
 ------------------------------------------------------------------------------
-Attended, D51(b), in this order. Read the plan before applying it.
+Attended, D51(b), in this order. Read the plan before applying it. Every line is
+re-runnable: the plan is banked, so a repeat resumes rather than starting over.
 
     heroku run:detached -a bainluck -- python3 scripts/repair_7410_promoted_clubs_absent_from_their_league.py
     heroku run:detached -a bainluck -- python3 scripts/repair_7410_promoted_clubs_absent_from_their_league.py --backup
@@ -279,6 +319,92 @@ def plan_sides(rows, tokens: set[str]):
     return plan, skipped_not_cross_club, skipped_not_in_directory
 
 
+def reconcile_banked_plan(banked, live_sides, tokens: set[str]):
+    """Rebuild the plan from the bank, re-validated against the live sides.
+
+    Returns ``(plan, already_applied, anomalies)``.
+
+    This is the path every run after the first one takes, and it exists because
+    the fresh derivation is DELIBERATELY unable to see its own work: clause 3
+    selects sides whose club does not exist, and the first write creates it.
+    See the header.
+
+    The bank is evidence, not authority. A banked row only becomes a plan entry
+    when the live side still agrees with it on all four counts that admitted it:
+
+    * the side still carries the banked name (normalized — the bank stores what
+      the row said, and a row whose name has since changed is a different fact);
+    * it is still bound to the banked ``team_id_before``. Bound to
+      ``team_id_after`` instead means the repair already wrote it, which is
+      ``already_applied`` and not an error — that is what makes a re-run safe;
+    * ``binding_defect`` still reads ``CROSS_CLUB``, so a side something else
+      has since corrected is left alone rather than rewritten;
+    * ESPN's directory still names the club (clause 4, unchanged).
+
+    Everything else is an anomaly, reported by ``event:side`` and dropped. None
+    of these drops is silent and none of them is a write.
+    """
+    live = {(row.event_id, row.side): row for row in live_sides}
+    plan: list[dict] = []
+    already_applied: list[tuple] = []
+    anomalies: list[str] = []
+
+    for bank_row in banked:
+        key = (bank_row.event_id, bank_row.side)
+        row = live.get(key)
+        if row is None:
+            anomalies.append(
+                f"{key[0]}:{key[1]} is banked but no live side reads back "
+                "(deleted event, or a side whose team FK no longer resolves)"
+            )
+            continue
+        if normalize_club_name(row.row_name) != normalize_club_name(bank_row.row_name):
+            anomalies.append(
+                f"{key[0]}:{key[1]} the side's own name changed since the bank: "
+                f"{bank_row.row_name!r} -> {row.row_name!r}"
+            )
+            continue
+        if bank_row.team_id_after is not None and row.bound_id == bank_row.team_id_after:
+            already_applied.append(key)
+            continue
+        if row.bound_id != bank_row.team_id_before:
+            anomalies.append(
+                f"{key[0]}:{key[1]} is bound to {row.bound_id}, which is neither "
+                f"the banked before ({bank_row.team_id_before}) nor after "
+                f"({bank_row.team_id_after}) — something else moved it"
+            )
+            continue
+        if (
+            binding_defect(row.row_name, row.bound_name, row.bound_sport_id, row.sport_id)
+            != CROSS_CLUB
+        ):
+            anomalies.append(
+                f"{key[0]}:{key[1]} no longer reads as cross-club — left alone"
+            )
+            continue
+        if normalize_club_name(row.row_name) not in tokens:
+            anomalies.append(
+                f"{key[0]}:{key[1]} {row.row_name!r} is no longer in ESPN's directory"
+            )
+            continue
+        plan.append(
+            {
+                "event_id": row.event_id,
+                "side": row.side,
+                "row_name": row.row_name,
+                "before_id": row.bound_id,
+                "before_name": row.bound_name,
+                "commence_time": row.commence_time,
+                "status": row.status,
+                # NULL until the mint commits. Carried so the mint can be checked
+                # against what the undo will look for.
+                "after_id": bank_row.team_id_after,
+            }
+        )
+
+    return plan, already_applied, anomalies
+
+
 def wrong_app_refusal(args) -> str | None:
     """Refuse a write from anywhere but the producer app.
 
@@ -340,6 +466,39 @@ SELECT s.*
  ORDER BY s.commence_time DESC, s.event_id, s.side
 """
 
+#: The banked plan, in the order it will be read back and applied. Deliberately
+#: unfiltered: this table belongs to this repair alone, so every row in it is a
+#: row this repair banked, and scoping the read would hide a row rather than
+#: report it.
+_BANKED_SQL = f"""
+SELECT event_id, side, row_name, team_id_before, team_id_after
+  FROM {BACKUP_TABLE}
+ ORDER BY event_id, side
+"""
+
+#: The CURRENT state of the banked sides. `_CANDIDATE_SQL` cannot serve here:
+#: its `NOT EXISTS` is the clause the mint invalidates, which is the whole
+#: defect CERT-3166 found. This one selects by id and applies no clause at all —
+#: every judgement about these rows is made in `reconcile_banked_plan`, where it
+#: can be attributed and tested.
+_LIVE_SIDES_SQL = """
+SELECT e.id AS event_id, e.sport_id, 'home' AS side,
+       e.home_team_name AS row_name, e.home_team_id AS bound_id,
+       ht.name AS bound_name, ht.sport_id AS bound_sport_id,
+       e.commence_time, e.status
+  FROM events e
+  JOIN teams ht ON ht.id = e.home_team_id
+ WHERE e.id = ANY(:ids)
+UNION ALL
+SELECT e.id, e.sport_id, 'away',
+       e.away_team_name, e.away_team_id,
+       at.name, at.sport_id,
+       e.commence_time, e.status
+  FROM events e
+  JOIN teams at ON at.id = e.away_team_id
+ WHERE e.id = ANY(:ids)
+"""
+
 #: COMPARE-AND-SET, the same shape the #1798 rail writes with. The
 #: `AND <side>_team_id = :expected` half is the whole point: it asserts the
 #: plan's before-image at write time, so a side that moved between the plan and
@@ -349,6 +508,59 @@ _UPDATE_SQL = {
     "home": "UPDATE events SET home_team_id = :tid WHERE id = :eid AND home_team_id = :expected",
     "away": "UPDATE events SET away_team_id = :tid WHERE id = :eid AND away_team_id = :expected",
 }
+
+
+def print_plan(plan, minted) -> None:
+    """One line per side, in both modes. ``?`` where nothing is minted yet."""
+    print("\nplan:")
+    for p in plan:
+        target = minted.get(p["row_name"])
+        tid = getattr(target, "id", "?")
+        print(
+            f"  {p['event_id']:>9} {p['side']:<4} {p['row_name']!r:<16} "
+            f"{p['before_id']} {p['before_name']!r} -> {tid}   "
+            f"[{p['status']}] {p['commence_time']}"
+        )
+
+
+async def ensure_bank(s) -> None:
+    """Create the backup table and its key. Idempotent; safe to call every run.
+
+    Every column that MIRRORS an `events` column takes its type from that column
+    rather than being declared (#6215's lesson: one hand-typed column made that
+    backup unrunnable, which made --apply refuse forever). Both id columns are
+    the team FK, so both are selected from `home_team_id`; `row_name` mirrors
+    `home_team_name`.
+
+    `side` is the one column this repair INVENTS — it mirrors nothing, so
+    deriving it from an unrelated column would be cargo, not care. `text`
+    because an invented column has no reason to carry a length limit it could
+    one day truncate against.
+    """
+    from sqlalchemy import text
+
+    await s.execute(
+        text(
+            f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} AS "
+            "SELECT id AS event_id, "
+            " CAST(NULL AS text) AS side, "
+            " home_team_name AS row_name, "
+            " home_team_id AS team_id_before, home_team_id AS team_id_after, "
+            " now() AS taken_at "
+            "FROM events WHERE false"
+        )
+    )
+    # CTAS carries no constraints, so the ON CONFLICT below needs this.
+    # Idempotent: re-running --backup is safe. The key is (event, side) because
+    # 15290889 is in the plan TWICE — both of its sides are bound to 188 — and
+    # an event-only key would bank one and lose the other, leaving half the
+    # repair un-undoable.
+    await s.execute(
+        text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {BACKUP_TABLE}_pk "
+            f"ON {BACKUP_TABLE} (event_id, side)"
+        )
+    )
 
 
 async def run(args) -> int:  # noqa: C901 - a runbook, read top to bottom
@@ -403,50 +615,157 @@ async def run(args) -> int:  # noqa: C901 - a runbook, read top to bottom
             return 2
         print(f"{LEAGUE_SPORT} -> sport_id {sport_id}")
 
-        rows = (
-            await s.execute(text(_CANDIDATE_SQL), {"sport_id": sport_id})
-        ).all()
+        # ------------------------------------------------------------------
+        # THE PLAN. Derived freshly EXACTLY ONCE, and read back from the bank
+        # on every run after that — the fresh derivation is structurally unable
+        # to see its own work, because clause 3 selects sides whose club does
+        # not exist and the first write creates it (CERT-3166, see the header).
+        # ------------------------------------------------------------------
+        bank_exists = (
+            await s.execute(text("SELECT to_regclass(:t)"), {"t": BACKUP_TABLE})
+        ).scalar_one() is not None
+        banked = (await s.execute(text(_BANKED_SQL))).all() if bank_exists else []
 
-        # Clauses 2 (CROSS_CLUB) and 4 (ESPN names it), applied in Python so
-        # each rejection is attributable to the clause that made it.
-        plan, skipped_not_cross_club, skipped_not_in_directory = plan_sides(rows, tokens)
-
-        print(
-            f"\ncandidates with no club of their own name in the league: {len(rows)}"
-            f"\n  not cross-club (right club, other defect): {skipped_not_cross_club}"
-            f"\n  cross-club but NOT in ESPN's directory:    {len(skipped_not_in_directory)} names"
-            f"\n  in plan:                                   {len(plan)} sides"
-        )
-
-        if not plan:
+        if banked:
+            live = (
+                await s.execute(
+                    text(_LIVE_SIDES_SQL),
+                    {"ids": sorted({b.event_id for b in banked})},
+                )
+            ).all()
+            plan, already_applied, anomalies = reconcile_banked_plan(banked, live, tokens)
             print(
-                "\nREFUSING: zero sides to rebind. Either the repair has already "
-                "run or the query no longer matches the schema — a clean zero "
-                "here is a broken read, not a healthy table."
+                f"\n{BACKUP_TABLE} holds {len(banked)} banked sides — this run's plan "
+                "is THE BANK, re-validated against the live rows, not a fresh "
+                "derivation."
+                f"\n  already carrying the repair: {len(already_applied)}"
+                f"\n  still to write:              {len(plan)}"
+                f"\n  anomalies (left alone):      {len(anomalies)}"
             )
-            return 2
+            for note in anomalies:
+                print(f"    ! {note}")
 
-        # One mint per distinct club, through the forward path's own function.
+            if not plan:
+                if already_applied and not anomalies:
+                    print(
+                        f"\nNothing to do: all {len(already_applied)} banked sides "
+                        "already carry the repair. Re-running is a no-op by design."
+                    )
+                    return 0
+                print(
+                    "\nREFUSING: the bank holds rows and not one of them can be "
+                    "written. Every anomaly above is a live row disagreeing with "
+                    "what was banked — read them before touching this by hand."
+                )
+                return 2
+        else:
+            rows = (
+                await s.execute(text(_CANDIDATE_SQL), {"sport_id": sport_id})
+            ).all()
+
+            # Clauses 2 (CROSS_CLUB) and 4 (ESPN names it), applied in Python so
+            # each rejection is attributable to the clause that made it.
+            plan, skipped_not_cross_club, skipped_not_in_directory = plan_sides(rows, tokens)
+
+            print(
+                f"\ncandidates with no club of their own name in the league: {len(rows)}"
+                f"\n  not cross-club (right club, other defect): {skipped_not_cross_club}"
+                f"\n  cross-club but NOT in ESPN's directory:    {len(skipped_not_in_directory)} names"
+                f"\n  in plan:                                   {len(plan)} sides"
+            )
+
+            if not plan:
+                print(
+                    "\nREFUSING: zero sides to rebind, and no bank to resume from. "
+                    "Either the query no longer matches the schema or this league "
+                    "never had the defect — a clean zero here is a broken read, "
+                    "not a healthy table."
+                )
+                return 2
+
+        # The directory entry for each distinct club, resolved in EVERY mode so
+        # a plan-only run surfaces the refusal an apply would hit.
         clubs = sorted({p["row_name"] for p in plan})
-        minted: dict[str, object] = {}
+        entries: dict[str, object] = {}
         for club in clubs:
             entry = espn_entry_for(espn_teams, club)
             if entry is None:
                 print(f"REFUSING: {club!r} is not a single exact entry in the directory.")
                 return 2
-            if not (args.backup or args.apply):
+            entries[club] = entry
+
+        if not (args.backup or args.apply):
+            for club in clubs:
                 print(
                     f"  would mint/resolve {club!r} under sport_id {sport_id} "
-                    f"from ESPN {entry.espn_id} ({entry.display_name})"
+                    f"from ESPN {entries[club].espn_id} ({entries[club].display_name})"
                 )
-                continue
-            team = await upsert_team(s, club, entry, sport_id)
+            print_plan(plan, {})
+            print("\nplan only. Re-run with --backup, then --backup --apply.")
+            return 0
+
+        # ------------------------------------------------------------------
+        # BANK BEFORE MINT. `--apply` refuses without `--backup`, so from here
+        # `args.backup` is always true and the bank is unconditional. Writing it
+        # first is what makes every later line of the runbook re-runnable:
+        # there is no state in which a club has been created and the plan that
+        # justified creating it exists only in this process's memory.
+        # `team_id_after` is NULL until the mint is durable, and the undo's
+        # `= team_id_after` join reads NULL as "never written", correctly.
+        # ------------------------------------------------------------------
+        await ensure_bank(s)
+        for p in plan:
+            await s.execute(
+                text(
+                    f"INSERT INTO {BACKUP_TABLE} "
+                    "(event_id, side, row_name, team_id_before, team_id_after, taken_at) "
+                    "VALUES (:eid, :side, :row_name, :before, NULL, now()) "
+                    "ON CONFLICT (event_id, side) DO NOTHING"
+                ),
+                {
+                    "eid": p["event_id"],
+                    "side": p["side"],
+                    "row_name": p["row_name"],
+                    "before": p["before_id"],
+                },
+            )
+        await s.commit()
+
+        # Read the bank back rather than trusting rowcounts (gotcha #53), and
+        # check the PLAN's own (event, side) keys rather than counting rows —
+        # a count passes vacuously once the bank holds more rows than the plan.
+        have = {
+            (r.event_id, r.side)
+            for r in (
+                await s.execute(text(f"SELECT event_id, side FROM {BACKUP_TABLE}"))
+            ).all()
+        }
+        unbanked = [
+            f"{p['event_id']}:{p['side']}"
+            for p in plan
+            if (p["event_id"], p["side"]) not in have
+        ]
+        print(f"\nbanked: {len(plan) - len(unbanked)} of {len(plan)} planned sides in {BACKUP_TABLE}")
+        if unbanked:
+            print(
+                "REFUSING: these planned sides are not in the backup — "
+                f"{', '.join(unbanked)}. An undo that cannot restore every row it "
+                "is about to change is not an undo."
+            )
+            return 2
+
+        # One mint per distinct club, through the forward path's own function.
+        # `upsert_team` finds an existing row by exact name + sport before it
+        # creates anything, so on a resumed run this RESOLVES rather than mints.
+        minted: dict[str, object] = {}
+        for club in clubs:
+            team = await upsert_team(s, club, entries[club], sport_id)
             if team is None:
                 # `upsert_team`'s own #6215 refusal. It returns None rather than
                 # creating a club under a league its payload does not support.
                 print(
                     f"REFUSING: upsert_team refused to mint {club!r} under "
-                    f"sport_id {sport_id} from ESPN {entry.espn_id} — the "
+                    f"sport_id {sport_id} from ESPN {entries[club].espn_id} — the "
                     "payload does not correspond. Nothing written."
                 )
                 await s.rollback()
@@ -457,19 +776,24 @@ async def run(args) -> int:  # noqa: C901 - a runbook, read top to bottom
                 f"espn_id {team.espn_id}"
             )
 
-        print("\nplan:")
-        for p in plan:
-            target = minted.get(p["row_name"])
-            tid = getattr(target, "id", "?")
-            print(
-                f"  {p['event_id']:>9} {p['side']:<4} {p['row_name']!r:<16} "
-                f"{p['before_id']} {p['before_name']!r} -> {tid}   "
-                f"[{p['status']}] {p['commence_time']}"
-            )
+        print_plan(plan, minted)
 
-        if not (args.backup or args.apply):
-            print("\nplan only. Re-run with --backup, then --backup --apply.")
-            return 0
+        # THE MINT MUST AGREE WITH WHAT THE UNDO LOOKS FOR. On a resumed run the
+        # bank already names the target; resolving to a different id would write
+        # rows `restore_...py` can never reach, because it joins on
+        # `team_id_after`.
+        for p in plan:
+            expected_after = p.get("after_id")
+            resolved = getattr(minted[p["row_name"]], "id", None)
+            if expected_after is not None and resolved != expected_after:
+                print(
+                    f"REFUSING: {p['row_name']!r} now resolves to team {resolved}, "
+                    f"but the bank names {expected_after} as this repair's target. "
+                    "Writing a different id would put the row out of the undo's "
+                    "reach. Nothing written."
+                )
+                await s.rollback()
+                return 2
 
         # THE GUARD THAT MAKES THE WRITE UNABLE TO REPEAT THE DEFECT. Every
         # target is put through the same gate the write-time rails use: the
@@ -500,76 +824,55 @@ async def run(args) -> int:  # noqa: C901 - a runbook, read top to bottom
                 await s.rollback()
                 return 2
 
-        # The mints must be durable BEFORE the backup names their ids, or an
-        # undo would restore rows pointing at teams that were rolled back.
+        # The mints must be durable BEFORE the bank names their ids, or an undo
+        # would restore rows pointing at teams that were rolled back.
         await s.commit()
 
-        ids = sorted({p["event_id"] for p in plan})
+        # Now the bank can say what the repair's target IS. Until this runs the
+        # row reads `team_id_after IS NULL`, i.e. "banked, never written" — which
+        # is exactly true, and is what lets a crashed run resume.
+        for p in plan:
+            await s.execute(
+                text(
+                    f"UPDATE {BACKUP_TABLE} SET team_id_after = :after "
+                    "WHERE event_id = :eid AND side = :side"
+                ),
+                {
+                    "after": minted[p["row_name"]].id,
+                    "eid": p["event_id"],
+                    "side": p["side"],
+                },
+            )
+        await s.commit()
 
-        if args.backup:
-            # Every column that MIRRORS an `events` column takes its type from
-            # that column rather than being declared (#6215's lesson: one
-            # hand-typed column made that backup unrunnable, which made --apply
-            # refuse forever). Both id columns are the team FK, so both are
-            # selected from `home_team_id`; `row_name` mirrors `home_team_name`.
-            #
-            # `side` is the one column this repair INVENTS — it mirrors nothing,
-            # so deriving it from an unrelated column would be cargo, not care.
-            # `text` because an invented column has no reason to carry a length
-            # limit it could one day truncate against.
-            await s.execute(
-                text(
-                    f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} AS "
-                    "SELECT id AS event_id, "
-                    " CAST(NULL AS text) AS side, "
-                    " home_team_name AS row_name, "
-                    " home_team_id AS team_id_before, home_team_id AS team_id_after, "
-                    " now() AS taken_at "
-                    "FROM events WHERE false"
-                )
-            )
-            # CTAS carries no constraints, so the ON CONFLICT below needs this.
-            # Idempotent: re-running --backup is safe. The key is (event, side)
-            # because 15290889 is in the plan TWICE — both of its sides are
-            # bound to 188 — and an event-only key would bank one and lose the
-            # other, leaving half the repair un-undoable.
-            await s.execute(
-                text(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS {BACKUP_TABLE}_pk "
-                    f"ON {BACKUP_TABLE} (event_id, side)"
-                )
-            )
-            for p in plan:
+        # Read it back rather than trusting rowcounts (gotcha #53), and scope the
+        # check to the PLAN's own (event, side) keys. An event-id scope would
+        # also sweep in a banked side this run left alone as an anomaly, and
+        # refuse the nine good writes on account of the one we already decided
+        # not to touch.
+        planned_keys = {(p["event_id"], p["side"]) for p in plan}
+        unresolved = sorted(
+            f"{r.event_id}:{r.side}"
+            for r in (
                 await s.execute(
                     text(
-                        f"INSERT INTO {BACKUP_TABLE} "
-                        "(event_id, side, row_name, team_id_before, team_id_after, taken_at) "
-                        "VALUES (:eid, :side, :row_name, :before, :after, now()) "
-                        "ON CONFLICT (event_id, side) DO NOTHING"
-                    ),
-                    {
-                        "eid": p["event_id"],
-                        "side": p["side"],
-                        "row_name": p["row_name"],
-                        "before": p["before_id"],
-                        "after": minted[p["row_name"]].id,
-                    },
+                        f"SELECT event_id, side FROM {BACKUP_TABLE} "
+                        "WHERE team_id_after IS NULL"
+                    )
                 )
-            await s.commit()
-            banked = (
-                await s.execute(
-                    text(f"SELECT count(*) FROM {BACKUP_TABLE} WHERE event_id = ANY(:ids)"),
-                    {"ids": ids},
-                )
-            ).scalar_one()
-            print(f"\nbacked up: {banked} of {len(plan)} planned sides in {BACKUP_TABLE}")
-            if banked < len(plan):
-                print(
-                    "REFUSING to apply: the backup holds fewer rows than the plan. "
-                    "An undo that cannot restore every row it is about to change "
-                    "is not an undo."
-                )
-                return 2
+            ).all()
+            if (r.event_id, r.side) in planned_keys
+        )
+        if unresolved:
+            print(
+                f"REFUSING to apply: {len(unresolved)} planned side(s) still have "
+                f"no target id in the bank — {', '.join(unresolved)}. The undo "
+                "joins on that column, so writing now would put those rows out "
+                "of its reach."
+            )
+            return 2
+
+        ids = sorted({p["event_id"] for p in plan})
 
         if args.apply:
             moved = 0
