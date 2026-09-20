@@ -19,6 +19,15 @@ const code = src
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/\/\/.*$/gm, "");
 
+// #7545 — the empty state is its own component now (it has to decide WHICH
+// emptiness it is showing, which needs a test the page cannot give it).
+const emptyStateCode = readFileSync(
+  join(__dirname, "../../components/futures/FuturesTrendEmptyState.tsx"),
+  "utf8",
+)
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/\/\/.*$/gm, "");
+
 describe("futures-detail hero chart (#883 blend-only, single leader line)", () => {
   test("hero no longer renders the multi-line TournamentChart", () => {
     expect(code).not.toContain("TournamentChart");
@@ -56,6 +65,13 @@ describe("futures-detail edge states (#883 L2-49)", () => {
   });
 
   test("honest empty state instead of a broken sparse chart", () => {
-    expect(code).toContain("Not enough price history yet");
+    // #7545 moved this copy OUT of the page and into FuturesTrendEmptyState,
+    // because with a reader-chosen range there are now two emptinesses and only
+    // one of them is "this market has no history". The invariant this test was
+    // written for — the page never draws a degenerate chart, it says so plainly
+    // — is unchanged, so the guard follows the behaviour to where it lives
+    // rather than being deleted with the string it happened to be keyed on.
+    expect(code).toContain("<FuturesTrendEmptyState");
+    expect(emptyStateCode).toContain("Not enough price history yet");
   });
 });
