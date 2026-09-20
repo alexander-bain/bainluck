@@ -115,9 +115,19 @@ describe("#5852 link half — the league-qualified retry", () => {
     expect(asked).toEqual(["boston-red-sox"]);
   });
 
-  it("never retries the tennis same-family case the family test protects", async () => {
-    // A player's page filed under a different tournament is about the RIGHT
-    // person; `describeTeamRoute` returns offRoute false, so no retry may fire.
+  /**
+   * ⚠️ THIS ASSERTION WAS REVISED 2026-09-20, AND THE PROTECTION IT CARRIES WAS
+   * NOT DROPPED. It used to read `expect(asked).toEqual(["jannik-sinner"])` —
+   * "the tennis case never reaches the retry at all" — because the trigger was
+   * the SPORT family and a cross-tournament row is same-family. The competition
+   * half of #5852 widened the trigger, so the retry is now offered a tennis
+   * route too. What that test was defending is that a reader is never moved off
+   * the right PERSON, and that is asserted here directly (and again below, on
+   * the row that does exist). The cost it implied — no wasted request — is
+   * asserted too: the league-segment candidate `jannik-sinner-atp_us_open`
+   * carries an underscore `slugify` cannot emit, so it is never asked for.
+   */
+  it("leaves a tennis player on the tournament row they already have when there is no better one", async () => {
     const { fetchTeam, asked } = fetcherOver({
       "jannik-sinner": { team: { name: "Jannik Sinner", sport_key: "tennis_wta_miami_open" } },
     });
@@ -125,7 +135,25 @@ describe("#5852 link half — the league-qualified retry", () => {
     const out = await resolveTeamForRoute("jannik-sinner", "tennis", "atp_us_open", fetchTeam);
 
     expect(out.slug).toBe("jannik-sinner");
-    expect(asked).toEqual(["jannik-sinner"]);
+    expect(out.data.team.name).toBe("Jannik Sinner");
+    expect(asked).toEqual(["jannik-sinner", "jannik-sinner-open"]);
+    expect(asked).not.toContain("jannik-sinner-atp_us_open");
+  });
+
+  it("gives a tennis player the tournament row the URL asked for when it exists", async () => {
+    // 502 rows in this shape, measured 2026-09-20: the suffix is the sport
+    // key's last token, so `tennis_atp_us_open` mints `-open`.
+    const { fetchTeam } = fetcherOver({
+      "jannik-sinner": { team: { name: "Jannik Sinner", sport_key: "tennis_wta_miami_open" } },
+      "jannik-sinner-open": {
+        team: { name: "Jannik Sinner", sport_key: "tennis_atp_us_open" },
+      },
+    });
+
+    const out = await resolveTeamForRoute("jannik-sinner", "tennis", "atp_us_open", fetchTeam);
+
+    expect(out.slug).toBe("jannik-sinner-open");
+    expect(out.data.team.name).toBe("Jannik Sinner");
   });
 
   it("discards a retry that is ALSO off-route rather than rendering it", async () => {

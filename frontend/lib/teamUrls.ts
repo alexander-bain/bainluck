@@ -26,6 +26,29 @@ const SPORT_KEY_TO_PATH: Record<string, { sport: string; league: string }> = {
   golf_pga: { sport: "golf", league: "pga" },
 };
 
+/**
+ * The sport key a `/sport/<sport>/<league>/` route names. The inverse of
+ * `buildTeamPageUrl`'s own mapping, and it lives here so the two can never
+ * drift apart. #5852
+ *
+ * Both halves of that map matter: `("soccer", "ucl")` is `soccer_uefa_champs_league`
+ * (an ALIAS — nothing about the segment says "uefa champs league"), while an
+ * unmapped pair rejoins on the underscore the same way the fallback arm above
+ * split it. Returns null only when a segment is missing.
+ */
+export function sportKeyForRoute(
+  sport: string,
+  league: string,
+): string | null {
+  const s = sport.trim().toLowerCase();
+  const l = league.trim().toLowerCase();
+  if (!s || !l) return null;
+  for (const [key, mapped] of Object.entries(SPORT_KEY_TO_PATH)) {
+    if (mapped.sport === s && mapped.league === l) return key;
+  }
+  return `${s}_${l}`;
+}
+
 export function buildTeamPageUrl(
   teamName: string,
   sportKey: string | null | undefined,
