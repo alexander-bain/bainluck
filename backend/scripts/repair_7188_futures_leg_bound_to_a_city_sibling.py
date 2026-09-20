@@ -58,13 +58,13 @@ RUNBOOK
 ------------------------------------------------------------------------------
 Attended, D51(b), in this order. Read the plan before applying it.
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py --backup
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py --backup --apply
+    heroku run:detached -a bainluck -- python3 scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py
+    heroku run:detached -a bainluck -- python3 scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py --backup
+    heroku run:detached -a bainluck -- python3 scripts/repair_7188_futures_leg_bound_to_a_city_sibling.py --backup --apply
 
 Undo, one command:
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/restore_7188_futures_leg_bound_to_a_city_sibling.py --apply
+    heroku run:detached -a bainluck -- python3 scripts/restore_7188_futures_leg_bound_to_a_city_sibling.py --apply
 
 `heroku run` without `:detached` fails silently in the sandbox (gotcha #48) —
 verify by re-reading the rows about sixty seconds later, never by trusting an

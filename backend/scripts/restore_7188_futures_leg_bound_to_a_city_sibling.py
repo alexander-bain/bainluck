@@ -2,7 +2,7 @@
 
 One command, D51:
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/restore_7188_futures_leg_bound_to_a_city_sibling.py --apply
+    heroku run:detached -a bainluck -- python3 scripts/restore_7188_futures_leg_bound_to_a_city_sibling.py --apply
 
 Restores from `backup_7188_futures_leg_city_sibling`, and only for rows that
 STILL carry the value the repair wrote (``team_id = team_id_after``). A leg that

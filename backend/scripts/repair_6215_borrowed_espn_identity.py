@@ -74,13 +74,13 @@ RUNBOOK
 ------------------------------------------------------------------------------
 Attended, D51, and in this order. Read the plan before applying it.
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_6215_borrowed_espn_identity.py
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_6215_borrowed_espn_identity.py --backup
-    heroku run:detached -a bainluck -- python3 backend/scripts/repair_6215_borrowed_espn_identity.py --backup --apply
+    heroku run:detached -a bainluck -- python3 scripts/repair_6215_borrowed_espn_identity.py
+    heroku run:detached -a bainluck -- python3 scripts/repair_6215_borrowed_espn_identity.py --backup
+    heroku run:detached -a bainluck -- python3 scripts/repair_6215_borrowed_espn_identity.py --backup --apply
 
 Undo, one command:
 
-    heroku run:detached -a bainluck -- python3 backend/scripts/restore_6215_borrowed_espn_identity.py --apply
+    heroku run:detached -a bainluck -- python3 scripts/restore_6215_borrowed_espn_identity.py --apply
 
 `heroku run` without `:detached` fails silently in the sandbox (gotcha #48) —
 verify by re-reading the rows about sixty seconds later, never by trusting an

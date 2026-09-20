@@ -8,9 +8,9 @@ regress (the L1-L4 audit is the guard). Safe to re-run — already-folded rows a
 skipped via ``source_team_id`` / ``sport_id``.
 
 Usage:
-    heroku run --app bainluck python3 backend/scripts/seed_entity_registry.py
+    heroku run --app bainluck python3 scripts/seed_entity_registry.py
     # dry-run projection (no writes):
-    heroku run --app bainluck python3 backend/scripts/seed_entity_registry.py --dry-run
+    heroku run --app bainluck python3 scripts/seed_entity_registry.py --dry-run
 """
 import argparse
 import asyncio
