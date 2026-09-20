@@ -387,7 +387,7 @@ def test_the_three_tiers_do_not_share_a_redis_namespace():
 def test_stored_bytes_are_json_and_carry_the_envelope():
     rc = _FakeRedis()
     rfc.write(7, _stamped("live"), rc=rc)
-    raw = json.loads(rc.store[rfc.keys_for(7).primary].decode())
+    raw = concept_cache.decode_payload(rc.store[rfc.keys_for(7).primary])  # #7563
     assert raw[concept_cache.ENVELOPE_FIELD]["generation"] == concept_cache.GENERATION
 
 
@@ -506,7 +506,7 @@ async def test_debug_bypasses_the_cache_in_BOTH_directions():
 
     assert builds == [False, True]
     assert "_debug" in out
-    stored = json.loads(rc.store[rfc.keys_for(7).primary].decode())
+    stored = concept_cache.decode_payload(rc.store[rfc.keys_for(7).primary])  # #7563
     assert "_debug" not in stored, "a debug payload was published to the shared slot"
 
 

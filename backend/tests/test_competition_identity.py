@@ -307,7 +307,9 @@ async def test_the_stored_envelope_carries_the_competition_block():
         )
 
     assert built["competition"]["slug"] == "the-masters"
-    stored = json.loads(rc.store[cache_mod.cache_keys("event:golf:the-masters").primary])
+    stored = cache_mod.decode_payload(  # #7563: one codec, never a second one
+        rc.store[cache_mod.cache_keys("event:golf:the-masters").primary]
+    )
 
     # LAT-P181 — this used to assert `== "2027-04-08"`, and it was measured to go
     # red on **2027-04-12**: `majors_calendar.yaml` is a FORWARD horizon file

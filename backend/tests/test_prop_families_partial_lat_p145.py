@@ -255,7 +255,11 @@ def _envelope(payload):
 
 def _stored(rc, key):
     raw = rc.store.get(key)
-    return None if raw is None else json.loads(raw)
+    # #7563: the tier's own decoder, never a second one. This value may be
+    # zlib-compressed, and a helper that re-implements `json.loads` here is a
+    # codec that drifts from the module under test the moment a fixture grows
+    # past `_COMPRESS_MIN_BYTES` — which is exactly how this one was found.
+    return None if raw is None else cache_mod.decode_payload(raw)
 
 
 async def _build(plan, team=None, cap=400, **kw):
