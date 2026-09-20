@@ -43,7 +43,7 @@ Worse, the row half ALONE makes the page contradict itself in a NEW way:
 flipping the row to 38/27 while the series still say 27/38 renders
 *"Mountaineers 27 · WON · Cavaliers 38"* — the badge on the lower number.
 
-Hence this rail writes all four stores in ONE transaction per event:
+Hence this rail writes up to four stores in ONE transaction per event:
 
     1. ``events.home_score`` / ``away_score``
     2. ``espn_snapshots.home_score`` / ``away_score``
@@ -51,6 +51,28 @@ Hence this rail writes all four stores in ONE transaction per event:
     3. ``score_snapshots.home_score`` / ``away_score``
     4. the ESPN leg — ``win_prob_snapshots`` where ``source='espn'``,
        ``events.espn_win_prob_home``, ``win_probability_sources['espn']``
+
+🔴 "UP TO" FOUR, AND EACH ONE IS JUDGED SEPARATELY — A ROW CAN BE HALF-HEALED.
+#7338 released on 2026-09-20 while this rail was being written, and its live
+sweep reached the specimen inside the 6h window: it corrected ``events`` to
+38-27 and appended one correctly-oriented ``score_snapshots`` row, while
+``espn_snapshots`` stayed frozen at 102 swapped rows and the ESPN probability
+leg stayed at 0.0 for the side that won. That residual is what still renders
+"Bigger Picture: Cavaliers" over a game West Virginia won.
+
+The first cut of this rail had ONE global gate keyed on ``events.home_score``,
+so it read that row as "not slot copied" and walked away from the half still on
+the page — a repair windowed on the very column a partial repair had already
+moved. So: the VERDICT decides membership (it is identity-keyed, and a partial
+heal cannot move it), and each STORE then carries its own positive proof. No
+store is written on another store's evidence.
+
+MEASURED POPULATION (2026-09-19, this rail's own planner replayed over
+production): **0 swapped verdicts in 985 settled rows carrying an ``espn_id``**
+— 45 days, all older than 8h, every ESPN-adjudicable sport. There is no frozen
+backlog. This rail exists for the residual above and for the next time a
+neutral-site game settles outside the 6h window before a corrected poll reaches
+it (ESPN dark, a bowl game, an international fixture).
 
 THE JUDGE IS #7338's OWN, NEVER A SECOND IMPLEMENTATION. Membership is
 :func:`espn_orientation_verdict` and nothing else. It has THREE values and only
@@ -63,9 +85,9 @@ correct today.
 whose score disagrees with ESPN can be EITHER orientation-swapped (this rail) or
 score-drifted / espn_id-drifted (#7147's rail, ``repair_event_final_scores``).
 Applying the wrong one writes another game's final onto the row. They are told
-apart by :data:`SLOT_COPY_PROOF`: an orientation swap is only ever written when
-the stored score is EXACTLY ESPN's two numbers in ESPN's own slots. A row that
-merely disagrees with ESPN is reported as ``not_slot_copied`` and never touched
+apart by :data:`SLOT_COPY_PROOF`, applied per store: a store is only ever
+written when it holds EXACTLY ESPN's values in ESPN's own slots. A store that
+merely disagrees with ESPN is reported in ``series_notes`` and never touched
 here — it belongs to the other rail.
 
 WHAT IS DELIBERATELY NOT IN SCOPE (measured, not assumed — see #7354):
@@ -340,6 +362,19 @@ _COMPLEMENT_WPS_ESPN_SQL = """
 # `text()` is claimed by the driver's own parameter syntax, so the operator form
 # raises or silently mis-binds depending on the dialect. The function form is
 # the same index-eligible test with no parser ambiguity.
+
+
+#: plan action -> the counter it increments. A table rather than a chain, so a
+#: new action that nobody counts is visible as a missing key instead of silently
+#: landing in no bucket.
+_ACTION_COUNTERS = {
+    "skip_aligned": "aligned",
+    "skip_unresolved": "unresolved",
+    "skip_nothing_to_repair": "nothing_to_repair",
+    "skip_espn_not_found": "espn_not_found",
+    "skip_espn_not_final": "espn_not_final",
+    "skip_espn_no_score": "espn_no_score",
+}
 
 
 @dataclass
@@ -691,6 +726,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
         "swapped": 0, "repaired": 0, "aligned": 0, "unresolved": 0,
         "nothing_to_repair": 0, "espn_not_found": 0, "espn_not_final": 0,
         "espn_no_score": 0, "backup_refused": 0,
+        "errors": 0, "error_rows": [],
         "rows_written": {"events": 0, "espn_snapshots": 0,
                          "score_snapshots": 0, "espn_leg": 0},
         "post_final_pinned_rows": {},
@@ -700,56 +736,17 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
     client = ESPNAPIService()
     try:
         for row in rows:
-            # A plain object rather than the RowMapping: `espn_orientation_verdict`
-            # reads by getattr and a mapping would answer UNRESOLVED for every row.
-            proj = type("Row", (), dict(row))()
-            ee = await client.get_event(row["sport_key"], str(row["espn_id"]))
-
-            last_espn = (await session.execute(
-                text(_LAST_ESPN_SNAPSHOT_SQL), {"event_id": row["id"]})).first()
-            last_score = (await session.execute(
-                text(_LAST_SCORE_SNAPSHOT_SQL), {"event_id": row["id"]})).first()
-
-            plan = plan_orientation_repair(proj, ee, last_espn, last_score)
-
-            key = {
-                "skip_aligned": "aligned", "skip_unresolved": "unresolved",
-                "skip_nothing_to_repair": "nothing_to_repair",
-                "skip_espn_not_found": "espn_not_found",
-                "skip_espn_not_final": "espn_not_final",
-                "skip_espn_no_score": "espn_no_score",
-            }.get(plan.action)
-            if key:
-                res[key] += 1
-            if plan.verdict == ESPN_ORIENTATION_SWAPPED:
-                res["swapped"] += 1
-
-            if not plan.writes:
-                if plan.verdict in (ESPN_ORIENTATION_SWAPPED, ESPN_ORIENTATION_UNRESOLVED):
-                    res["ledger"].append(plan)
-                continue
-
-            pinned = (await session.execute(
-                text(_POST_FINAL_PINNED_SQL), {"event_id": row["id"]})).all()
-            for src, n in pinned:
-                res["post_final_pinned_rows"][src] = \
-                    res["post_final_pinned_rows"].get(src, 0) + n
-
-            res["ledger"].append(plan)
-            if not apply:
-                continue
-
-            counts = await _row_counts(session, plan)
-            await bank_prior_state(session, plan, counts)
-            if not await backup_is_verified(session, plan.event_id):
+            try:
+                await _scan_one(session, client, row, res, apply)
+            except Exception as exc:  # noqa: BLE001 - one row must not end the pass
+                # Gotcha #42: one bad item must never wipe the pass. A resumable
+                # rail is worse than useless if a single unreachable espn_id or a
+                # single constraint violation costs the other 49 rows their scan
+                # AND leaves the offset cursor unadvanced, so the next invocation
+                # re-reads the same poison row forever.
                 await session.rollback()
-                res["backup_refused"] += 1
-                continue
-            written = await apply_plan(session, plan)
-            await session.commit()
-            res["repaired"] += 1
-            for k, v in written.items():
-                res["rows_written"][k] = res["rows_written"].get(k, 0) + v
+                res["errors"] += 1
+                res["error_rows"].append(f"ev{row['id']}: {type(exc).__name__}: {exc}")
     finally:
         close = getattr(client, "close", None)
         if close:
@@ -758,6 +755,64 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
                 await maybe
 
     return res
+
+
+async def _scan_one(session, client, row, res: dict, apply: bool) -> None:
+    """Plan and, when applying, repair ONE row.
+
+    Raises on its own row; :func:`repair` isolates it so one unreachable
+    ``espn_id`` or one constraint violation cannot end the pass.
+    """
+    from sqlalchemy import text
+
+    # A plain object rather than the RowMapping: `espn_orientation_verdict`
+    # reads by getattr and a mapping would answer UNRESOLVED for every row.
+    proj = type("Row", (), dict(row))()
+    ee = await client.get_event(row["sport_key"], str(row["espn_id"]))
+
+    last_espn = (await session.execute(
+        text(_LAST_ESPN_SNAPSHOT_SQL), {"event_id": row["id"]})).first()
+    last_score = (await session.execute(
+        text(_LAST_SCORE_SNAPSHOT_SQL), {"event_id": row["id"]})).first()
+
+    plan = plan_orientation_repair(proj, ee, last_espn, last_score)
+
+    key = _ACTION_COUNTERS.get(plan.action)
+    if key:
+        res[key] += 1
+    if plan.verdict == ESPN_ORIENTATION_SWAPPED:
+        res["swapped"] += 1
+
+    if not plan.writes:
+        # A skip is only worth a ledger line when it is a judgement a reader
+        # might dispute. `aligned` is the overwhelming majority and says nothing.
+        if plan.verdict in (ESPN_ORIENTATION_SWAPPED, ESPN_ORIENTATION_UNRESOLVED):
+            res["ledger"].append(plan)
+        return
+
+    pinned = (await session.execute(
+        text(_POST_FINAL_PINNED_SQL), {"event_id": row["id"]})).all()
+    for src, n in pinned:
+        res["post_final_pinned_rows"][src] = \
+            res["post_final_pinned_rows"].get(src, 0) + n
+
+    res["ledger"].append(plan)
+    if not apply:
+        return
+
+    counts = await _row_counts(session, plan)
+    await bank_prior_state(session, plan, counts)
+    if not await backup_is_verified(session, plan.event_id):
+        # No bank, no write. The rollback drops the half-written bank with it,
+        # so the next invocation sees this row exactly as it found it.
+        await session.rollback()
+        res["backup_refused"] += 1
+        return
+    written = await apply_plan(session, plan)
+    await session.commit()
+    res["repaired"] += 1
+    for k, v in written.items():
+        res["rows_written"][k] = res["rows_written"].get(k, 0) + v
 
 
 async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
@@ -802,6 +857,15 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
               "and #7354):")
         for src, n in sorted(res["post_final_pinned_rows"].items()):
             print(f"  {src}: {n} rows captured after completed_at")
+
+    if res["errors"]:
+        # Loud, and never folded into a skip bucket: a row that RAISED was not
+        # judged, and reporting it as "aligned" would be the rail lying about
+        # its own coverage.
+        print(f"\n🔴 {res['errors']} row(s) RAISED and were not judged "
+              f"(the pass continued — gotcha #42):")
+        for line in res["error_rows"][:20]:
+            print(f"  {line}")
 
     if apply:
         print(f"\nCOMMITTED events={res['repaired']} "

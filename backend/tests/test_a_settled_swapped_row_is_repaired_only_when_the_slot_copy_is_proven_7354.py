@@ -330,6 +330,91 @@ class TestEachSeriesIsGatedOnItsOwnLastPoint:
         assert plan.writes is True
 
 
+class TestOneBadRowDoesNotEndThePass:
+    """Gotcha #42, and on a resumable rail it is worse than usual.
+
+    A raise on row 3 of 50 does not merely lose 47 scans: it leaves the offset
+    cursor unadvanced, so the next invocation re-reads the same poison row and
+    the walk never finishes. The row must be counted, named, and stepped over.
+    """
+
+    def test_a_raising_row_is_isolated_and_its_siblings_are_still_judged(self):
+        import asyncio
+
+        import scripts.repair_7354_settled_orientation_swap as mod
+
+        rows = [
+            {"id": 1, "espn_id": "a", "sport_key": "x"},
+            {"id": 2, "espn_id": "b", "sport_key": "x"},  # this one explodes
+            {"id": 3, "espn_id": "c", "sport_key": "x"},
+        ]
+        judged = []
+
+        async def fake_scan(session, client, row, res, apply):
+            if row["id"] == 2:
+                raise RuntimeError("ESPN said no")
+            judged.append(row["id"])
+            res["aligned"] += 1
+
+        class _Result:
+            def scalar(self):
+                return len(rows)
+
+            def mappings(self):
+                return self
+
+            def all(self):
+                return rows
+
+        class _Session:
+            async def execute(self, *a, **kw):
+                return _Result()
+
+            async def rollback(self):
+                pass
+
+            async def commit(self):
+                pass
+
+        monkey = {}
+        monkey["scan"] = mod._scan_one
+        mod._scan_one = fake_scan
+        mod_service = mod.__dict__.get("ESPNAPIService")
+        try:
+            import app.services.espn_api as espn_mod
+            real = espn_mod.ESPNAPIService
+            espn_mod.ESPNAPIService = lambda *a, **kw: object()
+            try:
+                res = asyncio.run(mod.repair(_Session(), apply=False))
+            finally:
+                espn_mod.ESPNAPIService = real
+        finally:
+            mod._scan_one = monkey["scan"]
+            if mod_service is not None:
+                mod.__dict__["ESPNAPIService"] = mod_service
+
+        assert judged == [1, 3], "the siblings of the bad row were not judged"
+        assert res["errors"] == 1
+        assert any("ev2" in line and "ESPN said no" in line
+                   for line in res["error_rows"]), res["error_rows"]
+
+    def test_a_raised_row_is_never_counted_as_a_clean_skip(self):
+        """Folding a raise into `aligned` would make the rail lie about its
+        own coverage — the row was not judged at all."""
+        import inspect
+
+        import scripts.repair_7354_settled_orientation_swap as mod
+
+        src = inspect.getsource(mod.repair)
+        handler = src[src.index("except Exception"):]
+        for bucket in ("aligned", "unresolved", "nothing_to_repair"):
+            assert f'res["{bucket}"]' not in handler, (
+                f"the error handler increments {bucket!r} — a row that raised "
+                f"was not judged and must not be counted as one that was"
+            )
+        assert 'res["errors"]' in handler
+
+
 class TestTheUndoObservesEveryColumnItRestores:
     """A restore that writes a column it does not compare is a blind overwrite.
 
