@@ -428,6 +428,51 @@ def test_the_generic_fill_never_blends_venues_matches_legs_or_dispatches():
         assert writer not in used, f"generic fill calls `{writer}`"
 
 
+def test_this_attempts_yield_is_counted_before_the_last_good_merge():
+    """The count is only true in ONE place in the function, so pin the place.
+
+    `stats.fetched_points` is what tells a settled market's answered attempt
+    from a payload that merely carries a healthy series (CERT-3152). It is
+    countable only while `entries` holds this attempt's points ALONE — one line
+    below the last-good merge, a carried series and a fetched one are the same
+    list, the count comes back positive for an attempt that fetched nothing, and
+    the freeze this ship removed comes straight back. No behavioural test in
+    this file can see that: it needs a venue, and the arm that watches the value
+    over a real fill is B11 in
+    `tests/integration/test_generic_market_history_7351_real_pg_redis.py`.
+
+    So this one watches the POSITION, which is the part a refactor moves.
+    """
+    source = (APP / "tasks" / "generic_market_history_fill.py").read_text()
+    tree = ast.parse(source)
+    func = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "build_generic_history"
+    )
+
+    def _line(predicate, what):
+        hits = [n.lineno for n in ast.walk(func) if predicate(n)]
+        assert hits, f"`build_generic_history` no longer {what}"
+        return min(hits)
+
+    counted = _line(
+        lambda n: (isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
+                   and n.slice.value == "fetched_points"),
+        "records `stats['fetched_points']`",
+    )
+    merged = _line(
+        lambda n: (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "validate_payload"),
+        "carries a last-good series through `validate_payload`",
+    )
+    assert counted < merged, (
+        f"`stats['fetched_points']` is set at line {counted}, AFTER the last-good "
+        f"merge begins at line {merged}. Past that point the count includes points "
+        "carried out of the cache, so an attempt that fetched nothing reads as an "
+        "answered one and a settled chart freezes for the week (CERT-3152)."
+    )
+
+
 def test_the_route_seam_reads_a_cache_and_never_a_provider():
     source = (APP / "routes" / "futures.py").read_text(encoding="utf-8")
     start = source.index("class _GenericVenueHistory:")
