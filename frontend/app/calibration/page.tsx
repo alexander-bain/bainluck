@@ -2419,7 +2419,16 @@ export default function CalibrationPage() {
         <h2 className="text-title-3 text-text-primary mb-3">How We Measure This</h2>
         <ul className="space-y-3 text-sm text-text-secondary">
           <li><strong className="text-text-primary">What&rsquo;s a calibration curve?</strong> We group every resolved prediction by its opening probability (0-10%, 10-20%, etc.) and check what percentage actually came true. If markets are well-calibrated, the points follow the diagonal line &mdash; a 30% prediction happens 30% of the time.</li>
-          <li><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets (Kalshi, Polymarket), a market&rsquo;s final price settles at $1.00 (happened) or $0.00 (didn&rsquo;t happen) when it resolves.</li>
+          {/* #7368. This bullet used to answer the question with "a market's final
+              price settles at $1.00 or $0.00", which is the one kind of evidence the
+              curve refuses: `truth_evidence.rule` grades a forecast only on a winner
+              established independently of that market's own price, and the
+              price-derived rows are excluded. We were advertising a weaker method
+              than the one we run. The lone-claim exception (D112, #997) is real, so
+              the last sentence is load-bearing, not a hedge. No count goes here: the
+              `price_derived` census is taken over a different shape than the curve's
+              exclusions and its own producer says the two have never been equal. */}
+          <li data-testid="calibration-who-won-note"><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets, we use the venue&rsquo;s own settlement: Kalshi&rsquo;s or Polymarket&rsquo;s published answer to the question, or a public record that settles it. We do not take the winner from the market&rsquo;s own closing price &mdash; a prediction we could only grade that way is left out of the curve instead, because a forecast marked by its own price is marking its own homework. The exception is a market that asks a single yes-or-no question, where there is no other price in play and the venue&rsquo;s answer stands on its own.</li>
           <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ sportsbooks. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
           {/* Queue 316 item 1. This was a column in Source Comparison, where it
               competed with ECE for the reader's attention while being a
