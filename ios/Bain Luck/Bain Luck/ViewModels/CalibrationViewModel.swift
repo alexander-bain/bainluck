@@ -194,12 +194,34 @@ final class CalibrationViewModel: ObservableObject {
     /// claim (L2-231 Item 0). It now names the same population web does, in the
     /// same words, and says which outcomes are missing from it rather than
     /// labelling the remainder with a property nobody measured.
+    ///
+    /// **#7496 — two words, because `fullN` is not the total and one cut is not
+    /// every cut.** `total_outcomes` is a POST-exclusion population, and this
+    /// page says so about itself nine screens down: *"that published total is
+    /// lower than the raw resolved-outcome count because we exclude markets that
+    /// can't form an honest prediction"*. The eight folded rules alone set aside
+    /// 147,721 outcomes. So the old sentence over-claimed twice: `(N in total)`
+    /// called a filtered population everything, and *"every outcome except the
+    /// never-moved ones"* named one cut as the only cut. Scoping the universe to
+    /// what we MEASURED fixes both at once — the never-moved rows really are the
+    /// only thing taken out of the measured set, which is the claim this sentence
+    /// can support.
+    ///
+    /// 🪤 **Web's fix says "untraded ones" and native deliberately does not.**
+    /// This is the native half of the same ship (#7497 on web), but L2-236 ruled
+    /// that word out here and the ruling holds: those rows are `price_moved ==
+    /// false` — they traded, they just never moved — and zero-bid, zero-volume
+    /// outcomes are already excluded upstream. Copying web verbatim would take
+    /// the over-claim fix and re-introduce a false name with it, so this takes
+    /// the scoping and leaves the vocabulary where L2-236 put it. The divergence
+    /// is one word and it is the correct one; `testNoCohortStringMakesALiquidityClaim`
+    /// is what keeps it.
     var heroPopulationText: String {
         guard data != nil else { return "\u{2014} resolved predictions" }
         if includeThin { return "\(formattedCohortOutcomes) resolved predictions" }
-        return "\(formattedCohortOutcomes) resolved predictions \u{2014} every outcome except the "
-            + "\(Self.fmt(unchangedN)) whose price never moved off its opening line "
-            + "(\(Self.fmt(fullN)) in total)"
+        return "\(formattedCohortOutcomes) resolved predictions \u{2014} every outcome we measured "
+            + "except the \(Self.fmt(unchangedN)) whose price never moved off its opening line "
+            + "(\(Self.fmt(fullN)) measured in all)"
     }
 
     // MARK: - Cohort banner (L2-231 Item 2 / L2-237 — every label names its predicate)
