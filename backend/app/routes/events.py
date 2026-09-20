@@ -36,7 +36,7 @@ from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 # #7369: the one place either search payload may answer "Conference". Module-level
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
-from app.utils.market_label_normalization import non_sport_topic_label
+from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -10154,7 +10154,12 @@ async def typeahead_search(
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
         futures_pool.append({
             "type": "futures",
-            "text": market.name,
+            # #7397: same translation as the search card below it — the dropdown
+            # is one tap above the page, so leaving it raw here would have the
+            # reader meet `Pro Football` first and `NFL` second, for one market.
+            # Display only; `_ta_market_facts` above still carries the raw name,
+            # so ranking and the club-name repair are unaffected.
+            "text": rewrite_venue_league_vocabulary(market.name),
             "market_id": market.id,
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
@@ -27848,7 +27853,21 @@ def _format_futures_for_search(
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
         "id": market.id,
-        "name": market.name,
+        # #7397: the venue's league word, translated to ours, and nothing else.
+        # `/search?q=chiefs` drew the chip `NFL (18)` and eighteen cards reading
+        # NFL above five market rows reading `Pro Football: 2027 Champion`.
+        #
+        # This repairs BOTH reader buckets at once and that is why it is here
+        # rather than on the list: the caller formats each market once into
+        # `_formatted_by_id`, and the flat `futures` list and `futures_families`
+        # (the ANSWERS rows) hold the SAME dicts — see the note beside
+        # `_repair_search_card_club_names`, which is placed on that map for
+        # exactly this reason.
+        #
+        # Display only. `market.name` is untouched in the DB and every keyed
+        # consumer — family keys, matching, calibration — still reads what it
+        # read before.
+        "name": rewrite_venue_league_vocabulary(market.name),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.
         # #5657 fixed the facet chips and the events arm; `GET /api/events/

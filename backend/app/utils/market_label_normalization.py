@@ -29,12 +29,40 @@ logger = logging.getLogger(__name__)
 
 # ── Label cleaning patterns ──────────────────────────────────────────────
 
-# Kalshi uses "Pro Basketball" instead of "NBA", etc.
-_PRO_SPORT_REWRITES: list[tuple[re.Pattern, str]] = [
+# Kalshi uses "Pro Basketball" instead of "NBA", etc. Polymarket does too — the
+# open-market census behind #7397 reads `Pro Football` 402 polymarket / 74 kalshi,
+# `Pro Basketball` 32, `Pro Baseball` 26, so this is venue vocabulary in general
+# and not one venue's quirk.
+#
+# Split in two because the two halves are safe on DIFFERENT surfaces (#7397):
+#
+# `_VENUE_LEAGUE_REWRITES` renames a league and nothing else, so it is sound
+# anywhere, on any sport, with no context — a market called "Pro Football" is an
+# NFL market wherever it is printed.
+_VENUE_LEAGUE_REWRITES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bPro Basketball\b", re.I), "NBA"),
     (re.compile(r"\bPro Football\b", re.I), "NFL"),
     (re.compile(r"\bPro Hockey\b", re.I), "NHL"),
     (re.compile(r"\bPro Baseball\b", re.I), "MLB"),
+]
+
+# `All-Pro` → `All-NBA`, by contrast, is only true once the surface has already
+# filtered to basketball. "All-Pro" is an NFL term, and production carries four
+# open football markets that this rule renames into the wrong sport:
+# `Pro Football: All-Pro Second-Team Offense` (60473175, kalshi, football) comes
+# out of `normalize_market_label` as `All-NBA Second-Team Offense`. That is
+# survivable on the Related Futures rail — its only caller — because the rail is
+# sport-scoped to the event, and it is not currently reader-visible there either
+# (checked on the served payload: two NFL events' rails, 1020 and 996 rows, carry
+# zero `All-`/`NBA` labels). It is NOT survivable on a search page, which is
+# every sport at once. So it stays here, below the league rewrites, and out of
+# the helper the unscoped surfaces call.
+#
+# Order is load-bearing and unchanged: `\bPro Basketball\b` fires first, so the
+# genuinely-NBA `All-Pro Basketball Third Team Selections` becomes `All-NBA Third
+# Team Selections` on both paths and never reaches the `All-Pro` rule.
+_PRO_SPORT_REWRITES: list[tuple[re.Pattern, str]] = [
+    *_VENUE_LEAGUE_REWRITES,
     (re.compile(r"\bAll-Pro\b", re.I), "All-NBA"),
 ]
 
@@ -470,6 +498,30 @@ _MERGE_RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^Naismith Player of the Year$", re.I), "naismith_poty"),
     (re.compile(r"^Naismith DPOY$", re.I), "naismith_dpoy"),
 ]
+
+
+def rewrite_venue_league_vocabulary(raw_name: str) -> str:
+    """Rename a venue's league phrase to ours, and change nothing else (#7397).
+
+    For surfaces that print a market's own title and cannot strip its league,
+    because they are not scoped to one: search results, the typeahead dropdown.
+    `Pro Football: 2027 Champion` → `NFL: 2027 Champion`.
+
+    This is deliberately NOT `normalize_market_label`. That function is built for
+    the Related Futures rail, where the page already says which league it is, so
+    it goes on to delete the league prefix and the year — turning the same
+    specimen into the bare `Champion`. Right on an event page, useless in a list
+    of search results. See the note on `_VENUE_LEAGUE_REWRITES` for why the
+    `All-Pro` rule is excluded here rather than shared.
+
+    Whitespace is preserved exactly: a display-only rewrite must not also become
+    a silent trim, or a caller comparing against the stored name sees a diff it
+    did not ask for.
+    """
+    label = raw_name
+    for pat, repl in _VENUE_LEAGUE_REWRITES:
+        label = pat.sub(repl, label)
+    return label
 
 
 def normalize_market_label(raw_name: str) -> str:
