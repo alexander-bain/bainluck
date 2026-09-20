@@ -19,6 +19,22 @@ nonisolated struct SearchResponse: Decodable, Sendable {
     let sports: [SportFacet]?
     let filters: SearchFilters?
     let didYouMean: String?
+    /// The stages `/api/events/search` could not finish (#1740 site 2).
+    ///
+    /// The route carries a 20,000 ms deadline and sheds stages rather than
+    /// erroring when it runs out, naming each one it dropped here. ADDITIVE on
+    /// the wire — `**({"degraded": degraded} if degraded else {})` at the payload
+    /// site — so an absent key, and an empty list, both mean the answer really
+    /// was complete. A list of stage names, NOT a boolean: `["futures"]`,
+    /// `["teams", "event_count"]`.
+    ///
+    /// Undecoded until now, which is the whole defect: the phone saw six empty
+    /// collections and printed "No results found for X" — an assertion about what
+    /// exists, made from a request we abandoned. See `SearchAnswerState`.
+    ///
+    /// The stage names are for US, not for the reader: nothing built from this
+    /// puts a stage name on screen (notice 34).
+    let degraded: [String]?
 }
 
 /// A tournament, ceremony or race the query names, derived server-side from the

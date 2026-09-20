@@ -945,9 +945,45 @@ struct SearchView: View {
             // above a US Open hub row would be the page contradicting itself.
             // Families count too: they can carry a headline the flat `futures`
             // slice had no room for, so a page with a family is never empty.
-            if results.results.isEmpty && results.futures.isEmpty
-                && families.isEmpty && concepts.isEmpty
-                && (results.teams ?? []).isEmpty && hubs.isEmpty {
+            //
+            // And when there is nothing at all, WHICH nothing it is decides what
+            // we may say (#1740). The search route sheds stages against its
+            // deadline and names them in `degraded`; "No results found" over one
+            // of those is an absence claim built from a request we gave up on.
+            // `SearchAnswerState` owns that call so it is testable and so the
+            // phone and the web cannot answer it differently.
+            switch SearchAnswerState.resolve(
+                hasEvents: !results.results.isEmpty,
+                hasFutures: !results.futures.isEmpty,
+                hasFamilies: !families.isEmpty,
+                hasConcepts: !concepts.isEmpty,
+                hasTeams: !(results.teams ?? []).isEmpty,
+                hasHubs: !hubs.isEmpty,
+                degraded: results.degraded
+            ) {
+            case .present:
+                EmptyView()
+
+            case .degraded:
+                // Never claims the thing is absent, and offers the retry: the
+                // failure is transient by construction — the answer was shed for
+                // time — so asking again is the correct next step. Deliberately
+                // not the error treatment: nothing errored, the request
+                // succeeded and came back partial. Same copy as the web's
+                // `SearchDegradedState`, and no stage names (notice 34).
+                ContentUnavailableView {
+                    Label("We didn't finish searching", systemImage: "hourglass")
+                } description: {
+                    Text("This one took too long, so we stopped early — there may well be results waiting. Nothing here means we ran out of time, not that we came up empty.")
+                } actions: {
+                    Button("Try Again") {
+                        Task { await viewModel.search() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .listRowBackground(Color.clear)
+
+            case .empty:
                 ContentUnavailableView(
                     "No Results",
                     systemImage: "magnifyingglass",
