@@ -376,6 +376,45 @@ export default function CalibrationPage() {
       .map(([cat]) => cat);
   }, [normalized, minCategoryOutcomes]);
 
+  // #7325 — the parked list, joined to the vocabulary the reader is shown.
+  //
+  // `small_sample_categories` is the backend's, keyed on RAW payload categories;
+  // `categories` above is this page's, keyed on `normalizeCat`. Nothing joined
+  // them, so a sub-league sat in "not enough data" while its own parent carried
+  // a published row three cards higher. Measured on production 2026-09-19, six
+  // of the EIGHT visible chips were already published: CFL 847, NFL Preseason
+  // 707, NCAAF FCS 682 and UFL 593 are inside Football (34,205); SHL 730 is
+  // inside Hockey (27,316); USA MLS 613 is inside Soccer (132,357). The reader
+  // saw Geopolitics published at 732 in the table and CFL parked at 847 in the
+  // card below it — a bigger number called too small to grade than one that got
+  // a curve. `americanfootball_nfl` was in the list at 393: the NFL, listed as a
+  // long-shot market we cannot stand behind.
+  //
+  // 67 of the 109 entries — 19,655 of the 23,873 outcomes the card called "still
+  // accumulating", 82% — were already graded and on the page. And the fold's
+  // promise ("the moment one crosses the bar it appears above automatically")
+  // could never be kept for them: `americanfootball_cfl` cannot appear as its
+  // own row, because it is already inside Football. It is not waiting.
+  //
+  // THE JOIN IS THE FIX, NOT A RE-COUNT. #7302's comment reasons "21 + 109 = 130
+  // against a payload holding 130", and that sum mixes bases — distinct RAW
+  // categories are 148, distinct NORMALIZED are 63, and 130 is neither. Dropping
+  // the overlap makes the page's two exhaustive lists an exact partition in ONE
+  // vocabulary: 21 published + 42 parked = 63, every normalized category the
+  // payload carries, disjoint, measured on the 2026-09-15 payload.
+  //
+  // Read off `categories` rather than recomputing the bar, so this cannot drift
+  // from the list the reader is actually shown. The backend list is untouched:
+  // `small_sample_categories` is produced inside the hashed calibration
+  // computation and #6868's bank is mid-convergence, so the page joins at render
+  // instead. Sorted here, once, so the section below reads one ordered list.
+  const parkedCategories = useMemo(() => {
+    const published = new Set(categories);
+    return [...(data?.small_sample_categories ?? [])]
+      .filter(c => !published.has(normalizeCat(c.category)))
+      .sort((a, b) => b.outcomes - a.outcomes);
+  }, [data, categories]);
+
   // Per-source metrics for the comparison section
   const sourceMetrics = useMemo(() => {
     if (!normalized) return [];
@@ -2173,8 +2212,11 @@ export default function CalibrationPage() {
           skeptic ("what about the weird / novelty / long-shot markets?") without faking
           a curve. Fully payload-driven from small_sample_categories (real counts), so
           the native app inherits the same honest note with no extra logic. */}
-      {data.small_sample_categories && data.small_sample_categories.length > 0 && (() => {
-        const thin = [...data.small_sample_categories].sort((a, b) => b.outcomes - a.outcomes);
+      {/* #7325: gated on the JOINED list, not the raw payload one. A payload
+          whose every parked entry is already published renders no card at all,
+          which is the honest end state — there is nothing being held back. */}
+      {parkedCategories.length > 0 && (() => {
+        const thin = parkedCategories;
         const thinTotal = thin.reduce((s, c) => s + c.outcomes, 0);
         const examples = thin.slice(0, 8);
         const catLabel = nicheCatLabel;

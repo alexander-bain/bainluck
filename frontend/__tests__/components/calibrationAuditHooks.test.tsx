@@ -738,9 +738,30 @@ describe("item 4 — every section names the cohort it draws from", () => {
    * COHORT_FREE_SECTIONS entry above stops it failing the presence rule
    * instead — the two halves are written together on purpose.
    */
+  /*
+   * #7325 moved the niche section off `{data.small_sample_categories && …}` and
+   * onto a `parkedCategories` memo, which joins that array to the published list
+   * so a sub-league already inside a published category stops being listed as
+   * unpublished. The exemption this guard protects is UNCHANGED — the join reads
+   * `categories`, which is all-cohort like the publish bar itself, never
+   * `cohortFilter` — but the section's source anchor moved, so each row now
+   * names its own gate.
+   *
+   * The fourth column is the derivation the section renders off, and it is the
+   * reason this is not a weakening: the cohort-free premise is about the DATA
+   * reaching the section, and that data is now computed one hop away. Reading
+   * only the JSX would let a future `cohortFilter` inside the memo pass a guard
+   * written to forbid exactly that. The memo is pulled into the window instead,
+   * so the assertions below cover strictly more source than before.
+   */
   const COHORT_FREE_BY_CONSTRUCTION = [
-    ["calibration-niche-section", "small_sample_categories"],
-    ["calibration-quarantine", "quarantine"],
+    [
+      "calibration-niche-section",
+      "parkedCategories",
+      "{parkedCategories.length > 0 &&",
+      "const parkedCategories = useMemo(",
+    ],
+    ["calibration-quarantine", "quarantine", "{data.quarantine &&", null],
   ] as const;
 
   /**
@@ -753,14 +774,32 @@ describe("item 4 — every section names the cohort it draws from", () => {
    * future comment can break is not a guard" — and the same answer applies,
    * fixed here rather than by rewording the comment.
    */
-  function sectionSource(payloadKey: string, testId: string): string {
-    const start = SOURCE.indexOf(`{data.${payloadKey} &&`);
+  function sectionSource(
+    gate: string,
+    testId: string,
+    derivation: string | null,
+  ): string {
+    const start = SOURCE.indexOf(gate);
     expect(start).toBeGreaterThan(-1);
     const idAt = SOURCE.indexOf(`data-testid="${testId}"`, start);
     expect(idAt).toBeGreaterThan(start);
     const end = SOURCE.indexOf("</section>", idAt);
     expect(end).toBeGreaterThan(idAt);
-    return SOURCE.slice(start, end)
+    let window = SOURCE.slice(start, end);
+    if (derivation !== null) {
+      // #7325: the memo body, up to and including its dependency array. Each
+      // `expect` here is load-bearing — a derivation this function silently
+      // failed to find would shrink the window back to the JSX and quietly
+      // restore the hole the fourth column exists to close.
+      const dAt = SOURCE.indexOf(derivation);
+      expect(dAt).toBeGreaterThan(-1);
+      const dEnd = SOURCE.indexOf("}, [", dAt);
+      expect(dEnd).toBeGreaterThan(dAt);
+      const lineEnd = SOURCE.indexOf("\n", dEnd);
+      expect(lineEnd).toBeGreaterThan(dEnd);
+      window += SOURCE.slice(dAt, lineEnd);
+    }
+    return window
       // `{/* … */}` and `/* … */`. Non-greedy, so two comments never merge
       // into one match that swallows the code between them.
       .replace(/\{?\/\*[\s\S]*?\*\/\}?/g, "")
@@ -771,12 +810,12 @@ describe("item 4 — every section names the cohort it draws from", () => {
 
   test.each(COHORT_FREE_BY_CONSTRUCTION)(
     "%s is rendered straight off its payload array, with no cohort predicate",
-    (testId, payloadKey) => {
+    (testId, renderedFrom, gate, derivation) => {
       // Anti-vacuity first: a window that missed the section would satisfy the
       // two absences below without examining anything.
-      const window = sectionSource(payloadKey, testId);
+      const window = sectionSource(gate, testId, derivation);
       expect(window).toContain("<h2");
-      expect(window).toContain(payloadKey);
+      expect(window).toContain(renderedFrom);
       // The premise of the exemption. If a future change filters this section
       // by the cohort, the exemption stops being true and this fires.
       expect(window).not.toContain("cohortFilter");
@@ -785,8 +824,8 @@ describe("item 4 — every section names the cohort it draws from", () => {
 
   test.each(COHORT_FREE_BY_CONSTRUCTION)(
     "%s therefore claims no cohort",
-    (testId, payloadKey) => {
-      expect(sectionSource(payloadKey, testId)).not.toContain("<CohortTag");
+    (testId, _renderedFrom, gate, derivation) => {
+      expect(sectionSource(gate, testId, derivation)).not.toContain("<CohortTag");
     },
   );
 });
