@@ -6,28 +6,35 @@
 
 Undo: ``restore_7501_clubs_without_a_slug_have_no_page.py --apply``.
 
-WHAT THIS IS, AND WHAT IT IS NOT
+THIS SCRIPT IS THE SHIP'S ONE ATTENDED STEP, NOT A SHORTCUT PAST THE BEAT
 
-It is not a second mechanism. ``backfill-team-slugs`` fires three times an hour
-and calls exactly the function this script calls; left alone it reaches the
-whole backlog inside three hours. This exists for two reasons and no others:
+``backfill-team-slugs`` fires three times an hour and calls exactly the function
+this script calls, but it **refuses to write until this script's ``--backup``
+has run once**, because a beat is an unattended production write and D51(b) buys
+one with a backup taken first. So the order is fixed and the beat cannot skip it:
 
-  1. **The bank.** ``--backup`` is the one place ``backup_7501_team_slug_fill``
-     gets created — runtime DDL, on the named app, invoked by a person (notice
-     47(c)). Once the table exists the beat writes into it too, so the restore
-     below covers the beat's work as well as this script's. Run ``--backup``
-     first and the fill is fully reversible; skip it and it is still safe, just
-     not individually undoable.
-  2. **A readable plan.** The default run writes nothing and prints the rung
-     distribution, so what the fill is about to do is checkable in one read
-     rather than inferred from a row count afterwards.
+  1. ``--backup`` creates ``backup_7501_team_slug_fill`` — the one place that
+     table is ever created, runtime DDL on the named app invoked by a person
+     (notice 47(c)). From that moment the beat is unblocked and banks every row
+     it writes, so the restore covers the beat's work as well as this script's.
+  2. ``--backup --apply`` drains the whole backlog now instead of over the next
+     three hours. Optional: after step 1 the beat gets there on its own.
 
-WHY IT IS SAFE TO RUN UNATTENDED (D51(b))
+``--apply`` without ``--backup`` is refused outright rather than quietly
+proceeding — the bank is the precondition of the write, so an operator who omits
+it has asked for the one thing the rule forbids (CERT-3171).
 
-Every write is ``UPDATE teams SET slug = :s WHERE id = :i AND slug IS NULL``.
-No existing slug moves, so no URL that resolves today stops resolving; the only
-observable change is that a page which 404'd starts rendering. A row the ladder
-cannot place keeps its NULL and is reported, not guessed at.
+A readable plan is the default. A bare run writes nothing and prints the rung
+distribution, so what the fill is about to do is checkable in one read rather
+than inferred from a row count afterwards.
+
+WHAT THE WRITE ACTUALLY IS
+
+``UPDATE teams SET slug = :s WHERE id = :i AND slug IS NULL``, each one banked in
+the same savepoint. No existing slug moves, so no URL that resolves today stops
+resolving; the only observable change is that a page which 404'd starts
+rendering. A row the ladder cannot place keeps its NULL and is reported, not
+guessed at.
 """
 
 from __future__ import annotations
@@ -77,6 +84,25 @@ def wrong_app_refusal(args) -> str | None:
         f"REFUSING to write: this is {where}, not '{PRODUCER_APP}'. "
         f"Re-run with `heroku run:detached -a {PRODUCER_APP}`."
     )
+
+
+def missing_backup_refusal(args) -> str | None:
+    """Refuse ``--apply`` unless ``--backup`` comes with it (D51(b)).
+
+    Argument-level and checked before the script opens a session, so the refusal
+    cannot be reached from a code path that has already written something. The
+    two flags are kept separate rather than ``--apply`` silently implying
+    ``--backup`` because the operator's command line is the record of what was
+    authorised: a run that banks has to say so.
+    """
+    if getattr(args, "apply", False) and not getattr(args, "backup", False):
+        return (
+            "REFUSING to write: --apply requires --backup. The bank is what "
+            "makes this fill reversible in one command, so it is the "
+            "precondition of the write and not an option beside it. "
+            "Re-run with `--backup --apply`."
+        )
+    return None
 
 
 async def ensure_bank(s) -> None:
@@ -147,10 +173,10 @@ async def run(args) -> int:
     from app.tasks.base import get_task_session
     from app.utils.slugify import slugify
 
-    refusal = wrong_app_refusal(args)
-    if refusal:
-        print(refusal)
-        return 2
+    for refusal in (missing_backup_refusal(args), wrong_app_refusal(args)):
+        if refusal:
+            print(refusal)
+            return 2
 
     async with get_task_session() as s:
         total = (await s.execute(select(func.count()).select_from(Team))).scalar_one()
@@ -163,10 +189,11 @@ async def run(args) -> int:
             f"teams: {total} rows, {missing} with no slug ({missing * 100 // max(total, 1)}%)"
         )
 
-        if not missing:
-            print("Nothing to do: every club has a slug.")
-            return 0
-
+        # The bank FIRST, and before the drained-backlog return below. Creating
+        # it is what unblocks the beat, and the beat's job outlives this
+        # backlog: every club `upsert_team` mints from here on is born with a
+        # NULL slug. A `--backup` that no-opped because today's backlog happens
+        # to be empty would leave the beat refusing forever on tomorrow's rows.
         if args.backup:
             from sqlalchemy import text
 
@@ -175,6 +202,10 @@ async def run(args) -> int:
                 await s.execute(text(f"SELECT count(*) FROM {BANK_TABLE}"))
             ).scalar_one()
             print(f"{BANK_TABLE}: ready, {banked} rows banked so far")
+
+        if not missing:
+            print("Nothing to do: every club has a slug.")
+            return 0
 
         # The plan, always — including on an --apply run, so the ledger the
         # operator reads is the one the write produced and not a second query.

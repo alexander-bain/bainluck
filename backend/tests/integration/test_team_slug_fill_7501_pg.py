@@ -29,6 +29,11 @@ Every interesting thing the filler does is a claim about Postgres:
 * **the bank's column types.** #6215's class: the CTAS derives `slug_after` from
   `teams.slug`, and `text` vs `varchar(200)` is the same characters to a double
   (#3672, CERT-2880).
+* **the bank as the PRECONDITION of the write** (CERT-3171). "Writes nothing
+  when the bank is absent" is a claim about what reached the column, and
+  `to_regclass`, the `ON CONFLICT` arbiter and the savepoint that keeps the slug
+  and its undo record atomic are all server behaviour. A double asked whether a
+  table exists answers whatever it was told to.
 
 ## what is deliberately not asserted here
 
@@ -37,6 +42,7 @@ The ladder's *content* — which string each rung composes — is unit-graded in
 file only asks which rung a row lands on when the index pushes it there.
 """
 
+import argparse
 import os
 
 import pytest
@@ -144,7 +150,14 @@ async def world(pg_session):
     `Manchester City` three times is production's actual shape: a club appears
     once per competition it plays in, one row takes the clean slug, and the
     others are the cohort this ship is about.
+
+    THE BANK IS PART OF THE WORLD because it is the precondition of every write:
+    after CERT-3171 the fill refuses outright without it, so a ladder test that
+    omitted it would be asserting the refusal path four different ways and
+    reading as four green rung tests. `TestTheBank` is where its absence is the
+    subject; everywhere else its presence is the premise.
     """
+    await ensure_bank(pg_session)
     epl = await _sport(pg_session, "soccer_epl")
     ucl = await _sport(pg_session, "soccer_uefa_champs_league")
     ncaaf = await _sport(pg_session, "americanfootball_ncaaf")
@@ -221,6 +234,7 @@ class TestTheRowTheLadderCannotPlace:
         """Every rung taken, including the two carrying the row's own id — only
         reachable by squatting on the id after the insert, which is what makes
         `unresolved` a report rather than a normal outcome."""
+        await ensure_bank(pg_session)
         sport = await _sport(pg_session, "soccer_epl")
         other = await _sport(pg_session, "americanfootball_ncaaf")
         stuck = await _team(pg_session, "Squatted FC", sport)
@@ -259,15 +273,246 @@ class TestRunningItTwice:
         assert planned["pairs"] == applied["pairs"]
 
 
-class TestTheBank:
-    async def test_the_fill_runs_and_says_so_when_there_is_no_bank(
+class TestTheBankIsThePreconditionOfEveryWrite:
+    """CERT-3171. The bank is not bookkeeping beside the write — it is what
+    makes an unattended production write permissible at all (D51(b)), so its
+    absence has to stop the write rather than downgrade it."""
+
+    async def _unbanked_world(self, pg_session):
+        """`world` establishes the bank, which is exactly what these tests must
+        not have. Seeded here instead of dropping the table afterwards: a test
+        whose premise is arranged by undoing a fixture passes if the undo
+        silently fails."""
+        ncaaf = await _sport(pg_session, "americanfootball_ncaaf")
+        georgia = await _team(pg_session, "Georgia Bulldogs", ncaaf)
+        await pg_session.commit()
+        assert (
+            await pg_session.execute(text(f"SELECT to_regclass('{BANK_TABLE}')"))
+        ).scalar_one() is None
+        return georgia
+
+    async def test_the_fill_refuses_and_writes_nothing_with_no_bank(self, pg_session):
+        """The defect CERT-3171 named. The beat fires at :05/:25/:45 and would
+        have slugged 500 clubs a pass before anyone created the bank — rows that
+        are, by construction, the ones the restore can never reach.
+
+        Asserted on the COLUMN, not on the returned counter: a stats dict saying
+        `written: 0` is the claim under test, so trusting it would be circular."""
+        georgia = await self._unbanked_world(pg_session)
+
+        stats = await fill_missing_team_slugs(pg_session)
+
+        assert stats["refused"], "the pass proceeded with no bank behind it"
+        assert BANK_TABLE in stats["refused"]
+        assert await _slug_of(pg_session, georgia) is None
+        assert stats["written"] == 0
+        assert stats["banked"] is False
+        # Still reported honestly, so the beat's WARNING names the backlog it is
+        # sitting on rather than reading as a drained queue.
+        assert stats["remaining"] == 1
+
+    async def test_the_refusal_creates_no_table_of_its_own(self, pg_session):
+        """A beat that fixed its own precondition would be running DDL as a
+        consequence of a release, which is migration-class (notice 47(c)) and
+        the reason the refusal exists rather than a `CREATE TABLE` here."""
+        await self._unbanked_world(pg_session)
+        await fill_missing_team_slugs(pg_session)
+        assert (
+            await pg_session.execute(text(f"SELECT to_regclass('{BANK_TABLE}')"))
+        ).scalar_one() is None
+
+    async def test_a_dry_run_needs_no_bank(self, pg_session):
+        """It writes nothing, so it has nothing to undo. Without this arm the
+        refusal could be implemented as a blanket early return and the operator
+        would lose the plan that tells them what the apply will do."""
+        georgia = await self._unbanked_world(pg_session)
+        planned = await fill_missing_team_slugs(pg_session, dry_run=True)
+        assert planned["refused"] is None
+        assert dict(planned["pairs"])[georgia] == "georgia-bulldogs"
+        assert await _slug_of(pg_session, georgia) is None
+
+    async def test_the_bank_covers_every_single_successful_write(
         self, pg_session, world
     ):
-        """The ship is not held hostage to a side table. A beat firing before
-        anyone has run `--backup` must still give clubs their pages."""
+        """EXACT coverage, both directions — not a count. A bank holding four
+        rows for four writes can still be four wrong rows, and the restore joins
+        on `t.slug = b.slug_after`, so a bank row naming a slug its club does not
+        wear is an undo that silently declines."""
         stats = await fill_missing_team_slugs(pg_session)
-        assert stats["banked"] is False
         assert stats["written"] == 4
+
+        banked = dict(
+            (
+                await pg_session.execute(
+                    text(f"SELECT team_id, slug_after FROM {BANK_TABLE}")
+                )
+            ).all()
+        )
+        assert banked == dict(stats["pairs"])
+        # And every banked pair is the value the club actually carries.
+        for team_id, slug_after in banked.items():
+            assert await _slug_of(pg_session, team_id) == slug_after
+
+    async def test_a_refill_after_a_restore_rebanks_the_new_slug(
+        self, pg_session, world
+    ):
+        """`ON CONFLICT DO NOTHING` leaves the FIRST fill's value in the bank
+        here, and the restore joins on `t.slug = b.slug_after` — so the bank
+        reads full, the undo reports nothing to do, and the club is stranded
+        with a slug no one can take back.
+
+        The sequence is production's, not a contrivance: the restore does NOT
+        delete what it restores (by design — it is the record of what was
+        written), the beat fires three times an hour, and a refill can land on a
+        different rung than the one that was banked because the restore freed
+        the rung above it. Here `manchester-city` falls free, and the fill takes
+        rows newest-id first, so the EFL Championship row reaches it before the
+        UCL row does and moves off the `manchester-city-efl_champ` it banked.
+        """
+        await fill_missing_team_slugs(pg_session)
+        banked_first = (
+            await pg_session.execute(
+                text(f"SELECT slug_after FROM {BANK_TABLE} WHERE team_id = :i"),
+                {"i": world["city_champ"]},
+            )
+        ).scalar_one()
+        assert banked_first == "manchester-city-efl_champ"
+
+        # The real undo, then the clean name falls free.
+        await pg_session.execute(text(_RESTORE_SQL))
+        await pg_session.execute(
+            text("UPDATE teams SET slug = NULL WHERE id = :i"),
+            {"i": world["city_epl"]},
+        )
+        await pg_session.commit()
+
+        await fill_missing_team_slugs(pg_session)
+
+        # The premise, asserted rather than assumed: the refill really did move
+        # a banked club onto a different rung, so ON CONFLICT was reached.
+        assert await _slug_of(pg_session, world["city_champ"]) == "manchester-city"
+
+        rows = (
+            await pg_session.execute(
+                text(f"SELECT team_id, slug_after FROM {BANK_TABLE}")
+            )
+        ).all()
+        for team_id, slug_after in rows:
+            assert await _slug_of(pg_session, team_id) == slug_after
+
+        # And the consequence that matters: the undo can still reach every one
+        # of them. Five now — the four the first fill wrote plus the EPL row
+        # that fell free and was slugged by the refill.
+        assert len(rows) == 5
+        assert (await pg_session.execute(text(_RESTORABLE_SQL))).scalar_one() == 5
+
+    async def test_the_bank_row_and_the_slug_land_together_or_not_at_all(
+        self, pg_session, world
+    ):
+        """Atomicity, proven by breaking the bank rather than by reading the
+        code: a bank whose `slug_after` cannot hold the value makes the INSERT
+        raise INSIDE the savepoint, and the club must come back out NULL rather
+        than slugged-but-unrecorded."""
+        await pg_session.execute(
+            text(f"ALTER TABLE {BANK_TABLE} ADD COLUMN must_be_set integer NOT NULL")
+        )
+        await pg_session.commit()
+
+        stats = await fill_missing_team_slugs(pg_session)
+
+        assert stats["written"] == 0
+        assert await _slug_of(pg_session, world["georgia"]) is None
+        assert (
+            await pg_session.execute(text(f"SELECT count(*) FROM {BANK_TABLE}"))
+        ).scalar_one() == 0
+
+
+class TestTheOperatorPath:
+    """The repair script's own gate, driven end to end against the real server.
+
+    Graded here rather than as a unit on `missing_backup_refusal` because the
+    claim is "zero writes", and a pure-argument test cannot tell a refusal that
+    returns early from one that returns after the loop.
+    """
+
+    @staticmethod
+    def _driving(monkeypatch, pg_session):
+        """Point the script's session factory at this test's database, and stand
+        it on the producer app so the app gate (which fires first on an unset
+        `HEROKU_APP_NAME`) cannot be what refuses."""
+        import contextlib
+
+        import app.tasks.base as task_base
+
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck")
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield pg_session
+
+        monkeypatch.setattr(task_base, "get_task_session", _session)
+
+    async def test_apply_without_backup_refuses_and_writes_nothing(
+        self, pg_session, monkeypatch
+    ):
+        from scripts.repair_7501_clubs_without_a_slug_have_no_page import run
+
+        ncaaf = await _sport(pg_session, "americanfootball_ncaaf")
+        georgia = await _team(pg_session, "Georgia Bulldogs", ncaaf)
+        await pg_session.commit()
+        self._driving(monkeypatch, pg_session)
+
+        code = await run(argparse.Namespace(apply=True, backup=False))
+
+        assert code == 2
+        assert await _slug_of(pg_session, georgia) is None
+        assert (
+            await pg_session.execute(text(f"SELECT to_regclass('{BANK_TABLE}')"))
+        ).scalar_one() is None
+
+    async def test_backup_then_apply_banks_and_fills(
+        self, pg_session, monkeypatch, world
+    ):
+        """The positive control. Without it the test above passes on a script
+        that refuses everything."""
+        from scripts.repair_7501_clubs_without_a_slug_have_no_page import run
+
+        self._driving(monkeypatch, pg_session)
+
+        code = await run(argparse.Namespace(apply=True, backup=True))
+
+        assert code == 0
+        assert await _slug_of(pg_session, world["georgia"]) == "georgia-bulldogs"
+        assert (
+            await pg_session.execute(text(f"SELECT count(*) FROM {BANK_TABLE}"))
+        ).scalar_one() == 4
+
+    async def test_backup_creates_the_bank_even_with_nothing_left_to_fill(
+        self, pg_session, monkeypatch
+    ):
+        """`--backup` is what unblocks the beat, and the beat's job outlives
+        today's backlog — every club `upsert_team` mints is born slug-less. A
+        `--backup` that returned early on an empty backlog would leave the beat
+        refusing forever on tomorrow's rows."""
+        from scripts.repair_7501_clubs_without_a_slug_have_no_page import run
+
+        ncaaf = await _sport(pg_session, "americanfootball_ncaaf")
+        await _team(pg_session, "Georgia Bulldogs", ncaaf, "georgia-bulldogs")
+        await pg_session.commit()
+        self._driving(monkeypatch, pg_session)
+
+        code = await run(argparse.Namespace(apply=False, backup=True))
+
+        assert code == 0
+        assert (
+            await pg_session.execute(text(f"SELECT to_regclass('{BANK_TABLE}')"))
+        ).scalar_one() is not None
+
+
+class TestTheBank:
+    """Its shape, and the undo it exists to serve. `ensure_bank` is idempotent,
+    so the calls below are redundant with `world` and kept because each test
+    should read as the sequence an operator actually runs."""
 
     async def test_the_banks_columns_are_the_teams_columns(self, pg_session, world):
         """#6215's class (CERT-2880): a hand-declared backup column that
@@ -334,8 +579,9 @@ class TestTheBank:
 
     async def test_banking_is_idempotent_across_two_passes(self, pg_session, world):
         """`ensure_bank` runs on every invocation of the script, and the beat
-        writes `ON CONFLICT DO NOTHING`. Neither may duplicate a club's row —
-        a second row for one club would make the restore's join ambiguous."""
+        writes `ON CONFLICT (team_id) DO UPDATE`. Neither may duplicate a club's
+        row — a second row for one club would make the restore's join
+        ambiguous."""
         await ensure_bank(pg_session)
         await fill_missing_team_slugs(pg_session)
         await ensure_bank(pg_session)

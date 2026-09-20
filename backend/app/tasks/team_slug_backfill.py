@@ -32,14 +32,28 @@ games) skews new. Gotcha #41's starvation hazard does not apply: the population
 does not expire and the drain is finite — 4,004 rows at 500 per pass, three
 passes an hour, reaches the oldest row inside three hours.
 
-THE BANK (D51(b)) IS WRITTEN, NEVER CREATED, HERE
+THE BANK (D51(b)) IS THE PRECONDITION OF EVERY WRITE, AND IS NEVER CREATED HERE
 
-If ``backup_7501_team_slug_fill`` exists — the attended repair script creates it
-— every write is banked into it so the one-command restore can undo the beat's
-work as well as the script's. This task never runs DDL: a ``CREATE TABLE`` that
-executes as a consequence of a release is migration-class under notice 47(c),
-and a beat is the least attended invocation there is. No table, no banking, and
-the fill proceeds — the ship is not held hostage to a bookkeeping side table.
+No ``backup_7501_team_slug_fill``, no writes. Not "writes without banking" —
+**zero writes**, reported as a refusal. This is D51(b) read literally: an
+unattended production write is permitted because a backup was taken FIRST and a
+one-command restore exists, so a pass that fills 500 clubs with no bank behind it
+is precisely the unattended-and-unrevertable write the rule forbids. An earlier
+revision of this file banked opportunistically and filled regardless; the rows it
+wrote before anyone ran ``--backup`` were, by construction, the rows the restore
+could never reach (CERT-3171).
+
+The table is created by ``scripts/repair_7501_*.py --backup`` and nowhere else —
+runtime DDL, on the named app, invoked by a person (notice 47(c)). This task
+never runs DDL: a ``CREATE TABLE`` that executes as a consequence of a release is
+migration-class, and a beat is the least attended invocation there is. So the
+beat idles, loudly, until that one attended command has been run; after it, every
+pass — this one and every future row ``upsert_team`` mints — is banked and
+reversible.
+
+The bank write lives INSIDE the same SAVEPOINT as the slug UPDATE, so the pair is
+atomic: there is no interleaving in which a club is slugged and its undo record
+is not, and none in which the bank claims a slug the club does not carry.
 """
 
 from __future__ import annotations
@@ -96,7 +110,11 @@ async def fill_missing_team_slugs(
 
     ``dry_run`` reads and resolves the full ladder without writing, so the plan
     is checkable — including which rung each row lands on — before a production
-    write. It reports the same ``written`` pairs the apply would produce.
+    write. It reports the same ``written`` pairs the apply would produce, and
+    needs no bank: it writes nothing to refuse.
+
+    An apply with no bank returns ``refused`` and writes NOTHING. See this
+    module's header — that is D51(b), not a missing nicety.
     """
     stats: dict = {
         "examined": 0,
@@ -105,6 +123,11 @@ async def fill_missing_team_slugs(
         "errors": 0,
         "dry_run": dry_run,
         "banked": False,
+        # None on every pass that was allowed to proceed. A string naming the
+        # reason otherwise — the beat logs it at WARNING, so an idling drain is
+        # legible from the worker log instead of reading as a quiet success
+        # ("it returned" is not "it worked", hot-list #53).
+        "refused": None,
         "pairs": [],
         # Seeded, not assigned at the end. The caller loops on this key, and the
         # one pass that must report it honestly is the empty one that ends the
@@ -113,6 +136,22 @@ async def fill_missing_team_slugs(
         # pass that had work to do).
         "remaining": 0,
     }
+
+    # D51(b), checked BEFORE a single row is considered rather than consulted at
+    # write time: the refusal has to be structurally incapable of writing, not
+    # merely arranged not to. A dry run is exempt because it has nothing to undo.
+    if not dry_run:
+        stats["banked"] = await _bank_exists(session)
+        if not stats["banked"]:
+            stats["refused"] = (
+                f"{BANK_TABLE} does not exist, so this pass would be an "
+                "unattended production write with no way back (D51(b)). Wrote "
+                "nothing. Run `scripts/repair_7501_clubs_without_a_slug_have_no"
+                "_page.py --backup` on bainluck once; every pass after it is "
+                "banked and reversible."
+            )
+            stats["remaining"] = await _remaining(session)
+            return stats
 
     rows = (
         await session.execute(
@@ -147,9 +186,6 @@ async def fill_missing_team_slugs(
         .all()
     )
 
-    bank = (not dry_run) and await _bank_exists(session)
-    stats["banked"] = bank
-
     for team_id, ladder in ladders:
         try:
             for candidate in ladder:
@@ -161,19 +197,32 @@ async def fill_missing_team_slugs(
                     stats["pairs"].append((team_id, candidate))
                     break
                 try:
+                    # ONE savepoint, both statements. The undo record cannot lag
+                    # the slug it undoes: either the pair commits or neither
+                    # does, and an IntegrityError from the UNIQUE index rolls
+                    # both back before the next rung is tried.
                     async with session.begin_nested():
                         result = await session.execute(
                             update(Team)
                             .where(Team.id == team_id, Team.slug.is_(None))
                             .values(slug=candidate)
                         )
-                        if result.rowcount and bank:
+                        if result.rowcount:
                             await session.execute(
                                 text(
                                     f"INSERT INTO {BANK_TABLE} "
                                     "(team_id, slug_after, taken_at) "
                                     "VALUES (:team_id, :slug, now()) "
-                                    "ON CONFLICT (team_id) DO NOTHING"
+                                    # DO UPDATE, not DO NOTHING. A club restored
+                                    # and later re-slugged would otherwise keep
+                                    # the FIRST fill's value in the bank, and the
+                                    # restore's `t.slug = b.slug_after` join
+                                    # would then decline to undo the slug the
+                                    # club is actually wearing. The bank names
+                                    # the write it is the undo for.
+                                    "ON CONFLICT (team_id) DO UPDATE SET "
+                                    "slug_after = EXCLUDED.slug_after, "
+                                    "taken_at = EXCLUDED.taken_at"
                                 ).bindparams(
                                     bindparam("team_id", team_id, type_=Integer),
                                     bindparam("slug", candidate, type_=String),
@@ -215,6 +264,16 @@ async def _backfill_team_slugs(limit: int = DEFAULT_LIMIT) -> dict:
     """Beat entry point. One pass, its own session."""
     async with get_task_session() as session:
         stats = await fill_missing_team_slugs(session, limit=limit)
+    if stats["refused"]:
+        # WARNING, not info: a beat that fires three times an hour and writes
+        # nothing looks identical to a drained backlog in a log line, and the
+        # remedy is one attended command that nobody will run unprompted.
+        logger.warning(
+            "#7501 team slug fill REFUSED (%s clubs still pageless): %s",
+            stats["remaining"],
+            stats["refused"],
+        )
+        return {k: v for k, v in stats.items() if k != "pairs"}
     logger.info(
         "#7501 team slug fill: examined=%s written=%s unresolved=%s errors=%s",
         stats["examined"],
