@@ -5031,18 +5031,31 @@ async def get_playoff_grid(
     # 7. Build trend chart for top N teams
     # -----------------------------------------------------------------------
 
-    # Collect championship outcome IDs for top N teams
-    top_team_norms = [_normalize_team_name(t["name"]) for t in teams[:top]]
+    # Collect championship outcome IDs for top N teams.
+    #
+    # #7458: this used to keep ONE outcome per team, so the chart drew whichever
+    # source happened to sort first while the table beside it blended all of
+    # them — half of the 6.67pt the NBA legend disagreed with its own table by.
+    # Every source's outcome is now carried, which is only safe because
+    # _build_trend_chart de-vigs each venue's column and holds it across the
+    # buckets that venue did not write in; pooling them raw would have drawn a
+    # sawtooth between two honest opinions.
+    #
+    # All of a team's outcomes are labelled with the TEAM's display name, never
+    # the outcome's own: sources spell a club differently, and the fallback here
+    # was the lowercase normalized form, so naming per outcome would split one
+    # team into two differently-named series the moment the break came out.
     trend_outcome_ids = []
     trend_outcome_names: dict[int, str] = {}
 
-    for norm_name in top_team_norms:
-        entries = grid_raw.get(norm_name, {}).get(championship_col, [])
-        for e in entries:
-            oid = e["outcome_id"]
+    for team in teams[:top]:
+        norm_name = _normalize_team_name(team["name"])
+        for e in grid_raw.get(norm_name, {}).get(championship_col, []):
+            oid = e.get("outcome_id")
+            if not oid or oid in trend_outcome_names:
+                continue
             trend_outcome_ids.append(oid)
-            trend_outcome_names[oid] = outcome_id_to_name.get(oid, norm_name)
-            break  # one outcome per team for the chart
+            trend_outcome_names[oid] = team["name"]
 
     trend_chart = await _build_trend_chart(
         db,

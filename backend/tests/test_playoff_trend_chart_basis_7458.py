@@ -305,6 +305,40 @@ async def test_sibling_outcomes_are_a_denominator_never_a_line():
 
 
 @pytest.mark.asyncio
+async def test_a_team_priced_by_two_venues_is_one_series_not_two():
+    """The register path used to keep one outcome per team (`break`).
+
+    Taking that out is what lets the chart blend what the table blends — but
+    the label came from the OUTCOME, whose fallback was the lowercase
+    normalized form, so two venues' rows for one club would have drawn two
+    differently-named lines. The caller now labels every one of a team's
+    outcomes with the TEAM's display name; this pins the property that makes
+    that safe.
+    """
+    okc_at_odds_api, okc_at_polymarket = 101, 111
+    rows = []
+    for row in _snapshots(hours_back=24):
+        if row.market_id == _POLYMARKET_MARKET and row.outcome_id == _OKC:
+            row = _Row(**{**row.__dict__, "outcome_id": okc_at_polymarket})
+        rows.append(row)
+
+    names = {
+        okc_at_odds_api: "Oklahoma City Thunder",
+        okc_at_polymarket: "Oklahoma City Thunder",
+        _SAS: "San Antonio Spurs",
+    }
+    session = _FakeSession((_ODDS_API_MARKET, _POLYMARKET_MARKET), rows)
+    chart = await _build_trend_chart(session, list(names), names, hours=168)
+
+    labels = [e["name"] for e in chart["outcomes"]]
+    assert labels.count("Oklahoma City Thunder") == 1, (
+        f"one club drew {labels.count('Oklahoma City Thunder')} lines: {labels}"
+    )
+    # And the single line is the blend of both venues, not one of them.
+    assert _legend(chart, "Oklahoma City Thunder") == pytest.approx(0.2219, abs=0.005)
+
+
+@pytest.mark.asyncio
 async def test_no_snapshots_is_an_empty_chart_not_a_half_built_one():
     chart = await _chart([])
 
