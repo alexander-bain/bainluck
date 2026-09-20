@@ -427,10 +427,20 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     // the sentence names the sportsbook rows as a subset of it — not as a third
     // thing sitting outside both cohorts. The arithmetic is unchanged; only the
     // grouping and the words moved.
+    // #7330: the subset claim no longer repeats the traded count, which the
+    // headline printed one space earlier in the same rendered sentence. The
+    // claim ID is unchanged because the requirement is — "Of those" says subset.
     has("copy.headline_is_one_traded_number", text, "Showing traded markets (389,385)"),
-    has("copy.sportsbook_named_as_a_subset", text, "389,385 traded outcomes (including 40,075 sportsbook lines)"),
+    has("copy.sportsbook_named_as_a_subset", text, "Of those, 40,075 are sportsbook lines."),
     has("copy.excluded_side_counted", text, "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."),
     has("copy.toggle_names_what_it_adds", text, "Include untraded (+263,022)"),
+    // #7330: and the count is printed ONCE in the rendered banner. `text` is the
+    // whole page, so this is scoped to the banner's own two halves joined.
+    {
+      id: "copy.traded_count_not_doubled",
+      ok: !text.includes("Showing traded markets (389,385) 389,385"),
+      detail: "#7330: headline count must not be restated by the sentence after it",
+    },
     // D101 (Alex, Wed 2026-09-09): `copy.proxy_footnote_rendered` stood here and
     // asserted the rendered half of the pairing — the short word never on screen
     // without its proxy sentence. He ruled the sentence DELETED, so the claim is
@@ -518,7 +528,7 @@ test.describe("calibration cohort copy", () => {
       // Swapped: the moved side is now the 263,022-row cohort.
       claims.push(
         has("copy.headline_follows_the_swap", text, "Showing traded markets (303,097)"),
-        has("copy.sportsbook_named_as_a_subset", text, "303,097 traded outcomes (including 40,075 sportsbook lines)"),
+        has("copy.sportsbook_named_as_a_subset", text, "Of those, 40,075 are sportsbook lines."),
         has("copy.excluded_side_counted", text, "Excluded: 349,310 untraded outcomes, whose price never moved off its opening line."),
         await partitionArithmetic(p, {
           moved: 263_022, sportsbook: 40_075, traded: 303_097, untraded: 349_310, total: 652_407,

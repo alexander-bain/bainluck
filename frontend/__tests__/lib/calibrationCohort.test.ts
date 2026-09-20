@@ -111,6 +111,23 @@ const copyOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.partitionNote ?? "",
 ];
 
+/**
+ * The cohort banner AS A READER SEES IT.
+ *
+ * #7330. `headline` and `detail` are two fields here and ONE sentence on the
+ * page — `{cohort.headline} {cohort.detail}`, calibration/page.tsx. Every
+ * assertion in this file was written per-field, so the page could print
+ * "Showing traded markets (449,027) 449,027 traded outcomes (including 155,127
+ * sportsbook lines)" with both halves green: the defect lived in the join and
+ * nothing tested the join. Anything asserted about what the reader reads goes
+ * through here, not through one field.
+ *
+ * Kept byte-identical to the JSX's own `{" "}` separator so a claim proved here
+ * is a claim about the rendered string.
+ */
+const renderedLine = (c: ReturnType<typeof describeCohort>): string =>
+  `${c.headline} ${c.detail}`;
+
 /** The strings that carry the cohort's NAME, excluding the footnote that explains it. */
 const labelsOf = (c: ReturnType<typeof describeCohort>): string[] => [
   c.headline,
@@ -293,12 +310,65 @@ describe("every cohort label names the predicate it actually selects", () => {
   // doesn't apply", which is exactly the copy the ruling removes: sportsbook
   // lines are traded BY CONSTRUCTION (a book moves its line with money), so
   // they are part of the traded cohort, not an appendix to it.
+  // #7330 re-pointed the `detail` assertion. "ONE traded number" is what this
+  // test is named for and it was only ever true per-field: the headline printed
+  // the count and `detail` printed it AGAIN, one space later in the same
+  // rendered sentence. The requirement — the sportsbook rows named as a SUBSET
+  // of the traded cohort — is unchanged and is now carried by "Of those".
   test("the default cohort is ONE traded number, with the sportsbook subset named", () => {
     expect(dflt.headline).toBe("Showing traded markets (389,385)");
-    expect(dflt.detail).toContain(
-      "389,385 traded outcomes (including 40,075 sportsbook lines)"
-    );
+    expect(dflt.detail).toContain("Of those, 40,075 are sportsbook lines.");
     expect(dflt.shortLabel).toBe("Traded");
+  });
+
+  // #7330 — THE GUARD FOR THE CLASS, written over the join.
+  //
+  // Every other assertion in this describe block reads one field. The banner is
+  // two fields rendered as one sentence, so a count can be printed twice with
+  // every per-field assertion green — which is exactly what shipped, in the
+  // default view, the one a reader lands on without touching the toggle.
+  //
+  // Stated as "each count appears once in the line" rather than "detail must
+  // not start with the count", because the second phrasing pins today's wording
+  // and says nothing about the next clause someone adds to either half.
+  const countsIn = (line: string): string[] =>
+    line.match(/\b\d{1,3}(?:,\d{3})+\b|\b\d+\b/g) ?? [];
+
+  test("no count is printed twice in the banner a reader actually reads", () => {
+    const states = [
+      ["traded (the default view)", dflt],
+      ["all markets", all],
+      ["traded, no sportsbook rows",
+        describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, false)],
+      ["all markets, no sportsbook rows",
+        describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, true)],
+      ["traded, nothing excluded",
+        describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false)],
+    ] as const;
+
+    for (const [name, c] of states) {
+      const line = renderedLine(c);
+      const counts = countsIn(line);
+      const repeated = counts.filter((n, i) => counts.indexOf(n) !== i);
+      expect({ state: name, repeated, line }).toEqual({
+        state: name,
+        repeated: [],
+        line,
+      });
+    }
+  });
+
+  test("the banner's counts are the partition's, each named once", () => {
+    // The positive half: dropping the restatement must not drop a FACT. All
+    // three numbers the default banner is responsible for are still on screen.
+    const line = renderedLine(dflt);
+    expect(line).toBe(
+      "Showing traded markets (389,385) Of those, 40,075 are sportsbook lines. " +
+        "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."
+    );
+    for (const n of ["389,385", "40,075", "263,022"]) {
+      expect(line.split(n)).toHaveLength(2); // present, exactly once
+    }
   });
 
   test("the dissolved third category is gone from EVERY emitted label", () => {
@@ -334,8 +404,14 @@ describe("every cohort label names the predicate it actually selects", () => {
     expect(dflt.partitionNote).toContain("count as traded");
     // And the rows themselves are still named and counted in the copy a reader
     // lands on, with no tap required.
-    expect(dflt.detail).toContain("40,075 sportsbook lines");
-    expect(dflt.detail).toContain("389,385 traded outcomes");
+    //
+    // #7330: the traded count is read off the RENDERED LINE rather than off
+    // `detail`, because that is where the requirement actually lives — "no tap
+    // required" is a claim about what is on screen, and the headline is on
+    // screen, one space earlier. Asserting it on `detail` specifically is what
+    // pinned the count into both halves.
+    expect(dflt.detail).toContain("40,075 are sportsbook lines");
+    expect(renderedLine(dflt)).toContain("389,385");
   });
 
   test("the excluded side is described by what it is, with its count", () => {
