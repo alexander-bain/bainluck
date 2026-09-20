@@ -769,9 +769,11 @@ export default function CalibrationPage() {
     .join(", ");
 
   // L2-127 (Alex's Option 4): show EVERY populated bucket — no floor filter. A
-  // small-sample bucket renders as a faded hollow dot with a wide 95% CI bar (the
-  // thin convention, threshold = MIN_CHART_BUCKET_N), never silently hidden. The
-  // label count is the full source/category total, as before.
+  // small-sample bucket renders as a faded hollow dot with a wide 95% CI bar, on a
+  // faded dashed stretch of curve (#7399 — the thin convention reached the dot and
+  // not the line, which is the mark a reader actually follows; threshold =
+  // MIN_CHART_BUCKET_N), never silently hidden. The label count is the full
+  // source/category total, as before.
   // UX-P078: the full-width view is a PROVIDER's pooled curve. Pooling here is
   // the same `aggregateBuckets` call the per-source view used, given the whole
   // provider's keys instead of one — not an average of three curves.
@@ -1827,9 +1829,10 @@ export default function CalibrationPage() {
           <div className="mt-2 space-y-2">
             <p className="text-xs text-text-muted" data-testid="calibration-panels-key-note">
               Every bucket is shown. Solid dots are well-sampled; faded hollow dots are under{" "}
-              {MIN_CHART_BUCKET_N.toLocaleString()} outcomes. Error bars are the 95% CI &mdash;
-              wider means less certain. Each panel states its own sample size, and the providers
-              differ by more than 28x in how much of the curve they carry.
+              {MIN_CHART_BUCKET_N.toLocaleString()} outcomes, and the curve is dashed wherever it
+              runs into one. Error bars are the 95% CI &mdash; wider means less certain. Each panel
+              states its own sample size, and the providers differ by more than 28x in how much of
+              the curve they carry.
             </p>
             {providerShapeNote && (
               <p className="text-xs text-text-muted" data-testid="calibration-shape-annex-note">
@@ -2007,8 +2010,8 @@ export default function CalibrationPage() {
           <p className="text-xs text-text-muted">
             Same treatment as By Source: 95% CI error bars, and every bucket shown &mdash;
             small-sample ones (&lt;{MIN_CHART_BUCKET_N.toLocaleString()} outcomes) as faded
-            hollow dots with wide error bars, never hidden. Select a category tab to see
-            per-bucket sample counts.
+            hollow dots on a dashed stretch of curve, with wide error bars, never hidden.
+            Select a category tab to see per-bucket sample counts.
           </p>
         </CalibrationCardNote>
         <div className="flex flex-wrap gap-2 mb-4" data-testid="calibration-category-tabs">
