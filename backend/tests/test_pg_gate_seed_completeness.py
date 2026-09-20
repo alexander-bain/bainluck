@@ -309,6 +309,17 @@ COVERED = (
     # Polymarket rail reaches its container row through
     # `market_metadata->>'polymarket_event_id'`.
     "test_repair_club_noun_apply_restore_6955_pg.py",
+    # #7147: seeds `sports` and ten `events` by raw INSERT and drives a real
+    # `_poll_all_odds` scores pass over them. `sports` carries an explicit
+    # reserved id for the #6221 sibling's reason — the shared CI database's
+    # sequence is behind its explicit-id rows, so letting the serial fire raises
+    # on `sports_pkey`, which an `ON CONFLICT (key)` clause does not cover.
+    # Two seeded columns are nullable and so invisible to the NOT-NULL arm
+    # below while being the whole subject: `espn_id`, which is the "authority"
+    # the refusal protects (a seed without it leaves every row unanchored and
+    # the guard never fires), and the stored `home_score`/`away_score` pair,
+    # where a NULL half is the carve-out the ship had to keep intact.
+    "test_completed_espn_final_is_not_repoisoned_7147_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
