@@ -1,5 +1,6 @@
 """Futures/Outrights API endpoints."""
 
+import asyncio
 import logging
 import os
 import re
@@ -4465,6 +4466,313 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
 # `app.utils.golf_card_snapshot`, which owns it as of UX-P271.
 
 
+# ---------------------------------------------------------------------------
+# #7351 — the venue's own history, for the two ORDINARY chart readers
+# ---------------------------------------------------------------------------
+#
+# PILLAR: TRUTH. SHIP: opening a generic Discover market shows its supported
+# historical observations on the phone and the web, including history our
+# periodic polls missed.
+#
+# `futures_odds_snapshots` is a sampler. Market 59165099 ("Will federal capital
+# gains taxes be cut in 2026?") served ONE observation in its seven-day window
+# while Kalshi's own candlesticks for the exact ticker held more. The venue
+# history machinery already existed (`tasks/futures_chart_series_fill`) but only
+# the concept envelope read it, and its cache is keyed by outcome NAME — unsafe
+# for a single question, because every binary has a "Yes". These helpers read
+# the identity-bound sibling cache (`utils/generic_market_history`) instead.
+#
+# WHAT THE READERS MAY AND MAY NOT DO WITH IT:
+#   * a venue point is a REAL observation at a REAL instant: never interpolated,
+#     never carried across a gap, never given a synthetic "now" endpoint;
+#   * it passes `_drop_unsupported_snapshot_points` — the SAME canonical support
+#     predicates as our own rows, asked of the point's own book, at read time;
+#   * a capture is never displaced: venue points fill only the instants no
+#     capture claims (`unclaimed_instants`), so every point served before this
+#     change is served unchanged after it;
+#   * nothing here touches current price, rank, movement, settlement or Field
+#     metadata, and nothing is written to Postgres;
+#   * no provider is ever called from a request. A cold page serves what it has
+#     and asks the background lane ONCE, behind a per-market claim and an hourly
+#     site-wide budget; the next ordinary read uses the result.
+
+
+#: Captures in the requested window under which a read may ask the background
+#: lane for one venue fill. A BOUNDED FETCH TRIGGER — see the call site: it is
+#: counted in rows, so it is not, and does not claim to be, a judgement about
+#: whether any individual line on the chart is thin.
+_VENUE_FILL_THIN_CAPTURES = 20
+
+
+class _GenericVenueHistory:
+    """What the generic-history cache holds for ONE market, already vetted."""
+
+    def __init__(self) -> None:
+        self.applicable = False
+        self.state = "not_applicable"
+        self.rows: dict[int, list] = {}
+        self.payload: Optional[dict] = None
+        self.refusals: list[dict] = []
+        self.unsupported_dropped = 0
+        self.fill = "not_considered"
+        self.thin_basis: Optional[str] = None
+
+    def in_window(self, cutoff: datetime, capture_rows: list, outcome_ids) -> list:
+        """Venue rows at/after `cutoff` that no capture already speaks for."""
+        if not self.rows:
+            return []
+        from app.utils.generic_market_history import unclaimed_instants
+
+        captured: dict[int, list[datetime]] = defaultdict(list)
+        for row in capture_rows:
+            captured[row.outcome_id].append(row.captured_at)
+        kept: list = []
+        for oid in outcome_ids:
+            rows = [r for r in self.rows.get(oid, ()) if r.captured_at >= cutoff]
+            if not rows:
+                continue
+            free = unclaimed_instants([r.captured_at for r in rows], captured.get(oid, ()))
+            kept.extend(r for r in rows if r.captured_at in free)
+        return kept
+
+    def describe(self, served_rows: list, *, scale_refused: Optional[str] = None) -> dict:
+        """The reader's own statement of what it served and why — metadata only."""
+        stamps = [r.captured_at for r in served_rows]
+        payload = self.payload or {}
+        block = {
+            "state": self.state if not scale_refused else "refused",
+            "points_served": len(served_rows),
+            "outcomes_served": len({r.outcome_id for r in served_rows}),
+            "observed_from": min(stamps).isoformat() if stamps else None,
+            "observed_through": max(stamps).isoformat() if stamps else None,
+            "built_at": payload.get("built_at"),
+            "fill_status": payload.get("status"),
+            "scale": payload.get("scale"),
+            "unsupported_points_withheld": self.unsupported_dropped,
+            "fill": self.fill,
+        }
+        if self.thin_basis:
+            # What "thin" MEANT for this response. Stated so the trigger cannot be
+            # read back as a claim that every sparse line on this chart was
+            # repaired — it is the rule that decided whether to ask, nothing more.
+            block["fill_trigger"] = self.thin_basis
+        refusals = [r for r in self.refusals]
+        if scale_refused:
+            refusals.append({"scope": "reader", "reason": scale_refused})
+        if refusals:
+            block["refusals"] = refusals[:10]
+        return block
+
+
+def _venue_scale_refusal(
+    market: FuturesMarket,
+    charted_outcomes: list,
+    venue_by_outcome: dict,
+    outcome_time_groups: dict,
+    devigged: dict,
+) -> Optional[str]:
+    """None when `/history`'s PRINTED scale is the venue's raw scale here; else why not.
+
+    🔴 FOR A SQUEEZABLE EXCLUSIVE FIELD THE EVIDENCE MUST BE CONTEMPORANEOUS WITH
+    THE POINT BEING ADMITTED. The squeeze is a whole-field operation: what it does
+    to one outcome's number is a function of the OTHER outcomes' values at the
+    SAME instant. A venue point is, by construction, at an instant no capture
+    reached (`unclaimed_instants`), so the captures cannot answer for it.
+
+    The first presentation admitted such a market whenever every CAPTURED instant
+    happened to come through the squeeze unchanged. That is the inference removed
+    here: two outcomes sitting at .5/.5 all week are exactly the case where the
+    squeeze is the identity *because the field already sums to one*, and that says
+    nothing about an unobserved instant where it may not.
+
+    So the venue instants are asked to answer for themselves, through the SAME
+    scale contract this route prints with rather than a second copy of its rules:
+    every charted outcome must have an observation at that instant (a field with a
+    hole has no denominator), and running `devigged_consensus_by_time` over those
+    contemporaneous raw values must return them unchanged. Where that holds the
+    squeeze is measured to be the identity AT THE POINT BEING SERVED; where it
+    does not, the series is refused rather than converted by a rule nobody ruled
+    on. Nothing new is fetched and no denominator is borrowed from today.
+
+    A market that cannot be squeezed by construction needs none of this — a
+    non-exclusive family (#199) or the single-outcome binary the named specimen is
+    — and falls straight through to the per-capture comparison below.
+    """
+    squeezable = bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1
+    if squeezable:
+        from app.utils.futures_history_basis import devigged_consensus_by_time
+
+        charted_ids = {int(o.id) for o in charted_outcomes}
+        venue_columns: dict[datetime, dict[int, float]] = defaultdict(dict)
+        for oid, rows in venue_by_outcome.items():
+            for row in rows:
+                venue_columns[row.captured_at][int(oid)] = float(row.probability)
+        for column in venue_columns.values():
+            if set(column) != charted_ids:
+                return "exclusive_field_incomplete_at_venue_instant"
+        venue_printed = devigged_consensus_by_time(
+            {at: {market.source: col} for at, col in venue_columns.items()},
+            mutually_exclusive=True,
+        )
+        for at, column in venue_columns.items():
+            printed_here = venue_printed.get(at)
+            if printed_here is None:
+                return "printed_scale_is_not_the_venue_raw_scale"
+            for oid, raw in column.items():
+                if abs(float(printed_here.get(oid, raw + 1.0)) - raw) > 5e-5:
+                    return "printed_scale_is_not_the_venue_raw_scale"
+    for oid in venue_by_outcome:
+        for captured_at, raw_values in (outcome_time_groups.get(oid) or {}).items():
+            point = devigged.get(captured_at)
+            if point is None or oid not in point or not raw_values:
+                continue
+            if abs(float(point[oid]) - mean(raw_values)) > 5e-5:
+                return "printed_scale_is_not_the_venue_raw_scale"
+    return None
+
+
+def _venue_rows_served(venue_cells: dict) -> list:
+    """The venue observations a served timeline entry actually carries.
+
+    Since the reader serves each of these at its OWN recorded instant, the cells
+    ARE the served rows — one per (outcome, bucket) the captures left empty, the
+    last observation in each. The `observed_from` / `observed_through` stamps
+    `describe` builds from them are therefore real venue instants, and can be
+    compared directly with the timestamps in the timeline.
+    """
+    return [row for cells in venue_cells.values() for row in cells.values()]
+
+
+def _request_path_redis():
+    """The Redis client a CHART READ is allowed to wait on (#7351).
+
+    THE LATENCY MIDDLEWARE'S OWN SIGNATURE, ON PURPOSE — `socket_timeout=0.5,
+    fast_fail=True`. Two reasons, and the second is a budget, not a preference:
+
+      * the default client retries three times at up to 5 s each. A chart must
+        lose its venue history to a sick Redis in about half a second, not hold
+        the reader for fifteen;
+      * `get_redis_client` caches ONE POOL PER DISTINCT SIGNATURE PER PROCESS, and
+        the plan's 80 connections are shared by every process of both apps
+        (#1197; `test_redis_pool_fits_the_shared_budget_1197` pins the signature
+        set). The web process already holds this exact pool for the latency
+        sampler, so this call is a dict lookup and adds NO pool and NO signature.
+    """
+    from app.tasks.redis_state import get_redis_client
+
+    return get_redis_client(socket_timeout=0.5, fast_fail=True)
+
+
+async def _load_generic_venue_history(
+    market: FuturesMarket, charted_outcomes: list, exclusive_field_ids: set
+) -> _GenericVenueHistory:
+    """Read + vet the cached venue history. NEVER raises, NEVER calls a provider."""
+    venue = _GenericVenueHistory()
+    try:
+        from app.tasks.generic_market_history_fill import (
+            market_is_fillable,
+            read_cached_history,
+        )
+        from app.utils.generic_market_history import as_snapshot_rows, validate_payload
+
+        if not market_is_fillable(market, charted_outcomes):
+            return venue
+        venue.applicable = True
+        # Off the loop: the sync client is bounded (gotcha #39), but bounded at
+        # seconds, and a chart read must not hold every other request for them.
+        payload = await asyncio.to_thread(
+            read_cached_history, market.id, _request_path_redis()
+        )
+        if payload is None:
+            venue.state = "cold"
+            return venue
+        venue.payload = payload
+        accepted, venue.refusals = validate_payload(payload, market, charted_outcomes)
+        for oid, points in accepted.items():
+            rows = as_snapshot_rows(oid, market.source, points)
+            supported = _drop_unsupported_snapshot_points(
+                rows, charted_outcomes, exclusive_field_ids
+            )
+            venue.unsupported_dropped += len(rows) - len(supported)
+            if supported:
+                venue.rows[oid] = supported
+        if any(r.get("scope") == "payload" for r in venue.refusals):
+            venue.state = "refused"
+        else:
+            venue.state = "warm" if venue.rows else "empty"
+    except Exception as exc:  # noqa: BLE001 — history enrichment never fails a chart
+        logger.warning("generic venue history unavailable for market %s: %s",
+                       getattr(market, "id", None), str(exc)[:200])
+        venue.rows = {}
+        venue.state = "unavailable"
+    return venue
+
+
+def _plan_and_dispatch_generic_history_fill(
+    market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool
+) -> str:
+    """Win the claim, spend it, hand it back if the broker refuses. Sync; run off-loop.
+
+    THE DISPATCH LIVES IN THE ROUTE, NOT THE TASK MODULE — `test_no_task_dispatches
+    _another_task` keeps `.apply_async` out of `app/tasks/`, the same bargain as
+    `/api/events/{id}/history`'s on-demand chart backfill.
+    """
+    from app.tasks.generic_market_history_fill import plan_on_demand_fill, release_claim
+
+    plan = plan_on_demand_fill(
+        market, charted_outcomes, payload,
+        chart_is_thin=chart_is_thin, rc=_request_path_redis(),
+    )
+    if not plan.get("enqueue"):
+        return str(plan.get("reason"))
+    try:
+        from app.tasks import fill_generic_market_history
+
+        fill_generic_market_history.apply_async(
+            kwargs={"market_ids": [int(market.id)]}, queue="background",
+        )
+        return "requested"
+    except Exception as exc:  # noqa: BLE001 — a broker hiccup must not hold the claim
+        release_claim(market.id)
+        logger.warning("generic venue history: dispatch failed for market %s: %s",
+                       market.id, str(exc)[:200])
+        return "dispatch_failed"
+
+
+async def _consider_generic_history_fill(
+    venue: _GenericVenueHistory, market: FuturesMarket, charted_outcomes: list,
+    *, chart_is_thin: bool,
+) -> None:
+    """Ask the background lane for this market's venue history, at most once."""
+    if not venue.applicable or venue.state == "unavailable":
+        return
+    try:
+        # PLAIN DATA crosses the thread boundary, never a live ORM row: an
+        # attribute the session had expired would lazy-load from the worker
+        # thread and raise `MissingGreenlet` (gotcha #6's family).
+        from types import SimpleNamespace
+
+        market_ref = SimpleNamespace(
+            id=market.id, source=market.source,
+            external_id=market.external_id, status=market.status,
+        )
+        outcome_refs = [
+            SimpleNamespace(id=o.id, external_id=o.external_id) for o in charted_outcomes
+        ]
+        venue.fill = await asyncio.to_thread(
+            _plan_and_dispatch_generic_history_fill,
+            market_ref, outcome_refs, venue.payload, chart_is_thin,
+        )
+    # (Load bearing for `scan_mutation_residue.py` Pass B — without a line here
+    # the closing paren above plus the bare `noqa` below reproduce
+    # `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement literal
+    # verbatim and this file reads as mutation residue. Do not delete.)
+    except Exception as exc:  # noqa: BLE001 — a chart never fails on its refill
+        venue.fill = "error"
+        logger.warning("generic venue history: fill consideration failed for %s: %s",
+                       market.id, str(exc)[:200])
+
+
 @router.get("/{market_id}/probability-timeline")
 async def get_probability_timeline(
     market_id: int,
@@ -4638,6 +4946,32 @@ async def get_probability_timeline(
         list(result.scalars().all()), charted_outcomes, _field_ids
     )
 
+    # #7351 — the venue's own history for this market's own contracts, from the
+    # identity-bound cache. A cache read, never a provider call. `venue_rows` is
+    # what it adds INSIDE the window being served: real observations our polls
+    # missed, already through the support filter above, and never an instant a
+    # capture already speaks for. With a cold cache this is `[]` and every line
+    # below behaves exactly as it did.
+    venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids)
+    venue_rows = venue.in_window(cutoff, snapshots, all_outcome_ids)
+    # Thin is judged on OUR captures in the window the reader ASKED for — the
+    # same `< 20` this route has always used to call a window sparse — so a
+    # chart our polls already draw densely never spends a venue request.
+    #
+    # ⚠️ IT IS A FETCH TRIGGER, NOT A VERDICT ON THE CHART, and this ship does not
+    # claim otherwise. The count is rows, not lines: twenty captures spread over
+    # twenty outcomes clear the trigger while every individual line is still one
+    # point, and those charts are NOT repaired here. Naming a per-line density
+    # policy is its own question with its own evidence; what this bounds is how
+    # often a public GET may turn into an outbound venue request. Read
+    # `venue_history.fill_trigger` in the response rather than inferring the rule
+    # from the number.
+    venue.thin_basis = f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
+    await _consider_generic_history_fill(
+        venue, market, charted_outcomes,
+        chart_is_thin=len(snapshots) < _VENUE_FILL_THIN_CAPTURES,
+    )
+
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
     # for in-play markets (#1138): those are pinned to the event start above and
     # are snapshot-dense, so extending would only re-introduce the pre-event dead
@@ -4647,7 +4981,11 @@ async def get_probability_timeline(
         (10, 2160),  # <10 snapshots -> try 90 days
     ]
     for threshold, extended_hours in _TIMELINE_EXTEND_TIERS:
-        if len(snapshots) < threshold and extended_hours > actual_hours:
+        # #7351: an admitted venue observation IS an observation, so it counts
+        # toward "is this window sparse" exactly as a capture does. A market the
+        # venue documents well stops being stretched to 90 days to find nine
+        # points, and `actual_hours` keeps describing the window served.
+        if (len(snapshots) + len(venue_rows)) < threshold and extended_hours > actual_hours:
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
@@ -4661,11 +4999,17 @@ async def get_probability_timeline(
             extended_snapshots = _drop_unsupported_snapshot_points(
                 list(ext_result.scalars().all()), charted_outcomes, _field_ids
             )
-            if len(extended_snapshots) > len(snapshots):
+            extended_venue_rows = venue.in_window(
+                extended_cutoff, extended_snapshots, all_outcome_ids
+            )
+            if (len(extended_snapshots) + len(extended_venue_rows)) > (
+                len(snapshots) + len(venue_rows)
+            ):
                 snapshots = extended_snapshots
+                venue_rows = extended_venue_rows
                 actual_hours = extended_hours
 
-    if not snapshots:
+    if not snapshots and not venue_rows:
         return {
             "market_id": market_id,
             "market_name": market.name,
@@ -4720,13 +5064,50 @@ async def get_probability_timeline(
     all_bucket_keys = set()
     for buckets in outcome_buckets.values():
         all_bucket_keys.update(buckets.keys())
-    sorted_bucket_keys = sorted(all_bucket_keys)
+
+    # #7351 — venue observations fill ONLY the (outcome, bucket) cells no capture
+    # reached. A cell a capture already fills is served byte-for-byte as before;
+    # that is the whole compatibility argument for dense markets.
+    #
+    # THE VALUE IS THE LAST OBSERVATION IN THE BUCKET, NOT A MEDIAN. The median
+    # above is a consensus ACROSS BOOKS at one reading. Two venue observations in
+    # one hour are one book at two instants, and their median is a price nobody
+    # quoted; the last one is the price the bucket closed on.
+    #
+    # 🔴 AND IT IS SERVED AT THE INSTANT IT WAS OBSERVED, NOT AT THE BUCKET START.
+    # The bucket is how this route DEDUPLICATES against our own captures — one
+    # venue point per (outcome, hour) that our polls missed — and that is all it
+    # is. Writing the observation into the bucket's own entry would publish
+    # 05:00 for a price the venue timestamped 05:41: a time nobody observed, on
+    # the one series whose entire claim is that these are real observations at
+    # real instants. `/history` has always served the raw instant; the phone read
+    # the rounded one, so the two readers disagreed about when the same
+    # observation happened.
+    #
+    # Capture buckets are untouched and still emit at the bucket start, so a
+    # market with no venue history is byte-for-byte what it was. A venue
+    # observation gets its own entry keyed by its own timestamp, which is also
+    # why two outcomes observed at different instants inside one hour can no
+    # longer be collapsed onto one shared reading.
+    #
+    # ONLY THE CHARTED TOP-N. A venue point never feeds "Field": the fill fetches
+    # a bounded top-N, so a Field summed from venue points would be a partial sum
+    # presented as the rest of the market.
+    venue_cells: dict[int, dict[int, object]] = defaultdict(dict)
+    for row in sorted(venue_rows, key=lambda r: r.captured_at):
+        if row.outcome_id not in top_outcome_ids or row.probability is None:
+            continue
+        bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
+        if bucket_key in (outcome_buckets.get(row.outcome_id) or {}):
+            continue
+        # Last observation in the cell wins — the rows are in ascending order.
+        venue_cells[row.outcome_id][bucket_key] = row
 
     # Build timeline: for each time bucket, compute median probability per outcome
-    timeline = []
-    for bucket_key in sorted_bucket_keys:
-        bucket_ts = datetime.fromtimestamp(bucket_key, tz=timezone.utc).isoformat()
-        entry = {"timestamp": bucket_ts, "outcomes": {}}
+    entries_by_instant: dict[datetime, dict] = {}
+    for bucket_key in sorted(all_bucket_keys):
+        bucket_at = datetime.fromtimestamp(bucket_key, tz=timezone.utc)
+        entry = {"timestamp": bucket_at.isoformat(), "outcomes": {}}
 
         field_prob = 0.0
 
@@ -4746,10 +5127,31 @@ async def get_probability_timeline(
         # Add Field if there are outcomes outside the top N. Cap at 1.0 (#1139):
         # independent binaries carry bookmaker overround and can sum >100%
         # (gotcha #23), which renders as an impossible >100% line.
+        #
+        # #7351: only in a bucket a CAPTURE reached — which is now every entry
+        # built by this loop. In a venue-only entry no Field member was read at
+        # all, and `0.0` there would be a fabricated zero rather than a missing
+        # value (gotcha #53), so those entries below never carry the key.
         if len(charted_outcomes) > top:
             entry["outcomes"]["Field"] = round(min(field_prob, 1.0), 6)
 
-        timeline.append(entry)
+        entries_by_instant[bucket_at] = entry
+
+    # #7351: the venue's observations, each at the instant the venue recorded.
+    # An instant that coincides exactly with a bucket start joins that entry
+    # rather than shadowing it; the outcome cannot already be present there,
+    # because a cell a capture reached was skipped above.
+    for oid, cells in venue_cells.items():
+        for row in cells.values():
+            entry = entries_by_instant.get(row.captured_at)
+            if entry is None:
+                entry = {"timestamp": row.captured_at.isoformat(), "outcomes": {}}
+                entries_by_instant[row.captured_at] = entry
+            entry["outcomes"].setdefault(
+                outcome_names[oid], round(float(row.probability), 6)
+            )
+
+    timeline = [entries_by_instant[at] for at in sorted(entries_by_instant)]
 
     # Build outcome metadata list (ordered by current probability)
     outcomes_meta = []
@@ -4806,9 +5208,12 @@ async def get_probability_timeline(
         # `APIClient.swift:929` fetches `/probability-timeline`; nothing native
         # calls `/futures/{id}/history`. Production 01:05Z for market 58321581,
         # the Game Awards market in Alex's screenshot: `actual_hours` **168**,
-        # and NINE buckets spanning **20.0 hours**. Measured off the buckets, so
-        # what is reported is the domain the chart draws — bucket-aligned, which
-        # is why it reads 04:30 where `/history` reads the raw 04:31.
+        # and NINE buckets spanning **20.0 hours**. Measured off the entries, so
+        # what is reported is the domain the chart draws — bucket-aligned where a
+        # capture built the entry, which is why it reads 04:30 where `/history`
+        # reads the raw 04:31. #7351's venue entries are the exception and say so
+        # honestly: they carry the venue's own recorded instant, so a domain that
+        # ends on one ends on a real observation rather than on an hour mark.
         **_measure_timeline_coverage(timeline),
         # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
         # Self-describing payload metadata: it says what one step of `timeline` below
@@ -4820,6 +5225,14 @@ async def get_probability_timeline(
         "bucket_seconds": bucket_seconds,
         "timeline": timeline,
         "outcomes": outcomes_meta,
+        # #7351 — ADDITIVE and only on a market whose venue publishes history.
+        # Says what the venue-history seam contributed to THIS response, so the
+        # coverage above can be read for what it is. Shipped clients ignore an
+        # unknown key (`Decodable`); nothing above it changed shape.
+        **(
+            {"venue_history": venue.describe(_venue_rows_served(venue_cells))}
+            if venue.applicable else {}
+        ),
     }
 
 
@@ -5328,9 +5741,22 @@ async def get_futures_history(
         _history_field_ids,
     )
 
+    # #7351 — same seam, same rules, as `get_probability_timeline` above: the
+    # identity-bound venue history for this market's own contracts, read from
+    # cache, support-filtered, and never displacing a capture. `[]` when cold.
+    venue = await _load_generic_venue_history(
+        market, charted_outcomes, _history_field_ids
+    )
+    venue_rows = venue.in_window(cutoff, snapshots, outcome_ids)
+    await _consider_generic_history_fill(
+        venue, market, charted_outcomes,
+        chart_is_thin=len(snapshots) < _EXTEND_TIERS[0][0],
+    )
+
     # Auto-extend if sparse
     for threshold, extended_hours in _EXTEND_TIERS:
-        if len(snapshots) < threshold and extended_hours > actual_hours:
+        # #7351: an admitted venue observation counts toward "is this sparse".
+        if (len(snapshots) + len(venue_rows)) < threshold and extended_hours > actual_hours:
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
@@ -5351,8 +5777,14 @@ async def get_futures_history(
                 charted_outcomes,
                 _history_field_ids,
             )
-            if len(extended_snapshots) > len(snapshots):
+            extended_venue_rows = venue.in_window(
+                extended_cutoff, extended_snapshots, outcome_ids
+            )
+            if (len(extended_snapshots) + len(extended_venue_rows)) > (
+                len(snapshots) + len(venue_rows)
+            ):
                 snapshots = extended_snapshots
+                venue_rows = extended_venue_rows
                 field_rows = extended_field
                 actual_hours = extended_hours
                 auto_extended = True
@@ -5426,9 +5858,36 @@ async def get_futures_history(
     # (gotcha #53: an absence and a fact must not share a shape).
     total_data_points = 0
 
+    # #7351 — THE SCALE CONTRACT. The cached venue series is the venue's RAW YES
+    # probability. This route prints `devigged` — per-instant, whole-field, run
+    # through the #23 squeeze — and a venue point has no whole field at its
+    # instant to be squeezed with. So a venue point is admitted ONLY where the
+    # printed scale is measurably the raw scale; otherwise the series is REFUSED
+    # for this reader rather than converted by a rule nobody ruled on.
+    venue_by_outcome: dict[int, list] = defaultdict(list)
+    for row in sorted(venue_rows, key=lambda r: r.captured_at):
+        if row.outcome_id in charted_ids and row.probability is not None:
+            venue_by_outcome[row.outcome_id].append(row)
+    venue_scale_refusal: Optional[str] = None
+    if venue_by_outcome:
+        venue_scale_refusal = _venue_scale_refusal(
+            market, charted_outcomes, venue_by_outcome, outcome_time_groups, devigged
+        )
+        if venue_scale_refusal:
+            venue_by_outcome = defaultdict(list)
+    venue_rows_served: list = []
+
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
-    for oid, time_groups in outcome_time_groups.items():
+    # Captured outcomes first and in their existing order, so a response with no
+    # venue history is byte-for-byte what it was; an outcome our polls never
+    # reached inside the window follows.
+    _history_order = list(outcome_time_groups.keys()) + [
+        oid for oid in outcome_ids
+        if oid in venue_by_outcome and oid not in outcome_time_groups
+    ]
+    for oid in _history_order:
+        time_groups = outcome_time_groups.get(oid) or {}
         history = []
         for captured_at in sorted(time_groups.keys()):
             # #4992: a timestamp whose books all refused normalization is
@@ -5452,6 +5911,20 @@ async def get_futures_history(
                 "american_odds": None,
                 "bookmaker": "consensus",
             })
+        # #7351: the venue's own observations at the instants no capture claims.
+        # Real timestamp, raw value, and a provenance a reader can tell from a
+        # capture — an older venue sample never passes as a fresh poll.
+        for row in venue_by_outcome.get(oid, ()):
+            history.append({
+                "timestamp": row.captured_at.isoformat(),
+                "probability": round(float(row.probability), 6),
+                "american_odds": None,
+                "bookmaker": row.bookmaker,
+                "provenance": "venue_history",
+            })
+            venue_rows_served.append(row)
+        if venue_by_outcome.get(oid):
+            history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
         elim = _detect_elimination(history)
         total_data_points += len(history)
         outcome_history[oid] = {
@@ -5497,6 +5970,11 @@ async def get_futures_history(
         response["auto_extended"] = True
     if total_data_points < 10:
         response["sparse"] = True
+    # #7351 — additive, and only on a market whose venue publishes history.
+    if venue.applicable:
+        response["venue_history"] = venue.describe(
+            venue_rows_served, scale_refused=venue_scale_refusal
+        )
 
     return response
 

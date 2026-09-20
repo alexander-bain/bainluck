@@ -19,14 +19,169 @@ export interface MovementLeader {
  * market that's the actual WINNER (is_winner === true), which can differ from the
  * highest-probability outcome — falling back to the leader if none is flagged.
  * On a live market it's just the leader.
+ *
+ * #7439 — A GRADED ROW IS UNBEATABLE IN A SORT BY PROBABILITY, AND ON A LIVE
+ * MULTI-WINNER FIELD IT IS NOT THE ANSWER.
+ *
+ * `leader` arrives as `sort(by probability desc)[0]`, so a row already graded
+ * `is_winner` sits at 1.0 and wins that sort forever. Production,
+ * `/futures/114091` — *"Who will become a UFC champion in 2026?"*, 28 fighters,
+ * `status: "open"`, resolving in December — headlined:
+ *
+ *     100%
+ *     Sean Strickland
+ *     Resolves Dec 31, 2026
+ *
+ * He did become a champion in 2026, so the grade is right; the question is still
+ * open because it asks for *a* champion, not *the* champion. The reader met a
+ * live field whose headline answer was 100% and a name.
+ *
+ * This is #7396's mechanic one surface over (there, `pickJourneyFuture` on the
+ * team page) and the backend's `_championship_path_stmt` rule one layer down.
+ *
+ * 🪤 THE SCOPE IS THE WHOLE OF THE FIX, AND IT IS WHY THIS IS NOT A ONE-LINER.
+ * 671 open tier<=3 markets carry a graded row beside live ones, and they FORK:
+ *
+ *   - `mutually_exclusive === false` (329 markets, the UFC shape): several rows
+ *     can be graded YES and the question stays open. A graded row is a RESULT;
+ *     the hero must feature the live leader. This branch.
+ *   - `mutually_exclusive` true/unknown (342 markets): one graded row means the
+ *     question IS answered. Skipping it would HIDE the answer and crown a
+ *     runner-up — strictly worse than the status quo. Untouched, deliberately.
+ *
+ * So the new behaviour is gated on an EXPLICIT `false`. Absent/null/true keeps
+ * today's answer, which also matches the serializer's own default
+ * (`getattr(market, "mutually_exclusive", True)`) — an unknown field is mutex.
+ *
+ * The graded row is never deleted from the page: it keeps its table row, its
+ * "Won" grade and its place in the outcome list. Only the FEATURED row moves.
+ * When every row is graded there is no live leader to promote, so the fallback
+ * is today's behaviour rather than an empty hero.
+ *
+ * 🪤 AND THE SECOND CLAUSE, WHICH REPLAYING THE REAL BOARDS IS WHAT FOUND.
+ *
+ * Promoting the best UNGRADED row is only an improvement when that row carries
+ * a price. Measured over the 315 boards this rule moves, the promoted row is at
+ * **exactly 0% on 51 of them (16%)** — mostly cumulative threshold ladders,
+ * where the graded rung is the one already cleared and every tighter rung is
+ * dead:
+ *
+ *   /futures/108569    "Above 56" graded 0.9995   ->  "Above 60"  0.0
+ *   /futures/12925046  "Governor Democratic primary" 0.98
+ *                                                 ->  "Senate Republican primary" 0.0
+ *
+ * A hero reading "0% Above 60" is not a repair of "100% Above 56"; it is a
+ * different wrong headline, and arguably the worse one, because a board whose
+ * every live row is at zero is DECIDED even though `mutually_exclusive` is
+ * false — the cleared rung really is the answer.
+ *
+ * So the promotion needs a live row that is actually live. When the best
+ * ungraded row has no price, there is no live leader and the fallback is
+ * today's behaviour. That leaves 264 boards genuinely improved and no hero
+ * printing a name beside 0%. A row at 3% still promotes: "the field's best shot
+ * is 3%" is an odd sentence but a true one, and 0 is the only crisp line
+ * between "unlikely" and "nothing here".
  */
-export function pickHeroOutcome<T extends { is_winner?: boolean | null }>(
+export function pickHeroOutcome<
+  T extends { is_winner?: boolean | null; probability?: number | null },
+>(
   outcomes: readonly T[],
   leader: T | null,
   resolved: boolean,
+  mutuallyExclusive?: boolean | null,
 ): T | null {
-  if (!resolved) return leader;
+  if (!resolved) {
+    if (mutuallyExclusive !== false) return leader;
+    return pickLiveLeader(outcomes) ?? leader;
+  }
   return outcomes.find((o) => o.is_winner === true) ?? leader;
+}
+
+/**
+ * #7439 — the highest-probability outcome that is NOT already graded a winner
+ * AND still carries a price, or null when there is no such row.
+ *
+ * Null therefore means "this board has no live leader", which is true in two
+ * different ways — every row graded, or every ungraded row at 0% — and both
+ * want the same answer from the caller: leave today's behaviour alone. See the
+ * second clause on `pickHeroOutcome` for why the 0% case is not a repair.
+ *
+ * The comparator is byte-identical to the page's own `leader` memo, so on a
+ * field with nothing graded this returns exactly the row `leader` already holds
+ * — the new branch cannot re-order a healthy market. Stable-sorted on a copy:
+ * ties keep payload order, the same way the page's does.
+ */
+export function pickLiveLeader<
+  T extends { is_winner?: boolean | null; probability?: number | null },
+>(outcomes: readonly T[]): T | null {
+  return (
+    [...outcomes]
+      .sort((a, b) => (b.probability ?? 0) - (a.probability ?? 0))
+      .find((o) => o.is_winner !== true && (o.probability ?? 0) > 0) ?? null
+  );
+}
+
+/**
+ * #7439 — the outcomes the trend chart selects on FIRST PAINT.
+ *
+ * Lifted out of the page's seed effect so the rule can be asserted directly.
+ * It was inline, which meant the only thing a test could do about it was grep
+ * the page's source for a substring — and a substring cannot tell a correct
+ * filter from an inverted one. Every arm below is now a real assertion.
+ *
+ * The graded row headlining the hero was ALSO seeding this chart, so an open
+ * market drew a flat 100% line across its whole Probability Trend. Same defect,
+ * same gate (`mutually_exclusive === false`), same refusal to touch the mutex
+ * half — on a mutually-exclusive field the graded row is the answer and belongs
+ * in the seed.
+ *
+ * This decides FIRST PAINT only. The graded row keeps its checkbox in the table
+ * below and a reader can add it back; nothing is removed from the chart.
+ *
+ * `limit` is the live-market seed width; the settled branch is unchanged from
+ * L2-156 Item 2 (the WINNER — which may not be the highest current probability
+ * — plus the runner-up).
+ */
+export function pickChartSeedOutcomes<
+  T extends { id: number; is_winner?: boolean | null; probability?: number | null },
+>(
+  outcomes: readonly T[],
+  resolved: boolean,
+  mutuallyExclusive?: boolean | null,
+  limit = 3,
+): T[] {
+  if (outcomes.length === 0) return [];
+
+  const byProb = [...outcomes].sort(
+    (a, b) => (b.probability ?? 0) - (a.probability ?? 0),
+  );
+
+  if (resolved) {
+    const winner = outcomes.find((o) => o.is_winner === true) ?? byProb[0];
+    const runnerUp = byProb.find((o) => o.id !== winner.id);
+    return runnerUp ? [winner, runnerUp] : [winner];
+  }
+
+  // The gate carries BOTH of `pickHeroOutcome`'s clauses, so the chart and the
+  // hero can never disagree about which row is this board's story: skip graded
+  // rows only on a non-mutex field, and only when a priced live row exists at
+  // all. On the 51 all-zero boards the hero holds, so the seed holds too.
+  const live =
+    mutuallyExclusive === false && pickLiveLeader(outcomes) !== null
+      ? byProb.filter((o) => o.is_winner !== true)
+      : byProb;
+
+  // 🪤 `live` is never empty here, so there is deliberately no fallback branch.
+  // An earlier draft carried `live.length > 0 ? live : byProb` and mutation
+  // testing exposed it as unreachable: the early return leaves `byProb`
+  // non-empty, the else-branch IS `byProb`, and the then-branch only runs when
+  // `pickLiveLeader` found a priced ungraded row — which is itself a member of
+  // the filtered list. Dead defensive code that no test can reach is how a
+  // guard rots, so it is gone rather than left looking load-bearing.
+  //
+  // If the price clause in `pickLiveLeader` is ever loosened, that invariant
+  // breaks and the fallback must come back.
+  return live.slice(0, limit);
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

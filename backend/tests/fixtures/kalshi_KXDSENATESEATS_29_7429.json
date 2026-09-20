@@ -1,0 +1,117 @@
+{
+ "_captured": "GET https://api.elections.kalshi.com/trade-api/v2/markets?event_ticker=KXDSENATESEATS-29 \u2014 2026-09-20, standing notice 26 (#7429)",
+ "markets": [
+  {
+   "ticker": "KXDSENATESEATS-29-A56",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold more than 56 Senate seats in the 121st Congress?",
+   "yes_sub_title": "Above 56",
+   "no_sub_title": "Above 56",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-B45",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold fewer than 45 Senate seats in the 121st Congress?",
+   "yes_sub_title": "Below 45",
+   "no_sub_title": "Below 45",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E45",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 45 Senate seats in the 121st Congress?",
+   "yes_sub_title": "45",
+   "no_sub_title": "45",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E46",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 46 Senate seats in the 121st Congress?",
+   "yes_sub_title": "46",
+   "no_sub_title": "46",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E47",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 47 Senate seats in the 121st Congress?",
+   "yes_sub_title": "47",
+   "no_sub_title": "47",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E48",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 48 Senate seats in the 121st Congress?",
+   "yes_sub_title": "48",
+   "no_sub_title": "48",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E49",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 49 Senate seats in the 121st Congress?",
+   "yes_sub_title": "49",
+   "no_sub_title": "49",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E50",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 50 Senate seats in the 121st Congress?",
+   "yes_sub_title": "50",
+   "no_sub_title": "50",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E51",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 51 Senate seats in the 121st Congress?",
+   "yes_sub_title": "51",
+   "no_sub_title": "51",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E52",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 52 Senate seats in the 121st Congress?",
+   "yes_sub_title": "52",
+   "no_sub_title": "52",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E53",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 53 Senate seats in the 121st Congress?",
+   "yes_sub_title": "53",
+   "no_sub_title": "53",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E54",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 54 Senate seats in the 121st Congress?",
+   "yes_sub_title": "54",
+   "no_sub_title": "54",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E55",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 55 Senate seats in the 121st Congress?",
+   "yes_sub_title": "55",
+   "no_sub_title": "55",
+   "status": "active"
+  },
+  {
+   "ticker": "KXDSENATESEATS-29-E56",
+   "event_ticker": "KXDSENATESEATS-29",
+   "title": "Will the Democratic party hold exactly 56 Senate seats in the 121st Congress?",
+   "yes_sub_title": "56",
+   "no_sub_title": "56",
+   "status": "active"
+  }
+ ]
+}

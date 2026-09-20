@@ -122,6 +122,11 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         # the declared set match mechanically. An exception here is an exception
         # for every future dispatch too.
         "app.tasks.fill_futures_chart_series",
+        # #7351: dispatched from `routes/futures.py` when a generic chart reader
+        # serves a thin series and the market's venue-history cache is cold or
+        # stale. Nobody polls it, and it is declared for the reason given on the
+        # line above: the derived set and the declared set match mechanically.
+        "app.tasks.fill_generic_market_history",
         "app.tasks.fix_outcome_names",
         "app.tasks.flow_sentinel",
         "app.tasks.grid_register_sentinel",

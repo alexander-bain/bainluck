@@ -424,6 +424,220 @@ class TestWeatherCities:
         assert resp.status_code == 405
 
 
+class TestWeatherCitiesUnitAgreement:
+    """One card, one temperature scale (#3663).
+
+    Los Angeles declared ``unit: "F"`` with ``mode: 91.4`` over a ladder still
+    labelled ``27°C or below`` … ``37°C or higher``. The mode was converted out
+    of the source's Celsius and the labels were not: one converter ran, the
+    other didn't. The card is not merely mislabelled, it is unreadable as a
+    distribution — there is no way to tell which scale the 46% belongs to.
+
+    Measured on production 2026-09-20: LA was the ONLY one of 42 cities whose
+    labels disagreed with its own declared unit, so these tests carry the
+    healthy neighbours (Wellington in native °C, San Francisco in native °F
+    ranges) as controls — a fix that converts everything is as wrong as the one
+    that converts nothing.
+    """
+
+    @staticmethod
+    def _la_celsius_market(now):
+        """The specimen, with production's exact label shapes and bounds."""
+        return _market(
+            market_id=901,
+            name="Highest temperature in Los Angeles on Sep 21?",
+            source="polymarket",
+            outcomes=[
+                _outcome("27°C or below", 0.002, outcome_id=9010, rank=1),
+                _outcome("28°C", 0.015, outcome_id=9011, rank=2),
+                _outcome("33°C", 0.455, outcome_id=9012, rank=3),
+                _outcome("37°C or higher", 0.0005, outcome_id=9013, rank=4),
+            ],
+            resolution_date=now + timedelta(days=2),
+        )
+
+    async def _cities(self, client, mock_db, markets):
+        mock_db.execute.return_value = _query_result(markets)
+        resp = await client.get("/api/weather/cities")
+        assert resp.status_code == 200
+        return {c["id"]: c for c in resp.json()}
+
+    async def test_la_celsius_ladder_is_relabelled_into_fahrenheit(
+        self, client, mock_db
+    ):
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [self._la_celsius_market(now)])
+
+        high = cities["la"]["high"]
+        assert high["unit"] == "F"
+        # 33°C is the modal bucket and is exactly 91.4°F.
+        assert high["mode"] == 91.4
+        assert [b["label"] for b in high["dist"]] == [
+            "80.6°F or below",
+            "82.4°F",
+            "91.4°F",
+            "98.6°F or higher",
+        ]
+
+    async def test_la_conversion_preserves_bounds_and_probabilities(
+        self, client, mock_db
+    ):
+        """The bound words and the numbers beside them are the contract.
+
+        "or below" / "or higher" mark the open tails; dropping or flipping one
+        restates which side of 27°C the 0.2% lives on. The probabilities are
+        not a function of the scale and may not move at all.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [self._la_celsius_market(now)])
+
+        dist = cities["la"]["high"]["dist"]
+        assert dist[0]["label"].endswith("or below")
+        assert dist[-1]["label"].endswith("or higher")
+        assert [b["probability"] for b in dist] == [0.002, 0.015, 0.455, 0.0005]
+        assert [b["prob"] for b in dist] == [0, 2, 46, 0]
+
+    async def test_wellington_keeps_its_native_celsius_ladder(self, client, mock_db):
+        """Healthy control: a Celsius city reading Celsius data converts nothing."""
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=902,
+                name="Highest temperature in Wellington on Sep 21?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("12°C or below", 0.10, outcome_id=9020, rank=1),
+                    _outcome("13°C", 0.60, outcome_id=9021, rank=2),
+                    _outcome("14°C or higher", 0.30, outcome_id=9022, rank=3),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["wellington"]["high"]
+        assert high["unit"] == "C"
+        assert high["mode"] == 13.0
+        assert [b["label"] for b in high["dist"]] == [
+            "12°C or below",
+            "13°C",
+            "14°C or higher",
+        ]
+
+    async def test_san_francisco_keeps_its_native_fahrenheit_ranges(
+        self, client, mock_db
+    ):
+        """Healthy control: the `N-N°F` range shape is 72 of production's labels."""
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=903,
+                name="Highest temperature in San Francisco on Sep 21?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("60-65°F", 0.20, outcome_id=9030, rank=1),
+                    _outcome("65-70°F", 0.55, outcome_id=9031, rank=2),
+                    _outcome("70-75°F", 0.25, outcome_id=9032, rank=3),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["sf"]["high"]
+        assert high["unit"] == "F"
+        # The mode is asserted beside the labels because a conversion that
+        # fires unconditionally leaves these labels untouched (they are
+        # already °F) and moves only this number — 67.5 would read 153.5.
+        assert high["mode"] == 67.5
+        assert [b["label"] for b in high["dist"]] == [
+            "60-65°F",
+            "65-70°F",
+            "70-75°F",
+        ]
+
+    async def test_a_celsius_range_converts_once_and_stays_a_range(
+        self, client, mock_db
+    ):
+        """A range that actually needs converting — the case production has no
+        instance of today, and the only one that can convert twice.
+
+        The rewrite runs the span pattern and then the point pattern over the
+        result, so "27-28°C" becomes "80.6-82.4°F" and the point pattern then
+        sees "82.4°F" again. Converting that a second time reads 180.3°F. The
+        two production shapes cannot catch this between them: the °C labels
+        are all points, and the ranges are all already °F, so neither reaches
+        this path. Mutation-tested — dropping the span rewriter's bounds or
+        its same-unit guard survives every other test in this class.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=906,
+                name="Highest temperature in Miami on Sep 21?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("26°C or below", 0.10, outcome_id=9060, rank=1),
+                    _outcome("27-28°C", 0.70, outcome_id=9061, rank=2),
+                    _outcome("29°C or higher", 0.20, outcome_id=9062, rank=3),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["miami"]["high"]
+        assert high["unit"] == "F"
+        assert [b["label"] for b in high["dist"]] == [
+            "78.8°F or below",
+            "80.6-82.4°F",
+            "84.2°F or higher",
+        ]
+        # 27-28°C has a midpoint of 27.5°C, which is 81.5°F.
+        assert high["mode"] == 81.5
+
+    async def test_every_citys_labels_agree_with_its_declared_unit(
+        self, client, mock_db
+    ):
+        """The rule over the whole response, not an LA fixture.
+
+        LA is today's instance; the next one will be a different city, so the
+        assertion is the invariant the payload owes every row.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            self._la_celsius_market(now),
+            _market(
+                market_id=904,
+                name="Highest temperature in Wellington on Sep 21?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("12°C", 0.40, outcome_id=9040, rank=1),
+                    _outcome("13°C", 0.60, outcome_id=9041, rank=2),
+                ],
+                resolution_date=now + timedelta(days=2),
+            ),
+            _market(
+                market_id=905,
+                name="Highest temperature in San Francisco on Sep 21?",
+                source="kalshi",
+                outcomes=[
+                    _outcome("60-65°F", 0.30, outcome_id=9050, rank=1),
+                    _outcome("65-70°F", 0.70, outcome_id=9051, rank=2),
+                ],
+                resolution_date=now + timedelta(days=2),
+            ),
+        ])
+
+        assert {"la", "wellington", "sf"} <= set(cities)
+        for city_id, city in cities.items():
+            high = city["high"]
+            unit = high["unit"]
+            other = "C" if unit == "F" else "F"
+            for bucket in high["dist"]:
+                label = bucket["label"]
+                assert f"°{other}" not in label, (
+                    f"{city_id} declares unit {unit!r} but labels a bucket {label!r}"
+                )
+
+
 # ============================================================================
 # 3. Rain — GET /api/weather/rain
 # ============================================================================
