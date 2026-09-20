@@ -180,42 +180,27 @@ def test_the_whole_card_replays_from_the_venues_own_bytes():
     ]
 
 
-# ── both locks are load-bearing, and the failure direction is one-way ──────
+# ── the equality is load-bearing, and the failure direction is one-way ─────
+#
+# An earlier draft asserted an `isdigit()` pre-check as a separate "lock". Its
+# mutant survived all eleven tests — `leg.group(1)` is `[0-9]+`, so the equality
+# below already implies the label is only digits. The branch was removed rather
+# than kept with a test that could not kill it.
 
 
-def test_a_bare_number_the_ticker_does_not_corroborate_is_left_alone():
-    """Lock 2. An uncorroborated ordinal could still be Kalshi obfuscation.
-
-    Without this the fix would be a bare-number rule, and `Option 1`-shaped
-    labels that happen to arrive stripped of their noun would start reaching the
-    screen as `1`.
-    """
-    assert (
-        _exact_count_label(
-            _market("KXSOMEFIELD-26-ALPHA", "Who wins?", yes_sub_title="1")
-        )
-        is None
-    )
-
-
-def test_a_ticker_leg_that_disagrees_with_the_label_is_left_alone():
-    """Both locks must name the SAME number — agreement is the whole signal."""
-    assert (
-        _exact_count_label(
-            _market("KXDSENATESEATS-29-E52", "…exactly 52…", yes_sub_title="51")
-        )
-        is None
-    )
-
-
-def test_a_non_numeric_label_is_left_alone():
-    """Lock 1. `Above 56` reaches step 3 on its own merits, as it always did."""
-    assert (
-        _exact_count_label(
-            _market("KXDSENATESEATS-29-A56", "…more than 56…", yes_sub_title="Above 56")
-        )
-        is None
-    )
+@pytest.mark.parametrize(
+    "ticker,label,why",
+    [
+        ("KXSOMEFIELD-26-ALPHA", "1", "uncorroborated ordinal — could be obfuscation"),
+        ("KXDSENATESEATS-29-E52", "51", "both present, but they disagree"),
+        ("KXDSENATESEATS-29-A56", "Above 56", "not a count leg; step 3 handles it"),
+        ("KXDSENATESEATS-29-E52", "", "no label at all"),
+        ("KXDSENATESEATS-29-E52", "052", "same value, not the same string"),
+    ],
+)
+def test_the_venue_must_say_the_same_number_twice(ticker, label, why):
+    """Anything short of an exact agreement falls through to the ladder."""
+    assert _exact_count_label(_market(ticker, "…", yes_sub_title=label)) is None, why
 
 
 def test_the_older_bare_number_ticker_format_is_deliberately_untouched():

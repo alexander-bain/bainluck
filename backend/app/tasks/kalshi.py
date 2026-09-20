@@ -301,13 +301,19 @@ def _exact_count_label(market) -> Optional[str]:
     which reached step 2 intact because it is not only digits — sitting legibly
     at rank 7. 114 rows on 24 open markets, every one a count question.
 
-    TWO INDEPENDENT LOCKS, THE SAME SHAPE AS ``outcome_display_names`` (#4151):
-    the label must be only digits, AND the ticker's own final segment must be
-    ``-E<those exact digits>``. Neither alone is enough — a bare ``1`` whose
-    ticker does not corroborate it could still be an obfuscated ordinal, and the
-    ticker leg alone is what is already on the screen. Requiring the venue to
-    say the same number twice, in two independently-authored fields, is what
-    makes this unable to assert anything the venue did not.
+    THE PREDICATE IS ONE EQUALITY: the venue has to say the same number twice,
+    in two independently-authored fields — the ``-E<n>`` leg of the ticker and
+    the label itself. That is the same two-signal shape as
+    ``outcome_display_names`` (#4151), and it is what makes this unable to
+    assert anything the venue did not. Neither half alone would do: a bare ``1``
+    the ticker does not corroborate could still be an obfuscated ordinal, and
+    the ticker leg on its own is the string already on the screen.
+
+    Written as a single comparison on purpose. An ``isdigit()`` pre-check reads
+    like a second lock and is not one — ``leg.group(1)`` is ``[0-9]+``, so the
+    equality already implies the label is only digits. Its mutant survived the
+    whole suite; a branch no test can kill is a branch that documents a
+    guarantee it is not providing.
 
     The failure direction is one-way, so nothing that reads correctly today can
     regress: a shape this does not recognise falls through to the ladder
@@ -320,10 +326,8 @@ def _exact_count_label(market) -> Optional[str]:
     bare number is what a person would say back.
     """
     label = (market.yes_sub_title or "").strip()
-    if not label.isdigit():
-        return None
     leg = _EXACT_COUNT_LEG_RE.search(market.ticker or "")
-    if not leg or leg.group(1) != label:
+    if leg is None or leg.group(1) != label:
         return None
     return label
 
