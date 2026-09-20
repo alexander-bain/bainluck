@@ -55,8 +55,13 @@ const { chromium } = createRequire(findPlaywright())('playwright');
 const eventId = process.argv[2];
 const seconds = parseInt(process.argv[3] || '200', 10);
 const forceVisible = process.argv.includes('--visible');
-if (!eventId) {
+// An event id is digits. Checked rather than assumed because this value is
+// interpolated into a url below, and because anything else is a typo that would
+// otherwise be reported as a page making zero requests — the exact reading this
+// probe exists to make impossible.
+if (!eventId || !/^[0-9]+$/.test(eventId)) {
   console.error('usage: quiet-stall-poll-7621.mjs <eventId> [seconds] [--visible]');
+  console.error('  <eventId> must be numeric.');
   process.exit(2);
 }
 
@@ -92,7 +97,14 @@ try {
   // Sibling fetches (history, markets) kept landing in ux/1399's capture, which is
   // exactly why the page looked alive, so counting "any request" would answer the
   // wrong question.
-  const eventRe = new RegExp(`/api/events/${eventId}(?:[?#]|$)`);
+  // Compared as a PATHNAME, not matched as a pattern. Two reasons, and the
+  // second is why it is written this way rather than with a regex built from
+  // `eventId`: equality cannot be fooled by a neighbouring path that merely
+  // starts with the same digits (`/api/events/1478169` vs `…/14781697`), and
+  // there is no expression assembled from an argument for anything to be
+  // injected into — CodeQL `js/regex-injection` flags exactly that shape, and it
+  // is right to.
+  const eventPath = `/api/events/${eventId}`;
   // CONTROL, and it is not optional: "the event endpoint was never re-requested"
   // and "my regex matches nothing" produce the identical count of zero. Every
   // other `/api/` path is tallied beside it, so a page that is demonstrably
@@ -103,8 +115,13 @@ try {
     const u = req.url();
     if (!u.includes('/api/')) return;
     const at = Math.round((Date.now() - t0) / 1000);
-    if (eventRe.test(u)) hits.push(at);
-    const path = u.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+    let path;
+    try {
+      path = new URL(u).pathname;
+    } catch {
+      return;
+    }
+    if (path === eventPath) hits.push(at);
     if (!allApi.has(path)) allApi.set(path, []);
     allApi.get(path).push(at);
   });
