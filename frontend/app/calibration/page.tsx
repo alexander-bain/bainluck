@@ -1303,10 +1303,36 @@ export default function CalibrationPage() {
           {data.date_range?.start && data.date_range?.end
             ? `Data ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}`
             : `${data.total_outcomes.toLocaleString()} resolved outcomes`}
-          {" · Updated "}
+          {/* #7612, the residual. This slot used to read `· Updated hourly`
+              whenever `generated_at` was absent — a CADENCE standing in for the
+              DATE the sentence promises, asserted in the one state where we
+              could not read that date. Same claim `methodologyRefreshClause`
+              withholds one card down, same rule as #2649: THE PAGE MAY
+              DESCRIBE, IT MAY NOT PREDICT.
+
+              It is the worse instance of the two. The banner above is driven by
+              `availability`/`cache`, not by this field, so
+              `decideCalibrationStaleness` returns null on a payload that is
+              `fresh` but undated (calibrationStaleness.ts:231) — nothing renders
+              above to correct it, and the reassuring word lands alone. That is
+              the empty-200 shape gotcha #53 names: the degraded branch asserting
+              MORE than the branch that has the facts.
+
+              Withheld, not replaced (#4113, notice 34): an undated payload
+              simply drops the segment. A reader loses a true date on a healthy
+              page and gains no paragraph explaining its absence. The date-range
+              half above is independent and still renders.
+
+              Latent today — the producer stamps `generated_at` on every
+              artifact and every serve tier derives from it, so this is not
+              reachable on production as measured 2026-09-20 (payload carried
+              `2026-09-15T11:16:10Z`). It is fixed because it is the same
+              sentence as #7612's, one grep apart, and `generated_at` is typed
+              nullable (`types.ts:2741`) with the route defending against a
+              non-str at `calibration.py:1391`. */}
           {data.generated_at
-            ? new Date(data.generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-            : "hourly"}
+            ? ` · Updated ${new Date(data.generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+            : ""}
         </p>
       </div>
 
