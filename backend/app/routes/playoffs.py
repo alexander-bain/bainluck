@@ -28,6 +28,7 @@ from app.models import (
 from app.services import get_db
 from app.utils.db_cancellation import is_query_canceled
 from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #6532
+from app.utils.futures_liveness import leg_is_graded  # #7387
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import canonical_conference as _canonical_conference
 from app.utils.static_divisions import canonical_division as _canonical_division
@@ -3541,6 +3542,72 @@ _GRID_DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
 _GRID_RESOLVED_COVERAGE = 0.9
 
 
+def _grid_leg_is_terminal(graded: bool, probability: float) -> bool:
+    """A graded leg whose price is AT THE RAIL, and nothing wider (#7387).
+
+    🔴 THE SCOPE LIMITER, and it is the whole correctness of this ship. The
+    defect was that ``prob <= 0 or prob >= 1.0`` DELETED graded legs, so the
+    repair may only restore that exact population. A graded leg the grid was
+    already serving keeps its number, untouched.
+
+    Measured why, on #6532's La Liga relegation fixture, which this got wrong
+    first: a mid-season relegation market carries ``api_settlement`` on legs
+    that are still quoting — Barcelona ``is_winner=true`` at **0.99**, Levante
+    ``false`` at 0.60, Espanyol ``false`` at 0.02. Treating the badge alone as a
+    verdict turned three honestly-priced rows into blank terminal cells, which
+    is precisely the harm `test_grid_book_refuted_price_6532_pg` exists to
+    catch. #6442 had already written the general form of this: *an extreme price
+    is a QUOTE, not a grade* — and the mirror holds, a badge on a mid-market
+    price is not a settlement.
+
+    At the rail the two agree and there is no number left to lose: the cell was
+    going to be dropped entirely, so stating the result strictly beats silence.
+    """
+    return graded and (probability <= 0 or probability >= 1.0)
+
+
+def _grid_dedup_rank(entry: dict) -> tuple:
+    """Which of one source's several legs for a team+column survives (#7387).
+
+    The rule was "keep the LOWEST probability", because a source that matched
+    both `Championship` and `Make Championship Game` to one column is quoting
+    the second and the genuine market is the cheaper one. That reasoning is
+    about QUOTES and silently discarded a verdict: a graded winner sits at 1.0,
+    which is the highest number in its group and therefore never chosen, so the
+    club went back to rendering a blank.
+
+    Ungraded groups are unchanged — every ungraded leg shares the last rank, so
+    ``min`` still picks the lowest price, byte for byte the old behaviour.
+    """
+    if entry.get("terminal"):
+        return (0 if entry.get("is_winner") else 1, entry["probability"])
+    return (2, entry["probability"])
+
+
+def _grid_terminal_state(entries: list[dict]) -> str | None:
+    """The cell state a graded leg forces, or ``None`` for an ordinary cell.
+
+    #7387. Settled outranks trading — the same order the register path states
+    two hundred lines below ("a terminal result still supersedes it") — so one
+    graded leg decides the cell even when another source is still quoting.
+
+    A WINNER OUTRANKS A LOSER, and the asymmetry is not a tie-break for its own
+    sake. ``is_winner = true`` is only ever written by a grader reading a
+    verdict, while ``is_winner = false`` is the column's own default
+    (``server_default=text("false")``); the affirmative claim is therefore the
+    better-evidenced one whenever two legs disagree, and a club that has clinched
+    must never be published as eliminated on the strength of a default.
+    """
+    state = None
+    for e in entries:
+        if not e.get("terminal"):
+            continue
+        if e.get("is_winner"):
+            return "won"
+        state = "eliminated"
+    return state
+
+
 def _grid_price_is_decided(p: float, eps: float) -> bool:
     """A price within ε of 0 (eliminated) or 1 (clinched).
 
@@ -4421,7 +4488,20 @@ async def get_playoff_grid(
                     prob = (float(outcome.current_yes_bid) + float(outcome.current_yes_ask)) / 2
                 else:
                     continue
-                if prob <= 0 or prob >= 1.0:
+                # #7387. A price at the rail is junk from a market that is still
+                # trading and a RESULT from one that has been graded, and this
+                # line could not tell them apart: it deleted the answers we are
+                # most sure of. Eight of thirty MLB clubs — including the four
+                # best records in baseball — reached the reader with no
+                # Make Playoffs cell at all, which reads as "no data" beside a
+                # 90% division cell on the same row.
+                #
+                # The verdict travels on the outcome itself, so nothing is
+                # plumbed: `_grid_terminal_state` re-reads it where the cell is
+                # built. Graded legs still face every team-name filter below —
+                # a settled "#1 seed" is as much not-a-team as a trading one.
+                if not leg_is_graded(outcome.is_winner, outcome.resolution_source) \
+                        and (prob <= 0 or prob >= 1.0):
                     continue
                 # Skip non-team outcome names (thresholds, dates, generic)
                 oname = outcome.name or ""
@@ -4582,17 +4662,43 @@ async def get_playoff_grid(
             else:
                 norm = _normalize_team_name(team_name)
 
+            graded = leg_is_graded(outcome.is_winner, outcome.resolution_source)
+            # A terminal cell publishes no number, so a graded leg that reached
+            # the loop through the bid/ask fallback (``current_probability`` NULL)
+            # must not be asked for one — `float(None)` would 500 the whole grid
+            # for every league. Ungraded rows keep the existing expression
+            # exactly, including that pre-existing hazard, which is #7387's
+            # neighbour and not its business.
+            _raw_p = outcome.current_probability
+            _probability = 0.0 if graded and _raw_p is None else float(_raw_p)
             source_entry = {
                 "source": market.source,
-                "probability": float(outcome.current_probability),
+                "probability": _probability,
                 "market_id": market.id,
                 "outcome_id": outcome.id,
                 "market_name": market.name,
                 "volume_24h": market.volume_24h,
+                # #7387. The verdict rides the ordinary entry rather than a
+                # parallel map, so every alias override, prefix merge and
+                # team_id merge below moves it with the row it belongs to. A
+                # side map keyed on the pre-merge name would be looked up under
+                # a name that no longer exists.
+                #
+                # `terminal`, not `graded`: only a graded leg AT THE RAIL is one
+                # the old filter deleted, and only that population may change.
+                # A graded leg the grid already served keeps its number.
+                "terminal": _grid_leg_is_terminal(graded, _probability),
+                "is_winner": outcome.is_winner is True,
             }
 
             grid_raw[norm][col_key].append(source_entry)
-            all_outcome_ids.append(outcome.id)
+            if not graded:
+                # A graded leg stops being written the moment it is graded
+                # (`futures_liveness`: the writer refuses it), so its 24h "move"
+                # is an artefact of the grading write, not a market movement.
+                # Terminal cells publish no trend, so this only keeps the
+                # movers list honest.
+                all_outcome_ids.append(outcome.id)
             outcome_id_to_team[outcome.id] = norm
             # Store display name (first occurrence wins)
             if norm not in outcome_id_to_name:
@@ -4615,7 +4721,7 @@ async def get_playoff_grid(
             # Keep lowest prob per source
             deduped = []
             for source, source_entries in by_source.items():
-                best = min(source_entries, key=lambda e: e["probability"])
+                best = min(source_entries, key=_grid_dedup_rank)
                 deduped.append(best)
             grid_raw[norm_name][col_key] = deduped
 
@@ -4791,6 +4897,21 @@ async def get_playoff_grid(
             if not entries:
                 continue
 
+            # #7387. A graded leg renders its RESULT and no number, the same
+            # shape the register path emits below, which is the shape
+            # `lib/gridCellState.ts` already turns into "Clinched"/"Eliminated"
+            # on both /playoffs/[sport] and the team page's division race. No
+            # client change is owed: the reader states are the frozen C108 five.
+            terminal = _grid_terminal_state(entries)
+            if terminal is not None:
+                cells[col.key] = {
+                    "merged_probability": None,
+                    "sources": [],
+                    "trend_24h": None,
+                    "state": terminal,
+                }
+                continue
+
             # Deduplicate entries from same source — if two markets from
             # the same source (e.g., two Kalshi markets) map to the same
             # column for the same team, average them into one entry.
@@ -4866,6 +4987,11 @@ async def get_playoff_grid(
                 continue
             srcs = cell.get("sources", [])
             prob = cell["merged_probability"]
+            # #7387: a terminal cell carries no number. The Kalshi 0.45-0.65
+            # noise test is about an illiquid QUOTE and has nothing to say about
+            # a settled result — and `None` in the comparison below would 500.
+            if prob is None:
+                continue
             # Single-source Kalshi noise: probability in the 0.45-0.65 range
             # with no corroboration from another source
             if (len(srcs) == 1
