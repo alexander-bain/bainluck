@@ -71,7 +71,23 @@ SHORTEST_FUTURE_OFFSET = timedelta(days=5, hours=10)
 #: freely — the guard is written against THIS name, not against "one day".
 ANCHOR_LAG = timedelta(days=1)
 
-NOW = datetime.now(timezone.utc) - ANCHOR_LAG
+#: The instant this module was imported, kept so the guard below can assert the
+#: RELATIONSHIP between it and `NOW` instead of comparing `NOW` to a clock that
+#: has moved on since.
+#:
+#: 🔴 THE FIRST DRAFT OF THAT GUARD FAILED CI ON THIS VERY BRANCH, and the
+#: failure is worth more than the guard. It read
+#: `abs((datetime.now(utc) - NOW) - ANCHOR_LAG) < 5 minutes`. Alone, that passes
+#: — the file runs in a second. Inside the real shard it ran **11 minutes after
+#: this module was imported**, because a 14,000-test shard imports its modules
+#: at collection and gets to any one test much later. So the assertion was not
+#: measuring the anchor at all; it was measuring HOW LONG THE SUITE HAD BEEN
+#: RUNNING, and the failure message accused a correct anchor of being a literal.
+#: Stamping the import instant removes the clock from the comparison entirely,
+#: so no suite duration can move it.
+_IMPORTED_AT = datetime.now(timezone.utc)
+
+NOW = _IMPORTED_AT - ANCHOR_LAG
 
 
 def _outcome(oid, name, prob=0.5, is_winner=False):
@@ -112,11 +128,15 @@ def _stamp_of(entry):
     return datetime.fromisoformat(entry["history"][-1]["timestamp"])
 
 
-def _anchor_source_line() -> str:
+def _source_line(prefix: str) -> str:
     for line in Path(__file__).read_text(encoding="utf-8").splitlines():
-        if line.startswith("NOW = "):
+        if line.startswith(prefix):
             return line
-    raise AssertionError("no `NOW = ` assignment found in this module")
+    raise AssertionError(f"no `{prefix}` assignment found in this module")
+
+
+def _anchor_source_line() -> str:
+    return _source_line("NOW = ")
 
 
 def _future_offsets_graded_against_the_real_clock() -> list[timedelta]:
@@ -180,16 +200,19 @@ class TestTheAnchorCannotAgeOut:
         has moved away from it, so a datetime typed a minute ago satisfies it.
         Reading the assignment itself closes that window.
         """
-        line = _anchor_source_line()
-        assert "datetime.now(" in line, (
-            f"the anchor must be derived from the clock; it reads `{line}`. "
+        stamp = _source_line("_IMPORTED_AT = ")
+        anchor = _anchor_source_line()
+        assert "datetime.now(" in stamp, (
+            f"the import instant must come from the clock; it reads `{stamp}`. "
             "See #7611 — this file's previous anchor was a literal and master "
             "went red for every lane the second real time reached it."
         )
-        assert not re.search(r"datetime\(\s*\d{4}", line), (
-            f"the anchor names an instant: `{line}`. A datetime literal here is "
-            "a dated bomb, not a fixed clock (gotcha #44). See #7611."
-        )
+        for line in (stamp, anchor):
+            assert not re.search(r"datetime\(\s*\d{4}", line), (
+                f"this line names an instant: `{line}`. A datetime literal in "
+                "the anchor is a dated bomb, not a fixed clock (gotcha #44). "
+                "See #7611."
+            )
 
     def test_the_declared_ceiling_is_the_real_shortest_future_offset(self):
         """And it is read off the specimens, so a new short one cannot slip in."""
@@ -206,14 +229,18 @@ class TestTheAnchorCannotAgeOut:
             "shortest specimen could expire under it. See #7611."
         )
 
-    def test_the_anchor_was_computed_from_the_clock_and_not_written_down(self):
-        """Catches an anchor that is derived but from something that stopped moving."""
-        drift = abs((datetime.now(timezone.utc) - NOW) - ANCHOR_LAG)
-        assert drift < timedelta(minutes=5), (
-            "NOW must be `datetime.now(timezone.utc) - ANCHOR_LAG` (gotcha #44), "
-            f"not an instant someone wrote down. It currently sits {drift} away "
-            "from its own declared lag, which is what a hard-coded datetime "
-            "looks like once the clock has moved past it. See #7611."
+    def test_the_anchor_is_exactly_its_declared_lag_behind_the_import_instant(self):
+        """Exact, and with no clock in it — so no suite duration can move it.
+
+        The version of this that read `datetime.now(utc) - NOW` against a
+        five-minute tolerance was measuring how long the shard had been running,
+        not the anchor, and it reddened CI on a correct anchor eleven minutes
+        into the run. See the note beside `_IMPORTED_AT`.
+        """
+        assert NOW == _IMPORTED_AT - ANCHOR_LAG, (
+            f"NOW ({NOW}) must be exactly ANCHOR_LAG ({ANCHOR_LAG}) behind the "
+            f"import instant ({_IMPORTED_AT}). Any value written down by hand "
+            "misses this by the width of a datetime. See #7611."
         )
 
     def test_the_anchor_leaves_room_for_this_files_future_schedules(self):
