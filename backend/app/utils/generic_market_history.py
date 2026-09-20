@@ -20,6 +20,9 @@ its readers byte-for-byte alone:
      "scale": "venue_yes_probability_raw",
      "market_id", "market_source", "market_external_id",
      "attempted_at", "built_at", "status": "ok" | "degraded" | "empty",
+     "market_settled": bool,   # was the market already settled when this ran?
+                               # `plan_on_demand_fill` needs it to tell an answer
+                               # from an attempt that predates the settlement.
      "outcomes": {"<outcome_id>": {
          "outcome_id", "contract": {...exact venue contract...},
          "points": [[iso_ts, probability, yes_bid, yes_ask, last_price, tier], …],

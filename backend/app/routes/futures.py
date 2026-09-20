@@ -4497,6 +4497,13 @@ def _progression_merge_key(outcome: FuturesOutcome) -> str:
 #     site-wide budget; the next ordinary read uses the result.
 
 
+#: Captures in the requested window under which a read may ask the background
+#: lane for one venue fill. A BOUNDED FETCH TRIGGER — see the call site: it is
+#: counted in rows, so it is not, and does not claim to be, a judgement about
+#: whether any individual line on the chart is thin.
+_VENUE_FILL_THIN_CAPTURES = 20
+
+
 class _GenericVenueHistory:
     """What the generic-history cache holds for ONE market, already vetted."""
 
@@ -4508,6 +4515,7 @@ class _GenericVenueHistory:
         self.refusals: list[dict] = []
         self.unsupported_dropped = 0
         self.fill = "not_considered"
+        self.thin_basis: Optional[str] = None
 
     def in_window(self, cutoff: datetime, capture_rows: list, outcome_ids) -> list:
         """Venue rows at/after `cutoff` that no capture already speaks for."""
@@ -4543,6 +4551,11 @@ class _GenericVenueHistory:
             "unsupported_points_withheld": self.unsupported_dropped,
             "fill": self.fill,
         }
+        if self.thin_basis:
+            # What "thin" MEANT for this response. Stated so the trigger cannot be
+            # read back as a claim that every sparse line on this chart was
+            # repaired — it is the rule that decided whether to ask, nothing more.
+            block["fill_trigger"] = self.thin_basis
         refusals = [r for r in self.refusals]
         if scale_refused:
             refusals.append({"scope": "reader", "reason": scale_refused})
@@ -4560,43 +4573,50 @@ def _venue_scale_refusal(
 ) -> Optional[str]:
     """None when `/history`'s PRINTED scale is the venue's raw scale here; else why not.
 
-    MEASURED, NOT ASSUMED. For every outcome that would gain venue points, every
-    captured instant in the served window is compared: the value this route
-    prints (`devigged`) against the raw consensus of the same rows. Equal at
-    every instant (to the squeeze's own 4-dp rounding) means the squeeze and the
-    de-vig are the identity on this market in this window, and a raw venue point
-    sits on the printed scale. One instant that differs refuses the market.
+    🔴 A SQUEEZABLE EXCLUSIVE FIELD IS REFUSED, AND MEASURED EQUALITY ELSEWHERE IN
+    THE WINDOW DOES NOT RESCUE IT. The squeeze is a whole-field operation: what it
+    does to one outcome's number is a function of the OTHER outcomes' values at
+    the SAME instant. A venue point is, by construction, at an instant no capture
+    reached (`unclaimed_instants`) — so at that instant this route has no
+    companion values and no denominator, and cannot know what the squeeze would
+    have done there.
 
-    With NO captured instant to measure against, only a market that cannot be
-    squeezed by construction is admitted: a non-exclusive family (#199) or a
-    single-outcome binary. A multi-outcome exclusive field with nothing to
-    measure fails CLOSED.
+    The first presentation admitted such a market whenever every captured instant
+    happened to come through the squeeze unchanged. That is the inference this
+    correction removes: two outcomes sitting at .5/.5 all week are exactly the
+    case where the squeeze is the identity *because the field already sums to
+    one*, and it says nothing about an unobserved instant where it may not. The
+    evidence needed is contemporaneous with the point being admitted, and it does
+    not exist, so the honest answer is a refusal rather than a converted number.
+
+    What is still admitted is what needs no inference: a market that cannot be
+    squeezed by construction — a non-exclusive family (#199) or a single-outcome
+    binary, which is the named specimen this ship is for. There the printed value
+    IS the raw one, and the per-instant comparison below is what proves it over
+    the captures this window does hold.
     """
-    squeezable = bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1
+    if bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1:
+        return "exclusive_field_scale_unprovable_at_venue_instants"
     for oid in venue_by_outcome:
-        compared = 0
         for captured_at, raw_values in (outcome_time_groups.get(oid) or {}).items():
             point = devigged.get(captured_at)
             if point is None or oid not in point or not raw_values:
                 continue
-            compared += 1
             if abs(float(point[oid]) - mean(raw_values)) > 5e-5:
                 return "printed_scale_is_not_the_venue_raw_scale"
-        if compared == 0 and squeezable:
-            return "printed_scale_unmeasurable_for_exclusive_field"
     return None
 
 
-def _venue_rows_served(venue_rows: list, venue_cells: dict, bucket_seconds: int) -> list:
-    """The venue rows whose observation is the value of a served timeline cell."""
-    served = []
-    last_in_cell: dict[tuple[int, int], object] = {}
-    for row in sorted(venue_rows, key=lambda r: r.captured_at):
-        bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
-        if bucket_key in venue_cells.get(row.outcome_id, {}):
-            last_in_cell[(row.outcome_id, bucket_key)] = row
-    served.extend(last_in_cell.values())
-    return served
+def _venue_rows_served(venue_cells: dict) -> list:
+    """The venue observations a served timeline entry actually carries.
+
+    Since the reader serves each of these at its OWN recorded instant, the cells
+    ARE the served rows — one per (outcome, bucket) the captures left empty, the
+    last observation in each. The `observed_from` / `observed_through` stamps
+    `describe` builds from them are therefore real venue instants, and can be
+    compared directly with the timestamps in the timeline.
+    """
+    return [row for cells in venue_cells.values() for row in cells.values()]
 
 
 def _request_path_redis():
@@ -4913,9 +4933,19 @@ async def get_probability_timeline(
     # Thin is judged on OUR captures in the window the reader ASKED for — the
     # same `< 20` this route has always used to call a window sparse — so a
     # chart our polls already draw densely never spends a venue request.
+    #
+    # ⚠️ IT IS A FETCH TRIGGER, NOT A VERDICT ON THE CHART, and this ship does not
+    # claim otherwise. The count is rows, not lines: twenty captures spread over
+    # twenty outcomes clear the trigger while every individual line is still one
+    # point, and those charts are NOT repaired here. Naming a per-line density
+    # policy is its own question with its own evidence; what this bounds is how
+    # often a public GET may turn into an outbound venue request. Read
+    # `venue_history.fill_trigger` in the response rather than inferring the rule
+    # from the number.
+    venue.thin_basis = f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
-        chart_is_thin=len(snapshots) < 20,
+        chart_is_thin=len(snapshots) < _VENUE_FILL_THIN_CAPTURES,
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -5020,27 +5050,40 @@ async def get_probability_timeline(
     # one hour are one book at two instants, and their median is a price nobody
     # quoted; the last one is the price the bucket closed on.
     #
+    # 🔴 AND IT IS SERVED AT THE INSTANT IT WAS OBSERVED, NOT AT THE BUCKET START.
+    # The bucket is how this route DEDUPLICATES against our own captures — one
+    # venue point per (outcome, hour) that our polls missed — and that is all it
+    # is. Writing the observation into the bucket's own entry would publish
+    # 05:00 for a price the venue timestamped 05:41: a time nobody observed, on
+    # the one series whose entire claim is that these are real observations at
+    # real instants. `/history` has always served the raw instant; the phone read
+    # the rounded one, so the two readers disagreed about when the same
+    # observation happened.
+    #
+    # Capture buckets are untouched and still emit at the bucket start, so a
+    # market with no venue history is byte-for-byte what it was. A venue
+    # observation gets its own entry keyed by its own timestamp, which is also
+    # why two outcomes observed at different instants inside one hour can no
+    # longer be collapsed onto one shared reading.
+    #
     # ONLY THE CHARTED TOP-N. A venue point never feeds "Field": the fill fetches
     # a bounded top-N, so a Field summed from venue points would be a partial sum
     # presented as the rest of the market.
-    capture_bucket_keys = set(all_bucket_keys)
-    venue_cells: dict[int, dict[int, float]] = defaultdict(dict)
+    venue_cells: dict[int, dict[int, object]] = defaultdict(dict)
     for row in sorted(venue_rows, key=lambda r: r.captured_at):
         if row.outcome_id not in top_outcome_ids or row.probability is None:
             continue
         bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
         if bucket_key in (outcome_buckets.get(row.outcome_id) or {}):
             continue
-        venue_cells[row.outcome_id][bucket_key] = float(row.probability)
-    for cells in venue_cells.values():
-        all_bucket_keys.update(cells.keys())
-    sorted_bucket_keys = sorted(all_bucket_keys)
+        # Last observation in the cell wins — the rows are in ascending order.
+        venue_cells[row.outcome_id][bucket_key] = row
 
     # Build timeline: for each time bucket, compute median probability per outcome
-    timeline = []
-    for bucket_key in sorted_bucket_keys:
-        bucket_ts = datetime.fromtimestamp(bucket_key, tz=timezone.utc).isoformat()
-        entry = {"timestamp": bucket_ts, "outcomes": {}}
+    entries_by_instant: dict[datetime, dict] = {}
+    for bucket_key in sorted(all_bucket_keys):
+        bucket_at = datetime.fromtimestamp(bucket_key, tz=timezone.utc)
+        entry = {"timestamp": bucket_at.isoformat(), "outcomes": {}}
 
         field_prob = 0.0
 
@@ -5048,10 +5091,6 @@ async def get_probability_timeline(
             oid = outcome.id
             probs = outcome_buckets.get(oid, {}).get(bucket_key, [])
             if not probs:
-                # #7351: a venue observation for a cell no capture filled.
-                venue_value = venue_cells.get(oid, {}).get(bucket_key)
-                if venue_value is not None:
-                    entry["outcomes"][outcome_names[oid]] = round(venue_value, 6)
                 continue
 
             med_prob = median(probs)
@@ -5065,13 +5104,30 @@ async def get_probability_timeline(
         # independent binaries carry bookmaker overround and can sum >100%
         # (gotcha #23), which renders as an impossible >100% line.
         #
-        # #7351: only in a bucket a CAPTURE reached. In a venue-only bucket no
-        # Field member was read at all, and `0.0` there would be a fabricated
-        # zero rather than a missing value (gotcha #53).
-        if len(charted_outcomes) > top and bucket_key in capture_bucket_keys:
+        # #7351: only in a bucket a CAPTURE reached — which is now every entry
+        # built by this loop. In a venue-only entry no Field member was read at
+        # all, and `0.0` there would be a fabricated zero rather than a missing
+        # value (gotcha #53), so those entries below never carry the key.
+        if len(charted_outcomes) > top:
             entry["outcomes"]["Field"] = round(min(field_prob, 1.0), 6)
 
-        timeline.append(entry)
+        entries_by_instant[bucket_at] = entry
+
+    # #7351: the venue's observations, each at the instant the venue recorded.
+    # An instant that coincides exactly with a bucket start joins that entry
+    # rather than shadowing it; the outcome cannot already be present there,
+    # because a cell a capture reached was skipped above.
+    for oid, cells in venue_cells.items():
+        for row in cells.values():
+            entry = entries_by_instant.get(row.captured_at)
+            if entry is None:
+                entry = {"timestamp": row.captured_at.isoformat(), "outcomes": {}}
+                entries_by_instant[row.captured_at] = entry
+            entry["outcomes"].setdefault(
+                outcome_names[oid], round(float(row.probability), 6)
+            )
+
+    timeline = [entries_by_instant[at] for at in sorted(entries_by_instant)]
 
     # Build outcome metadata list (ordered by current probability)
     outcomes_meta = []
@@ -5128,9 +5184,12 @@ async def get_probability_timeline(
         # `APIClient.swift:929` fetches `/probability-timeline`; nothing native
         # calls `/futures/{id}/history`. Production 01:05Z for market 58321581,
         # the Game Awards market in Alex's screenshot: `actual_hours` **168**,
-        # and NINE buckets spanning **20.0 hours**. Measured off the buckets, so
-        # what is reported is the domain the chart draws — bucket-aligned, which
-        # is why it reads 04:30 where `/history` reads the raw 04:31.
+        # and NINE buckets spanning **20.0 hours**. Measured off the entries, so
+        # what is reported is the domain the chart draws — bucket-aligned where a
+        # capture built the entry, which is why it reads 04:30 where `/history`
+        # reads the raw 04:31. #7351's venue entries are the exception and say so
+        # honestly: they carry the venue's own recorded instant, so a domain that
+        # ends on one ends on a real observation rather than on an hour mark.
         **_measure_timeline_coverage(timeline),
         # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
         # Self-describing payload metadata: it says what one step of `timeline` below
@@ -5147,7 +5206,7 @@ async def get_probability_timeline(
         # coverage above can be read for what it is. Shipped clients ignore an
         # unknown key (`Decodable`); nothing above it changed shape.
         **(
-            {"venue_history": venue.describe(_venue_rows_served(venue_rows, venue_cells, bucket_seconds))}
+            {"venue_history": venue.describe(_venue_rows_served(venue_cells))}
             if venue.applicable else {}
         ),
     }

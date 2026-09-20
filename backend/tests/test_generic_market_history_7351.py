@@ -249,8 +249,92 @@ def test_an_answer_even_an_empty_one_is_not_asked_for_again_until_it_ages():
     later = NOW + timedelta(seconds=fill.REFRESH_AFTER_SECONDS + 1)
     assert _plan(empty, rc=_Redis(), now=later)["enqueue"] is True
     assert _plan(empty, thin=False, rc=_Redis(), now=later)["reason"] == "chart_not_thin"
+
+
+def test_only_a_successful_post_settlement_fill_ends_a_settled_markets_retries():
+    """The settled short-circuit is about an ANSWER, never about a date.
+
+    A settled payload is cached for SEVEN DAYS, so every attempt this test walks
+    would have frozen the chart for a week under the first presentation: it
+    short-circuited on any dated attempt whatever it contained. Each of these is
+    a state a real fill reaches — the venue rate-limited us, one window errored,
+    or the fill simply ran the day before the market settled and so cannot hold
+    the hours that decided it.
+    """
+    market, outcome = _market(), _outcome()
     settled = _market(status="settled")
-    assert _plan(empty, market=settled, rc=_Redis(), now=later)["reason"] == "settled_and_already_answered"
+    later = NOW + timedelta(seconds=fill.REFRESH_AFTER_SECONDS + 1)
+
+    def reason(payload):
+        return _plan(payload, market=settled, rc=_Redis(), now=later)["reason"]
+
+    answered = dict(_payload(market, outcome), market_settled=True)
+    assert reason(answered) == "settled_and_already_answered"
+    assert fill.answers_a_settled_market(answered) is True
+
+    # Every other shape is an ATTEMPT, and an attempt recovers on the ordinary
+    # bounded retry rather than standing as the week's answer.
+    for label, payload in [
+        ("empty", dict(_payload(market, outcome), outcomes={}, status="empty",
+                       market_settled=True)),
+        ("degraded", dict(_payload(market, outcome), status="degraded",
+                          market_settled=True)),
+        ("ok but carrying no series", dict(_payload(market, outcome), outcomes={},
+                                           market_settled=True)),
+        ("taken before the market settled", dict(_payload(market, outcome),
+                                                 market_settled=False)),
+        ("from a fill that never stamped the state", _payload(market, outcome)),
+    ]:
+        assert reason(payload) == "claimed", f"a {label} fill froze a settled chart"
+        assert fill.answers_a_settled_market(payload) is False
+
+    # The retry stays BOUNDED: inside the refresh age even a settled market's
+    # failed attempt is left alone, so this is a ceiling and not a sweep.
+    stale = dict(_payload(market, outcome), outcomes={}, status="empty", market_settled=True)
+    assert _plan(stale, market=settled, rc=_Redis(), now=NOW)["reason"] == "answered_recently"
+
+
+class _SessionReturning:
+    """The one query `fill_generic_market_history` makes, answered from memory."""
+
+    def __init__(self, market):
+        self.market = market
+
+    async def execute(self, *_args, **_kwargs):
+        market = self.market
+        return SimpleNamespace(scalar_one_or_none=lambda: market)
+
+
+def test_the_fill_stamps_the_settlement_state_its_answer_was_taken_under():
+    """Without the stamp the planner above can only guess, so the write owes it."""
+    import asyncio
+    import json
+
+    from app.utils.generic_market_history import build_payload, cache_key
+
+    for status, expected in (("settled", True), ("open", False)):
+        market = _market(status=status)
+        market.outcomes = []
+        rc = _Redis()
+        result = asyncio.run(
+            fill.fill_generic_market_history(
+                _SessionReturning(market), market.id, rc=rc, now=NOW
+            )
+        )
+        assert result["cached"] is True
+        cached = json.loads(rc.kv[cache_key(market.id)])
+        assert cached["market_settled"] is expected, (
+            "the cached payload must record the state the fill ran under"
+        )
+        assert rc.ttl[cache_key(market.id)] == (
+            fill.SETTLED_CACHE_TTL_SECONDS if expected else fill.CACHE_TTL_SECONDS
+        ), "the settled payload is the one held for a week, so it owes the stamp"
+
+    # The stamp is the FILL's to add, because only the fill knows. A payload that
+    # never went through it cannot claim to answer a settled market.
+    bare = build_payload(_market(), {}, now=NOW, stats={}, degraded=False)
+    assert "market_settled" not in bare
+    assert fill.answers_a_settled_market(bare) is False
 
 
 def test_the_task_is_bounded_to_named_markets():

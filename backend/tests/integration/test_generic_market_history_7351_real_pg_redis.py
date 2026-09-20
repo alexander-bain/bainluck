@@ -632,19 +632,40 @@ def _assert_named_contract(timeline: dict, history: dict):
     for ts, reason in REJECTED_IN_WEEK.items():
         assert ts not in {t for t, _ in served_h}, f"{ts} must be rejected ({reason})"
 
-    # The phone's reader buckets to the hour. Two venue observations inside one
-    # hour serve the LAST one (a real quote), never their median; a bucket our
-    # capture reached keeps the capture.
-    cells: dict[str, float] = {}
+    # The phone's reader buckets to the hour to DEDUPLICATE — one venue point per
+    # (outcome, hour), the LAST one in the hour (a real quote, never a median),
+    # and an hour our capture reached keeps the capture.
+    #
+    # 🔴 BUT IT SERVES THAT OBSERVATION AT THE INSTANT THE VENUE RECORDED IT. The
+    # bucket decides WHICH observation is served, never WHEN it happened. Two of
+    # the specimen's own candles close off the hour — 08:01 and 09:41 — and the
+    # first presentation published them as 08:00 and 09:00: times nobody observed,
+    # on the one series whose whole claim is that these are real observations at
+    # real instants. `/history` served the true minute all along, so the two
+    # readers disagreed about when the same Kalshi candle closed.
+    last_in_hour: dict[str, tuple[str, float]] = {}
     for ts, value in ADMITTED_IN_WEEK:
-        cells[_hour_bucket(ts)] = value
+        last_in_hour[_hour_bucket(ts)] = (ts, value)
+    # An hour our own capture reached is the capture's, and a capture is still
+    # served at its bucket start — nothing about our own rows moved.
+    last_in_hour.pop(_hour_bucket(CAPTURE_IN_WEEK[0]), None)
+    cells = dict(last_in_hour.values())
     cells[_hour_bucket(CAPTURE_IN_WEEK[0])] = CAPTURE_IN_WEEK[1]
     served_t = _in_week(_timeline_points(timeline))
     missing_t = [b for b in cells if b not in {t for t, _ in served_t}]
     assert not missing_t, f"MISSING ELIGIBLE VENUE TIMESTAMPS on /probability-timeline: {missing_t}"
     assert served_t == sorted(cells.items()), (
-        f"/probability-timeline buckets.\n got  {served_t}\n want {sorted(cells.items())}"
+        f"/probability-timeline observations.\n got  {served_t}\n want {sorted(cells.items())}"
     )
+    # Stated as itself, so the mutant that re-floors these cannot pass by
+    # agreeing with a table that was floored the same way.
+    off_the_hour = {"2026-09-19T08:01:00+00:00", "2026-09-19T09:41:00+00:00"}
+    assert off_the_hour <= {t for t, _ in served_t}, (
+        "a venue observation was relabelled with its bucket start: "
+        f"{sorted(off_the_hour - {t for t, _ in served_t})}"
+    )
+    # …and BOTH readers say the same instant for the same candle.
+    assert off_the_hour <= {t for t, _ in served_h}
 
 
 def test_A1_named_replay_both_readers_serve_the_venue_history_our_polls_missed(venue, broker):
@@ -887,6 +908,89 @@ def test_B8_the_hourly_budget_bounds_a_crawler(venue, broker):
     assert broker.calls == [] and _redis().get(claim_key(MARKET_ID)) is None
 
 
+def _set_market_status(status: str, market_id=MARKET_ID):
+    """Settle (or re-open) a seeded market, the way the poller eventually does."""
+
+    async def _go():
+        from sqlalchemy import update
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        import app.models.models as m
+
+        engine = create_async_engine(DB_URL)
+        async with async_sessionmaker(engine)() as s:
+            await s.execute(
+                update(m.FuturesMarket)
+                .where(m.FuturesMarket.id == market_id)
+                .values(status=status)
+            )
+            await s.commit()
+        await engine.dispose()
+
+    _arun(_go())
+
+
+@pytest.mark.parametrize("mode", ["http_500", "http_429", "empty"])
+def test_B9_a_settled_markets_failed_fill_recovers_instead_of_freezing_for_a_week(venue, broker, mode):
+    """A settled payload is kept for SEVEN DAYS, so what is in it had better be an answer.
+
+    The first presentation short-circuited a settled market on any DATED attempt,
+    whatever it contained. A venue that was rate-limited for thirty seconds
+    therefore froze that chart for a week, and the failure is silent by
+    construction: the reader sees a thin chart and a warm cache, and nothing ever
+    asks again. This walks the real seam — claim, fill, read — and requires the
+    recovery to happen on the ordinary bounded retry.
+    """
+    _seed_specimen()
+    _set_market_status("settled")
+    venue.kalshi_mode = mode
+    assert _timeline()["venue_history"]["fill"] == "requested"
+    broker.run_enqueued()
+
+    failed = _timeline()
+    assert failed["venue_history"]["points_served"] == 0
+    # Bounded, not a storm: inside the refresh age the bad attempt stands.
+    assert failed["venue_history"]["fill"] == "answered_recently"
+    assert broker.calls == []
+
+    # …but it is NOT the week's answer. Once the attempt ages out the venue is
+    # asked again, and a healthy one fills the chart.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=4)
+    venue.kalshi_mode = "recorded"
+    assert _timeline()["venue_history"]["fill"] == "requested", (
+        "a settled market's failed fill was treated as its answer"
+    )
+    broker.run_enqueued()
+    warm = _timeline()
+    assert warm["venue_history"]["state"] == "warm"
+    assert len(_in_week(_timeline_points(warm))) > 1
+    assert _payload()["market_settled"] is True
+
+    # And NOW the retries stop: a successful post-settlement fill is the answer,
+    # even though it is older than the refresh age.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=8)
+    assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
+    assert broker.calls == []
+
+
+def test_B10_a_fill_taken_before_settlement_is_not_a_settled_markets_answer(venue, broker):
+    """It cannot be: it does not contain the hours that decided the question."""
+    _seed_specimen()
+    _cold_then_warm(broker)                      # a healthy fill while still OPEN
+    assert _payload()["market_settled"] is False
+
+    _set_market_status("settled")
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=4)
+    assert _timeline()["venue_history"]["fill"] == "requested", (
+        "a pre-settlement fill was frozen in as the settled answer"
+    )
+    broker.run_enqueued()
+    assert _payload()["market_settled"] is True
+
+    FrozenDatetime.current = FROZEN_NOW + timedelta(hours=8)
+    assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
+
+
 # ═══ C — IDENTITY AND SHAPE ═════════════════════════════════════════════════
 
 OTHER_MARKET_ID, OTHER_OUTCOME_ID, OTHER_TICKER = 59165100, 219751700, "KXOTHERQUESTION-26-YES1"
@@ -1045,29 +1149,98 @@ def test_C3_independent_binaries_stay_independent_and_a_field_is_never_renormali
     assert hist["venue_history"]["state"] == "warm"
 
 
-def test_C4_a_squeezed_exclusive_field_refuses_the_raw_series_on_history_only(venue, broker):
-    """`/history` prints the #23-squeezed scale; a raw venue point is not on it."""
-    _seed_field(mutually_exclusive=True, capture_scale=1.12)     # 112% → the squeeze fires
+@pytest.mark.parametrize("capture_scale, what", [
+    (1.12, "a field whose captures sum to 112%, so the squeeze visibly fires"),
+    (1.00, "a field whose captures sum to 100%, so the squeeze is the identity "
+           "at every instant we can measure"),
+])
+def test_C4_an_exclusive_field_refuses_the_raw_series_on_history_only(venue, broker, capture_scale, what):
+    """`/history` prints the #23-squeezed scale; a raw venue point is not on it.
+
+    🔴 AND THE SECOND CASE IS THE ONE THAT MATTERS. The squeeze is a WHOLE-FIELD
+    operation: what it does to one outcome is a function of the other outcomes'
+    values at the SAME instant. A venue point is by construction at an instant no
+    capture reached, so at that instant this route holds no companion values and
+    no denominator — there is nothing to squeeze it with and nothing to prove it
+    would not have been squeezed.
+
+    The first presentation admitted the whole market whenever every CAPTURED
+    instant happened to come through unchanged, which is exactly what a field
+    sitting at 100% does for as long as it sits there. That is an inference from
+    one instant to a different one, and this is its control: identical field,
+    identical candles, captures that need no squeeze at all — and the series is
+    still refused, because the evidence the scale contract needs is
+    contemporaneous with the point being admitted and does not exist.
+    """
+    _seed_field(mutually_exclusive=True, capture_scale=capture_scale)
     _field_venue(venue)
     _timeline(FIELD_MARKET_ID)
     broker.run_enqueued()
     hist = _history(FIELD_MARKET_ID)
-    assert hist["venue_history"]["state"] == "refused"
-    assert hist["venue_history"]["refusals"][-1]["reason"] == "printed_scale_is_not_the_venue_raw_scale"
+    assert hist["venue_history"]["state"] == "refused", what
+    assert hist["venue_history"]["refusals"][-1]["reason"] == (
+        "exclusive_field_scale_unprovable_at_venue_instants"
+    ), what
     assert all("provenance" not in p for e in hist["outcomes"] for p in e["history"])
     # The phone's reader plots the RAW scale by ruling (#7284) and may serve them.
     tl = _timeline(FIELD_MARKET_ID)
     assert tl["venue_history"]["points_served"] == 12
+    assert len(venue.provider_requests()) == 3, "four tickers ride ONE batched request per tier"
 
 
-def test_C5_a_coherent_exclusive_field_is_served_on_both_readers(venue, broker):
-    _seed_field(mutually_exclusive=True, capture_scale=1.0)      # sums to 1.00: no squeeze
-    _field_venue(venue)
+def _field_venue_at_distinct_minutes(venue: Venue):
+    """The same synthetic candles, each ticker closing at its OWN minute."""
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {60: {"markets": [
+        {"market_ticker": f"KXFIELD-26-{sfx}", "candlesticks": [
+            _candle(_hours_ago(h) + FIELD_MINUTES[sfx] * 60,
+                    f"{p - 0.01 + i * 0.01:.2f}", f"{p + 0.01 + i * 0.01:.2f}")
+            for i, h in enumerate((40, 30, 12))]}
+        for _oid, sfx, _name, p in FIELD]}}
+
+
+FIELD_MINUTES = {"A": 7, "B": 41, "C": 23, "D": 55}
+
+
+def test_C5_two_outcomes_observed_at_different_minutes_are_not_collapsed(venue, broker):
+    """One hour, four tickers, four different closing minutes — four instants.
+
+    The timeline's entry used to BE the bucket, so every outcome observed inside
+    one hour shared a single reading stamped at the hour mark: four separate
+    observations published as one simultaneous quote of the whole field. Nothing
+    in the specimen could catch that (it has one outcome), and nothing that
+    asserts a bucket's contents can catch it either, because the collapsed answer
+    is what such an assertion describes.
+
+    Non-exclusive so `/history` serves them too (C4 owns the exclusive refusal),
+    and the two readers are then asked the same question: WHEN was this observed.
+    """
+    _seed_field(mutually_exclusive=False, capture_scale=1.6)
+    _field_venue_at_distinct_minutes(venue)
     _timeline(FIELD_MARKET_ID)
     broker.run_enqueued()
+    tl = _timeline(FIELD_MARKET_ID)
     hist = _history(FIELD_MARKET_ID)
-    assert hist["venue_history"]["state"] == "warm" and hist["venue_history"]["points_served"] == 12
-    assert len(venue.provider_requests()) == 3, "four tickers ride ONE batched request per tier"
+
+    hour = _hours_ago(30)
+    entries = {b["timestamp"]: b["outcomes"] for b in tl["timeline"]}
+    assert _iso(hour) not in entries, (
+        "an entry was published at an hour mark no outcome was observed at"
+    )
+    for i, (_oid, sfx, name, p) in enumerate(FIELD):
+        at = _iso(hour + FIELD_MINUTES[sfx] * 60)
+        assert at in entries, f"{name} was not served at the minute it was observed"
+        assert list(entries[at]) == [name], (
+            f"{at} carries {sorted(entries[at])} — observations of different "
+            "outcomes at different instants were merged into one reading"
+        )
+        assert entries[at][name] == pytest.approx(round(p + 0.01, 6))
+
+    # Both readers, the same instants, for the same candles.
+    served_h = {e["name"]: {pt["timestamp"] for pt in e["history"]} for e in hist["outcomes"]}
+    for _oid, sfx, name, _p in FIELD:
+        assert _iso(hour + FIELD_MINUTES[sfx] * 60) in served_h[name]
+    assert hist["venue_history"]["state"] == "warm"
 
 
 # ── Polymarket: every provider byte below is SYNTHETIC ──────────────────────

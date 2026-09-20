@@ -149,6 +149,40 @@ def market_is_fillable(market: Any, outcomes: Sequence[Any]) -> bool:
     return any((getattr(o, "external_id", None) or "").strip() for o in outcomes)
 
 
+def answers_a_settled_market(payload: dict | None) -> bool:
+    """Does this cached attempt settle the question for a settled market?
+
+    🔴 THE SETTLED SHORT-CIRCUIT IS A STATEMENT ABOUT AN ANSWER, NOT ABOUT A DATE.
+    The first presentation suppressed every further request the moment a settled
+    market had ANY dated attempt on file, and the settled TTL is SEVEN DAYS. So a
+    fill that came back empty because the venue was rate-limited, a fill that came
+    back `degraded` because one window errored, and a fill that succeeded the day
+    BEFORE the market settled — which cannot contain the hours that decided it —
+    each froze the chart for a week with no way back. The failure is silent by
+    construction: the reader sees a thin chart and a `warm` cache, and nothing
+    ever asks again.
+
+    Three things must all hold for an attempt to be that answer:
+
+      * `status == "ok"` — not `empty`, not `degraded`;
+      * it actually carries a series (an `ok` payload with no outcomes is the
+        venue saying nothing, which is a result but not an answer);
+      * it was taken while the market was ALREADY settled, which is the only way
+        it can cover the run-in to settlement. The fill stamps that at write
+        time, so this is read evidence rather than an inference from the clock.
+
+    Anything else falls through to `REFRESH_AFTER_SECONDS` — the same bounded
+    three-hour retry an open market gets. That is a retry ceiling, not a sweep:
+    the per-market claim and the site-wide hourly cap are unchanged, and a
+    successful post-settlement fill ends the retries on the next read.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("status") != "ok" or not payload.get("outcomes"):
+        return False
+    return payload.get("market_settled") is True
+
+
 def plan_on_demand_fill(
     market: Any,
     outcomes: Sequence[Any],
@@ -180,8 +214,10 @@ def plan_on_demand_fill(
             return {"enqueue": False, "reason": "chart_not_thin"}
     else:
         settled = (getattr(market, "status", None) or "").lower() in _SETTLED_STATUSES
-        if settled:
-            # A settled market's venue series cannot change; one answer is the answer.
+        if settled and answers_a_settled_market(payload):
+            # A settled market's venue series cannot change, so ONE SUCCESSFUL
+            # ANSWER TAKEN AFTER SETTLEMENT is the answer, and it is kept for the
+            # 7-day settled TTL rather than re-fetched.
             return {"enqueue": False, "reason": "settled_and_already_answered"}
         if age <= REFRESH_AFTER_SECONDS:
             return {"enqueue": False, "reason": "answered_recently"}
@@ -574,6 +610,12 @@ async def fill_generic_market_history(
         last_good=last_good, now=now,
     )
     settled = (market.status or "").lower() in _SETTLED_STATUSES
+    # Stamped into the payload, not just used to pick the TTL: `plan_on_demand_fill`
+    # has to tell a fill taken AFTER settlement (which covers the run-in, and is
+    # the answer) from one taken before it (which cannot). Recording the state the
+    # fill actually ran under is evidence; comparing timestamps to a settlement
+    # time we do not carry would be a guess.
+    payload["market_settled"] = settled
     written = False
     if not dry_run:
         written = write_cached_history(market_id, payload, settled=settled, rc=rc)

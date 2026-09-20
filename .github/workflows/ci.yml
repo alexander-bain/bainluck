@@ -3110,7 +3110,11 @@ jobs:
           python - "$RC" <<'PY'
           import sys, xml.etree.ElementTree as ET
 
-          EXPECTED = 34
+          # 34 in the delivered candidate; 39 after Live's four required
+          # corrections added their controls (the exclusive-field scale refusal
+          # gained its coherent-field case, and the settled failed/degraded/
+          # pre-settlement lifecycle gained four).
+          EXPECTED = 39
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()
