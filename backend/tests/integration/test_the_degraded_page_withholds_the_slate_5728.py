@@ -11,6 +11,8 @@ finals day, when the scoreboard read raises, the page does not show me the
 opening round of a tournament that finished a fortnight ago.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.routes import tournaments
@@ -23,6 +25,15 @@ URL = f"/api/tournaments/{SLUG}"
 #: asserts "not 96" against a slate that happens to be empty for some other
 #: reason is not asserting anything.
 PRODUCTION_DEFECT_COUNT = 96
+
+#: How long before the request the re-anchored ceremony stamp is placed (#7464).
+#:
+#: `build_slate` retires a pinned fixture on
+#: ``started < now - MATCH_STALE_AFTER_HOURS - CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS``
+#: — 6h + 24×21h = **510h**. One day leaves ~20 days of margin at the far wall
+#: and 18 hours at the near one, so neither is reachable by any clock jitter
+#: between this fixture's `now` and the route's, which are milliseconds apart.
+CEREMONY_STAMP_AGE = timedelta(days=1)
 
 
 def _espn(scoreboard):
@@ -46,6 +57,78 @@ def _cold(monkeypatch):
 
     monkeypatch.setattr(tournaments, "_cache_get", _miss)
     monkeypatch.setattr(tournaments, "_cache_set", _noop)
+
+
+def _reanchored(register: dict) -> dict:
+    """The committed register with every ``scheduled_date`` shifted as one.
+
+    Rigidly, by a single delta, so the draw keeps its own shape — qualifiers
+    still fall before the main draw, and the 96 main-draw fixtures still share
+    the one ceremony instant that `tournament_slate` is written around. Only
+    the tournament's position on the calendar moves.
+    """
+    stamps = {
+        m["scheduled_date"]: datetime.fromisoformat(m["scheduled_date"])
+        for m in register.get("matchups") or []
+        if isinstance(m, dict) and isinstance(m.get("scheduled_date"), str)
+    }
+    if not stamps:
+        # LOUD, never a silent no-op. A register this fixture cannot re-anchor
+        # is one every test below would then measure against the wall clock,
+        # which is the entire defect it exists to remove.
+        raise AssertionError(
+            f"{SLUG}: no datable matchup to re-anchor — the rig would silently "
+            "hand the clock back to the tests it is meant to protect"
+        )
+    delta = (datetime.now(timezone.utc) - CEREMONY_STAMP_AGE) - max(stamps.values())
+    shifted = {raw: (parsed + delta).isoformat() for raw, parsed in stamps.items()}
+    return {
+        **register,
+        "matchups": [
+            {**m, "scheduled_date": shifted[m["scheduled_date"]]}
+            if isinstance(m, dict) and m.get("scheduled_date") in shifted
+            else m
+            for m in register.get("matchups") or []
+        ],
+    }
+
+
+@pytest.fixture(autouse=True)
+def _register_anchored_to_the_request(monkeypatch):
+    """#7464: the committed register expires, so the CLOCK must not be an input.
+
+    🔴 THE BOMB THIS DEFUSES, MEASURED. `us-open-2026.json` pins all 96
+    main-draw fixtures at the single ceremony stamp ``2026-08-30T04:00:00Z``,
+    and `build_slate` retires a pinned fixture 510 hours after it. The register
+    fallback therefore yielded **96 rows at 2026-09-20T09:59:00Z and 0 at
+    10:00:01Z** — and master's CI was green on `13a23384a` at 09:26:30Z and red
+    on `288cb1140` at 10:00:12Z, twelve seconds the wrong side of that wall.
+    Gotcha #44: the anchor was absolute while the rule it met was relative.
+
+    ⭐ AND THE RED WAS HIDING A LIVE REGRESSION CHANNEL, measured. With the
+    register retired, `test_a_raised_scoreboard_read_withholds_the_card`
+    asserted `matches == []`, `count == 0` and `count != 96` against a slate
+    that was empty regardless — three of its five assertions vacuous. Its
+    `withheld_reason` pair still bit, so it is not that the arm proved nothing;
+    it is that it stopped proving the thing this file is named for. Stop
+    `_withheld_slate` emptying the rows while it still stamps the reason — the
+    #5728 defect exactly, the reader back on the fortnight-old opening round —
+    and the repaired file fails THIS arm, while the retired-register file
+    passes it and fails only the control, for the clock reason it was failing
+    for already. A genuine regression would have arrived looking like the red
+    that was on the board anyway.
+
+    The product rule is CORRECT and does not move: a tournament that ended
+    three weeks ago *should* fall off "what's on". Only the fixture is wrong,
+    so only the fixture is repaired — offset FIRST, from the request's own now.
+    """
+    real = tournaments.load_register
+
+    def _anchored(tournament, season, **kwargs):
+        register = real(tournament, season, **kwargs)
+        return register if register is None else _reanchored(register)
+
+    monkeypatch.setattr(tournaments, "load_register", _anchored)
 
 
 class TestTheReaderNeverSeesTheOpeningRound:
@@ -90,6 +173,11 @@ class TestTheReaderNeverSeesTheOpeningRound:
         right answer when we KNOW there is nothing on, and the whole point of
         #5728 is that the two cases stopped sharing a word. If this ever goes
         red the fix has over-fired and is emptying real cards.
+
+        The count is pinned, not merely non-empty (#7464). This arm's job is to
+        keep the `!= PRODUCTION_DEFECT_COUNT` above honest, and it can only do
+        that by proving the fallback puts all 96 back on the page — "some rows"
+        would let the draw quietly shrink to one and still read green.
         """
         monkeypatch.setattr(
             tournaments, "_espn_results", _espn("unavailable")
@@ -97,6 +185,11 @@ class TestTheReaderNeverSeesTheOpeningRound:
         slate = (await client.get(URL)).json()["slate"]
 
         assert slate["matches"], "the register fallback was suppressed too"
+        assert slate["count"] == PRODUCTION_DEFECT_COUNT, (
+            f"the fallback served {slate['count']} of {PRODUCTION_DEFECT_COUNT} "
+            "main-draw rows — the test above is now asserting against a number "
+            "no path produces"
+        )
         assert "withheld_reason" not in slate
 
 
