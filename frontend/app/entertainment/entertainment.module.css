@@ -259,10 +259,35 @@
   gap: 10px;
 }
 
+/* #7356 — THE RESERVATION WAS INERT WHERE IT WAS MEANT TO WORK AND WAS THE WHOLE
+   HEIGHT WHERE IT HURT, so `min-height: 280px` is gone rather than moved.
+
+   #5953 fixed this card's desktop hole by making the `<a>` the flex column its
+   `flex: 1` spacer is an item of, and deliberately kept the reservation, on the
+   reasoning that "with the spacer live it is a floor the content now fills".
+   That reasoning holds at 1280px and is false below 900px. Measured on
+   production 2026-09-20 (`tools/ent-hero-lead-fill-5953.mjs`, lead card):
+
+       1280px  card 421px  minH 280  spacer 196px   <- height comes from the GRID
+        800px  card 280px  minH 280  spacer  55px   <- height comes from minH
+        390px  card 280px  minH 280  spacer  55px   <- height comes from minH
+
+   Above 900px `.heroGrid` is `min-height: 420px` with `1fr 1fr` rows and the
+   lead spans both, so the card is 421px and 280 can never bind — the spacer's
+   196px is real work, filling a row the grid sized. Below 900px the grid is
+   `min-height: auto` with `auto` rows and the lead sits alone in row 1, so
+   `min-height` is the ONLY thing setting the height and the spacer faithfully
+   renders the entire surplus as one 55px blank block between the title and the
+   first outcome — 23% of the card, which reads as something failing to load
+   rather than as spacing (latency/661 measured it twice, 70 minutes apart).
+
+   Releasing it costs nothing at 1280px (421px is unchanged) and lets the card
+   size to its content below 900px. The lead still reads as the lead there on
+   the marks that survive: a 72px cover against the siblings' 44px, an 18px
+   title against 14px, and this 18px padding against 14px. */
 .heroCardLead {
   composes: heroCard;
   padding: 18px;
-  min-height: 280px;
 }
 
 /* ── Cover tile ── */

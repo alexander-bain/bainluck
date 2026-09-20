@@ -312,9 +312,20 @@ describe("#5953 — the lead hero card's spacer can actually grow", () => {
     const lead = grid.children[0];
     const anchor = walk(lead).filter((n) => n.tag === "a")[0];
     expect(anchor.attrs).toContain('href="/futures/12345"');
-    // The reservation is deliberately LEFT IN PLACE (see the fix's comment):
-    // with the spacer live it is a floor the content fills, and it is what keeps
-    // the lead reading as the lead on a phone.
+    /* THE RESERVATION IS GONE — #7356, and this comment used to say the opposite.
+       It read: "deliberately LEFT IN PLACE … with the spacer live it is a floor
+       the content fills, and it is what keeps the lead reading as the lead on a
+       phone." The first half was true at 1280px and false below 900px, where the
+       content did NOT fill it and the now-live spacer rendered the surplus as one
+       55px blank block between the title and the first outcome. The second half
+       was never tested: the lead reads as the lead on the marks the card actually
+       carries — a 72px cover against the siblings' 44px, an 18px title against
+       14px, 18px padding against 14px — and all three survive.
+       Nothing in THIS file changes. The fix above is the one that matters at
+       1280px, where the grid still holds the card open and the spacer still fills
+       196px of it; #7356 only stopped the card reserving a height the grid was
+       not asking for. The stylesheet half is pinned in
+       `entertainmentLeadReservesNothingItCannotFill7356.test.ts`. */
     expect(classOf(lead)).toMatch(/heroLead/);
   });
 
