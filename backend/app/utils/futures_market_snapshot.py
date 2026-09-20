@@ -769,6 +769,36 @@ def _outcome_observed_epoch(outcome: Any) -> int | None:
     return _price_observed_epoch(outcome)
 
 
+def outcome_observed_at(outcome: Any) -> Any:
+    """One leg's observation instant as a UTC datetime, or `None` (#7537).
+
+    `_outcome_observed_epoch`'s two-carrier resolution, handed out in the type a
+    caller comparing legs to each other needs. `displayed_price_stamp` folds the
+    same epochs to one MIN for a card's age mark; this answers the per-leg
+    question that a WITHIN-board comparison asks, and neither is derivable from
+    the other — a MIN over the board is exactly the datum that cannot say which
+    leg is behind which.
+
+    🔴 IT RETURNS A `datetime` AND THAT IS THE WHOLE REASON IT EXISTS.
+    `market_staleness._as_utc` — which every predicate in that module funnels
+    its stamps through, `stale_observation_keys` included — answers `None` for
+    anything that is not a `datetime`, deliberately, so that a non-stamp reads
+    as "no evidence" rather than raising inside `_score_futures`'s per-market
+    `try/except`. Hand it the raw epoch int this function wraps and every leg
+    resolves to `None`, the predicate returns the empty set, and the caller is
+    not wrong-but-loud — it is SILENTLY INERT, on the cached path only, which is
+    the path nearly every card is served from. That failure is invisible to any
+    test built on ORM rows, because those carry `last_updated` and pass.
+
+    An outcome with neither carrier (`tennis_population.OutcomeRow`) answers
+    `None`, the honest degradation the rest of this module applies.
+    """
+    epoch = _outcome_observed_epoch(outcome)
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+
+
 def displayed_price_stamp(outcomes: Iterable[Any]) -> Any:
     """`MIN` observation over the legs HANDED IN — no ranking, no window (#5809).
 
