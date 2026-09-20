@@ -20,6 +20,7 @@ from app.utils.event_completion import (
 from app.utils.game_pairing import (
     IdCurrency,
     clockless_write_defers_to_authority,
+    clockless_write_repoisons_a_settled_final,
     external_id_currency,
 )
 from app.utils.odds_math import (
@@ -1176,6 +1177,14 @@ async def _poll_all_odds():
         # and none has arrived since 2026-09-01, so a NON-zero reading is the
         # interesting one and it names the writer that would have lied.
         scores_refused_illegal_tennis_final = 0
+        # #7147: settled authoritative finals this pass declined to overwrite.
+        # Same rule as its neighbours — a guard whose refusals are invisible
+        # cannot be told from a guard that is off. Unlike the tennis counter,
+        # this one is expected to be non-zero routinely: the measured
+        # disagreement rate on completed ESPN-anchored rows rises with lag
+        # (1.5% under a minute, 27.7% at 12-24h), so a long run of zeros on
+        # evenings with finished games is the reading to distrust.
+        scores_refused_settled_repoison = 0
         # #2368: score fetches the quota breaker refused. Same rule as the
         # `scores_refused_*` counters above — a guard whose refusals are
         # invisible is indistinguishable from a guard that is off, and this
@@ -2119,9 +2128,78 @@ async def _poll_all_odds():
                                     event_obj.away_score,
                                 )
 
+                            # ── #7147 / CERT-3145: AND IT DOES NOT WRITE A
+                            # SETTLED FINAL BACK OVER AN AUTHORITY'S ─────────
+                            #
+                            # The #6056 deferral two blocks up holds only while
+                            # `status == "live"`, and says why `completed` is
+                            # excluded: the write that LANDS a final must never
+                            # be withheld. True — but landing a final on a row
+                            # that holds none and OVERWRITING one an
+                            # ESPN-anchored row already holds are two different
+                            # writes, and the single word `completed` was
+                            # letting both through.
+                            #
+                            # Measured 2026-09-19: event 15313146 was repaired
+                            # to ESPN's 7-3 at 22:37Z and was serving 7-2 again
+                            # by 23:15:07Z with a fresh `score_history` row. The
+                            # #7147 cleanup deletes the residue; without this
+                            # the writer just puts it back, so the repair is a
+                            # sweep and not a fix.
+                            #
+                            # Effective status and effective PAIR, for the two
+                            # reasons the tennis arm above already states:
+                            # `event_status` is None on a pass that is not
+                            # changing the status — and a row that is ALREADY
+                            # completed is exactly the row at risk — while the
+                            # two score writes below are independent, so a
+                            # one-sided payload lands on the stored other half.
+                            _repoisons_settled_final = (
+                                clockless_write_repoisons_a_settled_final(
+                                    event_status=(
+                                        event_status
+                                        if event_status is not None
+                                        else event_obj.status
+                                    ),
+                                    espn_id=event_obj.espn_id,
+                                    home_score=home_score,
+                                    away_score=away_score,
+                                    stored_home_score=event_obj.home_score,
+                                    stored_away_score=event_obj.away_score,
+                                )
+                            )
+                            if _repoisons_settled_final:
+                                scores_refused_settled_repoison += 1
+                                logger.info(
+                                    "#7147 refusing to overwrite a settled "
+                                    "authoritative final: event %s (%s vs %s) "
+                                    "holds %s-%s with espn_id %s; payload "
+                                    "%s-%s would make it %s-%s. Score "
+                                    "declined; status left alone.",
+                                    event_obj.id,
+                                    event_obj.home_team_name,
+                                    event_obj.away_team_name,
+                                    event_obj.home_score,
+                                    event_obj.away_score,
+                                    event_obj.espn_id,
+                                    home_score,
+                                    away_score,
+                                    (
+                                        home_score
+                                        if home_score is not None
+                                        else event_obj.home_score
+                                    ),
+                                    (
+                                        away_score
+                                        if away_score is not None
+                                        else event_obj.away_score
+                                    ),
+                                )
+
                             _skip_score_write = (
                                 _clockless_write_would_fight
                                 or _illegal_tennis_final
+                                or _repoisons_settled_final
                             )
                             if home_score is not None and not _skip_score_write:
                                 update_values["home_score"] = home_score
@@ -2318,6 +2396,7 @@ async def _poll_all_odds():
             "scores_refused_illegal_tennis_final": (
                 scores_refused_illegal_tennis_final
             ),
+            "scores_refused_settled_repoison": scores_refused_settled_repoison,
             "scores_skipped_quota": scores_skipped_quota,
             "stat_model_from_poll": stat_model_from_poll,
             "events_closed": events_closed,
