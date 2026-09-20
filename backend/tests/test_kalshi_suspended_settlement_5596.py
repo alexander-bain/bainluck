@@ -328,6 +328,7 @@ class TestTheStatement:
             "final_floor",
             "live_floor",
             "suspended_floor",
+            "stale_touch_floor",
             "frozen_gap",
             "limit",
         }
@@ -378,7 +379,12 @@ CREATE TABLE futures_outcomes (
     market_id INTEGER,
     current_yes_bid REAL,
     current_yes_ask REAL,
-    current_probability REAL
+    current_probability REAL,
+    -- #5024's second live screen reads the poller's touch stamp. Every row this
+    -- file seeds is TOUCHED AT `now` unless it says otherwise (see `_select`),
+    -- because these cases are about the two book signatures and a row that
+    -- silently read as un-polled would be selected by the other screen entirely.
+    last_updated TEXT
 );
 """
 
@@ -411,9 +417,12 @@ def _select(markets, events, outcomes, *, now=NOW):
     )
     con.executemany(
         "INSERT INTO futures_outcomes "
-        "(id,market_id,current_yes_bid,current_yes_ask,current_probability) "
-        "VALUES (?,?,?,?,?)",
-        outcomes,
+        "(id,market_id,current_yes_bid,current_yes_ask,current_probability,"
+        "last_updated) VALUES (?,?,?,?,?,?)",
+        # A 5-tuple means "touched at `now`" — #5024's staleness screen must not
+        # change the answer to a question about the BOOK. A case that wants a
+        # stale row passes a sixth element.
+        [tuple(o) + (_iso(now),) if len(o) == 5 else tuple(o) for o in outcomes],
     )
     sql = sweep.RECENT_FINAL_SELECT_SQL.replace(
         "CAST(:frozen_gap AS numeric)", "CAST(:frozen_gap AS REAL)"
@@ -425,6 +434,9 @@ def _select(markets, events, outcomes, *, now=NOW):
             "live_floor": _iso(now - timedelta(hours=sweep.LIVE_EVENT_WINDOW_HOURS)),
             "suspended_floor": _iso(
                 now - timedelta(hours=sweep.SUSPENDED_EVENT_WINDOW_HOURS)
+            ),
+            "stale_touch_floor": _iso(
+                now - timedelta(minutes=sweep.LIVE_STALE_TOUCH_MINUTES)
             ),
             "frozen_gap": sweep.FROZEN_BOOK_GAP,
             "limit": 200,
