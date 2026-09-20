@@ -357,6 +357,132 @@ class TestEachSeriesIsGatedOnItsOwnLastPoint:
         assert plan.writes is True
 
 
+class TestADrawnFinalCannotProveASlotCopySoItAuthorisesNoWrite:
+    """#7445 — the proof is `stored == ESPN's pair in ESPN's slots`.
+
+    On a level final the swapped pair and the true pair are the SAME pair, so
+    that proof is satisfied by the correct orientation too. It is unfalsifiable,
+    it answers yes forever, and each pass re-swaps the series — whose mid-game
+    rows are NOT symmetric — flipping a tied game's in-game line between right
+    and wrong with nothing able to say which state it is in.
+
+    Found by the after-check on this rail's own production apply, not by a test:
+    ev14947547 (PSG 2-2 Rennes, 2026-08-23) was repaired at 08:59:56Z and the
+    dry run immediately after still reported it `repairable=1`.
+    """
+
+    # PSG 2-2 Rennes. Our row has PSG home; ESPN has Rennes home. Orientation is
+    # genuinely SWAPPED by name — that is what makes this the dangerous case
+    # rather than an uninteresting one: every gate before the proof passes.
+    PSG = "Paris Saint-Germain"
+    REN = "Stade Rennais"
+
+    def _drawn_row(self, **kw):
+        return _row(self.PSG, self.REN, 2, 2, event_id=14947547, **kw)
+
+    def _drawn_espn(self):
+        return _espn_event(self.REN, self.PSG, 2, 2)
+
+    def test_the_verdict_is_still_swapped_so_this_is_a_refusal_not_a_miss(self):
+        """The gate must fire on the proof, not by failing to see the swap."""
+        plan = plan_orientation_repair(
+            self._drawn_row(), self._drawn_espn(),
+            last_espn_snapshot=(2, 2), last_score_snapshot=(2, 2))
+
+        assert plan.verdict == ESPN_ORIENTATION_SWAPPED
+        assert plan.action == "skip_symmetric_final"
+        assert plan.writes is False
+
+    def test_no_store_is_written_and_the_reason_says_why(self):
+        plan = plan_orientation_repair(
+            self._drawn_row(), self._drawn_espn(),
+            last_espn_snapshot=(2, 2), last_score_snapshot=(2, 2))
+
+        assert plan.new_home_score is None
+        assert plan.new_away_score is None
+        assert plan.swap_espn_snapshots is False
+        assert plan.swap_score_snapshots is False
+        assert plan.complement_espn_leg is False
+        assert "level" in plan.reason and "2-2" in plan.reason
+
+    def test_the_probability_leg_is_not_complemented_on_a_draw(self):
+        """`espn_home > espn_away` is a two-valued answer to a three-valued
+        question. On a draw it reads False, so a leg at <=0.1 used to count as
+        "decisive and agreeing with the side that won" and was complemented to
+        >=0.9 on every pass. Neither side won.
+        """
+        plan = plan_orientation_repair(
+            self._drawn_row(espn_win_prob_home=0.02), self._drawn_espn(),
+            last_espn_snapshot=None, last_score_snapshot=None)
+
+        assert plan.complement_espn_leg is False
+        assert plan.new_espn_win_prob_home is None
+
+    def test_a_drawn_series_whose_mid_game_rows_are_asymmetric_is_still_refused(self):
+        """The series' LAST point is what the proof reads, and on a draw it is
+        symmetric however asymmetric the rest of the series is. This is the arm
+        that pins the actual damage: `0-1, 0-2, 1-2` are the rows that flip.
+        """
+        plan = plan_orientation_repair(
+            self._drawn_row(), self._drawn_espn(),
+            last_espn_snapshot=(2, 2), last_score_snapshot=(2, 2))
+
+        assert plan.swap_score_snapshots is False
+
+    # ⭐ THE ADMITTED CONTROLS. The three arms above are jointly satisfied by a
+    # planner that refuses everything, so on their own they would pass against a
+    # rail that had been broken into uselessness. These two are the ones that
+    # fail if the refusal is widened past a level final.
+
+    def test_an_ASYMMETRIC_final_still_repairs_every_store(self):
+        # 0.05, not 0.95: ESPN's HOME on the specimen is Virginia, who lost, so
+        # a leg that was slot-copied from ESPN's home probability reads low. A
+        # leg at 0.95 is the arm that is correctly LEFT ALONE.
+        plan = plan_orientation_repair(
+            _specimen_row(espn_win_prob_home=0.05), _specimen_espn(),
+            last_espn_snapshot=(27, 38), last_score_snapshot=(27, 38))
+
+        assert plan.action == "repair_orientation"
+        assert plan.writes is True
+        assert (plan.new_home_score, plan.new_away_score) == (38, 27)
+        assert plan.swap_espn_snapshots is True
+        assert plan.swap_score_snapshots is True
+        assert plan.complement_espn_leg is True
+
+    def test_a_one_goal_game_is_not_caught_by_the_symmetry_gate(self):
+        """The boundary is `espn_home == espn_away`, not "a low score" or "a
+        soccer game" — the nearest non-draw must still repair.
+        """
+        plan = plan_orientation_repair(
+            _row(self.PSG, self.REN, 2, 1, event_id=14947547),
+            _espn_event(self.REN, self.PSG, 2, 1),
+            last_espn_snapshot=(2, 1), last_score_snapshot=(2, 1))
+
+        assert plan.action == "repair_orientation"
+        assert (plan.new_home_score, plan.new_away_score) == (1, 2)
+        assert plan.swap_espn_snapshots is True
+
+    def test_a_drawn_final_that_is_ALIGNED_is_still_reported_as_aligned(self):
+        """The symmetry gate sits behind the verdict gates, so it must not
+        swallow the dispositions that were already correct.
+        """
+        plan = plan_orientation_repair(
+            _row(self.REN, self.PSG, 2, 2, event_id=14947547),
+            self._drawn_espn(), last_espn_snapshot=(2, 2),
+            last_score_snapshot=(2, 2))
+
+        assert plan.action == "skip_aligned"
+
+    def test_the_new_action_is_counted_rather_than_landing_in_no_bucket(self):
+        """`_ACTION_COUNTERS` is deliberately a table, so an action nobody
+        counts is a missing key. A refusal that is invisible on the operator's
+        summary line is a refusal nobody can audit.
+        """
+        from scripts.repair_7354_settled_orientation_swap import _ACTION_COUNTERS
+
+        assert _ACTION_COUNTERS["skip_symmetric_final"] == "symmetric_final"
+
+
 class TestOneBadRowDoesNotEndThePass:
     """Gotcha #42, and on a resumable rail it is worse than usual.
 
