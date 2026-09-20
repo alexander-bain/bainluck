@@ -1098,6 +1098,66 @@ def test_B12_a_venue_that_purged_a_settled_market_is_asked_a_bounded_number_of_t
     assert _in_week(_timeline_points(_timeline())) == healthy
 
 
+@pytest.mark.parametrize("mode", ["http_500", "http_429"])
+def test_B13_failed_settled_attempts_do_not_exhaust_the_silence_ceiling(
+    venue, broker, mode
+):
+    """Three failures in a row, then a healthy answer. CERT-3156.
+
+    B12's ceiling is about a venue that ANSWERS and has nothing to give —
+    Kalshi's purge. A 429 is not that: it is the venue declining to answer, and
+    counting it spends a bounded budget on a fact nobody established. The first
+    cut counted both, so three rate-limited attempts inside nine hours froze the
+    chart for the seven-day settled TTL on a `degraded` payload — the very
+    failure this ship exists to remove, rebuilt out of the repair for it.
+
+    So: `MAX_SETTLED_EMPTY_ATTEMPTS` failures must leave the counter at zero and
+    the market still askable, the carried chart must survive every one of them,
+    and the healthy answer that follows must land and end the retries.
+    """
+    from app.tasks.generic_market_history_fill import MAX_SETTLED_EMPTY_ATTEMPTS
+
+    _seed_specimen()
+    _, _, open_t, _ = _cold_then_warm(broker)
+    healthy = _in_week(_timeline_points(open_t))
+    assert len(healthy) > 1
+
+    _set_market_status("settled")
+    venue.kalshi_mode = mode
+    for attempt in range(1, MAX_SETTLED_EMPTY_ATTEMPTS + 1):
+        FrozenDatetime.current = FROZEN_NOW + timedelta(hours=4 * attempt)
+        assert _timeline()["venue_history"]["fill"] == "requested", (
+            f"failure {attempt} of {MAX_SETTLED_EMPTY_ATTEMPTS} exhausted a "
+            "ceiling that is about SILENCE, not about errors"
+        )
+        broker.run_enqueued()
+        after = _payload()
+        assert after["status"] == "degraded"
+        assert after["settled_empty_attempts"] == 0, (
+            "a failed attempt advanced the silence counter"
+        )
+        # The reader keeps the chart through every failure (B5, under settlement).
+        assert _in_week(_timeline_points(_timeline())) == healthy
+
+    # One past the ceiling, still asking.
+    FrozenDatetime.current = FROZEN_NOW + timedelta(
+        hours=4 * (MAX_SETTLED_EMPTY_ATTEMPTS + 1)
+    )
+    assert _timeline()["venue_history"]["fill"] == "requested"
+
+    # …and the healthy answer lands and ends them.
+    venue.kalshi_mode = "recorded"
+    broker.run_enqueued()
+    answered = _payload()
+    assert answered["stats"]["fetched_points"] > 0
+    assert answered["settled_empty_attempts"] == 0
+    FrozenDatetime.current = FROZEN_NOW + timedelta(
+        hours=4 * (MAX_SETTLED_EMPTY_ATTEMPTS + 2)
+    )
+    assert _timeline()["venue_history"]["fill"] == "settled_and_already_answered"
+    assert broker.calls == []
+
+
 # ═══ C — IDENTITY AND SHAPE ═════════════════════════════════════════════════
 
 OTHER_MARKET_ID, OTHER_OUTCOME_ID, OTHER_TICKER = 59165100, 219751700, "KXOTHERQUESTION-26-YES1"

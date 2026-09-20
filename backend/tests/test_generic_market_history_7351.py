@@ -353,6 +353,62 @@ def test_a_venue_that_has_purged_a_settled_market_is_asked_a_bounded_number_of_t
         assert fill.settled_empty_attempts(dict(carried, settled_empty_attempts=junk)) == 0
 
 
+def test_a_failed_attempt_never_spends_the_ceiling_that_is_about_silence():
+    """"The venue gave me nothing" and "I could not ask" are different facts.
+
+    The first cut of the ceiling spent both, so three 429s inside nine hours
+    exhausted it and a `degraded` payload with no points — possibly a market
+    whose history we had never once fetched — read as the week's answer. That is
+    the freeze this ship removes, rebuilt out of the repair for it (CERT-3156).
+    A failed attempt is always retryable on the ordinary bounded interval,
+    however many have gone before.
+    """
+    market, outcome = _market(), _outcome()
+    settled = _market(status="settled")
+    later = NOW + timedelta(seconds=fill.REFRESH_AFTER_SECONDS + 1)
+    spent = fill.MAX_SETTLED_EMPTY_ATTEMPTS
+
+    # Every shape a failed attempt arrives in, at and beyond the ceiling.
+    for label, over in [
+        ("one window errored", {"stats": {"fetched_points": 0, "window_errors": 1}}),
+        ("the venue call raised", {"stats": {"fetched_points": 0, "fetch_errors": 1}}),
+        ("status says degraded", {"status": "degraded",
+                                  "stats": {"fetched_points": 0}}),
+        ("degraded with no history at all", {"status": "degraded", "outcomes": {},
+                                             "stats": {"fetched_points": 0}}),
+    ]:
+        failed = dict(_payload(market, outcome), market_settled=True,
+                      settled_empty_attempts=spent, **over)
+        assert fill.answers_a_settled_market(failed) is False, (
+            f"a settled chart froze for a week on: {label}"
+        )
+        assert _plan(failed, market=settled, rc=_Redis(), now=later)["reason"] == "claimed"
+        # …and it does not advance the counter either, so a bad afternoon at the
+        # venue cannot exhaust a ceiling that is about silence.
+        assert fill.next_settled_empty_attempts(failed, failed, settled=True) == spent
+
+    # The clean empty at the same count still satisfies it — otherwise this arm
+    # would pass against a ceiling that never fires at all.
+    clean = dict(_payload(market, outcome, stats={"fetched_points": 0}),
+                 market_settled=True, settled_empty_attempts=spent)
+    assert fill.answers_a_settled_market(clean) is True
+
+    # Three failures do not move a count of zero…
+    failed_clean_slate = {"stats": {"fetched_points": 0, "fetch_errors": 1}}
+    count = 0
+    for _ in range(3):
+        count = fill.next_settled_empty_attempts(
+            dict(failed_clean_slate, settled_empty_attempts=count),
+            failed_clean_slate, settled=True,
+        )
+    assert count == 0, "three failed attempts spent the silence ceiling"
+    # …and a healthy answer after them ends the retries, which is the other half
+    # of the required repair.
+    healthy = dict(_payload(market, outcome), market_settled=True,
+                   settled_empty_attempts=count)
+    assert fill.answers_a_settled_market(healthy) is True
+
+
 class _SessionReturning:
     """The one query `fill_generic_market_history` makes, answered from memory."""
 

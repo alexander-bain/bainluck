@@ -3118,7 +3118,10 @@ jobs:
           # 43 with CERT-3152's required repair: B11 (an empty post-settlement
           # fill is not answered by the series it carried) and B12 (the ceiling
           # that keeps that repair from asking a purged venue forever).
-          EXPECTED = 43
+          # 45 with CERT-3156's: B13, parametrized over 429 and 500, proves a run
+          # of FAILED settled attempts never spends a ceiling that is about a
+          # venue's silence.
+          EXPECTED = 45
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

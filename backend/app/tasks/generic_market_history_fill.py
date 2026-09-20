@@ -208,6 +208,18 @@ def answers_a_settled_market(payload: dict | None) -> bool:
     chart holds it for the rest of the settled TTL. A payload that predates this
     counter has no attempt to describe, so it is not an answer — it costs one
     bounded retry, which rewrites it with the counter.
+
+    🔴 ONLY A CLEAN EMPTY COUNTS AGAINST THAT CEILING (CERT-3156). "The venue
+    fetched me nothing" and "I could not ask the venue" are different facts, and
+    the first cut of the ceiling spent both: three 429s or three 500s inside nine
+    hours exhausted it, and the payload — `degraded`, no points, possibly not one
+    byte of history ever fetched — then read as the week's answer. That is the
+    freeze this ship exists to remove, rebuilt out of the repair for it. A
+    failed attempt therefore neither ADVANCES the counter (see
+    :func:`next_settled_empty_attempts`) nor SATISFIES it here: an errored
+    attempt is always retryable at `REFRESH_AFTER_SECONDS`, however many have
+    gone before, because a venue that is erroring has not told us anything about
+    what it holds.
     """
     if not isinstance(payload, dict):
         return False
@@ -215,13 +227,39 @@ def answers_a_settled_market(payload: dict | None) -> bool:
         return False
     stats = payload.get("stats")
     stats = stats if isinstance(stats, dict) else {}
-    if settled_empty_attempts(payload) >= MAX_SETTLED_EMPTY_ATTEMPTS:
+    if attempt_reached_the_venue(payload) and (
+        settled_empty_attempts(payload) >= MAX_SETTLED_EMPTY_ATTEMPTS
+    ):
         # The venue has been asked its ceiling of times since this market
-        # settled and has published nothing since. Stop asking; keep the chart.
+        # settled, answered every time, and published nothing. Stop asking; keep
+        # the chart. `attempt_reached_the_venue` is what keeps a run of failures
+        # from spending a ceiling that is about SILENCE.
         return True
     if payload.get("status") != "ok" or not payload.get("outcomes"):
         return False
     return int(stats.get("fetched_points") or 0) > 0
+
+
+def attempt_reached_the_venue(payload: dict | None) -> bool:
+    """Did the fill behind this payload get an ANSWER, as opposed to an error?
+
+    Keyed on the error counters `build_generic_history` writes — `fetch_errors`
+    (the venue call or the whole source raised) and `window_errors` (one window
+    of a multi-window fetch failed) — because those are the CAUSE; `status ==
+    "degraded"` is derived from exactly them and is checked too, so a payload
+    that arrives degraded without counters (an older schema, a hand-written
+    test) is still read as a failure rather than as silence.
+
+    An attempt that reached the venue and was handed nothing is a RESULT: it is
+    the only thing the settled-empty ceiling is allowed to count.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("status") == "degraded":
+        return False
+    stats = payload.get("stats")
+    stats = stats if isinstance(stats, dict) else {}
+    return not (stats.get("fetch_errors") or stats.get("window_errors"))
 
 
 def settled_empty_attempts(payload: dict | None) -> int:
@@ -238,10 +276,17 @@ def next_settled_empty_attempts(last_good: dict | None, payload: dict, *,
                                 settled: bool) -> int:
     """The counter this fill's payload carries forward.
 
-    Counts only attempts made WHILE SETTLED that fetched nothing of their own —
-    an open market's empty fill is an ordinary retry and is not on this clock,
-    and one fetched point resets it, because a venue that answered once is not
-    the silent venue this ceiling exists for.
+    Counts only attempts made WHILE SETTLED that REACHED THE VENUE and were
+    handed nothing. Three rules, and each one is a different fact:
+
+      * an OPEN market's empty fill is an ordinary retry and is not on this
+        clock at all;
+      * one fetched point RESETS it — a venue that answered once is not the
+        silent venue the ceiling exists for;
+      * a FAILED attempt (429, 500, one window erroring) HOLDS it where it is —
+        neither advancing nor resetting. Advancing would let a bad afternoon at
+        the venue spend a ceiling that is about silence (CERT-3156); resetting
+        would let a flaky venue erase clean empties we really did observe.
     """
     if not settled:
         return 0
@@ -249,6 +294,8 @@ def next_settled_empty_attempts(last_good: dict | None, payload: dict, *,
     fetched = int((stats if isinstance(stats, dict) else {}).get("fetched_points") or 0)
     if fetched > 0:
         return 0
+    if not attempt_reached_the_venue(payload):
+        return settled_empty_attempts(last_good)
     return settled_empty_attempts(last_good) + 1
 
 
