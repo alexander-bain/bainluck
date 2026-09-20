@@ -21,6 +21,26 @@ The population ACCRUES (75 → 163 in a day) and the soonest kickoff was 58
 minutes away when this was measured, so the issue's own "soonest orphan is
 Sep 24, not launch-blocking" scope note had already inverted when it was re-run.
 
+RE-MEASURED 14:46Z WITH THE SHIPPED PREDICATE after CERT-3173 (`2177692c9718a4a4`
+— the backup-table join, the `+ RETIRED_REVIVAL_TOLERANCE` cutoff and the family
+screen, which is what the beat actually asks):
+
+    candidates                                        93
+      ... refused, a surviving row holds the fixture  27   all soccer_other
+      ... REVIVED                                     66   42 NHL, 8 WNBA, 16 soccer
+      ... of the 27, refusals the BLOCKED code missed 19
+      ... revivals LOST to the widening                0
+
+Those 19 are the block: their survivor sits under a canonical league key, so a
+same-`sport_id` screen could not see it. `15306885` (Villarreal CF v Levante UD,
+`soccer_other`) has FOUR scheduled `soccer_spain_la_liga` rows at its own
+kickoff — the first presentation would have published a fifth card for one
+match. The widening loses nothing: it is a strict superset of the old screen.
+
+It also DRAINS: 163 became 93 in seventeen minutes as Saturday's 15:30Z slot
+passed, and a row whose start passes while it is still `voided` is lost, not
+deferred.
+
 THE VOID WAS CORRECT WHEN IT FIRED. `future_dated` at retirement is 0 across all
 13,588 rows in the arm's backup table. The chain is #4590's: `commence_time` was
 minted as the ingest clock (retirement-time values carry non-zero seconds —
@@ -336,19 +356,32 @@ class _FakeResult:
 
 
 class _FakeSession:
-    """Answers the recall with a fixed row set.
+    """Answers the recall with a fixed row set and the sport read with a key.
 
     It does NOT apply the WHERE clause, so these tests prove the Python-side
-    status and name logic only. The SQL window is a separate claim, pinned by
-    `test_the_window_is_the_measured_one` and by the production split the module
-    docstring records.
+    status and name logic ONLY.
+
+    🔴 THAT LIMIT IS THE ONE CERT-3173 BLOCKED ON, so it is worth stating what
+    this class cannot see. The screen's own SQL decides which rows ever reach
+    the Python pass below; a fake that hands over pre-baked rows proves the
+    post-filter and says nothing about the filter in front of it. The first
+    presentation's screen admitted only `Event.sport_id == event.sport_id` and
+    every test here still passed. `TestTheScreenAgainstARealDatabase` executes
+    the statement instead.
+
+    Dispatches on the SQL rather than positionally, for the reason
+    `_ImplSession` gives: a second query must not silently re-point the first
+    query's answer.
     """
 
-    def __init__(self, rows):
+    def __init__(self, rows, sport_key="icehockey_other"):
         self._rows = rows
+        self._sport_key = sport_key
 
-    async def execute(self, _stmt):
-        return _FakeResult(self._rows)
+    async def execute(self, stmt):
+        if "JOIN sports" in str(stmt):
+            return _FakeResult(self._rows)
+        return SimpleNamespace(scalar=lambda: self._sport_key)
 
 
 def _other(home, away, status="scheduled"):
@@ -376,11 +409,11 @@ def _subject():
 
 @pytest.mark.asyncio
 class TestTheSurvivingCounterpartScreen:
-    async def _ask(self, rows, subject=None):
+    async def _ask(self, rows, subject=None, sport_key="icehockey_other"):
         from app.tasks.espn_sync import _row_has_surviving_counterpart
 
         return await _row_has_surviving_counterpart(
-            _FakeSession(rows), subject or _subject()
+            _FakeSession(rows, sport_key=sport_key), subject or _subject()
         )
 
     async def test_an_orphan_has_no_counterpart(self):
@@ -435,6 +468,10 @@ class TestTheSurvivingCounterpartScreen:
 
         assert SURVIVING_COUNTERPART_WINDOW == timedelta(hours=30)
 
+    async def test_a_subject_whose_sport_cannot_be_named_fails_closed(self):
+        """Same rule as the nameless row: unclassifiable is not `orphan`."""
+        assert await self._ask([], sport_key=None) is True
+
 
 # ---------------------------------------------------------------------------
 # The impl, actually executed
@@ -470,8 +507,13 @@ class _ImplSession:
             return SimpleNamespace(
                 scalars=lambda: SimpleNamespace(all=lambda: ids)
             )
-        # The twin screen's recall.
-        return _FakeResult([])
+        if "JOIN sports" in sql:
+            # The twin screen's recall.
+            return _FakeResult([])
+        # The screen's read of the candidate's own sport key. A real key, not
+        # `None`: `None` fails the screen closed and every revival below would
+        # be refused for a reason that has nothing to do with what it asserts.
+        return SimpleNamespace(scalar=lambda: "icehockey_other")
 
     async def get(self, _model, pk):
         return self._rows.get(pk)
@@ -594,3 +636,277 @@ class TestTheBlastRadiusIsBounded:
             commence_time_source=None,
             market_anchored=False,
         ), "the verdict must refuse a revived row outright"
+
+
+# ---------------------------------------------------------------------------
+# The screen against a REAL DATABASE — CERT-3173's required repair
+# ---------------------------------------------------------------------------
+#
+# 🔴 WHY A DATABASE AND NOT ANOTHER FAKE. Every test above hands
+# `_row_has_surviving_counterpart` its candidate rows already chosen, so all of
+# them pass whatever the WHERE clause says. The first presentation's clause was
+# `Event.sport_id == event.sport_id`, and CERT-3173 blocked it: the entire
+# population this ship revives is in a CATCH-ALL sport, and a catch-all's twin
+# routinely sits under the canonical league key — a different `sport_id`, so it
+# could never enter the screen. The arm would have read "orphan" for a fixture a
+# reader can already see and published its hidden sibling as a second scheduled
+# game.
+#
+# So this class seeds sqlite, runs the REAL statement against it, and reads what
+# the screen actually returns. `test_a_canonical_league_survivor_is_seen_across_
+# the_catchall_boundary` is the one that fails on the blocked code.
+#
+# 🪤 `strpos` IS POSTGRES. sqlite spells it `instr`, so the rail registers the
+# Postgres name rather than letting the containment test be rewritten for the
+# fixture — a screen a test had to re-spell is not the screen that ships.
+
+from sqlalchemy import create_engine, event as sa_event  # noqa: E402
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB  # noqa: E402
+from sqlalchemy.ext.compiler import compiles  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_sqlite(type_, compiler, **kw):  # pragma: no cover - test rail
+    return "JSON"
+
+
+class _AsyncShim:  # pragma: no cover - test rail
+    """The async surface the screen uses, over a sync sqlite session."""
+
+    def __init__(self, session):
+        self._s = session
+
+    async def execute(self, statement, params=None):
+        if params is None:
+            return self._s.execute(statement)
+        return self._s.execute(statement, params)
+
+
+START = datetime(2026, 10, 6, 23, 0, tzinfo=timezone.utc)
+
+
+def _database():
+    from app.models.models import Base, Event, Sport, Team
+
+    engine = create_engine("sqlite://")
+
+    @sa_event.listens_for(engine, "connect")
+    def _register(dbapi_conn, _record):  # pragma: no cover - test rail
+        dbapi_conn.create_function(
+            "strpos",
+            2,
+            lambda haystack, needle: (haystack or "").find(needle or "") + 1,
+        )
+
+    Base.metadata.create_all(
+        engine, tables=[Sport.__table__, Team.__table__, Event.__table__]
+    )
+    return Session(engine, expire_on_commit=False)
+
+
+def _seeded(subject_sport, *others, subject_sport_row=True):
+    """A database holding the specimen plus whatever rows a test names.
+
+    ``others`` are ``(sport_key, home, away, status, offset)`` tuples. The
+    specimen is always the production one — Predators vs. Maple Leafs, retired
+    by the #5532 arm with a start that has moved to 2026-10-06 23:00Z.
+    """
+    from app.models.models import Event, Sport
+
+    session = _database()
+    sport_ids = {}
+
+    def sport_id(key):
+        if key not in sport_ids:
+            row = Sport(key=key, name=key, active=True)
+            session.add(row)
+            session.flush()
+            sport_ids[key] = row.id
+        return sport_ids[key]
+
+    subject = Event(
+        sport_id=sport_id(subject_sport) if subject_sport_row else 4242,
+        home_team_name="Predators",
+        away_team_name="Maple Leafs",
+        commence_time=START,
+        status=UNREACHABLE_SUSPENDED_TERMINAL,
+    )
+    session.add(subject)
+    for key, home, away, status, offset in others:
+        session.add(
+            Event(
+                sport_id=sport_id(key),
+                home_team_name=home,
+                away_team_name=away,
+                commence_time=START + offset,
+                status=status,
+            )
+        )
+    session.flush()
+    return session, subject
+
+
+async def _screen(session, subject):
+    from app.tasks.espn_sync import _row_has_surviving_counterpart
+
+    return await _row_has_surviving_counterpart(_AsyncShim(session), subject)
+
+
+@pytest.mark.asyncio
+class TestTheScreenAgainstARealDatabase:
+    async def test_a_canonical_league_survivor_is_seen_across_the_catchall_boundary(
+        self,
+    ):
+        """🔴 THE CERT-3173 SPECIMEN. False here is a duplicate on the site.
+
+        `icehockey_other` is where an unmapped NHL row lands; the fixture's
+        living row is keyed `icehockey_nhl`. On the blocked code the screen asks
+        for an identical `sport_id`, never sees it, and the beat publishes a
+        second scheduled Predators–Maple Leafs.
+        """
+        session, subject = _seeded(
+            "icehockey_other",
+            ("icehockey_nhl", "Predators", "Maple Leafs", "scheduled", timedelta()),
+        )
+        assert await _screen(session, subject) is True
+
+    async def test_the_soccer_pair_the_twin_fold_measured(self):
+        """`soccer_other` × `soccer_netherlands_eredivisie`, the named shape.
+
+        `event_twin_fold._merge_catchall_leagues` folds this pair on production
+        (Ajax v Willem II, 15307699 × 15297733). The two club names are also
+        spelled differently on the two sides, which the containment test carries.
+        """
+        session, subject = _seeded(
+            "soccer_other",
+            (
+                "soccer_netherlands_eredivisie",
+                "Nashville Predators",
+                "Toronto Maple Leafs",
+                "scheduled",
+                timedelta(hours=2),
+            ),
+        )
+        assert await _screen(session, subject) is True
+
+    async def test_a_cross_family_row_is_not_a_survivor(self):
+        """The 65 measured cross-sport pairs must not refuse 65 revivals.
+
+        59 `baseball_other` × `esports` pairs share squashed club names and a
+        minute, and are emphatically not one fixture each. A screen with no
+        sport test at all would read every one as a survivor.
+        """
+        session, subject = _seeded(
+            "baseball_other",
+            ("esports", "Predators", "Maple Leafs", "scheduled", timedelta()),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_same_sport_survivor_still_answers(self):
+        """The widening ADDS rows; it must not drop the ones already caught."""
+        session, subject = _seeded(
+            "icehockey_other",
+            ("icehockey_other", "Predators", "Maple Leafs", "completed", timedelta()),
+        )
+        assert await _screen(session, subject) is True
+
+    async def test_a_true_orphan_is_still_an_orphan(self):
+        """The ship itself: 135 rows have no survivor and must come back."""
+        session, subject = _seeded(
+            "icehockey_other",
+            ("icehockey_nhl", "Senators", "Canadiens", "scheduled", timedelta()),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_row_outside_the_window_is_not_a_survivor(self):
+        """The 30h window, executed rather than asserted on its constant."""
+        session, subject = _seeded(
+            "icehockey_other",
+            (
+                "icehockey_nhl",
+                "Predators",
+                "Maple Leafs",
+                "scheduled",
+                timedelta(hours=31),
+            ),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_retired_survivor_does_not_count(self):
+        """Two hidden rows are not a twin — reviving one is still the ship."""
+        session, subject = _seeded(
+            "icehockey_other",
+            (
+                "icehockey_nhl",
+                "Predators",
+                "Maple Leafs",
+                UNREACHABLE_SUSPENDED_TERMINAL,
+                timedelta(),
+            ),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_sport_the_database_cannot_name_fails_closed(self):
+        """A dangling `sport_id` yields no key, so no family, so no verdict."""
+        session, subject = _seeded(
+            "icehockey_other",
+            ("icehockey_nhl", "Senators", "Canadiens", "scheduled", timedelta()),
+            subject_sport_row=False,
+        )
+        assert await _screen(session, subject) is True
+
+
+class TestTheSportFamilyRule:
+    """`sport_family_key` — the pure rule the screen's SQL is built from."""
+
+    def test_a_catchall_answers_its_sport(self):
+        from app.utils.sport_keys import sport_family_key
+
+        assert sport_family_key("soccer_other") == "soccer"
+        assert sport_family_key("icehockey_other") == "icehockey"
+
+    def test_a_real_league_answers_the_same_sport(self):
+        from app.utils.sport_keys import sport_family_key
+
+        assert sport_family_key("icehockey_nhl") == "icehockey"
+        assert sport_family_key("soccer_netherlands_eredivisie") == "soccer"
+
+    def test_a_bare_category_is_its_own_family(self):
+        from app.utils.sport_keys import sport_family_key
+
+        assert sport_family_key("esports") == "esports"
+
+    def test_two_sports_do_not_share_a_family(self):
+        from app.utils.sport_keys import sport_family_key
+
+        assert sport_family_key("baseball_other") != sport_family_key("esports")
+
+    def test_a_missing_key_is_none_not_a_blank_prefix(self):
+        """A blank prefix is a `LIKE '%'` — every sport, the guard dropped."""
+        from app.utils.sport_keys import sport_family_key
+
+        for absent in (None, "", "  ", "_other"):
+            assert sport_family_key(absent) is None
+
+    def test_the_family_rule_agrees_with_the_twin_folds(self):
+        """Two rules for one question drift; this pins them to each other.
+
+        `event_twin_fold._catchall_sport_prefix` answers the catch-all half of
+        this question for the fold that measured the pairs quoted above. Where
+        it has an answer, it must be the same answer.
+        """
+        from app.utils.event_twin_fold import _catchall_sport_prefix
+        from app.utils.sport_keys import (
+            SPORT_PREFIX_TO_DISPLAY_FAMILY,
+            sport_family_key,
+        )
+
+        for prefix in SPORT_PREFIX_TO_DISPLAY_FAMILY:
+            key = f"{prefix}_other"
+            assert _catchall_sport_prefix(key) == sport_family_key(key) == prefix

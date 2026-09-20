@@ -1216,14 +1216,58 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
     surfaces that emit SQL are allowlists and must stay allowlists" — so it is
     asked in Python, where it is a frozenset lookup, and the screen stays a pure
     narrowing.
+
+    🔴 THE SPORT TEST IS A FAMILY, NOT A ``sport_id``, AND THAT IS THE WHOLE
+    SAFETY OF THIS ARM (CERT-3173). The first presentation asked
+    ``Event.sport_id == event.sport_id`` and was blocked for it. Every row this
+    ship revives is in a CATCH-ALL sport (measured: 114 ``soccer_other``, 42
+    ``icehockey_other``, 7 ``basketball_other``), and a catch-all's twin
+    routinely sits under the canonical league key instead —
+    ``event_twin_fold._merge_catchall_leagues`` exists for exactly that shape and
+    names the pairs it folds (``soccer_other`` × ``soccer_netherlands_eredivisie``,
+    × ``soccer_mexico_ligamx``, …). Those survivors have a different ``sport_id``,
+    so they could not enter the screen at all: the arm would have read "orphan"
+    for a fixture a reader can already see and published its hidden sibling as a
+    second scheduled game — the precise harm this function exists to refuse.
+
+    THE FAMILY IS STILL A GUARD AND DROPPING IT WOULD BE WORSE THAN ``sport_id``.
+    The same fold measured 65 CROSS-SPORT pairs sharing squashed club names and a
+    minute — 59 ``baseball_other`` × ``esports``, 5 ``americanfootball_other`` ×
+    ``esports``, 1 ``basketball_other`` × ``baseball_npb`` — which are a
+    classification defect somebody else owns and are emphatically not one fixture
+    each. A screen with no sport test would read every one of them as a survivor
+    and refuse 65 revivals it should make. :func:`sport_family_key` keeps the
+    cross-family refusal and only widens WITHIN a sport.
+
+    Widening the screen can only ever ADD candidates, and a candidate can only
+    ever make this return ``True`` — a refusal. That is the direction
+    :data:`SURVIVING_COUNTERPART_WINDOW` already argues for at length: erring
+    wide costs a row that stays invisible and #2693 gets it, erring narrow costs
+    a twin on a reader's screen.
     """
     from app.utils.event_completion import is_retired_event_status
+    from app.utils.sport_keys import sport_family_key
 
     home = (event.home_team_normalized or event.home_team_name or "").lower()
     away = (event.away_team_normalized or event.away_team_name or "").lower()
     if not home or not away:
         # FAIL CLOSED. A row with no usable name cannot be shown to be an
         # orphan, and the cost of guessing wrong is a twin.
+        return True
+
+    # One extra PK read per candidate rather than a join in the caller's recall,
+    # and it is affordable because the pass is capped at
+    # `UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS` rows every ten minutes. The key
+    # cannot be read off `event.sport` — the caller holds a bare `session.get`
+    # row, and touching a lazy relationship on an async session raises.
+    family = sport_family_key(
+        (await session.execute(
+            select(Sport.key).where(Sport.id == event.sport_id)
+        )).scalar()
+    )
+    if family is None:
+        # FAIL CLOSED again, and for the same reason as the nameless row above:
+        # a row whose sport we cannot name cannot be shown to be an orphan.
         return True
 
     home_col = func.lower(
@@ -1241,9 +1285,11 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
             Event.home_team_name,
             Event.away_team_normalized,
             Event.away_team_name,
+        ).join(
+            Sport, Sport.id == Event.sport_id
         ).where(
             Event.id != event.id,
-            Event.sport_id == event.sport_id,
+            Sport.key.startswith(family, autoescape=True),
             Event.commence_time
             >= event.commence_time - SURVIVING_COUNTERPART_WINDOW,
             Event.commence_time
@@ -4318,10 +4364,24 @@ async def _revive_retired_future_starts_impl() -> dict:
     vs. Maple Leafs — Maple Leafs 53% — Oct 6" and the game behind it has no
     page. We show the question and hide the game.
 
-    Measured on production 2026-09-20: 163 rows are ``voided`` with a future
-    start (114 ``soccer_other``, 42 ``icehockey_other``, 7 ``basketball_other``),
-    up from 75 the day before — the population ACCRUES — and 135 of them are
-    orphans. All 163 were retired by the #5532 arm.
+    Measured on production 2026-09-20 14:29Z: 163 rows are ``voided`` with a
+    future start (114 ``soccer_other``, 42 ``icehockey_other``, 7
+    ``basketball_other``), up from 75 the day before, and all 163 were retired
+    by the #5532 arm.
+
+    RE-MEASURED 14:46Z WITH THE SHIPPED PREDICATE — this exact recall (the
+    backup-table join and the ``+ RETIRED_REVIVAL_TOLERANCE`` cutoff) and the
+    family screen below, `2177692c9718a4a4`:
+
+        candidates                                    93
+          ... refused, a surviving row holds it       27   all `soccer_other`
+          ... REVIVED                                 66   42 NHL, 8 WNBA, 16 soccer
+
+    THE POPULATION DRAINS AS WELL AS ACCRUES, and the drain is the reason this
+    is a ten-minute beat and not a daily one. 163 became 93 in the seventeen
+    minutes between those two reads — Saturday's 15:30Z kickoff slot passing —
+    and a row whose start passes while it is still ``voided`` is not deferred,
+    it is LOST: the game was never on the site and never will be.
 
     THE VOID WAS CORRECT WHEN IT FIRED and this task does not second-guess it;
     ``retired_row_start_moved_into_future`` carries that argument in full, along
@@ -4403,10 +4463,16 @@ async def _revive_retired_future_starts_impl() -> dict:
             # The twin screen is ASKED PER ROW and it is a JOIN, not a column, so
             # the recall cannot carry it — the same reason `market_anchored` is
             # handed to the retirement verdict rather than left in its WHERE
-            # clause. Measured 2026-09-20: 28 of the 163 have a survivor and
-            # every one is `soccer_other`; all 42 NHL and all 7 WNBA rows are
-            # orphans, so the marquee population this ship exists for carries no
-            # twin risk at all.
+            # clause. Measured 2026-09-20 14:46Z under the shipped family
+            # screen: 27 of the 93 candidates have a survivor and every one is
+            # `soccer_other`; all 42 NHL and all 8 WNBA rows are orphans, so the
+            # marquee population this ship exists for carries no twin risk.
+            #
+            # 19 of those 27 are refusals the FIRST presentation would not have
+            # made (CERT-3173), because their survivor sits under a canonical
+            # league key. `15306885` — Villarreal CF v Levante UD, `soccer_other`
+            # — has FOUR scheduled `soccer_spain_la_liga` rows at its own kickoff.
+            # Reviving it would have published a fifth card for one match.
             has_twin = await _row_has_surviving_counterpart(session, event)
             if not retired_row_start_moved_into_future(
                 event.status,

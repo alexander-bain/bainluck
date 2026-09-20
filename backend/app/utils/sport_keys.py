@@ -2960,6 +2960,45 @@ SPORT_PREFIX_TO_DISPLAY_FAMILY: dict[str, str] = {
 _SPORT_CATCH_ALL_SUFFIX = "_other"
 
 
+def sport_family_key(sport_key: Optional[str]) -> Optional[str]:
+    """The SPORT a league key belongs to. `soccer_other`, `soccer_mexico_ligamx` → `soccer`.
+
+    The machine-side twin of :func:`_sport_family_word`, which answers the same
+    question with a word for a reader. This one answers it with the key prefix,
+    so a query can ask "are these two rows in the same sport?" of two keys that
+    are NOT equal — the question `sport_id` equality silently answers no to, and
+    the reason CERT-3173 blocked #7260's first presentation: every row in that
+    ship's population is a catch-all, and a catch-all's twin routinely sits under
+    the canonical league key (`soccer_other` × `soccer_netherlands_eredivisie` is
+    a measured pair in `event_twin_fold`).
+
+    A CATCH-ALL HAS ITS SUFFIX STRIPPED, not its first `_` split, which is what
+    `event_twin_fold._catchall_sport_prefix` does and for the reason its
+    docstring gives: stripping is the exact inverse of how the key is formed, so
+    the two rules cannot start disagreeing on the day a sport name contains an
+    underscore. They agree on every catch-all key today, and
+    `test_the_family_rule_agrees_with_the_twin_folds` pins the agreement rather
+    than restating the rule.
+
+    A real league key has no such inverse, so its family is the head before the
+    first `_` — the same prefix the matcher already scopes candidates with
+    (`event.sport.key.startswith(sport_prefix)` in `_score_candidates`). A bare
+    category (`esports`) is its own family.
+
+    `rugby` therefore covers `rugbyleague_*` and `rugbyunion_*` under a
+    `startswith` test while `rugbyleague` does not cover `rugby_*`. The asymmetry
+    is left rather than papered over: this exists for callers deciding whether
+    two rows might be one fixture, where a family that is too WIDE costs a
+    refusal and one that is too narrow costs a duplicate.
+    """
+    key = (sport_key or "").strip()
+    if not key:
+        return None
+    if key.endswith(_SPORT_CATCH_ALL_SUFFIX):
+        return key[: -len(_SPORT_CATCH_ALL_SUFFIX)] or None
+    return key.split("_", 1)[0] or None
+
+
 def _sport_family_word(sport_key: str) -> str:
     """The reader-facing family word for a key, full key first then its head.
 
