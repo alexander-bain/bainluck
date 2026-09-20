@@ -554,6 +554,45 @@ class TestWeatherCitiesUnitAgreement:
             "70-75°F",
         ]
 
+    async def test_a_celsius_range_converts_once_and_stays_a_range(
+        self, client, mock_db
+    ):
+        """A range that actually needs converting — the case production has no
+        instance of today, and the only one that can convert twice.
+
+        The rewrite runs the span pattern and then the point pattern over the
+        result, so "27-28°C" becomes "80.6-82.4°F" and the point pattern then
+        sees "82.4°F" again. Converting that a second time reads 180.3°F. The
+        two production shapes cannot catch this between them: the °C labels
+        are all points, and the ranges are all already °F, so neither reaches
+        this path. Mutation-tested — dropping the span rewriter's bounds or
+        its same-unit guard survives every other test in this class.
+        """
+        now = datetime.now(timezone.utc)
+        cities = await self._cities(client, mock_db, [
+            _market(
+                market_id=906,
+                name="Highest temperature in Miami on Sep 21?",
+                source="polymarket",
+                outcomes=[
+                    _outcome("26°C or below", 0.10, outcome_id=9060, rank=1),
+                    _outcome("27-28°C", 0.70, outcome_id=9061, rank=2),
+                    _outcome("29°C or higher", 0.20, outcome_id=9062, rank=3),
+                ],
+                resolution_date=now + timedelta(days=2),
+            )
+        ])
+
+        high = cities["miami"]["high"]
+        assert high["unit"] == "F"
+        assert [b["label"] for b in high["dist"]] == [
+            "78.8°F or below",
+            "80.6-82.4°F",
+            "84.2°F or higher",
+        ]
+        # 27-28°C has a midpoint of 27.5°C, which is 81.5°F.
+        assert high["mode"] == 81.5
+
     async def test_every_citys_labels_agree_with_its_declared_unit(
         self, client, mock_db
     ):
