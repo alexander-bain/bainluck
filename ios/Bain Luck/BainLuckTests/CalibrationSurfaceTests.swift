@@ -125,8 +125,8 @@ final class CalibrationSurfaceTests: XCTestCase {
         XCTAssertEqual(vm.fullN, 700)
         XCTAssertEqual(
             vm.heroPopulationText,
-            "600 resolved predictions \u{2014} every outcome except the 100 whose price never "
-                + "moved off its opening line (700 in total)")
+            "600 resolved predictions \u{2014} every outcome we measured except the 100 whose "
+                + "price never moved off its opening line (700 measured in all)")
         // The pre-fix bug: leading with total_outcomes (700) under the default
         // cohort, i.e. a number the cohort below it contradicts.
         XCTAssertNotEqual(vm.heroPopulationText, vm.formattedTotalOutcomes)

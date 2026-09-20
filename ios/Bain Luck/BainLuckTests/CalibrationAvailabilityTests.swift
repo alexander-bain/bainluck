@@ -255,9 +255,9 @@ final class CalibrationAvailabilityTests: XCTestCase {
         XCTAssertEqual(vm.cohortToggleLabel, "Include never-moved (+\(fmt(Prod.unchangedN)))")
         XCTAssertEqual(
             vm.heroPopulationText,
-            "\(fmt(Prod.cohortN)) resolved predictions \u{2014} every outcome except the "
-                + "\(fmt(Prod.unchangedN)) whose price never moved off its opening line "
-                + "(\(fmt(Prod.fullN)) in total)")
+            "\(fmt(Prod.cohortN)) resolved predictions \u{2014} every outcome we measured "
+                + "except the \(fmt(Prod.unchangedN)) whose price never moved off its opening "
+                + "line (\(fmt(Prod.fullN)) measured in all)")
 
         vm.includeThin = true
         XCTAssertEqual(vm.cohortHeadline, "Showing all markets (\(fmt(Prod.fullN)))")
@@ -296,6 +296,84 @@ final class CalibrationAvailabilityTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// #7496 — the same sweep, for the other over-claim: **no cohort-facing
+    /// string may call `total_outcomes` the total, or the rest of the page
+    /// "every outcome".**
+    ///
+    /// `total_outcomes` is a POST-exclusion population and this page says so
+    /// about itself nine screens down — *"that published total is lower than the
+    /// raw resolved-outcome count because we exclude markets that can't form an
+    /// honest prediction"*. The eight folded rules alone set aside 147,721
+    /// outcomes on today's payload. So a sentence that prints `(N in total)`, or
+    /// promises "every outcome" and then names one cut, is contradicted by the
+    /// page's own methodology.
+    ///
+    /// A sweep rather than one equality, for the reason above it: a single
+    /// assertion on the hero is satisfied by moving the claim into the stat
+    /// detail beside it. Both toggle states, because the include-everything hero
+    /// is a different sentence and is deliberately left alone — there `fullN` IS
+    /// the cohort, so it claims nothing about what was left out, and the sweep
+    /// must not read that as a violation. Hence phrases, not the bare word
+    /// "total": `activityPartitionNote` legitimately ends "= N resolved
+    /// outcomes", which is a sum of three named parts and not a claim of
+    /// completeness.
+    @MainActor
+    func testNoCohortStringCallsTheFilteredPopulationTheTotal() throws {
+        let vm = try prodModel()
+        let banned = ["in total", "total outcomes", "the total", "in all markets",
+                      "every outcome except", "all resolved outcomes"]
+
+        // 🪤 The sweep's own control, and it is here because mutation found it:
+        // emptying `banned` leaves the loop running over all seven strings and
+        // both toggle states while asserting NOTHING, and every other test in
+        // this file stays green. A list-driven assertion has to assert its list.
+        // Pinned to the two phrases the reported defect actually printed, not
+        // just to a count, so trimming the list down to the harmless entries
+        // fails here too.
+        XCTAssertEqual(banned.count, 6)
+        XCTAssertTrue(banned.contains("in total"))
+        XCTAssertTrue(banned.contains("every outcome except"))
+
+        for includeNeverMoved in [false, true] {
+            vm.includeThin = includeNeverMoved
+            let strings: [(String, String)] = [
+                ("headline", vm.cohortHeadline),
+                ("detail", vm.cohortDetail),
+                ("shortLabel", vm.cohortShortLabel),
+                ("toggleLabel", vm.cohortToggleLabel),
+                ("toggleA11y", vm.cohortToggleAccessibilityLabel),
+                ("hero", vm.heroPopulationText),
+                ("partitionNote", vm.activityPartitionNote ?? ""),
+            ]
+            for (name, value) in strings {
+                for phrase in banned {
+                    XCTAssertFalse(
+                        value.localizedCaseInsensitiveContains(phrase),
+                        "\(name) (includeNeverMoved=\(includeNeverMoved)) calls a filtered "
+                            + "population complete via \"\(phrase)\": \(value)")
+                }
+            }
+        }
+    }
+
+    /// 🪤 The control for the sweep above, and it is not optional: a banned-phrase
+    /// list is satisfied by a page that prints nothing. This asserts the sentence
+    /// the sweep is supposed to permit is actually there, scoped and whole.
+    @MainActor
+    func testTheHeroStillNamesItsTwoPopulationsAfterTheScoping() throws {
+        let vm = try prodModel()
+        let hero = vm.heroPopulationText
+
+        XCTAssertTrue(hero.contains("every outcome we measured except"),
+                      "the hero no longer scopes its universe to what was measured: \(hero)")
+        XCTAssertTrue(hero.contains("(\(fmt(Prod.fullN)) measured in all)"),
+                      "the hero no longer says which population the exclusion is out of: \(hero)")
+        XCTAssertTrue(hero.hasPrefix("\(fmt(Prod.cohortN)) resolved predictions"),
+                      "the hero no longer leads with the cohort it measured: \(hero)")
+        XCTAssertTrue(hero.contains(fmt(Prod.unchangedN)),
+                      "the hero no longer says how many were set aside: \(hero)")
     }
 
     /// The accessibility reading of the toggle names what it acts on. The visible
