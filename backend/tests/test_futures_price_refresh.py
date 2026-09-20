@@ -1344,6 +1344,12 @@ class _RunHarness:
         def __init__(self, rows=(), scalar=0):
             self._rows = list(rows)
             self._scalar = scalar
+            # #6598: a real `CursorResult` always carries `rowcount`, and the
+            # sweep now reads it off the field re-derivation. A fake narrower
+            # than the object it stands in for raises inside the per-market
+            # `try`, which this harness reports as `terminal: failed` — a
+            # failure of the fake wearing the shape of a failure of the task.
+            self.rowcount = len(self._rows)
 
         def fetchall(self):
             return self._rows

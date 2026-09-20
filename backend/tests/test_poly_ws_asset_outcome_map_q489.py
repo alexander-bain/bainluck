@@ -96,6 +96,13 @@ def _install_socket(monkeypatch, frames):
 class _Result:
     def __init__(self, rows):
         self._rows = rows
+        # #6598: a real `CursorResult` always carries `rowcount`, and the flush
+        # now reads it off the field re-derivation that follows the prices. A
+        # fake narrower than the object it stands in for raises inside the
+        # flush's `except Exception`, which REQUEUES the batch — so the next
+        # flush writes the same price again and this file's `writes` list grows
+        # a duplicate per retry. The symptom looks nothing like the cause.
+        self.rowcount = len(list(rows))
 
     def all(self):
         return list(self._rows)

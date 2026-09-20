@@ -260,9 +260,15 @@ async def test_the_predicate_does_not_narrow_what_the_rail_writes(monkeypatch):
         text for text, _ in (_compiled(s) for s in session.statements)
         if "INSERT INTO futures_odds_snapshots" in text
     ]
+    # #6598 gave this rail one more `futures_outcomes` statement — the field
+    # re-derivation that follows the prices — and it is NOT a price write: it
+    # assigns `rank` and nothing else. Excluded by its SET clause so this
+    # assertion keeps meaning what it says ("the predicate did not change which
+    # LEGS get priced") rather than becoming a count of statements.
     outcome_updates = [
         text for text, _ in (_compiled(s) for s in session.statements)
         if "UPDATE futures_outcomes" in text
+        and "current_probability" in text.split(" SET ", 1)[-1].split(" FROM ", 1)[0]
     ]
     # Two legs priced (Yes and No) => two outcome updates and two snapshots,
     # unchanged by the predicate, which touches only the market-level lookups.

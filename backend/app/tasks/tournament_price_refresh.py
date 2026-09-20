@@ -357,6 +357,11 @@ async def _refresh_registered_tournament_prices(
         # first cut counted intentions and reported 4 on a pass that moved one
         # row — see the deferred close in `_write_refreshed_prices`.
         "markets_settled": 0,
+        # #6598 / CERT-3182. Rows whose `rank` this pass corrected after moving
+        # the price it is derived from. Reported unconditionally: the statement
+        # is a no-op on a field that was already right, so "0" is the healthy
+        # reading and its absence is the one that means the wiring is gone.
+        "ranks_rederived": 0,
         # A closed book that named no winner — see `settled_yes_probability`.
         # Reported rather than dropped: a register whose legs all close without
         # a result is a venue change, and it would otherwise look like a quiet
@@ -521,12 +526,28 @@ async def _write_refreshed_prices(
         _resolve_market_probability,
         complementary_book,
     )
+    from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.odds_math import probability_to_american
     from app.utils.winner_field_coherence import DUPLICATE_CONDITION_LEG_SQL
 
     # #6919: conditions whose book this pass read as SETTLED. Collected in the
     # loop, spent once after it — see the deferred close at the bottom.
     settled_conditions: list[str] = []
+
+    # #6598 / CERT-3182: legs this pass gave a LIVE price to. Collected here
+    # rather than the market ids because this loop never learns one — it walks
+    # Gamma CONDITIONS, and #3868's whole finding is that a condition's legs sit
+    # on two different market rows. The ids are resolved to their markets once,
+    # after the loop.
+    #
+    # LIVE ONLY, and the exclusion is the settled-board exemption the helper's
+    # header states rather than a shortcut. A leg this pass GRADED is written
+    # 1.0 or 0.0 by `settled_yes_probability`, and a board whose last write was
+    # its settlement is a record of how it finished; #6325 refused to renumber
+    # one and that refusal holds here. A ladder with live siblings still
+    # re-derives — an eliminated player really is behind everyone still playing,
+    # which is what the page already shows by sorting on the price.
+    live_priced_outcome_ids: list[int] = []
 
     async with get_task_session() as session:
         for market in markets:
@@ -864,6 +885,8 @@ async def _write_refreshed_prices(
                     )
                 )
                 stats["outcomes_updated"] += 1
+                if settled is None:
+                    live_priced_outcome_ids.append(outcome_id)
 
                 # The snapshot is what `price_observed_at` reads, so a refresh
                 # that updated the outcome and wrote no snapshot would move the
@@ -887,6 +910,26 @@ async def _write_refreshed_prices(
                     )
                 )
                 stats["snapshots_written"] += 1
+
+        # ── #6598 / CERT-3182. Every leg this pass re-priced moved the value
+        # `rank` is derived from, and this rail never wrote `rank` at all — so a
+        # price CROSSING here left the ladder ordered by the last full poll's
+        # opinion. One statement for every market touched (`PARTITION BY`),
+        # before the close and inside the same transaction as the prices.
+        if live_priced_outcome_ids:
+            market_ids = [
+                r[0]
+                for r in (
+                    await session.execute(
+                        select(FuturesOutcome.market_id)
+                        .where(FuturesOutcome.id.in_(live_priced_outcome_ids))
+                        .distinct()
+                    )
+                ).all()
+            ]
+            stats["ranks_rederived"] = (
+                await session.execute(rerank_market_fields_stmt(market_ids))
+            ).rowcount
 
         # ── #6919, THE DEFERRED CLOSE. One statement, after every leg this
         # pass answers has been written.

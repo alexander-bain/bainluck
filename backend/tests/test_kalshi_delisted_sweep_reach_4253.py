@@ -69,9 +69,21 @@ def _stats() -> dict:
 class _Result:
     def __init__(self, rows):
         self._rows = rows
+        self.rowcount = len(list(rows))
 
     def fetchall(self):
         return list(self._rows)
+
+
+def _is_the_field_rerank(stmt) -> bool:
+    """#6598's re-derivation of `rank`, which this arm now emits after a
+    withdrawal. Not dispatchable by identity like the four constants above —
+    it is built per market — so it is recognised by its SET clause, which names
+    `rank` and nothing else."""
+    clause = str(stmt).split(" SET ", 1)[-1]
+    for boundary in (" FROM ", " WHERE "):
+        clause = clause.split(boundary, 1)[0]
+    return clause.strip().startswith("rank=")
 
 
 class _FakeSession:
@@ -86,6 +98,11 @@ class _FakeSession:
         self.commits = 0
         self.rollbacks = 0
         self.retire_calls = []
+        #: #6598 — markets whose field this arm re-derived after withdrawing a
+        #: leg. Recorded rather than merely tolerated so the arm's coverage is
+        #: assertable: `_retire_delisted_kalshi_legs` has two callers and only
+        #: one of them is the batched loop.
+        self.rerank_calls = []
 
     async def execute(self, stmt, params=None):
         if stmt is mod._KALSHI_UNREACHED_FROZEN_SQL:
@@ -98,6 +115,9 @@ class _FakeSession:
             if rows is None:
                 rows = [(i,) for i in range(len(params["tickers"]))]
             return _Result(rows)
+        if _is_the_field_rerank(stmt):
+            self.rerank_calls.append(stmt)
+            return _Result([])
         raise AssertionError(f"unexpected statement: {stmt}")
 
     async def scalar(self, stmt, params=None):
@@ -446,6 +466,13 @@ class TestTheArmReachesWhatTheBatchNeverDid:
         # The shared counter moves too: the ledger the operator reads is one number.
         assert stats["kalshi_legs_retired"] == 2
         assert session.retire_calls == [{"market_id": OPENAI, "tickers": DEAD}]
+        # #6598 / CERT-3182: a withdrawal is a field change, and THIS arm is the
+        # second caller of `_retire_delisted_kalshi_legs` — the one a re-rank
+        # wired at the batched loop's call site would have missed entirely.
+        assert len(session.rerank_calls) == 1, (
+            "the sweep withdrew two legs and left the board ranked against "
+            "prices it no longer holds"
+        )
 
     def test_the_control_is_probed_before_any_candidate(self):
         """The ordering IS the safety argument — a control probed after proves nothing."""
