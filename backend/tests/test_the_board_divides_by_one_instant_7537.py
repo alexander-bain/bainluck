@@ -40,11 +40,17 @@ import pytest
 
 import app.routes.futures as futures_routes
 import app.utils.futures_market_snapshot as snapshot_utils
-from app.routes.futures import _format_market_detail
 from app.utils.market_staleness import (
     OBSERVATION_LAG_DAYS,
     stale_observation_keys,
 )
+
+# ONE IMPORT FORM PER MODULE. `app.routes.futures` is already imported above as
+# a module (`_at` patches its `datetime`), so a `from app.routes.futures import
+# _format_market_detail` beside it is `py/import-and-import-from` — a CodeQL
+# note, and the same one 5ef820189 cleared for `espn_sync`. The formatter is
+# reached through the module instead; it is the same object either way.
+_format_market_detail = futures_routes._format_market_detail
 
 #: The minute the rugby board was read off production.
 MEASURED_AT = datetime(2026, 9, 20, 15, 40, tzinfo=timezone.utc)
