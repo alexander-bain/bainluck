@@ -149,8 +149,8 @@ BAK_TABLE = "bak_7354_settled_orientation_swap"
 
 #: The proof that separates an ORIENTATION SWAP from a SCORE DRIFT.
 #:
-#: A slot-copied row holds ESPN's two numbers in ESPN's own slots: our
-#: ``home_score`` IS ``ee.home_score`` and our ``away_score`` IS
+#: A slot-copied STORE holds ESPN's two numbers in ESPN's own slots: its
+#: ``home_score`` IS ``ee.home_score`` and its ``away_score`` IS
 #: ``ee.away_score``, while our home side corresponds to ESPN's AWAY competitor.
 #: That is a complete description of the write that produced the defect, and it
 #: is falsifiable: if the stored pair is anything else, the row was not produced
@@ -160,7 +160,13 @@ BAK_TABLE = "bak_7354_settled_orientation_swap"
 #: merely disagrees with ESPN — which is #7147's ``score_drifted`` and
 #: ``espn_id_drifted`` population, where the measured remedy is different and,
 #: for 8 of 21 drifted rows in that census, the stored score is already CORRECT.
-SLOT_COPY_PROOF = "stored score is ESPN's pair in ESPN's slots"
+#:
+#: 🔴 The sentence is about a STORE, not about the row. On a half-healed
+#: specimen the event score is already correct while `espn_snapshots` is still
+#: slot-copied, so a reason that said "stored score is …" printed a claim the
+#: operator could read off the same dry-run line and see was false. The written
+#: plan names the stores that carry the proof; nothing is written without one.
+SLOT_COPY_PROOF = "ESPN's pair still sits in ESPN's slots"
 
 # Settled rows ESPN can still adjudicate. ONE definition, shared by the census
 # and the candidate fetch so the bound and the work cannot drift apart.
@@ -428,9 +434,11 @@ def plan_orientation_repair(
     3. **The verdict must be a positive** ``swapped``. ``aligned`` is correct
        already; ``unresolved`` means we could not read the row's names, which is
        not evidence of anything. Neither is written.
-    4. **The stored score must be ESPN's pair in ESPN's slots**
+    4. **Each store must hold ESPN's pair in ESPN's slots** to be written
        (:data:`SLOT_COPY_PROOF`). This is what tells an orientation swap apart
-       from #7147's score drift, whose remedy is the opposite one.
+       from #7147's score drift, whose remedy is the opposite one. It is asked
+       of every store separately, and the plan's ``reason`` names the ones that
+       answered — on a half-healed row they are a strict subset.
 
     The two series are gated SEPARATELY and per series, on the same principle: a
     series is swapped only if its own last point is demonstrably in the swapped
@@ -559,10 +567,18 @@ def plan_orientation_repair(
                 f"espn leg {value} is undecided on a settled game — not evidence "
                 f"of an inversion, left alone")
 
-    if (plan.new_home_score is not None or plan.swap_espn_snapshots
-            or plan.swap_score_snapshots or plan.complement_espn_leg):
+    # The reason names the stores that earned the write, because on a
+    # half-healed row they are a strict subset and the operator reading the
+    # dry-run has to be able to check the sentence against the same line.
+    proven = [label for label, earned in (
+        ("events score", plan.new_home_score is not None),
+        ("espn_snapshots", plan.swap_espn_snapshots),
+        ("score_snapshots", plan.swap_score_snapshots),
+        ("espn leg", plan.complement_espn_leg),
+    ) if earned]
+    if proven:
         plan.action = "repair_orientation"
-        plan.reason = SLOT_COPY_PROOF
+        plan.reason = f"{SLOT_COPY_PROOF} in: {', '.join(proven)}"
     else:
         plan.action = "skip_nothing_to_repair"
         plan.reason = (

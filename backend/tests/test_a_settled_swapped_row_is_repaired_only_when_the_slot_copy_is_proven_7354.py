@@ -102,7 +102,15 @@ class TestTheSpecimenIsRepaired:
         assert plan.verdict == ESPN_ORIENTATION_SWAPPED
         assert plan.action == "repair_orientation"
         assert plan.writes is True
-        assert plan.reason == SLOT_COPY_PROOF
+        # The reason names the store that earned the write and only that store:
+        # this specimen is passed no series and no leg, so neither may appear.
+        assert plan.reason.startswith(SLOT_COPY_PROOF)
+        assert "events score" in plan.reason
+        for unproven in ("espn_snapshots", "score_snapshots", "espn leg"):
+            assert unproven not in plan.reason, (
+                f"{unproven!r} was never proven yet the reason claims it: "
+                f"{plan.reason!r}"
+            )
 
     def test_the_repaired_score_gives_the_winner_the_higher_number(self):
         """West Virginia is our home side and West Virginia scored 38."""
@@ -240,6 +248,23 @@ class TestTheHalfHealedRowIsStillRepaired:
 
         assert plan.complement_espn_leg is True
         assert plan.new_espn_win_prob_home == 1.0
+
+    def test_the_reason_names_the_proven_stores_and_claims_no_others(self):
+        """The operator's line has to survive being read against the row.
+
+        The reason used to be the flat sentence "stored score is ESPN's pair in
+        ESPN's slots" — the last trace of the one-global-gate design. On this
+        row the stored score is 38-27, the TRUE pair, so the dry-run printed a
+        claim the same line disproves, next to a destructive apply.
+        """
+        plan = self._half_healed()
+
+        assert "espn_snapshots" in plan.reason
+        assert "espn leg" in plan.reason
+        # The two stores #7338 already healed are not written, so the reason
+        # must not say they carried the proof.
+        assert "events score" not in plan.reason, plan.reason
+        assert "score_snapshots" not in plan.reason, plan.reason
 
 
 class TestTheProbabilityLegCarriesItsOwnProof:
