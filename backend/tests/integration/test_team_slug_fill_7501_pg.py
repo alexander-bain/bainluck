@@ -73,18 +73,27 @@ async def pg_session():
     from app.models.models import Sport, Team
     from app.services.database import Base
 
-    # Only the two tables this ship touches, rather than `Base.metadata` whole.
-    # Not an optimisation: the full schema carries DDL that needs PostgreSQL 15
-    # (`NULLS NOT DISTINCT`), and a fixture that only stands up on the CI image
-    # is a fixture nobody runs before pushing. `teams` and `sports` are the real
-    # ones, from `models.py`, with the real UNIQUE index on `teams.slug` — which
-    # is the entire reason this file wants a server.
+    # DROP the whole schema, CREATE only the two tables this ship touches.
+    #
+    # The asymmetry is deliberate and both halves were measured. `search-recall`
+    # shares ONE database across ~55 gates, so a subset `drop_all` raises
+    # `DependentObjectsStillExistError: constraint events_home_team_id_fkey on
+    # table events depends on table teams` against whatever the previous gate
+    # left behind — only the full graph knows the drop order. And a subset
+    # `create_all` skips the DDL that needs PostgreSQL 15 (`NULLS NOT DISTINCT`,
+    # on `container_provider_anchors`), so this file also stands up on a
+    # PostgreSQL 14 to hand — which is how the filler's `remaining` KeyError was
+    # found before a runner reported it as a red deploy gate.
+    #
+    # Dropping everything also resets the `sports` sequence, which is why the
+    # seeds below can let the serial fire instead of naming explicit ids the way
+    # #6221 and #7147 had to.
     tables = [Sport.__table__, Team.__table__]
 
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
         await conn.execute(text(f"DROP TABLE IF EXISTS {BANK_TABLE}"))
-        await conn.run_sync(Base.metadata.drop_all, tables=tables)
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all, tables=tables)
 
     maker = async_sessionmaker(engine, expire_on_commit=False)

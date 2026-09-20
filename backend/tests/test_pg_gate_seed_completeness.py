@@ -320,6 +320,24 @@ COVERED = (
     # the guard never fires), and the stored `home_score`/`away_score` pair,
     # where a NULL half is the carve-out the ship had to keep intact.
     "test_completed_espn_final_is_not_repoisoned_7147_pg.py",
+    # #7501: seeds `sports` and seven `teams` by raw INSERT to drive the slug
+    # filler against the real UNIQUE index on `teams.slug`, which IS the
+    # mechanism — 855 of the 4,004 slug-less clubs exist as a cohort only
+    # because that index refuses their clean name.
+    #
+    # One seeded column is nullable, invisible to the NOT-NULL arm below, and
+    # the entire subject: `teams.slug` itself. Three of the seven rows are
+    # seeded WITH a slug and four with NULL, and both halves are load-bearing —
+    # a seed that slugged everything would leave the filler nothing to do and
+    # every assertion would pass having filled nothing, while a seed that
+    # slugged nothing would remove the collisions and send all four rows to
+    # rung 1, so the three arms that exist to prove rungs 2 and 3 would pass
+    # while testing rung 1 three times.
+    #
+    # The `sports` rows let the serial fire rather than naming explicit ids
+    # (the #6221/#7147 hazard above) because this gate's fixture drops and
+    # recreates the whole schema first, which resets the sequence with it.
+    "test_team_slug_fill_7501_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

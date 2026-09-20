@@ -1610,7 +1610,32 @@ def free_background_slots(
 #: beat this week writes the identical `BACKGROUND_BEAT_COUNT = 124` against a
 #: base of 123 while this branch writes 124, and the composed tree is 125 with
 #: no textual conflict. Re-run the census after any rebase.
-BACKGROUND_BEAT_COUNT = 124
+#:
+#: 🔴 RE-DERIVED at authority/865 (2026-09-20, #7501): 124 → **125**, explicit
+#: 81 → **82**, fall-through UNMOVED at 43. One beat added,
+#: `backfill-team-slugs` (`crontab(minute="5,25,45")`) with an EXPLICIT
+#: `options: {"queue": "background"}`, which is why the explicit half is the
+#: one that moved. Counted by RUNNING the census in this file's own test
+#: against the assembled schedule on the composed tree, not by adding one to
+#: the line above.
+#:
+#: Cost shape, declared because this file is where `background` gets argued
+#: about: THREE fires an hour, each one indexed `SELECT … WHERE slug IS NULL
+#: ORDER BY id DESC LIMIT 500` plus up to 500 single-row UPDATEs inside their
+#: own savepoints. It is a DRAINING beat, not a standing one: 4,004 rows on
+#: 2026-09-20, ~1,500/hour, so it converges inside three hours to one empty
+#: indexed read per fire and stays there for as long as `upsert_team` keeps
+#: minting pageless clubs (a handful a day). `:05/:25/:45` is not a rounding —
+#: those minutes sit outside the settlement sweep's `10:31`+13m window, so
+#: `SWEEP_WINDOW_COFIRE_CEILING` is untouched, and crontab rather than an
+#: interval because `BACKGROUND_INTERVAL_FLOOR` rules that a background
+#: interval beat slower than 180 s is a co-fire, not a floor.
+#:
+#: ⚠️ The merge hazard applies to THIS line in turn: another lane adding a
+#: background beat this week writes the identical `BACKGROUND_BEAT_COUNT = 125`
+#: against a base of 124, and the composed tree is 126 with no textual
+#: conflict. Re-run the census after any rebase.
+BACKGROUND_BEAT_COUNT = 125
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
