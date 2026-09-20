@@ -312,8 +312,14 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     const i = SOURCE.indexOf("data: movedBuckets");
     expect(i).toBeGreaterThan(-1);
     const block = SOURCE.slice(i, i + 400);
-    expect(block).toContain("label: `Traded (");     // the nouns are unchanged
-    expect(block).toContain("label: `Untraded (");
+    // #6176's claim here is "the colours moved, the NOUNS did not". #7335 made
+    // those nouns one shared object instead of seven literals, so the anchor is
+    // re-pointed rather than dropped: the claim is identical, and the two halves
+    // of it now live in two files. This asserts the legend draws from the shared
+    // nouns; `calibrationMatchedBuckets.test.ts` (#7335) asserts those nouns are
+    // still "Traded"/"Untraded" and that nothing on the page re-spells them.
+    expect(block).toContain("label: `${COHORT_NOUNS.moved.column} (");
+    expect(block).toContain("label: `${COHORT_NOUNS.unchanged.column} (");
     expect(block).not.toContain("#16a34a");          // green
     expect(block).not.toContain("#dc2626");          // red
     // Categorical, drawn from the page's own palette, and the two series must

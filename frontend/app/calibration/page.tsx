@@ -19,6 +19,7 @@ import CalibrationBucketTable from "@/components/CalibrationBucketTable";
 import { CalibrationCardNote } from "@/components/CalibrationCardNote";
 import {
   buildSourcePanels,
+  COHORT_NOUNS,
   compareMatchedBuckets,
   describeActivityComparison,
   ece,
@@ -138,7 +139,10 @@ function CohortTag({ cohort, scope }: {
   // The traded-vs-untraded section draws from BOTH sides — that comparison is
   // its entire subject — so labelling it with the active cohort would be a lie
   // in the one place the distinction is being explained.
-  const text = scope === "comparison" ? "Traded vs untraded" : cohort.shortLabel;
+  const text =
+    scope === "comparison"
+      ? `${COHORT_NOUNS.moved.column} vs ${COHORT_NOUNS.unchanged.inline}`
+      : cohort.shortLabel;
   return (
     <span
       className="ml-2 align-middle text-[10px] uppercase tracking-wide text-text-muted border border-surface-border rounded px-1.5 py-0.5"
@@ -1475,9 +1479,14 @@ export default function CalibrationPage() {
                       {/* UX-P075 item (c): one vocabulary. These columns said
                           "Price moved"/"Price unchanged" while the toggle above
                           them said something else again — same two cohorts,
-                          three namings on one page. */}
-                      <th className="py-2 pr-4 font-medium text-right">Traded</th>
-                      <th className="py-2 pr-4 font-medium text-right">Untraded</th>
+                          three namings on one page.
+
+                          #7335: they now draw from `COHORT_NOUNS`, because the
+                          sentence forty pixels below this table was STILL on
+                          the old pair. Renaming six literals leaves a seventh;
+                          one object does not. */}
+                      <th className="py-2 pr-4 font-medium text-right">{COHORT_NOUNS.moved.column}</th>
+                      <th className="py-2 pr-4 font-medium text-right">{COHORT_NOUNS.unchanged.column}</th>
                       <th className="py-2 font-medium text-right">Difference</th>
                     </tr>
                   </thead>
@@ -1568,8 +1577,8 @@ export default function CalibrationPage() {
                 minimum hue separation, computed from the palette's own hexes. */}
             <CalibrationChart
               series={[
-                { data: movedBuckets, color: COLORS[0], label: `Traded (${movedN.toLocaleString()})` },
-                { data: unchangedBuckets, color: COLORS[5], label: `Untraded (${unchangedN.toLocaleString()})` },
+                { data: movedBuckets, color: COLORS[0], label: `${COHORT_NOUNS.moved.column} (${movedN.toLocaleString()})` },
+                { data: unchangedBuckets, color: COLORS[5], label: `${COHORT_NOUNS.unchanged.column} (${unchangedN.toLocaleString()})` },
               ]}
               width={700}
               height={400}
@@ -1595,12 +1604,12 @@ export default function CalibrationPage() {
             {/* UX-P075 item (c): "Active Trading" / "Opening Price Only" were a
                 fourth and fifth name for the same two cohorts. The nouns stay —
                 #6176 moved the claim, not the vocabulary. */}
-            <StatCard label="Traded"
+            <StatCard label={COHORT_NOUNS.moved.column}
               testId="calibration-activity-moved"
               value={`${movedECE.toFixed(1)}pp`}
               detail={`${movedN.toLocaleString()} outcomes`}
               valueClass="text-text-primary" />
-            <StatCard label="Untraded"
+            <StatCard label={COHORT_NOUNS.unchanged.column}
               testId="calibration-activity-unchanged"
               value={`${unchangedECE.toFixed(1)}pp`}
               detail={`${unchangedN.toLocaleString()} outcomes`}

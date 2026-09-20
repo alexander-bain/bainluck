@@ -25,6 +25,7 @@
 
 import {
   buildSourcePanels,
+  COHORT_NOUNS,
   compareMatchedBuckets,
   describeActivityComparison,
   ece,
@@ -382,5 +383,140 @@ describe("per-source panels keep the size difference the overlay conveyed by acc
     expect(buildSourcePanels(null)).toEqual([]);
     expect(buildSourcePanels([])).toEqual([]);
     expect(buildSourcePanels([{ source: "x", buckets: [{ n: 0, error: 0 }] }])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #7335 — ONE vocabulary for the two cohorts, asserted on the emitted sentence.
+//
+// UX-P075 item (c) (Alex, 2026-08-13) renamed the excluded cohort "untraded"
+// everywhere. Everywhere turned out to be five of six places: the table
+// headers, the chart legend and the two stat cards were renamed, and the
+// sentence printed directly UNDER that table kept saying "price-moved outcomes
+// run -3.5pp against +0.3pp for price-unchanged". One card, two vocabularies
+// for the same two cohorts, about forty vertical pixels apart, with nothing on
+// the page saying they were the same two.
+//
+// Every assertion in this file passed while that shipped, because each one read
+// a number. The naming was nobody's assertion. So the guards below are on the
+// EMITTED STRING (what the reader's eye lands on), not on a branch or a field:
+//
+//   1. both sentences on the card name the cohorts with the card's own nouns;
+//   2. no rival spelling survives anywhere in either sentence;
+//   3. the page draws those nouns from `COHORT_NOUNS` rather than re-spelling
+//      them, so a future rename moves one object and cannot leave a sixth site
+//      behind — which is the exact failure mode this issue was.
+//
+// Written to outlive the current wording: it pins that the sentence and the
+// headers are the SAME bytes, never what those bytes happen to say today.
+// ---------------------------------------------------------------------------
+
+/**
+ * The retired namings of THESE TWO COHORTS — UX-P075 item (c) lists them:
+ * "price moved"/"price unchanged" in the prose, "Active Trading"/"Opening
+ * Price Only" on the stat cards.
+ *
+ * Deliberately narrow. A first draft also banned /opening[-\s]price[-\s]only/i
+ * and reddened on the methodology sentence "An opening price only counts if
+ * there was a real offer on both sides of it" — which is prose about a price,
+ * not a name for a cohort. The retired LABEL is title-cased, so the label form
+ * is what is matched; a broader rule would make this guard something a future
+ * session edits around rather than obeys. `price_moved` (underscore) is the
+ * payload's flag and a machine key, in scope for nothing here.
+ */
+const RIVAL_COHORT_WORDS =
+  /[Pp]rice[-\s][Mm]oved|[Pp]rice[-\s][Uu]nchanged|Active Trading|Opening Price Only/;
+
+/** Source with comments removed, so a comment QUOTING the old wording is fine. */
+function codeOnly(relPath: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { readFileSync } = require("fs") as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { join } = require("path") as typeof import("path");
+  const src = readFileSync(join(__dirname, "..", "..", relPath), "utf8");
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    // `[^:]` so a URL's `//` is not read as a line comment and does not eat
+    // the rest of that line (which would weaken the scan, silently).
+    .split("\n")
+    .map(l => l.replace(/(^|[^:])\/\/.*$/, "$1"))
+    .join("\n");
+}
+
+describe("#7335 — the card names its two cohorts one way, not two", () => {
+  const matched = compareMatchedBuckets(
+    PROD_BUCKETS.map(b => ({
+      bucket_idx: b.bucket_idx,
+      price_moved: b.price_moved,
+      n: b.n,
+      winners: b.winners,
+      sum_prob: b.sum_prob,
+    }))
+  );
+
+  test("the matched-bucket sentence uses the same two nouns as the table headers", () => {
+    const s = matched.sentence as string;
+    expect(s).not.toBeNull();
+    // The headers render `COHORT_NOUNS.*.column`; the sentence is mid-clause,
+    // so it takes the same nouns in their inline form. Same object, one source.
+    expect(s).toContain(COHORT_NOUNS.moved.inline);
+    expect(s).toContain(COHORT_NOUNS.unchanged.inline);
+    expect(COHORT_NOUNS.moved.column.toLowerCase()).toBe(COHORT_NOUNS.moved.inline);
+    expect(COHORT_NOUNS.unchanged.column.toLowerCase()).toBe(COHORT_NOUNS.unchanged.inline);
+  });
+
+  test("no rival naming of the two cohorts survives in either sentence", () => {
+    // Both sentences on this card, not just the one that was wrong: the
+    // aggregate tiles sit inside the same disclosure and were renamed under the
+    // same ruling, so a regression there is the same defect.
+    const aggregate = describeActivityComparison(
+      { ece: 1.7, n: PROD.movedN },
+      { ece: 1.0, n: PROD.unchangedN }
+    ).sentence as string;
+
+    for (const sentence of [matched.sentence as string, aggregate]) {
+      expect(sentence).not.toMatch(RIVAL_COHORT_WORDS);
+    }
+    expect(aggregate).toContain(COHORT_NOUNS.moved.column);
+    expect(aggregate).toContain(COHORT_NOUNS.unchanged.inline);
+  });
+
+  test("the one-sided and thin-sample sentences carry the same nouns", () => {
+    // The sentence is emitted from one template, but a cohort word reaching a
+    // reader only on a fallback path is exactly how #7335 stayed invisible.
+    const oneSided = compareMatchedBuckets([
+      { bucket_idx: 2, price_moved: true, n: 5000, winners: 1000, sum_prob: 1250 },
+      { bucket_idx: 7, price_moved: true, n: 4000, winners: 3000, sum_prob: 2960 },
+      { bucket_idx: 7, price_moved: false, n: 4000, winners: 2900, sum_prob: 2960 },
+    ]);
+    const s = oneSided.sentence as string;
+    expect(s).toContain(COHORT_NOUNS.moved.inline);
+    expect(s).toContain(COHORT_NOUNS.unchanged.inline);
+    expect(s).not.toMatch(RIVAL_COHORT_WORDS);
+  });
+
+  test("the page re-spells neither noun — it draws both from COHORT_NOUNS", () => {
+    // The structural half. A guard that only reads the sentence cannot see a
+    // sixth site drifting away from it; this one fails the moment a literal
+    // cohort noun re-enters the page, which is how the two vocabularies grew
+    // apart in the first place.
+    const page = codeOnly("app/calibration/page.tsx");
+
+    expect(page).toContain("COHORT_NOUNS.moved.column");
+    expect(page).toContain("COHORT_NOUNS.unchanged.column");
+    expect(page).not.toMatch(/\b(?:Traded|Untraded)\b/);
+    expect(page).not.toMatch(RIVAL_COHORT_WORDS);
+  });
+
+  test("the nouns are spelled exactly once in the codebase — in COHORT_NOUNS", () => {
+    // `lib/calibrationMath.ts` owns the object, so it is the one file allowed
+    // to hold the literals, and it may hold them only in the definition.
+    const math = codeOnly("lib/calibrationMath.ts");
+    const literals = math.match(/\b(?:Traded|Untraded)\b/g) ?? [];
+    expect(literals).toEqual(["Traded", "Untraded"]);
+    expect(math).toMatch(
+      /moved:\s*\{\s*inline:\s*"traded",\s*column:\s*"Traded"\s*\}/
+    );
+    expect(math).not.toMatch(RIVAL_COHORT_WORDS);
   });
 });
