@@ -113,6 +113,36 @@ const AWAY_PROB = 0.26;
 const HOME_TEXT = "74%";
 const AWAY_TEXT = "26%";
 
+/**
+ * The kickoff every fixture in this file shares — an OFFSET from now, never a
+ * literal (#7602, gotcha #44).
+ *
+ * All four fixtures below are `status: "scheduled"` and every assertion in this
+ * file is about what a PRE-MATCH card prints: the two probability chips, which
+ * of them is withheld on a draw-priced sport, and how the bar's remainder is
+ * painted. None of them asserts a date or a time.
+ *
+ * They carried the literal `2026-09-20T18:40:00Z`, and at 18:40Z on 2026-09-20
+ * real time crossed it. `EventCard` then classified the event as started and
+ * rendered "No result reported · Sep 20" in place of the chips, so three of
+ * this suite's assertions went red — and stayed red, because a literal in the
+ * past never comes back. Master's CI was red on `c9873d185` for this and this
+ * alone, which blocks every lane's merge, not just this file's owner.
+ *
+ * A fixed offset with no branch in it is the repair gotcha #44 names ("offset
+ * FIRST, then truncate; if your anchor contains an `if`, it isn't fixed"). Three
+ * days out rather than a couple of hours so that no card on any of the four
+ * surfaces can read it as imminent or in-progress — the failure being repaired
+ * is precisely a card changing state as the clock approaches this instant.
+ *
+ * Worth naming for whoever reads this next: the fourth EventCard test
+ * ("CONTROL: a two-way sport paints a real away segment") stayed GREEN through
+ * the whole outage, because it asserts an ABSENCE and a card rendering "No
+ * result reported" contains no away segment either. A control that passes when
+ * its subject has stopped rendering is not confirming the control.
+ */
+const KICKOFF = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
 describe("#6238 the two arms are genuinely different", () => {
   it("the draw-priced key is declared and the control key is not", () => {
     expect(sportPricesADraw(DRAW_SPORT)).toBe(true);
@@ -210,7 +240,7 @@ function feedCard(sport: string, over: Partial<FeedEventData> = {}): FeedItem {
     sport_name: "League",
     home_team: "Sevilla FC",
     away_team: "Deportivo Alaves",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     status: "scheduled",
     home_score: null,
     away_score: null,
@@ -323,7 +353,7 @@ function sharedEvent(sport: string, over: Partial<Event> = {}): Event {
     sport_name: "League",
     home_team: "Sevilla FC",
     away_team: "Deportivo Alaves",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     status: "scheduled",
     home_score: null,
     away_score: null,
@@ -378,7 +408,7 @@ function discoverItem(sport: string): FeedItem {
       sport_name: "League",
       home_team: "Sevilla FC",
       away_team: "Deportivo Alaves",
-      commence_time: "2026-09-20T18:40:00Z",
+      commence_time: KICKOFF,
       status: "scheduled",
       home_score: null,
       away_score: null,
@@ -463,7 +493,7 @@ function matchupChild(): EventConceptChild {
     kind: "matchup",
     event_id: 15298551,
     status: "scheduled",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     home: { name: "Sevilla FC", probability: HOME_PROB },
     away: { name: "Deportivo Alaves", probability: AWAY_PROB },
   } as unknown as EventConceptChild;
