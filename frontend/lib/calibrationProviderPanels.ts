@@ -199,6 +199,51 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
   );
 }
 
+/** Where the shape breakout lives, and what its own control counts. */
+export interface ShapeBreakoutPointer {
+  /** The provider panel(s) to name, joined for prose. */
+  label: string;
+  /** How many panels that label covers — the sentence's grammatical number. */
+  providerCount: number;
+  /**
+   * The count the named control renders, or `null` when more than one control
+   * does and no single number is true of any of them.
+   */
+  keyCount: number | null;
+}
+
+/**
+ * The pointer a sentence elsewhere on the page uses to send a reader into the
+ * shape breakout — the panel to name, and the number they will see on it.
+ *
+ * #7308. Source Comparison's note pointed at ONE provider's disclosure and
+ * quoted the page-wide `sources.length`: the sentence promised "all 7 keys"
+ * while the control it named renders "Break out the shapes (4)". Both numbers
+ * were true — seven raw keys really are on the page, four of them really are in
+ * that panel — and that is what made it survive #6265, whose census asked the
+ * VOCABULARY question ("keys" is the right word for a raw count, so the line
+ * passed) and never the locality one: the number of keys in *what*.
+ *
+ * So `keyCount` is the very expression the `<summary>` renders, read off the
+ * same built panels, for the reason the header above already gives — a second
+ * expression that must stay in agreement with a rendered string is #1620's
+ * disease. Two breakout providers means two controls with two counts and no
+ * single number the reader can be promised, so the count is `null` and the
+ * caller writes the sentence without one, rather than summing two disclosures
+ * into a figure neither of them shows.
+ */
+export function shapeBreakoutPointer(
+  panels: readonly ProviderPanel[]
+): ShapeBreakoutPointer | null {
+  const withShapes = shapeBreakdownProviders(panels);
+  if (!withShapes.length) return null;
+  return {
+    label: withShapes.map(p => p.label).join(" and "),
+    providerCount: withShapes.length,
+    keyCount: withShapes.length === 1 ? withShapes[0].sources.length : null,
+  };
+}
+
 /**
  * The Sources KPI's subtext — UX-P080 / Alex round 2, item 2.
  *

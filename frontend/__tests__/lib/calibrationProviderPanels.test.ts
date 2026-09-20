@@ -1,6 +1,7 @@
 import {
   buildProviderPanels,
   shapeBreakdownNote,
+  shapeBreakoutPointer,
   type ProviderPanelInput,
   providerKpiDetail,
   withoutGroupQualifier,
@@ -261,6 +262,74 @@ describe("shapeBreakdownNote — derived from the panels, not from a condition",
 
   it("says nothing for an empty panel set", () => {
     expect(shapeBreakdownNote([])).toBeNull();
+  });
+});
+
+describe("shapeBreakoutPointer — the count is the PANEL's, never the page's (#7308)", () => {
+  it("counts the keys in the panel it names, not the keys on the page", () => {
+    // Five source keys on the page; the panel the sentence points at holds
+    // three of them. The old call site quoted five. This is the whole defect.
+    const panels = buildProviderPanels(liveInputs());
+    const pointer = shapeBreakoutPointer(panels)!;
+    expect(pointer).not.toBeNull();
+    expect(pointer.label).toBe("Sportsbooks (Odds API)");
+    expect(pointer.providerCount).toBe(1);
+    expect(pointer.keyCount).toBe(3);
+    expect(pointer.keyCount).not.toBe(LIVE_SOURCES.length);
+  });
+
+  it("returns the very expression the control renders, for any grouping", () => {
+    // Stated as an identity rather than a number so it survives a regrouping:
+    // `<summary>Break out the shapes ({p.sources.length})</summary>` is the
+    // control, and this is that same read.
+    const panels = buildProviderPanels(liveInputs());
+    const breakout = panels.filter(p => p.hasShapeBreakdown);
+    expect(breakout).toHaveLength(1);
+    expect(shapeBreakoutPointer(panels)!.keyCount).toBe(breakout[0].sources.length);
+  });
+
+  it("refuses a number when two controls would each render a different one", () => {
+    // Two breakout providers means no single figure is true of either
+    // disclosure. Summing them would invent a count neither control shows —
+    // the same invention one scope up.
+    const twoFamilies = buildProviderPanels([
+      {
+        provider: "odds_api_family",
+        label: "Sportsbooks (Odds API)",
+        sources: ["odds_api", "odds_api_totals", "odds_api_spreads"],
+        buckets: [{ n: 100, error: 2 }],
+        pooledEce: 4.2,
+      },
+      {
+        provider: "kalshi",
+        label: "Kalshi",
+        sources: ["kalshi", "kalshi_scalar"],
+        buckets: [{ n: 90, error: 2 }],
+        pooledEce: 3.0,
+      },
+    ]);
+    const pointer = shapeBreakoutPointer(twoFamilies)!;
+    expect(pointer.providerCount).toBe(2);
+    expect(pointer.keyCount).toBeNull();
+    expect(pointer.label).toBe("Sportsbooks (Odds API) and Kalshi");
+  });
+
+  it("points nowhere when there is no disclosure to point at", () => {
+    // Same UX-P075 rule `shapeBreakdownNote` above is held to: the sentence
+    // must be unable to describe a control the page is not rendering. The old
+    // call site was gated on `shapeInline`, which is false in this case too —
+    // so it sent a reader to a Sportsbooks panel that does not exist.
+    const singleShapeOnly = buildProviderPanels(
+      groupSourcesByProvider(["kalshi", "polymarket"]).map(g => ({
+        provider: g.provider,
+        label: g.label,
+        sources: g.sources,
+        buckets: bucketsFor(g.sources[0]),
+        publishedEce: 2.0,
+      }))
+    );
+    expect(shapeBreakoutPointer(singleShapeOnly)).toBeNull();
+    expect(shapeBreakoutPointer([])).toBeNull();
   });
 });
 
