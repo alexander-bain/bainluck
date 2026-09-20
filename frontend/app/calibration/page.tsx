@@ -58,6 +58,7 @@ import {
 import {
   buildProviderPanels,
   eceInputsForPanel,
+  panelSpreadNote,
   providerKpiDetail,
   shapeBreakdownNote,
   shapeBreakdownProviders,
@@ -2074,9 +2075,8 @@ export default function CalibrationPage() {
             <p className="text-xs text-text-muted" data-testid="calibration-panels-key-note">
               Every bucket is shown. Solid dots are well-sampled; faded hollow dots are under{" "}
               {MIN_CHART_BUCKET_N.toLocaleString()} outcomes, and the curve is dashed wherever it
-              runs into one. Error bars are the 95% CI &mdash; wider means less certain. Each panel
-              states its own sample size, and the providers differ by more than 28x in how much of
-              the curve they carry.
+              runs into one. Error bars are the 95% CI &mdash; wider means less certain.{" "}
+              {panelSpreadNote(providerPanels)}
             </p>
             {providerShapeNote && (
               <p className="text-xs text-text-muted" data-testid="calibration-shape-annex-note">

@@ -344,6 +344,52 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
   );
 }
 
+/**
+ * How far apart the drawn panels are in size, as the panels-key fold states it.
+ *
+ * #7581. This was a hardcoded `28x` in the JSX, and both halves of the number
+ * had moved out from under it: it was measured when the section overlaid FIVE
+ * source curves on one axis (~420K against ~15K), and the default cohort now
+ * draws three panels spanning 2.7x. The fold's own header says its notes are
+ * derived from the built panels "never from a condition that implies them" —
+ * this was the one sentence in it that wasn't, and it was the one that was
+ * wrong. Wrong in both directions, too: 2.7x in the traded cohort, and 9,081x
+ * in the all-markets cohort, where a 36-outcome DataGolf panel is drawn the
+ * same size as a 326,909-outcome Kalshi one. That second case is the whole
+ * reason the sentence exists, and the frozen figure understated it 325x.
+ *
+ * The size half is unconditional — every panel does state its own n — so this
+ * always returns a sentence. Only the comparison is conditional, and it drops
+ * out when there is nothing to compare: fewer than two panels, or panels close
+ * enough that the ratio rounds to 1.0.
+ *
+ * No bound verb over the ratio (#7573, same page): the figure is stated, not
+ * capped. "More than Nx" has to be re-argued against the data every time the
+ * data moves, which is how `28x` survived as long as it did.
+ */
+export function panelSpreadNote(panels: readonly ProviderPanel[]): string {
+  const base = "Each panel states its own sample size";
+  const ns = panels.map(p => p.n).filter(n => Number.isFinite(n) && n > 0);
+  if (ns.length < 2) return `${base}.`;
+  const spread = formatSpread(Math.max(...ns) / Math.min(...ns));
+  if (!spread) return `${base}.`;
+  return `${base}, and the largest here carries ${spread}x the outcomes of the smallest.`;
+}
+
+/**
+ * The ratio at the precision the sentence quotes it, or null when it rounds to
+ * parity and the comparison is not worth making. Formatting, not deriving —
+ * the sibling of `toDisplay` above.
+ */
+function formatSpread(ratio: number): string | null {
+  if (!Number.isFinite(ratio) || ratio < 1) return null;
+  if (ratio < 10) {
+    const oneDp = Math.round(ratio * 10) / 10;
+    return oneDp <= 1 ? null : oneDp.toFixed(1);
+  }
+  return Math.round(ratio).toLocaleString("en-US");
+}
+
 /** Where the shape breakout lives, and what its own control counts. */
 export interface ShapeBreakoutPointer {
   /** The provider panel(s) to name, joined for prose. */
