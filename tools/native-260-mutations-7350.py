@@ -150,9 +150,24 @@ MUTANTS = [
      'let earlierPhrase = "\\(earlier) earlier prices"',
      "'1 earlier prices' — the sentence reads as a template.", "unit"),
     ("in-window-branch-collapsed",
-     'let note = inWindow == 0\n            ? "No prices \\(windowWord) — \\(earlierPhrase)"\n            : "One price \\(windowWord) — \\(earlierPhrase)"',
-     'let note = "No prices \\(windowWord) — \\(earlierPhrase)"',
+     'case 0: windowPhrase = "No prices \\(windowWord)"\n        case 1: windowPhrase = "One price \\(windowWord)"',
+     'case 0: windowPhrase = "No prices \\(windowWord)"\n        case 1: windowPhrase = "No prices \\(windowWord)"',
      "the specimen's one visible price is denied.", "unit"),
+
+    # ═══ the window count is a COUNT, not a ternary ═══
+    # `cardBody` gates on POINTS and this sentence counts INSTANTS; a timeline
+    # entry holding only `Field` or only outcomes past `topFilter` is an instant
+    # with no point, so a sparse card CAN hold two or more. The first cut read
+    # both of these branches as "one or none" and lied on every such window.
+    ("several-prices-called-one",
+     'default: windowPhrase = "\\(inWindow) prices \\(windowWord)"',
+     'default: windowPhrase = "One price \\(windowWord)"',
+     "three observations reported to the reader as one.", "unit"),
+    ("full-window-read-as-no-history",
+     'note: inWindow == 1\n                    ? "Only one price seen so far"\n                    : "\\(inWindow) prices seen so far"',
+     'note: "No price history yet"',
+     "'No price history yet' printed over a response holding nine prices — the "
+     "exact gotcha #53 sentence this ship exists to stop.", "unit"),
 
     # ═══ the window's own name ═══
     ("window-word-borrows-the-chip",
