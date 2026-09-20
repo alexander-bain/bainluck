@@ -4232,7 +4232,10 @@ def diversify_quality_families(
         return story_family_cap
 
     story_overflow: dict[str, list[dict]] = {}
-    story_kept: dict[str, list[dict]] = {}
+    # Positions in `kept`, NOT the survivor dicts themselves: the reserve is
+    # written to a COPY at the end of this function (see below), so the carrier
+    # has to be replaced in the list rather than mutated where it sits.
+    story_kept_idx: dict[str, list[int]] = {}
 
     for item in sorted_items:
         family = item.get("_quality_family_key")
@@ -4262,16 +4265,29 @@ def diversify_quality_families(
             exact_counts[family] = exact_counts.get(family, 0) + 1
         if story:
             story_counts[story] = story_counts.get(story, 0) + 1
-            story_kept.setdefault(story, []).append(item)
+            story_kept_idx.setdefault(story, []).append(len(kept))
         kept.append(item)
 
     # Attach each story's surplus to EVERY survivor of that story, sharing one
     # list object. Not just the top one: a later pass may drop any single item,
     # and hanging the reserve off one carrier would make its survival the thing
     # that decides whether the bundle is complete.
+    #
+    # THE RESERVE IS WRITTEN TO A COPY, NEVER IN PLACE (#7426 repair,
+    # CERT-3162). The fused broaden pass (`FEED_FUSED_BROADEN_PASS`, default ON)
+    # builds its strict and relaxed pools OVER THE SAME DICT OBJECTS and runs
+    # this function once per pool, in turn. An in-place write here therefore
+    # stamped the relaxed pool's surplus onto items the strict pool also holds,
+    # and a strict bundle could seat relaxed-only members with the thin-pool
+    # broadening gate shut. Writing to a shallow copy keeps each pass's reserve
+    # pool-local: the carrier a reserve lands on is never a dict the other pool
+    # holds. Only carriers that actually GET a reserve are copied, so identity is
+    # unchanged for the rest of the list — and nothing downstream depends on the
+    # identity of a carrier either way, because the pools are merged by item id
+    # (`(it.get("data") or {}).get("id")`), never by object identity.
     for story, overflow in story_overflow.items():
-        for survivor in story_kept.get(story, ()):
-            survivor["_story_overflow_members"] = overflow
+        for idx in story_kept_idx.get(story, ()):
+            kept[idx] = {**kept[idx], "_story_overflow_members": overflow}
 
     return kept
 

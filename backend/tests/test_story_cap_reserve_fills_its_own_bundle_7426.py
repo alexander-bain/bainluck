@@ -17,12 +17,16 @@ reserved item, and the reserve can never conjure a bundle that would not have
 formed.
 """
 
+import copy
+
 from app.utils.discover_bundles import (
     _with_story_overflow,
     assemble_story_theme_bundles,
+    fold_same_question_cards,
 )
 from app.utils.feed_market_quality import (
     STORY_OVERFLOW_RESERVE,
+    cap_low_quality_families,
     diversify_quality_families,
 )
 
@@ -262,3 +266,159 @@ def test_the_reserve_never_reaches_a_reader():
 
     for member in bundle["data"]["items"]:
         assert not [k for k in member if k.startswith("_")]
+
+
+# ── THE RESERVE IS POOL-LOCAL (#7426 repair, CERT-3162) ──────────────────────
+#
+# Every guard above exercises ONE pool. The fused broaden pass
+# (`FEED_FUSED_BROADEN_PASS`, default ON) runs `_dedupe_and_cap` TWICE, over a
+# strict list and a relaxed list that SHARE ITEM OBJECTS — feed.py's own comment
+# at the collection site says so. The first shipped reserve was an in-place write
+# on those shared dicts, so the relaxed pass stamped its surplus onto items the
+# strict pool also held and a strict bundle seated relaxed-only members with the
+# broadening gate shut. 256 green focused tests were all consistent with that
+# bug, because a guard that builds its subject one pool at a time cannot fail on
+# an interaction between two. These build BOTH pools the way the route does.
+
+
+def _dedupe_and_cap(items: list[dict]) -> list[dict]:
+    """The route's `_dedupe_and_cap` (routes/feed.py), minus its group-id step.
+
+    `_dedupe_futures_by_group_id` is private to feed.py and keys on `group_id`,
+    which no fixture here sets, so it is a no-op on this cohort; the three caps
+    that DO act on it are the real ones, in the real order.
+    """
+    items = cap_low_quality_families(items, cap=1)
+    items = diversify_quality_families(
+        items, exact_family_cap=1, story_family_cap=5
+    )
+    return fold_same_question_cards(items)
+
+
+def _two_shared_pools() -> tuple[list[dict], list[dict]]:
+    """Strict and relaxed pools over THE SAME dict objects, as the route builds them.
+
+    Five Middle East questions clear the strict filters; three more clear only
+    the relaxed ones. The story cap is 4, so BOTH passes overflow — the strict
+    pass by one item (id 5), the relaxed pass by four (ids 5, 6, 7, 8).
+    """
+    strict = _middle_east_cohort(5)
+    relaxed_only = [
+        _item(6, "Houthi attack on a US vessel by...?", score=70),
+        _item(7, "Will Hezbollah disarm in 2026?", score=69),
+        _item(8, "Egypt-Israel treaty suspended by...?", score=68),
+    ]
+    # Same objects in both lists — that sharing is the whole hazard.
+    return strict, strict + relaxed_only
+
+
+def _bundle_members(items: list[dict]) -> list[int]:
+    bundle = next(
+        (it for it in assemble_story_theme_bundles(items) if it["type"] == "bundle"),
+        None,
+    )
+    assert bundle is not None, "the Middle East cluster must still fold"
+    return sorted(bundle["data"]["member_ids"])
+
+
+def test_the_relaxed_pass_cannot_change_what_the_strict_bundle_seats():
+    """The named repair: assemble the strict bundle before and after the relaxed cap.
+
+    This is the exact production order — `_dedupe_and_cap(strict_items)` then
+    `_dedupe_and_cap(relaxed_pool)` — and it is the assertion the shipped version
+    fails: with the in-place write the second call reaches back through the
+    shared dicts and re-seats a bundle that was already decided.
+    """
+    strict_pool, relaxed_pool = _two_shared_pools()
+
+    strict_kept = _dedupe_and_cap(strict_pool)
+    before = _bundle_members(strict_kept)
+
+    _dedupe_and_cap(relaxed_pool)
+    after = _bundle_members(strict_kept)
+
+    assert before == after
+
+
+def test_a_relaxed_only_question_stays_off_the_strict_card():
+    """Ids 6-8 exist only in the relaxed pool; the strict card may not seat them.
+
+    Seating one means a reader on a healthy (fat) pool is shown a market that
+    only the relaxed no-movement/no-resolution windows admit — the broadening
+    gate decides that, and here it never opened.
+    """
+    strict_pool, relaxed_pool = _two_shared_pools()
+
+    strict_kept = _dedupe_and_cap(strict_pool)
+    _dedupe_and_cap(relaxed_pool)
+
+    members = _bundle_members(strict_kept)
+    assert members == [1, 2, 3, 4, 5], members
+
+
+def test_the_7426_recovery_still_happens_on_the_strict_pool():
+    """Without this the repair could pass by simply reverting the ship.
+
+    Id 5 is the strict pool's OWN story-cap surplus (cap 4, five questions). It
+    must still reach the card — that recovery is what #7426 is.
+    """
+    strict_pool, relaxed_pool = _two_shared_pools()
+
+    strict_kept = _dedupe_and_cap(strict_pool)
+    _dedupe_and_cap(relaxed_pool)
+
+    assert len(strict_kept) == MIDDLE_EAST_SLOT_CAP
+    assert 5 in _bundle_members(strict_kept)
+
+
+def test_the_broadened_pool_may_seat_its_own_surplus_when_broadening_fires():
+    """The capability is confined, not removed.
+
+    When the strict pool is thin the route merges the broadened pool's NEW ids
+    into the feed (#1090), and a row that arrives that way carries the RELAXED
+    pass's reserve. A relaxed-only question on the card is correct then — and,
+    by the test above, only then.
+
+    Id 9 is the specimen: relaxed-only AND over the relaxed story cap, so its one
+    and only route onto a card is the reserve of a carrier the merge admitted.
+    Three strict questions (under the cap of 4) keep the strict pass out of it.
+    """
+    strict_pool = _middle_east_cohort(3)
+    relaxed_pool = strict_pool + [
+        # Outranks the strict rows, so it survives the relaxed cap and the merge
+        # admits it — it is the carrier.
+        _item(6, "Houthi attack on a US vessel by...?", score=110),
+        # Over the relaxed cap: reachable only as that carrier's reserve.
+        _item(9, "Egypt-Israel treaty suspended by...?", score=60),
+    ]
+
+    strict_kept = _dedupe_and_cap(strict_pool)
+    broadened = _dedupe_and_cap(relaxed_pool)
+
+    assert 9 not in _bundle_members(strict_kept), "not without the merge"
+
+    seen_ids = {(it.get("data") or {}).get("id") for it in strict_kept}
+    merged = strict_kept + [
+        it for it in broadened if (it.get("data") or {}).get("id") not in seen_ids
+    ]
+
+    members = _bundle_members(merged)
+    assert 6 in members and 9 in members, members
+
+
+def test_the_cap_does_not_mutate_the_items_it_is_given():
+    """The invariant behind all four, stated once so the next reserve inherits it.
+
+    Any pass that writes to an item it was handed is writing into every other
+    pool that holds it. `diversify_quality_families` is called once per pool over
+    shared objects, so it may read its inputs and it may copy them — it may not
+    touch them.
+    """
+    _, relaxed_pool = _two_shared_pools()
+    before = copy.deepcopy(relaxed_pool)
+
+    diversify_quality_families(
+        relaxed_pool, exact_family_cap=1, story_family_cap=5
+    )
+
+    assert relaxed_pool == before
