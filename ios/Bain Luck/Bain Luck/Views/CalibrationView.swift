@@ -626,8 +626,15 @@ struct CalibrationSurfaceView: View {
     // MARK: - Category Breakdown
 
     private var categoryBreakdownSection: some View {
+        // #7515 — the caption names the population its bar counts. The bar is
+        // all-cohort (#7195/#7302); the Outcomes column beside it is
+        // cohort-scoped (#7190). `renderedRowOutcomes` is the column as drawn,
+        // read off the SAME array the ForEach below iterates, so the clause
+        // cannot drift from the rows it describes.
         cardSection("Category Breakdown",
-                    sub: "Raw leagues are rolled up into product-level categories, sorted by ECE. Categories below \(fmtN(viewModel.minCategoryOutcomes)) resolved outcomes are held out — see below.") {
+                    sub: CalibrationPopulation.categoryTableNote(
+                        bar: viewModel.minCategoryOutcomes,
+                        renderedRowOutcomes: viewModel.topCategoryRows.map(\.n))) {
             if let best = viewModel.bestCategoryRow, let worst = viewModel.worstCategoryRow {
                 HStack(spacing: 10) {
                     categorySummaryCard("Best calibrated", best, .green)
@@ -865,8 +872,10 @@ struct CalibrationSurfaceView: View {
         }
     }
 
+    /// One definition, shared with the caption that has to quote the bar in the
+    /// characters this column prints (#7515). See `CalibrationPopulation`.
     private func fmtN(_ n: Int) -> String {
-        n >= 1000 ? String(format: "%.1fK", Double(n) / 1000) : "\(n)"
+        CalibrationPopulation.compactCount(n)
     }
 }
 
