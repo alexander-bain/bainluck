@@ -140,6 +140,80 @@ export function providerLabel(provider: string): string {
   return PROVIDER_DISPLAY_NAMES[provider] || prettifySourceKey(provider);
 }
 
+// ---------------------------------------------------------------------------
+// NAMING A PROVIDER INSIDE A SENTENCE — #7456
+//
+// A third register, for the same reason `SOURCE_DISPLAY_NAMES` and
+// `PROVIDER_DISPLAY_NAMES` are two: a name that labels a table row and a name
+// that sits mid-sentence genuinely disagree, and collapsing them would make one
+// of the two read wrong. "Sportsbooks (Odds API)" is right above a column of
+// figures and wrong inside "We analyzed 747,028 resolved predictions across …",
+// where the supplier's name is plumbing and the sentence wants the thing itself.
+//
+// WHAT THIS IS FOR. The hero sentence and the "What's included?" bullet each
+// state a total and then name the providers behind it. Both were hand-written
+// lists of three, and the page publishes four: on the all-markets cohort the
+// hero credited 747,028 outcomes — DataGolf's 36 included — to "Kalshi,
+// Polymarket, and sportsbook odds", 500px above a stat card reading SOURCES 4
+// and naming DataGolf. That is #6265's rule ("the page answers 'how many
+// sources' ONCE, from `providerGroups`") with the NAMES half never converted.
+//
+// WHY THE FALLBACK IS A REAL NAME, NOT A THROW. An unmapped provider must still
+// reach the sentence, because the failure this exists to prevent is a provider
+// being counted in a total and left out of the list that explains it. Falling
+// back to `providerLabel` costs a slightly stiff phrase for one release; the
+// alternatives (drop it, or throw and blank the hero) both reintroduce the
+// defect. `calibrationProviders.test.ts` pins the map CLOSED over the payload's
+// providers, so on real data the fallback is never the thing a reader sees.
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider names as they read mid-sentence.
+ *
+ * Exported so a test can assert the map is CLOSED over the providers the
+ * payload publishes. Comparing `providerProseName` against `providerLabel`
+ * cannot do that job: they agree on Kalshi, Polymarket and DataGolf by design,
+ * so a missing entry would look identical to a present one.
+ */
+export const PROVIDER_PROSE_NAMES: Record<string, string> = {
+  kalshi: "Kalshi",
+  polymarket: "Polymarket",
+  odds_api_family: "sportsbook odds",
+  datagolf: "DataGolf",
+};
+
+export function providerProseName(provider: string): string {
+  return PROVIDER_PROSE_NAMES[provider] || providerLabel(provider);
+}
+
+/**
+ * Name a set of providers as an Oxford-comma list, for a sentence that
+ * attributes a stated total to them.
+ *
+ * Takes provider KEYS and the register to name them in, so the list a sentence
+ * prints and the rows the page renders can be derived from one array. The
+ * caller decides WHICH providers — the cohort's, or the whole population's —
+ * because that is the part that differs between the two sentences and the part
+ * a reader would catch us getting wrong.
+ *
+ * Empty in, empty out: a caller renders the "across …" clause only when there
+ * is something to name, rather than printing a sentence that trails into a
+ * full stop. Duplicates are dropped so a repeated key cannot name a provider
+ * twice.
+ */
+export function listProviderNames(
+  providers: readonly string[],
+  nameOf: (provider: string) => string = providerProseName
+): string {
+  const names = [...new Set(providers)].map(nameOf);
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  // Two names take no comma; three or more take the serial comma the page's
+  // existing sentences already use ("moneylines, spreads, and totals").
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 /**
  * Reader-facing names for individual SOURCE keys.
  *

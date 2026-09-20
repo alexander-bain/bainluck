@@ -43,7 +43,10 @@ import {
 } from "@/lib/calibrationProvability";
 import {
   groupSourcesByProvider,
+  listProviderNames,
   makeSourceLabeller,
+  providerLabel,
+  providerOf,
   shapeBreakdownIsSymmetric,
   SHAPE_BREAKDOWN_MIN_N,
 } from "@/lib/calibrationProviders";
@@ -903,6 +906,55 @@ export default function CalibrationPage() {
   // renders — so the section cannot omit a provider the table names.
   const withheldNote = withheldSourcesNote(sourceRows, cohort.toggleLabel);
 
+  // #7456 — THE TWO SENTENCES THAT ATTRIBUTE A TOTAL TO ITS SOURCES.
+  //
+  // Both were hand-written lists of three providers over a page that publishes
+  // four. The hero credited the all-markets 747,028 — DataGolf's 36 included,
+  // `by_source` sums to it exactly — to "Kalshi, Polymarket, and sportsbook
+  // odds", 500px above the stat card reading SOURCES 4 and naming DataGolf.
+  // This is #6265's ruling ("the page answers 'how many sources' ONCE, from
+  // `providerGroups`") with the NAMES half never converted.
+  //
+  // The two lists are scoped differently because their SUBJECTS are, and that
+  // is the whole reason each needs its own derivation rather than one shared
+  // constant:
+  //
+  //   hero          `cohort.heroClause` — the cohort. DataGolf is 0 in the
+  //                 default cohort, so naming it there would be the opposite
+  //                 falsehood. Keyed on `sourceRowsExcludedFromRollup`, the
+  //                 same predicate `withheldNote` and `bySourceCaption` read,
+  //                 so the sentence cannot name a provider the table says has
+  //                 nothing in this cohort.
+  //   methodology   `data.total_outcomes` — the whole published population,
+  //                 whatever the toggle says. So it names all four, always.
+  //
+  // Order is `providerGroups`', which is `sources`' descending-outcome order —
+  // the order the Sources card already prints its names in. Ordering by cohort
+  // n instead would reshuffle the hero when the toggle moves, for no reader
+  // benefit.
+  const heroProviderNames = (() => {
+    const withheld = new Set(sourceRowsExcludedFromRollup(sourceRows).map(r => r.provider));
+    return listProviderNames(
+      providerGroups.filter(g => !withheld.has(g.provider)).map(g => g.provider)
+    );
+  })();
+  // Measured, not assumed: a provider is in the population list because it has
+  // outcomes in the payload, not because it has a key in it.
+  const populationProviderNames = (() => {
+    const nByProvider = new Map<string, number>();
+    for (const b of normalized) {
+      const p = providerOf(b.source);
+      nByProvider.set(p, (nByProvider.get(p) ?? 0) + b.n);
+    }
+    return listProviderNames(
+      providerGroups.filter(g => (nByProvider.get(g.provider) ?? 0) > 0).map(g => g.provider),
+      // The methodology fold describes the Source Comparison rows, so it names
+      // them the way those rows are labelled — supplier attribution and all,
+      // which is what "(via The Odds API)" was doing here by hand.
+      providerLabel
+    );
+  })();
+
   // #7316: the "Top 5" tab is the top 5 of the cohort on screen, in the order
   // its own labels print — see `cohortOrderedCategories`.
   const catChartData = (
@@ -1075,9 +1127,18 @@ export default function CalibrationPage() {
       {/* Hero */}
       <div className="text-center space-y-3 pb-6 border-b border-surface-border">
         <h1 className="text-title-1 text-text-primary">Do Prediction Markets Predict Anything?</h1>
-        <p className="text-text-secondary max-w-2xl mx-auto">
-          We analyzed {cohort.heroClause} across
-          Kalshi, Polymarket, and sportsbook odds (moneylines, spreads, and totals). The answer: when markets say
+        {/* #7456 — the provider list comes from the rows, never from this file.
+            The shape parenthetical "(moneylines, spreads, and totals)" that
+            stood after "sportsbook odds" is DELETED rather than re-derived: it
+            was a second hand-written enumeration of the same family, it named
+            three of its four keys (omitting `odds_api_bookmaker`, 106,030 of
+            the family's 155,127 outcomes), and the Sources card below already
+            derives that list in full. One place owns the shapes; the hero's job
+            is to say whose outcomes the number is. */}
+        <p className="text-text-secondary max-w-2xl mx-auto" data-testid="calibration-hero-sources"
+          data-hero-sources={heroProviderNames}>
+          We analyzed {cohort.heroClause}
+          {heroProviderNames ? ` across ${heroProviderNames}` : ""}. The answer: when markets say
           something has a 30% chance of happening, it happens about 30% of the time.
         </p>
         {/* Queue 316 item 3. The greeting is a sentence a person can check; the
@@ -2679,7 +2740,7 @@ export default function CalibrationPage() {
               different words, so it passed every arm. The guard added beside
               those bans the CLAIM SHAPE and is keyed on the payload, so it goes
               quiet only if the asymmetry is actually closed. */}
-          <li><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""} across Kalshi, Polymarket, and sportsbook odds (via The Odds API). That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted. Data refreshes hourly.</li>
+          <li data-population-sources={populationProviderNames}><strong className="text-text-primary">What&rsquo;s included?</strong> {data.total_outcomes.toLocaleString()} resolved outcomes{data.date_range?.start && data.date_range?.end ? ` from ${monthYear(data.date_range.start)}–${monthYear(data.date_range.end)}` : ""}{populationProviderNames ? ` across ${populationProviderNames}` : ""}. That published total is lower than the raw resolved-outcome count because we exclude markets that can&rsquo;t form an honest prediction &mdash; see the exclusions below. A price without participants isn&rsquo;t a prediction, so never-traded outcomes are excluded &mdash; completely on Kalshi, and on Polymarket only inside its placeholder band, which leaves some of them still counted. Data refreshes hourly.</li>
           {/* CAL-P1217 — the exclusions stop being a handful of named rules and
               become an accounting a reader can add up.
               *
