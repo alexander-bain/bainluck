@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { markSearchDestination } from "@/lib/searchFunnel";
 import Link from "next/link";
 import { searchEvents, fetchSearchSuggestions } from "@/lib/api";
-import { getLeagueDisplay, getEmojiForLeague, getSportLabel } from "@/lib/sportCategories";
+import { getLeagueDisplay, getEmojiForLeague, getSportLabel, getTeamRowSportLabel } from "@/lib/sportCategories";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime, useAnalytics } from "@/hooks";
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
@@ -21,7 +21,7 @@ import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
 import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { trackEvent } from "@/lib/analytics";
-import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
+import type { SearchResponse, SearchSportFacet, SearchSuggestion, SearchTeam } from "@/lib/types";
 
 // Representative example queries spanning the search gold-set's classes (a team,
 // a season future, a politics question) — a self-contained zero-state that works
@@ -164,13 +164,16 @@ function SearchZeroState({
   );
 }
 
-function TeamCard({ team }: { team: SearchTeam }) {
+// #7390 (#5780's web twin): `sports` is the SAME array the filter pills above
+// these cards are built from, and it is passed in so the row can read the name
+// the server gave this league instead of shortening the key itself. A card
+// rendered without it still says a sport, never a key — see
+// `getTeamRowSportLabel`.
+export function TeamCard({ team, sports }: { team: SearchTeam; sports?: SearchSportFacet[] }) {
   const url = buildTeamPageUrl(team.name, team.sport_key);
   if (!url) return null;
 
-  const sportLabel = team.sport_key
-    ? team.sport_key.split("_").slice(1).join(" ").toUpperCase()
-    : null;
+  const sportLabel = getTeamRowSportLabel(team.sport_key, sports);
 
   return (
     <Link
@@ -520,7 +523,7 @@ function SearchContent() {
           <SectionHeader title="Teams" count={results.teams.length} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {results.teams.map((team) => (
-              <TeamCard key={team.id} team={team} />
+              <TeamCard key={team.id} team={team} sports={results.sports} />
             ))}
           </div>
         </section>

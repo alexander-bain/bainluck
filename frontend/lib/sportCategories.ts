@@ -942,6 +942,70 @@ export function getSportLabel(
     : (servedName as string).trim();
 }
 
+/** The minimal shape of a served sport row: the key and the name beside it.
+ *  `SearchSportFacet` (the search payload's `sports[]`, which the filter pills
+ *  are built from) satisfies it. */
+export interface ServedSportRow {
+  key: string;
+  name?: string | null;
+}
+
+/**
+ * The label a reader should see on a row that names a TEAM rather than a
+ * market — search's Teams cards today. #7390, the web twin of #5780.
+ *
+ * THE DEFECT. The team card shortened the key itself, `sport_key.split("_")
+ * .slice(1).join(" ").toUpperCase()`, so the grey line under a club's name was
+ * the database key with the family filed off and the rest shouted:
+ * `baseball_milb` -> "MILB" one screen under a filter pill reading "MiLB",
+ * `soccer_germany_bundesliga` -> "GERMANY BUNDESLIGA" under a pill reading
+ * "Bundesliga - Germany", `soccer_usa_mls` (697 teams, the largest affected
+ * group) -> "USA MLS". Measured on production 2026-09-19: 66 of the 178
+ * `sports` rows disagree with the name the server serves that way.
+ *
+ * 🪤 `getLeagueDisplay` IS NOT THE FIX, and swapping the call site onto it
+ * would look like one. It has no `baseball_milb` entry, so the key falls
+ * through to its own parse — `parts.slice(1).map(toUpperCase).join(" ")`,
+ * byte-identical to the deleted line — and returns "MILB" again.
+ *
+ * WHAT ANSWERS IT. The page already holds the name: `results.sports` carries
+ * `{key, name}` and the pills a few hundred pixels above are built from it. So
+ * arm 1 is `getSportLabel` over that served row — the pills' OWN rule, the same
+ * call with the same inputs, which is why the row and its pill cannot disagree
+ * rather than merely happening to agree today.
+ *
+ * WHEN THE PAGE HAS NO NAME. The facet is tallied over the matched EVENTS
+ * (`_search_sport_facets`), so a team whose sport has no game on the page is
+ * absent from it — `?q=yank` returns a Yankees row and no facet at all — as are
+ * the 19 rows that store their own key where a brand belongs ("mma_other",
+ * "Tennis Atp"). Then: the curated map if it names this league, otherwise the
+ * SPORT FAMILY ("Baseball", "Soccer"). Coarse on purpose, and the same trade
+ * native made: the facet is missing exactly when no result on the page is in
+ * that sport, which is when "which sport is this club?" is the reader's
+ * question and the tour name is not. No arm of this function parses a key: the
+ * one family `SPORT_CATEGORIES` has no entry for (handball) takes the key's
+ * family token title-cased, "Handball", rather than "GERMANY BUNDESLIGA".
+ */
+export function getTeamRowSportLabel(
+  sportKey: string | null | undefined,
+  facets?: readonly ServedSportRow[] | null,
+): string | null {
+  const key = sportKey?.trim();
+  if (!key) return null;
+
+  const served = facets?.find((f) => f.key === key)?.name;
+  if (hasCuratedLeagueName(key) || !servedSportNameIsRaw(key, served)) {
+    return getSportLabel(key, served);
+  }
+  const family = getCategoryForLeague(key) ?? getCategoryByKey(key);
+  if (family) return family.name;
+  // A key whose family this file has no category for — `handball_germany_
+  // bundesliga` is the measured one, 20 teams. `getLeagueDisplay` would parse
+  // the key here and hand back "GERMANY BUNDESLIGA", which is the defect this
+  // helper exists to end, so take the family token instead: "Handball".
+  return toTitleCaseAcronymSafe(key.split("_")[0]);
+}
+
 /**
  * The group label ("Soccer", "Ice Hockey") for a sport row, or undefined.
  *
