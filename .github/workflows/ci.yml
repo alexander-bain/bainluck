@@ -2777,6 +2777,46 @@ jobs:
             exit 1
           fi
 
+      - name: "#7445 the settled-orientation rail applied TWICE writes nothing (real Postgres)"
+        # The rail merged with 54 unit guards AND the census gate above, and was
+        # still not idempotent on a DRAW. `SLOT_COPY_PROOF` asks whether a store
+        # holds ESPN's pair in ESPN's slots; on a level final the swapped pair
+        # and the true pair are the SAME pair, so the proof is unfalsifiable and
+        # answers yes forever. Each pass re-swapped the series, whose mid-game
+        # rows are NOT symmetric, so a tied game's in-game score line alternated
+        # between right and wrong with nothing able to say which state it was in.
+        #
+        # Measured on production: ev14947547 (PSG 2-2 Rennes) was repaired at
+        # 08:59:56Z and the dry run immediately after still reported it
+        # `repairable=1`. No fake session in the suite ever applied a write and
+        # then re-planned the row it had just written, which is why the defect
+        # lives exactly here and nowhere the other two gates can see.
+        #
+        # ⭐ The corpus carries a DECISIVE game beside the draw on purpose: "the
+        # second pass wrote zero" is satisfied perfectly by a rail broken into
+        # refusing everything, so the decisive game must be repaired by pass 1
+        # for the arm to mean anything. Red-first is executed, not remembered —
+        # one arm reverts the gate by surgery on the shipped planner and asserts
+        # the draw's rows flip again.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_7354_is_idempotent_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/idem7445.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/idem7445.txt; then
+            echo "::error::#7445 rail idempotence gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          # A skip check cannot see a DESELECTION: four of the five arms are
+          # satisfied by a rail that refuses everything, so losing the decisive
+          # game's arm specifically would leave this step green and meaningless.
+          # `[= ]5 passed`, not `^5 passed` (the summary is inside an `=====`
+          # banner) and not a bare `5 passed` (which `15 passed` would satisfy).
+          # Both wrong forms were tried against the real output before this one.
+          if ! grep -qE "[= ]5 passed" /tmp/idem7445.txt; then
+            echo "::error::#7445 idempotence gate did not run all 5 arms — tests were deselected or removed"
+            exit 1
+          fi
+
       - name: "#6977 diacritic search fold, three rails (real Postgres)"
         # A plain-keyboard reader reached NONE of an accented club's rows.
         # Measured on production 2026-09-18, same minute, two spellings:

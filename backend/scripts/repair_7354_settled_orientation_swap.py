@@ -104,6 +104,15 @@ written when it holds EXACTLY ESPN's values in ESPN's own slots. A store that
 merely disagrees with ESPN is reported in ``series_notes`` and never touched
 here — it belongs to the other rail.
 
+🔴 AND A DRAWN FINAL PROVES NOTHING AT ALL (#7445). :data:`SLOT_COPY_PROOF` is
+``stored == (espn_home, espn_away)``. When ESPN's final is level those two pairs
+are identical, so the proof is satisfied by the CORRECT orientation too — it is
+unfalsifiable, it answers yes forever, and the rail re-swaps the series on every
+pass. Mid-game rows are not symmetric, so each pass alternates a tied game's
+in-game score line between right and wrong. A level final therefore authorises
+no write at all: the event is reported and counted (``symmetric_final``) on
+every pass, and left for a person with the venue's own goal times.
+
 WHAT IS DELIBERATELY NOT IN SCOPE (measured, not assumed — see #7354):
 
 * **Props.** The issue's "settled props graded backwards" bullet is an
@@ -461,6 +470,7 @@ _ACTION_COUNTERS = {
     "skip_aligned": "aligned",
     "skip_unresolved": "unresolved",
     "skip_nothing_to_repair": "nothing_to_repair",
+    "skip_symmetric_final": "symmetric_final",
     "skip_espn_not_found": "espn_not_found",
     "skip_espn_not_final": "espn_not_final",
     "skip_espn_no_score": "espn_no_score",
@@ -588,6 +598,43 @@ def plan_orientation_repair(
     # alone and reported.
     slot_pair = (espn_home, espn_away)
     true_pair = (espn_away, espn_home)
+
+    # 🔴 A DRAWN FINAL CANNOT PROVE A SLOT COPY, SO IT MAY NOT AUTHORISE ONE
+    # (#7445, found by the after-check on this rail's own apply — not by a
+    # test). Every store proof below is `pair == slot_pair`, i.e. "this store
+    # still holds ESPN's pair in ESPN's slots". When ESPN's final is level,
+    # `slot_pair == true_pair`: the swapped and the aligned orientation are the
+    # SAME pair, so the proof is unfalsifiable and answers yes forever. It then
+    # re-swaps the series on every pass — and a series' mid-game rows are NOT
+    # symmetric (`0-1`, `0-2`, `1-2`), so each run alternates the in-game score
+    # line between right and wrong with nothing able to say which state you are
+    # in. Measured on ev14947547 (PSG 2-2 Rennes, 2026-08-23): repaired at
+    # 08:59:56Z, and the after-check dry run still reported it `repairable=1`.
+    #
+    # The ESPN leg below is poisoned by the same symmetry from the other end:
+    # `espn_home_won = espn_home > espn_away` is a two-valued answer to a
+    # three-valued question, so on a draw it reads False, a leg at <=0.1 is
+    # "decisive and agrees with the side that won", and it is complemented to
+    # >=0.9 every pass. Neither side won.
+    #
+    # ⭐ THIS IS A REFUSAL, NOT A REPAIR. Issue #7445 proposed judging the
+    # series on its last ASYMMETRIC point instead; that cannot be implemented,
+    # because the only authority this rail holds is ESPN's FINAL pair and a
+    # mid-game `1-2` matches neither `(2,2)` nor `(2,2)`. There is no evidence
+    # here to reason from, so the honest disposition is to write nothing and
+    # say so. A genuinely swapped drawn game is left for a person with the
+    # venue's own goal times; it is reported on every pass rather than being
+    # silently dropped, and it is counted (`symmetric_final`), so an operator
+    # sees a standing number rather than an absence.
+    if slot_pair == true_pair:
+        plan.action = "skip_symmetric_final"
+        plan.reason = (
+            f"ESPN's final is level at {espn_home}-{espn_away}, so "
+            f"\"{SLOT_COPY_PROOF}\" is the same statement as \"the store is "
+            f"already correct\" — unfalsifiable, and never a licence to write "
+            f"(#7445). Every store is left to its own rail."
+        )
+        return plan
 
     stored_home = _as_int(getattr(row, "home_score", None))
     stored_away = _as_int(getattr(row, "away_score", None))
@@ -824,7 +871,8 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
         "scanned": len(rows), "next_offset": offset + len(rows),
         "remaining": max(0, population - (offset + len(rows))),
         "swapped": 0, "repaired": 0, "aligned": 0, "unresolved": 0,
-        "nothing_to_repair": 0, "espn_not_found": 0, "espn_not_final": 0,
+        "nothing_to_repair": 0, "symmetric_final": 0,
+        "espn_not_found": 0, "espn_not_final": 0,
         "espn_no_score": 0, "backup_refused": 0,
         "errors": 0, "error_rows": [],
         "rows_written": {"events": 0, "espn_snapshots": 0,
@@ -937,7 +985,8 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
           f"next_offset {res['next_offset']})")
     print(f"swapped={res['swapped']} repairable={sum(1 for p in res['ledger'] if p.writes)} "
           f"aligned={res['aligned']} unresolved={res['unresolved']} "
-          f"nothing_to_repair={res['nothing_to_repair']}")
+          f"nothing_to_repair={res['nothing_to_repair']} "
+          f"symmetric_final={res['symmetric_final']}")
     print(f"espn_not_found={res['espn_not_found']} "
           f"espn_not_final={res['espn_not_final']} espn_no_score={res['espn_no_score']}")
 
