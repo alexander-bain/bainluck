@@ -161,6 +161,8 @@ def run(root, source, mission, lock_fd, timeout):
     folder = root / "runs" / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                                + f"-{issue['number']}-" + uuid.uuid4().hex[:6])
     folder.mkdir(parents=True)
+    save(root / "STATUS.json", {"state": "preparing_workspace", "issue": issue["number"],
+                               "run": str(folder), "base_sha": sha, "updated_at": now()})
     checkout = folder / "checkout"
     # Independent repository, no shared index or writeable git metadata with a lane.
     archive = folder / "source.tar"
@@ -169,8 +171,8 @@ def run(root, source, mission, lock_fd, timeout):
     checkout.mkdir()
     subprocess.run(["tar", "-xf", str(archive), "-C", str(checkout)], check=True, timeout=120)
     archive.unlink()
-    subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True, timeout=120)
+    subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True, timeout=120)
     subprocess.run(["git", "-C", str(checkout), "-c", "user.name=Diagnosis Snapshot",
                     "-c", "user.email=diagnosis@localhost", "-c", "commit.gpgsign=false",
                     "commit", "-qm", f"Read-only source snapshot {sha}"], check=True, timeout=120)
