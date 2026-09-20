@@ -131,7 +131,10 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         "M7", WARMER,
         "the single-run lock is ignored, so at a 30s cadence a slow cold run "
         "gets a second copy piled on top of it doing identical work",
-        "    if not _acquire_run_lock():\n",
+        # RE-TARGETED #3398: the helper returns a token now, so the refusal is
+        # `is None` rather than a falsy bool. Same mutant, same meaning — the
+        # branch that stops a second copy never fires.
+        "    if lock_token is None:\n",
         "    if False:\n",
     ),
     (
@@ -145,17 +148,27 @@ MUTATIONS: list[tuple[str, Path, str, str, str]] = [
         "M9", WARMER,
         "the lock is never released, so one run wedges the warmer off for the "
         "whole lock TTL after every beat",
-        "    finally:\n        _release_run_lock()\n",
-        "    finally:\n        pass\n",
+        # RE-TARGETED #3398. `_release_run_lock(lock_token)` now appears TWICE —
+        # the min_period skip releases too — so the bare line is ambiguous and
+        # the scan would refuse it. Anchored on the holder teardown above it,
+        # which only the `finally` has.
+        "        with suppress(asyncio.CancelledError):\n"
+        "            await holder\n"
+        "        _release_run_lock(lock_token)\n",
+        "        with suppress(asyncio.CancelledError):\n"
+        "            await holder\n"
+        "        pass\n",
     ),
     (
         "M10", WARMER,
         "the lock fails CLOSED on a Redis blip — the warmer silently stops "
         "warming and reports a clean skip every beat",
+        # RE-TARGETED #3398: the three-state claim replaced the bool, so failing
+        # CLOSED is now `None` (a demonstrated refusal) rather than `False`.
         '        logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)\n'
-        "        return True\n",
+        "        return _LOCK_UNKNOWN\n",
         '        logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)\n'
-        "        return False\n",
+        "        return None\n",
     ),
 ]
 
