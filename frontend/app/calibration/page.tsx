@@ -2507,11 +2507,34 @@ export default function CalibrationPage() {
               competed with ECE for the reader's attention while being a
               guardrail rather than a headline: it answers "is the error spread
               across the curve or concentrated in one bucket", which matters
-              when you already distrust the number and not before. */}
+              when you already distrust the number and not before.
+
+              #7389: it said "Across the whole page", and the count beside it is
+              `cohortBuckets` — the headline table's ten bins and nothing else.
+              The page draws far more buckets than that. Measured on the live
+              payload 2026-09-20 in the DEFAULT traded cohort, reproducing this
+              file's own `aggregateBuckets`: the Polymarket panel is 9 of 10
+              (40-50% at -8.3pp over 11,705 outcomes, a solid dot needing no
+              tap), and inside "Break out the shapes" — whose own copy says
+              "Every bucket is shown" — Spreads is 4 of 10 (-49.1pp at the top
+              bin) and Totals 3 of 8 (-72.3pp). False in the all-markets state
+              too: that clears the Polymarket bin and leaves the three
+              sportsbook shapes exactly as they are.
+
+              The scope was also the wrong way round rhetorically. The sentence
+              exists to say the thin buckets are not swinging wildly, and it was
+              claiming page-wide authority for that on a page rendering a thin
+              bucket 72pp out.
+
+              Scoped, not re-counted. A true whole-page number is not available
+              to print: the population moves with the source tab, the category
+              tab, the cohort toggle and whether a fold is open, so one scalar
+              for it would be #7374's defect again. Every other clause here is
+              already headline-scoped, so only the scope phrase moves. */}
           <li data-testid="calibration-buckets-in-band-note">
             <strong className="text-text-primary">&ldquo;Buckets within 5pp&rdquo; &mdash; the
             guardrail behind the headline.</strong> We split the curve into probability buckets and
-            check how many land within 5 percentage points of perfect. Across the whole page that is{" "}
+            check how many land within 5 percentage points of perfect. On the headline curve that is{" "}
             <strong className="text-text-primary">
               {cohortBuckets.filter(b => Math.abs(b.error) <= 5).length} of {cohortBuckets.length}
             </strong>{" "}
