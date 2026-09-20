@@ -34,6 +34,19 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Any
+
+#: The statuses on which a row is ASSERTING a result to a reader.
+#:
+#: Spelled here rather than imported from ``espn_tennis_anchor.SETTLED_STATUSES``
+#: on purpose: this module imports nothing but the standard library (the same
+#: discipline ``sport_keys.py`` keeps), and that module pulls
+#: ``app.services.espn_tennis`` in behind it — which is exactly why
+#: ``odds_polling`` imports its tennis predicate IN-FUNCTION. One vocabulary in
+#: two places is only safe if a drift is loud, so
+#: ``test_the_settled_vocabulary_agrees_with_the_tennis_rails`` pins the two
+#: together and reds if either moves.
+SETTLED_STATUSES_CLAIMING_A_RESULT = ("completed", "closed")
 
 # A day/night doubleheader is the tightest legitimate "two different games, same
 # clubs, same day" case in the sports we carry: MLB game 1 ~13:05 local, game 2
@@ -176,3 +189,80 @@ def clockless_write_defers_to_authority(
       and deferring there would mean deferring to nobody.
     """
     return event_status == "live" and bool(espn_id)
+
+
+def clockless_write_repoisons_a_settled_final(
+    *,
+    event_status: Any,
+    espn_id: Any,
+    home_score: Any,
+    away_score: Any,
+    stored_home_score: Any = None,
+    stored_away_score: Any = None,
+) -> bool:
+    """May the clockless feed CHANGE a final an authority already banked?
+
+    #7147 / CERT-3145, and the arm
+    :func:`clockless_write_defers_to_authority` deliberately does not cover.
+    That guard is ``status == "live" and bool(espn_id)``, and its docstring says
+    why ``completed`` is excluded, in as many words: *"the write that lands a
+    FINAL score must never be withheld — that is the one case where this feed
+    noticing first matters more than the flicker."*
+
+    **That carve-out is right, and it is not what was happening.** Landing a
+    final on a row that holds none, and OVERWRITING a final an ESPN-anchored row
+    already holds, are two different writes that the single word ``completed``
+    was covering as one. Measured on production 2026-09-19: event ``15313146``
+    was repaired to ESPN's ``7-3`` at 22:37Z and was serving ``7-2`` again by
+    23:15:07Z, with a freshly stamped ``score_history`` row to match. The
+    cleanup ran, and the writer simply wrote the stale number back — so the
+    repair was a deletion of today's residue, not a fix, and the reader saw the
+    wrong final return within the hour.
+
+    So the carve-out is kept and narrowed to the write it was written for:
+    **a clockless write that would land a DIFFERENT pair on a settled,
+    authority-anchored row that already states a result is refused.**
+
+    ═══ WHY EACH CONDITION IS LOAD-BEARING ═══
+
+    * **A write carrying neither side is not a write.** Refused first, so a pass
+      that touched nothing can never increment the counter — the counter is the
+      only way to tell this guard holding from the population being empty.
+    * **Settled only**, read off :data:`SETTLED_STATUSES_CLAIMING_A_RESULT`. A
+      ``live`` row is the sibling's business and a ``scheduled`` one is nobody's.
+    * **``espn_id`` only.** Identical to the sibling's reasoning: a row ESPN does
+      not cover has no other score writer, and deferring there defers to nobody.
+      This is the "authoritative" in the ship's name — without an anchor there is
+      no authority whose number this would be protecting.
+    * **The row must ALREADY hold BOTH halves.** This is the carve-out, kept
+      intact. A settled row with a ``NULL`` on either side is not stating a
+      result yet, so this write is the one LANDING the final and must go
+      through. Only a complete stored pair can be re-poisoned.
+    * **The pair must actually DIFFER.** An agreeing write is a no-op; refusing
+      it would spend a refusal on a pass that changed nothing and make the
+      counter unreadable.
+
+    ═══ IT JUDGES THE POST-WRITE PAIR, NOT THE PAYLOAD ═══
+
+    The same correction CERT-2963 forced on the tennis predicate, for the same
+    reason: ``odds_polling`` stores each side in an INDEPENDENT statement, so a
+    payload carrying one side lands on top of whatever the row already holds.
+    Stored ``7-3`` plus an incoming ``home=7, away=None`` is judged on the pair
+    the row will HOLD — ``7-3``, unchanged, allowed — while stored ``7-3`` plus
+    an incoming ``away=2`` will hold ``7-2`` and is refused. Asking the payload
+    instead would answer about a score that will never exist.
+
+    Returning ``True`` means **decline the score half of this write**, never the
+    status: a game that finished, finished. Same trade as both sibling guards.
+    """
+    if home_score is None and away_score is None:
+        return False
+    if event_status not in SETTLED_STATUSES_CLAIMING_A_RESULT:
+        return False
+    if not espn_id:
+        return False
+    if stored_home_score is None or stored_away_score is None:
+        return False
+    effective_home = home_score if home_score is not None else stored_home_score
+    effective_away = away_score if away_score is not None else stored_away_score
+    return (effective_home, effective_away) != (stored_home_score, stored_away_score)

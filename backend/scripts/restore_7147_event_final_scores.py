@@ -71,7 +71,44 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.repair_event_final_scores import BAK_TABLE  # noqa: E402
+from scripts.repair_event_final_scores import BAK_TABLE, SNAP_BAK_TABLE  # noqa: E402
+
+#: THE SNAPSHOT HALF'S PLAN. A deleted row's undo is an INSERT, so the
+#: compare-and-swap that guards the event-row half has no analogue here: there
+#: are no "columns that moved on" because there is no row to move. What replaces
+#: it is the absence test — put the row back only where nothing holds its id —
+#: and that is the primary key's job, expressed as ``ON CONFLICT DO NOTHING``.
+#:
+#: The FK to ``events`` is checked in the plan rather than left to raise: an
+#: event deleted since the repair would abort the insert, and one row that
+#: cannot come back must not take the rest of the restore down with it.
+_SNAP_PLAN_SQL = f"""
+SELECT b.snapshot_id,
+       b.event_id,
+       b.captured_at,
+       b.home_score,
+       b.away_score,
+       b.espn_final,
+       EXISTS (SELECT 1 FROM score_snapshots s
+                WHERE s.id = b.snapshot_id)   AS already_present,
+       EXISTS (SELECT 1 FROM events e
+                WHERE e.id = b.event_id)      AS event_exists
+  FROM {SNAP_BAK_TABLE} b
+ ORDER BY b.event_id, b.captured_at
+"""
+
+#: Re-insert with the ORIGINAL primary key, so a second run of the undo is a
+#: no-op rather than a second copy of every snapshot. Safe against the identity
+#: sequence: these ids were issued before the delete, so the sequence is already
+#: past them.
+_SNAP_RESTORE_SQL = f"""
+INSERT INTO score_snapshots (id, event_id, captured_at, home_score, away_score)
+SELECT b.snapshot_id, b.event_id, b.captured_at, b.home_score, b.away_score
+  FROM {SNAP_BAK_TABLE} b
+ WHERE b.snapshot_id = :snapshot_id
+   AND EXISTS (SELECT 1 FROM events e WHERE e.id = b.event_id)
+ON CONFLICT (id) DO NOTHING
+"""
 
 #: The banked row beside the live one, so the dry run can show which rows the
 #: undo would move and which it will decline. Every restored column appears on
@@ -199,24 +236,71 @@ async def restore_rows(session, plan: list, *, progress_every: int = 500):
     return restored, skipped
 
 
+async def restore_snapshots(session, plan: list):
+    """Put each banked snapshot back, one row per transaction.
+
+    Same single-row commit discipline as :func:`restore_rows` and for the same
+    measured reason (#3780): a batched write over a contended table rolls the
+    whole restore back on the first busy row.
+
+    Returns ``(restored, skipped)`` where a skip is a row that is already
+    present (a second run, or one the repair never actually deleted) or whose
+    event has since been removed.
+    """
+    from sqlalchemy import text
+
+    restored, skipped = 0, []
+    for row in plan:
+        if row.already_present or not row.event_exists:
+            skipped.append(row.snapshot_id)
+            continue
+        result = await session.execute(
+            text(_SNAP_RESTORE_SQL), {"snapshot_id": row.snapshot_id}
+        )
+        if (result.rowcount or 0) == 0:
+            # Lost to a concurrent insert on the same id between plan and write.
+            # Visible, for the same reason the event-row half makes it visible:
+            # a restore that silently changed nothing reads as a clean run.
+            skipped.append(row.snapshot_id)
+        else:
+            restored += 1
+        await session.commit()
+    return restored, skipped
+
+
 async def run(args) -> None:
     from sqlalchemy import text
 
     from app.tasks.base import get_task_session
 
     async with get_task_session() as s:
+        # The two banks are asked for INDEPENDENTLY. A database can hold either
+        # without the other — a run that found only snapshot defects creates no
+        # event-row table, and every database repaired before this half shipped
+        # holds the event-row table alone. Returning early on the first missing
+        # one would make the undo silently decline to restore the other.
         exists = (
             await s.execute(text(f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL"))
         ).scalar_one()
-        if not exists:
+        snap_exists = (
+            await s.execute(
+                text(f"SELECT to_regclass('{SNAP_BAK_TABLE}') IS NOT NULL")
+            )
+        ).scalar_one()
+        if not exists and not snap_exists:
             # Gotcha #53: an empty read is not a fact. "Never backed up" and
             # "backed up, nothing to restore" are different answers and the
             # operator needs to be told which one this is.
-            print(f"{BAK_TABLE} does not exist — this repair has never been "
-                  f"applied on this database. Nothing to restore.")
+            print(f"Neither {BAK_TABLE} nor {SNAP_BAK_TABLE} exists — this "
+                  f"repair has never been applied on this database. Nothing "
+                  f"to restore.")
             return
 
-        plan = (await s.execute(text(_PLAN_SQL))).all()
+        plan = (await s.execute(text(_PLAN_SQL))).all() if exists else []
+        snap_plan = (
+            (await s.execute(text(_SNAP_PLAN_SQL))).all() if snap_exists else []
+        )
+
         movable = [r for r in plan if restorable(r)]
         print(f"=== #7147 restore: {len(plan)} banked row(s), "
               f"{len(movable)} still holding everything the repair wrote ===")
@@ -229,6 +313,25 @@ async def run(args) -> None:
         if len(plan) > 20:
             print(f"  ... and {len(plan) - 20} more")
 
+        snap_movable = [
+            r for r in snap_plan if not r.already_present and r.event_exists
+        ]
+        print(f"\n=== #7147 snapshot restore: {len(snap_plan)} banked "
+              f"snapshot(s), {len(snap_movable)} still absent and re-insertable "
+              f"===")
+        for r in snap_plan[:20]:
+            if r.already_present:
+                mark = "SKIP (already present)"
+            elif not r.event_exists:
+                mark = "SKIP (event no longer exists)"
+            else:
+                mark = "re-insert"
+            print(f"  ev{r.event_id} snap{r.snapshot_id}: "
+                  f"{r.home_score}-{r.away_score} at {r.captured_at} "
+                  f"(final was {r.espn_final}) {mark}")
+        if len(snap_plan) > 20:
+            print(f"  ... and {len(snap_plan) - 20} more")
+
         if not args.apply:
             print("\nDRY RUN — no writes. Re-run with --apply to restore.")
             return
@@ -239,6 +342,13 @@ async def run(args) -> None:
             print("skipped (the score, the completion time or the blend has "
                   "moved on from what the repair wrote): "
                   + ", ".join(str(i) for i in skipped[:50]))
+
+        snap_restored, snap_skipped = await restore_snapshots(s, snap_plan)
+        print(f"RE-INSERTED {snap_restored} snapshot(s); "
+              f"skipped {len(snap_skipped)}")
+        if snap_skipped:
+            print("skipped (already present, or the event is gone): "
+                  + ", ".join(str(i) for i in snap_skipped[:50]))
 
 
 def main() -> None:

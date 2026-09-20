@@ -347,6 +347,118 @@ _BAK_MISSING_SQL = f"""
        AND NOT EXISTS (SELECT 1 FROM {BAK_TABLE} b WHERE b.event_id = e.id)
 """
 
+# ── THE SECOND HALF OF THE SHIP: THE SNAPSHOT THAT OUTRANKS THE FIX ──────────
+#
+# Repairing ``events.home_score`` does NOT change what a reader sees. The event
+# page's hero prints ``lastChartPoint?.homeScore ?? event?.home_score``
+# (``app/events/[id]/page.tsx``) — the event row is the FALLBACK BENEATH two
+# observation series, and ``computeLastChartPoint`` ranks those two by their own
+# clocks. So a ``score_snapshots`` row stamped after full time beats the
+# corrected row forever.
+#
+# Measured on production 2026-09-19, after this repair applied cleanly to both
+# rows in the MLB tail: ``events`` read the ESPN final (5-6 and 7-3) while
+# bainluck.com/events/15313231 printed "5 – 5 · FINAL · TIED" and
+# /events/15313146 printed "7 – 2". Both pages were photographed. The cause on
+# both is one snapshot stamped ``2026-09-19 00:15:22.408164+00`` — three days
+# after a 09-16 game ended — carrying the pre-repair score.
+#
+# Those rows are not observations. Nothing watched that game on 09-19; the
+# writer re-read our own defective ``events`` row and banked it as a sighting.
+# The StatPal arm compares against the LAST SNAPSHOT rather than the event row
+# (``tasks/statpal_sync.py``), which is why exactly the drifted events got one
+# and no others did: the poisoned population IS the defect population.
+#
+# So they are DELETED, not corrected. Rewriting one to the true final would
+# manufacture a different lie — a claim that somebody observed this score three
+# days late — and would still drag the Score Differential chart out to a flat
+# line days past the whistle (Alex, 2026-09-14: charts are confined to the
+# actual game duration).
+SNAP_BAK_TABLE = "bak_7147_post_final_score_snapshots"
+
+#: How long after ``completed_at`` a score observation is still plausibly the
+#: game's own. NOT a round number chosen for comfort — the shape of the
+#: population picks it. Bucketed over 5,030 completed events with snapshots in
+#: the trailing 60 days (production, 2026-09-19), by the lag between an event's
+#: LAST snapshot and its ``completed_at``, counting how many disagree with the
+#: event's final score:
+#:
+#:     lag            events   disagree
+#:     <= 1 min        4,487      69   (1.5%)  ← the normal tail of a live game
+#:     1 min – 3 h       192       2   (1.0%)
+#:     3 h – 12 h        141       7   (5.0%)
+#:     12 h – 24 h       112      31   (27.7%)  ← regime change
+#:     24 h – 3 d         87      24   (27.6%)
+#:     3 d – 3.8 d        12      11   (91.7%)
+#:
+#: The disagreement rate is flat at ~1% for the first three hours and then
+#: climbs by a factor of 28. Anything inside the flat region is a live game's
+#: own last gasp; the climb is this defect. 30 minutes sits well inside the flat
+#: region, so the grace never eats a legitimate observation, and it still
+#: catches every row in the climb.
+#:
+#: The grace is a floor under the TIME test only. The remedy is additionally
+#: gated on the snapshot DISAGREEING with an ESPN final this scan has already
+#: proven belongs to this row, so a late-but-correct snapshot is never touched
+#: however far past the whistle it lands.
+POST_FINAL_SNAPSHOT_GRACE_MINUTES = 30
+
+#: One row per deleted snapshot, keyed on the snapshot's own primary key so the
+#: undo can put back exactly what was removed. There is no ``new_*`` manifest
+#: here and the CERT-3141 argument does not apply: a DELETE leaves nothing for a
+#: later writer to legitimately move on from, so "what we left behind" is
+#: "absence". The undo's compare-and-swap is correspondingly the absence test —
+#: re-insert only where no row holds that id — which is enforced by the primary
+#: key itself rather than by a column comparison.
+_SNAP_BAK_CREATE_SQL = f"""
+    CREATE TABLE IF NOT EXISTS {SNAP_BAK_TABLE} (
+      snapshot_id  bigint PRIMARY KEY,
+      event_id     bigint NOT NULL,
+      captured_at  timestamptz NOT NULL,
+      home_score   integer,
+      away_score   integer,
+      espn_final   text,
+      banked_at    timestamptz NOT NULL DEFAULT now())
+"""
+
+_SNAP_BAK_COPY_SQL = f"""
+    INSERT INTO {SNAP_BAK_TABLE} (
+        snapshot_id, event_id, captured_at, home_score, away_score, espn_final)
+    SELECT s.id, s.event_id, s.captured_at, s.home_score, s.away_score,
+           :espn_final
+      FROM score_snapshots s
+     WHERE s.id = ANY(CAST(:snapshot_ids AS bigint[]))
+    ON CONFLICT (snapshot_id) DO NOTHING
+"""
+
+#: Same reasoning as :data:`_BAK_MISSING_SQL`: asked as a count of rows about to
+#: be deleted that have NO banked row. Zero, or the delete is refused.
+_SNAP_BAK_MISSING_SQL = f"""
+    SELECT count(*) FROM score_snapshots s
+     WHERE s.id = ANY(CAST(:snapshot_ids AS bigint[]))
+       AND NOT EXISTS (
+           SELECT 1 FROM {SNAP_BAK_TABLE} b WHERE b.snapshot_id = s.id)
+"""
+
+_SNAP_DELETE_SQL = """
+    DELETE FROM score_snapshots
+     WHERE id = ANY(CAST(:snapshot_ids AS bigint[]))
+"""
+
+#: Candidate rows for the whole selected window, in one query. Only snapshots
+#: past the grace are fetched; the score comparison happens per row in the loop,
+#: because only there is ESPN's final for THAT row known and proven.
+_POST_FINAL_SNAPSHOT_SQL = """
+    SELECT s.id, s.event_id, s.captured_at, s.home_score, s.away_score
+      FROM score_snapshots s
+      JOIN events e ON e.id = s.event_id
+     WHERE s.event_id = ANY(CAST(:event_ids AS bigint[]))
+       AND e.completed_at IS NOT NULL
+       AND s.captured_at > e.completed_at
+                         + make_interval(mins => :grace_minutes)
+     ORDER BY s.event_id, s.captured_at
+"""
+
 # Default group budget per invocation. Each group is ONE ESPN scoreboard call and
 # the client sleeps 0.5s between requests, so this stays inside the 30s HTTP wall.
 _GROUP_LIMIT = 25
@@ -444,6 +556,72 @@ async def reconcile_backup(session, event_ids: list) -> dict:
     return {"events": int(missing)}
 
 
+def snapshot_contradicts_final(snap, espn_home, espn_away) -> bool:
+    """True when a post-grace snapshot disagrees with ESPN's proven final.
+
+    Pure, and deliberately the ONLY score test on this rail: the grace bounds
+    *when* a row is eligible, this bounds *whether* it is wrong. A snapshot that
+    lands a week late carrying the right final is a harmless duplicate of the
+    truth and is left alone — the defect is a number that contradicts the
+    result, not a row with an awkward timestamp.
+
+    ``None`` on either ESPN side means we were never told the final, so nothing
+    is contradicted and nothing is deleted. This mirrors
+    :func:`score_is_stale`'s refusal to grade against an unknown.
+    """
+    if espn_home is None or espn_away is None:
+        return False
+    return (snap.home_score, snap.away_score) != (espn_home, espn_away)
+
+
+async def ensure_snapshot_backup_table(session) -> None:
+    """Runtime DDL for the snapshot bank, attended invocation only (47(c)).
+
+    Same class and same licence as :func:`ensure_backup_table`; kept separate so
+    a run that finds no snapshot defect creates no table it never uses.
+    """
+    from sqlalchemy import text
+
+    await session.execute(text(_SNAP_BAK_CREATE_SQL))
+
+
+async def bank_post_final_snapshots(session, snapshot_ids: list, espn_final: str) -> None:
+    """Copy the rows about to be deleted into :data:`SNAP_BAK_TABLE`.
+
+    Called INSIDE the group's transaction and BEFORE the delete, so the commit
+    that removes a snapshot lands its undo with it. ``espn_final`` is banked as
+    text alongside each row purely so a person reading the backup months later
+    can see what the row was measured against without re-deriving it.
+    """
+    from sqlalchemy import text
+
+    if not snapshot_ids:
+        return
+    await session.execute(text(_SNAP_BAK_COPY_SQL), {
+        "snapshot_ids": list(snapshot_ids),
+        "espn_final": espn_final,
+    })
+
+
+async def reconcile_snapshot_backup(session, snapshot_ids: list) -> dict:
+    """How many rows about to be DELETED have no banked row? Zero, or refuse.
+
+    Shaped to be read by the same :func:`backup_is_exact` as the event-row bank,
+    including its empty-mapping refusal: a reconciliation that inspected nothing
+    must not read as a clean pass (gotcha #53).
+    """
+    from sqlalchemy import text
+
+    if not snapshot_ids:
+        return {}
+    missing = (
+        await session.execute(
+            text(_SNAP_BAK_MISSING_SQL), {"snapshot_ids": list(snapshot_ids)}
+        )
+    ).scalar_one()
+    return {"snapshots": int(missing)}
+
+
 def score_is_stale(our_home, our_away, espn_home, espn_away, espn_is_final: bool) -> bool:
     """True when a settled event's stored score disagrees with ESPN's FINAL.
 
@@ -536,6 +714,12 @@ SCORE_DRIFTED = "score_drifted"
 ESPN_ID_DRIFTED = "espn_id_drifted"
 ESPN_ID_UNRESOLVABLE = "espn_id_unresolvable"
 LINK_PROVEN = "proven"
+#: The reader-facing class: the event row is right and the PAGE is still wrong,
+#: because a score observation stamped after full time outranks it in the hero's
+#: own ladder. Named as its own class rather than folded into ``score_drifted``
+#: because it survives that one's remedy — a row can hold this defect with a
+#: perfect score. See :data:`SNAP_BAK_TABLE` for the measurement.
+POST_FINAL_SNAPSHOT = "post_final_snapshot"
 
 #: class -> the ONLY remedy that class may be handed. Handing ``espn_id_drifted``
 #: the score remedy is the corruption this split exists to make unrepresentable.
@@ -555,6 +739,12 @@ DEFECT_REMEDY = {
         "this row's own slate and no single game on that slate is provably ours "
         "(doubleheader / postponement). An empty read is not a fact (gotcha #53). "
         "Explicitly NOT the score repair"
+    ),
+    POST_FINAL_SNAPSHOT: (
+        "SNAPSHOT repair, on score_snapshots and not on the event row: the same "
+        "POST ...?apply=true deletes the contradicting post-full-time rows and "
+        "banks them in bak_7147_post_final_score_snapshots. The event row may "
+        "already be correct — this is the half the reader actually sees"
     ),
 }
 
@@ -859,6 +1049,20 @@ async def repair(
             )).all()
         }
 
+    # STEP 3b — post-full-time snapshot candidates for the selected window, in
+    # one query. Fetched for rows that HAVE a completed_at (the opposite set to
+    # STEP 3, which serves the rows that lack one), since the grace is measured
+    # from it. Only the time test runs here; whether a candidate is actually
+    # wrong is decided per row in the loop, against the ESPN final proven there.
+    dated_ids = [r.event_id for r in rows if r.completed_at is not None]
+    post_final_snaps: dict[int, list] = {}
+    if dated_ids:
+        for row in (await s.execute(text(_POST_FINAL_SNAPSHOT_SQL), {
+            "event_ids": dated_ids,
+            "grace_minutes": POST_FINAL_SNAPSHOT_GRACE_MINUTES,
+        })).all():
+            post_final_snaps.setdefault(row.event_id, []).append(row)
+
     espn = get_espn_service()
     stats = {
         "events_scanned": 0,
@@ -883,6 +1087,15 @@ async def repair(
         # was refused" and "the gate never ran" are the two readings of a silent
         # rail and only one of them is safe.
         "backup_refused": 0,
+        # THE READER-FACING HALF (#7147). A third class, counted apart from the
+        # two above for the same reason they are counted apart from each other:
+        # the remedy is different (a DELETE on another table) and summing them
+        # into one headline would hide which half of the ship actually moved.
+        # ``post_final_snapshot_defects`` counts EVENTS, the two beside it count
+        # ROWS — an event can carry more than one poisoned snapshot.
+        "post_final_snapshot_defects": 0,
+        "post_final_snapshots_dropped": 0,
+        "snapshot_backup_refused": 0,
     }
     ledger: list[dict] = []
     groups_scanned = 0
@@ -892,6 +1105,7 @@ async def repair(
         # Once per invocation, before any group: the table has to exist before
         # the first bank, and IF NOT EXISTS makes the second call free.
         await ensure_backup_table(s)
+        await ensure_snapshot_backup_table(s)
         await s.commit()
 
     for sport_key, game_date in selected:
@@ -1002,7 +1216,20 @@ async def repair(
                 r.home_score, r.away_score, ee.home_score, ee.away_score, is_final
             )
             needs_completed_at = r.completed_at is None
-            if not stale and not needs_completed_at:
+
+            # The third class, decided here because this is the first point at
+            # which ESPN's final is PROVEN to be this row's own — the same
+            # licence the score remedy runs on. A row can carry this defect with
+            # a perfectly correct ``events`` score: repairing the event row is
+            # what LEAVES it in that state, so the early exit below has to see
+            # this class or the reader-facing half is unreachable on exactly the
+            # rows this repair just fixed.
+            post_final = [
+                sn for sn in post_final_snaps.get(r.event_id, ())
+                if snapshot_contradicts_final(sn, ee.home_score, ee.away_score)
+            ]
+
+            if not stale and not needs_completed_at and not post_final:
                 continue
 
             entry = {
@@ -1045,11 +1272,70 @@ async def repair(
                 if old_res != new_res:
                     stats["winner_flips"] += 1
             else:
-                entry["action"] = "fix_completed_at_only"
+                # A row can reach here on the completed_at gap, on the snapshot
+                # class, or on both. Naming the snapshot case explicitly matters
+                # because "fix_completed_at_only" is a claim that the score
+                # series was left alone, and on this branch that is false.
+                entry["action"] = (
+                    "fix_completed_at_only" if needs_completed_at
+                    else "drop_post_final_snapshots"
+                )
+
+            if post_final:
+                stats["post_final_snapshot_defects"] += 1
+                entry["post_final_snapshots"] = [
+                    {
+                        "snapshot_id": sn.id,
+                        "captured_at": sn.captured_at.isoformat(),
+                        "score": f"{sn.home_score}-{sn.away_score}",
+                        "minutes_after_final": round(
+                            (sn.captured_at - r.completed_at).total_seconds() / 60.0, 1
+                        ) if r.completed_at else None,
+                    }
+                    for sn in post_final
+                ]
+                entry["espn_final"] = f"{ee.home_score}-{ee.away_score}"
+                entry["snapshot_defect_class"] = POST_FINAL_SNAPSHOT
+                entry["snapshot_remedy"] = DEFECT_REMEDY[POST_FINAL_SNAPSHOT]
 
             ledger.append(entry)
 
             if not apply:
+                continue
+
+            # ── THE SNAPSHOT HALF ────────────────────────────────────────────
+            # Its own bank and its own compare-and-swap, deliberately NOT routed
+            # through the event-row gate below. The two write different tables
+            # with different undos, and sharing one refusal counter would make
+            # "the event row had no backup" and "the snapshot rows had none"
+            # indistinguishable in the only place a person reads afterwards.
+            # Runs FIRST so that a snapshot-only row — the shape this repair's
+            # own score fix creates — never reaches the event-row bank, which
+            # would bank a row it is not about to write.
+            if post_final:
+                snap_ids = [sn.id for sn in post_final]
+                await bank_post_final_snapshots(
+                    s, snap_ids, f"{ee.home_score}-{ee.away_score}"
+                )
+                snap_recon = await reconcile_snapshot_backup(s, snap_ids)
+                if not backup_is_exact(snap_recon):
+                    stats["snapshot_backup_refused"] += 1
+                    entry["snapshot_action"] = "skip_backup_not_banked"
+                    entry["snapshot_remedy"] = (
+                        "no undo could be banked for these snapshots, so none "
+                        "were deleted — investigate before re-running"
+                    )
+                else:
+                    await s.execute(
+                        text(_SNAP_DELETE_SQL), {"snapshot_ids": snap_ids}
+                    )
+                    stats["post_final_snapshots_dropped"] += len(snap_ids)
+                    group_writes += 1
+
+            # A row whose ONLY defect was the snapshot class has nothing to write
+            # on the event row, so it stops here — before a bank that would
+            # record a "repair" of a row this pass never touched.
+            if not stale and not needs_completed_at:
                 continue
 
             # D51(b) — BANK BEFORE WRITE, in this group's own transaction, so
@@ -1188,6 +1474,18 @@ async def run(apply: bool, limit: int, sport: str | None, offset: int = 0) -> No
     print(f"identity_blocked={res['identity_blocked']} date_blocked={res['date_blocked']} "
           f"doubleheader_ambiguous={res['doubleheader_ambiguous']} "
           f"not_final={res['espn_not_final']} not_found={res['espn_not_found']}")
+    print(f"post_final_snapshot_defects={res['post_final_snapshot_defects']} "
+          f"(events) dropped={res['post_final_snapshots_dropped']} (rows) "
+          f"refused={res['snapshot_backup_refused']}")
+    # The snapshot class prints on its own list for the same reason the linkage
+    # class does: it is a different table, a different undo, and a row can appear
+    # here with a perfectly correct score.
+    for e in res["ledger"][:200]:
+        for sn in e.get("post_final_snapshots") or ():
+            print(f"  [post_final_snapshot] ev{e['event_id']} [{e['sport_key']}] "
+                  f"{e['matchup']}: snapshot {sn['score']} at {sn['captured_at']} "
+                  f"({sn['minutes_after_final']}m after full time) "
+                  f"vs final {e.get('espn_final')}")
     for e in res["ledger"][:40]:
         if e.get("action") == "fix_score":
             print(f"  [score_drifted] ev{e['event_id']} [{e['sport_key']}] {e['matchup']}: "
@@ -1209,7 +1507,8 @@ async def run(apply: bool, limit: int, sport: str | None, offset: int = 0) -> No
               "game's final onto the row.")
     if apply:
         print(f"\nCOMMITTED scores={res['scores_repaired']} "
-              f"completed_at={res['completed_at_repaired']} blend={res['blend_repaired']}")
+              f"completed_at={res['completed_at_repaired']} blend={res['blend_repaired']} "
+              f"post_final_snapshots_dropped={res['post_final_snapshots_dropped']}")
         if res["groups_remaining"]:
             print(f"Re-run with --offset {res['next_offset']} "
                   f"({res['groups_remaining']} groups remaining).")

@@ -382,6 +382,15 @@ class _Session:
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
+        # #7147, the snapshot half — matched FIRST because its table name
+        # carries the `bak_7147` prefix, so every pattern below also matches its
+        # statements. No row is served: this file's subject is which CLASS
+        # reaches a write, and a fixture that grew a snapshot defect would put a
+        # second class into every assertion here.
+        if "bak_7147_post_final" in sql:
+            return _Result([], scalar=0)
+        if "FROM score_snapshots s" in sql and "JOIN events e" in sql:
+            return _Result([])
         # #7147 — the D51(b) backup the apply now banks before every write.
         # Answered here rather than by loosening the `unexpected SQL` guard
         # below: that guard is what makes this a statement contract, and this
