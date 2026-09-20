@@ -1,0 +1,210 @@
+{
+ "family_key": "to score",
+ "label": "To Score",
+ "sport": "soccer",
+ "entity_count": 11,
+ "sources": [
+  "kalshi",
+  "polymarket"
+ ],
+ "rows": [
+  {
+   "entity": "FC Cincinnati vs. Pumas de la UNAM - First Team",
+   "market_id": 57098841,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "polymarket",
+   "sources": [
+    "polymarket"
+   ],
+   "cross_source": {
+    "polymarket": 1.0
+   },
+   "group_id": "polymarket:748233",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "FC Cincinnati vs Atlas FC: First Team",
+   "market_id": 59222460,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXLEAGUESCUPFTTS-26AUG11CINATL",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "FC Cincinnati vs Seattle Sounders: First Team",
+   "market_id": 59743099,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26AUG22CINSEA",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "FC Cincinnati vs Pumas UNAM: First Team",
+   "market_id": 59245348,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXLEAGUESCUPFTTS-26AUG07CINPUM",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "FC Cincinnati vs Vancouver Whitecaps FC: First Team",
+   "market_id": 58609415,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26JUL22CINVAN",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "FC Cincinnati vs New York City FC: First Team",
+   "market_id": 59181965,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26AUG19CINNYC",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "Orlando City SC vs FC Cincinnati: First Team",
+   "market_id": 59202921,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26AUG15ORLCIN",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "FC Cincinnati"
+  },
+  {
+   "entity": "Nashville SC vs FC Cincinnati: First Team",
+   "market_id": 59706680,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26AUG29NSHCIN",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "Nashville SC"
+  },
+  {
+   "entity": "FC Cincinnati vs San Jose Earthquakes: First Team",
+   "market_id": 58609399,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXMLSFTTS-26AUG01CINSJ",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "San Jose Earthquakes"
+  },
+  {
+   "entity": "FC Cincinnati vs CF Pachuca: First Team",
+   "market_id": 59259652,
+   "outcome_id": null,
+   "probability": 1.0,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 1.0
+   },
+   "group_id": "kalshi:KXLEAGUESCUPFTTS-26AUG04CINPAC",
+   "status": "settled",
+   "settled": true,
+   "result": "won",
+   "top_outcome": "CF Pachuca"
+  },
+  {
+   "entity": "FC Cincinnati vs DC United: First Team",
+   "market_id": 60521194,
+   "outcome_id": null,
+   "probability": 0.65,
+   "source": "kalshi",
+   "sources": [
+    "kalshi"
+   ],
+   "cross_source": {
+    "kalshi": 0.65
+   },
+   "group_id": "kalshi:KXMLSFTTS-26SEP05CINDCU",
+   "status": "settled",
+   "settled": true,
+   "result": null,
+   "top_outcome": "FC Cincinnati"
+  }
+ ]
+}
