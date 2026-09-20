@@ -1789,6 +1789,156 @@ def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
     return all((t in n) or (e and e in n) for t, e in low)
 
 
+def _futures_board_is_not_a_partition(market: "FuturesMarket") -> bool:
+    """The served legs do not divide one question, so their max answers nothing.
+
+    #5516 MIRRORED. That predicate withdraws an EXCLUSIVE board whose whole
+    served ladder sums far UNDER 100% — `Cubs 24% · Reds 18%` on a three-way
+    inning market — because the SET cannot be read even though every rung is
+    honest. This is the over-100% side of the identical coin: a board summing to
+    271% is not a ladder with a missing rung, it is several unrelated questions
+    stacked in one row, and `max()` over it is not a favourite. Its own docstring
+    names the boundary ("a board summing past 100% is already excluded by
+    precondition 5"); this is that exclusion given a name and a second caller.
+
+    IT DOES NOT WITHDRAW ANYTHING. #5516 deletes the card; this only says the
+    market may not SPEAK FOR A FAMILY. Every market it answers True for stays on
+    the page, in the flat list and in its family — see `_family_headline_index`.
+    The lower stakes are why it needs fewer preconditions than its sibling.
+
+    THE STORED FLAG CANNOT DO THIS JOB, and finding that out is most of the work
+    behind this predicate. `mutually_exclusive` reads `False` on the bundles, so
+    a first cut was keyed on it — and that cut moved 6 of 15 measured club
+    queries, four of them somewhere worse. The flag is also `False` on one-leg
+    propositions
+    (`NBA: Stephen Curry to leave Warriors?` 0.02, `LeBron James to Announce his
+    Retirement` 0.02, `Bronny James to Play for the Lakers` 0.92), which are the
+    correct headlines for their families; skipping them sent `q=warriors` past an
+    NBA market to an NRL rugby fixture, defeating #7259's own wrong-sport
+    demotion. The leg sum is self-evidencing and needs no flag to be right.
+
+    MEASURED BEFORE THE THRESHOLD WAS CHOSEN, to #5516's standard. Production
+    2026-09-19, all 37,805 open markets with >=2 priced legs, by served sum:
+
+        < 0.97        2,810    7.4%
+        0.97 - 1.03  24,433   64.6%   <- the partitions
+        1.03 - 1.10   1,103    2.9%   <- over-round / vig on honest boards
+        1.10 - 1.25     938    2.5%
+        1.25 - 1.50     724    1.9%
+        1.50 - 2.00     800    2.1%
+        > 2.00        6,997   18.5%   <- the bundles
+
+    Bimodal, like its sibling's, which is what makes a threshold honest rather
+    than arbitrary. **2.0 is deliberately the conservative end of the gap**: it
+    takes only the 18.5% that cannot be a partition under any reading, and
+    leaves the whole ambiguous 1.03-2.00 band (3,565 markets, 9.4%, where vig or
+    a stale leg is a live explanation) heading families exactly as it does today.
+
+    ONE PRECONDITION, NOT #5516's FOUR, and the three it drops are dropped for a
+    stated reason rather than forgotten. All that is left is: **it sums past the
+    bar.**
+
+    Dropped — **exclusivity**: the sum is the evidence, and the flag was measured
+    wrong (above).
+
+    Dropped — **untruncated**: truncation is a hazard only in the UNDER
+    direction. A top-N cut of a 32-team field sums LOW; no slice of a real
+    partition can sum past 2.0.
+
+    Dropped — **"two or more priced legs"**, its sibling's precondition 2, and
+    this one was deleted on evidence rather than judgement. It reads as the
+    load-bearing line here, because every false-negative of the rejected
+    flag-keyed rule is a one-leg market and this looks like what protects them.
+    It is not: **a leg's probability cannot exceed 1.0, so n legs cannot sum past
+    n, and a board needs THREE legs before it can cross 2.0 at all.** The two-leg
+    floor is therefore strictly weaker than the threshold and can never fire.
+    Mutation testing proved it: severing the line changed no test. Deleted rather
+    than kept as defence in depth, exactly as #5516 deleted its own unreachable
+    "is it a Yes/No question" arm for the same reason.
+
+    ⚠️ THAT DELETION IS SAFE ONLY WHILE THE BAR STAYS ABOVE 1.0. Lower
+    `_BOARD_MAX_PARTITION_SUM` under 1.0 and one-leg propositions become
+    reachable again — `Curry to leave Warriors?` at 0.02 would be called a
+    bundle and `q=warriors` would head with a rugby fixture. The invariant is
+    guarded by `test_the_bar_stays_above_a_single_legs_ceiling`, which is the
+    test to read before touching the constant.
+    """
+    # FAIL-SAFE ON AN UNJUDGEABLE ROW, and this is the one line that is about
+    # the CALLER rather than the rule. `_compose_futures_families` never touched
+    # `outcomes` before #7261, so it is the first thing in the family path to
+    # need them. On the real path they are guaranteed loaded — the same list is
+    # filtered by `_futures_card_has_no_answer`, which reads them, before the
+    # composer ever sees it — but "guaranteed by a sibling call" is not a thing
+    # to stake a 500 on, and a market whose legs we cannot see is a market we
+    # have no evidence about. No evidence means no demotion: today's headline.
+    legs = getattr(market, "outcomes", None)
+    if legs is None:
+        return False
+    priced = [
+        o for o in _search_surviving_legs(market) if o.current_probability is not None
+    ]
+    return sum(float(o.current_probability) for o in priced) > _BOARD_MAX_PARTITION_SUM
+
+
+def _family_headline_index(members: list) -> int:
+    """INDEX of the member that should HEAD this family — the first one whose
+    top row is an answer to its own market (#7261).
+
+    An index rather than the market, so the caller can drop exactly the row it
+    drew. Removing it by identity would drop two members should one object ever
+    appear twice in a family, quietly shrinking `member_count`.
+
+    WHAT THE READER SAW. Alex, `?q=dodgers`: the ANSWERS card was headed by
+    `Shay Whitcomb: Home Runs O/U 0.5, 7%` — an opposing player's home-run prop,
+    offered as the answer to a fan typing their club's name. Live again on
+    `?q=astros` at 2026-09-19 21:52Z, which is the specimen this was built on:
+    `Atlanta Braves vs. Houston Astros - Player Props` heading with
+    `Grant Holmes: Strikeouts O/U 3.5, 57%` (25 legs summing 271%), while
+    `- First 5 Innings Winner` sat below it printing `Houston Astros 45.5%`.
+
+    THE ROW IS NOT WRONG; THE CARD IS ASKING IT THE WRONG QUESTION. See
+    `_futures_board_is_not_a_partition` for the test and the measurement behind
+    its threshold. Here it is only consulted, never widened.
+
+    THE INVERSION #7261 WARNED ABOUT IS AVOIDED BY NOT ASKING THE QUESTION. The
+    issue declined to propose a fix because the tempting rule — "prefer the
+    member whose leading outcome names the entity" — is right for `dodgers` (the
+    club is IN the answer space) and WRONG for `lebron james` (the entity is in
+    the market NAME, the answer space is teams), so it demotes
+    `LeBron James Next Team`, the correct headline. The two cases invert and a
+    rule read off one specimen picks the wrong one. This rule never reads the
+    query at all: it asks only whether the market's own legs divide one
+    question, which is a property of the row and not of who typed what.
+
+    A SCAN, NOT A SORT, and that distinction is the blast radius. The ranking
+    handed in has already survived `_demote_narrower_scope`,
+    `_demote_wrong_league` and `_demote_wrong_sport` (#7259 is why the
+    Mexican-league `Astros de Jalisco` sits last in this very family).
+    Re-sorting would throw all of that away — the flag-keyed first cut did
+    exactly that and handed `q=warriors` to a rugby match. Skipping DOWN the
+    existing order preserves every upstream demotion and can only move a market
+    past members that answer nothing.
+
+    FALLS BACK RATHER THAN DROPPING. If no member can answer, index 0 — today's
+    behaviour. A family is never dropped, no card is created, and no member
+    leaves the page: the demoted bundle becomes the first row under the
+    headline. The only possible effect is a reorder, which is the blast radius
+    #7261 asked for.
+
+    MEASURED ON THE FIFTEEN CLUB QUERIES, live, before this shipped. Two move:
+    `astros` (`Grant Holmes: Strikeouts O/U 3.5` -> `Houston Astros 45.5%`, the
+    ship) and `mets`, which was heading `Philadelphia Phillies vs. New York Mets`
+    with `1st 5 Innings O/U 3.5 at 99.65%` — an 18-leg container summing 704%,
+    printing a near-certainty about a game it does not price. The other thirteen
+    — including `lebron james`, `alcaraz`, `warriors`, `dodgers` and `red sox` —
+    are byte-identical.
+    """
+    for i, m in enumerate(members):
+        if not _futures_board_is_not_a_partition(m):
+            return i
+    return 0
+
+
 def _compose_futures_families(
     markets: list,
     expanded: list[tuple[str, str | None]],
@@ -1882,8 +2032,13 @@ def _compose_futures_families(
             # response. Per TOKEN, not per string: `expanded` is already the
             # tokenised query, so no separator is invented or lost.
             label = " ".join(title_word(t) for t, _ in expanded)
-        headline = members[0]  # reranked: name-match then volume
-        rest = members[1:]
+        # Reranked order (name-match, then volume, then the three demotions),
+        # scanned for the first member that can state an answer — see
+        # `_family_headline`. `rest` keeps that same order minus the one drawn,
+        # so `shown` and `more_below` below are unaffected except by the skip.
+        lead = _family_headline_index(members)
+        headline = members[lead]
+        rest = members[:lead] + members[lead + 1 :]
         shown = rest[:4]
         # 🔴 #2646: `more_count` renders as "+N more markets below", so it is a
         # promise about THIS PAGE and may only count rows the page puts below.
@@ -26133,6 +26288,17 @@ _BOARD_MIN_SERVED_SUM = 0.50
 # precondition 2 — this constant is the reason #6676's coin-flip-band controls
 # and #6327's stored-zero card are untouched by this guard.
 _BOARD_MIN_SERVED_LEGS = 2
+
+#: The other end of the same ruler (#7261). Above this, the served legs cannot
+#: be one question's answer space: 271% is not a ladder missing a rung, it is
+#: several unrelated binaries in one row. Read ONLY by
+#: `_futures_board_is_not_a_partition`, which demotes such a market from heading
+#: a search family; nothing is withdrawn on this constant, so it is not a
+#: sibling of `_BOARD_MIN_SERVED_SUM` in blast radius even though it is one in
+#: shape. 2.0 is the conservative end of a measured bimodal gap — the full
+#: distribution, and why the ambiguous 1.03-2.00 band is deliberately left
+#: alone, are in the predicate's docstring.
+_BOARD_MAX_PARTITION_SUM = 2.0
 
 
 def _futures_market_is_wholly_unpriced(market: "FuturesMarket") -> bool:
