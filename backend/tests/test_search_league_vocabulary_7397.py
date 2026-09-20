@@ -100,6 +100,7 @@ from app.utils.market_label_normalization import (
     _PRO_SPORT_REWRITES,
     _QUALIFIED_VENUE_LEAGUE_REWRITES,
     _VENUE_LEAGUE_REWRITES,
+    _VOWEL_SOUND_INITIALISMS,
     _apply_venue_league_rewrites,
     normalize_market_label,
     rewrite_venue_league_vocabulary,
@@ -474,7 +475,10 @@ class TestTheQualifierGuardFailsSafe:
             # Articles and prepositions.
             ("Will the 2026 Pro Football champs visit?", "Will the 2026 NFL champs visit?"),
             ("Winner of Pro Baseball Cy Young", "Winner of MLB Cy Young"),
-            ("A Pro Football game this season", "A NFL game this season"),
+            # Sentence-initial "A" is a real article, so it moves to "An" with
+            # the initialism behind it. The team-abbreviation case that must NOT
+            # move is its own test in `TestTheIndefiniteArticleMovesWithTheLeague`.
+            ("A Pro Football game this season", "An NFL game this season"),
         ],
     )
     def test_an_ordinary_prefix_still_gets_rewritten(self, raw, expected):
@@ -494,7 +498,127 @@ class TestTheQualifierGuardFailsSafe:
         women elsewhere must still be rewritten."""
         raw = "Most women in a Pro Football front office"
         assert rewrite_venue_league_vocabulary(raw) == (
-            "Most women in a NFL front office"
+            # "an", not "a" — incidental to what this test is for, but it is the
+            # reader's sentence either way.
+            "Most women in an NFL front office"
+        )
+
+
+class TestTheIndefiniteArticleMovesWithTheLeague:
+    """"a Pro Football game" is English; "a NFL game" is not.
+
+    Found by walking the NFL league page's own served payload AFTER this ship
+    was already offered and gated GREEN — no test caught it, because two tests
+    in this file had pinned "a NFL game" as the expected string.
+
+    The population is five open markets, counted on production rather than
+    guessed, and four of the five are novelty markets:
+
+        30779639  Aaron Donald to play in a Pro Football game this season
+        56914123  Jake Paul to Play in a Pro Football Game This Season
+        59164756  Ben Simmons to play in a Pro Basketball game this season
+        59693519  Will Salt Lake City receive a Pro Baseball expansion team...
+        27561356  Will Trump attend a Pro Basketball finals game?   (resolved)
+    """
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (
+                "Aaron Donald to play in a Pro Football game this season",
+                "Aaron Donald to play in an NFL game this season",
+            ),
+            (
+                "Jake Paul to Play in a Pro Football Game This Season",
+                "Jake Paul to Play in an NFL Game This Season",
+            ),
+            (
+                "Ben Simmons to play in a Pro Basketball game this season",
+                "Ben Simmons to play in an NBA game this season",
+            ),
+            (
+                "Will Salt Lake City receive a Pro Baseball expansion team"
+                " before Aug 1, 2027?",
+                "Will Salt Lake City receive an MLB expansion team"
+                " before Aug 1, 2027?",
+            ),
+            (
+                "Will Trump attend a Pro Basketball finals game?",
+                "Will Trump attend an NBA finals game?",
+            ),
+        ],
+    )
+    def test_the_five_production_specimens(self, raw, expected):
+        assert rewrite_venue_league_vocabulary(raw) == expected
+
+    def test_a_mid_name_capital_a_is_a_team_abbreviation_and_does_not_move(self):
+        """THE TRAP, and it is a live row rather than a hypothetical.
+
+        Market 252 is `Los Angeles A pro baseball wins this season?` — the LA
+        Angels, written the way Kalshi writes `New York J` and `New York G`,
+        both of which the NFL page serves today. A rule that reads any "A" as an
+        article prints "Los Angeles An MLB wins this season?", which is worse
+        than the jargon this ship exists to remove.
+
+        The phrase is still rewritten; only the article is left alone.
+        """
+        assert rewrite_venue_league_vocabulary(
+            "Los Angeles A pro baseball wins this season?"
+        ) == "Los Angeles A MLB wins this season?"
+
+    def test_a_sentence_initial_capital_a_is_a_real_article_and_does_move(self):
+        """The other side of the same rule — without this, the guard above
+        would pass just as well by never correcting a capital "A" at all.
+        """
+        assert rewrite_venue_league_vocabulary(
+            "A Pro Football game will be played in Dublin"
+        ) == "An NFL game will be played in Dublin"
+
+    def test_the_wnba_keeps_its_article_because_it_is_read_double_you(self):
+        """Spelling does not decide this, pronunciation does. `WNBA` opens on a
+        consonant sound, so the naive `repl[0] not in "AEIOU"` test — which
+        would pass every other assertion in this class — is wrong here.
+        """
+        assert rewrite_venue_league_vocabulary(
+            "a Women's Pro Basketball game this season"
+        ) == "a WNBA game this season"
+        assert "WNBA" not in _VOWEL_SOUND_INITIALISMS
+
+    def test_every_bare_replacement_is_classified(self):
+        """A league added to the bare list without an entry here silently keeps
+        the wrong article. This fails the moment someone adds one.
+        """
+        for _pat, repl in _VENUE_LEAGUE_REWRITES:
+            assert repl in _VOWEL_SOUND_INITIALISMS, (
+                f"{repl!r} is rewritten but not classified for its article"
+            )
+
+    def test_a_name_with_no_article_is_untouched_by_the_rule(self):
+        """The article group is optional, so the rule must not have narrowed
+        what the bare pattern matches."""
+        assert (
+            rewrite_venue_league_vocabulary("Pro Football: 2027 Champion")
+            == "NFL: 2027 Champion"
+        )
+
+    def test_an_a_inside_a_word_is_not_an_article(self):
+        """`\\ba` must not fire on the trailing "a" of the preceding word."""
+        assert (
+            rewrite_venue_league_vocabulary("Formula Pro Basketball trophy")
+            == "Formula NBA trophy"
+        )
+
+    def test_the_qualifier_guard_still_declines_the_whole_match(self):
+        """When the guard declines, it has to hand back the article too —
+        otherwise the article is dropped and the phrase reappears bare.
+        """
+        assert (
+            rewrite_venue_league_vocabulary("a Semi-Pro Football league")
+            == "a Semi-Pro Football league"
+        )
+        assert (
+            rewrite_venue_league_vocabulary("a College Pro Basketball showcase")
+            == "a College Pro Basketball showcase"
         )
 
 

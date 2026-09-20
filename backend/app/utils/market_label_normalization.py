@@ -61,6 +61,28 @@ _VENUE_LEAGUE_REWRITES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bPro Baseball\b", re.I), "MLB"),
 ]
 
+# An indefinite article in front of the phrase has to move WITH it. Every league
+# in the bare list above is an initialism read letter-by-letter, and all four
+# open on a vowel SOUND — "en-eff-ell", "en-bee-ay", "en-aitch-ell", "em-ell-bee"
+# — so the article that was correct in front of the venue's words is wrong in
+# front of ours: "a Pro Football game" is English, "a NFL game" is not.
+#
+# Spelling does not decide this, pronunciation does, which is why this is a named
+# set and not `repl[0] not in "AEIOU"`. `WNBA` is the counter-example and it is
+# already in production: "double-you-en-bee-ay" opens on a consonant, so it keeps
+# "a". It reaches the text through `_QUALIFIED_VENUE_LEAGUE_REWRITES`, which does
+# not consult this set at all — but it is named here so the next person adding a
+# league asks the question instead of pattern-matching the first letter.
+# `All-NBA` is likewise absent on purpose: it is a rewrite of `All-Pro`, the
+# article in front of it belongs to "All-", and the safe failure is to leave it.
+#
+# MEASURED before writing it, on production `futures_markets` (#7397): exactly
+# five open markets carry an article in front of the phrase — Aaron Donald and
+# Jake Paul "to play in a Pro Football game", Ben Simmons "a Pro Basketball
+# game", and Salt Lake City receiving "a Pro Baseball expansion team". It is a
+# five-row class, not a long tail, and four of the five are novelty markets.
+_VOWEL_SOUND_INITIALISMS = frozenset({"NBA", "NFL", "NHL", "MLB"})
+
 # The backstop for the qualifier we have NOT met yet. A rule above can only
 # rescue a phrase somebody has already seen; this decides what happens to the
 # next one. If a league-changing qualifier sits immediately in front of the
@@ -576,16 +598,46 @@ def _apply_venue_league_rewrites(
         label = pat.sub(repl, label)
 
     for pat, repl in bare_rules:
+        # The phrase is matched together with any indefinite article in front of
+        # it, so the two can be rewritten as one unit — see
+        # `_VOWEL_SOUND_INITIALISMS`. The article is optional, so this still
+        # matches everywhere the bare pattern did; `phrase` is a named group
+        # because the qualifier test below needs the phrase's own start offset,
+        # not the match's.
+        composed = re.compile(
+            r"(?:(?P<article>\ba)(?P<gap>\s+))?(?P<phrase>" + pat.pattern + r")",
+            pat.flags,
+        )
+
         # `re` has no variable-length lookbehind, so the qualifier test runs per
         # match against the text to its left. Read against `label`, not
         # `raw_name`: an earlier rule may already have rewritten that text, and
         # the question is what is in front of this match NOW.
         def _guarded(match: re.Match, _repl: str = repl) -> str:
-            if _LEAGUE_CHANGING_QUALIFIER.search(match.string[: match.start()]):
+            if _LEAGUE_CHANGING_QUALIFIER.search(match.string[: match.start("phrase")]):
+                # Declining returns the WHOLE match, article included, so a
+                # qualified phrase is left exactly as the venue wrote it.
                 return match.group(0)
-            return _repl
 
-        label = pat.sub(_guarded, label)
+            article = match.group("article")
+            if article is None:
+                return _repl
+
+            # A capital "A" that is not the first character of the name is a
+            # Kalshi team abbreviation, not an article. This is not a
+            # hypothetical: market 252 is `Los Angeles A pro baseball wins this
+            # season?` — the LA Angels, written the same way as the `New York J`
+            # and `New York G` rows the NFL page already serves. Treating it as
+            # an article yields "Los Angeles An MLB wins this season?", which is
+            # worse than the jargon we came to remove. A sentence-initial "A" is
+            # a real article and is still corrected.
+            is_team_abbreviation = article == "A" and match.start("article") != 0
+            if is_team_abbreviation or _repl not in _VOWEL_SOUND_INITIALISMS:
+                return f"{article}{match.group('gap')}{_repl}"
+
+            return f"{'An' if article.isupper() else 'an'}{match.group('gap')}{_repl}"
+
+        label = composed.sub(_guarded, label)
     return label
 
 

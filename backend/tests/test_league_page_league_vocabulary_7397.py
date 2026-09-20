@@ -94,7 +94,11 @@ _NFL_MARKET_NAMES = [
     ("Pro Football Championship MVP?", "NFL Championship MVP?"),
     (
         "Aaron Donald to play in a Pro Football game this season",
-        "Aaron Donald to play in a NFL game this season",
+        # The article moves too. This row is the reason that rule exists: it is
+        # served today in `sections.more_markets[].name` on the NFL page, and an
+        # earlier revision of this table asserted "a NFL game" — the defect,
+        # pinned by its own test.
+        "Aaron Donald to play in an NFL game this season",
     ),
 ]
 
