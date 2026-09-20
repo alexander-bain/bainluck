@@ -195,9 +195,13 @@ describe("#5045 — the live Projection tile holds a live number", () => {
     expect(text).not.toMatch(/Pre-game\s+FRO by/);
   });
 
-  it("the ACTUAL tile is untouched, so the card still reads as one sentence", () => {
+  it("the ACTUAL tile still names the leader, so the card reads as one sentence", () => {
     const text = renderGenoa({ openingHomeSpread: -0.5, homeSpread: 0.5 });
-    expect(text).toMatch(/Actual\s+FRO by 1\+/);
+    // #7380 respelled this tile — the scoreboard says Frosinone lead by one, so
+    // the tile says `FRO by 1` and no longer hedges a played margin as `1+`.
+    // The side it names, which is what #5045 is about, is unchanged.
+    expect(text).toMatch(/Actual\s+FRO by 1(?!\+)/);
+    expect(text).not.toMatch(/Actual\s+FRO by 1\+/);
   });
 
   it("NEGATIVE CONTROL — no live spread: PRE-GAME alone, and no invented Projection", () => {
