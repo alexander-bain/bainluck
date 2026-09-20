@@ -258,9 +258,18 @@ _BAK_COPY_SQL = f"""
 #: blend is rewritten by later legitimate passes (``backfill_winners``, a
 #: re-resolve) without touching the score, so a score-only CAS passes and the
 #: undo would replace the newer grade with the pre-repair one.
+#: The score is stamped here too, and NOT taken from the plan's prediction.
+#: A half-healed row is repaired WITHOUT its score being rewritten (#7338's
+#: sweep got there first), so the plan's `new_home_score` is None on exactly
+#: those rows while the live row holds a real value. Banking the prediction
+#: would leave the undo comparing a real score against NULL, which never
+#: matches, and the row could never be restored. Reading it back off the row
+#: records what we actually left behind either way.
 _BAK_STAMP_SQL = f"""
     UPDATE {BAK_TABLE} b
-       SET new_espn_win_prob_home      = e.espn_win_prob_home,
+       SET new_home_score              = e.home_score,
+           new_away_score              = e.away_score,
+           new_espn_win_prob_home      = e.espn_win_prob_home,
            new_win_probability_sources = e.win_probability_sources
       FROM events e
      WHERE e.id = b.event_id AND b.event_id = :event_id
@@ -434,26 +443,42 @@ def plan_orientation_repair(
         )
         return plan
 
+    # 🔴 EACH STORE IS JUDGED ON ITS OWN, AND THE REASON IS MEASURED, NOT
+    # THEORETICAL. #7338 released mid-build on 2026-09-20 and its live sweep
+    # reached the specimen inside the 6h post-commence window: it corrected
+    # `events.home_score` to 38-27 and appended one correctly-oriented
+    # `score_snapshots` row — while `espn_snapshots` stayed frozen at 102
+    # swapped rows (#922 skips the append for completed events) and the ESPN
+    # probability leg stayed at 0.0 for the side that won. A rail gated on one
+    # global test keyed on `events.home_score` reads that half-healed row as
+    # "not slot copied" and walks away from the half still on the page. That is
+    # a repair windowed on the very column a partial repair already moved.
+    #
+    # So the verdict decides MEMBERSHIP — it is identity-keyed and a partial
+    # heal cannot move it — and each store then carries its own positive proof.
+    # No store is ever written on another store's evidence, which is what keeps
+    # #7147's boundary intact: a store that merely DISAGREES with ESPN is left
+    # alone and reported.
+    slot_pair = (espn_home, espn_away)
+    true_pair = (espn_away, espn_home)
+
     stored_home = _as_int(getattr(row, "home_score", None))
     stored_away = _as_int(getattr(row, "away_score", None))
-    if (stored_home, stored_away) != (espn_home, espn_away):
-        plan.action = "skip_not_slot_copied"
-        plan.reason = (
-            f"orientation is SWAPPED but the stored score {stored_home}-{stored_away} "
-            f"is not ESPN's pair {espn_home}-{espn_away} in ESPN's slots, so this row "
-            "was not produced by the slot copy. Score/espn_id drift is #7147's rail."
+    if (stored_home, stored_away) == slot_pair:
+        # Our home corresponds to ESPN's AWAY competitor, so ESPN's away score
+        # is our home's. Written from ESPN rather than as a blind exchange of
+        # our own two columns: the authority's number is the one we can defend.
+        plan.new_home_score = espn_away
+        plan.new_away_score = espn_home
+    elif (stored_home, stored_away) == true_pair:
+        plan.series_notes.append("events score: already correct, left alone")
+    else:
+        plan.series_notes.append(
+            f"events score: stored {stored_home}-{stored_away} is neither ESPN's "
+            f"slot pair nor the true pair — score/espn_id drift is #7147's rail, "
+            f"left alone"
         )
-        return plan
 
-    # Our home corresponds to ESPN's AWAY competitor, so ESPN's away score is
-    # our home's. Written from ESPN rather than as a blind exchange of our own
-    # two columns: the authority's number is the one we can defend.
-    plan.action = "repair_orientation"
-    plan.reason = SLOT_COPY_PROOF
-    plan.new_home_score = espn_away
-    plan.new_away_score = espn_home
-
-    swapped_pair = (espn_home, espn_away)
     for label, last, attr in (
         ("espn_snapshots", last_espn_snapshot, "swap_espn_snapshots"),
         ("score_snapshots", last_score_snapshot, "swap_score_snapshots"),
@@ -462,9 +487,9 @@ def plan_orientation_repair(
             plan.series_notes.append(f"{label}: no rows")
             continue
         pair = (_as_int(last[0]), _as_int(last[1]))
-        if pair == swapped_pair:
+        if pair == slot_pair:
             setattr(plan, attr, True)
-        elif pair == (espn_away, espn_home):
+        elif pair == true_pair:
             plan.series_notes.append(f"{label}: already correct, left alone")
         else:
             plan.series_notes.append(
@@ -472,19 +497,43 @@ def plan_orientation_repair(
                 f"orientation, left alone"
             )
 
-    # The ESPN leg was written by the same slot copy that wrote the score we
-    # just proved, so it is inverted with it. Complemented, not zeroed: a leg
-    # stored as "ESPN says the home team wins with p" is, on the other side,
-    # 1 - p.
-    plan.complement_espn_leg = True
+    # The ESPN leg's own positive proof, mirroring the score's. A leg written by
+    # the slot copy holds ESPN's HOME probability, so on a settled game it
+    # agrees with ESPN's own home outcome: ~1 when ESPN's home won, ~0 when it
+    # lost. Our home is ESPN's away, so that is exactly backwards for us and the
+    # honest remedy is the complement — never a zeroing, and never applied to a
+    # leg that is merely undecided.
     current = getattr(row, "espn_win_prob_home", None)
+    value = None
     if current is not None:
         try:
-            plan.new_espn_win_prob_home = round(1.0 - float(current), 6)
+            value = float(current)
         except (TypeError, ValueError):
-            plan.new_espn_win_prob_home = None
             plan.series_notes.append("espn_win_prob_home unreadable, left alone")
+    if value is not None:
+        espn_home_won = espn_home > espn_away
+        decisive = value <= 0.1 or value >= 0.9
+        if decisive and (value >= 0.9) == espn_home_won:
+            plan.complement_espn_leg = True
+            plan.new_espn_win_prob_home = round(1.0 - value, 6)
+        elif decisive:
+            plan.series_notes.append(
+                f"espn leg {value} already reads for the side that won, left alone")
+        else:
+            plan.series_notes.append(
+                f"espn leg {value} is undecided on a settled game — not evidence "
+                f"of an inversion, left alone")
 
+    if (plan.new_home_score is not None or plan.swap_espn_snapshots
+            or plan.swap_score_snapshots or plan.complement_espn_leg):
+        plan.action = "repair_orientation"
+        plan.reason = SLOT_COPY_PROOF
+    else:
+        plan.action = "skip_nothing_to_repair"
+        plan.reason = (
+            "orientation is SWAPPED but no store still holds ESPN's values in "
+            "ESPN's slots — already repaired, or never slot-copied"
+        )
     return plan
 
 
@@ -545,12 +594,16 @@ async def apply_plan(session, plan: OrientationPlan) -> dict:
     from sqlalchemy import text
 
     written = {}
-    await session.execute(text(_SWAP_EVENT_SCORE_SQL), {
-        "event_id": plan.event_id,
-        "home_score": plan.new_home_score,
-        "away_score": plan.new_away_score,
-    })
-    written["events"] = 1
+    # Only when the score itself was proven slot-copied. A half-healed row whose
+    # score #7338 already corrected must not have it rewritten from a plan that
+    # deliberately left `new_home_score` unset.
+    if plan.new_home_score is not None:
+        await session.execute(text(_SWAP_EVENT_SCORE_SQL), {
+            "event_id": plan.event_id,
+            "home_score": plan.new_home_score,
+            "away_score": plan.new_away_score,
+        })
+        written["events"] = 1
 
     if plan.swap_espn_snapshots:
         r = await session.execute(
@@ -587,18 +640,31 @@ async def stamp_written_state(session, event_id: int) -> None:
     await session.execute(text(_BAK_STAMP_SQL), {"event_id": event_id})
 
 
-async def _row_counts(session, event_id: int) -> dict:
+async def _row_counts(session, plan: OrientationPlan) -> dict:
+    """Row counts for the series THIS PLAN will swap, and zero for the rest.
+
+    🔴 The counts are the undo's instruction sheet, so they must describe the
+    writes rather than the tables. Counting every row of every series would tell
+    the restore to un-swap a series this plan deliberately left alone — which on
+    a half-healed row is the series that is already CORRECT, so the undo would
+    introduce the defect the repair exists to remove.
+    """
     from sqlalchemy import text
 
+    wanted = {
+        "espn_snapshots": ("espn_snapshots", "", plan.swap_espn_snapshots),
+        "score_snapshots": ("score_snapshots", "", plan.swap_score_snapshots),
+        "espn_leg": ("win_prob_snapshots", " AND source = 'espn'",
+                     plan.complement_espn_leg),
+    }
     out = {}
-    for key, table, extra in (
-        ("espn_snapshots", "espn_snapshots", ""),
-        ("score_snapshots", "score_snapshots", ""),
-        ("espn_leg", "win_prob_snapshots", " AND source = 'espn'"),
-    ):
+    for key, (table, extra, will_write) in wanted.items():
+        if not will_write:
+            out[key] = 0
+            continue
         out[key] = (await session.execute(
             text(f"SELECT COUNT(*) FROM {table} WHERE event_id = :e{extra}"),
-            {"e": event_id})).scalar() or 0
+            {"e": plan.event_id})).scalar() or 0
     return out
 
 
@@ -606,7 +672,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
                  offset: int = 0, since_days: int = 60) -> dict:
     """Scan a bounded slice of settled rows and repair the swapped ones."""
     from sqlalchemy import text
-    from app.services.espn_api import ESPNAPIClient
+    from app.services.espn_api import ESPNAPIService
 
     params = {"sport_key": sport, "since_days": since_days}
     population = (await session.execute(text(_POPULATION_SQL), params)).scalar() or 0
@@ -623,7 +689,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
         "scanned": len(rows), "next_offset": offset + len(rows),
         "remaining": max(0, population - (offset + len(rows))),
         "swapped": 0, "repaired": 0, "aligned": 0, "unresolved": 0,
-        "not_slot_copied": 0, "espn_not_found": 0, "espn_not_final": 0,
+        "nothing_to_repair": 0, "espn_not_found": 0, "espn_not_final": 0,
         "espn_no_score": 0, "backup_refused": 0,
         "rows_written": {"events": 0, "espn_snapshots": 0,
                          "score_snapshots": 0, "espn_leg": 0},
@@ -631,7 +697,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
         "ledger": [],
     }
 
-    client = ESPNAPIClient()
+    client = ESPNAPIService()
     try:
         for row in rows:
             # A plain object rather than the RowMapping: `espn_orientation_verdict`
@@ -648,7 +714,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
 
             key = {
                 "skip_aligned": "aligned", "skip_unresolved": "unresolved",
-                "skip_not_slot_copied": "not_slot_copied",
+                "skip_nothing_to_repair": "nothing_to_repair",
                 "skip_espn_not_found": "espn_not_found",
                 "skip_espn_not_final": "espn_not_final",
                 "skip_espn_no_score": "espn_no_score",
@@ -673,7 +739,7 @@ async def repair(session, apply: bool, limit: int = 50, sport: Optional[str] = N
             if not apply:
                 continue
 
-            counts = await _row_counts(session, plan.event_id)
+            counts = await _row_counts(session, plan)
             await bank_prior_state(session, plan, counts)
             if not await backup_is_verified(session, plan.event_id):
                 await session.rollback()
@@ -711,15 +777,17 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
           f"next_offset {res['next_offset']})")
     print(f"swapped={res['swapped']} repairable={sum(1 for p in res['ledger'] if p.writes)} "
           f"aligned={res['aligned']} unresolved={res['unresolved']} "
-          f"not_slot_copied={res['not_slot_copied']}")
+          f"nothing_to_repair={res['nothing_to_repair']}")
     print(f"espn_not_found={res['espn_not_found']} "
           f"espn_not_final={res['espn_not_final']} espn_no_score={res['espn_no_score']}")
 
     for p in res["ledger"][:60]:
         if p.writes:
-            print(f"  [repair] ev{p.event_id} [{p.sport_key}] {p.matchup}: "
-                  f"{p.stored_score[0]}-{p.stored_score[1]} -> "
-                  f"{p.new_home_score}-{p.new_away_score}"
+            score = (f"{p.stored_score[0]}-{p.stored_score[1]} -> "
+                     f"{p.new_home_score}-{p.new_away_score}"
+                     if p.new_home_score is not None else
+                     f"score {p.stored_score[0]}-{p.stored_score[1]} left as-is")
+            print(f"  [repair] ev{p.event_id} [{p.sport_key}] {p.matchup}: {score}"
                   f"  espn_snapshots={'swap' if p.swap_espn_snapshots else 'no'}"
                   f" score_snapshots={'swap' if p.swap_score_snapshots else 'no'}"
                   f" espn_leg={'complement' if p.complement_espn_leg else 'no'}")
@@ -746,7 +814,25 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
         print("\nDRY-RUN — pass --apply to commit.")
 
 
+USAGE = """repair_7354_settled_orientation_swap — settled ESPN orientation swaps
+
+  --apply             commit (default is a dry-run ledger that writes nothing)
+  --limit N           rows to scan this invocation (default 50)
+  --offset N          resume cursor; advance by the printed next_offset
+  --since-days N      floor on commence_time (default 60) — oldest-first inside it
+  --sport KEY         restrict to one sport key
+  --help              print this and exit without opening a database
+
+Only a positive `swapped` verdict whose stored score is ESPN's pair in ESPN's
+own slots is ever written. Undo:
+
+  python3 scripts/restore_7354_settled_orientation_swap.py --apply
+"""
+
 if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(USAGE)
+        sys.exit(0)
     _limit, _offset, _since, _sport = 50, 0, 60, None
     for i, a in enumerate(sys.argv):
         if a == "--limit" and i + 1 < len(sys.argv):

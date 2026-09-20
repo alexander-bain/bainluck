@@ -169,24 +169,98 @@ class TestOnlyAPositiveSwapIsWritten:
 
 
 class TestTheSlotCopyProofSeparatesTwoDefectsWithOppositeRemedies:
-    """A swapped verdict alone must not authorise a write — #7147's boundary."""
+    """A swapped verdict alone must not authorise a write — #7147's boundary.
 
-    @pytest.mark.parametrize("stored", [(21, 38), (27, 40), (0, 0), (38, 27)])
-    def test_a_swapped_row_whose_score_is_not_espns_pair_is_refused(self, stored):
+    Each store carries its own positive proof, so a score that is neither
+    ESPN's slot pair nor the true pair is score/espn_id drift and is left for
+    #7147's rail even though this row's orientation IS swapped.
+    """
+
+    @pytest.mark.parametrize("stored", [(21, 38), (27, 40), (0, 0)])
+    def test_a_score_that_is_neither_pair_is_left_for_the_other_rail(self, stored):
         row = _row(WVU, UVA, stored[0], stored[1])
         plan = plan_orientation_repair(row, _specimen_espn())
 
         assert plan.verdict == ESPN_ORIENTATION_SWAPPED
-        assert plan.action == "skip_not_slot_copied"
-        assert plan.writes is False
-        assert "7147" in plan.reason
+        assert plan.new_home_score is None, "drifted score must not be rewritten"
+        assert any("7147" in n for n in plan.series_notes)
 
     def test_an_already_repaired_row_is_not_repaired_twice(self):
-        """Idempotence falls out of the proof: 38-27 is not ESPN's slot pair."""
-        plan = plan_orientation_repair(_row(WVU, UVA, 38, 27), _specimen_espn())
+        """Idempotence: with every store correct there is nothing left to do."""
+        plan = plan_orientation_repair(
+            _row(WVU, UVA, 38, 27, espn_win_prob_home=1.0), _specimen_espn(),
+            last_espn_snapshot=(38, 27), last_score_snapshot=(38, 27))
 
-        assert plan.action == "skip_not_slot_copied"
+        assert plan.action == "skip_nothing_to_repair"
         assert plan.writes is False
+
+
+class TestTheHalfHealedRowIsStillRepaired:
+    """The case that drove the per-store design, measured on production.
+
+    #7338 released on 2026-09-20 and its live sweep reached ev15308929 inside
+    the 6h post-commence window. It corrected `events.home_score` to 38-27 and
+    appended one correctly-oriented `score_snapshots` row, while
+    `espn_snapshots` stayed frozen at 102 swapped rows and the ESPN probability
+    leg stayed at 0.0 for the side that won — which is what still renders
+    "Bigger Picture: Cavaliers" over a game West Virginia won.
+
+    A rail with one global gate keyed on `events.home_score` reads that row as
+    "not slot copied" and walks away from the half still on the page.
+    """
+
+    def _half_healed(self):
+        return plan_orientation_repair(
+            _row(WVU, UVA, 38, 27, espn_win_prob_home=0.0), _specimen_espn(),
+            last_espn_snapshot=(27, 38),   # frozen, still swapped
+            last_score_snapshot=(38, 27),  # healed by #7338's sweep
+        )
+
+    def test_the_half_healed_row_is_still_repairable(self):
+        plan = self._half_healed()
+
+        assert plan.verdict == ESPN_ORIENTATION_SWAPPED
+        assert plan.action == "repair_orientation"
+        assert plan.writes is True
+
+    def test_the_already_correct_score_is_not_rewritten(self):
+        plan = self._half_healed()
+
+        assert plan.new_home_score is None
+        assert any("already correct" in n for n in plan.series_notes)
+
+    def test_the_already_correct_series_is_not_swapped_back_into_the_defect(self):
+        plan = self._half_healed()
+
+        assert plan.swap_score_snapshots is False
+        assert plan.swap_espn_snapshots is True
+
+    def test_the_frozen_probability_leg_is_complemented(self):
+        plan = self._half_healed()
+
+        assert plan.complement_espn_leg is True
+        assert plan.new_espn_win_prob_home == 1.0
+
+
+class TestTheProbabilityLegCarriesItsOwnProof:
+    def test_a_leg_already_reading_for_the_winner_is_left_alone(self):
+        plan = plan_orientation_repair(
+            _row(WVU, UVA, 38, 27, espn_win_prob_home=1.0), _specimen_espn(),
+            last_espn_snapshot=(27, 38))
+
+        assert plan.complement_espn_leg is False
+        assert any("already reads for the side that won" in n
+                   for n in plan.series_notes)
+
+    @pytest.mark.parametrize("value", [0.5, 0.4, 0.62])
+    def test_an_undecided_leg_is_not_evidence_of_an_inversion(self, value):
+        plan = plan_orientation_repair(
+            _row(WVU, UVA, 38, 27, espn_win_prob_home=value), _specimen_espn(),
+            last_espn_snapshot=(27, 38))
+
+        assert plan.complement_espn_leg is False
+        assert plan.new_espn_win_prob_home is None
+        assert any("undecided" in n for n in plan.series_notes)
 
 
 class TestEspnMustBeAbleToAdjudicate:
@@ -254,6 +328,45 @@ class TestEachSeriesIsGatedOnItsOwnLastPoint:
         # The row half still repairs — an event with no series is exactly the
         # case where the event row IS what the hero falls through to.
         assert plan.writes is True
+
+
+class TestEveryLazyImportInTheRailResolves:
+    """A function-local import is not exercised by importing the module.
+
+    This rail's ESPN client, session factory and SQLAlchemy handles are all
+    imported inside the functions that use them — correctly, to keep a script
+    importable without a database. The cost is that a wrong symbol name is
+    invisible until the moment the rail runs against production, which is the
+    worst possible time to discover it. `ESPNAPIClient` (the class is
+    `ESPNAPIService`) shipped that way and got this far.
+
+    So the names are resolved here, statically, for both halves of the pair.
+    """
+
+    @pytest.mark.parametrize("module_name", [
+        "scripts.repair_7354_settled_orientation_swap",
+        "scripts.restore_7354_settled_orientation_swap",
+    ])
+    def test_every_function_local_import_names_something_that_exists(self, module_name):
+        import ast
+        import importlib
+
+        mod = importlib.import_module(module_name)
+        tree = ast.parse(open(mod.__file__).read())
+
+        checked = 0
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.col_offset == 0:
+                continue  # module-level imports already ran at import time
+            target = importlib.import_module(node.module)
+            for alias in node.names:
+                assert hasattr(target, alias.name), (
+                    f"{module_name} imports {alias.name!r} from {node.module!r} "
+                    f"inside a function, and it does not exist"
+                )
+                checked += 1
+
+        assert checked, f"{module_name}: no function-local imports found to check"
 
 
 class TestThePlanCarriesItsOwnEvidence:
