@@ -15,6 +15,10 @@ import uuid
 
 REPO = "alexander-bain/bainluck"
 MODEL = "muse-spark-1.3-internal"
+# A tracked snapshot includes ~260MB of source/assets. Two minutes proved too
+# short under normal multi-lane disk load; keep a bounded setup deadline without
+# treating a slow archive extraction as a failed model diagnosis.
+SNAPSHOT_TIMEOUT = 600
 CHILD = None
 
 
@@ -167,15 +171,15 @@ def run(root, source, mission, lock_fd, timeout):
     # Independent repository, no shared index or writeable git metadata with a lane.
     archive = folder / "source.tar"
     with archive.open("wb") as stream:
-        subprocess.run(["git", "-C", str(source), "archive", sha], stdout=stream, check=True, timeout=120)
+        subprocess.run(["git", "-C", str(source), "archive", sha], stdout=stream, check=True, timeout=SNAPSHOT_TIMEOUT)
     checkout.mkdir()
-    subprocess.run(["tar", "-xf", str(archive), "-C", str(checkout)], check=True, timeout=120)
+    subprocess.run(["tar", "-xf", str(archive), "-C", str(checkout)], check=True, timeout=SNAPSHOT_TIMEOUT)
     archive.unlink()
     subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True, timeout=120)
-    subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True, timeout=120)
+    subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True, timeout=SNAPSHOT_TIMEOUT)
     subprocess.run(["git", "-C", str(checkout), "-c", "user.name=Diagnosis Snapshot",
                     "-c", "user.email=diagnosis@localhost", "-c", "commit.gpgsign=false",
-                    "commit", "-qm", f"Read-only source snapshot {sha}"], check=True, timeout=120)
+                    "commit", "-qm", f"Read-only source snapshot {sha}"], check=True, timeout=SNAPSHOT_TIMEOUT)
     save(folder / "ISSUE.json", issue)
     save(root / "STATUS.json", {"state": "running", "issue": issue["number"],
                                "run": str(folder), "base_sha": sha, "updated_at": now()})
