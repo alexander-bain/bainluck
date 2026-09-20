@@ -869,7 +869,8 @@
       "origin": "app.utils.resolution_authority:calibration_truth_eligible_sql",
       "sql_interpolated": true,
       "used_in": [
-        "_calibration_population_ctes"
+        "_calibration_population_ctes",
+        "compute_calibration_payload"
       ]
     },
     {
@@ -887,7 +888,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "752a761c54d18c739f2e2dc201e8331b7e5ab7e7223bb7d27de92ac805568e0b",
+  "source_sha256": "bc37181bffbe12327eff0e770eaa4b9502b98b3ef2356f3d8ac00e080a993bb6",
   "uncovered_behavior_or_evidence": 35,
   "uncovered_count": 62,
   "uncovered_sql_shaping": 27

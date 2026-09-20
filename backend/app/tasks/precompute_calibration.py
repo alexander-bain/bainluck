@@ -1763,6 +1763,7 @@ VOID_FILTER_RULE_TEXT = (
 )
 
 
+
 def outcome_is_calibration_void(resolution_source: str | None) -> bool:
     """True if an outcome is a VOID excluded from the published calibration set.
 
@@ -6923,14 +6924,49 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
         # (gotcha #21). 97% lack a polymarket_event_id so Gamma/CLOB re-resolution
         # is infeasible by construction; exclusion is the correct durable fix.
         # Surfaced here so the exclusion is transparent, never silent.
-        heur_sql = text("""
+        #
+        # D112 (#997, CAL-P1138) / #7622: THE SHAPE HALF, and why it is here.
+        # q271 admitted the lone-claim pair — at exactly one captured outcome no
+        # sibling's price can be grading the row, so `all_losers` there is the
+        # venue's own answer and is PUBLISHED. This counter was written before
+        # that and stayed shape-blind, so 6,081 rows (poly 3,497 / kalshi 2,584,
+        # measured 2026-09-20) were in the curve AND counted on the page as
+        # results we set aside. A published row is not an excluded row.
+        #
+        # The predicate is NEGATED from `calibration_truth_eligible_sql` rather
+        # than restated, so the count follows D112's set instead of carrying a
+        # second copy of it — the failure this fix repairs was precisely a
+        # widening that reached the population and missed a call site. The
+        # helper's COALESCE is what makes it safe under NOT (see its docstring).
+        # A LATERAL supplies the shape column the population scan gets from
+        # `market_result_shape`; this query has no such CTE in scope.
+        #
+        # TRANSPARENCY ONLY — not the population predicate. No
+        # CALIBRATION_POPULATION_VERSION bump, no re-grade (gotcha #21).
+        #
+        # 🔴 AND IT STAYS INLINE. Hoisting this to a module constant to make the
+        # RENDERED sql assertable is the ninth instance of the hole
+        # `_main_input_fingerprint`'s docstring keeps describing: the digest
+        # hashes this function's SOURCE, so a hoisted constant leaves only its
+        # NAME here and a later edit to the SQL would move no digest — a cursor
+        # banked under one predicate would stay resumable under another. The
+        # derived-input map catches it (`covered_by_value: False`), and it was
+        # caught that way. The guard test therefore asserts this source text,
+        # which is what the fingerprint protects.
+        heur_sql = text(f"""
             SELECT fm.source, COUNT(*) AS excluded
             FROM futures_outcomes fo
             JOIN futures_markets fm ON fm.id = fo.market_id
+            JOIN LATERAL (
+                SELECT COUNT(*) AS n_outcomes
+                FROM futures_outcomes o2
+                WHERE o2.market_id = fo.market_id
+            ) mrs ON TRUE
             WHERE fm.status = 'resolved'
               AND fo.resolution_source IN ('pass2_loser', 'all_losers')
               AND fo.opening_probability IS NOT NULL
               AND fo.opening_probability > 0 AND fo.opening_probability < 1
+              AND NOT {calibration_truth_eligible_sql(n_outcomes_col='mrs.n_outcomes')}
             GROUP BY fm.source
         """)
         heuristic_excluded = runner.reuse(PHASE_DIAGNOSTICS, "heuristic_excluded")
@@ -7829,7 +7865,11 @@ async def compute_calibration_payload(db, *, runner=None) -> dict:
                 "they were guessed, not authoritatively settled (Lane-2 #754 "
                 "measured pass2_loser at 0.0% winrate even at 0.5-0.9 prices), and "
                 "97% lack a polymarket_event_id so authoritative re-resolution is "
-                "infeasible. Read-side exclusion only; markets stay resolved, "
+                "infeasible. EXCEPT on a lone-claim market (exactly one captured "
+                "outcome), where all_losers is the venue's own answer rather than a "
+                "guess and the row is published (D112, #997) — those rows are not "
+                "counted here, because a published row is not an excluded one "
+                "(#7622). Read-side exclusion only; markets stay resolved, "
                 "never re-graded (gotcha #21)."
             ),
             "excluded_by_source": heuristic_excluded,

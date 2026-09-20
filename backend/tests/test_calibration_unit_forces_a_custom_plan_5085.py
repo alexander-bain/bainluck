@@ -211,7 +211,35 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: deliberately population-neutral today (``market_info`` withholds both
 #: DataGolf states symmetrically), so q271 still names the right rows and there
 #: is nothing for a reader to be told.
-LIVE_INPUT_FINGERPRINT = "8ddaa1ea408615b81599c385593d83a1"
+#:
+#: RE-ANCHORED for #7622 (the heuristic-count shape repair), composed on the
+#: master that already carries both anchors above: ``8ddaa1ea…`` ->
+#: ``d4000da8…``. The moved input is ``compute_calibration_payload`` and the
+#: edit is Query 9, the heuristic-exclusion transparency count, which gains the
+#: D112 lone-claim conjunct it should have gained at q271: a lone-claim
+#: ``all_losers`` row is PUBLISHED, so counting it as excluded told the reader we
+#: had set aside 6,081 results we were in fact scoring (polymarket 3,497 /
+#: kalshi 2,584, measured on production 2026-09-20). NO POPULATION SQL MOVED —
+#: the predicate is negated from the same ``calibration_truth_eligible_sql`` the
+#: population already calls, ``population_predicate_fingerprint`` is unchanged,
+#: and the digest moves only because the payload builder is hashed WHOLE. Same
+#: class as the CAL-P1318 anchor above, and the safe default doing its job.
+#:
+#: WHAT THIS RE-KEY COSTS, asked the way the notes above insist. MEASURED,
+#: NOTHING — and for a reason none of the notes above could use. The live
+#: ``calibration:main:checkpoint`` (read 2026-09-20 22:5xZ) carries
+#: ``input_fingerprint: 1a1d9a91…``, ``terminal: complete``, written 2026-09-16
+#: 16:34:18Z. That is the pin from BEFORE the CAL-P1318 and #6211 anchors above:
+#: both moved master's pin and neither has reached ``bainluck-heavy``, which is
+#: where ``precompute_calibration_main`` actually runs (notice 48). So the next
+#: heavy release re-keys that bank whatever else it carries, and this change
+#: rides a re-key already owed rather than buying one. Riding it is the cheap
+#: slot, exactly as the two notes above argued for their own changes.
+#:
+#: The version is NOT bumped, and this one is easy: the change moves a
+#: TRANSPARENCY COUNT, not a row. q271 names precisely the rows it named
+#: yesterday; what changes is whether the page describes one of them twice.
+LIVE_INPUT_FINGERPRINT = "d4000da8ca17d64dfeef47a8974d7c6f"
 
 
 class _Db:
