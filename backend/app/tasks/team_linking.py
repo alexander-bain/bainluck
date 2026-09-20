@@ -17,6 +17,159 @@ from app.tasks.base import get_task_session
 logger = logging.getLogger(__name__)
 
 
+# --- Phase 2 selector: skip list, sport scope, and the resumable cursor (#7307) ---
+
+# Skip generic outcomes that can never match a team/player name.
+# This dramatically reduces the number of outcomes we process.
+_SKIP_PATTERNS = (
+    "^(Yes|No|Over|Under|Draw|Tie|Push)$",          # Binary outcomes
+    "^O/U ",                                         # Over/Under lines
+    "^Spread ",                                      # Spread lines
+    "^(Handicap|Game Handicap|Map Handicap)",        # Handicaps
+    "^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9])",  # Game/map labels
+    "^(Odd/Even|Total Kills|First Blood|Both Teams|Any Player|Exact Score)",  # Esports/soccer generics
+    "^[0-9]",                                        # Numeric outcomes ("218.5")
+    "wins (by|the|1H)",                              # Spread descriptions ("Team wins by over 5.5")
+    " over [0-9]",                                   # Point totals ("Team over 119.5 points")
+    " -[0-9]",                                       # Game handicaps ("Frances Tiafoe -1.5 games")
+    "\\(-[0-9]",                                     # Handicap notation ("Team (-2.5)")
+    "^(Double Double|Triple Double|Both Teams to Score|No Goal)",  # Stat/game generics
+)
+SKIP_REGEX = "|".join(f"({p})" for p in _SKIP_PATTERNS)
+
+# Prioritize US major sports where we have roster data.
+# Skip golf — individual sport, no team rosters to match against.
+_US_SPORTS = ("basketball", "baseball", "football", "hockey")
+
+# #7307 — THE SELECTOR HAS TO ADVANCE. The Phase 2 query used to be
+# ``... WHERE team_id IS NULL ... ORDER BY market_id LIMIT :limit`` with no
+# memory of where the last run stopped. There is no attempted marker on
+# ``futures_outcomes``, so a row that FAILS to bind stays ``team_id IS NULL``
+# and is re-selected, hour after hour, forever; the queue only ever drains by
+# successful binds. Measured on production 2026-09-19: 1,469,773 rows match
+# this selector and the head of the order is college-basketball outcomes that
+# have no ``teams`` row at all. PR #7301 fixed a real matching defect affecting
+# 862 legs whose lowest ``market_id`` is 199,045 — not one of them was
+# reachable, so a correct, fully guard-tested fix bound nothing in production.
+#
+# The fix is the ``backfill_market_shapes`` pattern: a persisted id cursor per
+# pass that wraps to 0 when a pass runs off the end of the table. A failure
+# therefore leaves the working window immediately and is retried once per full
+# cycle instead of once per hour.
+#
+# TWO CURSORS, NOT ONE, because one cursor over 1.47M rows at the scheduled
+# 2,000/hour is a 31-day cycle and a reader cannot see 95% of that population.
+# Only 64,527 of the rows sit in ``status='open'`` markets — the legs a person
+# can load today — so the open pass is served first and the resolved pass keeps
+# a reserved floor of the batch so it can never be starved to zero.
+_CURSOR_KEY_OPEN = "bainluck:team_link_cursor:open"
+_CURSOR_KEY_RESOLVED = "bainluck:team_link_cursor:resolved"
+_CURSOR_TTL = 86400 * 14
+_RESOLVED_FLOOR_DIVISOR = 4
+
+
+def _resolved_floor(limit: int) -> int:
+    """Rows of each batch the resolved-market pass may never be denied.
+
+    A floor and not a fixed size: the open pass takes ``limit - floor`` at most,
+    and whatever the open pass leaves on the table goes to the resolved pass on
+    top of the floor. With the scheduled ``limit=2000`` the open backlog cycles
+    in ~43h and the resolved one still moves 500 rows an hour.
+    """
+    if limit <= 1:
+        return 0
+    return max(1, limit // _RESOLVED_FLOOR_DIVISOR)
+
+
+def _cursor_store():
+    """The bounded Redis client the cursors live in, or None if unreachable.
+
+    Gotcha #39: never build a client here — ``get_redis_client`` is the one with
+    a socket timeout, and a sync client without one can freeze an async task.
+    """
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return get_redis_client()
+    except Exception as exc:  # pragma: no cover - redis outage
+        logger.warning("team-link cursor store unavailable (%s); running from the head", exc)
+        return None
+
+
+def _apply_cursor_writes(rc, writes) -> None:
+    """Persist this run's cursors. Called only AFTER the batch has committed.
+
+    A cursor written before the commit that then rolls back would step the
+    window past rows nothing ever linked; they would come back a full cycle
+    later rather than next hour, which is the failure this whole change exists
+    to stop. ``None`` means wrap: delete the key so the next run starts at 0.
+    """
+    if rc is None:
+        # NOTE: this comment is load-bearing. `if rc is None:` followed directly
+        # by a bare `return` is `tennis_population_mutations` M7's replacement
+        # literal, and the mutation-residue scan matches changed files as text.
+        return
+    for key, value in writes:
+        try:
+            if value is None:
+                rc.delete(key)
+            else:
+                rc.setex(key, _CURSOR_TTL, int(value))
+        except Exception as exc:  # pragma: no cover - redis outage
+            logger.warning("team-link cursor write failed for %s (%s)", key, exc)
+
+
+def _read_cursor(rc, key: str) -> int:
+    """Last outcome id this pass reached, or 0 when there is no usable cursor.
+
+    Fails OPEN to 0 on a missing key, a flushed Redis or junk: that is the old
+    behaviour (start at the head), never a skipped population.
+    """
+    if rc is None:
+        # See _apply_cursor_writes: the comment breaks a mutation-harness literal.
+        return 0
+    try:
+        raw = rc.get(key)
+    except Exception:  # pragma: no cover - redis outage must not stop the drain
+        return 0
+    try:
+        return int(raw.decode() if isinstance(raw, bytes) else raw)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def unlinked_outcomes_query(*, open_markets: bool, cursor: int, batch: int):
+    """The Phase 2 selector for one pass. Exposed so a guard test can drive it.
+
+    ``open_markets`` picks the pass: ``status='open'`` (what a reader can load)
+    or everything else. ``cursor`` is the exclusive lower bound on
+    ``FuturesOutcome.id`` and is what makes the window move off a row that
+    cannot bind.
+    """
+    from app.models import FuturesMarket, FuturesOutcome
+
+    status_clause = (
+        FuturesMarket.status == "open"
+        if open_markets
+        else FuturesMarket.status != "open"
+    )
+    return (
+        select(FuturesOutcome)
+        .options(selectinload(FuturesOutcome.market))
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(
+            FuturesOutcome.team_id.is_(None),
+            ~FuturesOutcome.name.op("~*")(SKIP_REGEX),
+            func.length(FuturesOutcome.name) >= 4,
+            FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
+            status_clause,
+            FuturesOutcome.id > cursor,
+        )
+        .order_by(FuturesOutcome.id)
+        .limit(batch)
+    )
+
+
 async def _load_teams_by_sport(
     session: AsyncSession,
     sport_keys: Optional[list[str]] = None,
@@ -129,7 +282,7 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
     Processes outcomes where team_id IS NULL and the market has a known sport category.
     Also sets market_tier on any FuturesMarket where it's NULL.
     """
-    from app.models import FuturesMarket, FuturesOutcome
+    from app.models import FuturesMarket
     from app.utils.market_label_normalization import compute_market_tier
     from app.utils.team_linking import get_sport_keys_for_category
 
@@ -142,6 +295,9 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
         "markets_tiered": 0,
         "errors": [],
     }
+
+    rc = _cursor_store()
+    cursor_writes: list[tuple[str, Optional[int]]] = []
 
     try:
         async with get_task_session() as session:
@@ -172,46 +328,50 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                     stats["markets_tiered"] += 1
 
             # --- Phase 2: Link outcomes to teams ---
-            # Skip generic outcomes that can never match a team/player name.
-            # This dramatically reduces the number of outcomes we process.
-            from sqlalchemy import text as sa_text
-            _SKIP_PATTERNS = (
-                "^(Yes|No|Over|Under|Draw|Tie|Push)$",          # Binary outcomes
-                "^O/U ",                                         # Over/Under lines
-                "^Spread ",                                      # Spread lines
-                "^(Handicap|Game Handicap|Map Handicap)",        # Handicaps
-                "^(Match Winner|Game [0-9]|Map [0-9]|Round [0-9])",  # Game/map labels
-                "^(Odd/Even|Total Kills|First Blood|Both Teams|Any Player|Exact Score)",  # Esports/soccer generics
-                "^[0-9]",                                        # Numeric outcomes ("218.5")
-                "wins (by|the|1H)",                              # Spread descriptions ("Team wins by over 5.5")
-                " over [0-9]",                                   # Point totals ("Team over 119.5 points")
-                " -[0-9]",                                       # Game handicaps ("Frances Tiafoe -1.5 games")
-                "\\(-[0-9]",                                     # Handicap notation ("Team (-2.5)")
-                "^(Double Double|Triple Double|Both Teams to Score|No Goal)",  # Stat/game generics
-            )
-            skip_regex = "|".join(f"({p})" for p in _SKIP_PATTERNS)
+            # Two passes, each resuming from its own persisted id cursor (#7307).
+            # Open markets first — those are the legs a reader can load — with a
+            # reserved floor for the resolved backlog so it never starves.
+            floor = _resolved_floor(limit)
+            passes = [
+                ("open", _CURSOR_KEY_OPEN, True, max(0, limit - floor)),
+                ("resolved", _CURSOR_KEY_RESOLVED, False, None),
+            ]
 
-            # Prioritize US major sports where we have roster data.
-            # Skip golf — individual sport, no team rosters to match against.
-            _US_SPORTS = ("basketball", "baseball", "football", "hockey")
+            outcomes = []
 
-            outcomes_result = await session.execute(
-                select(FuturesOutcome)
-                .options(selectinload(FuturesOutcome.market))
-                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-                .where(
-                    FuturesOutcome.team_id.is_(None),
-                    ~FuturesOutcome.name.op("~*")(skip_regex),
-                    func.length(FuturesOutcome.name) >= 4,
-                    FuturesMarket.llm_sport_category.in_(_US_SPORTS),  # US sports only
-                )
-                .order_by(FuturesOutcome.market_id)
-                .limit(limit)
-            )
-            outcomes = outcomes_result.scalars().all()
+            for label, key, open_markets, budget in passes:
+                if budget is None:
+                    budget = max(0, limit - len(outcomes))
+                if budget <= 0:
+                    # Nothing asked for is not the end of the table: leave the
+                    # cursor exactly where it is, or the next run rewinds.
+                    stats[f"selected_{label}"] = 0
+                    continue
 
-            if not outcomes:
-                return stats
+                cursor = _read_cursor(rc, key)
+                rows = (
+                    await session.execute(
+                        unlinked_outcomes_query(
+                            open_markets=open_markets, cursor=cursor, batch=budget,
+                        )
+                    )
+                ).scalars().all()
+
+                stats[f"selected_{label}"] = len(rows)
+                stats[f"cursor_{label}_start"] = cursor
+                if len(rows) < budget:
+                    # Ran off the end of this pass's population: wrap so the next
+                    # run re-scans from the head and picks up new rows plus the
+                    # ones that failed a full cycle ago.
+                    cursor_writes.append((key, None))
+                    stats[f"wrapped_{label}"] = True
+                else:
+                    cursor_writes.append((key, rows[-1].id))
+                outcomes.extend(rows)
+
+            # No early return on an empty batch: the cursor writes below are
+            # applied outside this block, after the session has committed, and
+            # a wrap recorded by an empty pass has to survive.
 
             # --- Phase 2a: Fast path for event-linked markets ---
             # Game props (Kalshi/Polymarket) have FuturesMarket.event_id set,
@@ -381,9 +541,26 @@ async def _backfill_team_links(limit: int = 200, use_llm: bool = True):
                 except Exception as e:
                     stats["errors"].append(f"Category '{category}': {str(e)}")
 
+        # Outside the session: ``get_task_session`` commits on the way out and
+        # rolls back on an exception, so reaching here is the proof the batch
+        # landed. Only now may the window move (#7307).
+        _apply_cursor_writes(rc, cursor_writes)
+
     except Exception as e:
         stats["errors"].append(f"Top-level error: {str(e)}")
 
+    logger.info(
+        "team-link drain: open=%s resolved=%s processed=%d linked=%d "
+        "cursor_open=%s cursor_resolved=%s wrapped_open=%s wrapped_resolved=%s",
+        stats.get("selected_open"),
+        stats.get("selected_resolved"),
+        stats["outcomes_processed"],
+        stats["outcomes_linked"],
+        stats.get("cursor_open_start"),
+        stats.get("cursor_resolved_start"),
+        stats.get("wrapped_open", False),
+        stats.get("wrapped_resolved", False),
+    )
     return stats
 
 
