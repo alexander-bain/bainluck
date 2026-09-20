@@ -190,8 +190,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 
 # Stdlib-only module (gotcha #3's discipline, checked: `dataclasses`, `math`,
 # `typing`), so this cannot close an import cycle. It owns the derivation of
@@ -482,10 +483,40 @@ _MIN_QUERY_CHARS = 2
 #: doubling the load at exactly the moment the database is slowest.
 _LOCK_KEY = "bainluck:typeahead_warmer:running"
 
-#: Longer than a plausible cold run, short enough that a worker killed mid-run
-#: (the 300s hard SIGKILL that records as `no_data`) cannot wedge the warmer
-#: off permanently. A lock nobody can release is worse than no lock.
-_LOCK_TTL_SECONDS = 120
+#: Long enough that a run never loses its own lock, short enough that a run
+#: killed mid-flight cannot open a COLD HOLE. #3398, measured 2026-09-20: at 120
+#: the warmer skipped 31 beats on `lock` against 16 on `min_period` in 604s, ran
+#: 10 passes where the floor allows ~20, and left five write-gaps over the 65s
+#: response TTL (worst 267.7s) — 20.0% of the wall clock with all 40 head terms
+#: dead. A killed child cannot release, so the TTL IS the hole, and 120 > 65
+#: means one kill is always a cold search box.
+#:
+#: 45 is BELOW 65 (`RESPONSE_CACHE_TTL_S`), so a wedge alone can never outlive a
+#: warmed entry. That is the whole point of the change.
+#:
+#: ⚠️ There is no value that also clears the pass wall, and pretending otherwise
+#: is how this constant would go wrong again. `MEASURED_WALL_MAX_S` is 66.365 —
+#: ABOVE the 65s response TTL, deliberately, because ruling 075 makes it a bound
+#: with an argued margin after four consecutive cycles each set it to a point
+#: estimate and were each wrong within one cycle. So a pass may legitimately
+#: outlive the entries it is refreshing, and the two bounds "under the response
+#: TTL" and "over the pass wall" have NO overlap to pick from.
+#:
+#: `_LOCK_RENEW_SECONDS` is what resolves that, and it is therefore load-bearing
+#: rather than a belt-and-braces addition: the TTL bounds a pass that has STOPPED
+#: (the kill, which cannot renew), and the renewal covers a pass still RUNNING
+#: (which can). Lowering the TTL without it would trade a cold head for
+#: concurrent passes — the trade `0a7534ff9`'s commit message correctly refused.
+#: Today's observed wall is far under the registered bound (p50 13.2s, p95 21.5s,
+#: max 31.4s over the 64 passes in #3398's before/after windows), which is why
+#: renewals are rare in practice and the mechanism is still required.
+_LOCK_TTL_SECONDS = 45
+
+#: Re-`expire` the lock this often while a pass is in flight. A third of the TTL,
+#: so two consecutive renewal failures still leave a full beat of margin. Without
+#: this, shortening the TTL would just move the wedge from "a killed run blocks
+#: for 120s" to "a slow run is overtaken by its own successor".
+_LOCK_RENEW_SECONDS = 15
 
 #: `/typeahead`'s `max_length`. Mirrored rather than imported to keep this module
 #: importable without pulling the route in at module scope; the test asserts the
@@ -843,31 +874,105 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
             "seconds": round(time.monotonic() - started, 3)}
 
 
-def _acquire_run_lock() -> bool:
-    """True if THIS run owns the lock. False means another run is in flight.
+#: "Run, but we hold nothing." Returned when Redis could not answer, so the pass
+#: proceeds (fail open) while renew and release stay no-ops. A DISTINCT value
+#: rather than a token, because `search_head_warmer._RunLockClaim` records that
+#: reading `token is not None` as "we own it" is its own defect class — this
+#: module is small enough not to need that module's three-state claim object, but
+#: not so small that it may collapse OWNED and UNKNOWN into one shape.
+_LOCK_UNKNOWN = "unknown"
 
-    Fails OPEN: if Redis is unreachable we warm anyway. The lock exists to stop
-    duplicate work, not to enforce correctness — a doubled warm is wasteful, a
-    warmer that silently stops warming because Redis blinked is the bug this
-    whole file is about.
+
+def _acquire_run_lock() -> str | None:
+    """This run's lock TOKEN, `_LOCK_UNKNOWN`, or `None` when refused.
+
+    Three states, never two (gotcha #53): a token means `SET NX` was observed
+    succeeding and we own the lock; `_LOCK_UNKNOWN` means Redis did not answer
+    and we are warming anyway; `None` means somebody else demonstrably holds it
+    and this beat is a skip. Only `None` stops a pass — the lock exists to stop
+    duplicate work, not to enforce correctness, and a warmer that silently stops
+    warming because Redis blinked is the bug this whole file is about.
+
+    Returns a token rather than a bool (#3398) because renew and release are now
+    conditional on owning the lock. With `_LOCK_TTL_SECONDS` at 120 an
+    unconditional `delete` was near-harmless — expiry effectively never beat a
+    15s pass. At 45 with renewal it stops being theoretical: a run whose renewal
+    failed twice can wake up past its own expiry, and an unconditional delete
+    would then release the SUCCESSOR's lock and let a third copy in. The token
+    makes "release" mean "release mine".
     """
+    token = uuid.uuid4().hex
     try:
         from app.tasks.redis_state import get_redis_client
 
         rc = get_redis_client()
-        return bool(rc.set(_LOCK_KEY, "1", nx=True, ex=_LOCK_TTL_SECONDS))
+        if rc.set(_LOCK_KEY, token, nx=True, ex=_LOCK_TTL_SECONDS):
+            return token
+        return None
     except Exception:  # noqa: BLE001
         logger.warning("typeahead_warmer: lock unavailable, warming anyway", exc_info=True)
-        return True
+        return _LOCK_UNKNOWN
 
 
-def _release_run_lock() -> None:
+def _renew_run_lock(token: str) -> bool:
+    """Extend OUR lock by a full TTL. False means we no longer hold it.
+
+    Best-effort and never raises, for `_record_outcome`'s reason: an instrument
+    (or here, a safety) that can break the pass it protects is worse than not
+    having it. A failed renewal is not fatal — the pass keeps warming, and the
+    worst case is the state this change exists to bound, one TTL of wedge.
+    """
+    if token == _LOCK_UNKNOWN:
+        return False
     try:
         from app.tasks.redis_state import get_redis_client
 
-        get_redis_client().delete(_LOCK_KEY)
+        rc = get_redis_client()
+        if rc.get(_LOCK_KEY) not in (token, token.encode()):
+            return False
+        rc.expire(_LOCK_KEY, _LOCK_TTL_SECONDS)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.warning("typeahead_warmer: lock renewal failed", exc_info=True)
+        return False
+
+
+def _release_run_lock(token: str | None = None) -> None:
+    """Release the lock, but only if it is still ours (see `_acquire_run_lock`).
+
+    `_LOCK_UNKNOWN` releases NOTHING: that pass never established ownership, so
+    deleting the key would be taking the lock away from whoever legitimately
+    holds it. `token=None` keeps the old unconditional behaviour for the callers
+    and tests that predate #3398.
+    """
+    if token == _LOCK_UNKNOWN:
+        return
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        rc = get_redis_client()
+        if token is not None and rc.get(_LOCK_KEY) not in (token, token.encode()):
+            return
+        rc.delete(_LOCK_KEY)
     except Exception:  # noqa: BLE001
         logger.warning("typeahead_warmer: lock release failed", exc_info=True)
+
+
+async def _hold_run_lock(token: str) -> None:
+    """Renew the lock every `_LOCK_RENEW_SECONDS` until cancelled.
+
+    Runs as a sibling task to the warm itself so a pass that legitimately
+    outlasts the TTL keeps its lock. Redis calls are bounded (gotcha #39) but
+    synchronous, so they go off-loop — a warmer that stalls the event loop it
+    shares with the warm queries would slow down the thing it is protecting.
+    """
+    while True:
+        await asyncio.sleep(_LOCK_RENEW_SECONDS)
+        if not await asyncio.to_thread(_renew_run_lock, token):
+            # Lost it. Stop renewing rather than re-taking: whoever holds it now
+            # is doing this pass's work, and racing them is the duplicate warm
+            # the lock exists to prevent.
+            return
 
 
 def _seconds_since_last_pass(now: float) -> float | None:
@@ -1094,7 +1199,8 @@ async def _warm_typeahead(
         _record_outcome(out)
         return out
 
-    if not _acquire_run_lock():
+    lock_token = _acquire_run_lock()
+    if lock_token is None:
         logger.info("typeahead_warmer: another run holds the lock, skipping")
         return _no_work("lock", None)
 
@@ -1104,7 +1210,7 @@ async def _warm_typeahead(
     now = time.time()
     since_last = _seconds_since_last_pass(now)
     if since_last is not None and since_last < MIN_PASS_PERIOD_SECONDS:
-        _release_run_lock()
+        _release_run_lock(lock_token)
         logger.info(
             "typeahead_warmer: last pass started %.1fs ago (floor %ds), skipping",
             since_last, MIN_PASS_PERIOD_SECONDS,
@@ -1115,6 +1221,11 @@ async def _warm_typeahead(
 
     width = max(1, int(concurrency))
     wall_started = time.monotonic()
+    # #3398. Started BEFORE the work and cancelled in the same `finally` that
+    # releases, so there is no window in which the pass is running and nothing is
+    # renewing. The holder is the reason `_LOCK_TTL_SECONDS` can sit under the
+    # 65s response TTL without a slow pass being overtaken by its successor.
+    holder = asyncio.create_task(_hold_run_lock(lock_token))
     try:
         async with AsyncExitStack() as stack:
             sessions = [
@@ -1131,7 +1242,13 @@ async def _warm_typeahead(
 
             results = await _warm_head_concurrently(sessions[:width], head)
     finally:
-        _release_run_lock()
+        holder.cancel()
+        # Awaited, not fire-and-forget: an un-awaited cancelled task logs
+        # "Task exception was never retrieved" on some paths, and a warmer that
+        # prints a traceback every 30s is how a real finding gets filtered out.
+        with suppress(asyncio.CancelledError):
+            await holder
+        _release_run_lock(lock_token)
     seconds_wall = round(time.monotonic() - wall_started, 3)
 
     warmed = [r for r in results if r["ok"]]

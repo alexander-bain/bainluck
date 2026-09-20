@@ -404,7 +404,11 @@ class TestThePassSummaryTellsTheTruthAboutWrites:
 
     def test_a_skipped_pass_carries_the_new_keys_too(self):
         """The same-keys contract, extended to LAT-P134's fields."""
-        with patch.object(warmer, "_acquire_run_lock", return_value=False), \
+        # `None`, not `False` — #3398 moved the refusal sentinel when the helper
+        # started returning a token, and `False` is falsy but not `None`, so a
+        # stub left at `False` would run a full pass and quietly stop testing
+        # the skip shape this case is named for.
+        with patch.object(warmer, "_acquire_run_lock", return_value=None), \
              patch.object(warmer, "_record_outcome"):
             out = _run(warmer._warm_typeahead())
         assert out["terminal"] == "skipped"
