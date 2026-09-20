@@ -55,6 +55,7 @@ from app.utils.event_tennis import (
     list_tennis_tournament_concepts,
 )
 from app.utils.event_ufc import classify_ufc_prop, list_ufc_card_concepts
+from app.utils.grouped_field_legs import drop_legs_of_a_rendered_field
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +696,24 @@ async def build_hub(cfg: HubConfig, db: AsyncSession) -> dict:
             sections.pop("matches", None)
         if moved_props:
             sections["props"] = (sections.get("props") or []) + moved_props
+
+    # ── #7400: one question gets one card ──
+    #
+    # A Polymarket negative-risk event arrives as the grouped market AND every one
+    # of its binary legs, all sharing a `group_id`, so a section composed from that
+    # pool drew the ranked field and then restated each of its rows: 32 such cards
+    # on 2026-09-20, ten of them adjacent at the top of `/hub/esports` and 22 on
+    # `/hub/mma`. The key was in the payload all along and this route never read it.
+    #
+    # 🔴 BEFORE THE TIER AND THE COUNTS, deliberately, and this is the opposite
+    # placement to UX-P181's unpriced filter below. An unpriced row is a real,
+    # distinct market we refuse to DRAW, so it stays in `total` and is published as
+    # `dropped` — the swallow that counts. A leg is not another answer; it is this
+    # page's other copy of one. Counted, it would tell `resolve_entity_tier` that
+    # the MMA hub holds 39 futures answers where it holds 17 questions, and it
+    # would leave the section chip reading "25" over eleven cards (the chip is
+    # `markets.length` on the rows served). One question, one card, one count.
+    sections = drop_legs_of_a_rendered_field(sections)
 
     # ── UX-P061 (#1742, epic #1741): the entity envelope ──
     #
