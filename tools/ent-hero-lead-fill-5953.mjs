@@ -118,14 +118,27 @@ if (isLocal) {
 
 await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
 
-// The hero grid is the first grid on the page whose class carries `heroGrid` (CSS modules hash the
-// name, so match on the substring rather than an exact class).
-const found = await page.evaluate(() => {
-  const el = [...document.querySelectorAll('div')].find((d) =>
-    [...d.classList].some((c) => /heroGrid/.test(c))
-  );
-  return !!el;
-});
+/* The hero grid is the first grid on the page whose class carries `heroGrid` (CSS modules hash the
+   name, so match on the substring rather than an exact class).
+
+   WAIT FOR IT RATHER THAN ASKING ONCE. `/entertainment` is client-rendered — the served HTML carries
+   no card markup at all — so `waitUntil: 'networkidle'` can return before React has painted the
+   grid. Against a LOCAL build the API is routed by this file and the render lands inside the idle
+   window, so a single `evaluate` was enough and the gap never showed; against PRODUCTION this exited
+   3 (`NO HERO GRID`) on a page that renders the grid perfectly well a moment later (ux/1376, paying
+   #7356's after-check). A poll turns "I looked too early" — which reads exactly like "the page is
+   broken" — back into the absence it claims to report. */
+const found = await page
+  .waitForFunction(
+    () =>
+      [...document.querySelectorAll('div')].some((d) =>
+        [...d.classList].some((c) => /heroGrid/.test(c))
+      ),
+    null,
+    { timeout: 20000 }
+  )
+  .then(() => true)
+  .catch(() => false);
 if (!found) {
   console.error('NO HERO GRID — the page did not render `.heroGrid`');
   await browser.close();
