@@ -116,6 +116,7 @@ async def _run_polymarket_ws_consumer():
         topup_clob_tokens, topup_outcome_clob_tokens,
     )
     from app.tasks.ws_liveness import report as _report_liveness
+    from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
 
     # Q504-b: see the Kalshi arm — reported before the slate work, so a stall in
@@ -371,6 +372,13 @@ async def _run_polymarket_ws_consumer():
         # "we gave up and a price is gone".
         "final_flush_retries": 0,
         "final_flush_dropped": 0,
+        # #6598 / CERT-3182: rows whose `rank` a flush corrected. Twin of the
+        # Kalshi socket's counter and there for the same reason — this module
+        # moves `current_probability` and had never written the column derived
+        # from it, so a live crossing left the board ordered by the last poll.
+        # Counted unconditionally: the statement is a no-op on a field that did
+        # not cross, so 0 is healthy and absence is the failure.
+        "ranks_rederived": 0,
     }
 
     # Buffered price updates
@@ -425,6 +433,25 @@ async def _run_polymarket_ws_consumer():
                             ),
                         )
                     )
+
+                # #6598 / CERT-3182, twin of the Kalshi socket's. Every price
+                # above moved the value `rank` is derived from and this module
+                # has never written that column, so a crossing mid-game left the
+                # board numbered by whichever poll last saw it. One statement
+                # for every market the batch touched, in the same session as the
+                # prices. `market_by_outcome` is the slate map already in memory
+                # — no per-flush lookup on a two-second cadence.
+                reranked_markets = {
+                    market_by_outcome[oid]
+                    for oid in batch
+                    if oid in market_by_outcome
+                }
+                if reranked_markets:
+                    stats["ranks_rederived"] += (
+                        await session.execute(
+                            rerank_market_fields_stmt(sorted(reranked_markets))
+                        )
+                    ).rowcount
             stats["price_updates"] += len(batch)
         except Exception:
             # Q491 — THE SHIP. The batch is still in `price_buffer`, so the next

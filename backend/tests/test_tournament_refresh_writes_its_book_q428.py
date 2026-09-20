@@ -181,9 +181,28 @@ async def _run(monkeypatch, market=None, rows=None):
     return session, stats
 
 
+def _is_the_6598_rerank(stmt) -> bool:
+    """The field re-derivation, which is not a price write.
+
+    #6598 gave this rail a second statement against `futures_outcomes`: after
+    the prices, one UPDATE that re-derives `rank` across every leg of each
+    market touched. It names `rank` and nothing else, so every test in this
+    file — all of which are about the BOOK columns travelling with the price —
+    would otherwise count it as a third leg written. Told apart by its SET
+    clause rather than by position, so it stays told apart if the statements
+    are ever reordered.
+    """
+    clause = str(stmt).split(" SET ", 1)[-1]
+    for boundary in (" FROM ", " WHERE "):
+        clause = clause.split(boundary, 1)[0]
+    return "rank" in clause and "current_probability" not in clause
+
+
 def _by_table(session, name):
     out = []
     for stmt in session.statements:
+        if name == "futures_outcomes" and _is_the_6598_rerank(stmt):
+            continue
         table = getattr(stmt, "table", None)
         if table is not None and table.name == name:
             out.append(_bound(stmt))

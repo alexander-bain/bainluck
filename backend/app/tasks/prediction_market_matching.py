@@ -8372,6 +8372,7 @@ async def _poll_live_prediction_market_prices():
     # snapshot table this loop writes and the event row it stamps.
     from app.models.models import Event, FuturesOddsSnapshot
     from app.tasks.snapshots import _create_or_update_win_prob_snapshot
+    from app.utils.futures_rank import rerank_market_field_stmt  # #6598
     from app.utils.odds_math import probability_to_american
 
     stats = {
@@ -8380,6 +8381,11 @@ async def _poll_live_prediction_market_prices():
         "kalshi_fetched": 0,
         "polymarket_fetched": 0,
         "outcomes_updated": 0,
+        # #6598 / CERT-3182: rows whose `rank` this beat corrected after moving
+        # the price it is derived from. Reported unconditionally — the statement
+        # is a no-op on a field that did not cross, so 0 is the healthy reading
+        # and its absence is the one that means the wiring is gone.
+        "ranks_rederived": 0,
         # #3569: Kalshi-only counters. `kalshi_fetched` counts REQUESTS and
         # incremented happily throughout the outage, and `outcomes_updated` is
         # shared with Polymarket — which writes thousands of rows a beat — so
@@ -8966,6 +8972,23 @@ async def _poll_live_prediction_market_prices():
                             )
                             stats["futures_snapshots_written"] += 1
 
+                        # #6598 / CERT-3182. Every leg above moved (or, on a
+                        # withdrawal, took back) the price `rank` is derived
+                        # from, and this beat has never written that column —
+                        # so a live favourite changing hands left the board
+                        # numbered by whichever 2-hour poll last saw it. Last
+                        # in the market's work and before the boundary, so it
+                        # is durable with the prices it describes and sees the
+                        # withdrawals as well as the writes. `session.execute`
+                        # autoflushes the ORM assignments above (gotcha #5).
+                        stats["ranks_rederived"] = stats.get(
+                            "ranks_rederived", 0
+                        ) + (
+                            await session.execute(
+                                rerank_market_field_stmt(market_id)
+                            )
+                        ).rowcount
+
                         # #5682: this market's prices are durable HERE, before
                         # the next venue fetch. A deadlock on the market after
                         # it can no longer un-write them.
@@ -9265,6 +9288,17 @@ async def _poll_live_prediction_market_prices():
                                 )
                             )
                             stats["futures_snapshots_written"] += 1
+
+                        # #6598 / CERT-3182 — the Polymarket arm's copy of the
+                        # Kalshi branch's re-rank, for the same reason and in
+                        # the same position.
+                        stats["ranks_rederived"] = stats.get(
+                            "ranks_rederived", 0
+                        ) + (
+                            await session.execute(
+                                rerank_market_field_stmt(market_id)
+                            )
+                        ).rowcount
 
                         # #5682: durable before the next fetch, same reason as
                         # the Kalshi branch — one Polymarket event's deadlock

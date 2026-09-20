@@ -44,6 +44,18 @@ group, or touch ``event_id``. Discovery stays the polls' job. This separation is
 the actual fix: refresh coverage no longer depends on a discovery ordering, so
 the two can never starve each other again.
 
+IT DOES RE-DERIVE ``rank``, AND THE LIST ABOVE IS WHY IT HAS TO (#6598,
+CERT-3182). ``rank`` is not an independent column a writer may decline to own —
+it is a function of ``current_probability``, which is precisely what this task
+writes. Leaving it alone is not neutrality, it is publishing a stale ordering:
+`/economics` SORTS by this column with no number on screen, and the team-page
+season-futures badge prints it, so a price CROSSING written here re-creates
+#6598's served defect in full — on the front page, hourly, on the rows the polls
+"structurally cannot reach" and therefore cannot repair either. Every path below
+that changes or retires a price runs
+:func:`app.utils.futures_rank.rerank_market_field_stmt` for that market before it
+commits. The helper's own header carries the rule and the exemptions.
+
 THREE ARMS, BECAUSE THERE ARE THREE KINDS OF WORTH REFRESHING
 --------------------------------------------------------------
 The sweep selects on **value** (volume above a floor at any tier, or tier 1
@@ -166,6 +178,7 @@ from app.utils.futures_liveness import (
     VENUE_SETTLED_NOW_SQL,
     venue_answered,
 )
+from app.utils.futures_rank import rerank_market_field_stmt  # #6598 / CERT-3182
 from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
 logger = logging.getLogger(__name__)
@@ -1942,7 +1955,16 @@ async def _retire_delisted_kalshi_legs(
         {"market_id": market_id, "tickers": confirmed},
     )
     retired = len(result.fetchall())
-    if not retired:
+    if retired:
+        # #6598 / CERT-3182. Withdrawing a leg is a field change: the retired row
+        # drops to the NULL tail and everyone below it moves up one. Re-derived
+        # HERE rather than at the call sites because there are two of them — the
+        # batched loop and `_sweep_unreached_kalshi_frozen`'s own arm — and a
+        # rule enforced per call site is a rule the third caller will not know
+        # about. Both commit after this returns, so it is the same transaction as
+        # the withdrawal either way.
+        await session.execute(rerank_market_field_stmt(market_id))
+    else:
         # Zero rows has two causes and they are not the same news. Separate them
         # so the refusal is countable (CERT-2394) — see
         # `_KALSHI_MARKET_NOW_GRADED_SQL`.
@@ -2325,6 +2347,12 @@ async def _refresh_stale_futures_prices(
         # a clean success on every pass while retiring nothing, and a stat that
         # only appears when it fires cannot tell that apart from a quiet cohort.
         "legs_retired": 0,
+        # #6598 / CERT-3182. Rows whose `rank` this pass corrected. Reported
+        # unconditionally for the reason `legs_retired` is: the wiring is a
+        # no-op on a field the poll already had right, so "zero" and "the call
+        # was never made" are the two states this counter exists to separate,
+        # and only one of them is healthy.
+        "ranks_rederived": 0,
         # #5869. THE LEG THIS PASS DECLINED TO PRICE — the third outcome, and the
         # one the summary could not express. `legs_retired` says "the venue quotes
         # nothing, so we withdrew ours"; `markets_priced` says "we wrote". A leg
@@ -2691,6 +2719,17 @@ async def _refresh_stale_futures_prices(
                                     market["id"],
                                     unpriced_by_event.get(event_id) or [],
                                 )
+                                # #6598 / CERT-3182, and LAST for the reason
+                                # `_retire_unpriced_legs` runs after the write:
+                                # the field is only knowable once both have
+                                # finished with it. Same transaction, so a pass
+                                # whose prices roll back cannot leave the market
+                                # ranked against prices it no longer holds.
+                                _reranked = (
+                                    await session.execute(
+                                        rerank_market_field_stmt(market["id"])
+                                    )
+                                ).rowcount
                                 await session.commit()
                             except Exception as exc:
                                 await session.rollback()
@@ -2698,6 +2737,10 @@ async def _refresh_stale_futures_prices(
                                     f"polymarket {market['external_id']}: {exc}"
                                 )
                                 continue
+                            if _reranked:
+                                stats["ranks_rederived"] = (
+                                    stats.get("ranks_rederived", 0) + _reranked
+                                )
                             if retired:
                                 stats["legs_retired"] = (
                                     stats.get("legs_retired", 0) + retired
@@ -2800,6 +2843,17 @@ async def _refresh_stale_futures_prices(
                                 {"market_id": market["id"]},
                             )
                         ).fetchall()
+                        # #6598 / CERT-3182. The withdrawal above nulls every
+                        # leg of this market that still held a price, so the
+                        # numbers left behind rank a field that no longer has
+                        # prices in it. Re-derived in the same transaction as
+                        # the withdrawal for the reason the stamp is: a
+                        # withdrawal that committed without it would leave the
+                        # ladder sorted by a price nobody can see.
+                        if withdrawn:
+                            await session.execute(
+                                rerank_market_field_stmt(market["id"])
+                            )
                         await session.commit()
                     except Exception as exc:
                         await session.rollback()
@@ -2832,11 +2886,33 @@ async def _refresh_stale_futures_prices(
                     written = await _write_prices(
                         session, market["id"], "kalshi", priced, stats
                     )
+                    # #6598 / CERT-3182 — the repair this cert named. This is
+                    # the dominant writer of `current_probability` on the
+                    # high-value open book, and it wrote a price crossing
+                    # hourly while leaving `rank` on whatever the last poll set
+                    # it to. Re-derive across the whole field, in the write's
+                    # own transaction, before the commit.
+                    #
+                    # Unconditional rather than gated on `written`, and that is
+                    # the cheap half of the drain: a market this pass could not
+                    # price is exactly a market no poll is reaching either, so
+                    # it is where #6598's 1,326 fossils sit. The
+                    # `IS DISTINCT FROM` guard makes the healthy case zero row
+                    # writes, so the only markets that pay are the wrong ones.
+                    _reranked = (
+                        await session.execute(
+                            rerank_market_field_stmt(market["id"])
+                        )
+                    ).rowcount
                     await session.commit()
                 except Exception as exc:
                     await session.rollback()
                     stats["errors"].append(f"kalshi {market['external_id']}: {exc}")
                     continue
+                if _reranked:
+                    stats["ranks_rederived"] = (
+                        stats.get("ranks_rederived", 0) + _reranked
+                    )
                 if written:
                     stats["markets_priced"] += 1
                     stats["snapshots_written"] += written

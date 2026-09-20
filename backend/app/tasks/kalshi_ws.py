@@ -72,6 +72,7 @@ async def _run_kalshi_ws_consumer():
         LiveBlendRefresher, event_ids_for_outcomes,
     )
     from app.tasks.ws_liveness import report as _report_liveness
+    from app.utils.futures_rank import rerank_market_fields_stmt  # #6598
     from app.utils.price_change_stamp import price_changed_at_value
     from app.utils.resolution_authority import AUTHORITATIVE_SOURCES
 
@@ -171,6 +172,13 @@ async def _run_kalshi_ws_consumer():
         # absence — "it returned" is not "it wrote" (gotcha #53). A refusal is
         # terminal, not an error: the entry leaves the buffer like any other.
         "settled_declined": 0,
+        # #6598 / CERT-3182: rows whose `rank` a flush corrected. This socket
+        # moves `current_probability` faster than anything else in the system
+        # and had never heard of the column derived from it, so a favourite
+        # changing hands mid-game left the board ordered by the last REST poll.
+        # Counted unconditionally — the re-derivation is a no-op on a field that
+        # did not cross, so 0 is the healthy reading and absence is the failure.
+        "ranks_rederived": 0,
     }
 
     # -- Buffered price updates --
@@ -181,6 +189,13 @@ async def _run_kalshi_ws_consumer():
         outcome_id: event_id_by_market[market_id]
         for market_id, outcome_id in ticker_to_ids.values()
         if market_id in event_id_by_market
+    }
+    # #6598 / CERT-3182: outcome → its market, for the field re-rank after each
+    # flush. Taken from the subscription map that is already in memory rather
+    # than read back per flush — this runs every `PRICE_FLUSH_SECONDS`, and a
+    # lookup query on that cadence is a cost the socket does not have to pay.
+    market_id_by_outcome: dict[int, int] = {
+        outcome_id: market_id for market_id, outcome_id in ticker_to_ids.values()
     }
     blend_refresher = LiveBlendRefresher("kalshi")
 
@@ -201,6 +216,7 @@ async def _run_kalshi_ws_consumer():
         # — can lose a price the buffer was holding. Nothing needs to be
         # "put back", because it was never taken away.
         declined = 0
+        written_outcome_ids: list[int] = []
         try:
             async with get_task_session() as session:
                 for outcome_id, prob in batch.items():
@@ -266,6 +282,31 @@ async def _run_kalshi_ws_consumer():
                     # what this counter is named for.)
                     if result.rowcount == 0:
                         declined += 1
+                    else:
+                        written_outcome_ids.append(outcome_id)
+
+                # #6598 / CERT-3182. `rank` is derived from the price this loop
+                # just moved, and nothing in this module has ever written it —
+                # so a favourite changing hands mid-game left the board numbered
+                # by whichever REST poll last saw it, on the exact rows this
+                # socket exists to keep current.
+                #
+                # KEYED ON THE ROWS THAT ACTUALLY WROTE, not on the batch: a
+                # settled row declined by the #5411 guard changed nothing, and
+                # re-deriving its market's field would be this socket reaching a
+                # board it was just refused. Same session, so it lands in the
+                # transaction that carries the prices.
+                reranked_markets = {
+                    market_id_by_outcome[oid]
+                    for oid in written_outcome_ids
+                    if oid in market_id_by_outcome
+                }
+                if reranked_markets:
+                    stats["ranks_rederived"] += (
+                        await session.execute(
+                            rerank_market_fields_stmt(sorted(reranked_markets))
+                        )
+                    ).rowcount
             stats["flushes"] += 1
             stats["price_updates"] += len(batch) - declined
             stats["settled_declined"] += declined

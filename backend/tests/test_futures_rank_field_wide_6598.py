@@ -21,6 +21,25 @@ Each test below is aimed at ONE way the rule could be rewritten wrong:
 * scope               → the `market_id` filter survives
 * healthy = no write  → the `IS DISTINCT FROM` guard survives
 * the touch-stamp     → `last_updated` is never in the SET clause
+* the population      → every writer of the PRICE re-derives the rank
+
+THE LAST ONE IS CERT-3182's, AND IT REPLACES A GUARD THAT ASKED THE WRONG
+QUESTION. The first cut of this file enumerated the three pollers that NUMBER a
+batch and asserted each still called the helper. That guard was green while the
+ship was broken, because `rank` is not corrupted only by writers that number it
+wrong — it is corrupted by every writer that moves ``current_probability`` and
+leaves the number alone. Six modules did exactly that, `futures_price_refresh`
+loudest among them: it is the scheduled hourly net over precisely the served,
+registered and high-value markets the pollers cannot reach, so a price crossing
+there re-created the served defect within the hour on rows nothing else was
+going to repair.
+
+So the population is taken by AST from ``app/tasks/**`` rather than typed from
+memory, and a module that writes the price must either re-derive the field or be
+named in :data:`EXEMPT_WRITERS` with a reason. A seventh writer fails a test on
+the day it is written. The behaviour that guard protects — a crossing actually
+reordering the board — is executed in
+``test_futures_price_refresh_reranks_the_field_6598.py``.
 """
 
 import os
@@ -287,33 +306,191 @@ def test_the_stale_row_a_poll_never_saw_keeps_its_age(session):
     assert abs((fossil.last_updated.replace(tzinfo=timezone.utc) - old).total_seconds()) < 1
 
 
-def test_every_batch_ranking_poller_re_derives_the_field_after_its_writes():
-    """Reachability. The helper repairs nothing it is not called from, and the
-    three tasks that rank a BATCH of a larger field are the three that need it.
+# ── CERT-3182: the population is "writes the price", not "writes the rank" ───
+#
+# One entry per wired module, and the number is the count of write BOUNDARIES it
+# re-derives at, not a boolean. A boolean cannot tell a module that lost one of
+# its two call sites from one that still has both, and two of these modules got
+# their second boundary precisely because the first one did not cover the whole
+# path.
+#
+#   futures.py                     1  the odds_api pass
+#   kalshi.py                      2  main poll · linked-series refresh (#3518/#4356)
+#   polymarket.py                  2  main poll · dark-linked-book pass (#3613)
+#   futures_price_refresh.py       4  polymarket write+retire · kalshi write ·
+#                                     the pre-kick-off withdrawal · the delisted
+#                                     retirement (inside the helper, so both of
+#                                     ITS callers are covered by one)
+#   tournament_price_refresh.py    1  one PARTITION BY statement per pass
+#   kalshi_ws.py                   1  per flush
+#   polymarket_ws.py               1  per flush
+#   datagolf.py                    2  pre-tournament poll · live poll
+#   prediction_market_matching.py  2  the live poll's Kalshi and Polymarket arms
+WIRED_WRITERS = {
+    "futures.py": 1,
+    "kalshi.py": 2,
+    "polymarket.py": 2,
+    "futures_price_refresh.py": 4,
+    "tournament_price_refresh.py": 1,
+    "kalshi_ws.py": 1,
+    "polymarket_ws.py": 1,
+    "datagolf.py": 2,
+    "prediction_market_matching.py": 2,
+}
 
-    (The Polymarket over/under pair writer is deliberately NOT in this list: it
-    writes its complete two-leg field in one statement with a positional
-    Over=1 / Under=2 numbering, so it cannot produce the fragment defect and
-    re-ranking it would reorder a display that is intentional.)
+#: Writers that move ``current_probability`` and deliberately do NOT re-derive
+#: the field. Both write 1.0/0.0 as a SETTLEMENT onto a board that is over, and
+#: #6325 refused to renumber a settled board: a finished field's `rank` is the
+#: record of how it finished, and re-deriving it from the grade would collapse
+#: every loser onto one number. Named here rather than merely absent, because
+#: "nobody wired it" and "we decided not to" are the two states this file exists
+#: to keep apart.
+EXEMPT_WRITERS = {
+    "backfill_winners.py": "settlement — writes the grade, not a quote (#6325)",
+    "repair_winner_field.py": "settlement repair — same board, same refusal",
+}
+
+
+def _price_writing_task_modules():
+    """Modules under `app/tasks` that WRITE ``futures_outcomes.current_probability``.
+
+    By AST, not by grep, so the essay-length comments and docstrings this
+    codebase runs on — several of which quote the column inside SQL — cannot
+    enter the population and cannot be used to leave it either. Three shapes are
+    a write and nothing else is: a ``.values()``/constructor keyword, an ORM
+    attribute assignment on something that is not ``self``, and the column
+    appearing in the SET clause of a raw-SQL string.
     """
+    import ast
     import pathlib
+    import re
 
-    # One entry per batch-ranking write path that was wired, counted rather than
-    # merely present: `polymarket.py` ranks a batch in the main poll AND in the
-    # dark-linked-book pass (#3613), `kalshi.py` in the main poll AND in the
-    # linked-series refresh (#3518/#4356), `futures.py` in its single odds_api
-    # pass. A call removed from one of the two-call modules reads as 1 here and
-    # this fails, which a bare "does it call it at all" assertion would not.
-    expected_calls = {"polymarket.py": 2, "kalshi.py": 2, "futures.py": 1}
+    column = "current_probability"
+    set_clause = re.compile(r"\bSET\b(.*?)(?:\bWHERE\b|\bRETURNING\b|$)", re.S | re.I)
+    assigned = re.compile(r"\b" + column + r"\s*=")
+
+    def _docstrings(tree):
+        out = set()
+        for node in ast.walk(tree):
+            if isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                body = getattr(node, "body", None)
+                if (
+                    body
+                    and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)
+                ):
+                    out.add(id(body[0].value))
+        return out
 
     root = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks"
-    for module, calls in expected_calls.items():
+    writers = set()
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text())
+        docs = _docstrings(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == column:
+                writers.add(path.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr == column
+                        and not (
+                            isinstance(target.value, ast.Name)
+                            and target.value.id == "self"
+                        )
+                    ):
+                        writers.add(path.name)
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docs
+                and "UPDATE" in node.value.upper()
+            ):
+                if any(
+                    assigned.search(m.group(1))
+                    for m in set_clause.finditer(node.value)
+                ):
+                    writers.add(path.name)
+    return writers
+
+
+def test_the_detector_finds_the_writers_this_ship_was_bounced_for():
+    """The guard's own control, and it is not ceremony.
+
+    Everything below rests on `_price_writing_task_modules` seeing a write. A
+    detector that quietly stopped matching would turn the whole population empty
+    and every assertion after it vacuous — which is the exact shape of the
+    failure this file is being rewritten to fix, one level down. So: the module
+    CERT-3182 named, two it did not, and one non-writer that must stay out.
+    """
+    writers = _price_writing_task_modules()
+
+    assert "futures_price_refresh.py" in writers, (
+        "the detector cannot see the hourly writer CERT-3182 named — every "
+        "assertion below is vacuous"
+    )
+    assert {"kalshi_ws.py", "polymarket_ws.py"} <= writers
+    # A reader, not a writer: `precompute_interestingness` selects the column
+    # and never assigns it. If this ever enters the population the detector has
+    # started matching reads, and the exemption list will grow to hide it.
+    assert "precompute_interestingness.py" not in writers
+
+
+def test_every_writer_of_the_price_re_derives_the_rank_or_is_exempt_by_name():
+    """CERT-3182's finding, as a test.
+
+    `rank` is a function of ``current_probability``. A writer that moves the
+    price and leaves the number is not neutral — it publishes a stale ordering,
+    and on `futures_price_refresh` it did so hourly over the served book. The
+    population is therefore every price writer, and silence is not a permitted
+    answer for any of them.
+    """
+    writers = _price_writing_task_modules()
+    unaccounted = writers - set(WIRED_WRITERS) - set(EXEMPT_WRITERS)
+
+    assert unaccounted == set(), (
+        f"{sorted(unaccounted)} write futures_outcomes.current_probability and "
+        "neither re-derive the field nor carry a reason. `rank` is derived from "
+        "that column, so leaving it alone publishes the ordering of whatever "
+        "wrote it last — which is CERT-3182's finding. Wire "
+        "`rerank_market_field_stmt` at the write's own commit boundary, or add "
+        "the module to EXEMPT_WRITERS with the reason."
+    )
+
+
+def test_each_wired_writer_still_re_derives_at_every_boundary_it_claims():
+    """A call site lost is the defect back, silently, on that path only."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks"
+    for module, boundaries in sorted(WIRED_WRITERS.items()):
         src = (root / module).read_text()
-        assert "from app.utils.futures_rank import rerank_market_field_stmt" in src, (
+        assert "from app.utils.futures_rank import" in src, (
             f"{module} does not import the field-wide re-rank"
         )
-        found = src.count("rerank_market_field_stmt(")
-        assert found == calls, (
-            f"{module} calls the field-wide re-rank {found}×, expected {calls} — "
-            "a write path either lost its re-rank or gained one nobody graded"
+        found = src.count("rerank_market_field_stmt(") + src.count(
+            "rerank_market_fields_stmt("
         )
+        assert found == boundaries, (
+            f"{module} re-derives the field at {found} boundaries, expected "
+            f"{boundaries} — a write path either lost its re-rank or gained one "
+            "nobody graded"
+        )
+
+
+def test_an_exempt_writer_is_still_a_writer():
+    """The exemption list is a set of DECISIONS, not a residue.
+
+    A name left here after the module stopped writing the price is a reason
+    nobody can check, and it is how an exemption outlives the argument for it.
+    """
+    writers = _price_writing_task_modules()
+    stale = set(EXEMPT_WRITERS) - writers
+    assert stale == set(), (
+        f"{sorted(stale)} are exempted from re-deriving `rank` but no longer "
+        "write the price. Drop the exemption rather than carrying it."
+    )

@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy import func as sa_func, select, and_, null, or_, update
 
 from app.tasks.base import get_task_session
+from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.market_settlement import settled_values
 from app.utils.price_change_stamp import price_changed_at_value  # #2024, #4958
 
@@ -442,6 +443,20 @@ async def _poll_datagolf_markets() -> dict:
                                 stale_nulled, market.id,
                             )
 
+                        # #6598 / CERT-3182. This rail writes
+                        # `current_probability` — on the upsert above and again
+                        # on the withdrawal just now — and has never written the
+                        # column derived from it, so a golf outright board kept
+                        # whatever numbering its last full field produced while
+                        # the players moved under it. Last, after the null-out,
+                        # so the statement sees the finished field.
+                        # `session.execute` autoflushes the ORM assignments
+                        # above first (gotcha #5 — this rail writes through
+                        # attributes, like `tasks/futures.py`).
+                        await session.execute(
+                            rerank_market_field_stmt(market.id)
+                        )
+
                     # Resolve markets for completed tournaments on this tour.
                     # DataGolf markets carry their own leaderboard metadata, so
                     # completed tournaments go straight to 'resolved' (not
@@ -838,6 +853,15 @@ async def _poll_datagolf_live() -> dict:
                                 "DataGolf live: nulled %d stale outcomes on market %s",
                                 stale_nulled, market.id,
                             )
+
+                        # #6598 / CERT-3182 — the live arm's copy, and the arm
+                        # that needs it most: in-play probabilities cross
+                        # constantly, so this is where a leaderboard prints the
+                        # overnight leader still badged #1. Same placement and
+                        # same reasoning as the pre-tournament poll above.
+                        await session.execute(
+                            rerank_market_field_stmt(market.id)
+                        )
 
                     # Detect tournament completion: if ALL players in the "win"
                     # market have prob exactly 0.0 or 1.0, the event is finished.

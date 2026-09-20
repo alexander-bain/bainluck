@@ -63,15 +63,95 @@ tie with each other, so they all take the same trailing rank.
   last written, which is a louder lie than the stale value it replaces. It is
   left exactly as the poller wrote it, and named here so the next reader knows
   it was a decision.
+
+── THE POPULATION THIS HAS TO BE CALLED FROM IS "WRITES THE PRICE", NOT
+── "WRITES THE RANK" (CERT-3182) ────────────────────────────────────────────
+
+The first version of this ship wired the three pollers that *number* a batch,
+and its reachability guard enumerated exactly those three. That is the wrong
+population, and the gap is not a missed call site — it is a missed CLASS. `rank`
+is derived from ``current_probability``, so **every writer of the price
+invalidates the number, including the writers that have never heard of it**:
+
+    scheduled hourly `futures_price_refresh._write_prices` moves the price of
+    a served market's legs and leaves `rank` exactly where the last poll put it.
+
+Those writers do not corrupt the column by numbering it wrong; they corrupt it
+by leaving it alone while the thing it describes moves underneath. A price
+CROSSING on such a path re-creates the served defect in full — the stale
+ordering on `/economics`, the fossil badge on a team page — within the hour, on
+rows a poller may not reach for days. So the invariant is:
+
+    a transaction that changes or retires ``current_probability`` on any leg of
+    a market re-derives that market's field before it commits.
+
+Six modules were dark to the first wiring and are wired now:
+`futures_price_refresh` (the hourly net, and its three retirement paths),
+`tournament_price_refresh`, `kalshi_ws`, `polymarket_ws`, `datagolf` and
+`prediction_market_matching`'s live poll. `tests/test_futures_rank_field_wide_6598.py`
+enumerates the population by AST rather than by hand, so the seventh writer
+fails a test on the day it is written instead of being found by a reader.
+
+Two writers are exempt WITH A REASON rather than merely absent, and the reason
+is the same one: `backfill_winners` and `repair_winner_field` write 1.0/0.0 as a
+SETTLEMENT, onto a board that is over. #6325 refused to renumber a settled board
+and that refusal still holds — a finished field's rank is the record of how it
+finished, not a live ordering, and re-deriving it from the grade would collapse
+every loser onto one number.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 from sqlalchemy import func, select, update
 
 from app.models.models import FuturesOutcome
 
-__all__ = ["rerank_market_field_stmt"]
+__all__ = ["rerank_market_field_stmt", "rerank_market_fields_stmt"]
+
+
+def rerank_market_fields_stmt(market_ids: Sequence[int]):
+    """The same re-derivation, for several markets in ONE statement.
+
+    ``PARTITION BY market_id`` is what makes this the same rule and not a second
+    opinion: the ordering expression, the tie rule, the NULL placement and the
+    ``IS DISTINCT FROM`` guard are written once, here, and the single-market form
+    below is a call into this one. Two copies of a ranking rule is how the
+    fragment defect gets reintroduced by a writer that thought it was following
+    the existing one.
+
+    It exists for the writers that do not walk a market at a time. A socket
+    flush holds a batch of ``outcome_id``s spanning whatever ticked in the last
+    few seconds, and `tournament_price_refresh` walks Gamma *conditions* whose
+    legs live on several market rows; both would otherwise pay one round trip per
+    market on a hot path.
+
+    An empty list is a no-op (SQLAlchemy compiles ``IN ()`` to a false
+    predicate), so a caller never has to guard the call — which matters, because
+    the flush that wrote nothing is the common case on a quiet book.
+    """
+    ranked = (
+        select(
+            FuturesOutcome.id.label("id"),
+            func.rank()
+            .over(
+                partition_by=FuturesOutcome.market_id,
+                order_by=FuturesOutcome.current_probability.desc().nullslast(),
+            )
+            .label("rnk"),
+        )
+        .where(FuturesOutcome.market_id.in_(market_ids))
+        .subquery("field_rank")
+    )
+
+    return (
+        update(FuturesOutcome)
+        .where(FuturesOutcome.id == ranked.c.id)
+        .where(FuturesOutcome.rank.is_distinct_from(ranked.c.rnk))
+        .values(rank=ranked.c.rnk)
+        .execution_options(synchronize_session=False)
+    )
 
 
 def rerank_market_field_stmt(market_id: int):
@@ -86,21 +166,4 @@ def rerank_market_field_stmt(market_id: int):
     whole field and the batch rank was already the field rank. A market that is
     healthy pays one indexed scan and zero row writes.
     """
-    ranked = (
-        select(
-            FuturesOutcome.id.label("id"),
-            func.rank()
-            .over(order_by=FuturesOutcome.current_probability.desc().nullslast())
-            .label("rnk"),
-        )
-        .where(FuturesOutcome.market_id == market_id)
-        .subquery("field_rank")
-    )
-
-    return (
-        update(FuturesOutcome)
-        .where(FuturesOutcome.id == ranked.c.id)
-        .where(FuturesOutcome.rank.is_distinct_from(ranked.c.rnk))
-        .values(rank=ranked.c.rnk)
-        .execution_options(synchronize_session=False)
-    )
+    return rerank_market_fields_stmt([market_id])

@@ -139,10 +139,31 @@ class _CapturingSession:
 
     async def execute(self, stmt):
         if isinstance(stmt, Update):
-            if stmt.table.name == "futures_outcomes":
+            if stmt.table.name == "futures_outcomes" and _sets_the_price(stmt):
                 self._captured.append(stmt)
             return _Result([], rowcount=self._rowcount)
         return _Result(self._batches.pop(0) if self._batches else [])
+
+
+def _sets_the_price(stmt) -> bool:
+    """Is this the PRICE update, or the #6598 field re-rank that follows it?
+
+    The flush now emits two UPDATEs on `futures_outcomes` per batch: the price,
+    and the re-derivation of `rank` from it. This file's whole question is which
+    rows the PRICE statement's WHERE clause selects — the settled guard — so the
+    re-rank has to be told apart rather than counted, or the fixture's
+    "exactly one" assertion reads a correct second writer as a broken harness.
+    Keyed on the SET clause because that is the difference: one assigns
+    `current_probability`, the other assigns `rank` and nothing else
+    (`test_futures_rank_field_wide_6598` pins that). The clause has to be cut
+    out rather than searched for — the re-rank's `FROM (SELECT … ORDER BY
+    current_probability …)` subquery names the column too, so a substring test
+    over the whole statement matches both.
+    """
+    clause = str(stmt).split(" SET ", 1)[-1]
+    for boundary in (" FROM ", " WHERE "):
+        clause = clause.split(boundary, 1)[0]
+    return "current_probability" in clause
 
 
 class _NoopRefresher:
