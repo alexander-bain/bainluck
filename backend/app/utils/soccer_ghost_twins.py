@@ -715,6 +715,77 @@ match exists as six rows, five of them holding one Kalshi market each) and it
 needs a canonical test that does not depend on an authority id. It is named here
 and not guessed at, because "the row with the most markets wins" is exactly the
 name-and-shape absorption gotcha #32 refuses.
+
+THE SIXTH PASS EXTENDS A PROOF THAT ALREADY EXISTS, TO THE COPIES BESIDE IT
+═══════════════════════════════════════════════════════════════════════════
+
+#7549. Searching ``feyenoord`` on 2026-09-20 claimed **63 games** and led with a
+card for a match that had finished **5-0** four hours earlier. Fifty-seven of
+those rows are one fixture: Kalshi's Eredivisie legs each minted their own
+``events`` row, because the Pass-2 auto-create guard read only half of its own
+subtraction (the forward repair is in ``prediction_market_matching``). One row
+of the fifty-seven — ``15316082``, which happens to hold 66 markets — already
+carries ``provenance:duplicate-of:15306199``, written by the Polymarket
+container rail off a shared provider event id. The other fifty-six carry no tag,
+no score, no authority id, and in most cases **no markets at all**: the leg that
+minted them was later re-linked, leaving an empty husk that a reader still
+counts and search still pages through.
+
+WHY NONE OF THE FIVE PASSES ABOVE REACHES THEM, EACH FOR ITS OWN REASON:
+
+* the canonical spells its away club ``FC Utrecht`` and every copy spells it
+  ``Utrecht``. That is a LEADING token, which :func:`loose_block_key`
+  deliberately does not strip — ``FC Zurich`` and ``Zurich`` are not known to be
+  one club — so passes one, two and three never put them in one block;
+* :func:`ticker_pass` re-reads the COMPETITION off a ticker, and these rows are
+  already in the right competition. It moves nothing;
+* :func:`stranded_market_pass` requires the canonical to serve zero markets;
+  ``15306199`` serves five. And it requires the copy to hold at least one, which
+  ~50 of the husks do not;
+* :func:`fixture_ticker_pass` needs both rows to name the same Kalshi EVENT
+  ticker. The canonical holds five POLYMARKET markets and no Kalshi ticker at
+  all, so the ticker block holds nothing but ghosts and it correctly refuses.
+
+So the pass keys on the one piece of evidence that IS present: a sibling in the
+same block that another rail has already proven, on an id-anchored
+correspondence, to be a copy of ``15306199``. The canonical arrives by PRIMARY
+KEY rather than by name, which is why no key in this module has to be widened to
+reach the specimen — and the pass re-checks that the row that tag names is still
+played, scored and fixture-anchored before extending it.
+
+WHAT IT ADDS TO THE EXISTING PROOF, STATED AS ONE CLAIM. That two id-less,
+unscored rows carrying the same clubs in the same competition inside
+:data:`MAX_GHOST_LAG` of one played fixture are copies of the same thing. That
+is the SAME claim every name-keyed pass here already makes, resting on the same
+365-day measurement (zero genuine same-orientation rematches inside the window),
+and it is made here with strictly more evidence than passes one to three have:
+one member of the block is already proven.
+
+YIELD AND PRECISION, whole population, production 2026-09-20, the sweep's own
+-45d/+5d window read to exhaustion by id cursor (13,869 rows, 6,399 soccer)::
+
+    blocks holding a proven duplicate beside an untagged copy       100
+    tags planned                                                     82
+      ├─ Feyenoord v Utrecht      → 15306199  (5-0, statpal 9551358) 56
+      ├─ Ajax v Excelsior         → 15306197  (2-2, statpal 9551354) 19
+      └─ Willem II v Sittard      → 15306198  (0-1, statpal 9551357)   7
+    canonicals: completed, scored and statpal-anchored               3 / 3
+    tags naming a canonical outside these three                      0
+
+**All three canonicals were read by name and all three groups are exactly the
+mint storm this pass exists for**: 56 + 1 already-tagged = the 57 rows the
+duplicate-group query counts, 19 + 1 = 20, 7 + 1 = 8. Each group's already-proven
+row is the evidence and the remainder is the drain, with nothing left over — the
+shape a false positive could not produce.
+
+WHAT IT DOES NOT REACH, AND THAT IS THE INTENDED DIRECTION. The same query finds
+27 duplicate groups holding 179 rows in fourteen days; this pass takes 82 of
+them. The rest — Pohang Steelers v Seoul (25), San Lorenzo v Olimpia (8),
+Fortaleza v Junior (6), ADO Den Haag v Heerenveen (6) — hold **no proven sibling
+at all**, so there is nothing to extend and the pass is silent by construction.
+Under-tagging leaves a duplicate card visible and fixable; the alternative is
+inventing the first proof from names alone, which is the call ruling 048 forbids
+and which no measurement here supports.
 """
 
 from __future__ import annotations
@@ -992,6 +1063,15 @@ class SoccerRow:
     #: before that pass existed keeps its meaning: a row naming no event can be
     #: neither half of a ticker-identity pair, so an unset key can only withhold.
     ticker_event_key: str | None = None
+    #: The canonical this row is ALREADY proven to duplicate —
+    #: :func:`app.utils.proven_duplicates.canonical_id_from_tags` of its own
+    #: ``event_tags``, or ``None``. Read ONLY by :func:`proven_sibling_pass`,
+    #: which uses an existing proof as the evidence the other passes take from a
+    #: clock, a market count or a ticker. Defaults to ``None`` so every row built
+    #: before that pass existed keeps its meaning: a row with no proof behind it
+    #: can be neither the sibling that carries one nor a row this pass skips, and
+    #: an unset value can only ever withhold a tag.
+    duplicate_of: int | None = None
 
 
 def block_sport_key(row: SoccerRow) -> str:
@@ -1183,6 +1263,15 @@ class GhostPlan:
     #: reported rather than one ratio.
     fixture_blocks_examined: int = 0
     fixture_tags: int = 0
+    #: Blocks the SIXTH pass looked at, and how many of ``tags`` it contributed.
+    #: Its own pair for the same reason as the four above, and it dies in a way
+    #: none of them can: its evidence is a tag ANOTHER rail writes, so a rail
+    #: that stops writing ``provenance:duplicate-of:`` — or a reader that stops
+    #: parsing it — takes this to zero while every other number here is
+    #: untouched. Tags can exceed blocks, as in the fifth pass: one block held
+    #: 56 copies of one fixture on 2026-09-20.
+    proven_blocks_examined: int = 0
+    proven_tags: int = 0
     #: How many of ``rows_considered`` the first four passes were handed, i.e.
     #: the soccer partition. Its own number and not a ratio: ``rows_considered``
     #: now counts every sport, so the floor that proves the name-based passes
@@ -1725,6 +1814,181 @@ def fixture_ticker_pass(
     return tags, refusals, examined
 
 
+def classify_proven_sibling_block(
+    rows: list[SoccerRow],
+    canonical_by_id: dict[int, SoccerRow],
+    *,
+    now: datetime,
+    max_lag: timedelta = MAX_GHOST_LAG,
+) -> tuple[str, list[GhostTag], str]:
+    """Decide one block for the SIXTH pass. Pure.
+
+    Returns ``(outcome, tags, explanation)`` — a LIST, like
+    :func:`classify_fixture_ticker_block` and for the same reason: the question
+    "which of these is the copy" is not asked here, so there is no count at which
+    it becomes undecidable. Every id-less row in the block is a copy of the one
+    fixture the block's existing proof names.
+
+    The canonical is NOT taken from this block. It is looked up by id in
+    ``canonical_by_id``, which is the whole point of the pass — the specimen's
+    canonical spells its away club ``FC Utrecht`` where all 57 copies spell it
+    ``Utrecht``, so it is in a different block under every key this module has.
+    A canonical that is not in the window, or that does not meet
+    :func:`row_is_a_played_canonical`, is refused rather than assumed: the tag
+    being re-used as evidence was written by another rail, and this pass verifies
+    the row it names still looks like a canonical before extending it.
+    """
+    named = {row.duplicate_of for row in rows if row.duplicate_of is not None}
+    if not named:
+        return NOT_A_TWIN, [], "no row in this block is a proven duplicate of anything"
+    if len(named) > 1:
+        return (
+            REFUSE_AMBIGUOUS,
+            [],
+            (
+                f"{len(named)} different canonicals are already named by proven "
+                f"duplicates in this block — which fixture these rows copy is not "
+                f"decidable here"
+            ),
+        )
+
+    canonical_id = named.pop()
+    canonical = canonical_by_id.get(canonical_id)
+    if canonical is None:
+        return (
+            NOT_A_TWIN,
+            [],
+            f"the proven canonical {canonical_id} is not in this window",
+        )
+    if not row_is_a_played_canonical(canonical):
+        return (
+            NOT_A_TWIN,
+            [],
+            (
+                f"the proven canonical {canonical_id} is not a played, "
+                f"fixture-anchored row today"
+            ),
+        )
+
+    rival = next(
+        (
+            row
+            for row in rows
+            if row.event_id != canonical_id and row_is_a_played_canonical(row)
+        ),
+        None,
+    )
+    if rival is not None:
+        return (
+            REFUSE_AMBIGUOUS,
+            [],
+            (
+                f"row {rival.event_id} in this block is itself a played, "
+                f"fixture-anchored fixture distinct from the proven canonical "
+                f"{canonical_id} — two real fixtures share this key"
+            ),
+        )
+
+    ghosts = [
+        row
+        for row in rows
+        if row.duplicate_of is None
+        and row_could_be_a_ghost(row)
+        and not (now - GHOST_KICKOFF_GRACE < row.commence_time <= now)
+        and abs(row.commence_time - canonical.commence_time) <= max_lag
+    ]
+    if not ghosts:
+        return NOT_A_TWIN, [], "no untagged copy left in this block"
+
+    return (
+        TWIN_FOUND,
+        [
+            GhostTag(
+                ghost_id=ghost.event_id,
+                canonical_id=canonical_id,
+                reason=(
+                    f"{ghost.home_team_name} v {ghost.away_team_name}: an id-less "
+                    f"copy sharing its competition, clubs and window with a row "
+                    f"already proven to duplicate {canonical_id}"
+                ),
+            )
+            for ghost in ghosts
+        ],
+        "proven sibling",
+    )
+
+
+def proven_sibling_pass(
+    rows: list[SoccerRow],
+    *,
+    decided_ghost_ids: set[int],
+    now: datetime,
+    max_lag: timedelta = MAX_GHOST_LAG,
+) -> tuple[list[GhostTag], list[str], int]:
+    """Re-run the pairing over what the first five passes left, using a proof
+    that ALREADY EXISTS on one row of the block as the evidence for its siblings.
+
+    Returns ``(tags, refusals, blocks_examined)``. Pure. See the module
+    docstring's seventh section for the specimen, the population and why the five
+    passes above reach none of it.
+
+    THE EVIDENCE IS NOT A NEW JUDGEMENT. Every other pass here decides, from
+    scratch, that two rows are one fixture. This one decides nothing of the kind:
+    it reads a ``provenance:duplicate-of:`` element that another rail — one with
+    an id-anchored correspondence behind it (ruling 048 arm A or B) — has already
+    written, verifies that the row it names still reads as a played,
+    fixture-anchored canonical, and extends that finding to the rows the same
+    mint produced beside it. What it adds to the existing proof is one claim:
+    that two id-less rows carrying the same clubs, in the same competition,
+    inside :data:`MAX_GHOST_LAG` of the same played fixture, are copies of the
+    same thing. The module docstring's 365-day rematch measurement is what
+    bounds that claim, and it is the same measurement every name-keyed pass here
+    already rests on.
+
+    IT IS THE ONLY PASS WHOSE CANONICAL NEED NOT BE IN THE BLOCK, which is why
+    it reaches a population the other five cannot. ``Feyenoord v Utrecht`` and
+    ``Feyenoord v FC Utrecht`` differ in a LEADING token, which
+    :func:`loose_block_key` deliberately does not strip (``FC Zurich`` and
+    ``Zurich`` are not known to be one club), so no key in this module puts the
+    copies and their canonical together. The proven sibling bridges them without
+    widening any key: the canonical arrives by primary key, not by name.
+
+    It inherits the two properties that make passes two to five safe, by the same
+    mechanism: a ghost already decided is withheld, so no earlier decision can be
+    revised; and a row this pass calls a canonical is played, scored and
+    fixture-anchored, which :func:`row_could_be_a_ghost` is false for, so it can
+    never already be another pass's ghost.
+
+    A row that already carries a tag is never re-tagged — it is this pass's
+    EVIDENCE, not its subject — so running the sweep twice over an unchanged
+    population plans the same tags the second time and writes none of them.
+    """
+    residual = [r for r in rows if r.event_id not in decided_ghost_ids]
+    canonical_by_id = {r.event_id: r for r in rows}
+
+    blocks: dict[tuple[str, str, str], list[SoccerRow]] = defaultdict(list)
+    for r in residual:
+        blocks[_loose_name_key(r)].append(r)
+    blocks, refusals = fold_unclassified_blocks(blocks)
+
+    tags: list[GhostTag] = []
+    examined = 0
+    for key, members in sorted(blocks.items()):
+        if len(members) < 2:
+            continue
+        if not any(m.duplicate_of is not None for m in members):
+            continue
+        examined += 1
+        outcome, block_tags, explanation = classify_proven_sibling_block(
+            members, canonical_by_id, now=now, max_lag=max_lag
+        )
+        if outcome == TWIN_FOUND:
+            tags.extend(block_tags)
+        elif outcome == REFUSE_AMBIGUOUS:
+            refusals.append(f"{key[1]} v {key[2]} (proven sibling): {explanation}")
+    return tags, refusals, examined
+
+
 def plan_ghost_tags(
     rows: list[SoccerRow],
     *,
@@ -1766,6 +2030,15 @@ def plan_ghost_tags(
     this function and passes 1-4 must behave exactly as if it were absent, which
     is not a property a SQL ``WHERE`` clause can be tested for. The module
     docstring's sixth section carries what the fifth pass gains by it.
+
+    :func:`proven_sibling_pass` runs SIXTH and last, over what the five above
+    left. It is the only pass that decides nothing on its own: it reads a
+    ``provenance:duplicate-of:`` element another rail already wrote, verifies the
+    row it names still reads as a played canonical, and extends it to the id-less
+    copies in the same block. Running it last is what keeps it additive, and its
+    canonical is fetched by id rather than found in the block — see the module
+    docstring's seventh section for why that is the only thing that reaches its
+    population.
 
     :func:`stranded_market_pass` runs FOURTH and is the only one asking a
     different question — not "which row is still being advertised" but "which
@@ -1841,4 +2114,15 @@ def plan_ghost_tags(
     plan.refusals.extend(fixture_refusals)
     plan.fixture_blocks_examined = fixture_examined
     plan.fixture_tags = len(fixture_tags)
+
+    proven_tags, proven_refusals, proven_examined = proven_sibling_pass(
+        soccer_rows,
+        decided_ghost_ids={t.ghost_id for t in plan.tags},
+        now=now,
+        max_lag=max_lag,
+    )
+    plan.tags.extend(proven_tags)
+    plan.refusals.extend(proven_refusals)
+    plan.proven_blocks_examined = proven_examined
+    plan.proven_tags = len(proven_tags)
     return plan

@@ -99,6 +99,7 @@ import inspect
 import json
 
 from app.services.anchor_channel import DUPLICATE_TAG_PREFIX, duplicate_tag
+from app.utils.proven_duplicates import canonical_id_from_tags
 from app.utils.soccer_ghost_twins import (
     SoccerRow,
     competition_from_tickers,
@@ -175,7 +176,29 @@ MIN_EXPECTED_TICKER_ROWS = 1_000
 #: labelling real fixtures shows up here first, and a sweep is never the thing
 #: that gets to decide it has found sixty times more duplicates than anyone has
 #: ever measured.
+#:
+#: 🔴 Asked of the FIVE judgement passes only, since #7549 added a sixth whose
+#: tags are a different kind of thing — see :data:`MAX_EXPECTED_PROVEN_TAGS`.
+#: Raising this number to accommodate that pass was the obvious move and is the
+#: wrong one: this ceiling is the tripwire for a pairing regression in passes
+#: that decide from scratch, and a ceiling wide enough for one mint storm is a
+#: ceiling that no longer catches the thing it was set for.
 MAX_EXPECTED_TAGS = 120
+
+#: The SIXTH pass's own ceiling. Its tags are bounded by something the five
+#: above have no equivalent of — the copies must sit in a block that already
+#: holds a proven duplicate — but that bound is not small: one Kalshi mint storm
+#: produced 57 copies of a single Eredivisie fixture on 2026-09-20, and the
+#: pass's whole purpose is to drain exactly that.
+#:
+#: Measured on production 2026-09-20 over the sweep's own -45d/+5d window, whole
+#: population, 13,869 rows: 100 blocks hold a proven duplicate beside an
+#: untagged copy, and the pass plans **82** tags across three fixtures
+#: (Feyenoord v Utrecht 56, Ajax v Excelsior 19, Willem II v Sittard 7). 300 is
+#: ~3.7x that and still under 5% of the 6,399-row soccer partition, so a rule
+#: regression that started extending proofs across the window would trip it
+#: while three or four simultaneous storms would not.
+MAX_EXPECTED_PROVEN_TAGS = 300
 
 _POPULATION_SQL = """
 SELECT e.id,
@@ -292,6 +315,12 @@ def build_plan(rows, *, now):
             # are unregistered) but "which fixture" (string identity, which needs
             # no map to be complete).
             ticker_event_key=kalshi_event_key((r.kalshi_tickers or "").split(",")),
+            # The SIXTH pass's evidence, parsed by the same reader every surface
+            # uses (`canonical_id_from_tags`) rather than by a second spelling
+            # here — writer and reader of this tag must not drift, and this is
+            # the first place in the codebase that reads it back INTO a
+            # judgement rather than out to a page.
+            duplicate_of=canonical_id_from_tags(r.tags_text),
         )
         for r in rows
     ]
@@ -337,11 +366,18 @@ def band_refusal_reason(plan) -> str | None:
             f"format change, a link rail that stopped attaching markets). "
             f"Re-measure before writing."
         )
-    if len(plan.tags) > MAX_EXPECTED_TAGS:
+    judged = len(plan.tags) - plan.proven_tags
+    if judged > MAX_EXPECTED_TAGS:
         return (
-            f"the plan labels {len(plan.tags)} row(s), above the ceiling "
+            f"the five judgement passes label {judged} row(s), above the ceiling "
             f"{MAX_EXPECTED_TAGS} — far beyond anything measured, which is what a "
             f"pairing regression looks like. Re-measure before writing."
+        )
+    if plan.proven_tags > MAX_EXPECTED_PROVEN_TAGS:
+        return (
+            f"the proven-sibling pass extends {plan.proven_tags} label(s), above "
+            f"the ceiling {MAX_EXPECTED_PROVEN_TAGS} — a mint storm is bounded by "
+            f"its own fixture and this is not. Re-measure before writing."
         )
     return None
 
@@ -570,6 +606,14 @@ async def run_soccer_ghost_twin_sweep(
                 # ghosts — which is true of no other pass.
                 "fixture_blocks_examined": plan.fixture_blocks_examined,
                 "fixture_pairs_found": plan.fixture_tags,
+                # Its own pair once more, and the one that reports an OUR-SIDE
+                # outage the other five cannot: this pass's evidence is a tag a
+                # DIFFERENT rail writes, so a rail that stops writing
+                # `provenance:duplicate-of:` takes these two to zero while every
+                # other number on this verdict is untouched. `pairs_found` can
+                # exceed the block count here, as in the fifth pass.
+                "proven_blocks_examined": plan.proven_blocks_examined,
+                "proven_pairs_found": plan.proven_tags,
                 "pairs_found": len(plan.tags),
                 "already_tagged": len(plan.tags) - len(todo),
                 "tags_to_write": len(todo),
