@@ -1945,6 +1945,39 @@ def leader_standing_clause(
     return f"{leader_name} at {pct}%"
 
 
+# ── A bare-number answer needs the word the parenthesis cannot supply ─────────
+#
+# #7331 — `{leader_name} ({pct}%)` disambiguates a row's percentage by naming the
+# answer it belongs to, which is #4396's fix, and it works while the answer is a
+# WORD. When the answer is itself a quantity the grammar collapses. Production
+# 2026-09-20, 390px, the FED & RATES bundle:
+#
+#     September Inflation US - Annual
+#     New favorite: 3.6% (42%)                                  42%
+#
+# Three percentages on one row: an inflation RATE, its PROBABILITY, and that same
+# probability again in the row's own right-hand column. Nothing says which is
+# which, and the parenthetical is pure duplication of the number two inches away.
+# The row above it is fine for the only reason that matters — its answer is
+# `Hike 25bps`, so the parenthesis has something to disambiguate.
+#
+# "chance" is the site's existing vocabulary for exactly this ("4% chance, down
+# 7.4 points since Feb 19" on the Taiwan card the same morning), so it is spent
+# only where the ambiguity is real. A label carrying any letter already states
+# its own unit — measured on the same feed, 14 of the 16 served quantity leaders
+# prefix a word (`Above 20 million short tons (87%)`, `Above -0.4% (91%)`) and
+# read correctly. Those are left byte-identical: this is a copy fix for the
+# collapsed case, not a rewording of every card.
+def leader_percent_parenthetical(leader_name: str, pct: int) -> str:
+    """`(37%)` — or `(42% chance)` when the answer is itself a bare quantity."""
+    label = (leader_name or "").strip()
+    if label and any(ch.isdigit() for ch in label) and not any(
+        ch.isalpha() for ch in label
+    ):
+        return f"({pct}% chance)"
+    return f"({pct}%)"
+
+
 def generate_futures_reason(
     market_name: str,
     highlight_reasons: list[str],
@@ -2060,7 +2093,8 @@ def generate_futures_reason(
     if "leader_change" in reasons and not leader_is_ladder_rung and _lead_visible:
         if leader_name and leader_probability is not None:
             pct = _display_pct(leader_probability, rendered_leader_percent)
-            return f"New favorite: {leader_name} ({pct}%) now {_verb} {market_name}"
+            _paren = leader_percent_parenthetical(leader_name, pct)
+            return f"New favorite: {leader_name} {_paren} now {_verb} {market_name}"
         return f"New favorite in {market_name}"
 
     # (No `source_divergence` branch. Removed with the rest of DIAGNOSTIC_PHRASES
@@ -2188,9 +2222,10 @@ def generate_futures_reason(
         # simply drop the verb. `leader_standing_clause` deliberately does not
         # cover this shape: folding two grammars into one helper is how the
         # sentence would come back reading "Jordan (9%) Which countries will…".
+        _paren = leader_percent_parenthetical(leader_name, pct)
         if _lead_visible:
-            return f"{leader_name} ({pct}%) {_verb} {market_name}"
-        return f"{leader_name} ({pct}%) in {market_name}"
+            return f"{leader_name} {_paren} {_verb} {market_name}"
+        return f"{leader_name} {_paren} in {market_name}"
 
     return ""
 
@@ -2288,7 +2323,11 @@ def generate_futures_headline(
     # matching branch in `generate_futures_reason`.
     if "leader_change" in reasons and not leader_is_ladder_rung and _lead_visible:
         if leader_name and leader_probability is not None:
-            return f"New favorite: {leader_name} ({_display_pct(leader_probability, rendered_leader_percent)}%)"
+            pct = _display_pct(leader_probability, rendered_leader_percent)
+            return (
+                f"New favorite: {leader_name} "
+                f"{leader_percent_parenthetical(leader_name, pct)}"
+            )
         return "New favorite"
 
     # (No `source_divergence` branch — see `generate_futures_reason`.)
