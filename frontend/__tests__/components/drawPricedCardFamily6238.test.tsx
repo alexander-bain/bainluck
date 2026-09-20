@@ -394,8 +394,46 @@ describe("#6238 EventCard — the shared league/team/search card", () => {
   });
 
   it("CONTROL: a two-way sport paints a real away segment", () => {
-    const html = renderToStaticMarkup(<EventCard event={sharedEvent(TWO_WAY_SPORT)} />);
-    expect(html).not.toContain('data-bar-remainder="unattributed"');
+    // 🔴 #7602 — THIS CONTROL WAS VACUOUS, AND THE OUTAGE PROVED IT.
+    //
+    // It used to be one negative assertion:
+    //
+    //     expect(html).not.toContain('data-bar-remainder="unattributed"');
+    //
+    // A card that renders NOTHING satisfies that, and so does a card rendering
+    // the wrong thing entirely. On 2026-09-20 the clock crossed this file's
+    // fixture kickoff, `EventCard` swapped the whole bar for "No result
+    // reported · Sep 20", and its three siblings in this block went red — while
+    // THIS test, the one whose job is to prove the rule does not over-reach,
+    // stayed green through the entire outage. A control that passes in exactly
+    // the broken state its siblings catch is confirming nothing.
+    //
+    // So it asserts the PAINT positively now, and it asserts the CONTRAST: the
+    // two arms must disagree on this exact selector, which is the whole claim
+    // the control exists to make.
+    const segmentsOf = (html: string) =>
+      html.match(/<div class="rounded-full[^"]*"[^>]*style="[^"]*width:[^"]*"[^>]*>/g) ?? [];
+
+    const twoWay = segmentsOf(
+      renderToStaticMarkup(<EventCard event={sharedEvent(TWO_WAY_SPORT)} />),
+    );
+    // Both halves of the bar are drawn — a rendered card, not an empty one.
+    expect(twoWay).toHaveLength(2);
+
+    const away = twoWay[1];
+    expect(away).toContain("background-color");
+    expect(away).not.toContain("bg-surface-border/30");
+    expect(away).not.toContain("data-bar-remainder");
+
+    // The contrast. Same selector, same position, draw-priced sport: the away
+    // half is the neutral unattributed remainder. If this ever matched the
+    // two-way shape the assertions above would be describing nothing.
+    const drawPriced = segmentsOf(
+      renderToStaticMarkup(<EventCard event={sharedEvent(DRAW_SPORT)} />),
+    );
+    expect(drawPriced).toHaveLength(2);
+    expect(drawPriced[1]).toContain('data-bar-remainder="unattributed"');
+    expect(drawPriced[1]).not.toContain("background-color");
   });
 });
 

@@ -86,6 +86,28 @@ import type {
 
 const DISMISS = () => {};
 
+/**
+ * #7602 — the same gotcha #44 anchor a sibling file detonated on.
+ *
+ * On 2026-09-20 `drawPricedCardFamily6238.test.tsx` turned master red on three
+ * tests at 18:40Z, the minute real time crossed the literal `commence_time` its
+ * fixtures shared. Nobody's diff caused it and it did not recover — a literal
+ * kickoff in the past stays in the past. That file was repaired by `760e0764f`
+ * (discover), which pins `now` with fake timers instead.
+ *
+ * This is the only other live one. A sweep of every future-dated
+ * `commence_time` literal under `__tests__/` found 13 across 11 files: eleven
+ * use the 2030 sentinel and one uses 2099 — the safe convention, left alone —
+ * and this fixture, `status: "upcoming"`, pinned to `"2026-10-01T23:05:00Z"`.
+ *
+ * ⚠️ A DEFUSAL, NOT A REPAIR. This anchor had not been crossed and nothing here
+ * was failing, so the claim is NOT that it would have reddened these
+ * assertions — only that an anchor should not depend on when the suite runs.
+ * Offset from `Date.now()` with no branch, which is the shape gotcha #44
+ * prescribes: an anchor containing an `if` is not fixed.
+ */
+const KICKOFF = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
 // ── markup helpers ───────────────────────────────────────────────────────────
 
 const VOID_TAGS = new Set(["img", "br", "hr", "input", "path", "circle", "rect", "line", "polyline", "polygon", "meta", "source"]);
@@ -238,7 +260,7 @@ function eventData(): FeedEventData {
     sport_label: "MLB",
     llm_sport_category: "baseball_mlb",
     status: "upcoming",
-    commence_time: "2026-10-01T23:05:00Z",
+    commence_time: KICKOFF,
     current_odds: { home_probability: 0.55, away_probability: 0.45 },
   } as unknown as FeedEventData;
 }
