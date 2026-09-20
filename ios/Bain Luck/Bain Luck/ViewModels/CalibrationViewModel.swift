@@ -804,7 +804,10 @@ final class CalibrationViewModel: ObservableObject {
 
     // MARK: - Category / source normalization (mirrors the web maps)
 
-    private static func normalizedCategory(_ category: String) -> String {
+    /// Internal rather than private since #7532: the guard for that ship has to
+    /// name the PARENT a parked key rolls up to in order to assert that the chip
+    /// never prints the parent's label.
+    static func normalizedCategory(_ category: String) -> String {
         if let mapped = sportKeyMap[category] { return mapped }
         let base = category.split(separator: "_").first.map(String.init) ?? category
         if base == "americanfootball" { return "football" }
@@ -830,8 +833,16 @@ final class CalibrationViewModel: ObservableObject {
     }
 
     /// Display label for a raw (un-normalized) small-sample category token.
+    ///
+    /// #7532 — this used to read `categoryDisplayNames[normalizedCategory(raw)]`,
+    /// which is the one lookup a parked category may not make: normalising is
+    /// how a row finds its PARENT, and the parent is the row the Category
+    /// Breakdown is publishing two inches above these chips. Measured on the
+    /// 2026-09-20 payload, 67 of 109 chips came back wearing a published
+    /// parent's name. The rule (L2-103 Item 3b, Alex D5) and its twin live in
+    /// `nicheCategoryLabel`; this stays as the call site's name.
     static func nicheDisplayName(_ raw: String) -> String {
-        categoryDisplayNames[normalizedCategory(raw)] ?? toTitleCaseAcronymSafe(raw)
+        nicheCategoryLabel(raw)
     }
 
     private static func monthYear(_ iso: String) -> String {
