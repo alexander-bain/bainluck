@@ -10063,9 +10063,33 @@ async def typeahead_search(
                 raise
             # The dropdown must never be slower BECAUSE of a bonus lane.
             _ta_mark("headline_contenders_TIMED_OUT")
+            # #7397 RIDER: THE QUERY IS NOT SPENT HERE, and the length is not a
+            # coy way of writing it. CodeQL grades a request value reaching a log
+            # line `py/log-injection` at medium — alert #2065, open on master
+            # since 2026-09-06 — because `q` is free text a reader controls, so a
+            # query carrying a newline forges a whole log line downstream of us.
+            # This repo's standing answer is to spend a value the reader does not
+            # control (#5728, #5905, #6249, #6355, #6532 all made the same move),
+            # and here there is no trusted re-source for free text: unlike
+            # `/search`, this route never calls `_record_search_query`, so the
+            # text has no second home to point at either. `len(q)` is an int and
+            # it is the dimension this lane's cost actually tracks — the
+            # contender patterns are built per token, which is what
+            # `contender_patterns` fans out over.
+            #
+            # WHAT IS NOT LOST: the stage is already named by the
+            # `headline_contenders_TIMED_OUT` mark one line up, and `debug_timing=1`
+            # carries the marks back to a caller who needs the attribution.
+            #
+            # SCOPE, SAID PLAINLY: fifteen other logging calls in this file still
+            # spend `q`, all of them `search_events`' diagnostics, and CodeQL has
+            # two of those open (#2861, #2852). They are the same class and they
+            # are not this ship's to rewrite — degrading another lane's timeout
+            # diagnostics is its call, not mine. The guard beside this fix is
+            # therefore scoped to this handler and says so in its docstring.
             logger.warning(
-                "typeahead headline-contender lane timed out for %r — shipping "
-                "the dropdown unchanged", q
+                "typeahead headline-contender lane timed out on a %d-character "
+                "query — shipping the dropdown unchanged", len(q)
             )
             # NO `_recover_search_session` HERE — that is the 500 (see the block
             # comment above). The savepoint's own rollback has already restored
