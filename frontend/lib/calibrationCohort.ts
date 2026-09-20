@@ -128,7 +128,18 @@ export interface CohortCopy {
   key: CohortKey;
   /** Outcomes the active cohort contains. */
   cohortN: number;
-  /** Outcomes in the whole population — the comparison denominator. */
+  /**
+   * Outcomes in the measured population — the comparison denominator.
+   *
+   * #7496: NOT "the whole population", and no string here may call it that.
+   * `total_outcomes` is what survives the exclusion rules, and the page's own
+   * "What's included?" bullet says so — "that published total is lower than the
+   * raw resolved-outcome count because we exclude markets that can't form an
+   * honest prediction". The eight folded rules alone set aside 147,721
+   * outcomes, four of the six bulleted ones more. So a sentence that calls this
+   * number the total, or names the untraded rows as the only thing left out,
+   * is contradicted nine screens below by the same page.
+   */
   fullN: number;
   /** Short noun phrase for the cohort, for chart labels and headings. */
   shortLabel: string;
@@ -257,7 +268,11 @@ export function describeCohort(
           `sportsbook lines) · ${fmt(unchangedN)} untraded.`
         : `${fmt(movedN)} traded · ${fmt(unchangedN)} untraded.`,
       toggleLabel: unchangedN > 0 ? "Exclude untraded" : "Show every outcome",
-      statDetail: `all outcomes · ${fmt(fullN)} total`,
+      // #7496 — "all outcomes · 747,028 total" over the RESOLVED OUTCOMES card.
+      // Both halves claimed the exclusion rules away. The toggle's own scope is
+      // real and stays (this view holds every row the curve has); what it may
+      // not say is that the curve holds every row.
+      statDetail: `all measured outcomes · ${fmt(fullN)} measured`,
       heroClause: `${fmt(fullN)} resolved predictions`,
       // The cohort IS the population here, so the unqualified claim is true.
       plainHeadlineScope: "Across every market we track",
@@ -336,12 +351,28 @@ export function describeCohort(
       ? `Include untraded (+${fmt(unchangedN)})`
       : "Show every outcome",
     statDetail: unchangedN > 0
-      ? `excludes ${fmt(unchangedN)} untraded · ${fmt(fullN)} total`
-      : `all outcomes · ${fmt(fullN)} total`,
+      ? `excludes ${fmt(unchangedN)} untraded · ${fmt(fullN)} measured`
+      : `all measured outcomes · ${fmt(fullN)} measured`,
+    // #7496 — the hero read "every outcome except the 298,001 untraded ones …
+    // (747,028 in total)", which names untraded as the only cut and 747,028 as
+    // everything. Neither is true (see `fullN` above), and both stand in the
+    // largest type on the page, ahead of every qualification that walks them
+    // back.
+    //
+    // The exclusions do NOT move up here. Notice 34 / D102 keep the method off
+    // the reader's screen, and it is already carried twice below — the
+    // "What's included?" bullet and the exclusion list, folded. What the hero
+    // owes is a scope its own page does not contradict, and "we measured" is
+    // the page's own verb for it ("How We Measure This").
+    //
+    // The parenthetical says "measured in all" rather than "in all" because a
+    // reader skims it ALONE: "(747,028 in all)" read on its own is the same
+    // completeness claim with the qualifier out of sight. A scoping word that
+    // only works when the whole sentence is read is not a scoping word.
     heroClause: unchangedN > 0
-      ? `${fmt(defaultCohortN)} resolved predictions — every outcome except the ` +
-        `${fmt(unchangedN)} untraded ones, whose price never moved off its ` +
-        `opening line (${fmt(fullN)} in total)`
+      ? `${fmt(defaultCohortN)} resolved predictions — every outcome we measured except ` +
+        `the ${fmt(unchangedN)} untraded ones, whose price never moved off its ` +
+        `opening line (${fmt(fullN)} measured in all)`
       : `${fmt(defaultCohortN)} resolved predictions`,
     // "traded" is this module's ratified word for the default cohort, and it
     // covers the sportsbook rows correctly under D101 rather than apologising

@@ -1191,7 +1191,11 @@ export default function CalibrationPage() {
             </p>
             <p>
               Population: <span className="tabular-nums text-text-secondary">{cohortN.toLocaleString()}</span>{" "}
-              resolved outcomes{cohortN !== fullN && <> of <span className="tabular-nums text-text-secondary">{fullN.toLocaleString()}</span> total</>}
+              {/* #7496 — "of N total" here too, one tap down inside "Show the
+                  math". Same word, same page, same number as the footer and the
+                  hero, and the same reason it is wrong: fullN is the measured
+                  population, not the total. */}
+              resolved outcomes{cohortN !== fullN && <> of <span className="tabular-nums text-text-secondary">{fullN.toLocaleString()}</span> measured</>}
               {/* #6265 — PROVIDERS, like the stat card, because both say "sources".
                   This line used `sources.length` (7 raw payload keys) while the
                   card two inches above used `providerGroups.length` (4), so the

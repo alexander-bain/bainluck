@@ -143,7 +143,13 @@ export function cohortPhrase(key: CohortKey): string {
  */
 export function footerPopulationPhrase(cohortN: number, fullN: number): string {
   const cohort = `${cohortN.toLocaleString()} resolved outcomes`;
-  return cohortN === fullN ? cohort : `${cohort} of ${fullN.toLocaleString()} total`;
+  // #7496: "of N total" — the word, not the number. `fullN` is what survives
+  // the exclusion rules, and the "What's included?" card this line was written
+  // to reconcile with says so in its own next sentence ("that published total
+  // is lower than the raw resolved-outcome count"). Naming the whole beside the
+  // cohort is #4339's requirement and is unchanged; calling that whole the
+  // total is the claim this page stopped making.
+  return cohortN === fullN ? cohort : `${cohort} of ${fullN.toLocaleString()} measured`;
 }
 
 /** A payload category, as published, with the figure published for it. */
