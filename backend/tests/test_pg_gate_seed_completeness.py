@@ -101,6 +101,22 @@ COVERED = (
     "test_kalshi_sweep_settlement_bind_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
+    # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`
+    # by raw INSERT to run the live arm's own `RECENT_FINAL_SELECT_SQL` against
+    # a real server. Enrolled the same session the gate was written, because the
+    # discovery arm below found it before CI did and both hazards this file
+    # names are live in that seed:
+    #
+    #   * `futures_markets.category` and `.mutually_exclusive` are NOT NULL with
+    #     no server default, so omitting either kills the gate outright — the
+    #     loud half.
+    #   * the quiet half is the clock. Every row's `last_updated` IS the
+    #     subject: the new clause reaches a market no leg has touched inside
+    #     `LIVE_STALE_TOUCH_MINUTES`, so a seed that let that column take a
+    #     default would hand the predicate the value it is being asked about and
+    #     the gate would pass on a fact it invented. It is named explicitly on
+    #     every seeded leg, on both sides of the boundary.
+    "test_live_stale_touch_reach_5024_pg.py",
     "test_null_statpal_live_space_3094_real_postgres.py",
     # #6215 (CERT-2880's required gate). Seeds `sports` and one `teams` row by
     # raw INSERT to prove the repair's backup/restore round-trips a real JSONB
