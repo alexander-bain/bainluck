@@ -94,10 +94,21 @@ function points(probs: number[]) {
  * Period chips at the END of the series, which is where they collide: the
  * callout is at the last data point, and since the right-hand buffer was removed
  * (#3525) that point IS the plot's right rule.
+ *
+ * #7371 PULLED THEM BACK OFF THE RULE, AND THE COLLISION THIS FILE GUARDS IS
+ * VERTICAL, SO IT IS UNTOUCHED. The fractions were 0.55/0.78/0.93/0.99. The last
+ * one sat 1% of the span from the right rule, which after #7371 flips to grow
+ * inward and staggers onto a second row — and this file's first test asserts
+ * every chip's ink sits within 20px of the plot's top, i.e. that the strip is
+ * ONE row (that is the whole reason #7134 exists as a separate file). Worse, at
+ * 0.99 the fourth marker was itself the clipped caption #7371 is about: the rig
+ * was measuring a chip the reader never saw whole. 0.35/0.52/0.69/0.86 keeps
+ * four chips, 17% apart, all on row 0, the last with 14% of clear span to its
+ * right — over the 12.6% a left-anchored label needs, so none of them flips.
  */
 function lateBoundaries(probs: number[]): PeriodBoundary[] {
   const n = probs.length;
-  return [0.55, 0.78, 0.93, 0.99].map((f, i) => ({
+  return [0.35, 0.52, 0.69, 0.86].map((f, i) => ({
     timestamp: new Date(START + Math.floor(f * (n - 1)) * 60_000).toISOString(),
     label: ["T6", "B7", "T8", "T9"][i],
   }));

@@ -260,11 +260,21 @@ describe("#7134 — the end-value callout clears a TWO-row period strip", () => 
     // The band must be the depth the chart DREW. Asserting the two arms differ
     // by exactly one row is what stops the fix being "always drop two rows",
     // which would be a restyle of every single-row chart wearing a bug fix's
-    // name. `oneRow` reuses #5581's spacing: 0.55/0.78/0.93 are >12.6% apart.
+    // name.
+    //
+    // #7371 MOVED THE LAST MARKER INWARD, AND THE ARM IS UNCHANGED BY IT. These
+    // minutes were 55/85/110 on a 119-minute span, i.e. the last chip sat 9
+    // minutes (7.6%) from the right rule — inside one label's ink, so it now
+    // flips to grow inward and, being 21% from its neighbour, staggers with it.
+    // A perfectly good two-row strip, and useless as the ONE-row arm of a
+    // comparison. 55/80/100 restores what this arm was written to hold: gaps of
+    // 21% and 17% (both over the 12.6% stagger band) and 16% of clear span to
+    // the right of the last chip (over the 12.6% a left-anchored label needs),
+    // so all three sit on row 0 for the reason they always did — spacing.
     const oneRow: PeriodBoundary[] = [
       [55, "T6"],
-      [85, "B7"],
-      [110, "B8"],
+      [80, "B7"],
+      [100, "B8"],
     ].map(([min, label]) => ({
       timestamp: new Date(START + (min as number) * 60_000).toISOString(),
       label: label as string,

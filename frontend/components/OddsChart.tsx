@@ -45,6 +45,7 @@ import type { PeriodBoundary } from "@/lib/periodMarkers";
 import {
   dedupePeriodLabels,
   assignPeriodLabelRows,
+  anchorPeriodLabels,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 
@@ -1331,17 +1332,26 @@ export default function OddsChart({
     // of markers drawn is exactly what `dedupePeriodLabels` returned.
     const rowed = assignPeriodLabelRows(deduped, chartDuration);
 
-    return rowed.map((b) => ({
+    // #7371: every label grows RIGHT out of its rule (UX-P022 — anchoring them
+    // all the same way is what makes the gap between two markers the space
+    // available to the first one's text). The one marker that cannot is the one
+    // sitting ON the last category: a live game's newest half-inning starts at
+    // the newest data, so `T10` grew out of the svg and reached the page as a
+    // bare `T`. `anchorPeriodLabels` flips exactly those and spaces the flip;
+    // it is shared with the score differential chart, which clips identically.
+    //
+    // The right rule is the LAST CATEGORY, not the drawn extent: a categorical
+    // axis places a marker by index, and `chartData`'s last row is the column
+    // the rule is painted on.
+    const anchored = anchorPeriodLabels(
+      rowed,
+      chartDuration,
+      parseISO(chartData[chartData.length - 1].timestamp).getTime(),
+    );
+
+    return anchored.map((b) => ({
       ...b,
       time: format(parseISO(b.timestamp), labelFormat),
-      // UX-P022: labels used to ALTERNATE insideTopLeft / insideTopRight. That
-      // reads like it spreads them out, but it does the opposite — a left-anchored
-      // label grows rightward and the next right-anchored one grows leftward, so
-      // adjacent labels grow TOWARD each other and meet in the middle. Anchoring
-      // every label on the same side makes the gap between two markers the actual
-      // space available to the first one's text, which is what the spacing rule
-      // above assumes.
-      labelPosition: "insideTopLeft",
     }));
   }, [periodBoundaries, chartData, plottedProbKeys, labelFormat, drawnExtent]);
 

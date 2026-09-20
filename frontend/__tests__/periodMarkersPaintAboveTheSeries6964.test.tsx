@@ -241,12 +241,20 @@ describe("#6964 — the render is actually a chart with both things in it", () =
     expect(labels).toEqual(["Q2", "HT", "Q3", "Q4"]);
   });
 
-  it("ScoreDifferentialChart also draws the labelled `0` guide rule", () => {
-    // The chart carries a second labelled reference line, and the order rule
-    // below deliberately exempts it. Pinned so that exemption is a stated fact
-    // about a rule that exists, rather than a filter quietly matching nothing.
-    const all = labelledReferenceLines(RENDERED.get("ScoreDifferentialChart")!);
-    expect(all.map((g) => g.label)).toContain("0");
+  it("ScoreDifferentialChart also draws the `0` guide rule the order rule exempts", () => {
+    // The chart carries a second reference line, and the order rule below
+    // deliberately exempts it. Pinned so that exemption is a stated fact about a
+    // rule that exists, rather than a filter quietly matching nothing.
+    //
+    // #7371 TOOK ITS CAPTION, NOT THE RULE. This used to read the label `"0"`
+    // out of `labelledReferenceLines`. That caption was `position: "right"` —
+    // #3525's shape — and rendered at `x=385` anchored `start` against a plot
+    // rule at 380, i.e. half outside a 390px svg, duplicating the `0` the
+    // y-axis already prints on the same row. So the line is now pinned by its
+    // own stroke, which is what the exemption is actually about.
+    const markup = RENDERED.get("ScoreDifferentialChart")!;
+    expect(markup).toContain('stroke="rgba(0,0,0,0.2)"');
+    expect(labelledReferenceLines(markup).map((g) => g.label)).not.toContain("0");
   });
 
   it.each(CHARTS.map(([n]) => n))("%s draws data series to be painted over by", (name) => {

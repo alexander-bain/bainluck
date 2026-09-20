@@ -165,6 +165,96 @@ export function assignPeriodLabelRows<T extends { timestamp: string }>(
   return out;
 }
 
+/** Where a period label is anchored, in the `ReferenceLine` label's own words. */
+export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
+
+/**
+ * Painted width of one period label plus the air a reader needs after it, as a
+ * fraction of the chart's visible span.
+ *
+ * NOT A NEW NUMBER. It is `PERIOD_LABEL_MIN_SPACING_FRACTION ×
+ * PERIOD_LABEL_STAGGER_SPACING_MULTIPLE` — 12.6% — and that product is exactly
+ * what #6882 derived it from: a 3-character label at 11px bold is ~24px, plus
+ * ~8px of air, on the 252px plot a 390px screen draws, = 32px = 12.7%. #6882
+ * spends it on the gap BETWEEN two markers; the rule below spends the same
+ * budget on the gap between a marker and the plot's right rule, because it is
+ * the same ink measured against a different obstacle. Naming it here is what
+ * stops the two drifting into two numbers that mean one thing.
+ */
+export const PERIOD_LABEL_INK_FRACTION =
+  PERIOD_LABEL_MIN_SPACING_FRACTION * PERIOD_LABEL_STAGGER_SPACING_MULTIPLE;
+
+/**
+ * Choose which side each period label grows out of, and drop a row where that
+ * choice creates a collision the row rule above could not have seen.
+ *
+ * #7371 — A LIVE GAME'S NEWEST MARKER PRINTED A SINGLE ORPHAN GLYPH. On
+ * `/events/15314713` (Angels–Twins, hero `Top 10th`) the right-hand period rule
+ * was captioned **`T`**. There is no code path that emits a bare `T`: it is
+ * `T10` with its last two glyphs cut off. `insideTopLeft` anchors the text
+ * `start` at the rule, so a marker sitting ON the chart's last category grows
+ * its label out of the svg, which ends 10px later at every width. Measured in
+ * the rig at 390px before the fix: `x=385 anchor=start` against a plot rule at
+ * 380 — 5px of room for a 24px word. It is the same structural clip as #3541's
+ * bare `F` and #3525's stray `5`, on the one marker a live reader most wants.
+ *
+ * A live game reaches this shape every few minutes: the half-inning that just
+ * started IS the newest data, so its boundary is at or within a pixel of the
+ * right rule, and `Q`/`P`/`H` markers share the anchor in every other sport.
+ *
+ * WHY FLIP RATHER THAN DELETE THE CAPTION. #3541 answered the same clip by
+ * dropping the `Final` marker's label, and that was right there: the hero
+ * already carries a FINAL chip, so the word was redundant and its anchor could
+ * not be changed without colliding with a period label it is not spaced
+ * against. Neither holds here. `T10` is not printed anywhere else on the chart,
+ * and a period label collides only with other period labels — which this
+ * module already spaces, so the flip can be spaced by the same rule instead of
+ * being a special case pleading its own exception.
+ *
+ * THE FLIPPED LABEL NEEDS TWICE THE BUDGET. A left-anchored label and a
+ * right-anchored one on either side of a gap grow TOWARD each other, so the gap
+ * has to hold both inks — that is UX-P022's finding, and it is why alternating
+ * anchors was removed. It is not an argument against flipping the LAST label,
+ * which has no neighbour to its right; it is the reason the flipped label's
+ * clearance from its predecessor is `2 × PERIOD_LABEL_INK_FRACTION` rather than
+ * the one-way stagger band. Under that, it drops a row — the same remedy #6882
+ * chose for `HT → Q3`, for the same reason: both markers keep their caption.
+ *
+ * Over-firing is the safe direction (a staggered label is wholly readable, a
+ * collapsed one is gone), and both charts size themselves through
+ * `ResponsiveContainer width="100%"` and never learn their pixel width, so the
+ * rule stays proportional like every other rule here.
+ *
+ * Input must be timestamp-ascending and ALREADY ROWED by
+ * `assignPeriodLabelRows`: this is the second layout pass and it only ever
+ * raises a row, never lowers one.
+ */
+export function anchorPeriodLabels<T extends { timestamp: string; labelRow: number }>(
+  ascending: T[],
+  chartDurationMs: number,
+  chartEndMs: number,
+): Array<T & { labelPosition: PeriodLabelPosition }> {
+  const ink = chartDurationMs * PERIOD_LABEL_INK_FRACTION;
+  const out: Array<T & { labelPosition: PeriodLabelPosition }> = [];
+  for (const b of ascending) {
+    const t = new Date(b.timestamp).getTime();
+    // Room to the right of this marker, measured against the plot's right rule.
+    const flip = chartEndMs - t < ink;
+    let labelRow = b.labelRow;
+    if (flip && out.length > 0) {
+      const prev = out[out.length - 1];
+      const prevT = new Date(prev.timestamp).getTime();
+      if (t - prevT < 2 * ink && prev.labelRow === 0) labelRow = 1;
+    }
+    out.push({
+      ...b,
+      labelRow,
+      labelPosition: flip ? "insideTopRight" : "insideTopLeft",
+    });
+  }
+  return out;
+}
+
 /**
  * Largest plausible gap WITHIN a single game's period/inning markers. No sport
  * that renders period gridlines (NBA/NFL/MLB/NHL/soccer) has a 6-hour mid-game
