@@ -339,6 +339,45 @@ class TestTheGuardIsWiredIntoTheWriter:
         assert stats["teams_espn_mint_refused"] == 1
 
     @pytest.mark.asyncio
+    async def test_a_city_abbreviation_is_still_minted_on_a_sparse_payload(self):
+        """The veto's residual, and the reason it reached a reader.
+
+        `upsert_team` turns a False from `espn_identity_corresponds` into a
+        REFUSED MINT — so a veto that calls a club a rival of itself does not
+        merely cost a crest, it costs the `teams` row, `upsert_team` returns
+        None, and the caller's `accept_team_binding(team=None)` leaves the event
+        side's FK NULL. The game then renders with no club behind it.
+
+        SPARSE ON PURPOSE. A full ESPN payload carries `name` as the bare mascot
+        ("Clippers"), which corresponds on its own and MASKS the defect — which
+        is why the parametrized rail tests above, which populate two fields, are
+        not sufficient on their own. Several endpoints send `display_name` and
+        nothing else, and that is the shape that reached production.
+        """
+        from app.utils.espn_helpers import upsert_team
+
+        session = _FakeSession()
+        stats = {}
+        team = await upsert_team(
+            session,
+            "LA Clippers",
+            _EspnTeam(espn_id="12", display_name="Los Angeles Clippers"),
+            sport_id=7,
+            stats=stats,
+        )
+
+        assert team is not None, (
+            "the club was refused its own name — a city abbreviation read as a "
+            "rival, so no teams row exists and the event side stays unlinked"
+        )
+        assert team.name == "LA Clippers"
+        assert team.sport_id == 7
+        assert session.added == [team]
+        assert "teams_espn_mint_refused" not in stats
+        assert "teams_espn_identity_refused" not in stats
+        assert team.espn_id == "12", "minted, but then denied its enrichment"
+
+    @pytest.mark.asyncio
     async def test_an_existing_row_survives_un_enriched(self):
         """Refusing the mint must not become refusing the row.
 
@@ -574,6 +613,33 @@ _SAME_CLUB_BOTH_RAILS = [
     ("Nottingham Forest", "Nottm Forest"),              # truncation, drops the MIDDLE
 ]
 
+#: One club under a CITY ABBREVIATION — the #6215 veto's own residual.
+#:
+#: PROVENANCE, stated because it differs from every list above: these are NOT
+#: holdout rows. They are derived from `_CITY_ABBREVIATIONS`, and each is here
+#: because the veto shipped reading a different SCALE from the matcher it guards
+#: — `token_overlap_score` expands abbreviations, `shared_token_rivals` did not —
+#: so it called a club a rival of itself. `_token_stems_agree` cannot cover this
+#: class: it relates one token to one token, and 15 of these expand into two.
+#:
+#: The first eight are WITNESSES: each returned rivals=True before the expansion
+#: was added, which on a sparse ESPN payload (display_name only, no `name`) made
+#: `espn_identity_corresponds` refuse, and `upsert_team` refuses the MINT on that
+#: answer — so the event side stayed unlinked. The last two are CONTROLS that
+#: already passed, kept so a future narrowing of the expansion shows up here.
+_SAME_CLUB_ABBREVIATED = [
+    ("LA Clippers", "Los Angeles Clippers"),
+    ("NY Giants", "New York Giants"),
+    ("KC Chiefs", "Kansas City Chiefs"),
+    ("SF Giants", "San Francisco Giants"),
+    ("TB Buccaneers", "Tampa Bay Buccaneers"),
+    ("GB Packers", "Green Bay Packers"),
+    ("OKC Thunder", "Oklahoma City Thunder"),
+    ("LV Raiders", "Las Vegas Raiders"),
+    ("NE Patriots", "New England Patriots"),       # control: stem test already covered it
+    ("STL Blues", "St Louis Blues"),               # control: stem test already covered it
+]
+
 #: One club, but a pair the house matcher declines — repair rail only.
 _SAME_CLUB_REPAIR_RAIL_ONLY = [
     ("Duke Blue Devils", "Duke"),                       # mascot suffix
@@ -625,7 +691,8 @@ def test_shared_token_rivals_never_share_espn_identity_6215(ours, theirs):
 
 
 @pytest.mark.parametrize(
-    "ours,theirs", _SAME_CLUB_BOTH_RAILS + _SAME_CLUB_REPAIR_RAIL_ONLY
+    "ours,theirs",
+    _SAME_CLUB_BOTH_RAILS + _SAME_CLUB_ABBREVIATED + _SAME_CLUB_REPAIR_RAIL_ONLY,
 )
 def test_a_legitimate_alias_survives_the_rival_veto_6215(ours, theirs):
     """The control. A veto that refuses everything would pass the test above.
@@ -641,7 +708,9 @@ def test_a_legitimate_alias_survives_the_rival_veto_6215(ours, theirs):
     )
 
 
-@pytest.mark.parametrize("ours,theirs", _SAME_CLUB_BOTH_RAILS)
+@pytest.mark.parametrize(
+    "ours,theirs", _SAME_CLUB_BOTH_RAILS + _SAME_CLUB_ABBREVIATED
+)
 def test_a_legitimate_alias_still_enriches_on_the_writer_rail_6215(ours, theirs):
     """...and the writer still adopts it, for the pairs that reach the veto."""
     assert names_match(ours, theirs), (
@@ -695,16 +764,30 @@ def test_the_veto_only_refuses_and_never_admits_6215():
 #: Real alias pairs the score backfill depends on, every one of them measured
 #: as a pair `shared_token_rivals` WOULD refuse (2026-09-15, over 1,060 pairs
 #: from 500 ESPN-anchored teams: `names_match` accepts 943, the veto would
-#: refuse 10 — these nine plus one true rival).
+#: refuse 10 — nine real clubs plus one true rival).
+#:
+#: 🟢 FOUR OF THE NINE WERE SINCE RESCUED, and they moved DOWN rather than out.
+#: Teaching `shared_token_rivals` to expand abbreviations — the scale its own
+#: matcher already read — stopped it refusing `NY Red Bulls` and `LA Clippers`.
+#: The list below is what the veto still costs this rail; the list under it is
+#: what it stopped costing. Neither row was deleted, because the two together
+#: are the measurement, and a row removed on the day it starts passing is a
+#: cost that can never be shown to have fallen.
 _BACKFILL_ALIASES_THE_VETO_WOULD_COST = [
-    ("New York Red Bulls", "NY Red Bulls"),
-    ("New York Red Bulls", "Red Bull NY"),
     ("Crystal Palace", "C Palace"),
-    ("Los Angeles Clippers", "LA Clippers"),
     ("Grand Canyon Antelopes", "Grand Canyon Lopes"),
     ("North Dakota St Bison", "N Dakota St"),
     ("Army Knights", "Black Knights"),
     ("Albany Great Danes", "UAlbany Great Danes"),
+]
+
+#: The four the abbreviation expansion took off the bill above. These assert the
+#: OPPOSITE of their neighbours, so a narrowing of `_expand_abbreviations` — or a
+#: revert of the expansion in `shared_token_rivals` — reddens here by name.
+_BACKFILL_ALIASES_THE_VETO_NO_LONGER_COSTS = [
+    ("New York Red Bulls", "NY Red Bulls"),
+    ("New York Red Bulls", "Red Bull NY"),
+    ("Los Angeles Clippers", "LA Clippers"),
     ("Mt. St. Mary's Mountaineers", "Mount St. Mary's Mountaineers"),
 ]
 
@@ -720,9 +803,11 @@ def test_the_backfill_rail_keeps_its_aliases_6215(ours, theirs):
 
     That rail RECALLS a candidate ESPN game and then requires BOTH teams to
     agree; it does not decide an identity and write it down. Wiring the veto in
-    would refuse nine real clubs' score backfill to refuse one true rival pair.
-    So the veto stops at two rails ON PURPOSE, and this test is what a future
-    "surely this one too" change runs into.
+    would refuse FIVE real clubs' score backfill (nine before the abbreviation
+    expansion) to refuse one true rival pair. The ruling is unchanged — five for
+    one is still the wrong trade — but the number moved, so the sentence says
+    which number and when. The veto stops at two rails ON PURPOSE, and this test
+    is what a future "surely this one too" change runs into.
 
     Each pair below is asserted through the SAME predicate the backfill's local
     `names_match` closure calls, so if the import ever comes back, this reddens
@@ -734,5 +819,29 @@ def test_the_backfill_rail_keeps_its_aliases_6215(ours, theirs):
     )
     assert shared_token_rivals(ours, theirs), (
         f"{ours!r}/{theirs!r} is no longer a pair the veto would refuse, so "
-        "this row has stopped documenting the cost and must be re-measured"
+        "this row has stopped documenting the cost and must be re-measured. "
+        "If an abbreviation rule rescued it, MOVE it to "
+        "_BACKFILL_ALIASES_THE_VETO_NO_LONGER_COSTS rather than deleting it"
+    )
+
+
+@pytest.mark.parametrize(
+    "ours,theirs", _BACKFILL_ALIASES_THE_VETO_NO_LONGER_COSTS
+)
+def test_the_abbreviation_expansion_took_these_off_the_bill_6215(ours, theirs):
+    """The other half of the measurement above, asserted in the other direction.
+
+    `shared_token_rivals` tokenised without `_expand_abbreviations` while the
+    matcher it guards tokenises with it, so it read `NY` and `New York` as two
+    distinctive tokens and called a club a rival of itself. These four pairs are
+    the ones that cost measured the difference.
+    """
+    assert names_match(ours, theirs), (
+        f"{ours!r}/{theirs!r} no longer matches — the score backfill has "
+        "stopped recognising a real alias"
+    )
+    assert not shared_token_rivals(ours, theirs), (
+        f"the veto calls {ours!r} a rival of {theirs!r} again — one club "
+        "against itself. Check that `shared_token_rivals` still expands "
+        "abbreviations before it tokenises"
     )
