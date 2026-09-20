@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import {
   selectDivergenceRows,
-  type PropDropReason,
+  PROP_DROP_REASON_LABEL,
 } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import { countOf } from "@/lib/plural";
@@ -26,15 +26,6 @@ interface Props {
   playerProps?: readonly PlayerPropRow[] | null;
   status?: string | null;
 }
-
-const REASON_LABEL: Record<PropDropReason, string> = {
-  no_real_price: "no trading",
-  outside_band: "already decided",
-  misclassified: "couldn't be read",
-  wrong_game: "linked to another game",
-  ungraded: "settled but never graded",
-  unknown: "unknown",
-};
 
 export default function PropDivergenceRail({ playerProps, status }: Props) {
   const [expanded, setExpanded] = useState(false);
@@ -172,7 +163,7 @@ export default function PropDivergenceRail({ playerProps, status }: Props) {
               ? "These props couldn't be shown: "
               : "Also not shown: "}
             {nonBenign
-              .map((d) => `${d.count} ${REASON_LABEL[d.reason]}`)
+              .map((d) => `${d.count} ${PROP_DROP_REASON_LABEL[d.reason]}`)
               .join(", ")}
             .
           </p>

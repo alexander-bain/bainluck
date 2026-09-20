@@ -24,7 +24,7 @@ import { useMemo } from "react";
 import {
   selectDivergenceDetail,
   type DivergenceRow,
-  type PropDropReason,
+  PROP_DROP_REASON_LABEL,
 } from "@/lib/propDivergence";
 import type { PlayerPropRow } from "@/lib/playerPropsGrouping";
 import { SETTLED_NO_GRADE_LABEL } from "@/lib/propGrade";
@@ -39,15 +39,6 @@ interface Props {
   playerProps?: readonly PlayerPropRow[] | null;
   status?: string | null;
 }
-
-const REASON_LABEL: Record<PropDropReason, string> = {
-  no_real_price: "no trading",
-  outside_band: "already decided",
-  misclassified: "couldn't be read",
-  wrong_game: "linked to another game",
-  ungraded: "settled but never graded",
-  unknown: "unknown",
-};
 
 function Row({ row, settled }: { row: DivergenceRow; settled: boolean }) {
   // The right-hand pill answers "how far from the script": in-game that is the
@@ -229,7 +220,7 @@ export default function PropDivergenceDetail({ playerProps, status }: Props) {
           {result.eligible === 0
             ? "These props couldn't be shown: "
             : "Also not shown: "}
-          {nonBenign.map((d) => `${d.count} ${REASON_LABEL[d.reason]}`).join(", ")}.
+          {nonBenign.map((d) => `${d.count} ${PROP_DROP_REASON_LABEL[d.reason]}`).join(", ")}.
         </p>
       )}
     </div>
