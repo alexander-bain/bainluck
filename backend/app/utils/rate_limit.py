@@ -339,6 +339,104 @@ def _trusted_ips() -> frozenset:
     return cached
 
 
+# ---------------------------------------------------------------------------
+# D70 allowlist observability (#4635)
+# ---------------------------------------------------------------------------
+#
+# 🔴 THE COUNT OF CONFIGURED ENTRIES IS NOT THE OBSERVABLE THIS NEEDS, AND #4635
+# ASKED FOR THE COUNT.
+#
+# Measured 2026-09-10 14:08–14:13 PT: `RATE_LIMIT_TRUSTED_IPS` was set, ONE entry,
+# live since v4388 — and every lane request was still landing in the 60/min
+# anonymous bucket (165 requests, first 429 at #68 and #39). A line saying
+# "trusted rate-limit allowlist: 1 address(es)" would have been TRUE and would have
+# read as healthy for the ≥17 hours the fleet spent throttling itself. The
+# configured cardinality answers "is it armed"; the defect lives entirely in the
+# gap between that and "is it matching anything".
+#
+# So the state we publish has THREE values, not two — `unset`, `armed_and_matching`,
+# `armed_but_matching_nothing` — and the third is the one that was invisible.
+# Distinguishing it costs one integer increment per request that reaches the
+# trusted branch at all, which is already gated on a non-empty allowlist: when the
+# var is unset (the default, and every dev machine) this adds nothing to the hot
+# path. No Redis, no logging, no lock — the increments run on the event loop
+# thread, and an increment that raced would cost a miscount, never a wrong verdict.
+#
+# Per PROCESS, not per fleet: each web dyno counts what it saw since its own boot,
+# and the reader is told which dyno answered. That is the honest shape (there is no
+# shared counter and adding one would put a Redis write on the hot path), and it is
+# sufficient for the defect, because the throttled population calls continuously —
+# any dyno serving it accumulates misses.
+_trusted_match_count: int = 0
+_trusted_miss_count: int = 0
+_trusted_observed_since: float = time.time()
+
+
+def _record_trusted_branch(matched: bool) -> None:
+    """Count one request that reached the trusted branch. Called only when the
+    allowlist is non-empty, so an unset allowlist costs nothing at all."""
+    global _trusted_match_count, _trusted_miss_count
+    if matched:
+        _trusted_match_count += 1
+    else:
+        _trusted_miss_count += 1
+
+
+def _reset_trusted_observations() -> None:
+    """Clear the counters. For tests only — production never resets mid-process,
+    because `observed_seconds` is what makes a zero meaningful."""
+    global _trusted_match_count, _trusted_miss_count, _trusted_observed_since
+    _trusted_match_count = 0
+    _trusted_miss_count = 0
+    _trusted_observed_since = time.time()
+
+
+def trusted_allowlist_state() -> dict:
+    """Resolved D70 allowlist state, as counts and a verdict — never as addresses.
+
+    ``_trusted_ips()``'s docstring forbids printing the value: it identifies an
+    operator's network, and the credential rule's reasoning covers that as much as
+    it covers secrets. Nothing here returns, logs or hashes an address; the only
+    facts published are how many are configured and how many requests each branch
+    took.
+
+    The verdict, and what each one means for a reader who is being rate limited:
+
+    ``unset``
+        No allowlist configured. The correct default, and the state this shipped
+        in — everyone is on the ordinary ceilings. Not a defect.
+    ``armed_no_traffic_yet``
+        Configured, but this process has not seen a single non-admin request since
+        boot, so it has nothing to say either way. Ask again, or ask another dyno.
+    ``armed_and_matching``
+        Configured and observed granting the trusted ceiling. Working.
+    ``armed_but_matching_nothing``
+        🔴 Configured, requests are arriving, and NOT ONE of them matched. This is
+        the 2026-09-10 state: either the address rotated, or — as measured that day
+        — the population being throttled was never the population the allowlist
+        describes. Reading it requires no access to the value itself.
+    """
+    configured = len(_trusted_ips())
+    matched = _trusted_match_count
+    missed = _trusted_miss_count
+    if not configured:
+        verdict = "unset"
+    elif matched:
+        verdict = "armed_and_matching"
+    elif missed:
+        verdict = "armed_but_matching_nothing"
+    else:
+        verdict = "armed_no_traffic_yet"
+    return {
+        "verdict": verdict,
+        "configured_entries": configured,
+        "matched_requests": matched,
+        "unmatched_requests": missed,
+        "observed_seconds": max(0.0, round(time.time() - _trusted_observed_since, 1)),
+        "dyno": os.getenv("DYNO") or None,
+    }
+
+
 def _extract_uid_from_token(token: str) -> Optional[str]:
     """
     Decode JWT payload to extract 'uid' or 'sub' WITHOUT verifying the signature.
@@ -543,6 +641,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 peer = _router_peer_ip(request)
                 if peer in allowlist:
                     trusted_peer = peer
+                # #4635: count the branch, not the address. See
+                # `trusted_allowlist_state` — a configured allowlist that matches
+                # nothing is indistinguishable from a working one unless somebody
+                # counts the misses.
+                _record_trusted_branch(matched=trusted_peer is not None)
 
         if admin_key:
             key = admin_key

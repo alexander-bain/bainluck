@@ -28,7 +28,7 @@ if os.getenv("DYNO"):
 
 logger = logging.getLogger(__name__)
 
-from app.routes import containers, events, event_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
+from app.routes import containers, events, event_stream, sports, health, futures, admin, admin_analytics, admin_backfill_linkage, admin_backfill_odds, admin_judgments, admin_llm_diagnosis, admin_source_health, admin_rate_limit, admin_feed_config, admin_label_pass, admin_team_clusters, admin_cockpit, admin_file_issue, admin_cohort, auth, user, feed, market_moves, oscars, oscars_pool, golf, event, hub, march_madness, playoffs, tournaments, weather, economics, politics, entertainment, league_futures, predictions, og_image, teams, prop_families, feedback, calibration, source_intelligence, notifications, challenges, unsubscribe, telemetry
 from app.services.database import init_db
 
 # Initialize Sentry error tracking
@@ -313,6 +313,7 @@ app.include_router(admin_backfill_odds.router, prefix="/api", tags=["Admin Spars
 app.include_router(admin_judgments.router, prefix="/api", tags=["Admin Judgments"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_llm_diagnosis.router, prefix="/api", tags=["Admin LLM"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_source_health.router, prefix="/api", tags=["Admin Source Health"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
+app.include_router(admin_rate_limit.router, prefix="/api", tags=["Admin Rate Limit"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_feed_config.router, prefix="/api/admin", tags=["Admin Feed Config"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_label_pass.router, prefix="/api/admin", tags=["Admin Label Pass"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
 app.include_router(admin_team_clusters.router, prefix="/api/admin", tags=["Admin Team Clusters"], dependencies=ADMIN_ROUTER_DEPENDENCIES)
