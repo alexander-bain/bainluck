@@ -451,15 +451,32 @@ class TestTheRefusedValueLeavesTheDivisor:
         ), "the refused 0.50 must leave the divisor, not merely the page"
         assert survivors[3] == pytest.approx(0.40)
 
-    def test_a_board_of_fossils_can_start_normalizing_once_they_are_gone(self):
-        """Disclosed, not hidden: withholding can change an honest row's number.
+    def test_a_board_of_fossils_stays_raw_once_they_are_withheld(self):
+        """RE-SPECIMENED by #7103, which reversed the half this used to assert.
 
-        Fabricated 1.0s push a field's raw sum past `_FIELD_SUM_MAX`, and the
-        #1200 guard then serves the WHOLE board raw. Remove them and the true
-        field can fall back inside the band, so the surviving rows are normalized
-        where before they were not. That is the guard working on the real field
-        rather than on a field plus its phantoms — but it is a visible change to
-        rows this ship did not refuse, and it belongs in a test that names it.
+        As written for #5611 this named a disclosed side-effect: fabricated 1.0s
+        push a field's raw sum past `_FIELD_SUM_MAX`, the #1200 guard serves the
+        WHOLE board raw, and withholding them drops the true field back INTO the
+        band — so rows this ship never refused were suddenly normalized, 0.80
+        printing as 0.80/1.30. The docstring called that "a visible change to rows
+        this ship did not refuse", and it was right to be uneasy: #7103 measured
+        the same mechanism on production (`/api/futures/2951423`, eleven withheld
+        legs, a 47.0% favourite restated 30.9%) and ruled it a defect. Withholding
+        must not switch the squeeze ON.
+
+        The reason is this class's own thesis one step further. Line 451 requires
+        the refused value to leave the DIVISOR, not merely the page. But
+        `normalize_display_probs` reads an absent price as ZERO (`o.get(key) or 0`),
+        so dividing the survivors by their own sum asserts the withheld legs cannot
+        win — and they were withheld because their price is UNKNOWN, not because
+        their candidate is eliminated. A field with withheld members is not a
+        proved-complete distribution, so `field_complete=False` refuses the squeeze
+        and the honest rows print as stored.
+
+        So the subject inverts and stays falsifiable: withholding no longer changes
+        an honest row's number. Severing the gate restores 0.615 here and reddens
+        this line, which is what makes it a control rather than a restatement of
+        the raw read above it.
         """
         board = [{"prob": 1.0}, {"prob": 1.0}, {"prob": 0.80}, {"prob": 0.50}]
         raw = {o["id"]: o["probability"] for o in _detail(_market(board))["outcomes"]}
@@ -470,5 +487,5 @@ class TestTheRefusedValueLeavesTheDivisor:
             for o in _detail(_market(board), {1, 2})["outcomes"]
         }
         assert after[1] is None and after[2] is None
-        assert after[3] == pytest.approx(0.80 / 1.30, abs=0.001)
-        assert after[4] == pytest.approx(0.50 / 1.30, abs=0.001)
+        assert after[3] == pytest.approx(0.80), "withheld field: 0.80 is not 0.80/1.30"
+        assert after[4] == pytest.approx(0.50), "withheld field: 0.50 is not 0.50/1.30"
