@@ -1,5 +1,6 @@
 import {
   buildProviderPanels,
+  eceInputsForPanel,
   shapeBreakdownNote,
   shapeBreakoutPointer,
   type ProviderPanelInput,
@@ -149,10 +150,49 @@ describe("the ECE a panel renders states which KIND of number it is (ruling 003)
     expect(sportsbooks.ece).not.toBe(9.9);
   });
 
-  it("NEVER passes off a pooled figure as a single-shape provider's published one", () => {
-    // The inverse, which would quietly downgrade a server number to a client one.
+  // ── #7422 SPLIT ───────────────────────────────────────────────────────────
+  // This was ONE test asserting that a pooled figure on a single-shape provider
+  // is dropped to `none`. That conflated two things, and only one of them was
+  // the thing worth protecting:
+  //
+  //   (a) a pooled figure must never be LAUNDERED as `published` — still true,
+  //       still asserted, and it is the half that stops a client number being
+  //       passed off as the server's;
+  //   (b) a pooled figure on a single-shape provider is meaningless — FALSE
+  //       since the cohort toggle. Under a filter the server has published no
+  //       figure for the panel's population, so the pooled one is the only
+  //       honest number there is, and dropping it left the panel free to print
+  //       the whole-population figure instead (#7422: Polymarket, 1.6pp over
+  //       "79,278 outcomes", against its own row's 2.7pp).
+  //
+  // Split rather than deleted, per the rule that a test documenting a measured
+  // cost is split and made to assert the opposite, never pruned.
+  it("renders a single-shape provider's pooled figure, and NEVER as 'published'", () => {
     const kalshi = buildProviderPanels(
       liveInputs({ kalshi: { publishedEce: null, pooledEce: 7.7 } })
+    ).find(p => p.provider === "kalshi")!;
+    expect(kalshi.ece).toBe(7.7);
+    // The half of the old assertion that survives, and the load-bearing half:
+    // a client-derived number is never dressed up as the server's.
+    expect(kalshi.eceBasis).toBe("pooled");
+    expect(kalshi.eceBasis).not.toBe("published");
+  });
+
+  it("prefers the pooled figure over a stale published one on a single-shape provider", () => {
+    // The #7422 defect in miniature. Both are supplied — as they would be if a
+    // call site ever passed the whole-population number through under a cohort
+    // filter — and the one measured over the panel's OWN population wins.
+    const kalshi = buildProviderPanels(
+      liveInputs({ kalshi: { publishedEce: 1.6, pooledEce: 2.7 } })
+    ).find(p => p.provider === "kalshi")!;
+    expect(kalshi.ece).toBe(2.7);
+    expect(kalshi.ece).not.toBe(1.6);
+    expect(kalshi.eceBasis).toBe("pooled");
+  });
+
+  it("a single-shape provider with neither figure still says 'none'", () => {
+    const kalshi = buildProviderPanels(
+      liveInputs({ kalshi: { publishedEce: null, pooledEce: null } })
     ).find(p => p.provider === "kalshi")!;
     expect(kalshi.ece).toBeNull();
     expect(kalshi.eceBasis).toBe("none");
@@ -478,5 +518,102 @@ describe("providerKpiDetail — UX-P080 item 2 (Alex round 2)", () => {
 
   test("an empty provider list yields an empty string, not 'undefined'", () => {
     expect(providerKpiDetail([], label)).toBe("");
+  });
+});
+
+// ── #7422: WHICH FIGURE A PANEL MAY USE, IN BOTH COHORTS ────────────────────
+//
+// The defect was never in `buildProviderPanels`. It was at the call site, in
+// two ternaries keyed on `sources.length` — which answers "does the server
+// publish at this level" when the question the panel needs answered is "did
+// the server measure THIS population". Under the cohort toggle those come
+// apart, and `by_source[].ece` has no cohort dimension at all.
+//
+// What it printed: the traded Polymarket panel read "1.6pp ECE" (whole
+// population, n=264,956) directly above its own "79,278 outcomes", while the
+// Source Comparison row for the same provider in the same cohort read 2.7pp.
+//
+// This block exists because only ONE of the two cohorts is reachable by the
+// static page render the sibling test file uses, and the unreachable one is
+// the one that shipped wrong. A rule you cannot test in both states is a rule
+// with an untested half.
+describe("eceInputsForPanel — the server's figure is used only where it measured", () => {
+  const SERVER = 1.6; // by_source[].ece for polymarket — whole population
+  const POOLED = 2.7; // what Source Comparison derived for the traded cohort
+
+  it("unfiltered single-shape: the SERVER's number, and no pooled one (ruling 003)", () => {
+    expect(eceInputsForPanel(1, false, SERVER, POOLED)).toEqual({
+      publishedEce: SERVER,
+      pooledEce: null,
+    });
+  });
+
+  it("FILTERED single-shape: the pooled number, and the server's is withheld", () => {
+    // The defect, as an assertion. Pre-#7422 this returned the server's 1.6
+    // and the panel rendered it beside a filtered n.
+    expect(eceInputsForPanel(1, true, SERVER, POOLED)).toEqual({
+      publishedEce: null,
+      pooledEce: POOLED,
+    });
+  });
+
+  it("multi-shape is pooled in BOTH cohorts — the server publishes nothing there", () => {
+    for (const filtered of [false, true]) {
+      expect(eceInputsForPanel(3, filtered, SERVER, POOLED)).toEqual({
+        publishedEce: null,
+        pooledEce: POOLED,
+      });
+    }
+  });
+
+  it("the two are never both non-null — a basis is never ambiguous", () => {
+    for (const count of [1, 2, 3]) {
+      for (const filtered of [false, true]) {
+        const out = eceInputsForPanel(count, filtered, SERVER, POOLED);
+        expect(out.publishedEce === null || out.pooledEce === null).toBe(true);
+      }
+    }
+  });
+
+  it("a missing figure normalises to null rather than undefined", () => {
+    expect(eceInputsForPanel(1, false, undefined, undefined)).toEqual({
+      publishedEce: null,
+      pooledEce: null,
+    });
+    expect(eceInputsForPanel(1, true, SERVER, undefined)).toEqual({
+      publishedEce: null,
+      pooledEce: null,
+    });
+  });
+
+  it("end to end: a filtered panel renders the COHORT's figure, not the server's", () => {
+    // The rule and the builder together, which is what the page does. Without
+    // this the two halves could each be right and the composition still wrong.
+    const panel = buildProviderPanels([
+      {
+        provider: "polymarket",
+        label: "Polymarket",
+        sources: ["polymarket"],
+        buckets: [{ n: 79_278, error: 2.7, winners: 27_000 }],
+        ...eceInputsForPanel(1, true, SERVER, POOLED),
+      },
+    ])[0];
+    expect(panel.ece).toBe(POOLED);
+    expect(panel.ece).not.toBe(SERVER);
+    expect(panel.eceBasis).toBe("pooled");
+  });
+
+  it("end to end: an UNFILTERED panel still renders the server's figure", () => {
+    const panel = buildProviderPanels([
+      {
+        provider: "polymarket",
+        label: "Polymarket",
+        sources: ["polymarket"],
+        buckets: [{ n: 264_956, error: 1.6, winners: 90_660 }],
+        ...eceInputsForPanel(1, false, SERVER, POOLED),
+      },
+    ])[0];
+    expect(panel.ece).toBe(SERVER);
+    expect(panel.eceBasis).toBe("published");
   });
 });

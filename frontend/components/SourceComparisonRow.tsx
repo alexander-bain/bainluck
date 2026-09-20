@@ -49,6 +49,14 @@ export default function SourceComparisonRow({
       data-provider-n={row.n}
       data-provider-sources={row.sources.join(",")}
       data-row-state={row.state}
+      /* #7422. The row's ECE as DATA, in the same grammar the By Source panel
+         already publishes `data-panel-ece` in. The two surfaces are supposed to
+         be one derivation rendered twice, and for as long as this one existed
+         only as "2.7pp" inside a `<td>`, nothing could check that cheaply —
+         which is how the panel came to print the whole-population 1.6pp beside
+         a row saying 2.7pp about the same 79,278 outcomes. Empty string where
+         there is no figure, so "no number" and "0.0" stay distinguishable. */
+      data-row-ece={typeof row.ece === "number" ? row.ece : ""}
     >
       <td className="py-2.5 pr-1 sm:pr-4 font-medium text-text-primary">
         {row.label}

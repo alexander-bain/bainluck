@@ -53,6 +53,7 @@ import {
 // reasoning behind the panel's ECE.
 import {
   buildProviderPanels,
+  eceInputsForPanel,
   providerKpiDetail,
   shapeBreakdownNote,
   shapeBreakdownProviders,
@@ -810,6 +811,11 @@ export default function CalibrationPage() {
   // Ruling 003: the panel's ECE is the SERVER's `by_source` number, rendered.
   // A client that recomputed it here would be the ruling's own named failure —
   // the same calibration number derived twice, guaranteed to drift.
+  //
+  // #7422: these rows are WHOLE-POPULATION — `by_source` carries no cohort
+  // dimension — so this map answers for a cohort-filtered panel only by
+  // accident. Read it at the panel call sites below under `!cohortFilter`,
+  // never unconditionally.
   const publishedSourceEce = new Map(
     (data.by_source ?? []).map(m => [m.source, m.ece])
   );
@@ -855,15 +861,22 @@ export default function CalibrationPage() {
       label: group.label,
       sources: group.sources,
       buckets: providerBucketsFor(group),
-      // Single-shape provider: provider IS the source key, so the server's own
-      // published number is the panel's number, exactly as ruling 003 requires.
-      publishedEce:
-        group.sources.length === 1 ? publishedSourceEce.get(group.sources[0]) ?? null : null,
-      // Multi-shape provider: the number already on the page, not a new one.
-      pooledEce:
-        group.sources.length > 1
-          ? providerMetrics.find(pm => pm.provider === group.provider)?.ece ?? null
-          : null,
+      // #7422. Unfiltered single-shape provider: the server's own published
+      // number is the panel's number, exactly as ruling 003 requires. Anything
+      // else — a multi-shape provider, or ANY provider once the cohort toggle
+      // has narrowed it — gets `providerMetrics`, the cohort-aware memo Source
+      // Comparison renders, so the panel and the row cannot disagree.
+      //
+      // The rule is a named function rather than two ternaries here because
+      // only one of its two cohorts can be reached by a static page render, and
+      // the unreachable one is the one that shipped the whole-population 1.6pp
+      // beside Polymarket's 79,278 traded outcomes.
+      ...eceInputsForPanel(
+        group.sources.length,
+        Boolean(cohortFilter),
+        publishedSourceEce.get(group.sources[0]),
+        providerMetrics.find(pm => pm.provider === group.provider)?.ece,
+      ),
     })),
   );
   const providerPanelData = providerPanels.map(p => ({
