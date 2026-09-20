@@ -61,6 +61,11 @@ _BOOK_COLUMN_SUM = 1.21
 #: normalized and must survive de-vig untouched (#6675).
 _OKC_POLYMARKET = 0.215
 _SAS_POLYMARKET = 0.215
+#: production's polymarket column sums to 1.0180, NOT to 1. A fixture that
+#: rounds that to 1.0 makes de-vigging it a no-op, and the #6675 guard below
+#: passes whether or not the classification is applied — the mutation that
+#: drops ``already_normalized`` survived exactly that.
+_POLYMARKET_COLUMN_SUM = 1.018
 
 _ODDS_API_MARKET = 2
 _POLYMARKET_MARKET = 20569230
@@ -88,23 +93,38 @@ class _FakeResult:
 
 
 class _FakeSession:
-    """Answers the two reads ``_build_trend_chart`` makes, in order.
+    """Answers the two reads ``_build_trend_chart`` makes — by reading the query.
 
-    Deliberately not a mock that returns the same thing to everything: the
-    market lookup and the snapshot read have different shapes, and a fake that
-    cannot tell them apart would pass whatever the function did.
+    A fake that hands back the same canned rows whatever it is asked cannot see
+    the half of this fix that matters: widening the read from the ten drawn
+    outcomes to their markets' whole columns. The mutant that narrowed the
+    ``WHERE`` back to ``futures_outcomes.id IN (drawn)`` survived against such a
+    fake, because the siblings arrived anyway and the denominator stayed right.
+
+    So this one honours the filter it is given: ask for a market's column and
+    you get the siblings, ask for the drawn ids and you get only those.
     """
 
-    def __init__(self, market_ids, snapshot_rows):
+    def __init__(self, market_ids, snapshot_rows, drawn_ids=None):
         self._market_ids = [(m,) for m in market_ids]
         self._snapshot_rows = snapshot_rows
+        self._drawn_ids = set(drawn_ids) if drawn_ids is not None else set(_DRAWN)
         self.calls = 0
+        self.sql_seen = []
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
         self.calls += 1
+        sql = str(stmt)
+        self.sql_seen.append(sql)
         if self.calls == 1:
             return _FakeResult(self._market_ids)
-        return _FakeResult(self._snapshot_rows)
+        if "futures_outcomes.market_id IN" in sql:
+            return _FakeResult(self._snapshot_rows)
+        # Narrowed to the drawn outcomes: the siblings are simply not returned,
+        # exactly as the database would not return them.
+        return _FakeResult(
+            [r for r in self._snapshot_rows if r.outcome_id in self._drawn_ids]
+        )
 
 
 def _snapshots(
@@ -145,7 +165,10 @@ def _snapshots(
             for outcome_id, probability in (
                 (_OKC, okc_polymarket),
                 (_SAS, _SAS_POLYMARKET),
-                (_FIELD_POLYMARKET, 1.0 - okc_polymarket - _SAS_POLYMARKET),
+                (
+                    _FIELD_POLYMARKET,
+                    _POLYMARKET_COLUMN_SUM - okc_polymarket - _SAS_POLYMARKET,
+                ),
             ):
                 rows.append(_Row(
                     outcome_id=outcome_id, market_id=_POLYMARKET_MARKET,
@@ -302,6 +325,45 @@ async def test_sibling_outcomes_are_a_denominator_never_a_line():
             "the rest of the field is read to make the de-vig honest and must "
             "never reach the chart"
         )
+
+
+@pytest.mark.asyncio
+async def test_within_a_bucket_the_latest_write_is_the_one_that_counts():
+    """A book that re-prices twice in an hour must leave its LATER price.
+
+    The rows arrive newest-first and the first one seen for a key wins. With
+    one write per book per bucket nothing distinguishes that from taking the
+    oldest, so the fixture has to re-price mid-hour or the rule is untested.
+    """
+    rows = _snapshots(hours_back=24)
+    stale = datetime(2026, 9, 20, 4, 5, tzinfo=timezone.utc)
+    fresh = datetime(2026, 9, 20, 4, 50, tzinfo=timezone.utc)
+    same_hour = []
+    for book in _OKC_BOOK_PRICES:
+        sas = _SAS_BOOK_PRICES[book]
+        for captured, okc in ((stale, 0.05), (fresh, _OKC_BOOK_PRICES[book])):
+            same_hour.append(_Row(
+                outcome_id=_OKC, market_id=_ODDS_API_MARKET, bookmaker=book,
+                captured_at=captured, probability=okc,
+            ))
+            same_hour.append(_Row(
+                outcome_id=_SAS, market_id=_ODDS_API_MARKET, bookmaker=book,
+                captured_at=captured, probability=sas,
+            ))
+            same_hour.append(_Row(
+                outcome_id=_FIELD_ODDS_API, market_id=_ODDS_API_MARKET,
+                bookmaker=book, captured_at=captured,
+                probability=_BOOK_COLUMN_SUM - okc - sas,
+            ))
+    rows = [r for r in rows if r.captured_at < stale] + same_hour
+    rows.sort(key=lambda r: r.captured_at, reverse=True)
+
+    chart = await _chart(rows)
+
+    assert _legend(chart, "Oklahoma City Thunder") == pytest.approx(0.2219, abs=0.005), (
+        "the 04:05 price of 0.05 was superseded at 04:50 and must not be the "
+        "number the legend publishes"
+    )
 
 
 @pytest.mark.asyncio
