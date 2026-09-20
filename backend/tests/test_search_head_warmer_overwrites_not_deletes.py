@@ -2696,15 +2696,35 @@ def test_a_late_acquire_cannot_suppress_the_next_pass_until_the_entry_expires():
     The two constants are the reason a ghost is fatal rather than untidy, and the
     test states the arithmetic rather than assuming the reader knows it: a residual
     lock lives `_LOCK_TTL_SECONDS` and the entry it protects lives
-    `SEARCH_RESPONSE_TTL_SECONDS`. At 180 and 180 a single ghost spans the ENTIRE
-    life of the entry — every pass inside that window takes the `lock` skip, and
-    `/search` goes cold. This is the `DISCOVER` ship in one assertion.
+    `SEARCH_RESPONSE_TTL_SECONDS`. At 180 and 180 a single ghost spanned the ENTIRE
+    life of the entry — every pass inside that window took the `lock` skip, and
+    `/search` went cold. This is the `DISCOVER` ship in one assertion.
+
+    ⚠️ **#3655 MOVED THE PREMISE THIS TEST GUARDS, AND THE TRIPWIRE IS RE-AIMED
+    RATHER THAN REMOVED.** The premise used to be the equality `lock_ttl >= ttl`,
+    written by CERT-2114 with the instruction to re-derive the harm before
+    relaxing it. #3655 is that re-derivation: the lock is now 80 s and a ghost
+    can no longer span a whole entry on its own. It is still worth preventing —
+    `residual_lock_recovery_s()` is 170 s of a 180 s life, i.e. the ghost eats all
+    but one third of a pass period, so the entry survives by arithmetic and not by
+    much. The tripwire now asserts THAT, and fires in both directions: at zero
+    margin the old defect is back, and at a margin over one pass period the ghost
+    has become genuinely harmless and this test should be retired rather than
+    quietly kept.
     """
-    assert warmer._LOCK_TTL_SECONDS >= warmer.SEARCH_RESPONSE_TTL_SECONDS, (
-        f"this test's premise has moved: a ghost lock now lives "
-        f"{warmer._LOCK_TTL_SECONDS}s against a {warmer.SEARCH_RESPONSE_TTL_SECONDS}s "
-        f"entry, so it can no longer starve one on its own. Re-derive the harm "
-        f"before relaxing anything here"
+    from app.tasks.search_head_warmer import (
+        effective_pass_period_s,
+        residual_lock_recovery_s,
+    )
+
+    margin = warmer.SEARCH_RESPONSE_TTL_SECONDS - residual_lock_recovery_s()
+    assert 0 < margin < effective_pass_period_s(), (
+        f"this test's premise has moved: a ghost lock costs "
+        f"{residual_lock_recovery_s()}s against a "
+        f"{warmer.SEARCH_RESPONSE_TTL_SECONDS}s entry, leaving {margin}s of margin. "
+        f"At or below zero the #3655 hole is back; above a {effective_pass_period_s()}s "
+        f"pass period the ghost no longer threatens the entry and the harm needs "
+        f"re-deriving before anything here is relaxed"
     )
 
     redis = _LockRedis(set_delay=0.5)

@@ -140,7 +140,7 @@ is `residency_invariant()`, which is executable rather than prose. An entry live
 `SEARCH_RESPONSE_TTL_SECONDS`; a real pass arrives every
 `effective_pass_period_s()`; a pass rebuilds anything with under
 `REFRESH_AHEAD_SECONDS` left, and that rebuild may take up to
-`full_rebuild_budget_s()`. For the head never to go cold, ALL SEVEN must hold:
+`full_rebuild_budget_s()`. For the head never to go cold, ALL EIGHT must hold:
 
     REFRESH_AHEAD > TTL - P_effective              (1) the first pass CATCHES it
     REFRESH_AHEAD - P_effective > rebuild_budget   (2) and it SURVIVES the rebuild
@@ -149,9 +149,30 @@ is `residency_invariant()`, which is executable rather than prose. An entry live
     unit > every cooperative bound inside it       (5) and the budget is ENFORCED
     rebuild_budget < _LOCK_TTL_SECONDS             (6) and (4)'s lock really holds
     control wall > its own cooperative bound       (7) and so is the OTHER term
+    TTL > residual_lock_recovery_s()               (8) and a LOST lock is survived
 
 At 180 / 150 / 60 / 70: `150 > 120` ✓, `90 > 70` ✓, `150 <= 180` ✓, `180 > 150` ✓,
-`35 > 28.2` ✓, `70 < 180` ✓, `5 > 4.1` ✓.
+`35 > 28.2` ✓, `70 < 80` ✓, `5 > 4.1` ✓, `180 > 170` ✓.
+
+🔴 **CLAUSE (8) IS #3655, AND IT IS THE ONE RELATION SEVEN GRADES OF THIS
+INVARIANT NEVER ASSERTED.** `_LOCK_TTL_SECONDS` was the literal `180` and
+`SEARCH_RESPONSE_TTL_SECONDS` is `180`. Clause (6) compared the lock with the
+PASS and passed by 110 s; nothing compared the lock with the ENTRY. So the
+ordinary lost release — a walled compare-and-delete, or a child recycled mid-pass
+— suppressed every pass for exactly as long as the entry it protects had left to
+live, and `/search` served its cold path for the whole of it. The sibling
+`typeahead_warmer` carried the same shape at 120 s against a 65 s entry and
+MEASURED it (#3398): the head entirely cold 20.0 % of the wall clock. The lock
+TTL is now solved for by `derive_lock_ttl_s()` — 80 s, the midpoint of the only
+window that satisfies (6) and (8) at once — and the constant is no longer a
+literal any reader can move without the solver refusing.
+
+⚠️ AND THE FIRST CASUALTY OF THAT REPAIR IS NAMED HERE RATHER THAN DISCOVERED:
+`derive_message_expiry_s()` used to derive the beat's `expires` FROM the lock
+TTL, so a shortened lock would have silently cut the delivery bound #3364 raised
+from 20 to 180, on a beat whose delivered-fire ratio was measured to track that
+number. The expiry now derives from the entry life instead, which is the quantity
+its own argument was always about; the wired 180 does not move.
 
 🔴 **`rebuild_budget` IS THE LOCK-HELD INTERVAL, NOT THE WARMING (CERT-2095).** It is
 `control + setup + waves × unit_worst_case`, where `unit_worst_case` is the wall
@@ -580,7 +601,12 @@ SEARCH_HEAD_WARM_ENV = "SEARCH_HEAD_WARM_ENABLED"
 _WARM_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
 _LOCK_KEY = "bainluck:search_head_warmer:running"
-_LOCK_TTL_SECONDS = 180
+#: ⚠️ `_LOCK_TTL_SECONDS` USED TO BE THE LITERAL `180` ON THE NEXT LINE. It is now
+#: DERIVED by `derive_lock_ttl_s()` and assigned beside that function, below
+#: `full_rebuild_budget_s()`, because it is derived FROM the budget and a
+#: module-level assignment cannot read a function that has not been defined yet
+#: (#3655). The name is defined before anything calls it; only the reader's eye
+#: is inconvenienced, which is what this comment is for.
 _LAST_PASS_START_KEY = "bainluck:search_head_warmer:last_pass_start"
 _LAST_PASS_START_TTL_SECONDS = 3600
 
@@ -599,7 +625,7 @@ MAX_LIVE_MESSAGES = 16
 def derive_message_expiry_s(
     *,
     beat_s: float = BEAT_PERIOD_SECONDS,
-    lock_ttl_s: float = _LOCK_TTL_SECONDS,
+    entry_life_s: float = SEARCH_RESPONSE_TTL_SECONDS,
     max_live: int = MAX_LIVE_MESSAGES,
 ) -> float:
     """How long a `warm-search-head` message must be allowed to live. Derived.
@@ -653,13 +679,35 @@ def derive_message_expiry_s(
     sampled maximum has already been wrong twice in this program (42.6 s by
     11.3 s, then 53.920 s by 7.36 s). So the bound is not derived from the delay.
 
-    It is derived from where this task's own responsibility ENDS.
-    `_LOCK_TTL_SECONDS` is the longest this task can withhold a slot from its own
-    message: the lock cannot be held past its own TTL. A message younger than
-    that may still be waiting on a pass of this task; a message older than that
-    is not being held off by this warmer at all, it is merely old. That is the
-    honest place to stop, and it is a CONSTANT, so the next latency measurement
-    cannot move it.
+    It is derived from one entry LIFETIME of queued start opportunities:
+    `SEARCH_RESPONSE_TTL_SECONDS`. A fire published within the last TTL was
+    published while the entries this warmer exists to keep resident were still
+    alive, so delivering it late still does the job the beat was scheduled for.
+    A fire older than that was published under a cache state that no longer
+    exists; the head is cold by then and one more redundant recovery fire behind
+    the nine already queued buys nothing. It is a CONSTANT, so the next latency
+    measurement cannot move it.
+
+    🔴 **THIS USED TO DERIVE FROM `_LOCK_TTL_SECONDS` AND #3655 SEVERED THAT, AND
+    THE SEVERING IS THE POINT RATHER THAN A TIDY-UP.** The old argument — "the
+    longest this task can withhold a slot from its own message is its own lock
+    TTL, and a message older than that is merely old" — was sound while that TTL
+    was 180. #3655 derives the lock TTL from the pass budget instead, to stop a
+    residual lock outliving the entry it protects, which lands it at **80 s**. Had
+    this bound stayed coupled, a repair aimed at the residual-lock hole would have
+    silently halved the delivery window as its side effect: 180 -> 80, on a beat
+    whose delivered-fire ratio #3364 MEASURED to track this exact number
+    (`expires` 300 -> 0.87, 120 -> 0.37, 110 -> 0.23, 20 -> 0.03). The two
+    constants answer two different questions — "how long may a residual lock
+    suppress passes" and "how long is a queued fire still worth delivering" — and
+    the congestion #3480 is about is exactly when they pull apart. The wired value
+    does not move (180 = 180); what moves is what it is a fact ABOUT.
+
+    ⚠️ What the old argument still buys, kept because a reader will ask whether
+    the new bound is *permissive enough*: the withholding bound is now 80 s, and
+    180 > 80, so every message this warmer could itself be holding off still
+    survives. The lapping cost of the surplus is capped by `MAX_LIVE_MESSAGES` and
+    priced below.
 
     ## What it costs, stated
 
@@ -679,22 +727,22 @@ def derive_message_expiry_s(
     period the 60 s the cadence arithmetic assumes instead of the ~576 s it is
     today; #3539 is about that 60 s still not being sound against a 60 s TTL.
     """
-    if beat_s <= 0 or lock_ttl_s <= 0:
-        raise ValueError("beat period and lock TTL must both be positive")
-    if lock_ttl_s <= beat_s:
+    if beat_s <= 0 or entry_life_s <= 0:
+        raise ValueError("beat period and entry life must both be positive")
+    if entry_life_s <= beat_s:
         # Below the period the flat #1609 rule applies and this task does not
         # belong in the exempt set at all. A REFUSAL, not a quietly clamped value.
         raise ValueError(
-            f"lock TTL {lock_ttl_s}s is not above the {beat_s}s beat period, so a "
+            f"entry life {entry_life_s}s is not above the {beat_s}s beat period, so a "
             f"delivery-latency bound is not what this beat needs"
         )
-    live = lock_ttl_s / beat_s
+    live = entry_life_s / beat_s
     if live > max_live:
         raise ValueError(
-            f"expires {lock_ttl_s}s at a {beat_s}s beat leaves {live:.0f} messages "
+            f"expires {entry_life_s}s at a {beat_s}s beat leaves {live:.0f} messages "
             f"alive at once, over the declared cap of {max_live}"
         )
-    return float(lock_ttl_s)
+    return float(entry_life_s)
 
 
 def effective_pass_period_s(
@@ -965,6 +1013,170 @@ def full_rebuild_budget_s(
     return float(control + setup_s + math.ceil(head_size / concurrency) * bound)
 
 
+def residual_lock_recovery_s(
+    *,
+    lock_ttl_s: float | None = None,
+    beat_s: float = BEAT_PERIOD_SECONDS,
+    floor_s: float = MIN_PASS_PERIOD_SECONDS,
+    budget_s: float | None = None,
+) -> float:
+    """How long a RESIDUAL lock keeps a given query cold, worst case. **#3655.**
+
+        max(lock_ttl, floor) + beat + budget
+
+    A residual lock is the ordinary lost release: the compare-and-delete walls or
+    errors, or the child is recycled mid-pass and never reaches one, and the key
+    stands until Redis collects it. Nothing is broken and nothing is logged as
+    broken — every later fire simply takes the `lock` skip.
+
+    The three terms are the three things that have to happen before the entry is
+    written again, and each is the worst case of its own bound:
+
+    * `max(lock_ttl, floor)` — no pass may START before the key expires, and none
+      may start before `MIN_PASS_PERIOD_SECONDS` since the last pass start either.
+      The wedged pass STARTED, so both clocks run from the same instant and the
+      later of the two is what binds.
+    * `beat_s` — the fire that runs the recovery pass arrives on the beat grid,
+      and the acquire is not phase-aligned with it. Quantizing
+      (`beat * ceil(lock_ttl / beat)`) would give 150 s here rather than 170 s;
+      the conservative form is used because that alignment is an accident of the
+      previous pass's start, not a property of the schedule.
+    * `budget_s` — the recovery pass is permitted `full_rebuild_budget_s()` of
+      lock-held time, and this query may be the LAST one it writes (clause (4)'s
+      re-ranking argument, one hole over).
+
+    ⚠️ DELIVERY LATENCY IS NOT IN IT, deliberately and by the same convention as
+    `effective_pass_period_s()`: every clause in this module assumes a fire
+    published on the beat grid reaches a slot. That premise is #1609's and #3364
+    is what keeps it approximately true (`derive_message_expiry_s`). A recovery
+    that also waits on the pool is longer than this number — which makes this a
+    LOWER bound on the hole, and a lower bound is the honest thing for a clause
+    that refuses configurations.
+    """
+    lock_ttl = _LOCK_TTL_SECONDS if lock_ttl_s is None else float(lock_ttl_s)
+    budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
+    if lock_ttl <= 0 or beat_s <= 0 or floor_s <= 0 or budget <= 0:
+        raise ValueError("lock TTL, beat, floor and budget must all be positive")
+    return float(max(lock_ttl, floor_s) + beat_s + budget)
+
+
+def derive_lock_ttl_s(
+    *,
+    ttl_s: float = SEARCH_RESPONSE_TTL_SECONDS,
+    beat_s: float = BEAT_PERIOD_SECONDS,
+    budget_s: float | None = None,
+) -> int:
+    """How long `_LOCK_KEY` may survive, in WHOLE SECONDS. **Solved for (#3655).**
+
+    ## The defect, stated as the equality that caused it
+
+    `_LOCK_TTL_SECONDS` was `180` and `SEARCH_RESPONSE_TTL_SECONDS` is `180`. Two
+    independent constants that happened to be equal, and nothing in the module
+    compared them — `residency_invariant()` clause (6) asserted only
+    `budget < lock_ttl` (70 < 180 ✓), which is the OTHER direction. So one
+    residual lock suppressed every pass for exactly as long as the entry it
+    protects had left to live, and `/search` served the cold path for the whole of
+    it. The sibling `typeahead_warmer` shipped the same shape at 120 against a 65 s
+    entry (#3398), where it MEASURED as the head being entirely cold 20.0 % of the
+    wall clock.
+
+    ## The window, which has two ends and is why this is not a pick
+
+    A lock TTL is squeezed from both sides, and the two failure modes are
+    different defects rather than two readings of one:
+
+        lock_ttl > budget                    a LIVE pass must not lose its lock
+        lock_ttl < ttl - beat - budget       a RESIDUAL lock must not outlive the
+                                             entry (`residual_lock_recovery_s`)
+
+    At 180 / 20 / 70 that window is **(70, 90)** — open at both ends, 20 s wide,
+    and the shipped 180 was not in it. The value returned is its MIDPOINT, **80**:
+    the point that MAXIMISES THE SMALLER OF THE TWO MARGINS, and the only value in
+    an interval that needs no free parameter. "budget + margin" and
+    "ceiling - margin" both smuggle a chosen number back in, and this module has
+    been blocked six times for picking a constant and justifying it afterwards.
+
+    ⚠️ SAID OUT LOUD BECAUSE "DERIVED FROM THE BUDGET" WOULD OTHERWISE IMPLY IT
+    TRACKS THE BUDGET: the midpoint of `(budget, ttl - beat - budget)` reduces to
+    `(ttl - beat) / 2` — the budget CANCELS. So the budget decides whether the
+    window exists at all (and the raise below is where that is enforced), while
+    the value inside it is fixed by the entry life and the beat. A reader checking
+    whether a budget change moved this number should expect it not to, up until
+    the budget reaches `(ttl - beat) / 2` and the window shuts entirely.
+
+    ## Why there is no renewal here, unlike #3398
+
+    The sibling had to add one. Its window was EMPTY: a measured pass wall of
+    66.365 s against a 65 s entry life, so no TTL both outlives a live pass and
+    dies before the entry, and only a heartbeat from the running pass resolves it.
+    Ours is 20 s wide, so the same defect is repaired by arithmetic alone. Adding
+    a renewal anyway would be machinery bought against a failure the window
+    already excludes — and it would not move the ceiling, which is what the
+    reader's cold search box is behind.
+
+    ## What it costs, stated
+
+    The margin above the budget falls from 110 s to 10 s. A pass whose lock-held
+    interval exceeds its 70 s budget therefore loses exclusion 100 s sooner than
+    it used to, and a second pass may start underneath it. That is a real cost and
+    it is the accepted one: the budget is a sum of ENFORCED walls, the summary
+    already publishes `over_budget` for a pass that exceeds it, and the failure it
+    buys is duplicated warming (writes are overwrites — see
+    `test_search_head_warmer_overwrites_not_deletes`) rather than a reader served
+    a cold page.
+
+    ## Whole seconds, and rounded DOWN, because the consumer is `SET ... EX`
+
+    🔴 `redis.commands.core.extract_expire_flags` raises
+    `DataError("ex must be datetime.timedelta or int")` on a FLOAT — not a
+    truncation, a refused command — so a derivation returning `80.0` would make
+    every acquire raise on production while every unit test kept passing, because
+    a fake client accepts whatever it is handed. That is the reason this returns
+    `int` rather than the module's usual float, and the reason
+    `test_the_derived_ttl_is_what_redis_is_actually_given` drives the real
+    `_acquire_blocking` against a client that type-checks `ex` the way redis-py
+    does instead of asserting on the constant.
+
+    The rounding is DOWN, and the direction is chosen rather than inherited: the
+    two ends of the window are not equally bad. Below the window a live pass may
+    be overtaken by its successor and the cost is duplicated warming; above it a
+    reader gets a cold search box. Floor spends the fractional second on the end
+    that costs a reader nothing.
+
+    Raises rather than clamping when the window is empty, which at import time
+    means the module refuses to load. That is deliberate: an empty window means
+    these constants cannot keep the head resident, and the honest failure is a
+    refused release rather than a warmer that silently serves cold.
+    """
+    budget = full_rebuild_budget_s() if budget_s is None else float(budget_s)
+    if ttl_s <= 0 or beat_s <= 0 or budget <= 0:
+        raise ValueError("entry life, beat period and budget must all be positive")
+    ceiling = ttl_s - beat_s - budget
+    if ceiling <= budget:
+        raise ValueError(
+            f"no lock TTL keeps the head resident: a live pass needs more than "
+            f"{budget:g}s and a residual lock must expire before "
+            f"{ceiling:g}s ({ttl_s:g}s entry life less a {beat_s:g}s beat and a "
+            f"{budget:g}s rebuild). The window is empty — the budget, the width or "
+            f"the TTL has to move, and no lock TTL repairs it"
+        )
+    whole = math.floor((budget + ceiling) / 2.0)
+    if whole <= budget or whole >= ceiling:
+        # The window is non-empty but holds no whole second — e.g. (70.2, 71.1).
+        # Refused for the same reason as an empty one: there is nothing to ship.
+        raise ValueError(
+            f"the window ({budget:g}s, {ceiling:g}s) contains no whole second, so "
+            f"there is no lock TTL Redis can be given that satisfies both ends"
+        )
+    return int(whole)
+
+
+#: Derived, never picked — see `derive_lock_ttl_s()`. **80 s** at the shipped
+#: constants, down from a literal 180 that equalled the life of the entry it
+#: protects (#3655).
+_LOCK_TTL_SECONDS = derive_lock_ttl_s()
+
+
 def minimum_concurrency_for_residency(
     *,
     head_size: int = DEFAULT_HEAD_SIZE,
@@ -1099,8 +1311,9 @@ def residency_invariant(
     period_s: float | None = None,
     budget_s: float | None = None,
     unit_s: float | None = None,
+    lock_ttl_s: float | None = None,
 ) -> tuple[bool, str]:
-    """Is the head PROVABLY resident at these constants? `(ok, why)`. Six clauses.
+    """Is the head PROVABLY resident at these constants? `(ok, why)`. Eight clauses.
 
         (1) CAUGHT     refresh_ahead > ttl - period
         (2) SURVIVES   refresh_ahead - period > budget          (CERT-2084)
@@ -1109,6 +1322,14 @@ def residency_invariant(
         (5) WALL       unit > every cooperative bound inside it (CERT-2089)
         (6) LOCKED     budget < lock ttl
         (7) CONTROLLED control wall > its own cooperative bound  (CERT-2107)
+        (8) RESIDUAL   ttl > residual_lock_recovery_s()         (#3655)
+
+    (6) AND (8) ARE THE TWO ENDS OF ONE WINDOW and neither implies the other:
+    (6) says a LIVE pass keeps its lock, (8) says a RESIDUAL lock dies before the
+    entry it protects. The shipped constants satisfied (6) by 110 s and breached
+    (8) by 90 s, because nothing in this file had ever compared
+    `_LOCK_TTL_SECONDS` with `SEARCH_RESPONSE_TTL_SECONDS` — they were equal, and
+    an equality nobody asserts is not a relation, it is a coincidence.
 
     THE ONE-LINE READING, because SIX presentations of this have now been
     blocked and each time the sentence that would have caught it was missing:
@@ -1211,20 +1432,22 @@ def residency_invariant(
     # underneath the first. At the blocked unit bound the budget was ~236s against
     # a 180s lock, so clause (4) was resting on a premise that did not hold.
     #
-    # ⚠️ SAID PLAINLY BECAUSE A READER WILL CHECK: at D81's TTL of 180 this clause
-    # cannot fire — clause (3) needs `refresh_ahead <= 180` and clause (2) needs
-    # `refresh_ahead > 60 + budget`, which together already force `budget < 120`.
-    # It is not dead code, it is the clause that keeps (4) honest THE MOMENT THE
-    # TTL MOVES, which is precisely what #3539's remaining options contemplate; at
-    # `ttl=600, budget=200` it is the only clause that fires, and a test drives it
-    # there rather than asserting an unreachable branch is present.
-    if budget >= _LOCK_TTL_SECONDS:
+    # ⚠️ THE NOTE THAT USED TO SIT HERE SAID THIS CLAUSE COULD NOT FIRE AT D81's
+    # TTL, because clauses (2) and (3) together force `budget < 120` against a
+    # 180s lock. #3655 made the lock 80s, so the unreachable branch is reachable
+    # now: any budget in [80, 120) satisfies (2) and (3) and fails HERE. The
+    # clause went from "kept for the moment the TTL moves" to load-bearing at the
+    # shipped constants, which is the half of #3655 a reader is most likely to
+    # miss — shortening the lock did not only close a hole, it spent 100s of the
+    # margin this clause measures.
+    lock_ttl = _LOCK_TTL_SECONDS if lock_ttl_s is None else float(lock_ttl_s)
+    if budget >= lock_ttl:
         return False, (
             f"THE PASS OUTRUNS ITS OWN LOCK: a pass is permitted {budget:g}s but "
-            f"`{_LOCK_KEY}` expires after {_LOCK_TTL_SECONDS:g}s, so the lock stops "
+            f"`{_LOCK_KEY}` expires after {lock_ttl:g}s, so the lock stops "
             f"excluding the next pass before this one has finished — and the write "
             f"interval above is derived from an exclusion that is no longer holding. "
-            f"Needs budget < {_LOCK_TTL_SECONDS:g}s."
+            f"Needs budget < {lock_ttl:g}s."
         )
 
     # (7) CONTROLLED. 🔴 CERT-2107, and it is clause (5)'s argument owed for the
@@ -1249,15 +1472,38 @@ def residency_invariant(
             f"Needs the control wall > {control_cooperative:g}s."
         )
 
+    # (8) RESIDUAL. #3655, and it is clause (6) read from the other side. (6) asks
+    # whether the lock outlives a pass; nothing asked whether the lock outlives the
+    # ENTRY. It did: `_LOCK_TTL_SECONDS` and `SEARCH_RESPONSE_TTL_SECONDS` were
+    # both 180, so one lost release suppressed every pass for exactly the life of
+    # the thing the passes exist to keep alive, and `/search` served the cold path
+    # for the whole of it while every instrument in the module read healthy — the
+    # skips are `lock`, which is the normal word for "another pass has it".
+    #
+    # The recovery is not the TTL alone (`residual_lock_recovery_s`): after the key
+    # expires a fire still has to arrive and the rebuild still has to reach THIS
+    # query, and the clause compares the sum. A residual lock is the ordinary lost
+    # release — CERT-2114 closed the ghost-lock case, not this one.
+    recovery = residual_lock_recovery_s(lock_ttl_s=lock_ttl, budget_s=budget)
+    if recovery >= ttl_s:
+        return False, (
+            f"A RESIDUAL LOCK OUTLIVES THE ENTRY: one lost release suppresses passes "
+            f"for {lock_ttl:g}s, and the recovery pass then needs a fire and a rebuild "
+            f"— {recovery:g}s in all against a {ttl_s:g}s life, so the entry dies with "
+            f"the lock still deciding when it may be rewritten and `/search` serves the "
+            f"cold path. Needs lock ttl < {ttl_s - recovery + lock_ttl:g}s."
+        )
+
     return True, (
         f"resident: caught by {refresh_ahead_s:g}s (warmer phase leaves {warmer_phase:g}s), "
         f"and the worst phase starts its rebuild with {least_life_at_rebuild:g}s against a "
         f"{budget:g}s budget — {least_life_at_rebuild - budget:g}s of margin; and the worst "
         f"same-query write interval is {interval:g}s inside a {ttl_s:g}s life; the "
         f"{unit:g}s worker-unit wall is enforced and sits above the {cooperative:g}s of "
-        f"cooperative bounds inside it; the pass fits in its {_LOCK_TTL_SECONDS:g}s lock; "
+        f"cooperative bounds inside it; the pass fits in its {lock_ttl:g}s lock; "
         f"and each of the {LOCK_CONTROL_OPS_PER_PASS} lock-control round-trips is walled at "
-        f"{control_wall:g}s above its {control_cooperative:g}s cooperative bound"
+        f"{control_wall:g}s above its {control_cooperative:g}s cooperative bound; and a "
+        f"residual lock is recovered from in {recovery:g}s, inside the {ttl_s:g}s life"
     )
 
 

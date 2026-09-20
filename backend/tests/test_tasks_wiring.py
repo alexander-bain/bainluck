@@ -718,10 +718,15 @@ class TestHeavyQueueRouting:
         #   Production measured the defect at `matched_emitted` 30 /
         #   `matched_delivered` 0 in one 600 s bucket and 102 starts against
         #   2,949 expected fires over 16.4 h.
-        # * `_LOCK_TTL_SECONDS` raised far enough that the broker would hold more
-        #   than `MAX_LIVE_MESSAGES` of this beat's messages at once.
+        # * `SEARCH_RESPONSE_TTL_SECONDS` raised far enough that the broker would
+        #   hold more than `MAX_LIVE_MESSAGES` of this beat's messages at once.
         #   `derive_message_expiry_s` raises rather than returning a capped
         #   value, and this arm propagates that raise.
+        # * the expiry re-coupled to `_LOCK_TTL_SECONDS`. It was derived from that
+        #   constant until #3655 shortened the lock to 80 s to stop a residual lock
+        #   outliving the entry it protects; re-coupling them would halve this
+        #   delivery bound as a side effect of a repair aimed elsewhere, and
+        #   `_EXPIRING_WARMER_BEATS` would no longer equal the derivation.
         # * The beat period changed in the schedule without
         #   `BEAT_PERIOD_SECONDS` following it — the mirror assertion below is
         #   the only thing keeping the derivation's input honest.

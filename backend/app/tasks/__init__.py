@@ -5572,9 +5572,17 @@ def warm_search_head(self, head_size: int = None):
     round-trips, up from 50 — and teardown runs after the lock is released but
     still inside the task. So the soft limit has to cover budget + teardown, and at
     120/70 that leaves 50 s. A soft-limit breach is not a tidy failure here: it
-    abandons writes mid-pass and leaves `_LOCK_KEY` held until its own 180 s TTL
+    abandons writes mid-pass and leaves `_LOCK_KEY` held until its own TTL
     collects it. `test_the_pass_budget_fits_inside_the_workers_own_time_limit`
     is what refuses the next term that would close the gap silently.
+
+    ⚠️ SINCE #3655 THAT TTL IS **80 s**, DERIVED (`derive_lock_ttl_s`), AND IT IS
+    NOW UNDER THE SOFT LIMIT. A pass that reaches 120 s has therefore already lost
+    its exclusion at 80 s and a successor may be warming beside it — which is the
+    accepted end of the window that repair chose: the lock had to fit inside the
+    180 s life of the entry it protects or one lost release served the reader a
+    cold search box for that entry's whole life. Duplicated warming is wasteful
+    and the writes are overwrites; a cold `/search` is what a reader sees.
     """
     # NOTE the module is `search_head_warmer`, not `warm_search_head`: a
     # submodule sharing a name with a registered task is shadowed by the task on
@@ -8280,14 +8288,23 @@ _EXPIRING_WARMER_BEATS = {
     # the other background warmers the delivered ratio tracks `expires` and not
     # the queue — 300 s -> 0.87, 120 s -> 0.37, 110 s -> 0.23, 20 s -> 0.03.
     #
-    # 180 is `_LOCK_TTL_SECONDS`, a CONSTANT and deliberately not a sampled
-    # delivery latency (this program has read a sampled maximum as a bound and
-    # been wrong twice). It is where this task's own responsibility ends: the
-    # lock cannot be held past its own TTL, so a message older than that is
-    # provably not waiting on a pass of this warmer. The derivation, its refusals
-    # and the full cost statement live in
+    # 180 is `SEARCH_RESPONSE_TTL_SECONDS`, a CONSTANT and deliberately not a
+    # sampled delivery latency (this program has read a sampled maximum as a
+    # bound and been wrong twice). It is one entry LIFETIME of queued start
+    # opportunities: a fire published inside the last TTL was published while the
+    # entries this warmer keeps resident were still alive, so delivering it late
+    # still does the job it was scheduled for. The derivation, its refusals and
+    # the full cost statement live in
     # `search_head_warmer.derive_message_expiry_s`, which the wiring guard
     # asserts this value against.
+    #
+    # ⚠️ IT USED TO BE `_LOCK_TTL_SECONDS`, WHICH WAS ALSO 180, AND #3655 SEVERED
+    # THAT RATHER THAN RENAMING IT. That repair derives the lock TTL from the
+    # pass budget so a residual lock cannot outlive the entry it protects, which
+    # puts it at 80 s. Had this bound stayed coupled, the delivery window would
+    # have been cut by more than half as a side effect — on the one beat whose
+    # delivered ratio the line above measures against this exact number. The
+    # value does not move; what it is a fact about does.
     #
     # COST, stated and not rounded away: 9 messages alive at once, 8 of which
     # take the floor-skip path measured at 11-89 ms — under a second per pass
