@@ -32,9 +32,35 @@ export function pickJourneyFuture(
 ): JourneyPick | null {
   if (!futures || futures.length === 0) return null;
 
-  // Only season-long markets with a real probability are eligible.
+  // Only season-long markets with a real probability are eligible, and only
+  // ones that have NOT already been graded a winner (#7396).
+  //
+  // A settled "✓ Won" outcome is a RESULT, not a price. Its probability is
+  // parked at ~0.995, which beats every live market on the tie-break below, so
+  // without this clause the one team in a league that actually won last season
+  // leads its page with `CHAMPIONSHIP 100%` — Arsenal read that five games into
+  // a Premier League it had not yet played (and Barcelona the same in La Liga),
+  // while the SEASON FUTURES list one component down correctly rendered the
+  // same outcome as `What hit / ✓ Won` and the live market at 47%. One page,
+  // two answers to one question. Measured on production 2026-09-20: 2 of 507
+  // teams cleared the tie-break this way, and the settled row is only ever the
+  // higher number, which is why it looked like nothing site-wide.
+  //
+  // This mirrors the backend's own rule one layer down: `_championship_path_stmt`
+  // (routes/teams.py) already drops markets with a graded winner via
+  // `~graded.exists()`, which is why the preferred `championship_path` branch of
+  // `teamHeadline` never had this bug — only the futures fallback did.
+  //
+  // `is_winner !== true` and not a market-level test on purpose: the payload
+  // carries `false` for a graded LOSER and for an ungraded row alike (never
+  // null, measured), so `true` is the only value that unambiguously means
+  // settled. Graded losers are parked near 0 and lose the tie-break anyway.
   const eligible = futures.filter(
-    (f) => f.probability !== null && f.market_id != null && f.outcome_id != null,
+    (f) =>
+      f.probability !== null &&
+      f.market_id != null &&
+      f.outcome_id != null &&
+      f.is_winner !== true,
   );
   if (eligible.length === 0) return null;
 
