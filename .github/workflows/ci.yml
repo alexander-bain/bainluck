@@ -394,6 +394,21 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+      # #7351 — the generic-market history acceptance needs a REAL Redis (claim,
+      # coalescing, cache, last-good). Mapped to host port 56379 ON PURPOSE, not
+      # 6379: no step in this job sets REDIS_URL, so the app's default
+      # `redis://localhost:6379/0` still REFUSES for every other step and their
+      # fail-open behaviour is exactly what it was. Only the #7351 step names
+      # this port.
+      redis:
+        image: redis:7
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       # asyncpg URL for the test's own engine...
@@ -3013,6 +3028,108 @@ jobs:
           if f or e or rc:
               sys.exit(f"::error::#7284 guard RED: {f} failed, {e} errors")
           print("#7284 chart-route real-session guard GREEN on all", t, "tests")
+          PY
+
+      - name: "#7351 generic-market history acceptance — provision the disposable Postgres + Redis"
+        # Same bargain as the #4079 and #7284 steps: the suite DROPS AND RECREATES
+        # THE WHOLE SCHEMA and FLUSHES ITS REDIS DB, so it gets a database of its
+        # own (`bl_generic_history_7351`), Redis logical db 15 on the job-local
+        # service, and a fresh per-run nonce planted in BOTH. The suite refuses
+        # any Postgres or Redis that is not loopback or does not carry the nonce,
+        # and `GENERIC_HISTORY_*` deliberately do NOT fall back to `$DATABASE_URL`
+        # / `$REDIS_URL`.
+        run: |
+          set -o pipefail
+          python - <<'PY' > /tmp/gmh.env
+          import asyncio, secrets, sys
+          import asyncpg, redis
+
+          NONCE = secrets.token_hex(24)
+          DB = "bl_generic_history_7351"
+          REDIS = "redis://localhost:56379/15"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database=DB,
+                  host="localhost", port=5432)
+              await c.execute(
+                  "CREATE TABLE generic_history_disposable (nonce text NOT NULL)")
+              await c.execute(
+                  "INSERT INTO generic_history_disposable VALUES ($1)", NONCE)
+              print("server_version:", await c.fetchval("SHOW server_version"),
+                    file=sys.stderr)
+              await c.close()
+
+          asyncio.run(go())
+          rc = redis.Redis.from_url(REDIS, socket_timeout=5)
+          rc.flushdb()
+          rc.set("generic_history_disposable", NONCE)
+          print("redis_version:", rc.info("server")["redis_version"], file=sys.stderr)
+          print(f"GENERIC_HISTORY_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}")
+          print(f"GENERIC_HISTORY_REDIS_URL={REDIS}")
+          print(f"GENERIC_HISTORY_NONCE={NONCE}")
+          PY
+          cat /tmp/gmh.env >> "$GITHUB_ENV"
+          echo "provisioned bl_generic_history_7351 + redis db 15 with a fresh sentinel nonce"
+
+      - name: "#7351 an ordinary market's chart serves the venue history our polls missed"
+        # PILLAR: TRUTH. SHIP: opening a generic Discover market shows its
+        # supported historical observations on the phone and web, including
+        # history missed by our periodic polls.
+        #
+        # Both real chart routes, the real Celery task function, real Postgres
+        # and real Redis; only the venues' HTTP transport (saved bytes), the
+        # broker (recorded, then run) and the clock are controlled. The named
+        # replay is market 59165099 against Kalshi's own saved candles.
+        #
+        # `REDIS_URL` is set FOR THIS STEP ONLY: the app's claim, cache and task
+        # tracking must land on the disposable Redis, and the suite refuses to
+        # run if they would not. `KALSHI_API_KEY` is emptied so no credential can
+        # ride a request even into a mock transport.
+        #
+        # Same three refusals as the two steps above (skip / zero / short count),
+        # and pytest's exit code is read for its VALUE (gotcha #54).
+        env:
+          REDIS_URL: redis://localhost:56379/15
+          KALSHI_API_KEY: ""
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_generic_market_history_7351_real_pg_redis.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/gmh-junit.xml 2>&1 | tee /tmp/gmh.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          EXPECTED = 34
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/gmh-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#7351 acceptance produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#7351 acceptance collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#7351 acceptance SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#7351 acceptance ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#7351 acceptance RED: {f} failed, {e} errors")
+          print("#7351 generic-market history acceptance GREEN on all", t, "tests")
           PY
 
       - name: "#7147 a settled ESPN final survives a real scores pass (real Postgres)"

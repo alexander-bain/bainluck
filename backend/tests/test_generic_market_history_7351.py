@@ -1,0 +1,308 @@
+"""#7351 — the always-on half: identity, layering, the claim, and the fences.
+
+PILLAR: TRUTH. SHIP: opening a generic Discover market shows its supported
+historical observations on the phone and the web, including history missed by
+our periodic polls.
+
+The behavioural proof — both real routes, the real task, real Postgres and real
+Redis — is `tests/integration/test_generic_market_history_7351_real_pg_redis.py`
+and it only runs where its disposable services exist. This file needs nothing,
+so it runs in every shard, and it holds the rules a refactor is most likely to
+loosen without noticing:
+
+  * a cached series is served ONLY to the market, outcome id and exact venue
+    contract it was fetched for — never by name;
+  * a capture is never displaced by a venue point;
+  * the claim fails CLOSED and is bounded per market and per hour;
+  * the generic fill never blends venues, never matches legs, never dispatches a
+    task, and its route seam never reaches a provider.
+"""
+
+from __future__ import annotations
+
+import ast
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from app.tasks import generic_market_history_fill as fill
+from app.utils import generic_market_history as gmh
+
+NOW = datetime(2026, 9, 20, 3, 42, 32, tzinfo=timezone.utc)
+APP = Path(__file__).resolve().parents[1] / "app"
+
+
+def _market(source="kalshi", market_id=1, external_id="KXQ-26", status="open"):
+    return SimpleNamespace(id=market_id, source=source, external_id=external_id, status=status)
+
+
+def _outcome(oid=10, external_id="KXQ-26-YES", name="Yes"):
+    return SimpleNamespace(id=oid, external_id=external_id, name=name)
+
+
+def _payload(market, outcome, *, points=None, contract=None, **over):
+    points = points if points is not None else [
+        [(NOW - timedelta(hours=h)).isoformat(), 0.1 + h / 1000, 0.09, 0.11, None, "kalshi_candle_60m"]
+        for h in (30, 20, 10)
+    ]
+    body = {
+        "schema": gmh.SCHEMA, "version": gmh.CACHE_VERSION, "scale": gmh.SCALE,
+        "market_id": market.id, "market_source": market.source,
+        "market_external_id": market.external_id,
+        "attempted_at": NOW.isoformat(), "built_at": NOW.isoformat(), "status": "ok",
+        "outcomes": {str(outcome.id): {
+            "outcome_id": outcome.id,
+            "contract": contract or gmh.kalshi_contract(outcome),
+            "points": points,
+        }},
+        "stats": {},
+    }
+    body.update(over)
+    return body
+
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+
+def test_a_valid_payload_is_served_to_its_own_market_outcome_and_contract():
+    market, outcome = _market(), _outcome()
+    accepted, refusals = gmh.validate_payload(_payload(market, outcome), market, [outcome])
+    assert refusals == [] and list(accepted) == [outcome.id]
+    assert [p.probability for p in accepted[outcome.id]] == pytest.approx([0.13, 0.12, 0.11])
+    assert accepted[outcome.id][0].yes_bid == 0.09, "the book must travel with the point"
+
+
+@pytest.mark.parametrize("field, value, reason", [
+    ("market_id", 2, "market_id_mismatch"),
+    ("market_source", "polymarket", "market_source_mismatch"),
+    ("market_external_id", "KXOTHER-26", "market_external_id_mismatch"),
+    ("scale", "devigged", "scale_mismatch"),
+    ("version", "v0", "schema_or_version_mismatch"),
+    ("schema", "event-concept", "schema_or_version_mismatch"),
+    ("built_at", "yesterday", "built_at_unparseable"),
+])
+def test_a_payload_for_anything_else_is_refused_whole(field, value, reason):
+    market, outcome = _market(), _outcome()
+    accepted, refusals = gmh.validate_payload(
+        _payload(market, outcome, **{field: value}), market, [outcome]
+    )
+    assert accepted == {} and refusals == [{"scope": "payload", "reason": reason}]
+
+
+def test_two_markets_each_with_a_yes_never_share_a_series():
+    """The whole reason this cache is not the concept cache."""
+    mine, mine_yes = _market(market_id=1, external_id="KXA-26"), _outcome(10, "KXA-26-Y", "Yes")
+    theirs, their_yes = _market(market_id=2, external_id="KXB-26"), _outcome(20, "KXB-26-Y", "Yes")
+    their_payload = _payload(theirs, their_yes)
+
+    # Same NAME, their outcome id under my envelope.
+    forged = dict(their_payload, market_id=mine.id, market_external_id=mine.external_id)
+    accepted, refusals = gmh.validate_payload(forged, mine, [mine_yes])
+    assert accepted == {} and refusals[0]["reason"] == "not_a_charted_outcome_of_this_market"
+
+    # My outcome id, their CONTRACT.
+    entry = dict(their_payload["outcomes"]["20"], outcome_id=10)
+    accepted, refusals = gmh.validate_payload(dict(forged, outcomes={"10": entry}), mine, [mine_yes])
+    assert accepted == {} and refusals[0]["reason"] == "contract_outcome_external_id_mismatch"
+
+
+def test_an_outcome_re_pointed_at_another_contract_orphans_its_old_series():
+    market, outcome = _market(), _outcome()
+    payload = _payload(market, outcome)
+    outcome.external_id = "KXQ-26-NEWTICKER"
+    accepted, refusals = gmh.validate_payload(payload, market, [outcome])
+    assert accepted == {} and refusals[0]["reason"] == "contract_outcome_external_id_mismatch"
+
+
+def test_polymarket_contract_binds_condition_and_token_and_the_leg():
+    market = _market("polymarket", external_id="990001")
+    cond = "0x" + "ab" * 32
+    no_leg = _outcome(11, f"{cond}_no", "No")
+    contract = gmh.polymarket_contract(no_leg, token_id="222", resolved_via="gamma_condition_by_name")
+    assert contract["condition_id"] == cond and contract["outcome_external_id"] == f"{cond}_no"
+    ok, refusals = gmh.validate_payload(_payload(market, no_leg, contract=contract), market, [no_leg])
+    assert refusals == [] and list(ok) == [11]
+    # The YES leg of the same condition may not inherit the NO leg's series.
+    yes_leg = _outcome(11, f"{cond}_yes", "Yes")
+    ok, refusals = gmh.validate_payload(_payload(market, no_leg, contract=contract), market, [yes_leg])
+    assert ok == {} and refusals[0]["reason"] == "contract_outcome_external_id_mismatch"
+    assert gmh.polymarket_contract(_outcome(12, "not-a-condition", "X"), token_id="1", resolved_via="x") is None
+    assert gmh.wanted_gamma_outcome_name(no_leg) == "No"
+    assert gmh.wanted_gamma_outcome_name(_outcome(13, cond, "Detroit Tigers")) == "Detroit Tigers"
+
+
+@pytest.mark.parametrize("mutate, reason", [
+    (lambda pts: pts.reverse(), "timestamps_not_strictly_ascending"),
+    (lambda pts: pts.append(list(pts[-1])), "timestamps_not_strictly_ascending"),
+    (lambda pts: pts[-1].__setitem__(0, (NOW + timedelta(hours=1)).isoformat()), "timestamp_after_build"),
+    (lambda pts: pts[0].__setitem__(0, "2026-09-18T00:00:00"), "timestamp_unparseable_or_naive"),
+    (lambda pts: pts[1].__setitem__(1, 1.01), "probability_out_of_range"),
+    (lambda pts: pts[1].__setitem__(1, None), "probability_out_of_range"),
+    (lambda pts: pts[1].__setitem__(1, True), "probability_out_of_range"),
+    (lambda pts: pts.__setitem__(1, "junk"), "point_malformed"),
+])
+def test_one_impossible_point_refuses_the_whole_series(mutate, reason):
+    market, outcome = _market(), _outcome()
+    payload = _payload(market, outcome)
+    mutate(payload["outcomes"][str(outcome.id)]["points"])
+    accepted, refusals = gmh.validate_payload(payload, market, [outcome])
+    assert accepted == {} and refusals[0]["reason"] == reason
+
+
+def test_a_supported_zero_is_a_value_not_a_hole():
+    market, outcome = _market(), _outcome()
+    points = [[(NOW - timedelta(hours=2)).isoformat(), 0, None, None, None, "clob"],
+              [(NOW - timedelta(hours=1)).isoformat(), 0.0, None, None, None, "clob"]]
+    accepted, _ = gmh.validate_payload(_payload(market, outcome, points=points), market, [outcome])
+    assert [p.probability for p in accepted[outcome.id]] == [0.0, 0.0]
+
+
+# ── layering ────────────────────────────────────────────────────────────────
+
+
+def test_a_capture_always_stands_and_venue_points_fill_only_unclaimed_instants():
+    captures = [NOW - timedelta(hours=h) for h in (9, 6, 3)]
+    near = captures[1] + timedelta(minutes=20)       # inside the capture's 30-minute claim
+    far = captures[1] + timedelta(minutes=45)
+    same = captures[2]
+    after_build = NOW - timedelta(minutes=30)        # no capture near it
+    kept = gmh.unclaimed_instants([near, far, same, after_build], captures)
+    assert kept == {far, after_build}
+    assert gmh.unclaimed_instants([], captures) == set()
+    assert gmh.unclaimed_instants([far], []) == {far}
+
+
+def test_last_good_points_survive_a_venue_that_answers_with_less():
+    old = [gmh.VenuePoint(NOW - timedelta(hours=h), 0.2) for h in (30, 20, 10)]
+    fresh = [gmh.VenuePoint(NOW - timedelta(hours=10), 0.25), gmh.VenuePoint(NOW - timedelta(hours=1), 0.3)]
+    merged = gmh.merge_last_good(fresh, old)
+    assert [(p.observed_at, p.probability) for p in merged] == [
+        (NOW - timedelta(hours=30), 0.2), (NOW - timedelta(hours=20), 0.2),
+        (NOW - timedelta(hours=10), 0.25), (NOW - timedelta(hours=1), 0.3),
+    ]
+
+
+# ── the claim ───────────────────────────────────────────────────────────────
+
+
+class _Redis:
+    def __init__(self):
+        self.kv: dict = {}
+        self.ttl: dict = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.kv:
+            return None
+        self.kv[key], self.ttl[key] = value, ex
+        return True
+
+    def get(self, key):
+        return self.kv.get(key)
+
+    def incr(self, key):
+        self.kv[key] = int(self.kv.get(key, 0)) + 1
+        return self.kv[key]
+
+    def expire(self, key, seconds):
+        self.ttl[key] = seconds
+
+    def delete(self, key):
+        self.kv.pop(key, None)
+
+
+class _DeadRedis:
+    def __getattr__(self, name):
+        raise ConnectionError("redis is down")
+
+
+def _plan(payload=None, *, thin=True, market=None, rc=None, now=NOW):
+    market = market or _market()
+    return fill.plan_on_demand_fill(market, [_outcome()], payload, chart_is_thin=thin, now=now, rc=rc)
+
+
+def test_one_claim_per_market_with_its_own_expiry_and_an_hourly_budget():
+    rc = _Redis()
+    assert _plan(rc=rc) == {"enqueue": True, "reason": "claimed"}
+    assert rc.ttl[gmh.claim_key(1)] == fill.CLAIM_TTL_SECONDS, "a claim with no expiry is permanent"
+    assert _plan(rc=rc)["reason"] == "already_claimed"
+    fill.release_claim(1, rc)
+    assert _plan(rc=rc)["enqueue"] is True
+
+    capped = _Redis()
+    capped.kv[gmh.budget_key(NOW.strftime("%Y%m%d%H"))] = fill.HOURLY_FILL_CAP
+    assert _plan(rc=capped) == {"enqueue": False, "reason": "hourly_cap"}
+    assert gmh.claim_key(1) not in capped.kv, "a refused fill kept its claim"
+
+
+def test_no_redis_means_no_claim_and_no_venue_means_no_question():
+    assert _plan(rc=_DeadRedis()) == {"enqueue": False, "reason": "no_redis"}
+    assert _plan(market=_market("odds_api"), rc=_Redis())["reason"] == "source_has_no_venue_history"
+    assert _plan(thin=False, rc=_Redis())["reason"] == "chart_not_thin"
+
+
+def test_an_answer_even_an_empty_one_is_not_asked_for_again_until_it_ages():
+    market, outcome = _market(), _outcome()
+    empty = dict(_payload(market, outcome), outcomes={}, status="empty")
+    assert _plan(empty, rc=_Redis())["reason"] == "answered_recently"
+    later = NOW + timedelta(seconds=fill.REFRESH_AFTER_SECONDS + 1)
+    assert _plan(empty, rc=_Redis(), now=later)["enqueue"] is True
+    assert _plan(empty, thin=False, rc=_Redis(), now=later)["reason"] == "chart_not_thin"
+    settled = _market(status="settled")
+    assert _plan(empty, market=settled, rc=_Redis(), now=later)["reason"] == "settled_and_already_answered"
+
+
+def test_the_task_is_bounded_to_named_markets():
+    import asyncio
+
+    assert asyncio.run(fill.run_generic_market_history_fill(None))["markets_attempted"] == 0
+    assert fill.MAX_MARKETS_PER_TASK <= 3 and fill.TOP_N_OUTCOMES <= 12
+
+
+# ── fences ──────────────────────────────────────────────────────────────────
+
+
+def _names_used(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    used |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            used |= {alias.name for alias in node.names}
+    return used
+
+
+def test_the_generic_fill_never_blends_venues_matches_legs_or_dispatches():
+    used = _names_used(APP / "tasks" / "generic_market_history_fill.py")
+    for forbidden in ("blend_venues", "find_venue_legs", "same_question",
+                      "find_cross_source_markets", "_polymarket_token_id",
+                      "apply_async", "delay", "send_task"):
+        assert forbidden not in used, f"generic fill uses `{forbidden}`"
+    # …and it writes no table: no session write verb appears in the module at all.
+    # (`delete` is absent from this list on purpose — it is the Redis claim release.)
+    for writer in ("insert", "add", "add_all", "merge", "commit", "flush", "bulk_insert_mappings"):
+        assert writer not in used, f"generic fill calls `{writer}`"
+
+
+def test_the_route_seam_reads_a_cache_and_never_a_provider():
+    source = (APP / "routes" / "futures.py").read_text(encoding="utf-8")
+    start = source.index("class _GenericVenueHistory:")
+    end = source.index('@router.get("/{market_id}/probability-timeline")')
+    seam = source[start:end]
+    for forbidden in ("KalshiAPIService", "PolymarketAPIService", "httpx", "get_prices_history",
+                      "get_markets_candlesticks_raw", "build_generic_history",
+                      "fill_generic_market_history(", "read_cached_series", "apply_venue_history"):
+        assert forbidden not in seam, f"the request path names `{forbidden}`"
+    assert seam.count(".apply_async(") == 1, "exactly one dispatch, in the route (not in app/tasks/)"
+    assert "release_claim(market.id)" in seam, "a failed dispatch must hand the claim back"
+
+
+def test_the_task_is_registered_routed_to_background_and_not_on_a_beat():
+    from app import tasks
+
+    name = "app.tasks.fill_generic_market_history"
+    assert name in tasks.celery_app.tasks
+    assert name in tasks._HEAVY_KEEP_ON_BACKGROUND and name not in tasks.HEAVY_TASKS
+    beat = tasks.celery_app.conf.beat_schedule or {}
+    assert all(entry.get("task") != name for entry in beat.values()), "no population sweep"
