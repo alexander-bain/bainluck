@@ -450,6 +450,28 @@ export default function CalibrationPage() {
     });
   }, [normalized, categories, cohortFilter, provabilityByCategory]);
 
+  // #7316. The published categories ordered by the n the page PRINTS for them,
+  // which is cohort-scoped — `categories` is ordered by the UNFILTERED total and
+  // the cohort reorders it. #7190 found this in the Categories card and fixed it
+  // there; the By Category section is the same defect one section over, and its
+  // own comment predicted these exact two rows ("traded basketball (118,714)
+  // outranks traded soccer (58,440) while all-cohort soccer outranks basketball").
+  //
+  // What the default view printed before, measured on the live payload
+  // 2026-09-19 23:0xZ: the "Top 5" tab rendered Baseball (129,771), Soccer
+  // (58,440), Basketball (118,714), Tennis (25,207), Weather (12,967) — a legend
+  // whose own numbers run out of order, with Football (22,684) displaced
+  // entirely by a category 41% smaller. Flipping the toggle to the all-cohort
+  // side CORRECTED it, because that is the order the list was sorted in.
+  //
+  // MEMBERSHIP IS UNCHANGED, ONLY ORDER: this is `categoryMetrics`, which is
+  // `categories.map` — so the publish bar stays the only filter, which is the
+  // thing #7302 exists to keep true.
+  const cohortOrderedCategories = useMemo(
+    () => [...categoryMetrics].sort((a, b) => b.n - a.n),
+    [categoryMetrics]
+  );
+
   // Option C amendment 6: the section note's numerator. Counted over the rows
   // the table actually renders, intersected with the pooled key map — NOT over
   // `pooledByCategory` alone, which includes normalized keys below the
@@ -670,8 +692,10 @@ export default function CalibrationPage() {
   // outranks traded soccer (58,440) while all-cohort soccer outranks basketball.
   // Correcting the counts without the order would print a mis-sorted list, so
   // the two have to move together.
-  const topCats = [...categoryMetrics]
-    .sort((a, b) => b.n - a.n)
+  // #7316: the sort moved up into `cohortOrderedCategories` so the card's three,
+  // the chart's five and the tab strip are three slices of ONE ordering rather
+  // than three places that have to be kept in step by hand.
+  const topCats = cohortOrderedCategories
     .slice(0, 3)
     .map(cm => `${categoryLabel(cm.category)} (${cm.n.toLocaleString()})`)
     .join(", ");
@@ -794,7 +818,11 @@ export default function CalibrationPage() {
   // renders — so the section cannot omit a provider the table names.
   const withheldNote = withheldSourcesNote(sourceRows, cohort.toggleLabel);
 
-  const catChartData = (activeCat ? [activeCat] : categories.slice(0, 5)).map((cat, i) => ({
+  // #7316: the "Top 5" tab is the top 5 of the cohort on screen, in the order
+  // its own labels print — see `cohortOrderedCategories`.
+  const catChartData = (
+    activeCat ? [activeCat] : cohortOrderedCategories.slice(0, 5).map(cm => cm.category)
+  ).map((cat, i) => ({
     data: aggregateBuckets(normalized, b => b.category === cat && (!cohortFilter || cohortFilter(b))),
     color: COLORS[i % COLORS.length],
     label: `${categoryLabel(cat)} (${normalized.filter(b => b.category === cat && (!cohortFilter || cohortFilter(b))).reduce((s, b) => s + b.n, 0).toLocaleString()})`,
@@ -1850,7 +1878,10 @@ export default function CalibrationPage() {
       </section>
 
       {/* By Category */}
-      <section className="bg-surface-card rounded-xl p-5 border border-surface-border">
+      <section
+        className="bg-surface-card rounded-xl p-5 border border-surface-border"
+        data-testid="calibration-by-category"
+      >
         <h2 className="text-title-3 text-text-primary mb-1">By Category<CohortTag cohort={cohort} /></h2>
         {/* #4291 / standing notice 34, continuing #4118's sweep. What stood here
             was a method note — what the error bars are, what a faded dot means —
@@ -1867,9 +1898,13 @@ export default function CalibrationPage() {
             per-bucket sample counts.
           </p>
         </CalibrationCardNote>
-        <div className="flex flex-wrap gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4" data-testid="calibration-category-tabs">
           <TabButton label="Top 5" active={!activeCat} onClick={() => setActiveCat(null)} />
-          {categories.map(c => (
+          {/* #7316: same ordering as the "Top 5" default, so the first five
+              chips ARE that default's five. Ordering these by the all-cohort
+              total while the chart picked the cohort's five would have traded
+              one inconsistency for another. */}
+          {cohortOrderedCategories.map(({ category: c }) => (
             <TabButton key={c} label={categoryLabel(c)} active={activeCat === c} onClick={() => setActiveCat(c)} />
           ))}
         </div>
