@@ -134,6 +134,30 @@ const UNRENDERABLE: ActivityComparison = {
   sentence: null,
 };
 
+/**
+ * The ONE pair of nouns this page calls its two cohorts — UX-P075 item (c),
+ * Alex 2026-08-13: "rename the excluded cohort 'untraded' everywhere".
+ *
+ * #7335: everywhere was five of six places. The table headers, the chart
+ * legend and the two stat cards were renamed; the sentence printed directly
+ * under that table kept saying "price-moved outcomes run ... for
+ * price-unchanged", so a reader who had just read two columns headed
+ * Traded / Untraded was told about two other cohorts forty pixels lower and
+ * left to work out they were the same two. Nothing on the page said so.
+ *
+ * Exported and shared rather than re-spelled, so the sentence, the headers,
+ * the legend and the cards cannot drift apart again: a rename moves one
+ * object, not six literals, and there is no literal left to forget. The
+ * `moved` / `unchanged` KEYS are the payload's `price_moved` flag and stay —
+ * ruling 138's word is what the reader sees, and this is only that.
+ *
+ * `column` is the sentence-initial / header form; `inline` is mid-sentence.
+ */
+export const COHORT_NOUNS = {
+  moved: { inline: "traded", column: "Traded" },
+  unchanged: { inline: "untraded", column: "Untraded" },
+} as const;
+
 /** A cohort is usable only if it has outcomes AND a finite, non-negative ECE. */
 function cohortValue(c: ActivityCohort | null | undefined): number | null {
   if (!c) return null;
@@ -185,7 +209,8 @@ export function describeActivityComparison(
     movedText,
     unchangedText,
     sentence:
-      `Traded sits at ${movedText}pp and untraded at ${unchangedText}pp. ` +
+      `${COHORT_NOUNS.moved.column} sits at ${movedText}pp and ` +
+      `${COHORT_NOUNS.unchanged.inline} at ${unchangedText}pp. ` +
       `These are two different sets of outcomes, not the same forecasts ` +
       `measured twice, so the gap between them does not tell you whether ` +
       `trading moved a price closer to the truth.`,
@@ -406,8 +431,9 @@ export function compareMatchedBuckets(
   const sentence =
     `In ${closeCount} of ${comparable.length} matched buckets the two cohorts land within ` +
     `${MATCHED_BUCKET_CLOSE_BAND_PP}pp of each other. The widest matched gap is the ` +
-    `${widest.label} band, where price-moved outcomes run ${signedPp(wm.errorPp)}pp against ` +
-    `${signedPp(wu.errorPp)}pp for price-unchanged — a ` +
+    `${widest.label} band, where ${COHORT_NOUNS.moved.inline} outcomes run ` +
+    `${signedPp(wm.errorPp)}pp against ${signedPp(wu.errorPp)}pp for ` +
+    `${COHORT_NOUNS.unchanged.inline} — a ` +
     `${Math.abs(widest.gapPp as number).toFixed(1)}pp difference on ` +
     `${(wm.n + wu.n).toLocaleString()} outcomes.`;
   // #4340 / notice 34. This used to close with "Comparing inside a bucket holds
