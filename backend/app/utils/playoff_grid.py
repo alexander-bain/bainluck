@@ -106,18 +106,56 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
     return violations_fixed
 
 
+def column_scale_factor(col_sum: float, expected: float) -> float:
+    """The factor :func:`normalize_column_sums` applies to a column — or 1.0.
+
+    #7458. This is the WHOLE normalization policy as one pure function, because
+    the grid's table is not the only surface that publishes these numbers: the
+    trend chart beside it draws the same column and must arrive at the same
+    quantity. It used to reimplement nothing at all — it simply skipped this
+    stage — so EPL published Arsenal at 0.4750 in the legend and 0.4167 in the
+    table on one screen, a constant x1.140 apart, which is exactly this
+    function's factor for a column summing to 1.1388.
+
+    Sharing the policy rather than the arithmetic is the point. A second copy of
+    ``expected / col_sum`` would agree today and drift the first time a
+    threshold moves.
+
+    The dead band is deliberate and load-bearing: a column between 0.85 and 1.05
+    of expected is left ALONE, so a grid whose sources already agree is never
+    nudged. So is the 2.5x ceiling — a column that far over is a matching bug
+    (one team's outcome counted twice, a mis-classified market), and scaling it
+    would hide the defect behind a plausible-looking distribution instead of
+    leaving it visible.
+    """
+    if not expected or col_sum <= 0:
+        return 1.0
+    if col_sum > expected * 2.5:
+        # Likely a matching bug — the caller warns; never quietly rescale it.
+        return 1.0
+    if col_sum > expected * 1.05 or col_sum < expected * 0.85:
+        return expected / col_sum
+    return 1.0
+
+
 def normalize_column_sums(
     teams: list[dict],
     columns: list,
     league_slug: str,
-) -> None:
+) -> dict[str, float]:
     """Normalize championship/conference column probabilities to expected sums.
 
     When raw probabilities undershoot by >15% (common with prediction market
     data where long-tail teams floor at 0.1%), scales all values proportionally.
 
-    Modifies teams in-place.
+    Modifies teams in-place, and RETURNS the factor actually applied to each
+    column (#7458) so the trend chart can publish the same quantity this leaves
+    in the table. Columns left alone are absent from the mapping rather than
+    present as 1.0, so a caller can tell "policy said don't touch it" from
+    "policy is not defined for this column" — the trend chart treats both as
+    1.0, but a future consumer should not have to guess.
     """
+    applied: dict[str, float] = {}
     for col in columns:
         col_key = col.key if hasattr(col, "key") else col.get("key", "")
         expected = EXPECTED_COLUMN_SUMS.get(col_key)
@@ -137,26 +175,14 @@ def normalize_column_sums(
                 "Column %s sum=%.1f%% exceeds 2.5x expected %.0f%% for %s — likely a matching bug",
                 col_key, col_sum * 100, expected * 100, league_slug,
             )
-        elif col_sum > expected * 1.05:
-            # Moderate overshoot (5-150%) — typically from prediction market
-            # minimum tick sizes (0.5-1% floor on long-shot teams). Safe to
-            # normalize down proportionally.
-            scale = expected / col_sum
+
+        scale = column_scale_factor(col_sum, expected)
+        if scale != 1.0:
+            applied[col_key] = scale
             logger.info(
-                "Normalizing %s column from %.1f%% to %.0f%% (x%.2f) for %s (overshoot)",
+                "Normalizing %s column from %.1f%% to %.0f%% (x%.2f) for %s%s",
                 col_key, col_sum * 100, expected * 100, scale, league_slug,
-            )
-            for t in teams:
-                cell = t["cells"].get(col_key)
-                if cell and cell.get("merged_probability") is not None:
-                    cell["merged_probability"] = round(cell["merged_probability"] * scale, 4)
-                    for src in cell.get("sources", []):
-                        src["probability"] = round(src["probability"] * scale, 4)
-        elif 0 < col_sum < expected * 0.85:
-            scale = expected / col_sum
-            logger.info(
-                "Normalizing %s column from %.1f%% to %.0f%% (x%.2f) for %s",
-                col_key, col_sum * 100, expected * 100, scale, league_slug,
+                " (overshoot)" if col_sum > expected else "",
             )
             for t in teams:
                 cell = t["cells"].get(col_key)
@@ -178,6 +204,8 @@ def normalize_column_sums(
                 for src in cell.get("sources", []):
                     if src["probability"] > 1.0:
                         src["probability"] = 1.0
+
+    return applied
 
 
 def compute_movers(

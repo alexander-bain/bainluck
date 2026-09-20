@@ -1293,6 +1293,7 @@ async def _build_trend_chart(
     hours: int = 168,
     top_n: int = 10,
     bucket_seconds: int = 3600,
+    column_scale: float = 1.0,
 ) -> dict:
     """Build the grid's trend chart on the SAME basis as the grid's table.
 
@@ -1327,6 +1328,25 @@ async def _build_trend_chart(
        Each book column is therefore carried forward into the buckets where it
        did not write, so every point is a consensus over the same source set and
        a change in the line is a change in the market.
+
+    4. **The table's last stage.** De-vigging and blending still left the chart
+       one step short of the table, and the gap was a CONSTANT per league:
+       EPL's legend read x1.140 of every one of its own table cells, MLB's
+       x1.052. A constant ratio is a column rescale, not a per-venue vig
+       decision — ``normalize_column_sums`` scales a championship column that
+       sums outside ``[0.85, 1.05]`` back onto 1.0, and the chart never ran it.
+       ``column_scale`` is the factor that call ACTUALLY applied, handed in by
+       the caller rather than recomputed here, so the two surfaces cannot drift.
+
+    On ``column_scale`` being one scalar for the whole window rather than a
+    per-bucket sum: a per-bucket factor is the tempting version and it is wrong
+    here. The policy has a hard threshold at 1.05 and MLB's column sits at
+    1.0524 — a hair over — so a per-bucket factor would snap on and off as the
+    sum drifted across it and draw ~5pt STEPS into every series that no market
+    ever moved. That is a worse defect than the one being fixed, and it is the
+    same class as the flat line in (3): a line that moves for a reason outside
+    the market. A single scalar cannot do it: it rescales the level and leaves
+    the SHAPE — which is what a trend chart is for — exactly as measured.
 
     Only ``outcome_names``' names are drawn; the siblings exist to make the
     denominator honest and are dropped before the payload is built.
@@ -1441,7 +1461,11 @@ async def _build_trend_chart(
         timeline.append({
             "timestamp": datetime.fromtimestamp(bucket_ts, tz=timezone.utc).isoformat(),
             "outcomes": {
-                name: _merge_probabilities(probs) for name, probs in by_name.items()
+                # Rounded to 4dp and capped at 1.0 exactly as the table's cells
+                # are, so the legend and the cell are the same number rather
+                # than two numbers that agree to within a rounding step.
+                name: min(round(_merge_probabilities(probs) * column_scale, 4), 1.0)
+                for name, probs in by_name.items()
             },
         })
 
@@ -4973,7 +4997,9 @@ async def get_playoff_grid(
     # with > 50% single-source probability as likely misclassified.
 
     from app.utils.playoff_grid import normalize_column_sums, enforce_monotonicity
-    normalize_column_sums(teams, config.columns, config.slug)
+    # #7458: the trend chart publishes the championship column too, so it needs
+    # the factor this actually applied — not a second computation of it.
+    applied_column_scales = normalize_column_sums(teams, config.columns, config.slug)
 
     # Re-enforce monotonicity after normalization — normalize_column_sums can
     # scale conference probabilities upward (to sum to 200%), breaking the
@@ -5085,6 +5111,7 @@ async def get_playoff_grid(
         trend_outcome_names,
         hours=trend_hours,
         top_n=top,
+        column_scale=applied_column_scales.get(championship_col, 1.0),
     )
     trend_chart["column"] = championship_col
     trend_chart["top"] = top
