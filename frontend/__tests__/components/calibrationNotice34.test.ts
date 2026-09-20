@@ -93,7 +93,10 @@ const MOVED_BEHIND_A_DISCLOSURE: ReadonlyArray<readonly [string, string]> = [
   // are the furthest down the page, which is why calibration/1063's LOOK stopped
   // above them and why they are a second queue rather than an oversight caught
   // in review. Both photographed bare on production at 390px before this ship.
-  ["how to read the By Category dots", "hollow dots with wide error bars"],
+  // #7399 reworded the clause between "hollow dots" and "with wide error bars"
+  // (the curve is dashed there too now), so the needle is the part of the
+  // sentence that is about where the note LIVES rather than what it says.
+  ["how to read the By Category dots", "with wide error bars, never hidden"],
   ["which categories are excluded and why", "statistical noise, not a calibration signal"],
   ["which population the category table counts", 'data-testid="calibration-category-population-note"'],
 ] as const;

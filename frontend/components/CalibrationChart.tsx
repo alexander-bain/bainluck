@@ -96,6 +96,74 @@ interface Series {
   label: string;
 }
 
+/** A maximal stretch of the curve drawn at one weight. `from`/`to` index `Series.data`. */
+export interface CurveRun {
+  from: number;
+  to: number;
+  thin: boolean;
+}
+
+/**
+ * #7399 — WHY THE CURVE IS NOT ONE POLYLINE.
+ *
+ * `thinFloor` used to reach the DOT only: below it the marker fades to 0.28 with a
+ * dashed ring and prints its n, while the connecting line stayed one 2.5px
+ * full-opacity stroke from end to end. The line is the boldest mark on the chart and
+ * the one a reader's eye follows, so the two halves of the same drawing disagreed —
+ * under a legend that says thin samples are marked.
+ *
+ * Measured on the served payload 2026-09-20 (default traded cohort): the Totals (Odds
+ * API) panel, published at 2.5pp ECE, drew a vertical crash to 0% at the 70-80% bin,
+ * which is SEVEN outcomes; the two bins carrying 97% of its 15,537 outcomes sit within
+ * 3pp of the diagonal. Spreads, published at 0.4pp ECE, zigzagged on bins of 11 and 18.
+ * Both read as badly miscalibrated shapes beside a Moneylines panel whose every bin
+ * clears the floor and whose line is therefore straight.
+ *
+ * A segment is thin if EITHER endpoint is thin — a stretch is only as trustworthy as
+ * the weaker bucket it lands on. Adjacent segments of the same weight are merged so a
+ * well-sampled run still draws as one continuous stroke with proper joins.
+ *
+ * This does NOT hide anything: L2-127 (Alex's Option 4) rules every populated bucket is
+ * shown, and every point and every segment is still drawn. Only the weight changes.
+ */
+/**
+ * How much room the thin-bucket key actually has, on the narrowest chart this
+ * component is authored at anywhere on /calibration: the 300-unit shape panels inside
+ * "Break out the shapes". The key is right-anchored at `width - padR`, so it grows
+ * LEFTWARD, and the first thing it reaches is the rotated "Actual Win Rate" title at
+ * x=14. The budget is therefore the authored width less the right pad less a gutter
+ * for that title — not the plot box, which the key is allowed to overhang.
+ */
+export const KEY_BUDGET_W = 300 - 20 - 20;
+
+/**
+ * Advance per character for the key's `system-ui` at 9.5px. Measured on production
+ * 2026-09-20: the 47-character key rendered 219 CSS px on an unscaled 300-unit panel,
+ * i.e. 4.66. Rounded up so the guard bites before a reader does.
+ */
+export const KEY_CHAR_ADVANCE_PX = 4.75;
+
+/**
+ * #7399. Both marks, not just the dot. A reader looking at a dashed stretch of curve
+ * has to be able to find out here what the dash means — the treatment is the same one
+ * `curveRuns` and the marker share, so the key names it once for both. Kept to one
+ * short line: this is a source mark, not a method note (standing notice 34).
+ */
+export function thinBucketKey(thinFloor: number): string {
+  return `● size = sample count · faded + dashed = thin (n<${thinFloor})`;
+}
+
+export function curveRuns(ns: number[], thinFloor: number): CurveRun[] {
+  const runs: CurveRun[] = [];
+  for (let i = 0; i + 1 < ns.length; i++) {
+    const thin = ns[i] < thinFloor || ns[i + 1] < thinFloor;
+    const last = runs[runs.length - 1];
+    if (last && last.thin === thin && last.to === i) last.to = i + 1;
+    else runs.push({ from: i, to: i + 1, thin });
+  }
+  return runs;
+}
+
 interface CalibrationChartProps {
   series: Series[];
   width?: number;
@@ -233,10 +301,28 @@ export default function CalibrationChart({
       {series.map((s, si) => {
         if (!s.data.length) return null;
         const maxN = Math.max(...s.data.map(d => d.n));
-        const pathPoints = s.data.map(d => `${px(d.midpoint)},${py(d.actual)}`).join(" ");
         return (
           <g key={si}>
-            <polyline points={pathPoints} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" />
+            {/* #7399: one polyline per run, not one for the whole curve. See
+                `curveRuns` — the thin convention has to reach the mark the eye
+                actually follows. */}
+            {curveRuns(s.data.map(d => d.n), thinFloor).map((run, ri) => (
+              <polyline
+                key={`run-${ri}`}
+                points={s.data
+                  .slice(run.from, run.to + 1)
+                  .map(d => `${px(d.midpoint)},${py(d.actual)}`)
+                  .join(" ")}
+                fill="none"
+                stroke={s.color}
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                opacity={run.thin ? 0.28 : 1}
+                strokeDasharray={run.thin ? "4,4" : undefined}
+                data-thin={run.thin ? "true" : "false"}
+              />
+            ))}
             {/* CI error bars — rendered behind dots */}
             {s.data.map((d, di) => {
               if (d.ciLower == null || d.ciUpper == null) return null;
@@ -332,9 +418,10 @@ export default function CalibrationChart({
         );
       })()}
 
-      {/* Dot-size + thin-bucket key (L2-75 §B) */}
+      {/* Dot-size + thin-bucket key (L2-75 §B; #7399 adds the line, which carries
+          the same convention and used to be the one mark the key did not cover). */}
       <text x={width - padR} y={padT - 10} textAnchor="end" fill="#a8a29e" fontSize="9.5">
-        {`● size = sample count · faded ○ = thin (n<${thinFloor})`}
+        {thinBucketKey(thinFloor)}
       </text>
     </svg>
     </div>
