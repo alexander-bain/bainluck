@@ -6318,19 +6318,33 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     OPEN MARKETS ONLY (#7274's own bound, and live's): a settled board is a
     RESULT, and a result shows what ran.
 
-    ⚠️ ASKED ONLY OF LEGS THAT PRINT A NUMBER, and the boundary is #6256's, not
-    a convenience. This is a rule about a DIVISOR, and a leg rendering no price
-    is in no divisor — so removing it wins nothing here and costs something
-    elsewhere: `test_unpriced_leg_cannot_date_the_mark_6256` keeps a specimen
-    (*Which party will win the House in 2026?*) whose whole tail is `NULL` and
-    125 days old, and a blanket drop deletes that card's blank rows and with
-    them the shipped guard that they must not date the card's age mark. That
-    suite went red on exactly this and was right to. `displayed_price_stamp`
-    drew the same line one function over — "a leg that prints no number is not a
-    price fact either" — so this is the module's existing rule applied again
-    rather than a new exception. It also narrows what the predicate can do:
-    the reference stamp is the newest among PRICED legs, so an unpriced row can
-    neither be dropped nor make a priced sibling look stale.
+    ⚠️ THE WHOLE BOARD IS ASKED; ONLY A PRICED LEG IS DROPPED — TWO STEPS, AND
+    CERT-3188 BLOCKED THE ONE-STEP VERSION. The first cut narrowed the
+    GENERATOR to priced legs, which reads as the same rule and is not:
+    `stale_observation_keys` measures every stamp against the newest stamp IN
+    THE SET IT IS GIVEN, so narrowing the input also moves the reference
+    instant. The counterexample the bus found is two eight-day-old priced legs
+    beside one freshly-observed `NULL`-priced leg — detail's reference is that
+    fresh stamp and it withholds both prices, while a priced-only reference is
+    itself eight days old, nothing is stale, and the card keeps both. A tap
+    then still turns a number into a blank, which is the exact defect #7537
+    exists to close, re-entering by the back door. So the board dates the
+    board, and detail's `(o.id, o.last_updated) for o in sorted_outcomes`
+    passes the same population this does.
+
+    The priced test moves to the DROP instead, where #6256's boundary actually
+    lives and where it costs nothing: this is a rule about a DIVISOR, and a leg
+    rendering no price is in no divisor — so dropping it wins nothing here and
+    costs something elsewhere. `test_unpriced_leg_cannot_date_the_mark_6256`
+    keeps a specimen (*Which party will win the House in 2026?*) whose whole
+    tail is `NULL` and 125 days old, and a blanket drop deletes that card's
+    blank rows and with them the shipped guard that they must not date the
+    card's age mark. That suite went red on exactly this and was right to.
+    `displayed_price_stamp` drew the same line one function over — "a leg that
+    prints no number is not a price fact either" — so this is the module's
+    existing rule applied again rather than a new exception. A blank row can
+    therefore still never be DROPPED, which is all #6256 ever asked; what it
+    can now do is date the board, which is what detail already lets it do.
 
     FAILS OPEN. `stale_observation_keys` measures against the board's own newest
     stamp, so the leg holding that stamp is never stale and the empty set is
@@ -6345,13 +6359,15 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     if getattr(market, "status", None) != "open":
         return outcomes
     stale_ids = _stale_observation_keys(
-        (o.id, _outcome_observed_at(o))
-        for o in outcomes
-        if _outcome_prints_a_price(o)
+        (o.id, _outcome_observed_at(o)) for o in outcomes
     )
     if not stale_ids:
         return outcomes
-    survivors = [o for o in outcomes if o.id not in stale_ids]
+    survivors = [
+        o
+        for o in outcomes
+        if o.id not in stale_ids or not _outcome_prints_a_price(o)
+    ]
     return survivors or outcomes
 
 

@@ -48,7 +48,11 @@ from app.routes.feed import (
     _feed_display_scale,
 )
 from app.utils.feed_market_quality import classify_fabricated_book
-from app.utils.futures_market_snapshot import outcome_observed_at
+from app.utils.futures_market_snapshot import (
+    outcome_observed_at,
+    outcome_prints_a_price,
+)
+from app.utils.market_staleness import stale_observation_keys
 
 # The fixture's own instant. Every stamp below is an offset from it, so the
 # suite reads the same on any clock (gotcha #44 — offset first, never branch).
@@ -288,16 +292,111 @@ class TestOnlyLegsThatPrintANumberAreJudged:
         assert "Forward Party" not in [leg.name for leg in kept]
         assert "Green Party" in [leg.name for leg in kept]
 
-    def test_an_unpriced_leg_cannot_make_a_priced_sibling_look_stale(self):
-        """The reference stamp is the newest among PRICED legs. A blank row
-        carrying a newer stamp than every price must not move it."""
+    def test_an_unpriced_leg_dates_the_board_exactly_as_it_does_on_detail(self):
+        """🔴 THIS ASSERTION IS INVERTED FROM THE FIRST CUT, AND THAT WAS THE BLOCK.
+
+        It used to read "a blank row carrying a newer stamp than every price must
+        not move it" — the reference being the newest PRICED stamp. CERT-3188
+        showed that is the #7537 defect wearing a different hat: detail dates the
+        board off every outcome, so on this exact board it withholds both prices
+        while the card kept them. The boundary #6256 needs is on the DROP (a blank
+        row is never removed), not on who gets to date the board.
+        """
         rows = (
             ("Democratic Party", 0.8750, 0.8700, 0.8800, FOSSIL),
             ("Republican Party", 0.1350, 0.1300, 0.1400, FOSSIL),
             ("Green Party", None, None, None, NOW),
         )
         legs = board(rows=rows)
-        assert _drop_stale_observation_legs(market(), legs) == legs
+        kept = [leg.name for leg in _drop_stale_observation_legs(market(), legs)]
+        assert kept == ["Green Party"]
+
+
+class TestTheTwoSurfacesDateTheBoardFromTheSameSet:
+    """🔴 CERT-3188's BLOCK, pinned as the regression it asked for.
+
+    The finding: the feed half asked `stale_observation_keys` only about priced
+    legs, and that helper measures every stamp against the newest stamp IN THE
+    SET IT IS GIVEN. Narrowing the generator therefore moved the reference
+    instant rather than merely filtering the answer, so the two surfaces went on
+    disagreeing — in a shape the specimen board could not show, because there the
+    newest stamp happens to belong to a priced leg either way.
+    """
+
+    # The bus's counterexample: two eight-day-old priced legs beside one
+    # freshly-observed leg that prints no number.
+    SPLIT = (
+        ("Leeds Rhinos", 0.3950, 0.3300, 0.4600, FOSSIL),
+        ("Hull Kingston Rovers", 0.3300, 0.3200, 0.3400, FOSSIL),
+        ("St Helens", None, None, None, NOW),
+    )
+
+    def detail_withheld(self, legs) -> set:
+        """`routes/futures.py`'s own withholding line, reproduced.
+
+        That surface is live's file set (notice 41), so this suite models its
+        rule rather than importing its serializer — and
+        `test_detail_still_dates_the_board_off_every_outcome` below reads the
+        real call so this model cannot quietly stop matching it.
+        """
+        return stale_observation_keys((o.id, o.last_updated) for o in legs)
+
+    def test_the_card_drops_exactly_the_prices_the_page_withholds(self):
+        legs = board(rows=self.SPLIT)
+        kept = {leg.id for leg in _drop_stale_observation_legs(market(), legs)}
+        dropped = {leg.id for leg in legs} - kept
+
+        withheld = self.detail_withheld(legs)
+        priced_withheld = {
+            leg.id for leg in legs if leg.id in withheld and outcome_prints_a_price(leg)
+        }
+
+        assert dropped == priced_withheld
+        # Strawman: if this board ever stops biting, the equality above is
+        # satisfiable by two empty sets and proves nothing.
+        assert dropped, "the counterexample must actually remove something"
+
+    def test_a_blank_row_is_still_never_dropped_on_this_board(self):
+        """#6256's boundary survives the inversion — the blank leg dates the
+        board and stays on the card."""
+        legs = board(rows=self.SPLIT)
+        kept = [leg.name for leg in _drop_stale_observation_legs(market(), legs)]
+        assert kept == ["St Helens"]
+
+    def test_the_priced_only_reference_is_what_the_bus_blocked(self):
+        """The class's own strawman: the first cut's generator, run on this same
+        board, finds NOTHING stale while the detail page withholds two legs.
+        That gap is the defect; if it ever closes on its own this class is
+        guarding a shape that no longer exists."""
+        legs = board(rows=self.SPLIT)
+        priced_only = stale_observation_keys(
+            (leg.id, outcome_observed_at(leg))
+            for leg in legs
+            if outcome_prints_a_price(leg)
+        )
+        assert priced_only == set()
+        assert len(self.detail_withheld(legs)) == 2
+
+    def test_detail_still_dates_the_board_off_every_outcome(self):
+        """The model above is only honest while live's call passes the whole
+        population. Reading the real source keeps this suite from drifting away
+        from the surface it claims to agree with."""
+        from app.routes import futures as futures_module
+
+        calls = [
+            node
+            for node in ast.walk(ast.parse(inspect.getsource(futures_module)))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "stale_observation_keys"
+        ]
+        assert len(calls) == 1, f"expected one detail call, found {len(calls)}"
+
+        (arg,) = calls[0].args
+        assert isinstance(arg, ast.GeneratorExp)
+        (comp,) = arg.generators
+        assert isinstance(comp.iter, ast.Name) and comp.iter.id == "sorted_outcomes"
+        assert comp.ifs == [], "detail narrowed the population it dates the board from"
 
 
 class TestOurOwnOutageCannotBlankACard:
