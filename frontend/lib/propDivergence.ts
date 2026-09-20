@@ -442,13 +442,43 @@ export type PropDropReason =
   | "wrong_game"
   /** 5 — settled but never graded (#1976 §2). NOT benign. */
   | "ungraded"
+  /**
+   * 6 — named, but carries no over/under line: a field / winner-take-all market
+   * ("Most Receiving Yards") or a yes/no one ("Anytime Touchdown"). Benign —
+   * see the classification site for the measurement. #4953.
+   */
+  | "no_line"
   /** Unreadable for a reason we cannot name. Renders AS unknown. NOT benign. */
   | "unknown";
 
 const BENIGN_REASONS: ReadonlySet<PropDropReason> = new Set<PropDropReason>([
   "no_real_price",
   "outside_band",
+  "no_line",
 ]);
+
+/**
+ * The reader's words for each reason — ONE definition, imported by both the
+ * rail and its expanded detail.
+ *
+ * #4953: this was duplicated verbatim in `PropDivergenceRail.tsx` and
+ * `PropDivergenceDetail.tsx` — two copies of one vocabulary, on the same page,
+ * for a rail and its own detail view. The day they drift is the day the rail
+ * and the list it expands into disagree about the same dropped row.
+ *
+ * No value here may equal its own key: a bare enum name on a reader's screen is
+ * D102's "poorly worded tech jargon nonsense", and it is what put "Also not
+ * shown: 13 unknown" on every live NFL page. Guarded by test.
+ */
+export const PROP_DROP_REASON_LABEL: Record<PropDropReason, string> = {
+  no_real_price: "no trading",
+  outside_band: "already decided",
+  misclassified: "couldn't be read",
+  wrong_game: "linked to another game",
+  ungraded: "settled but never graded",
+  no_line: "no over/under line",
+  unknown: "couldn't be read at all",
+};
 
 export function isBenignDrop(reason: PropDropReason): boolean {
   return BENIGN_REASONS.has(reason);
@@ -1254,10 +1284,39 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
     const threshold = row.threshold;
     const at = marketName || outcomeName || "(unnamed row)";
 
-    if (!marketName || !isFiniteNumber(threshold)) {
-      // A prop row with no name or no line cannot be read, and we cannot tell
-      // WHY it is shaped that way from here. V3: that renders as unknown.
+    if (!marketName) {
+      // No name at all: we cannot read it and we cannot tell WHY it is shaped
+      // that way from here. V3: that renders as unknown, and it is the only
+      // thing that does.
       noteDrop("unknown", at);
+      continue;
+    }
+
+    if (!isFiniteNumber(threshold)) {
+      // #4953 — A NAMED ROW WITH NO LINE IS A DIFFERENT SHAPE, NOT A FAILURE.
+      // This used to share the branch above, so every named market that has no
+      // over/under line BY DESIGN was reported to the reader as unreadable.
+      // Measured on production 2026-09-20 17:0xZ, all 8 live NFL games: 5-19
+      // such rows each, 0 of them nameless, and the families are exactly the
+      // two kinds of market that cannot carry a line —
+      //   * field / winner-take-all: "Most Receiving Yards", "Most Rushing
+      //     Yards" (one leg per player, no threshold to travel against)
+      //   * yes/no: "Anytime Touchdown", "Safety", "Overtime", "D/ST
+      //     Touchdown", "First Team to Score a TD"
+      // e.g. `Pittsburgh vs New England: Most Receiving Yards / DK Metcalf /
+      // threshold=None / kalshi` — classified perfectly well, just not an
+      // over/under. The rail ranks price travel AGAINST a line, so a market
+      // with no line is out of its shape.
+      //
+      // BENIGN, for the same reason `no_real_price` is: this is not one of
+      // Alex's "that sounds very bad" losses. The rows are not even absent —
+      // they render on the same page under "All N props", so the old sentence
+      // told the reader 13 things were missing while they were looking at
+      // them. `misclassified` / `wrong_game` / `ungraded` / `unknown` keep
+      // their channel to the screen, so no real defect is silenced, and the
+      // count stays in `dropped` for probes exactly as the other benign
+      // reasons do.
+      noteDrop("no_line", at);
       continue;
     }
 
