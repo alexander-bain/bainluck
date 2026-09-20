@@ -403,6 +403,10 @@ class TestBeatScheduleCompleteness:
         "compute-calibration-prices",
         "precompute-bookmaker-calibration",
         "sync-polymarket-resolved-status",
+        # #7501 — the only writer of `teams.slug`, which is the column the team
+        # page resolves through. Gotcha #12: this allowlist is the reason a new
+        # beat entry cannot land silently.
+        "backfill-team-slugs",
         "backfill-espn-win-prob",
         "backfill-espn-win-prob-oldest",
         "backfill-polymarket-winners",

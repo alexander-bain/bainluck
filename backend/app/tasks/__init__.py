@@ -4948,6 +4948,21 @@ def backfill_team_identities(self):
     return run_async(_backfill_team_identities())
 
 
+# --- Team Slug Backfill (#7501) ---
+#
+# The single owner of `teams.slug`. `upsert_team` mints clubs with a NULL slug
+# and the route resolves a team page through that column, so a club born after
+# the May migration has no page at all — 4,004 rows (40.4%) on 2026-09-20. This
+# runs forward AND drains the backlog, because they are the same defect and one
+# mechanism cannot drift from itself. Additive only (`WHERE slug IS NULL`), so a
+# pass that half-finishes is a pass that did less, never one that broke a URL.
+
+@celery_app.task(bind=True, soft_time_limit=180, time_limit=240, name="app.tasks.backfill_team_slugs")
+def backfill_team_slugs(self, limit=None):
+    from app.tasks.team_slug_backfill import DEFAULT_LIMIT, _backfill_team_slugs
+    return run_async(_backfill_team_slugs(limit or DEFAULT_LIMIT))
+
+
 # --- Game State Backfill ---
 
 @celery_app.task(bind=True, soft_time_limit=1800, time_limit=1860, name="app.tasks.backfill_game_state")
@@ -7809,6 +7824,23 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.backfill_espn_ids",
         "schedule": crontab(minute=45, hour="5,11,17,23"),  # Every 6h, 30min after box scores
         "kwargs": {"limit": 1000},
+        "options": {"queue": "background"},
+    },
+    "backfill-team-slugs": {
+        # #7501 — the only writer of `teams.slug`. See `tasks/team_slug_backfill`.
+        #
+        # A CRONTAB, NOT AN INTERVAL, and the minutes are chosen, not rounded.
+        # `test_the_unavoidable_background_floor_is_named_and_has_not_grown`
+        # holds that a background interval beat slower than 180 s is not a
+        # continuous floor and has to be reasoned about as a co-fire; :05/:25/:45
+        # keeps every fire outside the settlement sweep's 10:31+13m window, so
+        # the co-fire ceiling this beat would otherwise push on is untouched.
+        #
+        # Three passes an hour at 500 rows drains the measured 4,004-row backlog
+        # in under three hours and then costs one indexed `slug IS NULL` scan
+        # per fire for as long as the mint keeps producing pageless clubs.
+        "task": "app.tasks.backfill_team_slugs",
+        "schedule": crontab(minute="5,25,45"),
         "options": {"queue": "background"},
     },
     "backfill-espn-win-prob": {
