@@ -81,6 +81,34 @@ function pp1(v: number): string {
   return v.toFixed(1);
 }
 
+/** #7596. `Error` is the only DERIVED figure in this table, and unlike every
+ *  other derived figure on the page its two inputs are printed in the same row.
+ *  `aggregateBuckets` rounds all three to 1dp INDEPENDENTLY — `avgProb` and
+ *  `actual` from their own ratios, `error` from the raw gap — so double rounding
+ *  can put 0.1pp between the error printed and the gap between the two numbers
+ *  printed beside it. On the 2026-09-20 payload it did on FIVE of ten rows:
+ *  74.6% / 77.2% / +2.7pp, 84.8% / 85.9% / +1.2pp, 4.2% / 3.8% / -0.5pp. A
+ *  reader who subtracts the columns — the one check this table can be checked
+ *  with by eye — got a different answer half the time, on the page about how
+ *  precise our numbers are.
+ *
+ *  `lib/calibrationMath.ts` already draws this line and draws it the same way:
+ *  `side().errorPp` is rounded from the raw ratio ("not from the two rounded
+ *  values") because that table prints no inputs beside it, while `gapPp` is
+ *  derived "at display precision" because both of ITS inputs are on screen. This
+ *  is that rule, applied to the one cell on the page that had neither.
+ *
+ *  This is the RENDER, not the measurement. `AggBucket.error` keeps its full
+ *  precision and is untouched: `ece()` and `mce()` read it to produce the
+ *  headline pp figure and every Source Comparison row, and a 0.05pp-per-bucket
+ *  shift there would move published numbers to fix a display. The cost here is
+ *  bounded at 0.05pp on a column whose values run 0.3-2.7pp inside intervals
+ *  ~0.7pp wide — below this table's own resolution, where the disagreement was
+ *  not. */
+function displayedErrorPp(b: Pick<AggBucket, "avgProb" | "actual">): number {
+  return Math.round((b.actual - b.avgProb) * 10) / 10;
+}
+
 export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket[] }) {
   return (
     <div className="overflow-x-auto scroll-shadow-x">
@@ -96,7 +124,9 @@ export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket
           </tr>
         </thead>
         <tbody>
-          {buckets.map(b => (
+          {buckets.map(b => {
+          const shownError = displayedErrorPp(b);
+          return (
             <tr key={b.bucket} className="border-t border-surface-border">
               {/* Same reason as the interval below: at 390px auto-layout gave
                   this column 58.7px and broke "30-40%" after the dash on four
@@ -129,13 +159,18 @@ export default function CalibrationBucketTable({ buckets }: { buckets: AggBucket
               >
                 {formatBucketCI(b)}
               </td>
+              {/* The colour reads the same number the cell prints, for the same
+                  reason: keyed on `b.error` a cell showing exactly "3.0pp" could
+                  be painted as though it were inside the 3pp bar. One quantity
+                  per cell, in the type and in the colour. */}
               <td className={`py-2 text-right tabular-nums ${
-                Math.abs(b.error) < 3 ? "text-text-muted" : b.error > 0 ? "text-green-600" : "text-red-600"
+                Math.abs(shownError) < 3 ? "text-text-muted" : shownError > 0 ? "text-green-600" : "text-red-600"
               }`}>
-                {b.error > 0 ? "+" : ""}{pp1(b.error)}pp
+                {shownError > 0 ? "+" : ""}{pp1(shownError)}pp
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>

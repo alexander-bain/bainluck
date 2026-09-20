@@ -111,7 +111,13 @@ describe("#6292 — six columns on a phone", () => {
     for (let r = 0; r < BUCKETS.length; r++) {
       const errorCell = cellsOf(MARKUP)[r * 6 + 5];
       expect(hiddenOnPhone(errorCell)).toBe(false);
-      expect(errorCell).toContain(`${BUCKETS[r].error}pp`);
+      // #7596: the figure is the gap between the two cells printed beside it, at
+      // 1dp — no longer `BUCKETS[r].error`, which on row 0 is the production
+      // -0.5pp against a printed 4.2% / 3.8%. This claim is about the column
+      // being PRESENT; the value rule is pinned below where it can fail.
+      expect(errorCell).toContain(
+        `${(Math.round((BUCKETS[r].actual - BUCKETS[r].avgProb) * 10) / 10).toFixed(1)}pp`
+      );
     }
   });
 
@@ -213,5 +219,103 @@ describe("#7183 — a whole-numbered figure keeps its decimal", () => {
         expect(cellText(r, c)).toMatch(/^[+-]?\d+\.\d(%|pp)$/);
       }
     }
+  });
+});
+
+// #7596 — THE `ERROR` CELL IS THE GAP BETWEEN THE TWO CELLS BESIDE IT.
+//
+// `aggregateBuckets` rounds `avgProb`, `actual` and `error` to 1dp
+// independently, so the printed error need not equal the printed inputs'
+// difference. On production (`/calibration`, `q271`, 2026-09-20 ~21:30Z) it did
+// not on FIVE of the headline table's ten rows — the whole table is in #7596.
+//
+// Why neither suite above could see it: `#6292`'s assertion interpolates
+// `BUCKETS[r].error`, which RESTATES whatever the component does with that
+// field, and `#7183`'s fixtures are whole numbers, where independent rounding
+// and display-precision rounding cannot differ. Row 0 of `#6292`'s own fixture
+// (4.2% / 3.8% / -0.5pp) is a real specimen of this defect that its assertion
+// could not fail on. This fixture exists to be the case they cannot be: every
+// row is one where the two rules disagree.
+const DISAGREE: AggBucket[] = [
+  // The five real mismatching rows off the 2026-09-20 payload. `error` is what
+  // `aggregateBuckets` produced from the raw ratios; the printed gap is 0.1pp
+  // away from it in each.
+  { midpoint: 5, n: 66556, winners: 2529, avgProb: 4.2, actual: 3.8, error: -0.5,
+    bucket: "0-10%", ciLower: 3.6, ciUpper: 3.9 },
+  { midpoint: 35, n: 43643, winners: 14926, avgProb: 34.9, actual: 34.2, error: -0.8,
+    bucket: "30-40%", ciLower: 33.7, ciUpper: 34.6 },
+  { midpoint: 65, n: 39528, winners: 25772, avgProb: 64.5, actual: 65.2, error: 0.8,
+    bucket: "60-70%", ciLower: 64.8, ciUpper: 65.7 },
+  { midpoint: 75, n: 28475, winners: 21983, avgProb: 74.6, actual: 77.2, error: 2.7,
+    bucket: "70-80%", ciLower: 76.7, ciUpper: 77.7 },
+  { midpoint: 85, n: 19926, winners: 17127, avgProb: 84.8, actual: 85.9, error: 1.2,
+    bucket: "80-90%", ciLower: 85.4, ciUpper: 86.4 },
+];
+
+describe("#7596 — the error printed is the difference of the figures printed", () => {
+  const MARKUP_D = renderToStaticMarkup(<CalibrationBucketTable buckets={DISAGREE} />);
+  const cellsD = cellsOf(MARKUP_D);
+  const cellTextD = (r: number, c: number) => textOf(cellsD[r * 6 + c]);
+
+  /** The fixture is only a test if the two rules really part on it. If a later
+   *  change to `aggregateBuckets` made these rows self-consistent, every
+   *  assertion below would pass against either rule and prove nothing. */
+  test("the fixture is a real disagreement on every row — never vacuous", () => {
+    for (const b of DISAGREE) {
+      const displayed = Math.round((b.actual - b.avgProb) * 10) / 10;
+      expect(displayed).not.toBeCloseTo(b.error, 5);
+      expect(Math.abs(displayed - b.error)).toBeCloseTo(0.1, 5);
+    }
+  });
+
+  test("every row's three printed figures reconcile — the check a reader runs", () => {
+    // Parsed back OUT of the markup rather than recomputed from the fixture, so
+    // this fails on what a reader would actually subtract.
+    expect(cellsD).toHaveLength(6 * DISAGREE.length);
+    for (let r = 0; r < DISAGREE.length; r++) {
+      const avg = parseFloat(cellTextD(r, 2).replace("%", ""));
+      // The rate cell carries the inline CI span, so take its leading figure.
+      const actual = parseFloat(
+        cellsD[r * 6 + 3].slice(cellsD[r * 6 + 3].indexOf(">") + 1).split("%")[0]
+      );
+      const printedError = parseFloat(cellTextD(r, 5).replace("pp", "").replace("−", "-"));
+      expect(printedError).toBeCloseTo(Math.round((actual - avg) * 10) / 10, 5);
+    }
+  });
+
+  test("the cell does NOT print the full-precision field when the two disagree", () => {
+    // The positive half of the claim above: it is not enough that the cell
+    // reconciles, it must have stopped printing `error`. Both are needed —
+    // a cell that printed neither would satisfy only one of them.
+    for (let r = 0; r < DISAGREE.length; r++) {
+      const b = DISAGREE[r];
+      expect(cellTextD(r, 5)).not.toContain(Math.abs(b.error).toFixed(1));
+      expect(cellTextD(r, 5)).toMatch(/^[+-]?\d+\.\d pp$|^[+-]?\d+\.\dpp$/);
+    }
+  });
+
+  test("sign and 1dp survive the change — including no `-0.0`", () => {
+    expect(cellTextD(0, 5)).toBe("-0.4pp");   // negative, and 0.4 not 0.5
+    expect(cellTextD(3, 5)).toBe("+2.6pp");   // positive keeps its "+"
+    const EQUAL: AggBucket[] = [
+      { midpoint: 55, n: 1000, winners: 550, avgProb: 55, actual: 55, error: -0.04,
+        bucket: "50-60%", ciLower: 52, ciUpper: 58 },
+    ];
+    const eq = renderToStaticMarkup(<CalibrationBucketTable buckets={EQUAL} />);
+    expect(textOf(cellsOf(eq)[5])).toBe("0.0pp"); // never "-0.0pp", never "+0.0pp"
+  });
+
+  test("the colour reads the number the cell prints, not the field", () => {
+    // A row whose printed gap lands exactly ON the 3pp bar while the raw field
+    // sits under it. Keyed on the field this cell would print "+3.0pp" in the
+    // muted "inside the bar" grey.
+    const ON_BAR: AggBucket[] = [
+      { midpoint: 75, n: 28475, winners: 22100, avgProb: 74.6, actual: 77.6, error: 2.9,
+        bucket: "70-80%", ciLower: 77.1, ciUpper: 78.1 },
+    ];
+    const cell = cellsOf(renderToStaticMarkup(<CalibrationBucketTable buckets={ON_BAR} />))[5];
+    expect(textOf(cell)).toBe("+3.0pp");
+    expect(ownClasses(cell)).toContain("text-green-600");
+    expect(ownClasses(cell)).not.toContain("text-text-muted");
   });
 });
