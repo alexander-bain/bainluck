@@ -410,6 +410,45 @@ export function stalenessScheduleClause(notice: CalibrationStalenessNotice): str
 }
 
 /**
+ * The methodology card's refresh-cadence sentence, or `null` for "say nothing".
+ *
+ * ## The defect this closes (#7612)
+ *
+ * `stalenessScheduleClause` above stopped the BANNER promising an hourly
+ * rebuild it could not support. The same promise survived one card down the
+ * page, as a string literal at the end of "What's included?", reading nothing
+ * from the payload:
+ *
+ *   > A price without participants isn't a prediction … Data refreshes hourly.
+ *
+ * Measured on production 2026-09-20 21:45Z: the page printed that over
+ * `producer: {stalled: true, beats_missed: 130}` — five days after the last
+ * refresh — while its own banner, in the same view, read "130 hourly rebuilds
+ * have come and gone without a new snapshot". Two sentences on one page load,
+ * each refuting the other.
+ *
+ * The rule is `stalenessScheduleClause`'s, applied to the surface that never
+ * got it: THE PAGE MAY DESCRIBE, IT MAY NOT PREDICT.
+ *
+ * The gate is the presence of a notice, not `producerProvenCurrent`, and that
+ * is deliberate — this sentence is about the DATA, not the curve. Under
+ * `frozen-inputs` the banner's own words are "The curve is current. The data
+ * behind it is older", so a card claiming the data refreshes hourly contradicts
+ * it just as squarely as under `last-good`, even though the producer is proven
+ * healthy. `null` in, the server said `fresh`, and the sentence is supported.
+ *
+ * Withheld rather than replaced, for #4113's reason: the banner directly above
+ * already describes the real state, and a paragraph explaining the absence is
+ * what notice 34 bans. A reader loses a true sentence on a fresh page and
+ * nothing else.
+ */
+export function methodologyRefreshClause(
+  notice: CalibrationStalenessNotice | null | undefined,
+): string | null {
+  return notice ? null : "Data refreshes hourly.";
+}
+
+/**
  * The drift clause, or `null` when there is nothing honest to say.
  *
  * Three readings and they are not interchangeable:
