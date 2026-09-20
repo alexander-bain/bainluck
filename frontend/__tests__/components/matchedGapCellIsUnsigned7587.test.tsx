@@ -197,6 +197,31 @@ type RenderedRow = {
   cells: string[];
 };
 
+/**
+ * Visible text of a markup fragment.
+ *
+ * A SCAN, not `.replace(/<[^>]*>/g, "")`. That one-liner is an HTML sanitizer's
+ * exact shape, is wrong on nested angle brackets, and CodeQL fails the PR for it
+ * with a HIGH `js/incomplete-multi-character-sanitization` — which it did to this
+ * file's first draft, the fourth time that has happened on this page's tests.
+ * Copied from `benchmarkRowCarriesItsPerBucketWord7225.test.tsx`, where the same
+ * two alerts and the same remedy are written out at length.
+ *
+ * No entity table is needed here: every cell this reads holds digits, `pp`, a
+ * comma, `%` or U+2212, and the only entity in the row markup — `&mdash;`, in the
+ * absent-side cells — is JSX, so React emits the character itself.
+ */
+function cellText(fragment: string): string {
+  let out = "";
+  let inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
 function renderedRows(html: string): RenderedRow[] {
   return html
     .split("<tr ")
@@ -207,7 +232,7 @@ function renderedRows(html: string): RenderedRow[] {
         .split("<td ")
         .slice(1)
         .map(td => td.slice(td.indexOf(">") + 1, td.indexOf("</td>")))
-        .map(inner => inner.replace(/<[^>]*>/g, ""));
+        .map(cellText);
       return {
         bucket: Number(/data-bucket="([^"]*)"/.exec(tr)?.[1]),
         gapAttr: /data-gap-pp="([^"]*)"/.exec(tr)?.[1] ?? "",
