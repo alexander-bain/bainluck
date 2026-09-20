@@ -64,7 +64,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.repair_7354_settled_orientation_swap import BAK_TABLE  # noqa: E402
+from scripts.repair_7354_settled_orientation_swap import (  # noqa: E402
+    BAK_TABLE,
+    wrong_app_refusal,
+)
 
 _EXISTS_SQL = f"SELECT to_regclass('{BAK_TABLE}') IS NOT NULL"
 
@@ -173,6 +176,13 @@ async def restore(session, apply: bool) -> dict:
 
 async def run(apply: bool) -> int:
     from app.tasks.base import get_task_session
+
+    # The same gate as the repair, by import rather than by copy — a restore is
+    # a production write in the opposite direction (ruling 47(c)).
+    refusal = wrong_app_refusal(apply)
+    if refusal:
+        print(refusal)
+        return 2
 
     async with get_task_session() as s:
         res = await restore(s, apply)

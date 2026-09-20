@@ -37,9 +37,11 @@ from app.utils.espn_helpers import (  # noqa: E402
     ESPN_ORIENTATION_UNRESOLVED,
 )
 from scripts.repair_7354_settled_orientation_swap import (  # noqa: E402
+    PRODUCER_APP,
     SLOT_COPY_PROOF,
     OrientationPlan,
     plan_orientation_repair,
+    wrong_app_refusal,
 )
 
 
@@ -533,6 +535,52 @@ class TestEveryLazyImportInTheRailResolves:
                 checked += 1
 
         assert checked, f"{module_name}: no function-local imports found to check"
+
+
+class TestTheWriteIsGatedOnTheNamedApp:
+    """Ruling 47(c) makes this rail's DDL non-migration-class *because* it runs
+    only when a person invokes it on a named app behind its own gate. The rail
+    cited 47(c) and had no such gate; this is it.
+    """
+
+    def test_a_dry_run_is_a_read_and_runs_anywhere(self, monkeypatch):
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+
+        assert wrong_app_refusal(False) is None
+
+    def test_an_apply_on_the_named_app_is_allowed(self, monkeypatch):
+        monkeypatch.setenv("HEROKU_APP_NAME", PRODUCER_APP)
+
+        assert wrong_app_refusal(True) is None
+
+    def test_an_apply_on_another_app_is_refused_by_name(self, monkeypatch):
+        monkeypatch.setenv("HEROKU_APP_NAME", "bainluck-heavy")
+        refusal = wrong_app_refusal(True)
+
+        assert refusal is not None
+        assert "bainluck-heavy" in refusal and PRODUCER_APP in refusal
+
+    def test_an_unset_app_refuses_rather_than_falling_through(self, monkeypatch):
+        """A laptop pointed at the production database is the case this exists
+        for, and it is the case with no `HEROKU_APP_NAME` at all."""
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+        refusal = wrong_app_refusal(True)
+
+        assert refusal is not None
+        assert "HEROKU_APP_NAME is unset" in refusal
+
+    def test_the_refusal_names_the_script_that_was_invoked(self, monkeypatch):
+        """The undo imports this refusal. Telling someone who reached for the
+        restore to re-run the repair `--apply` is the worst instruction we
+        could hand the person who has just decided the repair went wrong.
+        """
+        monkeypatch.delenv("HEROKU_APP_NAME", raising=False)
+        monkeypatch.setattr(
+            sys, "argv", ["scripts/restore_7354_settled_orientation_swap.py", "--apply"])
+        refusal = wrong_app_refusal(True)
+
+        assert "restore_7354_settled_orientation_swap.py" in refusal
+        assert "repair_7354_settled_orientation_swap.py" not in refusal
 
 
 class TestBothHalvesOfThePairAnswerHelpWithoutADatabase:

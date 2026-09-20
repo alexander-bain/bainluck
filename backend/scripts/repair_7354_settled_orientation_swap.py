@@ -161,6 +161,54 @@ from app.utils.espn_helpers import (  # noqa: E402
 
 BAK_TABLE = "bak_7354_settled_orientation_swap"
 
+#: Ruling 47(c) makes this rail's `CREATE TABLE IF NOT EXISTS` non-migration-class
+#: because a PERSON invokes it, on a NAMED app, behind its own gate. This is that
+#: named app, and it is asserted rather than assumed.
+#:
+#: `bainluck`, not `bainluck-heavy`: the writer that mints this defect is the
+#: ESPN slot copy behind `sync_espn_live_events`, which is NOT in `HEAVY_TASKS`
+#: (28 entries, checked 2026-09-20), so standing notice 48 does not reach this
+#: ship and the heavy app has no part in it.
+PRODUCER_APP = "bainluck"
+
+
+def wrong_app_refusal(apply: bool) -> Optional[str]:
+    """The gate that earns 47(c). Returns a refusal to print, or ``None``.
+
+    A dry run is a read and runs anywhere — that is the whole point of having
+    one. Only a write is gated.
+
+    THE UNDO IMPORTS THIS. A restore is a production write in the opposite
+    direction and earns the identical gate; it is also the write most likely to
+    be typed in a hurry by someone who has just decided the repair went wrong.
+
+    UNSET REFUSES. `HEROKU_APP_NAME` comes from the `runtime-dyno-metadata`
+    lab; absent it, we are a laptop pointed at whatever `DATABASE_URL` happens
+    to name, running whatever happens to be checked out — precisely the case
+    this gate exists to stop, and not a case to fall through on.
+    """
+    if not apply:
+        return None
+
+    app = os.environ.get("HEROKU_APP_NAME")
+    if app == PRODUCER_APP:
+        return None
+
+    where = f"'{app}'" if app else "not a Heroku dyno (HEROKU_APP_NAME is unset)"
+    # The invoked script, never a hardcoded name: this function is SHARED with
+    # the undo, and a refusal that told someone reaching for the restore to
+    # re-run the repair `--apply` would be the worst possible instruction to
+    # hand the person who has just decided the repair went wrong.
+    script = os.path.basename(sys.argv[0]) or "repair_7354_settled_orientation_swap.py"
+    return (
+        f"REFUSING to write: this is {where}, not '{PRODUCER_APP}'. This pair "
+        f"rewrites settled scores, two observation series and a probability leg "
+        f"on production rows. Re-run with "
+        f"`heroku run:detached -a {PRODUCER_APP} \"python3 scripts/{script} "
+        f"--apply\"` (gotcha #48: non-detached returns empty stdout that reads "
+        f"like success)."
+    )
+
 #: The proof that separates an ORIENTATION SWAP from a SCORE DRIFT.
 #:
 #: A slot-copied STORE holds ESPN's two numbers in ESPN's own slots: its
@@ -856,8 +904,13 @@ async def _scan_one(session, client, row, res: dict, apply: bool) -> None:
 
 
 async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
-              since_days: int) -> None:
+              since_days: int) -> int:
     from app.tasks.base import get_task_session
+
+    refusal = wrong_app_refusal(apply)
+    if refusal:
+        print(refusal)
+        return 2
 
     async with get_task_session() as s:
         res = await repair(s, apply, limit=limit, sport=sport, offset=offset,
@@ -916,6 +969,7 @@ async def run(apply: bool, limit: int, sport: Optional[str], offset: int,
                   f"({res['remaining']} rows remaining).")
     else:
         print("\nDRY-RUN — pass --apply to commit.")
+    return 0
 
 
 USAGE = """repair_7354_settled_orientation_swap — settled ESPN orientation swaps
@@ -947,4 +1001,4 @@ if __name__ == "__main__":
             _since = int(sys.argv[i + 1])
         if a == "--sport" and i + 1 < len(sys.argv):
             _sport = sys.argv[i + 1]
-    asyncio.run(run("--apply" in sys.argv, _limit, _sport, _offset, _since))
+    sys.exit(asyncio.run(run("--apply" in sys.argv, _limit, _sport, _offset, _since)))
