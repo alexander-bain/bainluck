@@ -602,16 +602,34 @@ struct EvolutionChartView: View {
         let earlier = seen - inWindow
 
         guard seen > 0 else { return SparseCopy(note: "No price history yet", hint: nil) }
+
+        // 🔴 The window count is NOT capped at one. `cardBody` gates on POINTS and
+        // this sentence counts INSTANTS, and the two diverge: `chartEntries` only
+        // emits a point for an outcome the card is displaying, so a timeline entry
+        // carrying just `Field` (filtered out) or only outcomes past `topFilter`
+        // is an instant with no point. Two such entries plus older history reached
+        // `inWindow == 2` while the card was still sparse, and the old ternary read
+        // every one of them as "One price". Count what is there.
+        let windowPhrase: String
+        switch inWindow {
+        case 0: windowPhrase = "No prices \(windowWord)"
+        case 1: windowPhrase = "One price \(windowWord)"
+        default: windowPhrase = "\(inWindow) prices \(windowWord)"
+        }
+
+        // Nothing older means the window already holds everything the response has,
+        // so the window's own name would be noise — and on the widest chip (no
+        // cutoff) it is always this branch. "so far" is true of every range.
         guard earlier > 0 else {
             return SparseCopy(
-                note: inWindow == 1 ? "Only one price seen so far" : "No price history yet",
+                note: inWindow == 1
+                    ? "Only one price seen so far"
+                    : "\(inWindow) prices seen so far",
                 hint: nil)
         }
 
         let earlierPhrase = earlier == 1 ? "one earlier price" : "\(earlier) earlier prices"
-        let note = inWindow == 0
-            ? "No prices \(windowWord) — \(earlierPhrase)"
-            : "One price \(windowWord) — \(earlierPhrase)"
+        let note = "\(windowPhrase) — \(earlierPhrase)"
         return SparseCopy(note: note, hint: "Try a longer range")
     }
 

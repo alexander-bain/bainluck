@@ -181,6 +181,36 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
             "singular and plural are both written, so neither reads as a template")
     }
 
+    /// 🔴 `cardBody` gates on POINTS; this sentence counts INSTANTS. They diverge —
+    /// `chartEntries` emits nothing for a timeline entry whose only outcomes are
+    /// `Field` (filtered) or past `topFilter` — so a sparse card CAN hold two or
+    /// more instants. The first cut read `inWindow` as a ternary and called every
+    /// such window "One price".
+    func testAWindowHoldingSeveralPricesIsNotCalledOne() {
+        let copy = Chart.sparseCopy(
+            windowInstants: 3, totalInstants: 9, windowWord: "in the last 7 days")
+
+        XCTAssertEqual(copy.note, "3 prices in the last 7 days — 6 earlier prices")
+        XCTAssertEqual(copy.hint, "Try a longer range")
+        XCTAssertFalse(
+            copy.note.hasPrefix("One price"),
+            "three observations must never be reported as one")
+    }
+
+    /// The same divergence with nothing older: the old code fell past the `earlier`
+    /// guard and printed "No price history yet" over a response holding nine prices
+    /// — the exact sentence #7350 exists to stop (gotcha #53).
+    func testAFullWindowWithNothingOlderStillCountsWhatItHas() {
+        let copy = Chart.sparseCopy(
+            windowInstants: 4, totalInstants: 4, windowWord: "in the last 7 days")
+
+        XCTAssertEqual(copy.note, "4 prices seen so far")
+        XCTAssertNil(copy.hint, "there is nothing older to reach")
+        XCTAssertNotEqual(
+            copy.note, "No price history yet",
+            "four prices are not an absence")
+    }
+
     // MARK: - The window's own name
 
     func testEachChipIsNamedInASentenceAReaderCanHold() {
@@ -204,10 +234,15 @@ final class ASparseWindowKeepsItsRangeControls7350Tests: XCTestCase {
 
     /// The widest range has no cutoff, so its window IS the whole response: when it
     /// is sparse there are never "earlier prices" to name, and the word is unused.
+    ///
+    /// The note is asserted in full, not just probed for the absent word: this case
+    /// used to return "No price history yet" over NINE prices and still satisfy both
+    /// checks below, so a bare `XCTAssertFalse` is exactly the guard that let it sit.
     func testTheWidestRangeNeverNeedsItsWord() {
         let copy = Chart.sparseCopy(
             windowInstants: 9, totalInstants: 9, windowWord: Chart.windowWord(for: .season))
 
+        XCTAssertEqual(copy.note, "9 prices seen so far")
         XCTAssertFalse(copy.note.contains("in this range"))
         XCTAssertNil(copy.hint)
     }
