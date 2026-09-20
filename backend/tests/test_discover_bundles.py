@@ -8,6 +8,10 @@ def _futures_item(
     theme: str = "ipo_valuation",
     public_source_disagreement: bool = False,
     threshold_count: int = 3,
+    # #7403 — real rungs always carry their provenance; these fixtures did not,
+    # so the date-ladder gate could not be exercised through them. "outcome" is
+    # what a magnitude rung carries, which is what every test here means.
+    rung_source: str = "outcome",
 ) -> dict:
     return {
         "type": "futures",
@@ -25,7 +29,12 @@ def _futures_item(
                 "bundle_candidate": True,
                 "comparison_theme": theme,
                 "threshold_points": [
-                    {"label": f"${index}B", "value": index, "probability": 0.2}
+                    {
+                        "label": f"${index}B",
+                        "value": index,
+                        "probability": 0.2,
+                        "source": rung_source,
+                    }
                     for index in range(threshold_count)
                 ],
                 "public_source_disagreement": public_source_disagreement,
@@ -930,3 +939,75 @@ def test_caps_constants_not_mutated_by_bundling():
     assert '"story:russia_ukraine": 2' in src
     assert '"story:us_2028_election": 2' in src
     assert "story_family_cap: int = 5" in src
+
+
+# ---------------------------------------------------------------------------
+# #7403 — A COMPARISON BUNDLE COMPARES MAGNITUDES, AND TIME IS NOT ONE.
+#
+# Every theme in `PUBLIC_COMPARISON_BUNDLE_THEMES` asks "how much": a valuation,
+# a price band, a Rotten Tomatoes score, a rainfall. A date ladder asks "by
+# when". Bundling the two puts "when does Anthropic announce an IPO?" beside
+# "what is Anthropic worth at IPO?" under one shared question true of neither.
+#
+# Measured on the served feed before the day-granularity parser landed: all five
+# cards passing `_theme_for_item`'s gates were magnitude ladders and none was a
+# date ladder — the separation was an accident of which labels the venues write,
+# not a rule. Widening the parser would have admitted three, including a Senate
+# board that `_COMMODITY_RE` reads as a commodity because the pollster it names
+# is Nate SILVER. So the rule is written down.
+
+
+def test_a_date_ladder_does_not_join_a_magnitude_comparison_bundle():
+    items = [
+        _futures_item(1, "SpaceX IPO Closing Market Cap"),
+        _futures_item(2, "Stripe IPO Closing Market Cap"),
+        _futures_item(3, "When will Anthropic announce an IPO?", rung_source="date_bucket"),
+    ]
+
+    result = assemble_discover_comparison_bundles(items)
+
+    bundles = [item for item in result if item["type"] == "bundle"]
+    assert len(bundles) == 1
+    members = bundles[0]["data"]["member_ids"]
+    assert 3 not in members, "a 'by when' ladder is not an IPO VALUATION"
+    assert sorted(members) == [1, 2]
+    # And it is not swallowed either — it survives as its own card.
+    assert 3 in [
+        item["data"]["id"] for item in result if item["type"] == "futures"
+    ]
+
+
+def test_a_magnitude_comparison_bundle_still_assembles():
+    # Both directions (gotcha #43): the gate must not eat the bundles it is
+    # meant to leave alone. Same three IPO ladders, all magnitude rungs.
+    items = [
+        _futures_item(1, "SpaceX IPO Closing Market Cap"),
+        _futures_item(2, "Stripe IPO Closing Market Cap"),
+        _futures_item(3, "Databricks IPO Closing Market Cap"),
+    ]
+
+    result = assemble_discover_comparison_bundles(items)
+
+    bundles = [item for item in result if item["type"] == "bundle"]
+    assert len(bundles) == 1
+    assert sorted(bundles[0]["data"]["member_ids"]) == [1, 2, 3]
+
+
+def test_a_mixed_ladder_is_not_read_as_a_date_ladder():
+    # `all`, not `any` — matching `FuturesCard.ladderKind`'s `every`. One
+    # magnitude rung and the board is not a date ladder, so it keeps whatever
+    # membership it had; the gate may not widen itself into magnitude ladders
+    # that happen to carry one dated rung.
+    mixed = _futures_item(3, "Databricks IPO Closing Market Cap")
+    mixed["data"]["discover_card"]["threshold_points"][0]["source"] = "date_bucket"
+    items = [
+        _futures_item(1, "SpaceX IPO Closing Market Cap"),
+        _futures_item(2, "Stripe IPO Closing Market Cap"),
+        mixed,
+    ]
+
+    result = assemble_discover_comparison_bundles(items)
+
+    bundles = [item for item in result if item["type"] == "bundle"]
+    assert len(bundles) == 1
+    assert sorted(bundles[0]["data"]["member_ids"]) == [1, 2, 3]

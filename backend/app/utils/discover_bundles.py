@@ -370,6 +370,29 @@ def _theme_for_item(item: dict[str, Any]) -> str | None:
     points = card.get("threshold_points") or []
     if len(points) < 2:
         return None
+    # #7403 — A COMPARISON BUNDLE COMPARES MAGNITUDES, AND TIME IS NOT ONE.
+    #
+    # Every theme in `PUBLIC_COMPARISON_BUNDLE_THEMES` asks "how much" — a
+    # valuation, a price band, a score, a rainfall. A date ladder asks "by
+    # when", and stacking the two in one bundle puts "when does Anthropic
+    # announce an IPO?" beside "what is Anthropic worth at IPO?" under a single
+    # shared question that is true of neither.
+    #
+    # This never fired before because the date parser only read MONTH-granularity
+    # buckets, which no themed market happened to use: measured on the served
+    # feed the day the day-granularity arm was written, all five cards passing
+    # the four gates above were magnitude ladders and none was a date ladder.
+    # Widening the parser put three date ladders in — "Anthropic IPO?",
+    # "When will Anthropic officially announce an IPO?", and a Senate board that
+    # `_COMMODITY_RE` reads as a commodity because the pollster is called Nate
+    # SILVER. So the rule is written down rather than left to depend on which
+    # labels a venue happens to write.
+    #
+    # `all`, matching `FuturesCard.ladderKind`'s `every`: the backend returns
+    # date rungs whole and first, so a ladder is homogeneous by construction and
+    # a mixture is not a date ladder either surface recognises.
+    if all(point.get("source") == "date_bucket" for point in points):
+        return None
     return str(theme)
 
 
