@@ -38,6 +38,10 @@ from app.utils.game_pairing import (
     live_write_is_premature as espn_live_write_is_premature,
     pair_verdict,
 )
+# #1918 — the write-time team-binding invariant. `tasks/espn_sync` has gated its
+# own door since the guard shipped; the two doors in THIS module write the same
+# column from the same `upsert_team` and were never routed through it (#4883).
+from app.utils.team_binding_invariant import accept_team_binding
 
 logger = logging.getLogger(__name__)
 
@@ -2089,9 +2093,30 @@ async def sync_scheduled_events(session, sport_key, espn_events, stats):
         ee = matched_espn
         home_team = await upsert_team(session, event.home_team_name, ee.home_team, event.sport_id, sched_team_cache, stats)
         away_team = await upsert_team(session, event.away_team_name, ee.away_team, event.sport_id, sched_team_cache, stats)
-        if home_team and event.home_team_id != home_team.id:
+        # #1918/#4883. Same column, same resolver and the same OVERWRITE shape as
+        # the live door in `tasks/espn_sync` — which has been gated since the guard
+        # shipped, while these two were not. `upsert_team` reaches the DB through
+        # three fuzzy arms before it gives up, and the "sound by construction"
+        # reading of this write is a claim about those arms, not about this line.
+        if event.home_team_id != getattr(home_team, "id", None) and accept_team_binding(
+            side="home",
+            row_name=event.home_team_name,
+            team=home_team,
+            event_sport_id=event.sport_id,
+            source="espn_scheduled",
+            event_id=event.id,
+            stats=stats,
+        ):
             event.home_team_id = home_team.id
-        if away_team and event.away_team_id != away_team.id:
+        if event.away_team_id != getattr(away_team, "id", None) and accept_team_binding(
+            side="away",
+            row_name=event.away_team_name,
+            team=away_team,
+            event_sport_id=event.sport_id,
+            source="espn_scheduled",
+            event_id=event.id,
+            stats=stats,
+        ):
             event.away_team_id = away_team.id
 
         # Register ESPN team identities (cached to avoid re-registering)
@@ -2537,9 +2562,32 @@ async def backfill_missing_scores(session, stats):
                             # Upsert teams for colors/logos
                             home_team = await upsert_team(session, ev.home_team_name, ee.home_team, ev.sport_id, backfill_team_cache, stats)
                             away_team = await upsert_team(session, ev.away_team_name, ee.away_team, ev.sport_id, backfill_team_cache, stats)
-                            if home_team and ev.home_team_id != home_team.id:
+                            # #1918/#4883, the third door. This rail is the loosest
+                            # of the three: it recalls a candidate by NAME across a
+                            # whole UTC date with the rival veto deliberately left
+                            # off (see the import note above), so a wrong-club
+                            # `upsert_team` return has the fewest things standing in
+                            # front of it here. A refusal costs the FK only — the
+                            # score written above stands.
+                            if ev.home_team_id != getattr(home_team, "id", None) and accept_team_binding(
+                                side="home",
+                                row_name=ev.home_team_name,
+                                team=home_team,
+                                event_sport_id=ev.sport_id,
+                                source="espn_score_backfill",
+                                event_id=ev.id,
+                                stats=stats,
+                            ):
                                 ev.home_team_id = home_team.id
-                            if away_team and ev.away_team_id != away_team.id:
+                            if ev.away_team_id != getattr(away_team, "id", None) and accept_team_binding(
+                                side="away",
+                                row_name=ev.away_team_name,
+                                team=away_team,
+                                event_sport_id=ev.sport_id,
+                                source="espn_score_backfill",
+                                event_id=ev.id,
+                                stats=stats,
+                            ):
                                 ev.away_team_id = away_team.id
                             stats["scores_backfilled"] = stats.get("scores_backfilled", 0) + 1
                             logger.info(
