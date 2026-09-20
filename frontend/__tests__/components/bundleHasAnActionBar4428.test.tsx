@@ -161,7 +161,15 @@ describe("#4428 — the comparison sibling gets the same footer", () => {
 
   it("CONTROL: the render reached a real GroupCard", () => {
     expect(markup).toContain(QUESTION);
-    expect(markup).toContain("Show 1 more");
+    // #7492 re-anchored this line. It read `toContain("Show 1 more")`, which
+    // was a fine control while the card seated `items[0]` and grew that footer
+    // for its one hidden member — but "Show 1 more" WAS the defect #7492
+    // removed, so the control had become a pin holding the bug in place. The
+    // card now seats both members of this two-member fixture, so the rows
+    // themselves are the stronger control: they say the render reached a real
+    // GroupCard AND that it drew the bundle, not just the header.
+    expect(markup).toContain("2028 U.S. Presidential Election winner?");
+    expect(markup).toContain("2028 Democratic presidential nominee");
   });
 
   it("🔴 THE SIBLING SHIP: GroupCard renders the bundle action bar too", () => {

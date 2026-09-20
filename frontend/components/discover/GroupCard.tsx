@@ -5,7 +5,7 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
-import { getCat } from "./constants";
+import { BUNDLE_PEEK_COUNT, getCat } from "./constants";
 import { FuturesCompactRow } from "./FuturesCard";
 
 interface GroupCardProps {
@@ -36,12 +36,30 @@ interface GroupCardProps {
  * "2 markets". It now carries the question the members are all answers to, on
  * its own line for the same reason ThemeBundleCard does — a question is a
  * sentence and does not fit beside the chip at 390px. The count is not lost:
- * the member rows are underneath and "Show N more" still prints it.
+ * the member rows are underneath and "Show all N" still prints it whenever
+ * there is more behind the chevron than the card already seats.
+ *
+ * #7492: it used to seat `items[0]` and nothing else, so a card whose own
+ * header asked "Which of these companies is priced highest to list?" drew ONE
+ * company under a `Show 1 more` — a control that cost a row to reveal a row,
+ * and a comparison the reader could not make without a tap. The theme sibling
+ * has seated five since it was written. Both now read `BUNDLE_PEEK_COUNT`, and
+ * the footer takes the sibling's label, accent token and top border: two bundle
+ * cards side by side in one scroll are one card family (notice 35), and these
+ * two differed in seat count, label, colour and border at once.
  */
 export function GroupCard({ items, title, sharedQuestion, positionIndex }: GroupCardProps) {
   const [expanded, setExpanded] = useState(false);
   const primary = items[0];
-  const rest = items.slice(1);
+  const peek = items.slice(0, BUNDLE_PEEK_COUNT);
+  // Every row this card draws is a `FuturesCompactRow` in BOTH states — unlike
+  // the theme sibling, which swaps compact rows for full member cards — so
+  // expanding a bundle that already seats all of its members changes nothing on
+  // screen. The chevron and the header's click target are therefore conditional
+  // on there being something behind them; a control that does nothing is the
+  // same lie as the `Show 1 more` this fix removes.
+  const canExpand = items.length > BUNDLE_PEEK_COUNT;
+  const shown = expanded ? items : peek;
   const cat = primary.type === "futures" ? (primary.data as FeedFuturesData).llm_sport_category : null;
   const catStyle = getCat(cat);
   const analytics = getDiscoverItemAnalytics(primary);
@@ -64,8 +82,11 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
     <div className="rounded-2xl border border-surface-border bg-surface-card shadow-lg overflow-hidden">
       {/* Group header */}
       <button
+        type="button"
         onClick={() => setExpandedWithTracking(!expanded)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-surface-elevated/50 hover:bg-surface-elevated transition-colors text-left"
+        disabled={!canExpand}
+        aria-expanded={canExpand ? expanded : undefined}
+        className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 bg-surface-elevated/50 transition-colors text-left ${canExpand ? "hover:bg-surface-elevated" : "cursor-default"}`}
       >
         <div className="flex flex-col gap-1 min-w-0">
           <span className="flex items-center gap-2 min-w-0">
@@ -87,29 +108,29 @@ export function GroupCard({ items, title, sharedQuestion, positionIndex }: Group
             <span className="text-sm font-semibold text-text-primary leading-snug">{sharedQuestion}</span>
           )}
         </div>
-        <svg className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
+        {canExpand && (
+          <svg className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
       </button>
 
-      {/* Primary item always visible */}
-      <div className="px-4 py-3 border-b border-surface-border">
-        <FuturesCompactRow item={primary} data={primary.data as FeedFuturesData} />
-      </div>
-
-      {/* Rest shown on expand */}
-      {expanded && rest.map((item, i) => (
+      {/* The members: the first BUNDLE_PEEK_COUNT of them collapsed, all of them
+          expanded. Both are the same compact row — the header's question is
+          answered by the rows, so the rows are what the card is for. */}
+      {shown.map((item, i) => (
         <div key={i} className="px-4 py-3 border-b border-surface-border last:border-0">
           <FuturesCompactRow item={item} data={item.data as FeedFuturesData} />
         </div>
       ))}
 
-      {!expanded && rest.length > 0 && (
+      {!expanded && canExpand && (
         <button
+          type="button"
           onClick={() => setExpandedWithTracking(true)}
-          className="w-full text-center py-2 text-xs text-blue-600 hover:text-blue-700 font-medium"
+          className="w-full text-center py-2.5 text-xs font-medium text-accent-brand hover:text-accent-brand/80 border-t border-surface-border"
         >
-          Show {rest.length} more
+          Show all {items.length}
         </button>
       )}
 

@@ -5,7 +5,7 @@ import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
-import { getCat } from "./constants";
+import { BUNDLE_PEEK_COUNT, getCat } from "./constants";
 import { FuturesCard, FuturesCompactRow } from "./FuturesCard";
 
 interface ThemeBundleCardProps {
@@ -23,7 +23,8 @@ interface ThemeBundleCardProps {
 }
 
 // Number of members shown in the collapsed mini-ranked-peek before "show all".
-const PEEK_COUNT = 5;
+// Shared with the comparison sibling since #7492 — see `BUNDLE_PEEK_COUNT`.
+const PEEK_COUNT = BUNDLE_PEEK_COUNT;
 
 /**
  * Theme bundle (geopolitics archetype — Phase 1, slice 1).
