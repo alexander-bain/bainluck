@@ -1822,7 +1822,15 @@ export default function CalibrationPage() {
               <CalibrationCardNote label="Reading this table" className="mt-2 mb-0">
                 <p className="text-xs text-text-muted">
                   Error is actual minus predicted, in percentage points: negative = the outcome
-                  happened <em>less</em> often than the price implied. Rows where either side is
+                  happened <em>less</em> often than the price implied. {/* #7587: this sign rule
+                  governs the first two columns only, and the gap cell used to wear the same sign
+                  in the same type — so the rule read onto a number it is false of. The cell is now
+                  unsigned, which is a difference from its two neighbours and so is said here once,
+                  in the fold that already decodes the columns. */}
+                  The {COHORT_NOUNS.moved.column} and {COHORT_NOUNS.unchanged.column} figures are
+                  each an error of that kind; Difference is the two subtracted, so it is the gap
+                  between them rather than an error of its own, and it carries no sign &mdash; which
+                  column sits lower is in the two columns themselves. Rows where either side is
                   below {MIN_CHART_BUCKET_N.toLocaleString()} outcomes are shown but greyed &mdash;
                   too thin to carry a comparison. A dash means only one cohort reaches that bucket,
                   so there is no matched pair to compare.
@@ -3371,6 +3379,31 @@ function MatchedBucketTableRow({ row, widest }: {
   widest: boolean;
 }) {
   const fmt = (pp: number) => `${pp > 0 ? "+" : pp < 0 ? "−" : ""}${Math.abs(pp).toFixed(1)}pp`;
+  // #7587: the two ERROR cells are signed and the fold under this table defines
+  // that sign — "negative = the outcome happened less often than the price
+  // implied". The gap cell used the same `fmt`, so it wore the same sign in the
+  // same type, and the rule the reader had just been given was false of it:
+  // 40-50% read −3.8pp, and nothing in that band happened 3.8pp less often than
+  // its price implied — −3.5 and +0.3 subtracted is not an error anything has.
+  //
+  // The sign also could not be rescued by explaining it, because it does not
+  // track the thing the heading asks about. Measured on the 2026-09-20 payload:
+  // at 40-50% (−3.49 vs +0.31) the negative gap is traded sitting ELEVEN TIMES
+  // further from the line; at 50-60% (+0.18 vs +1.69) the negative gap is traded
+  // sitting nine times CLOSER. Same sign, opposite verdicts, under a heading
+  // that asks which cohort predicts better.
+  //
+  // So the cell prints the quantity the sentence forty pixels below already
+  // calls a difference — `Math.abs(widest.gapPp)`, "a 3.8pp difference", and
+  // "within 2pp of each other" — and the two now state one quantity in one
+  // convention. It also makes that finding checkable by eye: "within 2pp" is a
+  // claim about |gap|, and a reader could only verify it by abs-ing ten rows.
+  //
+  // Direction is not lost: it is in the two signed, explained columns beside
+  // this one. `gapPp` stays signed (`lib/calibrationMath.ts`), `widest` is still
+  // chosen on `Math.abs`, and `data-gap-pp` below still carries the sign for
+  // probes — this is the RENDER, not the measurement.
+  const fmtGap = (pp: number) => `${Math.abs(pp).toFixed(1)}pp`;
   const thin = !row.comparable;
   return (
     <tr
@@ -3394,7 +3427,7 @@ function MatchedBucketTableRow({ row, widest }: {
       <td className={`py-2 text-right tabular-nums ${widest ? "font-semibold" : ""}`}>
         {row.gapPp === null
           ? <span aria-label="no matched pair to compare">&mdash;</span>
-          : fmt(row.gapPp)}
+          : fmtGap(row.gapPp)}
       </td>
     </tr>
   );
