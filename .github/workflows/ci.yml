@@ -2729,6 +2729,39 @@ jobs:
             exit 1
           fi
 
+      - name: "#7354 the settled-orientation rail can open its own census (real Postgres)"
+        # The rail merged with 54 green guards and could not execute. Its
+        # `_SETTLED_PREDICATE` carried `(:sport_key IS NULL OR s.key = :sport_key)`,
+        # and a bind whose only typing context is `IS NULL` has no type Postgres
+        # can infer, so asyncpg dies in PREPARE — before it looks at a value:
+        # `AmbiguousParameterError: could not determine data type of parameter $2`.
+        # Measured on production the morning after it merged, `run.8889` (no
+        # sport) and `run.3415` (`--sport americanfootball_ncaaf`), both exit 1
+        # on the first statement. Every one of the 54 guards drives a fake
+        # session, so no reader in the repo could see it; a server is the only
+        # thing that can.
+        #
+        # Runs the SHIPPED `run()` — the function the Heroku one-off calls —
+        # with `get_task_session` pointed at this database and only the ESPN
+        # HTTP call substituted, so what is asserted is the operator's own exit
+        # code and `population=` line. Dry-run only; the `--apply` half is D51(b)
+        # work and belongs with #6919's gate above, not here.
+        #
+        # A cast is not the only edit that silences the error — deleting the
+        # clause does too — so the corpus spans two sports and the arms assert
+        # both directions of the filter, plus the `--since-days` floor and the
+        # NULL-`espn_id` exclusion that share the predicate. Red-first is
+        # executed, not remembered: one arm reverts the cast by surgery on the
+        # shipped constant and asserts the server still refuses it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_7354_population_sql_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/census7354.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/census7354.txt; then
+            echo "::error::#7354 rail census gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6977 diacritic search fold, three rails (real Postgres)"
         # A plain-keyboard reader reached NONE of an accented club's rows.
         # Measured on production 2026-09-18, same minute, two spellings:

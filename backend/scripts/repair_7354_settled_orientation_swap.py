@@ -232,6 +232,18 @@ SLOT_COPY_PROOF = "ESPN's pair still sits in ESPN's slots"
 
 # Settled rows ESPN can still adjudicate. ONE definition, shared by the census
 # and the candidate fetch so the bound and the work cannot drift apart.
+#
+# 🔴 ``CAST(:sport_key AS text)``, NOT the bare bind. A bind parameter whose only
+# typing context is ``IS NULL`` has no type PostgreSQL can infer, so asyncpg's
+# PREPARE raises ``AmbiguousParameterError: could not determine data type of
+# parameter $2`` — for EVERY invocation, with or without ``--sport``, because the
+# failure is in the statement's type resolution and never reaches the values. The
+# rail could not open its own census; measured on production 2026-09-20 07:23Z
+# (run.8889, no sport) and 07:25Z (run.3415, ``--sport americanfootball_ncaaf``),
+# both exit 1 on the COUNT. Every test this rail shipped with drives a fake
+# session, so the text was never prepared by a server until it was invoked on one.
+# ``make_interval(days => :since_days)`` is typed by the function's own signature
+# and is fine; the ``IS NULL`` operand is the only untyped position here.
 _SETTLED_PREDICATE = """
       e.status IN ('closed', 'completed')
       AND e.espn_id IS NOT NULL
@@ -239,7 +251,7 @@ _SETTLED_PREDICATE = """
       AND e.away_score IS NOT NULL
       AND e.commence_time IS NOT NULL
       AND e.commence_time >= NOW() - make_interval(days => :since_days)
-      AND (:sport_key IS NULL OR s.key = :sport_key)
+      AND (CAST(:sport_key AS text) IS NULL OR s.key = CAST(:sport_key AS text))
 """
 
 _POPULATION_SQL = f"""
