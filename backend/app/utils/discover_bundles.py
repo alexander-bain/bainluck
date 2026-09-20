@@ -810,7 +810,49 @@ def _golf_tournament_bundle_copy(
     # Members of one key slugify identically, so this only ever picks between
     # spellings of the same tournament; the most common wins, ties by first
     # appearance (i.e. by the best-scoring member).
-    label = max(names, key=lambda t: (names.count(t), -names.index(t)))
+    #
+    # THE VOTE NEEDS A QUALITY GATE BEFORE IT COUNTS, because the venue disagrees
+    # with ITSELF (#7348). Kalshi ships this one tournament both ways —
+    # `BMW PGA Championship End of Round 3 Leader` and
+    # `Bmw Pga Championship: Top 10 Finishers` — so "most common" is a vote over
+    # strings of unequal quality, and on a SUBSET it loses. Production `?q=pga`
+    # served a four-member family, three garbled to one correct, and headed
+    # itself `Bmw Pga Championship`: Alex's bug report 145 ("awkward to see 'Mma'
+    # with the 2nd and 3rd letter in lowercase", #1938) on a tournament a reader
+    # searched for by its acronym, while the family's own members spelled it
+    # right. The corpus-wide majority is the correct spelling 5-to-3; the family
+    # the reader got was the unlucky slice.
+    #
+    # `t != t.title()` is the whole test, and it is EVIDENCE rather than a rule
+    # about acronyms: `str.title()` is exactly the transform that damages
+    # `BMW` -> `Bmw`, so a string it would CHANGE carries interior capitals no
+    # title-caser could have produced. `BMW PGA Championship` is kept because
+    # `.title()` would alter it; `Bmw Pga Championship` is indistinguishable from
+    # that function's own output and cannot be evidence of anything. Nothing is
+    # invented — every candidate is still a string the venue actually wrote, and
+    # the verbatim rule `golf_tournament_display_name` exists to protect is
+    # untouched.
+    #
+    # FAILS OPEN, which is why it is safe on the rest of the corpus. A tournament
+    # whose real name IS plain title case — `Biltmore Championship Asheville`,
+    # `The Open`, every ordinary stop — yields an empty preferred set, the pool
+    # falls back to every candidate, and the label is byte-identical to what
+    # shipped before. The gate can only ever act on a family that holds two
+    # spellings of one name, one of which is provably damaged.
+    #
+    # 🪤 IT RANKS CASING EVIDENCE, NOT BEAUTY. Were a venue to ship
+    # `BMW PGA CHAMPIONSHIP`, that also survives `.title()` and would compete on
+    # count like any other candidate — this does not prefer the prettiest string,
+    # only a string that cannot be title-caser output. No such all-caps sibling is
+    # in the corpus today; if one appears it is a new finding, not this rule
+    # misfiring.
+    #
+    # One helper, both surfaces: `story_family_label` routes `/api/events/search`
+    # here too, so the search family header and the Discover bundle headline move
+    # together and cannot drift apart again.
+    preferred = [t for t in names if t != t.title()]
+    pool = preferred or names
+    label = max(pool, key=lambda t: (pool.count(t), -pool.index(t)))
     article = "" if _LABEL_LEAD_RE.match(label) else "the "
     return label, f"What happens at {article}{label}?"
 
