@@ -33,6 +33,10 @@ from app.services.anchor_channel import (
     resolve_market_born_duplicate,
 )
 from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
+# #7369: the one place either search payload may answer "Conference". Module-level
+# and safe — `market_label_normalization` imports only `utils.futures_categorization`,
+# so there is no cycle to defer around; `tests/test_startup.py` is the guard.
+from app.utils.market_label_normalization import non_sport_topic_label
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -10042,7 +10046,17 @@ async def typeahead_search(
         # not be carried across that distance — an expired attribute would be a
         # lazy refresh inside async on the hottest path in the API.
         _ta_market_facts.append(_market_facts(market))
-        label = _TIER_LABELS.get(market.market_tier, None)
+        # #7369 — asked FIRST, because `_TIER_LABELS` covers all five tiers and
+        # so the `not label` arm below is reachable only on a NULL tier: the
+        # non-sport fallback written right there has never once fired for the
+        # 13,542 open politics/economics/weather rows it was written for, and
+        # they answer "Conference". The helper returns None for every other row,
+        # so both arms below stay exactly as they were.
+        label = non_sport_topic_label(
+            market.market_tier, market.category, market.llm_sport_category
+        )
+        if not label:
+            label = _TIER_LABELS.get(market.market_tier, None)
         if not label and market.sport_id is None:
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
         futures_pool.append({
@@ -27754,7 +27768,14 @@ def _format_futures_for_search(
         "category": market.category,
         "llm_sport_category": market.llm_sport_category,
         "market_tier": market.market_tier,
-        "market_type_label": _TIER_LABELS_SEARCH.get(market.market_tier, market.market_type or "Market"),
+        # #7369 — the same claim as the typeahead's, in the second payload that
+        # makes it; the helper is the one place either may say "Conference".
+        "market_type_label": (
+            non_sport_topic_label(
+                market.market_tier, market.category, market.llm_sport_category
+            )
+            or _TIER_LABELS_SEARCH.get(market.market_tier, market.market_type or "Market")
+        ),
         "status": market.status,
         "source": market.source,
         "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
