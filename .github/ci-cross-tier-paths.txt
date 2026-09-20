@@ -102,3 +102,15 @@ frontend/lib/sportCategories.ts
 # keep serving a fabricated away on a sport the web had already declared
 # three-way, and nothing would say so.
 frontend/lib/marketMapUtils.ts
+
+# #7501. `test_team_slug_url_map_matches_the_frontend_7501.py` parses
+# `SPORT_KEY_TO_PATH` out of this file, because the backend mints `teams.slug`
+# and the suffix it appends on a name collision has to be the league segment the
+# frontend puts in the path. The two records exist in two stacks with no shared
+# source. Drift is silent in BOTH directions and invisible to every route test:
+# add `soccer_italy_serie_a: { league: "seriea" }` here and the filler keeps
+# suffixing `italy_serie_a`, so every Serie A club gets a non-NULL slug, a census
+# counting non-NULL reads the ship as delivered, and not one of their pages
+# resolves. Adding a league to this map is exactly the frontend-only edit the
+# classifier would otherwise send past the shard holding the parity test.
+frontend/lib/teamUrls.ts

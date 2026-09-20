@@ -691,6 +691,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#7501 team slug fill (real Postgres)"
+        # `teams.slug` is UNIQUE, and 855 of the 4,004 slug-less clubs cannot
+        # take their clean name-slug because a club in another sport holds it.
+        # That collision IS the mechanism: the ladder, the per-row SAVEPOINT and
+        # the `WHERE slug IS NULL` idempotency key are all claims about what the
+        # server does with an index, and a session double has no index to refuse
+        # anything — every row would take rung 1 and the suite would read green
+        # while the production batch aborted on its first collision.
+        #
+        # The bank arm is #6215's class again: the CTAS has to derive
+        # `slug_after` from `teams.slug`, and a hand-declared type is the same
+        # characters to a double (#3672, CERT-2880).
+        #
+        # Same skip detection as every gate in this job — and the same reason
+        # the #6215 step gives for existing at all: this job names each PG file
+        # explicitly, so a `*_pg.py` nobody adds here runs nowhere.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_team_slug_fill_7501_pg.py \
+            -v -rs 2>&1 | tee /tmp/slugfill7501.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slugfill7501.txt; then
+            echo "::error::#7501 team slug fill SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it
