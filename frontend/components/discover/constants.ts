@@ -1,6 +1,20 @@
 import { categoryEmoji } from "@/lib/categoryEmoji";
 import { getCategoryForLeague } from "@/lib/sportCategories";
 
+/**
+ * How many members a collapsed bundle seats before it asks for a tap.
+ *
+ * It lives here, and not in either card, because the two bundle cards are one
+ * card family (notice 35) and were not: `ThemeBundleCard` held this as a local
+ * `PEEK_COUNT = 5` while `GroupCard` seated `items[0]`, so the AI theme bundle
+ * and the IPO comparison bundle — both two members, both in one scroll —
+ * drew two rows and one row (#7492). A comparison bundle is the worse half of
+ * that: its header asks "which of these is priced highest to list?" and a
+ * single row cannot answer a comparison. One constant is what keeps the answer
+ * from drifting apart again.
+ */
+export const BUNDLE_PEEK_COUNT = 5;
+
 export const CATEGORY_GRADIENTS: Record<string, string> = {
   basketball: "linear-gradient(135deg, #7c2d12, #c2410c)",
   football: "linear-gradient(135deg, #14532d, #15803d)",
