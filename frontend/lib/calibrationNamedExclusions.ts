@@ -44,6 +44,24 @@
 // counted in `unlistedRules` and rendered as nothing at all, so a rule the
 // backend adds tomorrow shows up as a number a probe can see rather than as a
 // raw key on the page or a silent omission.
+//
+// AND THE UNIVERSE IT CLOSES OVER IS THE BACKEND, NOT THE SERVED PAYLOAD (#7627)
+//
+// This map was first written from `api.bainluck.com/api/calibration`, which is
+// the obvious place to read "what blocks exist" and is the wrong one. That
+// payload is published by `precompute_calibration_main`, a HEAVY_TASK, and
+// `bainluck-heavy` runs behind master (notice 48): the response the map was
+// built from was stamped 2026-09-15 and carried fifteen blocks, while master had
+// emitted sixteen since 2026-09-14. So `identity_quarantine_filter` was missing
+// from the map, from the fixture, and therefore from the fixture-derived test
+// that was supposed to keep the map closed — one omission, invisible three
+// times, because all three read the same stale artifact.
+//
+// The cost was not a reader's: that rule must be skipped anyway. It was
+// `unlistedRules`, which would have read 1 forever for a rule the page names in
+// full, so the one signal built to catch the NEXT omission was pre-spent on a
+// known one. The suite now derives the universe from
+// `backend/app/tasks/precompute_calibration.py` itself.
 
 /**
  * The exclusions that already have their own bullet, with their own sentence.
@@ -60,6 +78,19 @@ export const EXCLUSIONS_WITH_THEIR_OWN_BULLET: ReadonlySet<string> = new Set([
   "soccer_2way_filter",
   "void_filter",
   "nonexclusive_bundle_filter",
+  // #7627. Not a folded row, and not for want of a label: these rows are the
+  // page's "Held out, under review" section (CAL-P067, Alex's #6275/#1902
+  // ruling), which prints the count in full. Listing them here too would be the
+  // double-naming this set exists to stop.
+  //
+  // The skip is safe to make unconditional because the section and this block
+  // are gated on the SAME backend variable — `identity_disputed_excluded` is
+  // both `identity_quarantine_filter.excluded` and the `> 0` test that decides
+  // whether `quarantine` is a row or an empty list — so there is no payload in
+  // which the fold stays silent and the section does too. That coupling is what
+  // makes this an own-bullet rule rather than a silent drop, so it is pinned
+  // against the backend source in the suite rather than trusted.
+  "identity_quarantine_filter",
 ]);
 
 /**
