@@ -11,10 +11,19 @@ finals day, when the scoreboard read raises, the page does not show me the
 opening round of a tournament that finished a fortnight ago.
 """
 
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.routes import tournaments
+from app.routes.tournaments import REGISTERED_TOURNAMENTS
 from app.tasks.tournament_matchup_linker import LINKS_PREFIX
+from app.utils.tournament_register import load_register
+from app.utils.tournament_slate import (
+    CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS,
+    MATCH_STALE_AFTER_HOURS,
+)
 
 SLUG = "us-open"
 URL = f"/api/tournaments/{SLUG}"
@@ -23,6 +32,131 @@ URL = f"/api/tournaments/{SLUG}"
 #: asserts "not 96" against a slate that happens to be empty for some other
 #: reason is not asserting anything.
 PRODUCTION_DEFECT_COUNT = 96
+
+
+def _registered_starts() -> list[datetime]:
+    """Every ``scheduled_date`` the register carries, as UTC instants."""
+    season = REGISTERED_TOURNAMENTS[SLUG]["season"]
+    return [
+        datetime.fromisoformat(
+            m["scheduled_date"].replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        for m in (load_register(SLUG, season).get("matchups") or [])
+        if m.get("scheduled_date")
+    ]
+
+
+def _ceremony_stamp() -> datetime:
+    """The opening instant of the draw these tests run against, read from the
+    register they actually serve — never written down here.
+
+    ``build_slate`` stamps a whole draw ceremony with one value: 96 of the 124
+    US Open matchups carry ``2026-08-30T04:00:00+00:00``. That single instant is
+    what both ends of the register's relevance window are measured from, so it
+    is the only honest origin for this file's clock. Reading it back out of the
+    register means a re-generated register moves the tests with it instead of
+    silently ageing them out.
+    """
+    season = REGISTERED_TOURNAMENTS[SLUG]["season"]
+    stamps = Counter(
+        m.get("scheduled_date")
+        for m in (load_register(SLUG, season).get("matchups") or [])
+        if m.get("scheduled_date")
+    )
+    assert stamps, (
+        f"the {SLUG} register carries no scheduled dates, so this file has no "
+        "anchor to derive — every test below would be measuring an empty draw"
+    )
+    raw, _ = stamps.most_common(1)[0]
+    return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+#: The instant every test in this file is served at: a day into the draw the
+#: register describes.
+#:
+#: ⏰ THIS FILE USED TO READ THE WALL CLOCK AND IT WAS A BOMB ON A FUSE (#7464).
+#: The register is a committed file with real dates in it; ``now`` was the real
+#: ``datetime.now``. The gap between them therefore grew by a day every day, and
+#: at ``ceremony + 21d + 6h`` — 2026-09-20T10:00:00Z, to the minute — it crossed
+#: the far end of the register's relevance window and the positive control below
+#: went red on master with no diff at all. One sha measured twice: green at
+#: 09:26Z, red at 10:25Z. It blocked every lane's merge, because a PR's CI runs
+#: on the merge ref and inherits master's red.
+#:
+#: Gotcha #44, in its purest form: OFFSET FIRST, THEN TRUNCATE. The anchor is an
+#: offset from the fixture's own stamp, so the distance under test is fixed
+#: forever and no hour of any day can change a verdict here.
+#:
+#: 24 hours in, and the choice is load-bearing in both directions —
+#: ``test_the_anchor_exercises_the_exemption_it_claims_to`` is the guard that
+#: says so. It must be past ``MATCH_STALE_AFTER_HOURS`` or the control would
+#: never enter the clock's branch and would pass for a reason it does not claim,
+#: and well inside ``CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS`` or the draw is
+#: retired as a finished tournament, which is the red this repairs.
+A_DAY_INTO_THE_DRAW = _ceremony_stamp() + timedelta(hours=24)
+
+
+class _TheRegistersClock(datetime):
+    """``datetime`` with ``now`` pinned, and every other classmethod intact.
+
+    A subclass rather than a stub on purpose: the route parses stamps with
+    ``fromisoformat`` and builds windows with ``timedelta`` off the same name,
+    and a bare fake would break those instead of freezing them.
+    """
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: D102 - stdlib signature
+        return A_DAY_INTO_THE_DRAW if tz else A_DAY_INTO_THE_DRAW.replace(tzinfo=None)
+
+
+@pytest.fixture(autouse=True)
+def _served_a_day_into_the_draw(monkeypatch):
+    """Every request below is served at :data:`A_DAY_INTO_THE_DRAW`."""
+    monkeypatch.setattr(tournaments, "datetime", _TheRegistersClock)
+
+
+def test_the_anchor_exercises_the_exemption_it_claims_to():
+    """The draw is in the clock's reach at the anchor, and survives it anyway.
+
+    The control below is only worth its name if the rows it counts are rows the
+    clock had an OPINION about. Two ways to lose that, and neither shows up as a
+    red anywhere else in this file:
+
+    * Drag the anchor back under ``MATCH_STALE_AFTER_HOURS`` and every test
+      still passes — the fixtures are merely upcoming, the clock never reaches
+      them, and the control has quietly stopped proving that a pinned fixture
+      survives retirement, which is the one thing it exists for.
+    * Push it past the far end and the control goes red, which is #7464.
+
+    So this is measured over the register's OWN rows rather than against
+    :func:`_ceremony_stamp`. Asserting elapsed hours against that function
+    instead was the first draft, and a mutant killed it: change the derivation
+    to take the earliest fixture rather than the ceremony's own stamp and the
+    anchor moves with the thing measuring it, so the check reads "24h" and
+    passes while the whole main draw has slid into the future. A guard may not
+    key its verification on the same value it is verifying.
+    """
+    starts = _registered_starts()
+    #: Asserted with slack on both sides, because an anchor that satisfies this
+    #: exactly on a bound is the same bomb with a shorter fuse: #7464 was green
+    #: at one bound and red an hour later. A margin as wide as the staleness
+    #: bound itself is the smallest one that cannot be reached by rounding.
+    margin = timedelta(hours=MATCH_STALE_AFTER_HOURS)
+
+    for jitter in (-margin, timedelta(0), margin):
+        at = A_DAY_INTO_THE_DRAW + jitter
+        cutoff = at - timedelta(hours=MATCH_STALE_AFTER_HOURS)
+        far_end = cutoff - timedelta(hours=CEREMONY_STAMP_COVERS_THE_TOURNAMENT_HOURS)
+
+        in_reach = [s for s in starts if far_end <= s < cutoff]
+        assert len(in_reach) >= PRODUCTION_DEFECT_COUNT, (
+            f"only {len(in_reach)} of {len(starts)} registered fixtures are "
+            f"inside the clock's reach at {at.isoformat()} (cutoff "
+            f"{cutoff.isoformat()}, far end {far_end.isoformat()}, jitter "
+            f"{jitter}) — fewer than the {PRODUCTION_DEFECT_COUNT} the control "
+            "counts, so it is passing on fixtures the clock never had an "
+            "opinion about, or it is sitting on a bound"
+        )
 
 
 def _espn(scoreboard):
