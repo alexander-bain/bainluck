@@ -27,6 +27,7 @@ import { shareContent } from "@/lib/share";
 import { useEngagementTime, usePageTracking, useScrollDepth } from "@/hooks";
 import { Button } from "@/components/ui/button";
 import { DailyThresholdBox } from "@/components/daily/DailyThresholdBox";
+import { categoryLabel, TodaysSetCard, toTodaysSetRows } from "@/components/daily/TodaysSetCard";
 
 const DAILY_GOAL = 5;
 const DAILY_STATE_KEY = "bainluck_daily_state_v1";
@@ -131,12 +132,6 @@ function questionIdFor(item: FeedItem): string | null {
   if (item.type === "event") return `event-${(item.data as FeedEventData).id}`;
   if (item.type === "futures") return `futures-${(item.data as FeedFuturesData).id}`;
   return null;
-}
-
-function categoryLabel(question: DailyQuestion): string {
-  return question.category
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function asDailyQuestion(item: FeedItem): DailyQuestion | null {
@@ -542,7 +537,11 @@ export default function DailyPage() {
           <div className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-sm">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <Trophy className="h-4 w-4 text-accent-warning" />
-              Habit Loop
+              {/* #7449 / notice 34 (D102) — this read "Habit Loop", which is
+                  behavioural-design vocabulary describing what the card is FOR
+                  to us, not what it holds for the reader: their streak, their
+                  best, and how many sets they have finished. */}
+              Your record
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2">
               <Metric label="Streak" value={`${meta.streak}`} />
@@ -555,39 +554,12 @@ export default function DailyPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-surface-border bg-surface-card p-4 shadow-sm">
-            <p className="text-sm font-semibold">Today&apos;s Answers</p>
-            <div className="mt-3 space-y-2">
-              {questions.map((question, index) => {
-                const answer = answers.find((entry) => entry.questionId === question.id);
-                const current = !answer && index === activeIndex && !completed;
-                return (
-                  <div
-                    key={question.id}
-                    className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
-                      current ? "border-accent-brand bg-accent-brand/5" : "border-surface-border bg-surface-card"
-                    }`}
-                  >
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-xs font-bold">
-                      {answer ? (
-                        answer.correct ? (
-                          <CheckCircle2 className="h-4 w-4 text-accent-live" />
-                        ) : (
-                          <XCircle className="h-4 w-4 text-accent-danger" />
-                        )
-                      ) : (
-                        index + 1
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-semibold">{question.subject}</p>
-                      <p className="truncate text-[11px] text-text-muted">{categoryLabel(question)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {/* #7449 — this card used to be headed "Today's Answers" while holding
+              five numbered questions and zero answers. The heading now follows
+              the same state its badges do, read off the rows themselves; the
+              reasoning, and why `completed` is the wrong signal for it, live in
+              components/daily/TodaysSetCard.tsx. */}
+          <TodaysSetCard rows={toTodaysSetRows(questions, answers, activeIndex, completed)} />
         </aside>
       </section>
     </main>
