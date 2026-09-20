@@ -459,6 +459,65 @@ def _sole_named_candidate(team_name, named_candidates, espn_team):
                 if token not in city_tokens
             )
         ]
+    else:
+        # A HALF-OVERLAP IS NOT AN IDENTITY (#7157). `_canonical_names_match`
+        # accepts any pair scoring >= 0.5, and a TWO-TOKEN name sharing only its
+        # generic half scores exactly 0.50 — `Coventry City`/`Manchester City`,
+        # `Hull City`/`Manchester City`, `BYU Cougars`/`Houston Cougars`. Where
+        # the league holds one club of that shape the scan returns ONE
+        # candidate, so the disambiguation below never runs and the sole
+        # candidate is adopted whole. `shared_token_rivals` refuses all of them
+        # and is already the veto in front of `espn_identity_corresponds`; the
+        # two adoption scans are simply the rail it was never wired into.
+        #
+        # ═══ MEASURED, PRODUCTION 2026-09-20 ═══
+        # Population: the 958 distinct (event name, dereferenced club name)
+        # pairs that DISAGREE, weighted by events. This is a proxy for the
+        # adoption call stream — rows that already bound, not a replay — and is
+        # named as one. 547 of those pairs are `names_match`-True, i.e. the
+        # answers this predicate gives. **62 pairs / 162 events** change to a
+        # refusal. All but the two below read as genuine wrong binds: two EPL
+        # events wearing `Manchester City`, `Bury Town` on `Shrewsbury Town`,
+        # `Jong Utrecht` on `FC Utrecht`, `Real Betis` on `Real Madrid`,
+        # `Manchester United` on `Newcastle United`.
+        #
+        # THE COST IS A DUPLICATE, WHICH THIS FILE HAS ALREADY RULED THE LESSER
+        # EVIL: refusing here falls through to the mint gate, so an alias the
+        # veto misreads gets its own row rather than another club's schedule.
+        # Two measured pairs pay it — `Atl. San Luis`/`Atlético San Luis` (the
+        # veto tokenises `atl.` with its period, so `_token_stems_agree` cannot
+        # reach `atletico`) and `Cal State Northridge Matadors`/`CSU Northridge
+        # Matadors` (an abbreviation in neither map). Both are pinned as COSTS
+        # in the guard file; neither is fixed by loosening this rule, and the
+        # period hole is not fixed here because the same tokenisation is the
+        # writer and repair rails' veto, measured at CERT-2881.
+        #
+        # THE FRAGMENT ARM ABOVE IS `elif`-SHAPED ON PURPOSE, AND IT IS
+        # LOAD-BEARING. A trailing single letter reads as a DISTINCTIVE token to
+        # `_token_stems_agree`, which requires two characters, so an
+        # unconditional veto refuses three of #6974's own four fragments their
+        # canonical row and mints the duplicate straight back:
+        #
+        #   shared_token_rivals('Los Angeles G', 'LA Galaxy')           -> True
+        #   shared_token_rivals('New York I',    'New York Islanders')  -> True
+        #   shared_token_rivals('New York R',    'New York Rangers')    -> True
+        #   shared_token_rivals('Los Angeles C', 'Los Angeles Clippers')-> False
+        #
+        # The fourth is spared only because `c` happens to sit in
+        # `_RESERVE_SUFFIX_RE`, so `normalize_name` deletes the letter before the
+        # veto ever sees it — luck, not a guard, and `g`/`i`/`r` are not in that
+        # list. The initial is the right test on this shape anyway: it is exact
+        # where the veto is heuristic.
+        #
+        # RESIDUE, so nobody reads the carve-out as a proof: a fragment whose
+        # STEM is a rival — `Manchester United C` against `Manchester City` —
+        # is still decided by the letter alone, and the letter says yes. No pair
+        # of that shape is in the census; it is named here, not fixed here.
+        accepted = [
+            (name, row)
+            for name, row in accepted
+            if not _shared_token_rivals(team_name, name)
+        ]
 
     if len(accepted) == 1:
         return accepted[0][1]
