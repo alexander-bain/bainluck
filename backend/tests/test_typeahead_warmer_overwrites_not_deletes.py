@@ -150,6 +150,17 @@ class TestTheWarmerForcesTheRebuildThroughTheFlag:
 
         Setting the flag and *then* deciding not to rebuild would be harmless
         today and load-bearing the moment someone moves the skip.
+
+        ⚠️ LAT-P270/#3398: `refresh_ahead` is now passed EXPLICITLY instead of
+        being implied by a hard-coded 64. The shipped threshold retires the skip
+        (no safe value exists at a 65 s TTL against a 48 s period), so a TTL
+        chosen to be "obviously fresh" is no longer fresh at all and this test
+        was silently exercising the rebuild path instead of the skip path.
+
+        The property under test is the SKIP MECHANISM, not the shipped
+        configuration — `derive_refresh_ahead_s()` brings the skip back on its
+        own if the cadence or the TTL ever leaves room for it, and this is the
+        arm that will still be guarding it when that happens.
         """
         called = []
 
@@ -159,7 +170,7 @@ class TestTheWarmerForcesTheRebuildThroughTheFlag:
 
         with patch.object(warmer, "_cache_ttl_seconds", return_value=64), \
              patch.object(events_route, "typeahead_search", _fake_route):
-            out = _run(warmer._warm_one(_FakeSession(), "celtics"))
+            out = _run(warmer._warm_one(_FakeSession(), "celtics", refresh_ahead=30))
 
         assert called == []
         assert out["reason"] == "fresh"

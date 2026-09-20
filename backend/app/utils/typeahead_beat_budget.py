@@ -257,6 +257,132 @@ WALL_MAX_EXCEEDS_RESPONSE_TTL = wall_max_exceeds_response_ttl()
 MEASURED_WALL_SAMPLE_PASSES = 32
 
 # ---------------------------------------------------------------------------
+# LAT-P270 / #3398 — THE PASS PERIOD, MEASURED, and why `quantised_period_s()`
+# may not be substituted for it here.
+#
+# Read once from the warmer's own ring (`GET /api/admin/typeahead-warmer/last`),
+# production `2629172a`, 32 passes spanning 1,233.7 s. `period_s` was checked
+# against the start-to-start gap reconstructed from `at - seconds_wall` and
+# agrees to 0.004 s, so the field is the real inter-pass period.
+#
+#     30.0  30.0  30.0  30.0  30.0  30.1  30.2  30.4  31.0  31.0  31.1
+#     33.7  35.3  37.3  39.8  40.0  40.0  40.0  40.0  40.0  40.0  40.0
+#     47.4  47.7  48.0  59.0                            139.7
+#
+# 🔴 `quantised_period_s(10, wall, 30)` PREDICTS 30 s for every wall this ring
+# contains (max 19.156 s), and the ring contains 40 s eleven times and 48 s
+# once. The helper models a beat grid aligned to pass starts; the live grid is
+# not aligned to them, so the floor expires mid-beat and the pass waits a whole
+# further beat. The helper is right about what it models and is left alone — but
+# a threshold derived from it would be derived from a period production does not
+# have, which is the LAT-P062 failure (a bound reasoned from the beat while the
+# measured period was half again as long) repeated one module over.
+#
+# The lock-stretched outlier is carried SEPARATELY rather than folded into the
+# max. 139.7 s is one pass, it is `_LOCK_TTL_SECONDS`-scale not cadence-scale,
+# and no refresh-ahead threshold can be made safe against it (see
+# `refresh_ahead_safe_floor_s()`); averaging it into the routine max would hide
+# that by making the floor look like a tuning problem.
+MEASURED_PERIOD_MAX_S = 48.0
+MEASURED_PERIOD_MAX_WITH_LOCK_S = 139.728
+MEASURED_PERIOD_MEDIAN_S = 40.0
+MEASURED_PERIOD_SAMPLE_PASSES = 32
+
+
+def refresh_ahead_safe_floor_s(
+    period_max_s: float = MEASURED_PERIOD_MAX_S,
+    wall_max_s: float = MEASURED_WALL_MAX_S,
+) -> float:
+    """The least refresh-ahead threshold whose `fresh` skip keeps its promise.
+
+    The promise is written at the skip itself in `tasks/typeahead_warmer.py`:
+    an entry is rebuilt "when it is close enough to expiry that it would not
+    survive until the next pass". So a skip is only honest when the entry
+    outlives the longest wait until something rewrites it.
+
+    A skip at threshold ``T`` leaves an entry with more than ``T`` seconds. The
+    pass that skipped it wrote nothing, so the next write is the NEXT pass —
+    up to ``period_max`` away — and that pass may not reach this particular
+    entry until ``wall_max`` into itself, because the head is re-ranked every
+    pass and a query written first in one pass can be written last in the next.
+    Hence ``T >= period_max + wall_max``.
+
+    🔴 THE TERM THAT WAS MISSING IS ``wall_max``, and it is why the shipped 35
+    was unsafe while looking safe. Reasoning with the period alone gives
+    ``65 - 30 = 35`` and reads as exactly adequate; the entry an early pass
+    observes was written LATE in the previous pass, so its remaining life is
+    ``ttl - (period - wall)``, well above 35, and the skip fires.
+    """
+    return float(period_max_s) + float(wall_max_s)
+
+
+def refresh_ahead_skip_is_reachable(
+    refresh_ahead_s: float,
+    ttl_s: float = RESPONSE_CACHE_TTL_S,
+) -> bool:
+    """Can the `fresh` skip fire at all at these constants?
+
+    A cached entry's remaining life never exceeds the TTL it was written with,
+    and the skip tests ``ttl_before > refresh_ahead``. At ``refresh_ahead >=
+    ttl`` that comparison is unsatisfiable and every entry is rebuilt.
+
+    A FUNCTION with both inputs open, for the reason
+    `wall_max_exceeds_response_ttl()` is one: a bare
+    ``REFRESH_AHEAD_SECONDS < RESPONSE_CACHE_TTL_S`` constant can be pinned by a
+    test that cannot tell a computed answer from a hard-coded one.
+    """
+    return float(refresh_ahead_s) < float(ttl_s)
+
+
+def derive_refresh_ahead_s(
+    ttl_s: float = RESPONSE_CACHE_TTL_S,
+    period_max_s: float = MEASURED_PERIOD_MAX_S,
+    wall_max_s: float = MEASURED_WALL_MAX_S,
+) -> int:
+    """`tasks/typeahead_warmer.REFRESH_AHEAD_SECONDS`, derived rather than set.
+
+    Two outcomes, and which one fires is arithmetic, not a preference:
+
+    * a safe threshold exists (``floor < ttl``) — ship the floor, and the skip
+      stays live and correct;
+    * no safe threshold exists (``floor >= ttl``) — ship the TTL, which makes
+      the skip unreachable and every pass rebuild. Slower, never cold.
+
+    **Today it is the second**, at every wall this program has ever published:
+    ``48.0 + 19.156 = 67.2 > 65`` on the ring measured for #3398, and
+    ``48.0 + 66.365 = 114.4 > 65`` on `MEASURED_WALL_MAX_S`. The verdict does
+    not depend on which wall constant is believed, which is the only reason a
+    threshold can be retired here without first re-deriving the wall.
+
+    🔴 WHY THIS IS DERIVED AND NOT A LITERAL. `REFRESH_AHEAD_SECONDS` was 35,
+    argued in a docstring against a **45 s** TTL and never re-argued when the
+    TTL became 65 (Fable's GO ruling 4, 2026-08-19). At 45 the skip really was
+    unreachable — "inert, and inert in the SAFE direction" — and the module
+    says so. At 65 the same 35 is live: it fired on 10 of 32 production passes,
+    and every pass it fired on rebuilt nothing, so the interval between real
+    rebuilds became ``30 + 40 = 70 s`` against a 65 s TTL and the whole 40-term
+    head expired. Five of the seven total-head losses in that ring are this,
+    one is the lock, and one is both. Deriving the value means the next TTL or
+    cadence move re-argues it whether or not anyone remembers to.
+    """
+    floor = refresh_ahead_safe_floor_s(period_max_s, wall_max_s)
+    if floor >= float(ttl_s):
+        return int(ttl_s)
+    return int(ceil(floor))
+
+
+#: The shipped threshold, and the sole definition of it. `typeahead_warmer`
+#: imports this rather than carrying a second copy — the drift between a
+#: constant and the TTL it is argued against is the whole of #3398.
+REFRESH_AHEAD_S = derive_refresh_ahead_s()
+
+#: True when the line above has retired the skip. Reported by the warmer in its
+#: pass summary so an operator reading `fresh: 0` can tell "nothing was fresh"
+#: from "the skip cannot fire" — gotcha #53, two different facts that produce
+#: the same zero.
+REFRESH_AHEAD_SKIP_REACHABLE = refresh_ahead_skip_is_reachable(REFRESH_AHEAD_S)
+
+# ---------------------------------------------------------------------------
 # LAT-P074 — THE PASS-ONLY WALL, MEASURED. And why it is NOT substituted above.
 #
 # `MEASURED_WALL_MAX_S = 42.6` is a known underestimate (LAT-P073 §5 registered

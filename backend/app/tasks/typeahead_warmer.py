@@ -193,6 +193,17 @@ import time
 
 from contextlib import AsyncExitStack
 
+# Stdlib-only module (gotcha #3's discipline, checked: `dataclasses`, `math`,
+# `typing`), so this cannot close an import cycle. It owns the derivation of
+# `REFRESH_AHEAD_SECONDS` because it is where `RESPONSE_CACHE_TTL_S` and the
+# measured pass wall already live — #3398 is what happens when a threshold is
+# argued in one module against a TTL that moves in another.
+from app.utils.typeahead_beat_budget import (
+    REFRESH_AHEAD_S,
+    REFRESH_AHEAD_SKIP_REACHABLE,
+    RESPONSE_CACHE_TTL_S,
+)
+
 logger = logging.getLogger(__name__)
 
 #: How many head queries to warm per run. 40 sits just past the measured
@@ -310,7 +321,35 @@ WARM_CONCURRENCY = 4
 #: the period ever drops below 10s. What was wrong is the justification, and a
 #: constant whose stated justification is refuted is the trap ruling 076 banks.
 #: The period is fixed by `MIN_PASS_PERIOD_SECONDS` and the beat, not by T.
-REFRESH_AHEAD_SECONDS = 35
+#:
+#: 🔴 LAT-P270 / #3398 — "IT IS INERT" WAS TRUE AND STOPPED BEING TRUE, AND THE
+#: VALUE IS NOW DERIVED SO THAT SENTENCE CAN NEVER GO STALE AGAIN.
+#:
+#: Every paragraph above computes against a **45s** TTL. The TTL became **65**
+#: (Fable's GO ruling 4, 2026-08-19, recorded in `typeahead_beat_budget`), and
+#: nobody re-ran the arithmetic here. Redo it at 65:
+#:
+#:     a skip fires when              T < ttl - P
+#:     P = 30s (the floor)  ->  T < 35   ... and T IS 35, so the `>` spares it
+#:     P = 30s, entry written LATE in the previous pass and read EARLY in this
+#:     one  ->  its remaining life is ttl - (P - wall) = 65 - (30 - 13) = 48s
+#:                                    48 > 35, SO THE SKIP FIRES.
+#:
+#: The in-pass phase term is what the refutation above still lacked. MEASURED on
+#: the warmer's own ring, production `2629172a`, 32 passes / 1,233.7 s: `fresh`
+#: fired on **10 of 32 passes**, all of them passes that had started ~30s after
+#: their predecessor and rebuilt **nothing**. A pass that rebuilds nothing does
+#: not restart the clock, so the interval between real rebuilds became 30 + 40 =
+#: **70s against a 65s TTL** and the entire 40-term head expired. The split is
+#: exact and has no overlap: 22 clean intervals, max **62.0s**; 7 losing
+#: intervals, min **70.0s**; TTL 65 sits between them.
+#:
+#: So `fresh: 0` is no longer "the only reachable value" and the safe direction
+#: is no longer where the constant was parked. `derive_refresh_ahead_s()` ships
+#: `period_max + wall_max` when that clears the TTL and the TTL itself when it
+#: does not — today the second, at every wall this program has published. The
+#: skip is unreachable again, which is where LAT-P062 believed it already was.
+REFRESH_AHEAD_SECONDS = REFRESH_AHEAD_S
 
 #: The pass may not START more often than this. A floor, not a cadence.
 #:
@@ -775,10 +814,26 @@ async def _warm_one(session, q: str, refresh_ahead: int = REFRESH_AHEAD_SECONDS)
     # reporting `no_write` on it would turn a Redis blink into a fake defect. It
     # reports `warmed_unverified` so the pass can say how much of its own success
     # it could not check.
+    # 🔴 LAT-P270/#3398 — THE CEILING CASE, made reachable by retiring the skip.
+    #
+    # "It moved up" is the right test for an entry with life left, and it is the
+    # WRONG test for an entry already at a full TTL: the route rewrites it to
+    # exactly `RESPONSE_CACHE_TTL_S`, `65 > 65` is false, and a perfectly good
+    # write reports `no_write` — the pass goes `partial` over a cache that is
+    # fine. Before this ship that entry was skipped as `fresh` and never reached
+    # here, so the hole shipped with the repair rather than existing before it.
+    #
+    # Reachable whenever a user's organic miss writes the same key in the second
+    # before this pass read its TTL. Rare, and a false defect is still a lying
+    # instrument, which is the one thing this file does not do.
     ttl_after = _cache_ttl_seconds(q)
     if ttl_after is None:
         reason = "warmed_unverified"
     elif ttl_after > (ttl_before if ttl_before is not None and ttl_before >= 0 else -1):
+        reason = "warmed"
+    elif ttl_after >= RESPONSE_CACHE_TTL_S:
+        # A full TTL IS the write landing: nothing but a write can produce it,
+        # and an entry the route declined to rebuild would be strictly younger.
         reason = "warmed"
     else:
         reason = "no_write"
@@ -1027,6 +1082,7 @@ async def _warm_typeahead(
             "unverified": 0,
             "expired": 0,
             "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
+            "refresh_ahead_skip_reachable": REFRESH_AHEAD_SKIP_REACHABLE,
             # `None`, not 0.0, when the gap is unknown. Zero would read as two
             # passes starting at the same instant.
             "period_s": None if period_s is None else round(period_s, 3),
@@ -1156,6 +1212,12 @@ async def _warm_typeahead(
         # directly — `ttl_before == -2`, i.e. no key at all.
         "expired": len(expired),
         "refresh_ahead_s": REFRESH_AHEAD_SECONDS,
+        # LAT-P270/#3398, gotcha #53: `fresh: 0` has two causes that print the
+        # same zero — "every entry was due a rebuild" and "the skip cannot fire
+        # at these constants". The second is now the shipped state and it is
+        # said out loud, because the whole defect was a skip everyone believed
+        # was unreachable still firing on 10 of 32 passes.
+        "refresh_ahead_skip_reachable": REFRESH_AHEAD_SKIP_REACHABLE,
         # The number the 45s TTL actually has to be compared against, and the
         # one the task could not previously state about itself. `None` when the
         # previous start is unknown (first pass after a restart, or Redis
