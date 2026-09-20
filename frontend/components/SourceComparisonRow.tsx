@@ -1,4 +1,5 @@
 import type { SourceRow } from "@/lib/calibrationSourceRows";
+import { censoredPopulationText } from "@/lib/calibrationSourceRows";
 import { withoutGroupQualifier } from "@/lib/calibrationProviderPanels";
 
 /**
@@ -105,9 +106,11 @@ export default function SourceComparisonRow({
             data-testid="calibration-provider-censored"
             data-provider-winners={row.winners ?? ""}
           >
-            {row.winners === 0
-              ? `All ${row.n.toLocaleString()} lost — no wins to measure against.`
-              : `All ${row.n.toLocaleString()} won — no losses to measure against.`}
+            {/* #7411: the sentence moved into `censoredPopulationText` so the
+                By Source panel states this population in the same words. It
+                used to be a literal here, and a literal is what a second
+                surface copies and then drifts from. */}
+            {censoredPopulationText(row.n, row.winners)}
           </td>
         </>
       ) : (

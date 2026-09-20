@@ -28,8 +28,19 @@ const LIVE_N: Record<string, number> = {
   odds_api_spreads: 12409,
 };
 
+/**
+ * A `winners` that is neither all nor none, so #7411's censoring gate reads
+ * these fixtures as MEASURED populations and the panels below are about what
+ * they were always about. A fixture that happened to be one-sided would now
+ * withhold its ECE, and every assertion here would be failing for a reason
+ * that has nothing to do with what it is testing.
+ */
+const mixedWinners = (n: number) => Math.max(1, Math.round(n / 2));
+
 /** One bucket carrying the source's whole n, so `n` sums to the live figure. */
-const bucketsFor = (src: string, error = 2) => [{ n: LIVE_N[src], error }];
+const bucketsFor = (src: string, error = 2) => [
+  { n: LIVE_N[src], error, winners: mixedWinners(LIVE_N[src]) },
+];
 
 function liveInputs(overrides: Partial<Record<string, Partial<ProviderPanelInput>>> = {}) {
   return groupSourcesByProvider(LIVE_SOURCES).map(g => {
@@ -100,7 +111,7 @@ describe("buildProviderPanels — the shape of By Source", () => {
     // The drop rule is `n`, not `buckets.length` — both states mean absent and
     // both must fall out in the same place.
     const panels = buildProviderPanels(
-      liveInputs({ polymarket: { buckets: [{ n: 0, error: 4 }] } })
+      liveInputs({ polymarket: { buckets: [{ n: 0, error: 4, winners: 0 }] } })
     );
     expect(panels.map(p => p.provider)).not.toContain("polymarket");
   });
@@ -198,9 +209,9 @@ describe("the panel's pooled ECE cannot disagree with the table's", () => {
       g => g.provider === "odds_api_family"
     )!;
     const pooledBuckets = [
-      { n: LIVE_N.odds_api, error: 6 },
-      { n: LIVE_N.odds_api_totals, error: 2 },
-      { n: LIVE_N.odds_api_spreads, error: -4 },
+      { n: LIVE_N.odds_api, error: 6, winners: mixedWinners(LIVE_N.odds_api) },
+      { n: LIVE_N.odds_api_totals, error: 2, winners: mixedWinners(LIVE_N.odds_api_totals) },
+      { n: LIVE_N.odds_api_spreads, error: -4, winners: mixedWinners(LIVE_N.odds_api_spreads) },
     ];
     const tableEce = ece(pooledBuckets);
 
@@ -225,6 +236,8 @@ describe("the panel's pooled ECE cannot disagree with the table's", () => {
     // the shapes differ in n, which they do by 26% here. If someone ever
     // "simplifies" the page to average the three published figures, the two
     // numbers separate and this states by how much.
+    // No `winners` here: `ece` takes the curve's two fields, and this call is
+    // about the metric, not about a panel.
     const pooled = ece([
       { n: LIVE_N.odds_api, error: 6 },
       { n: LIVE_N.odds_api_totals, error: 2 },
@@ -297,14 +310,14 @@ describe("shapeBreakoutPointer — the count is the PANEL's, never the page's (#
         provider: "odds_api_family",
         label: "Sportsbooks (Odds API)",
         sources: ["odds_api", "odds_api_totals", "odds_api_spreads"],
-        buckets: [{ n: 100, error: 2 }],
+        buckets: [{ n: 100, error: 2, winners: 50 }],
         pooledEce: 4.2,
       },
       {
         provider: "kalshi",
         label: "Kalshi",
         sources: ["kalshi", "kalshi_scalar"],
-        buckets: [{ n: 90, error: 2 }],
+        buckets: [{ n: 90, error: 2, winners: 45 }],
         pooledEce: 3.0,
       },
     ]);

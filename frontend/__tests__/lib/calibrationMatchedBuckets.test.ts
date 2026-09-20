@@ -269,7 +269,11 @@ function sourceBuckets(src: string) {
     a.winners += r.winners;
     a.sumProb += r.sum_prob;
   }
-  return Object.values(agg).map(a => ({ n: a.n, error: errPp(a) }));
+  // #7411: `winners` was already pooled here and then dropped on the way out.
+  // The panel builder needs it to run the censoring gate, and these are real
+  // production buckets, so the fixture carries a real mix rather than a
+  // convenient one.
+  return Object.values(agg).map(a => ({ n: a.n, error: errPp(a), winners: a.winners }));
 }
 
 const PROD_SOURCES = Array.from(new Set(PROD_BUCKETS.map(b => b.source)));
@@ -360,9 +364,9 @@ describe("per-source panels keep the size difference the overlay conveyed by acc
     // The honest state is "the backend did not publish one". Backfilling it
     // with a client derivation is exactly the drift ruling 003 forbids.
     const out = buildSourcePanels([
-      { source: "kalshi", buckets: [{ n: 100, error: 1 }], publishedEce: 0.8 },
-      { source: "newsource", buckets: [{ n: 50, error: 4 }] },
-      { source: "nulled", buckets: [{ n: 40, error: 9 }], publishedEce: null },
+      { source: "kalshi", buckets: [{ n: 100, error: 1, winners: 50 }], publishedEce: 0.8 },
+      { source: "newsource", buckets: [{ n: 50, error: 4, winners: 25 }] },
+      { source: "nulled", buckets: [{ n: 40, error: 9, winners: 20 }], publishedEce: null },
     ]);
     expect(out.find(p => p.source === "newsource")!.ece).toBeNull();
     expect(out.find(p => p.source === "nulled")!.ece).toBeNull();
@@ -373,7 +377,7 @@ describe("per-source panels keep the size difference the overlay conveyed by acc
     // An empty panel asserts "measured, found nothing". That is not what a
     // missing source means, and the difference matters on a page about honesty.
     const out = buildSourcePanels([
-      { source: "kalshi", buckets: [{ n: 100, error: 1 }] },
+      { source: "kalshi", buckets: [{ n: 100, error: 1, winners: 50 }] },
       { source: "ghost", buckets: [] },
     ]);
     expect(out.map(p => p.source)).toEqual(["kalshi"]);
@@ -382,7 +386,7 @@ describe("per-source panels keep the size difference the overlay conveyed by acc
   test("degenerate input yields no panels", () => {
     expect(buildSourcePanels(null)).toEqual([]);
     expect(buildSourcePanels([])).toEqual([]);
-    expect(buildSourcePanels([{ source: "x", buckets: [{ n: 0, error: 0 }] }])).toEqual([]);
+    expect(buildSourcePanels([{ source: "x", buckets: [{ n: 0, error: 0, winners: 0 }] }])).toEqual([]);
   });
 });
 

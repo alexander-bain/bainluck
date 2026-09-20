@@ -204,6 +204,32 @@ export function censoringVerdict(
   return { n, winners, censored: n > 0 && (winners === n || winners === 0) };
 }
 
+/**
+ * The one sentence a censored population is stated in, wherever it is stated.
+ *
+ * #7411. The verdict above shipped with #6211 wired to the Source Comparison
+ * table alone, and By Source went on publishing DataGolf's 36.5pp three
+ * thousand pixels below the row that refuses it. Fixing that gives the page a
+ * SECOND place to word this, and two places wording one fact differently is
+ * how a page starts disagreeing with itself again — the defect one layer up.
+ *
+ * So the sentence is a function, not a string literal copied to the second
+ * call site. `SourceComparisonRow` and the By Source panels both render THIS,
+ * and `panelCensoringMatchesTheRow7411` asserts they are byte-identical for
+ * the same population, which makes disagreement unrepresentable rather than
+ * merely discouraged (the module's own pairing-assertion discipline, UX-P075:
+ * a ban is satisfied by deleting the word, a pairing is not).
+ *
+ * Both directions are named because both are censored by the same arithmetic —
+ * an all-losers population's error is as price-determined as an all-winners
+ * one's — and `censoringVerdict` already returns `censored` for each.
+ */
+export function censoredPopulationText(n: number, winners: number | null): string {
+  return winners === 0
+    ? `All ${n.toLocaleString()} lost — no wins to measure against.`
+    : `All ${n.toLocaleString()} won — no losses to measure against.`;
+}
+
 /** A row as the page should render it. */
 export interface SourceRow {
   provider: string;

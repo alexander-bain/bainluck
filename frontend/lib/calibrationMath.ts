@@ -3,10 +3,29 @@
 // (reflects the outcomes users actually see); MCE is the equal-weighted
 // worst-bucket-sensitivity number (a tiny bucket counts as much as a huge one).
 
+import { censoringVerdict } from "./calibrationSourceRows";
+
 export interface CalibrationErrorBucket {
   n: number;
   /** actual - predicted, in percentage points. */
   error: number;
+}
+
+/**
+ * A bucket a PANEL is built from: the curve's two fields, plus the one the
+ * censoring gate reads.
+ *
+ * #7411. `CalibrationErrorBucket` is what a curve needs, and the panel
+ * builders took it — which narrowed `winners` away in the type while the page
+ * was handing them `AggBucket`, which has it. That is how #6211's censoring
+ * verdict came to be structurally unreachable from By Source: not a decision
+ * anyone made, just a field that fell off a type boundary. Requiring it here
+ * is what makes the gate reachable, and makes the compiler enumerate every
+ * call site rather than leaving one silently un-gated.
+ */
+export interface PanelBucket extends CalibrationErrorBucket {
+  /** Of this bucket's `n`, the outcomes that won. */
+  winners: number;
 }
 
 /** Equal-weighted mean |error| (pp). Worst-bucket sensitive. */
@@ -489,8 +508,12 @@ export function compareMatchedBuckets(
 
 export interface SourcePanelInput {
   source: string;
-  /** The source's aggregated buckets, as the curve draws them. */
-  buckets: CalibrationErrorBucket[];
+  /**
+   * The source's aggregated buckets, as the curve draws them. `winners` is
+   * required for the reason `ProviderPanelInput.buckets` says: the censoring
+   * gate fails closed on a missing one, so the compiler proves it is there.
+   */
+  buckets: PanelBucket[];
   /**
    * The server's published ECE for this source, in pp. `null`/absent when the
    * payload published none — never backfilled by a client-side derivation.
@@ -502,10 +525,21 @@ export interface SourcePanel {
   source: string;
   /** Outcomes behind this source. */
   n: number;
-  /** The server's ECE, pp, or `null` when the payload published none. */
+  /**
+   * The server's ECE, pp, or `null` when the payload published none — or when
+   * the population is censored and the number would measure that (#7411).
+   */
   ece: number | null;
   /** This source's share of the panelled population, 0-1. */
   share: number;
+  /**
+   * True when every outcome behind this shape fell on the same side, so its
+   * ECE is price-determined and is withheld. The curve is still drawn: #6211
+   * item 3 — hiding the panel deletes the only visible alarm.
+   */
+  censored: boolean;
+  /** Winners pooled across the buckets, on a censored panel only. */
+  winners: number | null;
 }
 
 /**
@@ -521,15 +555,29 @@ export function buildSourcePanels(inputs: SourcePanelInput[] | null | undefined)
   if (!inputs || !inputs.length) return [];
   const withN = inputs
     .filter(i => i && Array.isArray(i.buckets))
-    .map(i => ({
-      source: i.source,
-      n: i.buckets.reduce((s, b) => s + b.n, 0),
-      // Rendered, not derived — ruling 003. Rounding a published number to the
-      // page's display precision is formatting; recomputing it is not.
-      ece: typeof i.publishedEce === "number" && Number.isFinite(i.publishedEce)
-        ? Math.round(i.publishedEce * 10) / 10
-        : null,
-    }))
+    .map(i => {
+      // #7411. The same gate the provider panels and the Source Comparison
+      // table are judged by. A shape has no censored population today — the
+      // one that does, DataGolf, is a single-source provider — and that is
+      // exactly why it belongs here: the gate #6211 built was meant to catch
+      // the NEXT one-sided source without anyone walking the page, and a gate
+      // wired to only the surfaces that happen to be failing is not that.
+      const verdict = censoringVerdict(i.buckets);
+      return {
+        source: i.source,
+        n: i.buckets.reduce((s, b) => s + b.n, 0),
+        // Rendered, not derived — ruling 003. Rounding a published number to
+        // the page's display precision is formatting; recomputing it is not.
+        // Withholding it is neither: no number reaches the page from here.
+        ece: verdict.censored
+          ? null
+          : typeof i.publishedEce === "number" && Number.isFinite(i.publishedEce)
+            ? Math.round(i.publishedEce * 10) / 10
+            : null,
+        censored: verdict.censored,
+        winners: verdict.censored ? verdict.winners : null,
+      };
+    })
     // The one drop rule, and it is `n`, not `buckets.length`: a source present
     // with all-empty buckets is as absent as one with no buckets at all, and
     // both must fall out here rather than one falling out somewhere earlier.
