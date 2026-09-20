@@ -219,31 +219,44 @@ struct EvolutionChartView: View {
                     .frame(height: height)
             } else if let error {
                 emptyState(error, retryable: errorIsRetryable)
-            } else if let _ = data, chartEntries.count < 2 {
-                emptyState("Limited price history available")
-            } else if let _ = data, chartEntries.count >= 2 {
-                VStack(spacing: 0) {
-                    controlBar
-                    chartSection
-                    if let note = Self.coverageNote(
-                        coverageHours: data?.coverageHours,
-                        observationTimes: data?.observationTimes,
-                        requestedHours: requestedHours
-                    ) {
-                        Text(note)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                            .padding(.bottom, 6)
+            } else if data != nil {
+                switch Self.cardBody(
+                    windowPoints: chartEntries.count,
+                    windowInstants: windowInstants,
+                    totalInstants: totalInstants,
+                    windowWord: windowWord
+                ) {
+                case .sparse(let copy):
+                    VStack(spacing: 0) {
+                        controlBar
+                        emptyState(copy.note, hint: copy.hint)
                     }
-                    if crosshair != nil {
-                        crosshairTooltip
+                    .background(Color.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                case .plot:
+                    VStack(spacing: 0) {
+                        controlBar
+                        chartSection
+                        if let note = Self.coverageNote(
+                            coverageHours: data?.coverageHours,
+                            observationTimes: data?.observationTimes,
+                            requestedHours: requestedHours
+                        ) {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                                .padding(.bottom, 6)
+                        }
+                        if crosshair != nil {
+                            crosshairTooltip
+                        }
+                        leaderboardGrid
                     }
-                    leaderboardGrid
+                    .background(Color.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .background(Color.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
         .task {
@@ -256,7 +269,16 @@ struct EvolutionChartView: View {
 
     // MARK: - Empty State
 
-    private func emptyState(_ message: String, retryable: Bool = false) -> some View {
+    /// 🔴 #7350 — THE SECOND LINE USED TO READ *"Prices update every 1-2 hours for
+    /// this market"*, unconditionally, under every non-retryable empty state. It is
+    /// the poll schedule recited as a promise to the reader, and on the market that
+    /// reported this ship it was printed over nine observations spread across a
+    /// MONTH — three of the gaps longer than a week. Nothing in the payload supports
+    /// a cadence, so nothing here says one: the `hint` is passed in by the caller
+    /// that has evidence, and is absent otherwise.
+    private func emptyState(
+        _ message: String, hint: String? = nil, retryable: Bool = false
+    ) -> some View {
         VStack(spacing: 6) {
             Image(systemName: retryable ? "exclamationmark.triangle" : "doc.text")
                 .font(.system(size: 16))
@@ -265,10 +287,11 @@ struct EvolutionChartView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            if !retryable {
-                Text("Prices update every 1-2 hours for this market")
+            if let hint {
+                Text(hint)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
             }
             if retryable {
                 Button {
@@ -422,6 +445,31 @@ struct EvolutionChartView: View {
         return points
     }
 
+    /// Distinct instants the CHOSEN window holds, counted off the same timeline and
+    /// the same cutoff the plot is built from — not off `chartEntries`, whose count
+    /// multiplies by however many outcomes are selected.
+    private var windowInstants: Int {
+        guard let data else { return 0 }
+        let cutoff = timeCutoff
+        return data.timeline.reduce(into: 0) { total, entry in
+            guard let date = entry.timestamp.asDate else { return }
+            if let cutoff, date < cutoff { return }
+            total += 1
+        }
+    }
+
+    /// Distinct instants the RESPONSE holds, whatever window was asked for. The
+    /// route routinely answers with more than it was asked for — 59165099 returned
+    /// 2,160 hours against a 168-hour request — and that surplus is exactly the
+    /// history #7350 is about.
+    private var totalInstants: Int {
+        data?.timeline.reduce(into: 0) { total, entry in
+            if entry.timestamp.asDate != nil { total += 1 }
+        } ?? 0
+    }
+
+    private var windowWord: String { Self.windowWord(for: selectedRange) }
+
     // MARK: - Axis, Coverage and Observation Marks (#7077)
 
     /// How to tick and label this chart's time axis.
@@ -486,6 +534,121 @@ struct EvolutionChartView: View {
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
         return "Prices only go back \(coverageSpanWord(covered))"
+    }
+
+    // MARK: - A Window With Almost Nothing In It (#7350)
+
+    /// What the card draws once a response is in hand.
+    ///
+    /// 🔴 #7350 — THE CONTROLS LIVED INSIDE THE "THERE IS A CHART" BRANCH, so the
+    /// one state in which a reader most needs them was the one state that hid them.
+    /// *Will federal capital gains taxes be cut in 2026?* (59165099) on Alex's
+    /// TestFlight 1.0 (16): the route served **nine** observations reaching back to
+    /// August 18 — the client asked for 168 hours and the route answered with 2,160
+    /// — the default `7d` window filtered eight of them away, and the card fell to
+    /// *"Limited price history available"* with no chips under it. The history was
+    /// already on the phone, in the response the view was holding, and there was no
+    /// way to ask for it.
+    ///
+    /// ✅ The controls are now OUTSIDE the branch and the sparse state is a first
+    /// class card: chips, then one true line about what the chosen window holds.
+    /// **The plot still needs two points** — one observation is a dot in time, and
+    /// joining it to nothing is the invented interval #7077 was about — so the fix
+    /// is reachability and honesty, not a line drawn through a single price.
+    enum CardBody: Equatable {
+        /// The chart, its caption and its leaderboard.
+        case plot
+        /// Controls and one true sentence, no plot.
+        case sparse(SparseCopy)
+    }
+
+    /// What the sparse card says, and — only when there is something to reach — how
+    /// to reach it.
+    struct SparseCopy: Equatable {
+        let note: String
+        let hint: String?
+    }
+
+    static func cardBody(
+        windowPoints: Int, windowInstants: Int, totalInstants: Int, windowWord: String
+    ) -> CardBody {
+        guard windowPoints < 2 else { return .plot }
+        return .sparse(sparseCopy(
+            windowInstants: windowInstants,
+            totalInstants: totalInstants,
+            windowWord: windowWord
+        ))
+    }
+
+    /// The sentence, counted off the response rather than asserted.
+    ///
+    /// "Earlier" is the whole point: it distinguishes *we have never seen a price*
+    /// from *we have eight prices and you are looking at the wrong week*, which the
+    /// one sentence it replaces could not (gotcha #53 — an empty window and an empty
+    /// history had the same words). The hint appears only in the second case, so it
+    /// is never an instruction to go looking for something that is not there.
+    static func sparseCopy(
+        windowInstants: Int, totalInstants: Int, windowWord: String
+    ) -> SparseCopy {
+        // ONE clamp, not two: `guard seen > 0` below already sends every
+        // non-positive total to the honest sentence, so wrapping this in
+        // `max(0,)` as well was a second copy of the same rule — measured
+        // equivalent over every input pair in -50...50 by native/260's
+        // mutation run, which is exactly how a redundant guard shows up.
+        // The clamp on `inWindow` is NOT redundant and stays: it is what
+        // stops a negative window count inflating `earlier`.
+        let seen = totalInstants
+        let inWindow = max(0, min(windowInstants, seen))
+        let earlier = seen - inWindow
+
+        guard seen > 0 else { return SparseCopy(note: "No price history yet", hint: nil) }
+
+        // 🔴 The window count is NOT capped at one. `cardBody` gates on POINTS and
+        // this sentence counts INSTANTS, and the two diverge: `chartEntries` only
+        // emits a point for an outcome the card is displaying, so a timeline entry
+        // carrying just `Field` (filtered out) or only outcomes past `topFilter`
+        // is an instant with no point. Two such entries plus older history reached
+        // `inWindow == 2` while the card was still sparse, and the old ternary read
+        // every one of them as "One price". Count what is there.
+        let windowPhrase: String
+        switch inWindow {
+        case 0: windowPhrase = "No prices \(windowWord)"
+        case 1: windowPhrase = "One price \(windowWord)"
+        default: windowPhrase = "\(inWindow) prices \(windowWord)"
+        }
+
+        // Nothing older means the window already holds everything the response has,
+        // so the window's own name would be noise — and on the widest chip (no
+        // cutoff) it is always this branch. "so far" is true of every range.
+        guard earlier > 0 else {
+            return SparseCopy(
+                note: inWindow == 1
+                    ? "Only one price seen so far"
+                    : "\(inWindow) prices seen so far",
+                hint: nil)
+        }
+
+        let earlierPhrase = earlier == 1 ? "one earlier price" : "\(earlier) earlier prices"
+        let note = "\(windowPhrase) — \(earlierPhrase)"
+        return SparseCopy(note: note, hint: "Try a longer range")
+    }
+
+    /// The window a chip actually selects, as it reads INSIDE the sentence — the
+    /// preposition belongs to the phrase, because `Today` does not take one and
+    /// every other window does ("No prices today", "No prices in the last 7 days").
+    ///
+    /// Named from the RANGE, never from the chip's own label: `6M` reads fine on a
+    /// chip and not in a sentence, and the widest range's cutoff is nil — so when it
+    /// is sparse, the window IS everything and the count sentence carries it without
+    /// this word at all.
+    static func windowWord(for range: EvolutionTimeRange) -> String {
+        switch range {
+        case .week: return "in the last 7 days"
+        case .day: return "in the last 24 hours"
+        case .today: return "today"
+        case .tournament: return "during this event"
+        case .season: return "in this range"
+        }
     }
 
     static func coverageSpanWord(_ hours: Double) -> String {
