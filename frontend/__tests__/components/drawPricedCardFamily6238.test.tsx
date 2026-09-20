@@ -113,6 +113,39 @@ const AWAY_PROB = 0.26;
 const HOME_TEXT = "74%";
 const AWAY_TEXT = "26%";
 
+/**
+ * 🔴 THE CLOCK IS PINNED, AND THIS FILE IS WHY (gotcha #44).
+ *
+ * Nothing in #6238 is about time — these cards are specimens of a RENDER rule,
+ * and `commence_time` is here only because a card needs one. It was written as
+ * the literal `2026-09-20T18:40:00Z`, which was comfortably in the future on
+ * 2026-09-16 when the ship landed and became the past at 18:40Z on 2026-09-20.
+ * `EventCard` then stopped drawing chips for a pre-game match and rendered
+ * "No result reported · Sep 20" instead, so three assertions that had never
+ * been touched went red — on every branch at once, because the bomb is in the
+ * fixture rather than in anyone's diff.
+ *
+ * The anchor is therefore fixed and `now` is pinned an hour BEFORE it: the
+ * suite's subject is a card awaiting kick-off, and that is the only property of
+ * the instant any assertion here depends on. Offset first, no clock branch —
+ * an anchor containing an `if` is not fixed.
+ *
+ * The three describes below that still passed at 18:40Z were not safe either,
+ * merely later: the card surfaces suppress on their own `commence_time`-relative
+ * windows, so they would have fired on their own schedule. One pin covers all
+ * four fixtures.
+ */
+const KICKOFF = "2026-09-20T18:40:00Z";
+const BEFORE_KICKOFF = Date.parse(KICKOFF) - 60 * 60 * 1000;
+
+beforeEach(() => {
+  jest.useFakeTimers().setSystemTime(BEFORE_KICKOFF);
+});
+
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 describe("#6238 the two arms are genuinely different", () => {
   it("the draw-priced key is declared and the control key is not", () => {
     expect(sportPricesADraw(DRAW_SPORT)).toBe(true);
@@ -210,7 +243,7 @@ function feedCard(sport: string, over: Partial<FeedEventData> = {}): FeedItem {
     sport_name: "League",
     home_team: "Sevilla FC",
     away_team: "Deportivo Alaves",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     status: "scheduled",
     home_score: null,
     away_score: null,
@@ -323,7 +356,7 @@ function sharedEvent(sport: string, over: Partial<Event> = {}): Event {
     sport_name: "League",
     home_team: "Sevilla FC",
     away_team: "Deportivo Alaves",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     status: "scheduled",
     home_score: null,
     away_score: null,
@@ -378,7 +411,7 @@ function discoverItem(sport: string): FeedItem {
       sport_name: "League",
       home_team: "Sevilla FC",
       away_team: "Deportivo Alaves",
-      commence_time: "2026-09-20T18:40:00Z",
+      commence_time: KICKOFF,
       status: "scheduled",
       home_score: null,
       away_score: null,
@@ -463,7 +496,7 @@ function matchupChild(): EventConceptChild {
     kind: "matchup",
     event_id: 15298551,
     status: "scheduled",
-    commence_time: "2026-09-20T18:40:00Z",
+    commence_time: KICKOFF,
     home: { name: "Sevilla FC", probability: HOME_PROB },
     away: { name: "Deportivo Alaves", probability: AWAY_PROB },
   } as unknown as EventConceptChild;
