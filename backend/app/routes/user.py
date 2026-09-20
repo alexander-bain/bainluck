@@ -20,6 +20,7 @@ from app.models.models import (
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
+from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.name_normalization import names_match as _names_match
 
 logger = logging.getLogger(__name__)
@@ -1694,7 +1695,35 @@ async def _query_team_futures(
 
         per_team_items.setdefault(matched["id"], []).append({
             "outcome_id": outcome.id,
-            "outcome_name": outcome.name,
+            # #2142 — THE CLUB IS SPELLED THE SAME WAY EVERYWHERE ON ONE PAGE.
+            #
+            # Kalshi ships club names truncated (`New York Y`, `Los Angeles D`),
+            # and the Yankees page printed four of them directly beside the
+            # odds-api row spelling the same club `New York Yankees` — under a
+            # footer reading "New York Yankees · 30 markets tracked".
+            #
+            # #6479's engine already repairs this off the rung's OWN id-anchored
+            # ticker (`futures_outcomes.external_id` = `KXMLB-26-NYY`), and
+            # `routes/futures.py`, `routes/feed.py` and `routes/events.py` all
+            # call it. This function — which serves BOTH the team page and
+            # "Your Teams' Futures" — was simply never wired to it, so the fix
+            # that cleaned the Discover card never reached the team page.
+            #
+            # AT THE PAYLOAD BOUNDARY, DELIBERATELY. `_find_matched_team` above
+            # keeps reading the RAW `outcome.name`: repairing before the match
+            # would let `New York Y` newly satisfy `_strict_team_name_matches`
+            # and change WHICH rows reach a team page. That is a different ship
+            # with a different blast radius; this one only changes spelling.
+            #
+            # The helper abstains far more often than it fires, and that is the
+            # safety. Measured over the whole live population (238 team-bound
+            # open Kalshi rows of this shape): 120 repaired across 8 clubs, 110
+            # left alone — including every player carrying a generational suffix
+            # (`James Cook III`, `Pat Surtain II`), whose trailing capitals look
+            # identical but whose ticker leg is a player code, not a team code.
+            # A short name is visibly short; a wrong one is not.
+            "outcome_name": repair_field_outcome_name(outcome.external_id, outcome.name)
+            or outcome.name,
             "market_id": market.id,
             "market_name": market.name,
             "market_tier": market.market_tier,

@@ -681,8 +681,11 @@ async def test_query_team_futures_collapses_identity_duplicates():
     tim_rows = [(574, 3), (100, 2), (101, 2)]  # 12682 absent → 0
 
     # One market linked to the DUP id (12682) — should resolve to canonical 574.
+    # `external_id` is the rung's own Kalshi ticker; #2142 reads it to spell a
+    # truncated club out. "Boston Bruins" is not truncated, so the repair
+    # abstains and this row also serves as the pass-through control.
     outcome = SimpleNamespace(
-        id=1, name="Boston Bruins", team_id=12682,
+        id=1, name="Boston Bruins", external_id="KXNHL-26-BOS", team_id=12682,
         current_probability=0.3, probability_change_24h=0.0, rank=1,
         is_winner=False,
     )
