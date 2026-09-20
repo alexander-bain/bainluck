@@ -86,6 +86,19 @@ import type {
 
 const DISMISS = () => {};
 
+/**
+ * #7602 — the same gotcha #44 anchor this file's sibling detonated on.
+ *
+ * This fixture is `status: "upcoming"` and was pinned to the literal
+ * `"2026-10-01T23:05:00Z"`. Unlike `drawPricedCardFamily6238`'s it had not been
+ * crossed yet, so this is a defusal rather than a repair — swept while fixing
+ * the one that did fire, because "a literal kickoff in the past stays in the
+ * past" makes every future literal a dated red. Not claiming it WOULD have
+ * reddened this file's assertions; claiming the anchor may not depend on when
+ * the suite runs.
+ */
+const KICKOFF = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
 // ── markup helpers ───────────────────────────────────────────────────────────
 
 const VOID_TAGS = new Set(["img", "br", "hr", "input", "path", "circle", "rect", "line", "polyline", "polygon", "meta", "source"]);
@@ -238,7 +251,7 @@ function eventData(): FeedEventData {
     sport_label: "MLB",
     llm_sport_category: "baseball_mlb",
     status: "upcoming",
-    commence_time: "2026-10-01T23:05:00Z",
+    commence_time: KICKOFF,
     current_odds: { home_probability: 0.55, away_probability: 0.45 },
   } as unknown as FeedEventData;
 }
