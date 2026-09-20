@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,6 +43,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import app.routes.futures as futures_routes
+import app.utils.futures_market_snapshot as snapshot_utils
 from app.models.models import FuturesMarket
 from app.routes.futures import _format_market_detail, get_probability_timeline
 
@@ -59,16 +60,38 @@ DANUBE_ROWS = [
 ]
 
 
+#: Every module on the formatter's path that reads a wall clock of its own.
+#:
+#: The route is not the only reader. `_format_market_detail` delegates the
+#: dated movement to `dated_movement_points`, which lives in
+#: `futures_market_snapshot` and defaults its `now=` to *that* module's
+#: `datetime` — a namespace patching `app.routes.futures` never reaches. This
+#: list is the fixture's clock surface, and `TestTheFixtureHasOneClock` is what
+#: keeps it honest when the path grows a third reader.
+_CLOCK_READERS = (futures_routes, snapshot_utils)
+
+
 @contextmanager
 def _at(instant: datetime = MEASURED_AT):
-    """Both readers on one clock, so an expiry boundary cannot split them."""
+    """Every reader on one clock, so an expiry boundary cannot split them.
+
+    Half-freezing is not a weaker version of this — it is a time bomb. The
+    fixture's ages are all relative to `MEASURED_AT`, so a reader left on the
+    real clock measures a *relative* basis against an *absolute* now, and the
+    test passes only while the wall clock happens to sit inside the window it
+    is asserting. This one had a 12-hour life (#7284): banked at
+    `MEASURED_AT - 19h` against a 12–24h window, it went green on CI at 21:28Z
+    and failed on every run from 23:00:00Z forever.
+    """
 
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):
             return instant if tz is None else instant.astimezone(tz)
 
-    with patch.object(futures_routes, "datetime", _Frozen):
+    with ExitStack() as stack:
+        for module in _CLOCK_READERS:
+            stack.enter_context(patch.object(module, "datetime", _Frozen))
         yield
 
 
@@ -129,14 +152,18 @@ def _danube(rows=None, **kw):
     return _market([_outcome(*r) for r in (rows or DANUBE_ROWS)], **kw)
 
 
-async def _timeline(market, top=10):
+async def _timeline(market, top=10, at=MEASURED_AT):
     """The route, on a db that answers every query it can ask.
 
     Order-insensitive on purpose: the withheld-price arms run their own queries
     before the snapshot one, so a positional `side_effect` list would make this
     harness depend on how many queries the policy happens to make today.
+
+    `at` exists so `TestTheFixtureHasOneClock` can re-run an arm at instants
+    years apart. Every age here is derived from it, so the harness carries no
+    absolute instant of its own for a real clock to disagree with.
     """
-    captured = MEASURED_AT - timedelta(hours=1)
+    captured = at - timedelta(hours=1)
     snaps = []
     for o in market.outcomes:
         s = MagicMock()
@@ -164,7 +191,7 @@ async def _timeline(market, top=10):
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=_execute)
-    with _at():
+    with _at(at):
         return await get_probability_timeline(
             market_id=market.id, top=top, hours=168, db=db
         )
@@ -419,6 +446,100 @@ class TestWhatMustNotMove:
         assert alpha["id"] == 1
         assert alpha["rank"] == 3
         assert alpha["team_id"] == 77
+
+
+class TestTheFixtureHasOneClock:
+    """The class of defect that reddened master on a green sha (#7284).
+
+    `test_a_dated_amount_does_travel` banks a basis at `MEASURED_AT - 19h` and
+    asserts the 12–24h window admits it. `_at` froze `app.routes.futures` only,
+    so the *basis* was relative and the *now* it was measured against was the
+    real wall clock: valid 11:00Z–23:00:00Z on 2026-09-19 and false after.
+    Exact-sha CI ran at 21:28Z and was honestly green — a boundary a passing
+    gate cannot see, because crossing it changes nothing about the commit.
+
+    These arms fail on a half-frozen `_at` and pass on a whole one. They are
+    not a second opinion on the movement rule; they are the assertion that the
+    fixture's answer is a property of the fixture and not of the day it runs.
+    """
+
+    def test_every_reader_on_the_path_is_frozen_together(self):
+        """`_at`'s promise, asserted instead of restated.
+
+        Both modules are named as LITERALS, not iterated out of
+        `_CLOCK_READERS`. An arm that loops the same tuple `_at` loops cannot
+        fail when a module is dropped from it — it just iterates one fewer and
+        passes, which is what the first cut of this test did under the mutation
+        that produced the outage. Naming them is the whole point: this arm is
+        the one that must red when `snapshot_utils` goes missing.
+        """
+        instant = datetime(2031, 3, 4, 5, 6, tzinfo=timezone.utc)
+        with _at(instant):
+            assert futures_routes.datetime.now(timezone.utc) == instant
+            assert snapshot_utils.datetime.now(timezone.utc) == instant
+
+    def test_the_registry_holds_both_of_them_and_they_are_distinct(self):
+        """…and the tuple `_at` actually loops says the same thing.
+
+        Two names bound to one module would satisfy the arm above while a
+        second namespace stayed live, so identity is asserted too.
+        """
+        assert futures_routes in _CLOCK_READERS
+        assert snapshot_utils in _CLOCK_READERS
+        assert snapshot_utils is not futures_routes
+        assert len({id(m) for m in _CLOCK_READERS}) == len(_CLOCK_READERS)
+
+    @pytest.mark.parametrize(
+        "instant",
+        [
+            datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc),   # long past
+            datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc),  # inside the old window
+            datetime(2026, 9, 19, 23, 30, tzinfo=timezone.utc), # just past the boundary
+            datetime(2027, 6, 30, 18, 0, tzinfo=timezone.utc),  # after every literal
+            datetime(2099, 12, 31, 23, 59, tzinfo=timezone.utc),# far future
+        ],
+    )
+    async def test_a_dated_amount_travels_on_any_day_it_is_run(self, instant):
+        """The same arm that expired, re-asserted with the clock as a PARAMETER.
+
+        Ages are offsets from `instant`, never from a literal, so the only way
+        an arm here can fail is a reader reaching past the freeze to the real
+        clock (gotcha #44: offset first, and never let the anchor branch on the
+        day).
+        """
+        from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+        basis_at = (instant - timedelta(hours=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        market = _market(
+            [_outcome(1, "Yes", 0.62, change=0.04), _outcome(2, "No", 0.38)],
+            mid=999008,
+            me=False,
+        )
+        market.market_metadata = {DATED_BASIS_METADATA_KEY: {"1": [0.50, basis_at]}}
+        resp = await _timeline(market, at=instant)
+        assert _row(resp, "Yes")["probability_change_24h"] == pytest.approx(0.12)
+
+    @pytest.mark.parametrize("age_hours", [1, 11, 25, 400])
+    async def test_a_basis_outside_the_window_is_still_refused(self, age_hours):
+        """The freeze must not become a way of admitting everything.
+
+        Freezing both clocks makes the age exactly what the fixture says it is —
+        so the refusals have to keep working, or the arms above would pass on a
+        `dated_movement_points` that had stopped checking. 1h and 11h are under
+        the 12h floor, 25h and 400h over the 24h ceiling.
+        """
+        from app.utils.futures_market_snapshot import DATED_BASIS_METADATA_KEY
+
+        instant = datetime(2028, 2, 29, 9, 15, tzinfo=timezone.utc)
+        basis_at = (instant - timedelta(hours=age_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        market = _market(
+            [_outcome(1, "Yes", 0.62, change=0.04), _outcome(2, "No", 0.38)],
+            mid=999009,
+            me=False,
+        )
+        market.market_metadata = {DATED_BASIS_METADATA_KEY: {"1": [0.50, basis_at]}}
+        resp = await _timeline(market, at=instant)
+        assert _row(resp, "Yes")["probability_change_24h"] is None
 
 
 class TestTheRouteLoadsWhatTheFormatterDereferences:
