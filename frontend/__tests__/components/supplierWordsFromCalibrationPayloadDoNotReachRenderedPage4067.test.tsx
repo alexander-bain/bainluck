@@ -302,8 +302,15 @@ describe("#4067 — no supplier word from /api/calibration reaches the rendered 
     expect(text).toContain("2026-07-11");
     expect(text).toContain("Soccer 2-way (draw-omission) historical exclusion");
     expect(text).toContain("1,234 rows");
-    // The intro above the log promises "dates and rows affected". It keeps that
-    // promise; what goes is the engineer's paragraph beneath each entry.
+    // What goes is the engineer's paragraph beneath each entry.
+    //
+    // 🔴 #7363: this comment used to read "the intro above the log promises
+    // 'dates and rows affected'. It keeps that promise." That was true of THIS
+    // FIXTURE — one correction, `rows: 1_234` — and false on production, where
+    // 11 of 13 entries carry `rows: null`. The promise is gone from the intro
+    // now; the row count itself is unchanged and is still asserted here.
+    // `correctionsLogPromisesOnlyWhatEveryEntryCarries7363` holds the mixed
+    // fixture this one deliberately does not.
     expect(text).not.toContain("structurally dropped");
   });
 
