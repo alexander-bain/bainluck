@@ -10,6 +10,7 @@ import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, use
 import EventCard from "@/components/EventCard";
 import FuturesCard from "@/components/FuturesCard";
 import SearchFamilyCard from "@/components/SearchFamilyCard";
+import SearchTeamCard from "@/components/SearchTeamCard";
 import { familyShownIds } from "@/components/searchFamilyDisplay";
 import CategoryBrowser from "@/components/CategoryBrowser";
 import LoadingState from "@/components/LoadingState";
@@ -18,10 +19,9 @@ import SearchDegradedState from "@/components/SearchDegradedState";
 import { searchAnswerState } from "@/lib/searchAnswerState";
 import LeagueChips from "@/components/LeagueChips";
 import { END_OF_FEED_CATEGORIES } from "@/components/discover/EndOfFeedCard";
-import { buildTeamPageUrl } from "@/lib/teamUrls";
 import { eventPath } from "@/lib/eventKey";
 import { trackEvent } from "@/lib/analytics";
-import type { SearchResponse, SearchSuggestion, SearchTeam } from "@/lib/types";
+import type { SearchResponse, SearchSuggestion } from "@/lib/types";
 
 // Representative example queries spanning the search gold-set's classes (a team,
 // a season future, a politics question) — a self-contained zero-state that works
@@ -161,43 +161,6 @@ function SearchZeroState({
         </div>
       </div>
     </div>
-  );
-}
-
-function TeamCard({ team }: { team: SearchTeam }) {
-  const url = buildTeamPageUrl(team.name, team.sport_key);
-  if (!url) return null;
-
-  const sportLabel = team.sport_key
-    ? team.sport_key.split("_").slice(1).join(" ").toUpperCase()
-    : null;
-
-  return (
-    <Link
-      href={url}
-      className="flex items-center gap-3 p-3 bg-surface-card border border-surface-border rounded-card hover:shadow-md hover:border-accent-brand/30 transition-all"
-    >
-      {team.logo ? (
-        <img
-          src={team.logo}
-          alt=""
-          className="w-10 h-10 object-contain flex-shrink-0"
-          crossOrigin="anonymous"
-        />
-      ) : (
-        <div className="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center text-sm font-bold text-text-muted flex-shrink-0">
-          {team.abbreviation || team.name.charAt(0)}
-        </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-text-primary truncate">{team.name}</div>
-        <div className="text-xs text-text-secondary">
-          {team.record && <span>{team.record}</span>}
-          {team.record && sportLabel && <span> · </span>}
-          {sportLabel && <span>{sportLabel}</span>}
-        </div>
-      </div>
-    </Link>
   );
 }
 
@@ -520,7 +483,7 @@ function SearchContent() {
           <SectionHeader title="Teams" count={results.teams.length} />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {results.teams.map((team) => (
-              <TeamCard key={team.id} team={team} />
+              <SearchTeamCard key={team.id} team={team} sports={results.sports} />
             ))}
           </div>
         </section>
