@@ -54,7 +54,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { TeamCard } from "@/app/search/page";
+import SearchTeamCard from "@/components/SearchTeamCard";
 import {
   getSportLabel,
   getTeamRowSportLabel,
@@ -156,27 +156,30 @@ describe("#7390 the team row prints the name the server gave the league", () => 
     // rule and the reason this delegates to `getSportLabel` rather than taking
     // the served string raw.
     expect(
-      getTeamRowSportLabel("basketball_euroleague", [
-        { key: "basketball_euroleague", name: "Basketball Euroleague", count: 1 },
-      ]),
+      getTeamRowSportLabel(
+        "basketball_euroleague",
+        facetsFor([{ key: "basketball_euroleague", served: "Basketball Euroleague" }]),
+      ),
     ).toBe("EuroLeague");
   });
 
   it("treats a blank served name as no name rather than drawing an empty line", () => {
     for (const blank of ["", "   "]) {
       expect(
-        getTeamRowSportLabel("baseball_milb", [
-          { key: "baseball_milb", name: blank, count: 1 },
-        ]),
+        getTeamRowSportLabel(
+          "baseball_milb",
+          facetsFor([{ key: "baseball_milb", served: blank }]),
+        ),
       ).toBe("Baseball");
     }
   });
 
   it("matches on the key, so a facet for a different sport is not borrowed", () => {
     expect(
-      getTeamRowSportLabel("baseball_milb", [
-        { key: "baseball_mlb", name: "MLB", count: 1 },
-      ]),
+      getTeamRowSportLabel(
+        "baseball_milb",
+        facetsFor([{ key: "baseball_mlb", served: "MLB" }]),
+      ),
     ).toBe("Baseball");
   });
 });
@@ -282,7 +285,7 @@ describe("#7390 the rendered team card", () => {
 
   it("prints MiLB under a pill saying MiLB", () => {
     const html = renderToStaticMarkup(
-      <TeamCard team={worcester} sports={redSoxFacets} />,
+      <SearchTeamCard team={worcester} sports={redSoxFacets} />,
     );
     expect(html).toContain("Worcester Red Sox");
     expect(html).toContain("MiLB");
@@ -290,7 +293,7 @@ describe("#7390 the rendered team card", () => {
   });
 
   it("prints a sport, not a key, when the card is handed no facets", () => {
-    const html = renderToStaticMarkup(<TeamCard team={worcester} />);
+    const html = renderToStaticMarkup(<SearchTeamCard team={worcester} />);
     expect(html).toContain("Baseball");
     expect(html).not.toContain("MILB");
     expect(html).not.toContain("baseball_milb");
@@ -298,7 +301,7 @@ describe("#7390 the rendered team card", () => {
 
   it("puts the record and the league on one line, separated", () => {
     const html = renderToStaticMarkup(
-      <TeamCard
+      <SearchTeamCard
         team={{ ...worcester, name: "Boston Red Sox", sport_key: "baseball_mlb", record: "84-71" }}
         sports={redSoxFacets}
       />,
@@ -314,7 +317,7 @@ describe("#7390 the rendered team card", () => {
     // without one, so the card returns null before it reaches a label.
     expect(
       renderToStaticMarkup(
-        <TeamCard team={{ ...worcester, sport_key: null, record: "84-71" }} sports={redSoxFacets} />,
+        <SearchTeamCard team={{ ...worcester, sport_key: null, record: "84-71" }} sports={redSoxFacets} />,
       ),
     ).toBe("");
   });
@@ -324,24 +327,32 @@ describe("#7390 the rendered team card", () => {
 // Part 5 — the wiring pin
 // ---------------------------------------------------------------------------
 
-const PAGE_PATH = join(process.cwd(), "app/search/page.tsx");
-const PAGE_SOURCE = readFileSync(PAGE_PATH, "utf8");
+const PAGE_SOURCE = readFileSync(join(process.cwd(), "app/search/page.tsx"), "utf8");
+const CARD_SOURCE = readFileSync(
+  join(process.cwd(), "components/SearchTeamCard.tsx"),
+  "utf8",
+);
 
 describe("#7390 the page hands the card the pills' own payload", () => {
   it("renders the card with `sports={results.sports}`", () => {
-    // Without this the render above is a test of a component nothing calls
-    // that way: `<TeamCard team={team} />` compiles, renders "Baseball", and
-    // throws away the "MiLB" the page is holding.
-    expect(PAGE_SOURCE).toMatch(/<TeamCard[^>]*sports=\{results\.sports\}/);
+    // Without this line the renders above test a component nothing calls that
+    // way: `<SearchTeamCard team={team} />` compiles, renders "Baseball", and
+    // throws away the "MiLB" the page is holding — correct-but-coarse on every
+    // row, with the defect's own specimen silently downgraded.
+    expect(PAGE_SOURCE).toMatch(/<SearchTeamCard[^>]*sports=\{results\.sports\}/);
   });
 
-  it("asks the shared rule for the label exactly once", () => {
-    const calls = PAGE_SOURCE.split("\n").filter(
-      (line) =>
-        (line.split("//")[0] ?? line).includes("getTeamRowSportLabel("),
+  it("feeds those pills from the same array, so one payload answers both", () => {
+    expect(PAGE_SOURCE).toMatch(/results\.sports\.map\(\(sport\)/);
+  });
+
+  it("asks the shared rule for the label exactly once, on the key", () => {
+    const calls = CARD_SOURCE.split("\n").filter((line) =>
+      (line.split("//")[0] ?? line).includes("getTeamRowSportLabel("),
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("team.sport_key");
+    expect(calls[0]).toContain("sports");
   });
 });
 
