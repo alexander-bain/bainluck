@@ -119,72 +119,90 @@ export function leaderLabel(leader: MovementLeader | null): string | null {
 }
 
 /**
- * The name to print beside the hero's number, and in the settled sentence.
+ * The name to print beside the hero's number, and in the settled sentence: the
+ * outcome's OWN name, as served.
  *
- * #5997 — `isGenericOutcomeName` is the WIDE predicate (dates, bare numbers,
- * `Option A`, short tokens), and substituting "Yes" for those is a readability
- * fix. It is a lie for a name that states its own side, because the hero
- * features whichever outcome LEADS and that is routinely the `No` row: on
- * `/futures/20571021` (`Yes: null, No: 0.39`) the hero read "39% / Yes".
- * `statesItsOwnSide` is shared with `leaderLabel`, so the hero, this page's
- * settled sentence and the movement caption cannot answer the same question
- * three different ways.
+ * ═══ #7256 — "Yes" IS AN ANSWER, AND THE HERO MAY ONLY PRINT ANSWERS THE BOARD
+ * ACTUALLY CARRIES ═══
+ *
+ * #5997 narrowed the "Yes" substitution so it could not crown the opposite side
+ * of a binary. It left the wide fallback standing — dates, bare numbers,
+ * `Option A`, tokens of three characters or fewer — on the reasoning that such a
+ * name "means nothing above a percentage". Two production specimens, one of them
+ * Alex's, say the fallback is the larger defect:
+ *
+ *   /futures/55674185  2027 CONCACAF Gold Cup Champion, 23-way field
+ *                      leader `USA` 0.41        hero read "41% / Yes"
+ *   /futures/58776433  When will the Danube return to normal levels?, 3 rungs
+ *                      leader `October 1 - 31, 2026` 0.55
+ *                                               hero read "55% / Yes"
+ *
+ * Neither board has a row called "Yes". The page named the right answer twice —
+ * in All Outcomes and in the chart legend — and mislabelled it in the one place
+ * a reader looks first. Alex, filing the second: *"`Yes` is not an answer to a
+ * 'when' question, and no row on the page carries it … the predicate is not
+ * 'large field' but 'the market is not binary'."*
+ *
+ * ═══ THE MEASUREMENT IS WHAT RETIRES IT RATHER THAN NARROWS IT ═══
+ *
+ * Counted on production 2026-09-19 over all 43,510 open futures markets with a
+ * priced board, applying this function's own predicates to each market's leading
+ * outcome:
+ *
+ *   heroes printing "Yes"                          984
+ *     …whose board carries no Yes/No row at all    933
+ *     …on a non-binary market (Alex's predicate)   715
+ *
+ *   by arm:  <=3 chars 409 · date 560 · bare number 113 · `Option A` ___0___
+ *
+ * 🔴 THE ARM THE FALLBACK WAS WRITTEN FOR HAS NO MEMBERS. `Option|Choice|Bucket`
+ * matched zero markets, while the three arms that do fire are answering real
+ * questions: the short-token arm is `TCU`, `BYU`, `LSU`, `SMU`, `PSG`, `BTS`,
+ * `SEC`, `USA`, `AfD`, `Tie`, `Odd` — teams, parties, a band and a conference,
+ * every one of them the row a reader wants named. `PSG` is the sharpest case:
+ * #4627 added a HAND_PICKED_LABELS entry so a hero would say "PSG" instead of
+ * the fragment "Germain", and this function then replaced "PSG" with "Yes".
+ *
+ * So there is no narrowing left to do — a predicate whose justifying population
+ * is empty is not a readability fix, and #6301's rule on this page already says
+ * which way to resolve it: **no verdict beats a wrong one.** The rows that were
+ * "unreadable" print a date, a price or a ticker, which is honest and is what
+ * the reader's own board says three inches lower.
+ *
+ * ═══ WHAT THIS DOES NOT WEAKEN ═══
+ *
+ * #5997's ship is preserved a fortiori: it stopped "Yes" landing on a name that
+ * states its own side, and nothing is substituted now, so every one of its arms
+ * still holds. `statesItsOwnSide` stays exported and load-bearing for
+ * `leaderLabel`, which is on the movement caption — and that caption is the
+ * standing proof this change is right, because it uses the NARROW predicate and
+ * has been printing "USA" correctly all along, beside a hero saying "Yes".
+ *
+ * The empty name is not a new hole: measured 0 leading outcomes with a blank name
+ * across the same 43,510 markets, and `FuturesHero` gates every draw of this
+ * value on `{outcomeName && …}`, so a blank one leaves the space empty rather
+ * than explaining it (notice 34 / D102).
  */
 export function heroOutcomeLabel(name: string): string {
-  const served = name.trim();
-  if (statesItsOwnSide(served)) return served;
-  return isGenericOutcomeName(name) ? "Yes" : name;
+  return name.trim();
 }
 
-/**
- * Detect whether an outcome name is a recognizable entity (person, team, place)
- * vs a generic/date-like identifier that needs extra context in the hero display.
+/*
+ * `isGenericOutcomeName` was DELETED by #7256, not narrowed.
  *
- * Returns true for names like "May 18", "2026", "Q3", "Option A", "Before July",
- * "Over 5.5", bare numbers, single short words, or Yes/No variants.
- * Returns false for names that look like real entities: "Celtics", "Trump",
- * "Kendrick Lamar", "Manchester City".
+ * It existed for one caller — `heroOutcomeLabel` above — and answered one
+ * question: "is this name too bare to print, so that 'Yes' reads better?" The
+ * production count of the family it was written to rescue (`Option A`,
+ * `Choice 1`, `Bucket 3`) is zero, and every other arm it fired on was a real
+ * answer being overwritten. With the substitution retired there is no caller
+ * left, and an exported predicate that nothing calls is worse than no predicate:
+ * the next reader would take its existence as evidence that the hero still
+ * substitutes. The arms it recognised are recorded in `heroOutcomeLabel`'s
+ * measurement table rather than kept as code.
  *
- * Moved here from `app/futures/[id]/page.tsx` by #5997, unchanged: it is half of
- * `heroOutcomeLabel`, and a predicate that decides what a hero SAYS could not be
- * unit-tested while it sat inside a page that needs SWR, framer and three charts
- * to render. Its only callers are in this module.
+ * `statesItsOwnSide` (#5997) is the predicate that survives, and it is still
+ * load-bearing for `leaderLabel`.
  */
-export function isGenericOutcomeName(name: string): boolean {
-  const trimmed = name.trim();
-
-  // Short single-token names (<=4 chars) are likely generic unless they look like
-  // known abbreviations that are still meaningful (e.g., "Yes", "No")
-  if (trimmed.length <= 3) return true;
-
-  // Bare numbers or numbers with units: "5", "42.5", "100+", "$50"
-  if (/^[$]?\d+([.,]\d+)?[+%]?$/.test(trimmed)) return true;
-
-  // Date patterns: "May 18", "June 2026", "Jan 1, 2027", "2025-06", "Q3 2026"
-  const datePatterns = [
-    /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i,
-    /^(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d/i,
-    /^\d{4}(-\d{2})?$/,
-    /^Q[1-4]\b/i,
-    /^(Before|After|By)\s+(January|February|March|April|May|June|July|August|September|October|November|December)/i,
-    /^(Before|After|By)\s+(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i,
-    /^(Before|After|By)\s+\d{4}/i,
-    /^Week\s+\d/i,
-  ];
-  if (datePatterns.some((p) => p.test(trimmed))) return true;
-
-  // Threshold/range patterns: "Over 5.5", "Under 100", ">=50", "250+"
-  if (/^(Over|Under|Above|Below|At least|At most|More than|Less than|Fewer than)\s/i.test(trimmed)) return true;
-  if (/^[<>=]+\s*\d/.test(trimmed)) return true;
-
-  // Yes/No variants
-  if (/^(Yes|No)(\s|$)/i.test(trimmed)) return true;
-
-  // Option/Choice labels: "Option A", "Choice 1"
-  if (/^(Option|Choice|Bucket)\s/i.test(trimmed)) return true;
-
-  return false;
-}
 
 /**
  * #883 L2-55: the <title>/SEO text for a futures-detail page. On a SETTLED market

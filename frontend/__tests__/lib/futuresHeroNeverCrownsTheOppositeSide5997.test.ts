@@ -12,15 +12,27 @@
 // journey (81 → 66). The number was right and the name above it was the opposite
 // side of the question.
 //
-// The rule this file pins: "Yes" is a substitution for names that carry NO
+// The rule this file pinned: "Yes" is a substitution for names that carry NO
 // answer — "May 18", "2026", "Option A", a bare number. A name that states its
-// own side is printed as served. Both halves are asserted here, because a fix
-// that simply stopped substituting would take the readable hero off every
-// date-named outcome in the process.
+// own side is printed as served.
+//
+// ═══ AMENDED BY #7256 (ux/1374) — THE SECOND HALF OF THAT RULE IS GONE ═══
+//
+// The substitution is retired entirely: the hero prints the outcome's own name,
+// always. #5997's ship — the half this file is named for — is unchanged and
+// still asserted below; it simply holds a fortiori now, because nothing is
+// substituted for anything.
+//
+// What changed is the fallback #5997 preserved. Measured over 43,510 open
+// markets, it fired on 984 heroes, 933 of them on boards carrying no Yes/No row
+// at all, and its justifying family (`Option A`/`Choice 1`/`Bucket 3`) had ZERO
+// members. The arms that actually fired were `USA`, `TCU`, `PSG`, `BTS`,
+// `October 1 - 31, 2026`, `$92` — real answers, overwritten with one the board
+// did not carry. Full table and both production specimens: the block comment on
+// `heroOutcomeLabel`.
 
 import {
   heroOutcomeLabel,
-  isGenericOutcomeName,
   leaderLabel,
   movementExplanation,
   statesItsOwnSide,
@@ -54,15 +66,27 @@ describe("a name that states its own side is never replaced by \"Yes\"", () => {
     expect(heroOutcomeLabel(served)).toBe(expected);
   });
 
-  it("still substitutes for a name that carries no answer at all", () => {
-    // THE CONTROL (gotcha #43). Without these, a fix that deleted the
-    // substitution entirely would pass every assertion above and leave a hero
-    // reading "62% / May 18".
-    expect(heroOutcomeLabel("May 18")).toBe("Yes");
-    expect(heroOutcomeLabel("2026")).toBe("Yes");
-    expect(heroOutcomeLabel("Option A")).toBe("Yes");
-    expect(heroOutcomeLabel("Q3 2026")).toBe("Yes");
-    expect(heroOutcomeLabel("42.5")).toBe("Yes");
+  it("no longer substitutes for a name that carries no answer either (#7256)", () => {
+    // ⚠️ THIS ASSERTION IS INVERTED FROM WHAT #5997 WROTE, DELIBERATELY.
+    //
+    // It used to read `expect(heroOutcomeLabel("May 18")).toBe("Yes")` and was
+    // labelled THE CONTROL — the thing that would go red if anyone deleted the
+    // substitution wholesale. #7256 deleted it wholesale, because the behaviour
+    // this control protected is the behaviour Alex filed as a bug: a 3-rung date
+    // ladder on `/futures/58776433` printed "55% / Yes" over the rung
+    // `October 1 - 31, 2026`, and a 23-way field on `/futures/55674185` printed
+    // "41% / Yes" over `USA`.
+    //
+    // "62% / May 18" — the reading the old control called the failure mode — is
+    // CORRECT. It is the answer the board carries. "62% / Yes" is the failure.
+    //
+    // #5997's actual ship is untouched and is asserted above: a name that states
+    // its own side is never replaced. That now holds a fortiori.
+    expect(heroOutcomeLabel("May 18")).toBe("May 18");
+    expect(heroOutcomeLabel("2026")).toBe("2026");
+    expect(heroOutcomeLabel("Option A")).toBe("Option A");
+    expect(heroOutcomeLabel("Q3 2026")).toBe("Q3 2026");
+    expect(heroOutcomeLabel("42.5")).toBe("42.5");
   });
 
   it("never touches a real entity name", () => {
@@ -70,14 +94,15 @@ describe("a name that states its own side is never replaced by \"Yes\"", () => {
     expect(heroOutcomeLabel("Manchester City")).toBe("Manchester City");
   });
 
-  it("keeps `isGenericOutcomeName` itself unchanged", () => {
-    // The wide predicate was MOVED by this ship, not edited. It still answers
-    // true for a side-stating name; `heroOutcomeLabel` is what declines to act
-    // on that answer. Asserting it here is what makes the move provable.
-    expect(isGenericOutcomeName("No")).toBe(true);
-    expect(isGenericOutcomeName("Under 100")).toBe(true);
-    expect(isGenericOutcomeName("May 18")).toBe(true);
-    expect(isGenericOutcomeName("Kendrick Lamar")).toBe(false);
+  it("keeps `statesItsOwnSide` itself unchanged", () => {
+    // #5997 pinned `isGenericOutcomeName` here to prove its wide predicate had
+    // been MOVED rather than edited. #7256 deleted that predicate (it had no
+    // caller left), so the pin moves to the one #5997 introduced and that is
+    // still load-bearing — `leaderLabel` reads it on the movement caption.
+    expect(statesItsOwnSide("No")).toBe(true);
+    expect(statesItsOwnSide("Under 100")).toBe(true);
+    expect(statesItsOwnSide("May 18")).toBe(false);
+    expect(statesItsOwnSide("Kendrick Lamar")).toBe(false);
   });
 });
 

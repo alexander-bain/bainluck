@@ -138,13 +138,19 @@ describe("the page renders the tied block as a timeline", () => {
     // incoherent (the earlier window nests inside the later one), and NOT this
     // ship's to sort away. The reader keeps seeing what the book says.
     const html = render(PAYLOAD);
-    expect(html.indexOf("Before Oct 1, 2026")).toBeLessThan(
-      html.indexOf("Before Dec 1, 2025"),
-    );
+    // Each rung addressed by its own `aria-label="{label}: {pct}"`, which only
+    // `QuantityGroup` stamps. A bare `indexOf(label)` also matches the hero, which
+    // since #7256 prints the LEADING rung's name instead of substituting "Yes" —
+    // so the plain form compared the hero against a ladder row and read a
+    // correctly ordered ladder as broken.
+    const at = (s: string) => {
+      const i = html.indexOf(`aria-label="${s}:`);
+      expect(i).toBeGreaterThan(-1); // the rung is on the page — nothing dropped
+      return i;
+    };
+    expect(at("Before Oct 1, 2026")).toBeLessThan(at("Before Dec 1, 2025"));
     // And the top of the ladder is still the likeliest rung, by price.
-    expect(html.indexOf("Before May 1, 2027")).toBeLessThan(
-      html.indexOf("Before Jun 1, 2027"),
-    );
+    expect(at("Before May 1, 2027")).toBeLessThan(at("Before Jun 1, 2027"));
   });
 
   test("the ladder renders, not the ranked table", () => {
