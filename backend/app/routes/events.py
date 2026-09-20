@@ -36,7 +36,7 @@ from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 # #7369: the one place either search payload may answer "Conference". Module-level
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
-from app.utils.market_label_normalization import non_sport_topic_label
+from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -10063,9 +10063,33 @@ async def typeahead_search(
                 raise
             # The dropdown must never be slower BECAUSE of a bonus lane.
             _ta_mark("headline_contenders_TIMED_OUT")
+            # #7397 RIDER: THE QUERY IS NOT SPENT HERE, and the length is not a
+            # coy way of writing it. CodeQL grades a request value reaching a log
+            # line `py/log-injection` at medium — alert #2065, open on master
+            # since 2026-09-06 — because `q` is free text a reader controls, so a
+            # query carrying a newline forges a whole log line downstream of us.
+            # This repo's standing answer is to spend a value the reader does not
+            # control (#5728, #5905, #6249, #6355, #6532 all made the same move),
+            # and here there is no trusted re-source for free text: unlike
+            # `/search`, this route never calls `_record_search_query`, so the
+            # text has no second home to point at either. `len(q)` is an int and
+            # it is the dimension this lane's cost actually tracks — the
+            # contender patterns are built per token, which is what
+            # `contender_patterns` fans out over.
+            #
+            # WHAT IS NOT LOST: the stage is already named by the
+            # `headline_contenders_TIMED_OUT` mark one line up, and `debug_timing=1`
+            # carries the marks back to a caller who needs the attribution.
+            #
+            # SCOPE, SAID PLAINLY: fifteen other logging calls in this file still
+            # spend `q`, all of them `search_events`' diagnostics, and CodeQL has
+            # two of those open (#2861, #2852). They are the same class and they
+            # are not this ship's to rewrite — degrading another lane's timeout
+            # diagnostics is its call, not mine. The guard beside this fix is
+            # therefore scoped to this handler and says so in its docstring.
             logger.warning(
-                "typeahead headline-contender lane timed out for %r — shipping "
-                "the dropdown unchanged", q
+                "typeahead headline-contender lane timed out on a %d-character "
+                "query — shipping the dropdown unchanged", len(q)
             )
             # NO `_recover_search_session` HERE — that is the 500 (see the block
             # comment above). The savepoint's own rollback has already restored
@@ -10154,7 +10178,12 @@ async def typeahead_search(
             label = (market.llm_sport_category or market.category or "Market").replace("_", " ").title()
         futures_pool.append({
             "type": "futures",
-            "text": market.name,
+            # #7397: same translation as the search card below it — the dropdown
+            # is one tap above the page, so leaving it raw here would have the
+            # reader meet `Pro Football` first and `NFL` second, for one market.
+            # Display only; `_ta_market_facts` above still carries the raw name,
+            # so ranking and the club-name repair are unaffected.
+            "text": rewrite_venue_league_vocabulary(market.name),
             "market_id": market.id,
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
@@ -27848,7 +27877,21 @@ def _format_futures_for_search(
     _TIER_LABELS_SEARCH = {1: "Championship", 2: "Conference", 3: "Award", 4: "Division", 5: "Prop"}
     return {
         "id": market.id,
-        "name": market.name,
+        # #7397: the venue's league word, translated to ours, and nothing else.
+        # `/search?q=chiefs` drew the chip `NFL (18)` and eighteen cards reading
+        # NFL above five market rows reading `Pro Football: 2027 Champion`.
+        #
+        # This repairs BOTH reader buckets at once and that is why it is here
+        # rather than on the list: the caller formats each market once into
+        # `_formatted_by_id`, and the flat `futures` list and `futures_families`
+        # (the ANSWERS rows) hold the SAME dicts — see the note beside
+        # `_repair_search_card_club_names`, which is placed on that map for
+        # exactly this reason.
+        #
+        # Display only. `market.name` is untouched in the DB and every keyed
+        # consumer — family keys, matching, calibration — still reads what it
+        # read before.
+        "name": rewrite_venue_league_vocabulary(market.name),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.
         # #5657 fixed the facet chips and the events arm; `GET /api/events/

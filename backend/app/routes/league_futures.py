@@ -47,6 +47,7 @@ from app.utils.kalshi_expiration_start import (
 )
 from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.resolution_authority import can_write_winner
+from app.utils.market_label_normalization import rewrite_venue_league_vocabulary
 from app.utils.matchup_sides import sided_yes_no_labels
 from app.utils.lifecycle import event_is_playable, served_event_status
 from app.utils.entity_page_tiers import (
@@ -2367,7 +2368,16 @@ def _serialize_outcomes(
             # Renamed for READING only. The row keeps its id, so anything that
             # resolves, settles or charts this outcome still addresses it by id
             # and is untouched by the label.
-            "name": (labels or {}).get(o.name, o.name),
+            #
+            # #7397: the venue's league word after the sided label, not before,
+            # so a curated Yes/No label wins the naming and still gets the
+            # vocabulary fixed if it carried it. Outcome names are a real
+            # carrier here, not a hypothetical: the NFL page serves ten of
+            # "Will Sam Darnold win the Pro Football Championship Game MVP?"
+            # under `awards[].top_outcomes[].name`.
+            "name": rewrite_venue_league_vocabulary(
+                (labels or {}).get(o.name, o.name)
+            ),
             "probability": float(o.current_probability) if o.current_probability else None,
             "opening_probability": float(o.opening_probability) if o.opening_probability else None,
             "rank": o.rank,
@@ -2664,7 +2674,12 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
 
         market_data = {
             "id": market.id,
-            "name": market.name,
+            # #7397: the venue's word for the league, renamed to ours, for
+            # DISPLAY only. `market.name` itself is untouched, which matters:
+            # `_competition_echoes_name` and `sided_yes_no_labels` both read the
+            # stored attribute to decide things, and a display rewrite must not
+            # move a decision.
+            "name": rewrite_venue_league_vocabulary(market.name),
             "source": market.source,
             "external_id": market.external_id,
             "market_tier": market.market_tier,
@@ -3846,7 +3861,12 @@ async def build_linked_matches(
         withheld_ids = await _withheld_price_outcome_ids(db, market)
         row = {
             "id": market.id,
-            "name": market.name,
+            # #7397: the venue's word for the league, renamed to ours, for
+            # DISPLAY only. `market.name` itself is untouched, which matters:
+            # `_competition_echoes_name` and `sided_yes_no_labels` both read the
+            # stored attribute to decide things, and a display rewrite must not
+            # move a decision.
+            "name": rewrite_venue_league_vocabulary(market.name),
             "source": market.source,
             "external_id": market.external_id,
             "market_tier": market.market_tier,
