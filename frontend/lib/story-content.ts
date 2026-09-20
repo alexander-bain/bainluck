@@ -48,8 +48,12 @@ export const STORY_BLEND = {
   // Proof line is written to survive without live stats; the page fills in the
   // exact figure when the calibration API responds.
   proofLead: "And we grade ourselves in public:",
+  // #7564: "within" is a bound and this figure is an average, so the editorial
+  // fallback carried the same over-claim as the measured sentence it stands in
+  // for. Only the verb moves — the copy is deliberately unmeasured, because it
+  // renders exactly when the payload could not be read.
   proofBody:
-    "across nearly a million resolved outcomes, our numbers land within about two points of what actually happened.",
+    "across nearly a million resolved outcomes, our numbers land an average of about two points from what actually happened.",
   proofCta: "Check our calibration",
 };
 
