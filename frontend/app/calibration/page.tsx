@@ -2599,25 +2599,53 @@ export default function CalibrationPage() {
           </li>
           {/* Queue 316 item 2b (premise P8). The events/Odds-API path selects
               COALESCE(closing, opening), so "closing line" was not uniformly
-              true across the table and the fallback was silent. Wording only —
-              nothing about what is computed changes here. */}
-          {data.closing_line_coverage && data.closing_line_coverage.total > 0 && (
-            <li data-testid="calibration-price-basis-note"
-              data-has-closing={data.closing_line_coverage.has_closing}
-              data-needs-closing={data.closing_line_coverage.needs_closing}>
+              true across the table and the fallback was silent. The METHOD
+              statement below is that fix and is untouched.
+
+              #7472 removes the three QUANTITIES it grew, because none of them
+              were about the sportsbook rows the sentence names:
+
+                "17,077 of 20,145 sportsbook rows have a close"
+                  `closing_line_coverage` counts `events` rows — completed or
+                  closed, with a final score, no source filter at all. Every
+                  game we graded, whether or not a sportsbook ever priced it.
+                  The same screen sizes the sportsbook population at 155,127
+                  outcomes in three other places.
+
+                "1.5pp on closing-line rows against 1.3pp on opening-price rows"
+                  `mce_closing_line` / `mce_opening_price` are
+                  `_cohort_mce(buckets, True/False)`, which filters on
+                  `price_moved` — whether the price left its opening line, not
+                  which basis was read. Measured on the served payload: 1.49pp
+                  over 293,900 `price_moved=true` rows and 1.32pp over 298,001
+                  `false` ones. Sportsbook rows are `price_moved=null`; all
+                  155,127 of them sit outside BOTH figures, so the pair could
+                  not be the comparison the sentence made of it.
+
+                "the gap is the cost of the fallback"
+                  reads a cause into that same pair — the reading #6176
+                  withdrew, and which `Does a price that moves predict better?`
+                  explicitly disclaims four cards higher ("not evidence about
+                  what trading does to a forecast"). One page cannot hold both.
+
+              There is no corrected number to print: the payload carries no
+              per-basis error and no sportsbook-row closing coverage. Notice 34 /
+              D102 — leave the space empty rather than explain the emptiness. No
+              attribute survives either; `data-has-closing` was the same event
+              count under the same wrong noun and nothing read it.
+
+              The gate moves with the numbers. It was `closing_line_coverage`,
+              a field this bullet no longer touches, so the sentence about
+              sportsbook rows would have vanished on a payload that had them and
+              appeared on one that did not. `partition.notApplicableN` IS the
+              sportsbook-row count (`price_moved === null`), and it is what the
+              cohort banner already gates its own sportsbook clause on. */}
+          {partition.notApplicableN > 0 && (
+            <li data-testid="calibration-price-basis-note">
               <strong className="text-text-primary">Not every row is a closing price, and we say
               which.</strong> Kalshi and Polymarket are measured on their closing line. Sportsbook
               rows use the closing line <em>where one exists</em> and fall back to the opening price
-              where it does not &mdash;{" "}
-              <span className="text-text-primary">
-                {data.closing_line_coverage.has_closing.toLocaleString()} of{" "}
-                {data.closing_line_coverage.total.toLocaleString()}
-              </span>{" "}
-              sportsbook rows have a close ({data.closing_line_coverage.needs_closing.toLocaleString()}{" "}
-              do not). The two bases do not measure the same, and we publish both figures rather than
-              one blended number: {data.mce_closing_line?.toFixed(1)}pp on closing-line rows against{" "}
-              {data.mce_opening_price?.toFixed(1)}pp on opening-price rows. A closing line is the
-              stronger test, so the gap is the cost of the fallback, not a finding about the sportsbooks.
+              where it does not. A closing line is the stronger test.
             </li>
           )}
           <li><strong className="text-text-primary">What&rsquo;s a Brier score?</strong> It measures the average squared error of every prediction. If you predicted 70% and it happened, your error for that prediction is (0.70 - 1.0)&sup2; = 0.09. Average that across all predictions: 0 is perfect, 0.25 is random guessing. Ours is {overallBrier.toFixed(2)}.</li>

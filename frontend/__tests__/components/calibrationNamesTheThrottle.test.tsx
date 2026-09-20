@@ -86,7 +86,33 @@ describe("the failure the calibration page names", () => {
     // must still contain it while the code must not: that pair proves the strip
     // removed comments and not the page.
     expect(PAGE).toContain("Failed to load calibration data");
-    expect(PAGE_CODE.length).toBeGreaterThan(PAGE.length * 0.5);
+
+    // #7472: this was `PAGE_CODE.length > PAGE.length * 0.5`, and it measured
+    // COMMENT DENSITY, not survival. The page documents every ship in a block
+    // comment above the code it changed — that is the house style here and the
+    // reason `PAGE_CODE` has to exist at all — so the ratio drifts toward 0.5
+    // from above on a healthy file and trips on whichever ship happens to cross
+    // it. It failed at 94,938 / 95,583.5 on a change that removed twelve lines
+    // of JSX and added the comment saying why, which is the shape the guard is
+    // supposed to PROTECT. Raising the threshold buys the same failure later.
+    //
+    // The claim is "the strip removed comments and not the page", so assert
+    // that: the code the page is made of is still in `PAGE_CODE`, and prose
+    // that exists only inside comments is not. Immune to how much the file
+    // explains itself, and strictly stronger than a length ratio.
+    for (const landmark of [
+      "export default function CalibrationPage",
+      "describeLoadFailure",
+      "data-testid=",
+      "useMemo(",
+    ]) {
+      expect(PAGE_CODE).toContain(landmark);
+    }
+    // The other direction is already the pair this file is built on, asserted
+    // one test up: "Failed to load calibration data" survives in `PAGE` (it is
+    // quoted in the comment explaining the fix) and is gone from `PAGE_CODE`.
+    // A strip that became a no-op fails there; a strip that ate the file fails
+    // the landmarks here. Neither half is redundant.
   });
 
   it("the page publishes the status as evidence, so a LOOK pass can tell ours from theirs", () => {
