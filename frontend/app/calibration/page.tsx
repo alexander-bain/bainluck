@@ -30,6 +30,7 @@ import {
 import { describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
 import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
 import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
+import { mceIntervalForCohort, formatMceInterval } from "@/lib/calibrationIntervalScope";
 import {
   describeCategoryPopulation,
   describeCategoryTablePopulation,
@@ -159,6 +160,13 @@ function CohortTag({ cohort, scope }: {
  * A row of the "How We Compare" list. `mce` and (`rangeLow`, `rangeHigh`) are
  * alternatives, never both: a benchmark published as a RANGE has no point value,
  * and inventing one to draw a bar with is what CAL-P1261 removed.
+ *
+ * #7374 removed `ci`. Every row here prints the EQUAL-weighted per-bucket
+ * figure, and the only interval the payload publishes is bootstrapped
+ * n-weighted (`_bootstrap_mce_ci`, "n-weighted to match the #137 weighted point
+ * estimate") — an interval on ECE. There is no published interval for this
+ * statistic, so the field is gone rather than left for the next reader to fill
+ * back in with the same pair.
  */
 type BenchmarkRow = {
   label: string;
@@ -167,7 +175,6 @@ type BenchmarkRow = {
   rangeHigh?: number;
   n: number | null;
   highlight: boolean;
-  ci?: string;
 };
 
 const COLORS = [
@@ -316,6 +323,17 @@ export default function CalibrationPage() {
   const cohortN = useMemo(() =>
     normalized ? normalized.filter(b => !cohortFilter || cohortFilter(b)).reduce((s, b) => s + b.n, 0) : 0,
     [normalized, cohortFilter]);
+
+  // #7374 — the published bootstrap interval, if the active cohort is the one it
+  // was bootstrapped over. Derived here, once, from the same `cohortN`/`fullN`
+  // the page prints, so the interval and the population it claims to describe
+  // cannot be computed from two different things.
+  const mceInterval = useMemo(() => mceIntervalForCohort({
+    lower: data?.mce_ci_lower,
+    upper: data?.mce_ci_upper,
+    cohortN,
+    fullN,
+  }), [data, cohortN, fullN]);
 
   // L2-236: `price_moved` is a TRI-state and this page modelled it as a boolean.
   // The default cohort is `true` PLUS `null` — 349,310 + 40,075 on the 2026-08-02
@@ -1072,10 +1090,21 @@ export default function CalibrationPage() {
               calibration error), n-weighted: every resolved outcome counts once, so the number
               reflects what readers actually saw rather than treating a 12-outcome bucket as the
               equal of a 40,000-outcome one.{" "}
-              {priceCohort === "all" && (
-                <>95% confidence interval on the per-bucket figure:{" "}
-                <span className="tabular-nums text-text-secondary">
-                  {data.mce_ci_lower.toFixed(1)}&ndash;{data.mce_ci_upper.toFixed(1)}pp
+              {/* #7374 — the interval belongs to THIS sentence's figure, and to
+                  this cohort. `_bootstrap_mce_ci` accumulates
+                  `abs(actual - avg_prob) * w` over `total_w` and its own comment
+                  says "n-weighted to match the #137 weighted point estimate" —
+                  so it is an interval on ECE, which is what the sentence above
+                  it is about, and NOT on the equal-weighted per-bucket number it
+                  used to name. It is also bootstrapped over every bucket with no
+                  `price_moved` filter, so it describes the full population only.
+                  `mceIntervalForCohort` withholds it on any other cohort; the
+                  old gate (`priceCohort === "all"`) was a constant declared at
+                  the top of this component and could never be false. */}
+              {mceInterval && (
+                <>95% confidence interval on that figure:{" "}
+                <span className="tabular-nums text-text-secondary" data-testid="calibration-ece-ci">
+                  {formatMceInterval(mceInterval)}
                 </span>.{" "}</>
               )}
               Per-bucket error, the ten buckets averaged with equal weight{" "}
@@ -1348,6 +1377,20 @@ export default function CalibrationPage() {
           Our aggregate per-bucket error compared to published calibration benchmarks from academic research and forecasting platforms.
         </p>
         <div className="space-y-3">
+          {/* #7374. Our row used to carry "(95% CI: 0.3-1.2pp)" between its
+              figure and its outcome count, and it printed the same pair in both
+              cohort states — 1.0pp over 449,027 outcomes and 0.9pp over 747,028
+              — because `mce_ci_*` is one payload scalar bootstrapped over every
+              bucket with no `price_moved` filter. Reproduced off the live
+              payload: the traded cohort's own interval is 0.62-1.29pp, so the
+              default view's lower bound was out by about a factor of two and the
+              interval shown belonged to the 298,001 outcomes the banner above
+              had just excluded. It was also an interval on the n-weighted
+              figure, printed beside the equal-weighted one — the exact pair
+              #7225 welded the word "per-bucket" onto because a reader could not
+              tell them apart. It now appears once, in "Show the math", beside
+              the ECE it is an interval for, and only over the population it was
+              bootstrapped on. */}
           {/* CAL-P1261 (#6278). Three claims in this list were not supported.
               (1) OUR row reads `cohortMCE`/`cohortN` — the ACTIVE cohort,
               traded-only by default — while the section sits in the cohort-tag
@@ -1364,7 +1407,7 @@ export default function CalibrationPage() {
               green said "excellent" for a range whose top half the footnote
               itself excluded. A range is drawn as a band between its ends. */}
           {([
-            { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true, ci: priceCohort === "all" ? `${data.mce_ci_lower.toFixed(1)}-${data.mce_ci_upper.toFixed(1)}pp` : undefined },
+            { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true },
             { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
             { label: "Iowa Electronic Markets (Berg et al. 2008)", mce: 1.5, n: null, highlight: false },
             { label: "Academic consensus range (Arrow et al. 2008)", rangeLow: 2, rangeHigh: 5, n: null, highlight: false },
@@ -1392,12 +1435,13 @@ export default function CalibrationPage() {
                   }`}>
                     {/* CAL-P1261 after-LOOK: each figure is its own unbreakable
                         token. The value span must still wrap — our own row
-                        carries a CI and an outcome count and is three fragments
-                        long at 390px — but a wrap INSIDE a figure reads as a
+                        carries a figure and an outcome count and is two
+                        fragments long at 390px (three until #7374 took the
+                        interval out) — but a wrap INSIDE a figure reads as a
                         different number: the range rendered as "2-" / "5pp"
                         across two lines on production. Breaking between the
                         fragments (at the spaces below) is fine; breaking at the
-                        hyphen of "2-5pp" or "0.3-1.2pp" is not. */}
+                        hyphen of "2-5pp" is not. */}
                     {/* #7225. Our row is `cohortMCE` — the ten buckets averaged
                         with EQUAL weight — while the hero and the stat card
                         1,200px above are `cohortECE`, n-weighted. Both are
@@ -1422,7 +1466,6 @@ export default function CalibrationPage() {
                         <span className="font-normal text-text-secondary"> per-bucket</span>
                       ) : null}
                     </span>
-                    {row.ci ? <> <span className="whitespace-nowrap">{`(95% CI: ${row.ci})`}</span></> : ""}
                     {row.n ? <> | <span className="whitespace-nowrap">{`${row.n.toLocaleString()} outcomes`}</span></> : ""}
                   </span>
                 </div>
