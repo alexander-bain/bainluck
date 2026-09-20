@@ -426,6 +426,137 @@ def outcome_deadline_expired(
 EXPIRED_RUNG_MAX_PROBABILITY = 0.5
 
 
+# ---------------------------------------------------------------------------
+# The year a year-less rung is missing is often written on the rung NEXT TO IT.
+# #7383.
+#
+# `outcome_deadline_expired` reads a year-less "December 31" as THIS year, so on
+# 2026-09-19 it dates to 2026-12-31, reads as future, and is never expired — the
+# `_BARE_DATE_LOOKBACK_DAYS` rescue below it is not even reached. Nothing in the
+# pipeline compares a rung against the OTHER RUNGS OF ITS OWN BOARD, which is
+# where the year actually is. Live on production that morning, `/futures/112936`
+# ("Will Hamas agree to disarm?") was three rows and two of them were the same
+# date:
+#
+#     December 31, 2026   OPEN  31%   LATEST  18%
+#     December 31         OPEN 100%   LATEST   0%
+#     November 30         OPEN 100%   LATEST   0%
+#
+# — the bare pair being the 2025 rungs of a rolling ladder, reading to a reader
+# as certainties that collapsed to nothing.
+#
+# 🔴 THE INFERENCE IS "EARLIER", AND EARLIER IS NOT "PAST". Two rungs of one
+# ladder cannot name one deadline, so a bare rung sharing a month and day with a
+# dated one is a DIFFERENT, EARLIER occurrence. That alone does not make it
+# dead: board 20569379 ("Russia x Ukraine ceasefire agreement?") carries a bare
+# `December 31` at 21.5% beside `December 31, 2027` at 70.5%, and the bare one is
+# 2026 — earlier than its twin and still months away. Stripping it would delete a
+# live option, which is the sharp edge this whole module is careful about.
+#
+# So the test is on the occurrence STRICTLY BEFORE THE TWIN. If that date has
+# passed, every occurrence before the twin has passed, and the rung is dead
+# whichever one it is — so the rule never has to guess the year, which is the
+# only reason it is safe. If it has not passed, we cannot tell 2026 from 2025 and
+# we keep the rung.
+#
+# ⚠️ A GRADE IS NOT THE EVIDENCE HERE, MEASURED BEFORE BUILDING. Every rung in
+# this population also carries `is_winner IS FALSE` + `resolution_source =
+# 'api_settlement'`, and keying on that pair is the obvious fix. It is wrong:
+# that pair is set on 189 rungs whose own label names a FUTURE year on open
+# markets (`Before Jan 1, 2030` at 29%, `Before 2030` at 51.5%, `Before Apr 1,
+# 2027` at 88%). It does not mean "the venue graded this NO".
+#
+# Only a WHOLE-NAME date counts, on both sides. A prose rung that merely contains
+# a month ("Before Jul 25, 2026") is already read correctly by the rule above,
+# and re-reading it here would be a second answer to a settled question.
+_WHOLE_NAME_DATE_RE = re.compile(
+    r"^\s*("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|"
+    r"nov(?:ember)?|dec(?:ember)?"
+    r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(20\d{2}))?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _whole_name_date(name: str) -> tuple[int, int, int | None] | None:
+    """``(month, day, year_or_None)`` when the rung's whole name IS a date."""
+    match = _WHOLE_NAME_DATE_RE.match(name)
+    if match is None:
+        return None
+    month = _MONTH_NAME_TO_NUMBER[match.group(1).lower().rstrip(".")]
+    day = int(match.group(2))
+    year = int(match.group(3)) if match.group(3) else None
+    try:
+        datetime(year or 2000, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None  # February 30 is not a date, it is a label we cannot read
+    return month, day, year
+
+
+def _live_dated_twins(
+    names: list[str], now: datetime, *, grace_days: int
+) -> dict[tuple[int, int], int]:
+    """``(month, day) -> year`` for each dated rung that has NOT expired.
+
+    A month/day carrying MORE THAN ONE dated rung is left out entirely. With two
+    live twins a bare rung is earlier than both, and picking which one to measure
+    against is a guess — the whole point of the rule is that it never makes one.
+    """
+    twins: dict[tuple[int, int], int] = {}
+    ambiguous: set[tuple[int, int]] = set()
+    for name in names:
+        parsed = _whole_name_date(name)
+        if parsed is None:
+            continue
+        month, day, year = parsed
+        if year is None:
+            continue
+        key = (month, day)
+        if key in twins:
+            ambiguous.add(key)
+            continue
+        deadline = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
+        if now > deadline + timedelta(days=grace_days):
+            # The twin itself has passed, so the bare rung is the LATER one and
+            # may well be the live rung of the pair. Board 113013 is this shape:
+            # `December 31, 2025` at 0% beside a bare `December 31` at 29.5%.
+            continue
+        twins[key] = year
+    for key in ambiguous:
+        twins.pop(key, None)
+    return twins
+
+
+def _twin_proves_expired(
+    name: str,
+    twins: dict[tuple[int, int], int],
+    now: datetime,
+    *,
+    grace_days: int,
+) -> bool:
+    """Does a live dated twin on this board prove a year-less rung is past?"""
+    parsed = _whole_name_date(name)
+    if parsed is None:
+        return False
+    month, day, year = parsed
+    if year is not None:
+        return False  # it says its own year; the rule above already read it
+    twin_year = twins.get((month, day))
+    if twin_year is None:
+        return False
+    try:
+        latest_possible = datetime(
+            twin_year - 1, month, day, 23, 59, 59, tzinfo=timezone.utc
+        )
+    except ValueError:
+        # Feb 29 the year before a leap year. The rung is real, our arithmetic
+        # is not, and inventing a neighbouring day to strip a live option is
+        # exactly the trade this module refuses.
+        return False
+    return now > latest_possible + timedelta(days=grace_days)
+
+
 def expired_ladder_rungs(
     outcomes: list[str | None] | list[tuple[str | None, float | None]],
     now: datetime,
@@ -438,7 +569,18 @@ def expired_ladder_rungs(
     probabilities are available: a past-dated rung priced at or above
     ``EXPIRED_RUNG_MAX_PROBABILITY`` is the ladder's answer, not a dead option,
     and is never stripped.
+
+    #7383: a rung is ALSO expired when a dated twin on the SAME BOARD proves it
+    — see `_live_dated_twins`. That arm reads the whole list, which is why it
+    lives here and not in `outcome_deadline_expired`, and it is why the three
+    call sites needed no change to inherit it.
     """
+    names = [
+        (outcome[0] if isinstance(outcome, tuple) else outcome) or ""
+        for outcome in outcomes
+    ]
+    twins = _live_dated_twins(names, now, grace_days=grace_days)
+
     expired: set[str] = set()
     for outcome in outcomes:
         if isinstance(outcome, tuple):
@@ -448,7 +590,8 @@ def expired_ladder_rungs(
         if not name:
             continue
         if not outcome_deadline_expired(name, now, grace_days=grace_days):
-            continue
+            if not _twin_proves_expired(name, twins, now, grace_days=grace_days):
+                continue
         if probability is not None and probability >= EXPIRED_RUNG_MAX_PROBABILITY:
             continue
         expired.add(name)

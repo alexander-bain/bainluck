@@ -518,3 +518,131 @@ class TestWorldCupQualifyingKeepsItsOwnCalendar:
         assert is_title_implied_stale("Eurovision Winner", "entertainment", AUGUST_7) == (
             "stale_recurring_event_calendar"
         )
+
+
+# ---------------------------------------------------------------------------
+# #7383 — the year a year-less rung is missing is written on the rung next to it.
+#
+# Every ladder below is a production board, read off the served payload on
+# 2026-09-20 05:5xZ. SEPTEMBER_19 is that window; the anchor is a literal, not a
+# clock arithmetic (gotcha #44).
+# ---------------------------------------------------------------------------
+
+SEPTEMBER_19 = datetime(2026, 9, 19, 23, 40, 0, tzinfo=timezone.utc)
+
+
+class TestBareRungDatedByItsTwin:
+    def test_the_hamas_board_stops_printing_december_31_twice(self):
+        # /futures/112936 "Will Hamas agree to disarm?" — the whole board is
+        # three rows and two of them are December 31. The bare pair are the 2025
+        # rungs; a reader reads them as certainties that collapsed to 0%.
+        ladder = [
+            ("December 31, 2026", 0.175),
+            ("December 31", 0.0),
+            ("November 30", 0.0),
+        ]
+        expired = expired_ladder_rungs(ladder, SEPTEMBER_19)
+        assert "December 31" in expired
+        assert "December 31, 2026" not in expired, "the live 2026 rung is the board"
+
+    def test_a_bare_rung_with_no_dated_twin_is_untouched(self):
+        # The OTHER direction (gotcha #43). `November 30` has no dated twin on
+        # this board, so nothing proves its year and it stays — exactly as it
+        # does today.
+        ladder = [("December 31, 2026", 0.175), ("November 30", 0.0)]
+        assert expired_ladder_rungs(ladder, SEPTEMBER_19) == set()
+
+    def test_a_bare_rung_earlier_than_its_twin_but_still_future_is_kept(self):
+        # 🔴 THE REGRESSION THIS RULE WOULD OTHERWISE SHIP. /futures/20569379
+        # "Russia x Ukraine ceasefire agreement?" — the bare rungs are 2026,
+        # earlier than their 2027 twins and still months away. Three of them are
+        # live options priced 7.5-21.5%, and only May 31 / June 30 have actually
+        # passed.
+        ladder = [
+            ("December 31, 2027", 0.705),
+            ("November 30, 2027", 0.615),
+            ("October 31, 2027", 0.605),
+            ("June 30, 2027", 0.565),
+            ("May 31, 2027", 0.515),
+            ("December 31", 0.215),
+            ("November 30", 0.09),
+            ("October 31", 0.075),
+            ("June 30", 0.005),
+            ("May 31", 0.001),
+        ]
+        expired = expired_ladder_rungs(ladder, SEPTEMBER_19)
+        assert expired == {"June 30", "May 31"}, (
+            "only the occurrences that have actually passed; earlier is not past"
+        )
+
+    def test_an_already_passed_twin_proves_nothing(self):
+        # /futures/113013 "NATO x Russia military clash?" — here the DATED rung
+        # is the dead one (December 31, 2025 at 0%) and the bare one is the live
+        # 2026 rung at 29.5%. The bare rung is the LATER of the pair, so the rule
+        # must not fire; the existing date rule strips the 2025 twin on its own.
+        ladder = [("December 31", 0.295), ("December 31, 2025", 0.0)]
+        expired = expired_ladder_rungs(ladder, SEPTEMBER_19)
+        assert "December 31" not in expired
+        assert "December 31, 2025" in expired
+
+    def test_two_dated_twins_leave_the_bare_rung_alone(self):
+        # With two live twins the bare rung is earlier than both and picking one
+        # to measure against is a guess. The rule never guesses.
+        ladder = [
+            ("December 31, 2026", 0.2),
+            ("December 31, 2027", 0.5),
+            ("December 31", 0.01),
+        ]
+        assert "December 31" not in expired_ladder_rungs(ladder, SEPTEMBER_19)
+
+    def test_a_confident_bare_rung_is_still_the_answer(self):
+        # EXPIRED_RUNG_MAX_PROBABILITY applies to this arm too: a past rung at
+        # 90% is a cumulative ladder's ANSWER, not a ghost. December is the date
+        # that makes this test load-bearing — the rule above reads a bare
+        # "December 31" as the COMING December and keeps it, so only the new arm
+        # can reach this rung, and only the rescue can spare it.
+        ladder = [("December 31, 2026", 0.95), ("December 31", 0.9)]
+        assert expired_ladder_rungs(ladder, SEPTEMBER_19) == set()
+
+    def test_prose_rungs_are_not_read_by_this_arm(self):
+        # Only a WHOLE-NAME date counts, on both sides of the pair. This ladder
+        # is the twin shape in prose, and the existing rule reads "Before Dec 31"
+        # as the COMING December and keeps it — so if the new arm fired, this
+        # would be the only thing that changed the answer. It must not. The 2026
+        # twin is deliberate: it puts the year the arm would infer (2025) in the
+        # past, so dropping the whole-name anchoring reddens this test.
+        ladder = [("Before Dec 31, 2026", 0.5), ("Before Dec 31", 0.01)]
+        assert expired_ladder_rungs(ladder, SEPTEMBER_19) == set()
+
+    def test_the_iran_board_drops_its_2026_june_rung(self):
+        # /futures/3484764 "Iran leadership change?" — the board a reader meets
+        # from the Middle East bundle on Discover.
+        ladder = [
+            ("June 30, 2027", 0.255),
+            ("December 31", 0.145),
+            ("November 30", 0.085),
+            ("October 31", 0.055),
+            ("September 30", 0.014),
+            ("June 30", 0.001),
+        ]
+        expired = expired_ladder_rungs(ladder, SEPTEMBER_19)
+        assert expired == {"June 30"}, (
+            "the bare December/November/October rungs are 2026 and still live"
+        )
+
+    def test_a_range_rung_is_not_read_as_a_bare_date(self):
+        # The TAIL anchor on `_WHOLE_NAME_DATE_RE` is what this guards, and
+        # `re.match` already pins the head — so this is the only test that can
+        # see it. `October 1 - 31, 2026` is a real production label; without the
+        # tail anchor it parses as a bare "October 1", takes the 2026 twin, and
+        # is stripped as a 2025 rung — deleting a window that is still OPEN,
+        # which is #7274's defect arriving by a second door.
+        ladder = [("October 1, 2026", 0.4), ("October 1 - 31, 2026", 0.1)]
+        assert expired_ladder_rungs(ladder, SEPTEMBER_19) == set()
+
+    def test_a_ladder_is_never_emptied_by_this_arm(self):
+        # The surfaces drop a card whose every rung expired; the rule must not
+        # be able to reach that state on its own.
+        ladder = [("December 31, 2026", 0.175), ("December 31", 0.0)]
+        expired = expired_ladder_rungs(ladder, SEPTEMBER_19)
+        assert len(expired) < len(ladder)
