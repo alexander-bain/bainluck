@@ -1176,7 +1176,15 @@ const EXEMPT: Record<string, string[]> = {
 const OWED: Record<string, string[]> = {
   // The methodology page still says "price" throughout, for the reason in
   // ruling 138. Its venue names are EXEMPT, not owed.
-  "app/calibration": ["price-family", "blend"],
+  //
+  // #7472 PAID OFF `blend`. The surface's only hit was the price-basis note's
+  // "we publish both figures rather than one blended number", and that clause
+  // went with the two figures it introduced — they were the `price_moved`
+  // cohorts, not the closing-line and opening-price bases the sentence named,
+  // so there was nothing left to decline to blend. Deleted rather than left in
+  // place, which is this map's own discipline: a debt entry that no longer
+  // fires is dead, and the `no dead entries` test below is what enforces it.
+  "app/calibration": ["price-family"],
   "app/privacy": ["price-family"],
   "app/politics": ["price-family"],
   // "the price at the pump", "Gas price", "Inflation & Consumer Prices" —

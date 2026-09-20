@@ -2479,12 +2479,18 @@ export interface CalibrationData {
   mce_closing_line: number | null;
   mce_opening_price: number | null;
   /**
-   * How many sportsbook rows actually have a closing line behind them.
+   * How many COMPLETED EVENTS carry a closing probability.
    *
-   * The events/Odds-API path selects `COALESCE(closing, opening)`, so a row
-   * with no close silently degrades to the opening price. The page states the
-   * basis rather than letting "closing line" stand for the whole table
-   * (queue 316 item 2b). Optional: older cached payloads omit it.
+   * #7472 corrected this doc: it said "sportsbook rows", and the page printed
+   * the field under that noun. The producer
+   * (`precompute_calibration.py`, "Query 7: Closing line coverage") counts
+   * `events` rows with `status IN ('completed','closed')` and both scores set
+   * — every graded game, no source filter — so it is neither a row count nor
+   * scoped to the Odds API. The sportsbook population the accuracy page speaks
+   * about is two orders of magnitude larger and counted elsewhere.
+   *
+   * No reader-facing surface states this field any more; it stays on the type
+   * because the payload publishes it. Optional: older cached payloads omit it.
    */
   closing_line_coverage?: {
     has_closing: number;
