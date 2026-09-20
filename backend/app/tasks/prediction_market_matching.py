@@ -7549,20 +7549,32 @@ async def _create_event_from_prediction_market(session, matchup, market, now):
     #
     # Keeping these prefixes out of `KALSHI_GAME_TICKER_PREFIXES` closes Pass 1
     # only; this closes Pass 2, the general scan, which selects by name. The
-    # predicate reads the same dict as that subtraction, so the two halves can
+    # predicate reads the same set as that subtraction, so the two halves can
     # not drift apart.
+    #
+    # #7549: that last sentence was the intent and not the behaviour. Pass 1 is
+    # subtracted by `_CLASSIFICATION_ONLY_PREFIXES` — the cup dict UNION the 29
+    # `_UNSUPPORTED_LEAGUE_PREFIXES` — while this guard read only the cup half,
+    # so the 29 were closed at Pass 1 and open here. Everything above then
+    # happened to them verbatim: Kalshi names an Eredivisie leg "Feyenoord vs
+    # Utrecht: Regulation Time Spread", the colon defeats the derivative test,
+    # the name parses as a matchup, no candidate event is found, and the leg
+    # mints a fixture it can never absorb. Feyenoord v FC Utrecht reached 57
+    # rows for one match — a reader searching the club got 63 claimed games, 8
+    # rendered, and a ● LIVE card for a match that had finished 5–0 four hours
+    # earlier. Reading the union is the fix; the prefix lists are unchanged.
     #
     # LINKING IS UNTOUCHED. This writer runs only after `_find_matching_event`
     # found nothing, so refusing here costs a prop nothing except the fixture it
     # should never have invented — it still links the moment its tie exists.
-    from app.utils.sport_keys import is_classification_only_soccer_prop_ticker
+    from app.utils.sport_keys import is_classification_only_ticker
 
-    if market.source == "kalshi" and is_classification_only_soccer_prop_ticker(
+    if market.source == "kalshi" and is_classification_only_ticker(
         market.external_id
     ):
         logger.debug(
-            "Refusing auto-create from classification-only soccer prop %s "
-            "(#3446) — the ticker proves a sport, not a fixture",
+            "Refusing auto-create from classification-only ticker %s "
+            "(#3446/#7549) — the ticker proves a sport, not a fixture",
             market.external_id,
         )
         return None

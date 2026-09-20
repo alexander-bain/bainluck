@@ -2771,14 +2771,62 @@ def is_classification_only_soccer_prop_ticker(external_id: Optional[str]) -> boo
     is defined rather than incidental, like the tie in
     :func:`is_kalshi_game_level_ticker`.
     """
+    return _is_classification_only_against(
+        external_id, _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY
+    )
+
+
+def is_classification_only_ticker(external_id: Optional[str]) -> bool:
+    """The same question as above, asked against the WHOLE subtracted set (#7549).
+
+    :func:`is_classification_only_soccer_prop_ticker` closed Pass 2 for the 73
+    soccer cup/continental prop prefixes. But Pass 1 is subtracted by
+    :data:`_CLASSIFICATION_ONLY_PREFIXES`, which is that dict UNION the 29
+    ``_UNSUPPORTED_LEAGUE_PREFIXES`` — so the other 29 were closed at Pass 1 and
+    left OPEN at Pass 2, and #3446's failure mode ran unchecked on them for
+    exactly the reason its own docstring gives.
+
+    Measured on production 2026-09-20, 7 days of Kalshi-minted rows: 1,206 rows,
+    of which **11 fixtures held 141**. The worst was Feyenoord v FC Utrecht at
+    **57 rows for one match** — eight Eredivisie market legs
+    (``KXEREDIVISIEGAME/TOTAL/SPREAD/BTTS/1H…-26SEP20FEYFCU``) that all share the
+    game token ``26SEP20FEYFCU``, each minting its own fixture and none able to
+    absorb the others (ruling 048 / gotcha #32). What a reader met: searching the
+    club claimed 63 games, rendered 8 across three pages, and page 2 led with a
+    ● LIVE card for the match that had finished 5–0 four hours earlier.
+
+    The asymmetry was not a judgement anyone made — the guard was written for the
+    half its ticket named. Reading the union here is what makes the two halves
+    one boundary: a prefix added to EITHER set is now refused auto-create without
+    anyone remembering to restate it, which is the same anti-drift property
+    #3446 bought for its own dict.
+
+    Everything the narrower predicate promises still holds, because this is the
+    same rule over a larger set: AUTO-CREATE ONLY, classification untouched,
+    linking untouched (the writer runs only after ``_find_matching_event`` found
+    nothing, so refusing costs a market nothing but the fixture it should never
+    have invented), and a tie refuses on the same asymmetry.
+    """
+    return _is_classification_only_against(
+        external_id, _CLASSIFICATION_ONLY_PREFIXES
+    )
+
+
+def _is_classification_only_against(
+    external_id: Optional[str], candidates: Iterable[str]
+) -> bool:
+    """Longest prefix wins: is ``external_id``'s best match in ``candidates``
+    at least as specific as its best match in :data:`KALSHI_GAME_TICKER_PREFIXES`?
+
+    One body for both predicates above so the tie-break cannot be fixed in one
+    and not the other. ``candidates`` is iterated for its prefixes, so any
+    iterable of strings works — both call sites pass a frozenset or a dict.
+    """
     if not external_id:
         return False
     ext_lower = external_id.lower()
     longest_classification_only = max(
-        (
-            len(p) for p in _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY
-            if ext_lower.startswith(p)
-        ),
+        (len(p) for p in candidates if ext_lower.startswith(p)),
         default=0,
     )
     if not longest_classification_only:
