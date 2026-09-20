@@ -14,9 +14,9 @@ What arm 4 adds that the earlier arms had no reason to carry:
     fills at once, so nothing before this could have caught it.
   * FOUND-BY-GUARD mutants (6, 7). Two of My Stuff's four sites key on
     `journey.teamColor`, not `primaryColor`. Arm 3 named one My Stuff site; the
-    blanket source assertion found these two. They are the reason the count
-    assertion is 4 and not 2, so a mutant that removes one must die.
-  * A FALLBACK mutant (8), inherited in spirit from arm 3 and still the one worth
+    blanket source assertion found these two. They are part of why the count
+    assertion is 6 and not 2, so a mutant that removes one must die.
+  * A FALLBACK mutant (9), inherited in spirit from arm 3 and still the one worth
     the run: every "is it readable" assertion keeps passing when the default
     itself is invisible, because the floored branch happily returns a second
     unreadable colour. The fix looks wired and the reader still sees nothing.
@@ -27,7 +27,13 @@ Runs only from this lane's own worktree; every path below is absolute
 (native/236 left a script in the shared checkout and blocked the desk's
 fast-forward).
 
-Usage:  python3 tools/native-258-mutations-7036-fill-sites.py [--list]
+  * A FOLD mutant (11). Mutant 9's anchor matched TWICE on the first run, which
+    is how the duplicate `MyStuffTeamTextColour` was found: two byte-identical
+    fallbacks in one file, both suites green. The helpers are now one, so 9
+    scores — and 11 covers the two probability rows the fold moved onto the new
+    spelling, which arm 3's battery no longer recognises.
+
+Usage:  python3 tools/native-258-mutations-7036-fill-sites.py [--list] [--only 9,11]
 """
 import subprocess, sys, pathlib, signal, atexit
 
@@ -76,8 +82,31 @@ CAPSULE_RAW = '                                          : Color(hex: journey.te
 STRIPE_WIRED = "                    .fill(MyStuffTeamColour.color(c))"
 STRIPE_RAW = "                    .fill(Color(hex: c))"
 
+# 🪤 THIS ANCHOR IS WHY THE FOLD HAPPENED. On the first run it matched TWICE —
+# arm 3's `MyStuffTeamTextColour` and arm 4's draft enum each carried a
+# byte-identical `fallbackHex`, 400 lines apart in one file — so mutant 9 was
+# REFUSED rather than scored, and a refusal reads exactly like an unkillable
+# mutant if you stop at the count. Following it found two constants that must
+# never disagree with nothing to make them disagree loudly. They are now one
+# helper, so the anchor is unique and mutant 9 scores.
 FALLBACK_WIRED = '    static let fallbackHex = "#6b7280"'
 FALLBACK_INVISIBLE = '    static let fallbackHex = "#fffffe"'
+
+# The two probability rows the fold brought onto this helper (arm 3's sites, arm
+# 3's battery — under a spelling that battery no longer knows). Both branches are
+# byte-identical, so the anchor carries the branch keyword above it.
+PROB_ROW_WIRED = """            if isMultiSource {
+                Text(displayProb.map { formatProbability($0) } ?? "—")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(MyStuffTeamColour.color(item.matchedTeam?.primaryColor))"""
+PROB_ROW_RAW = """            if isMultiSource {
+                Text(displayProb.map { formatProbability($0) } ?? "—")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? "#6b7280"))"""
 
 FLOOR_WIRED = """    static func hex(_ stored: String?) -> String {
         TeamTextContrast.textHexOnCard(stored, fallback: fallbackHex)
@@ -107,6 +136,8 @@ MUTANTS = [
      "the fallback itself moves under the floor — the fix looks wired, the reader still sees nothing"),
     (10, MYSTUFF, FLOOR_WIRED, FLOOR_BYPASSED,
      "the helper keeps its name and shape but stops flooring"),
+    (11, MYSTUFF, PROB_ROW_WIRED, PROB_ROW_RAW,
+     "a folded probability row goes back to raw (arm 3's site, this arm's spelling)"),
 ]
 
 ORIGINALS = {}
@@ -149,7 +180,16 @@ def main():
             print(f"{n:2d}  {pathlib.Path(path).name:20s}  {why}")
         return 0
 
-    for path in {m[1] for m in MUTANTS}:
+    # `--only 9,11` re-scores named mutants without paying the whole battery
+    # again (~4.5 min each). A partial run prints its own scope so a report can
+    # never quote it as the full one.
+    only = None
+    if "--only" in sys.argv:
+        only = {int(n) for n in sys.argv[sys.argv.index("--only") + 1].split(",")}
+        print(f"PARTIAL RUN — mutants {sorted(only)} only")
+    mutants = [m for m in MUTANTS if only is None or m[0] in only]
+
+    for path in {m[1] for m in mutants}:
         ORIGINALS[str(path)] = pathlib.Path(path).read_text(encoding="utf-8")
 
     # A CONTROL run first: if the unmutated tree is not green, every "KILLED"
@@ -162,7 +202,7 @@ def main():
         return 2
 
     results = []
-    for n, path, wired, mutated, why in MUTANTS:
+    for n, path, wired, mutated, why in mutants:
         original = ORIGINALS[str(path)]
         if original.count(wired) != 1:
             print(f"{n:2d}  REFUSED (anchor matched {original.count(wired)}×, not 1) — {why}")
@@ -178,7 +218,8 @@ def main():
     restore()
     killed = sum(1 for _, v, _ in results if v == "KILLED")
     survived = [r for r in results if r[1] != "KILLED"]
-    print(f"\n{killed}/{len(MUTANTS)} killed, control green")
+    print(f"\n{killed}/{len(mutants)} killed, control green"
+          + (" (PARTIAL RUN)" if only is not None else ""))
     for n, v, why in survived:
         print(f"  HOLE  mutant {n} {v}: {why}")
     return 1 if survived else 0

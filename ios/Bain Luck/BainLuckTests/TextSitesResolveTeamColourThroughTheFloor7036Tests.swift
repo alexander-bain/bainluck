@@ -92,17 +92,17 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     // MARK: - The ship: My Stuff's probability column
 
     func testMyStuffGivesAWhiteShirtedTeamAVisibleProbability() {
-        let hex = MyStuffTeamTextColour.probabilityHex("#ffffff")
+        let hex = MyStuffTeamColour.hex("#ffffff")
 
         XCTAssertNotEqual(hex.uppercased(), "#FFFFFF",
                           "the My Stuff probability is still painted white on the white row")
         XCTAssertTrue(C.readableOnCard(hex), "probability colour \(hex) is under the 3:1 floor")
-        XCTAssertEqual(hex, MyStuffTeamTextColour.fallbackHex,
+        XCTAssertEqual(hex, MyStuffTeamColour.fallbackHex,
                        "a floored colour must land on the row's OWN existing default")
     }
 
     func testAReadableTeamColourReachesMyStuffUntouched() {
-        XCTAssertEqual(MyStuffTeamTextColour.probabilityHex("#d11317").uppercased(), "#D11317")
+        XCTAssertEqual(MyStuffTeamColour.hex("#d11317").uppercased(), "#D11317")
     }
 
     // MARK: - The fallbacks, which are the part that can silently reintroduce the bug
@@ -113,13 +113,13 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     func testBothSurfaceDefaultsClearTheFloorThemselves() {
         XCTAssertTrue(C.readableOnCard(GuessCardTeamTextColour.fallbackHex),
                       "the guess card's default is under 3:1 — flooring to it changes nothing a reader can see")
-        XCTAssertTrue(C.readableOnCard(MyStuffTeamTextColour.fallbackHex),
+        XCTAssertTrue(C.readableOnCard(MyStuffTeamColour.fallbackHex),
                       "My Stuff's default is under 3:1 — flooring to it changes nothing a reader can see")
 
         // Pinned, not merely "over the floor": a default nudged pale enough to
         // matter reddens here before it reaches a screen.
         XCTAssertEqual(C.contrastVsCardSurface(GuessCardTeamTextColour.fallbackHex) ?? 0, 5.17, accuracy: 0.01)
-        XCTAssertEqual(C.contrastVsCardSurface(MyStuffTeamTextColour.fallbackHex) ?? 0, 4.83, accuracy: 0.01)
+        XCTAssertEqual(C.contrastVsCardSurface(MyStuffTeamColour.fallbackHex) ?? 0, 4.83, accuracy: 0.01)
     }
 
     /// A colour that *looks* fine on screen tells you nothing about its ratio.
@@ -131,8 +131,8 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
         XCTAssertEqual(C.contrastVsCardSurface("#6cace4") ?? 0, 2.43, accuracy: 0.01)
         XCTAssertEqual(GuessCardTeamTextColour.homeHex(try event(homeHex: "#6cace4")),
                        GuessCardTeamTextColour.fallbackHex)
-        XCTAssertEqual(MyStuffTeamTextColour.probabilityHex("#6cace4"),
-                       MyStuffTeamTextColour.fallbackHex)
+        XCTAssertEqual(MyStuffTeamColour.hex("#6cace4"),
+                       MyStuffTeamColour.fallbackHex)
     }
 
     /// Absent and unparseable both mean "no colour to judge", and both must land
@@ -140,10 +140,10 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     func testAnAbsentOrUnparseableColourLandsOnTheDefault() throws {
         XCTAssertEqual(GuessCardTeamTextColour.homeHex(try event(homeHex: nil)),
                        GuessCardTeamTextColour.fallbackHex)
-        XCTAssertEqual(MyStuffTeamTextColour.probabilityHex(nil),
-                       MyStuffTeamTextColour.fallbackHex)
-        XCTAssertEqual(MyStuffTeamTextColour.probabilityHex("not a colour"),
-                       MyStuffTeamTextColour.fallbackHex)
+        XCTAssertEqual(MyStuffTeamColour.hex(nil),
+                       MyStuffTeamColour.fallbackHex)
+        XCTAssertEqual(MyStuffTeamColour.hex("not a colour"),
+                       MyStuffTeamColour.fallbackHex)
     }
 
     // MARK: - The wiring, which is the half no unit test above can reach
@@ -154,19 +154,25 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
     /// site that quietly went back to painting `primaryColor` raw — which compiles,
     /// renders, and leaves every assertion above green.
     ///
-    /// 🪤 **Scoped to the TEXT forms on purpose, and that is not a hedge.** Each of
-    /// these files still contains one raw `Color(hex: …primaryColor ?? …)` that this
-    /// arm deliberately does not touch: `DiscoverView`'s `teamBadge` fills a 36pt
-    /// tile with it, and `MyStuffView` passes it to `TeamLogoView` as a logo tint.
-    /// Those are colour-as-BACKGROUND, a different contrast question from
-    /// colour-as-text (a white tile is an invisible SHAPE, not an unreadable
-    /// number), and flooring them through `usableForText` would be asserting a
-    /// guarantee nobody has measured. They are named as the next arm on #7036.
-    /// A blanket "this file contains no raw primary_color" assertion fails on those
-    /// two lines — it did, on the first run of this suite — so each anchor below is
-    /// the text form specifically. Both are the exact strings mutants 1-4 of
+    /// 🪤 **Scoped to the TEXT forms on purpose, and that is not a hedge.** When
+    /// this arm shipped, each of these files still held one raw
+    /// `Color(hex: …primaryColor ?? …)` it deliberately did not touch —
+    /// `DiscoverView`'s 36pt `teamBadge` tile and `MyStuffView`'s `TeamLogoView`
+    /// tint — because colour-as-BACKGROUND is a different contrast question from
+    /// colour-as-text, and flooring them through `usableForText` would have
+    /// asserted a guarantee nobody had measured. A blanket "this file contains no
+    /// raw primary_color" assertion fails on those two lines — it did, on the
+    /// first run of this suite — so each anchor below is the text form
+    /// specifically. Both are the exact strings mutants 1-4 of
     /// `tools/native-238-mutations-7036-text-sites.py` write back, which is what
     /// keeps them from being absences that could never occur.
+    ///
+    /// **Arm 4 has since answered that question** (`FillSites…7036Tests`), so the
+    /// blanket form now exists there and is strictly stronger than these anchors.
+    /// These stay: an anchor that names the exact rendered expression fails with a
+    /// sentence about which row went raw, which a regex count cannot say. Arm 4
+    /// also folded this file's `MyStuffTeamTextColour` into the one
+    /// `MyStuffTeamColour` — the names below moved with it, the rule did not.
     func testTheGuessCardsRenderedPropertiesRouteThroughTheFloor() throws {
         let body = try String(contentsOf: Self.discoverViewURL, encoding: .utf8)
 
@@ -176,11 +182,21 @@ final class TextSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
                        "a guess-card TEXT colour is being painted from the raw primary_color again")
     }
 
+    /// 🪤 **The anchor carries `.foregroundStyle(` for a reason that only appeared
+    /// when arm 4 folded the two helpers into one.** Bare
+    /// `MyStuffTeamColour.color(item.matchedTeam?.primaryColor)` now matches a
+    /// THIRD site — `TeamFuturesSection`'s logo, which takes the same argument as
+    /// `color:` — so the count read 3 and this test reddened on a tree where all
+    /// three sites were correct. A source-scan anchor is only as specific as the
+    /// spelling it happens to be unique under, and folding two helpers together is
+    /// exactly the change that takes that uniqueness away. Anchoring on the
+    /// rendered modifier keeps the count meaning "the two probability branches".
     func testMyStuffsProbabilityColumnRoutesThroughTheFloor() throws {
         let body = try String(contentsOf: Self.myStuffViewURL, encoding: .utf8)
 
-        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)").count - 1, 2,
-                       "both the multi-source and single-source branches must route through the floor")
+        XCTAssertEqual(
+            body.components(separatedBy: ".foregroundStyle(MyStuffTeamColour.color(item.matchedTeam?.primaryColor))").count - 1, 2,
+            "both the multi-source and single-source branches must route through the floor")
         XCTAssertFalse(body.contains(".foregroundStyle(Color(hex: item.matchedTeam?.primaryColor ?? \"#6b7280\"))"),
                        "a My Stuff probability is being painted from the raw primary_color again")
     }

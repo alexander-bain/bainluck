@@ -46,6 +46,18 @@ import UIKit
 /// `LadderCardView` and `EvolutionChartView` still pass raw stored colours and are
 /// deliberately left: arm 3 named them as out of this arm's reach, and a chart
 /// line has its own surface question.
+///
+/// 🪤 **This type is arm 3's `MyStuffTeamTextColour`, widened and renamed — it is
+/// NOT a second helper beside it, and the near-miss is worth recording.** Arm 4
+/// was built as its own enum, 400 lines up the same file, with a byte-identical
+/// `fallbackHex` and a `hex(_:)` that was `probabilityHex(_:)` under another
+/// name. Every test passed and the gate was green: two constants that must never
+/// disagree, in one file, with nothing to make them disagree loudly. **What found
+/// it was a MUTATION anchor that matched twice** — the battery refused mutant 9
+/// rather than scoring it, and a refusal reads exactly like an unkillable mutant
+/// if you do not follow it. The duplicate is folded here; the six call sites (arm
+/// 3's two probability rows, arm 4's four) now share one constant, which is what
+/// "one rule" was supposed to mean three arms ago.
 enum MyStuffTeamColour {
 
     /// The colour these rows already used for a team with no stored colour.
@@ -739,27 +751,6 @@ private let sourceColors: [String: Color] = [
     "kalshi": Color.green,
     "odds_api": Color(white: 0.6),
 ]
-/// #7036 — the merged-future rows print their probability in the matched team's
-/// colour, on a white card.
-///
-/// **Internal, and keyed on the hex rather than the row.** `TeamFuturesSection`
-/// and `MergedTeamFuture` are both file-private, and `MergedTeamFuture` cannot be
-/// widened without dragging `TeamFutureItem` with it — so a test can reach
-/// neither the row nor the view that builds it. Taking the stored hex keeps the
-/// decision drivable by a test while leaving those types alone.
-enum MyStuffTeamTextColour {
-
-    /// The grey these rows already used for a team with no stored colour.
-    /// Measured 4.83:1 against the white card, so the fallback clears the floor
-    /// it is standing in for.
-    static let fallbackHex = "#6b7280"
-
-    /// The team's colour when it is readable, otherwise the row's own default.
-    static func probabilityHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
-    }
-}
-
 /// Merged view of the same outcome across sources.
 private struct MergedTeamFuture: Identifiable {
     var primary: TeamFutureItem
@@ -1279,7 +1270,7 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
+                    .foregroundStyle(MyStuffTeamColour.color(item.matchedTeam?.primaryColor))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             } else if let prob = displayProb {
@@ -1287,7 +1278,7 @@ private struct TeamFuturesSection: View {
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
+                    .foregroundStyle(MyStuffTeamColour.color(item.matchedTeam?.primaryColor))
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
             }

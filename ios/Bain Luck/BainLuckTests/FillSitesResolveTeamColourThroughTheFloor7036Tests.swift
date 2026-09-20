@@ -223,23 +223,26 @@ final class FillSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
                        "a guess-card tile is being filled from the raw primary_color again")
     }
 
-    /// ⭐ **Four sites, and arm 3 only knew about one of them.** The two in the
+    /// ⭐ **Six sites through one helper, and arm 3 only knew about two of them.**
+    /// Four are this arm's; the two probability rows are arm 3's, folded onto the
+    /// same helper (see `testMyStuffHasExactlyOneTeamColourHelper`). The two in the
     /// playoff journey card — the probability capsule and the 3pt leading stripe —
     /// key on `journey.teamColor` rather than `primaryColor`, so every search aimed
     /// at the reported spelling missed them for three arms. The capsule is the
     /// *"Relegated bar was a white capsule on a near-white track"* named in this
     /// issue's own opening paragraph. They are pinned individually here so a future
     /// arm cannot quietly drop one and still satisfy a bare count.
-    func testMyStuffsFourTeamColourSitesAllRouteThroughTheFloor() throws {
+    func testMyStuffsSixTeamColourSitesAllRouteThroughTheFloor() throws {
         let body = try String(contentsOf: Self.myStuffViewURL, encoding: .utf8)
 
-        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamColour.color(").count - 1, 4,
-                       "all four My Stuff team-colour sites must route through the floor")
+        XCTAssertEqual(body.components(separatedBy: "MyStuffTeamColour.color(").count - 1, 6,
+                       "all six My Stuff team-colour sites must route through the floor")
 
         for site in ["color: MyStuffTeamColour.color(journey.teamColor)",
                      "color: MyStuffTeamColour.color(item.matchedTeam?.primaryColor)",
                      ": MyStuffTeamColour.color(journey.teamColor).opacity(0.5))",
-                     ".fill(MyStuffTeamColour.color(c))"] {
+                     ".fill(MyStuffTeamColour.color(c))",
+                     ".foregroundStyle(MyStuffTeamColour.color(item.matchedTeam?.primaryColor))"] {
             XCTAssertTrue(body.contains(site), "a My Stuff team-colour site left the floor: \(site)")
         }
 
@@ -248,6 +251,28 @@ final class FillSitesResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
                     ".fill(Color(hex: c))"] {
             XCTAssertFalse(body.contains(raw), "a My Stuff site paints the raw team colour again: \(raw)")
         }
+    }
+
+    /// 🪤 **The duplicate this arm shipped in draft, and the guard that would not
+    /// have caught it.** Arm 4 was built as its own enum with a byte-identical
+    /// `fallbackHex` beside arm 3's `MyStuffTeamTextColour`, 400 lines apart in one
+    /// file. Every assertion in both suites passed — two constants that must never
+    /// disagree, and nothing that would say so if they did. What found it was a
+    /// MUTATION anchor that matched twice and was REFUSED rather than scored (a
+    /// refusal reads exactly like an unkillable mutant if you stop there).
+    ///
+    /// So the fold is pinned: one helper, one constant. The `4.83` in
+    /// `testTheLogoDefaultClearsTheFloorItself` is the value both copies carried, so
+    /// a re-split that changes one of them reddens there too.
+    func testMyStuffHasExactlyOneTeamColourHelper() throws {
+        let body = try String(contentsOf: Self.myStuffViewURL, encoding: .utf8)
+
+        XCTAssertEqual(body.components(separatedBy: "static let fallbackHex").count - 1, 1,
+                       "My Stuff carries two team-colour fallbacks again — they cannot be kept in step")
+        XCTAssertEqual(body.components(separatedBy: "\nenum MyStuffTeam").count - 1, 1,
+                       "a second My Stuff team-colour helper is back")
+        XCTAssertFalse(body.contains("enum MyStuffTeamTextColour"),
+                       "arm 3's helper was folded into MyStuffTeamColour; a re-split splits the rule")
     }
 
     /// ⭐ **The assertion arm 3 could not write.** Its own suite recorded that a
