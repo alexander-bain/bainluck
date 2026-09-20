@@ -78,7 +78,11 @@ console.log(`== ${baseUrl}/search at 390px, category "${category}" ==`);
 await page.goto(`${baseUrl}/search`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
 // The grid is the page; without it there is no tile to tap.
-const tile = page.locator(`button[aria-label^="Browse "][aria-label*="markets"]`).filter({ hasText: new RegExp(category, 'i') }).first();
+// 🪤 `hasText` takes a STRING here on purpose. `new RegExp(category, 'i')` reads the same and is
+// `js/regex-injection` (CodeQL, high) — a category argument of `.*` would match every tile and the
+// probe would silently measure whichever one sorted first. A string is matched case-insensitively
+// and as a substring by Playwright, which is exactly what the tile label ("Politics") needs.
+const tile = page.locator(`button[aria-label^="Browse "][aria-label*="markets"]`).filter({ hasText: category }).first();
 try {
   await tile.waitFor({ state: 'visible', timeout: 30000 });
 } catch {
