@@ -1571,9 +1571,35 @@ export default function CalibrationPage() {
 
               Deliberately narrow. The Arrow et al. "Academic consensus range"
               row's provenance is a separate question this does not settle. */}
+          {/* #7531. The Metaculus row read `mce: 2.5` and was drawn as a solid
+              bar from 0 to 25% of this axis — a measured point value. The page
+              does not have that number. Further Reading, 5,500px down, is where
+              it comes from: "The forecasting platform publishes its calibration
+              curve publicly, achieving ~2-3pp mean calibration error." 2.5 is
+              the midpoint of 2-3 and appears nowhere else.
+
+              That construction is exactly what CAL-P1261 removed from the Arrow
+              row, and the type above already records the rule it left behind:
+              `mce` and (`rangeLow`, `rangeHigh`) are alternatives, and inventing
+              a point value to draw a bar with is the thing that went. CAL-P1261
+              missed this row for a legible reason — Arrow's range is visible in
+              its own LABEL ("Academic consensus range ... 2-5pp"), so the
+              midpoint was obvious, while Metaculus's range lives in a different
+              section and the row read as a point. Both are ranges; only one was
+              drawn as one.
+
+              Not #7524. Metaculus's figure IS our statistic — the page sources
+              it as a mean calibration error off a published calibration curve —
+              so the row belongs in the section and only its SHAPE was wrong.
+              Berg's was a different quantity, which is why that row left the
+              section entirely. Two different repairs; never collapse them.
+
+              The label keeps "(self-reported)": the range is what Metaculus
+              publishes about itself, and that provenance is the reason the row
+              is not colour-graded on our thresholds. */}
           {([
             { label: priceCohort === "closing" ? "Bain Luck (closing line)" : priceCohort === "opening" ? "Bain Luck (opening price)" : "Bain Luck (all sources)", mce: cohortMCE, n: cohortN, highlight: true },
-            { label: "Metaculus (self-reported)", mce: 2.5, n: null, highlight: false },
+            { label: "Metaculus (self-reported)", rangeLow: 2, rangeHigh: 3, n: null, highlight: false },
             { label: "Academic consensus range (Arrow et al. 2008)", rangeLow: 2, rangeHigh: 5, n: null, highlight: false },
           ] as BenchmarkRow[]).map(row => {
             const isRange = row.rangeLow !== undefined && row.rangeHigh !== undefined;
