@@ -9,6 +9,10 @@ import { fetchEvent, fetchEventHistory, fetchGameMarkets, fetchTeamProgression, 
 import type { EventTournamentResponse, TeamProgressionResponse } from "@/lib/types";
 import { EVENT_BOOT_HISTORY_HOURS } from "@/lib/event/detailBoot";
 import {
+  EVENT_SLOW_LOAD_NOTICE_MS,
+  eventLoadingView,
+} from "@/lib/event/loadingPresentation";
+import {
   effectiveChartRange,
   historyRangeParam,
   nextFullHistoryLatch,
@@ -975,33 +979,45 @@ export default function EventPage({ params }: EventPageProps) {
       ? event?.score_observed_at ?? null
       : null;
 
-  // Loading timeout — if the event hasn't loaded after 12s, show error with retry
-  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
+  // #5607 — a slow load is a slow load, not a failure.
+  //
+  // This timer used to flip the whole page to a terminal "Loading timed out"
+  // card at 12s. It fired before `fetchEvent`'s FIRST stage could even expire
+  // (the 20s boot-claim race), so it announced a failure the fetch had not had
+  // and could not yet have had. `lib/event/loadingPresentation.ts` carries the
+  // full timing table and why neither a bigger constant nor another retry is
+  // the repair. The mark survives; what it is allowed to SAY is what changed.
+  const [pastSlowLoadMark, setPastSlowLoadMark] = useState(false);
   useEffect(() => {
     if (!eventLoading) {
-      setLoadingTimedOut(false);
+      setPastSlowLoadMark(false);
       return;
     }
-    const timer = setTimeout(() => setLoadingTimedOut(true), 12000);
+    const timer = setTimeout(
+      () => setPastSlowLoadMark(true),
+      EVENT_SLOW_LOAD_NOTICE_MS,
+    );
     return () => clearTimeout(timer);
   }, [eventLoading]);
 
   if (eventLoading) {
-    if (loadingTimedOut) {
-      return (
-        <ErrorMessage
-          title="Loading timed out"
-          message="The event is taking too long to load. Try refreshing."
-          onRetry={() => {
-            setLoadingTimedOut(false);
-            refreshEvent();
-          }}
-        />
-      );
-    }
+    // Whatever the clock says, this branch renders a LOADING view. The terminal
+    // claim is the `!event` branch below, which reads the real failure.
+    const loadingView = eventLoadingView(pastSlowLoadMark);
     return (
-      <div className="py-12">
-        <LoadingSpinner text="Loading event..." />
+      <div className="py-12 flex flex-col items-center gap-4">
+        <LoadingSpinner text={loadingView.text} />
+        {loadingView.offersRetry && (
+          <button
+            type="button"
+            onClick={() => refreshEvent()}
+            // Same affordance the card this replaces used, so the reader's way
+            // out looks the way it has always looked (`ErrorMessage`'s retry).
+            className="text-caption text-accent-brand underline hover:no-underline transition-colors"
+          >
+            Retry
+          </button>
+        )}
       </div>
     );
   }
