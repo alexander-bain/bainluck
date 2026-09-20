@@ -15,6 +15,7 @@ import type {
 } from "@/lib/types";
 import { bumpRated, sendKidInteraction } from "@/lib/play/session";
 import { decidePlayView, type PlayPoolStatus } from "@/lib/play/poolState";
+import { kidSafeImageUrl } from "@/lib/play/kidSafe";
 import PlayStateScreen from "./PlayStateScreen";
 import s from "./play.module.css";
 
@@ -38,8 +39,13 @@ interface CoolOrBoringProps {
 
 const RAIN_EMOJI = ["🎉", "⭐", "🔥", "🏆", "✨", "🎊", "🍀", "💥"];
 
-function cardImage(item: FeedItem): string | null {
-  if (item.type === "futures") return (item.data as FeedFuturesData).image_url || null;
+// #7461: the admission gate reads strings, so the picture is gated HERE — see
+// `kidSafeImageUrl`'s own header for why the rail an image comes from is the
+// thing being tested, and what a child saw before it was.
+export function cardImage(item: FeedItem): string | null {
+  if (item.type === "futures") {
+    return kidSafeImageUrl((item.data as FeedFuturesData).image_url);
+  }
   return null;
 }
 
