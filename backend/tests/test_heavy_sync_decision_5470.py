@@ -2475,6 +2475,355 @@ def test_the_deadline_for_a_wait_is_this_bands_close_read_from_either_side():
     ) + band
 
 
+# ── a sleep must be able to afford what it wakes up to (#5470's residual) ──────
+#
+# `wait_seconds` measured both of its checks to the WAKE instant, which is the one
+# instant at which the run decides nothing: it re-reads every fact first, and only
+# then is the verdict taken. Everything below is about the distance between those
+# two instants, and about the second one being the one that matters.
+
+#: Wake instant to the verdict line, every sleeping run in this workflow's last
+#: 100 (14 of them, 2026-09-19..09-20, read 2026-09-20). Recorded as the LIST so
+#: the charge can be checked against the world and not only against itself — the
+#: same reason `OBSERVED_RELEASE_LAGS_MIN` above is a list. The wake is COMPUTED
+#: (the `Sleeping Ns` echo plus N) and never read off the first log line: the two
+#: `ls-remote`s that run before anything is printed cost ~5 s, and reading the
+#: line would charge them to nobody.
+OBSERVED_POST_WAKE_SECONDS = (
+    9.72, 10.24, 10.47, 10.62, 10.73, 10.78, 10.86,
+    11.50, 11.57, 11.75, 12.04, 12.19, 13.02, 16.41,
+)
+
+#: Run 35518945494, 2026-09-20, replayed on its own numbers. The gate reached
+#: PUSH at 15:14:47Z with heavy 136 min old, slept 2640 s for the 180-min cycle
+#: floor to clear, and woke at 15:58:47Z — 13 s inside a band closing at :59:00.
+SPECIMEN_NOW = datetime(2026, 9, 20, 15, 14, 47, 375424, tzinfo=timezone.utc)
+SPECIMEN_AGE_MIN = 136
+SPECIMEN_SLEPT_S = 2640
+#: …and 13.02 s is what waking up cost it, from the same run's log.
+SPECIMEN_POST_WAKE_S = 13.02
+
+
+def _specimen_wait(**over):
+    kwargs = dict(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=SPECIMEN_AGE_MIN, now=SPECIMEN_NOW,
+    )
+    kwargs.update(over)
+    return sync.wait_seconds(**kwargs)
+
+
+def test_a_sleep_that_cannot_afford_its_own_re_read_is_not_taken():
+    """The specimen, and the whole of it: every clause of the old authorisation
+    was true, and the run still lost the hour.
+
+    The sleep was validated against 15:58:47 — inside the band, past the floor,
+    `decide` says PUSH there — and the verdict was taken 13.02 s later, at
+    15:59:00, which is not. Forty-four minutes of runner for the verdict it
+    already held at 15:14, and `bainluck-heavy` sat on `704cdc47` while the main
+    app served `d0555293`."""
+    wake = SPECIMEN_NOW + timedelta(seconds=SPECIMEN_SLEPT_S)
+    # Every reason the old rule had for taking it, still true.
+    assert sync.seconds_until_floor_clears(SPECIMEN_AGE_MIN) == SPECIMEN_SLEPT_S
+    assert sync.inside_window(wake), wake
+    assert SPECIMEN_SLEPT_S <= sync.band_seconds_left_at_open(SPECIMEN_NOW)
+    assert sync.decide(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=SPECIMEN_AGE_MIN + SPECIMEN_SLEPT_S // 60, now=wake,
+    ).code == PUSH
+    # And the one reason it should not have been: the verdict is taken later
+    # than the instant that was judged, and by then the band has shut.
+    verdict_at = wake + timedelta(seconds=SPECIMEN_POST_WAKE_S)
+    assert not sync.inside_window(verdict_at), verdict_at
+    assert sync.POST_WAKE_READ_SECONDS >= SPECIMEN_POST_WAKE_S
+
+    assert _specimen_wait() == 0
+
+
+def test_the_post_wake_charge_covers_every_post_wake_read_measured():
+    """Rounded up from the MAXIMUM, not the median, and the asymmetry is the
+    reason: under-stating authorises a sleep that cannot finish — the hour above
+    — while over-stating declines one whose remaining band was going to be spent
+    for nothing anyway. A charge below the worst reading is a charge that is
+    right on average and wrong exactly when it is consulted."""
+    assert sync.POST_WAKE_READ_SECONDS >= max(OBSERVED_POST_WAKE_SECONDS)
+    assert float(sync.POST_WAKE_READ_SECONDS) == int(sync.POST_WAKE_READ_SECONDS)
+    # It is a charge against the band, so it has to be small against the band.
+    opens, closes = sync.window_bounds()
+    assert sync.wake_to_push_seconds() < (closes - opens + 1) * 60 / 4
+
+
+def test_the_verdict_still_reads_PUSH_at_the_moment_it_is_actually_taken():
+    """The strengthening of `test_the_wait_is_authorised_by_the_SAME_judge`.
+
+    That test asks `decide` about the WAKE, which is not when `decide` is called —
+    it is called `POST_WAKE_READ_SECONDS` later, once the facts have been re-read.
+    This asks it about that later instant, which is the one the run occupies.
+
+    Both readings agree today (the deadline is what makes them agree, and
+    `test_judging_the_wake_is_sound_only_because_the_deadline_covers_the_re_read`
+    is where that is pinned), so this is the sweep and not the proof. Its value is
+    the ANCHORS: with the whole-minute `now` every other sweep in this file uses,
+    the two instants fall in the same minute at every minute of the hour, which is
+    exactly why none of them could see this. The seconds below are ragged on
+    purpose — a real trigger arrives at an arbitrary second, and the floor clears a
+    whole number of minutes after it, so the wake lands on that same second."""
+    floor = sync.min_cycle_interval_min()
+    checked = 0
+    for minute in range(60):
+        for second in (0, 13, 31, 47, 59):
+            for age in (None, 0, 100, floor - 48, floor - 20, floor - 1, floor, 10_000):
+                now = _at(minute).replace(second=second)
+                secs = sync.wait_seconds(
+                    main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=age, now=now,
+                )
+                if not secs:
+                    continue
+                checked += 1
+                projected = None if age is None else age + (secs + 59) // 60
+                verdict = sync.decide(
+                    main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=projected,
+                    now=now + timedelta(seconds=secs + sync.POST_WAKE_READ_SECONDS),
+                )
+                assert verdict.code == PUSH, (minute, second, age, verdict.reason)
+    assert checked > 200, checked
+
+
+def test_the_deadline_for_a_sleep_is_everything_the_run_still_owes_the_band():
+    """Swept rather than sampled: whenever this sleeps, the band is still open at
+    the verdict AND the push is still inside the band's closing edge."""
+    floor = sync.min_cycle_interval_min()
+    edge_cases = 0
+    for minute in range(60):
+        for second in (0, 13, 31, 47, 59):
+            for age in (None, 0, 5, floor - 48, floor - 30, floor - 8, floor - 1,
+                        floor, floor + 90):
+                now = _at(minute).replace(second=second)
+                secs = sync.wait_seconds(
+                    main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                    heavy_release_age_min=age, now=now,
+                )
+                if not secs:
+                    continue
+                wake = now + timedelta(seconds=secs)
+                assert sync.inside_window(
+                    wake + timedelta(seconds=sync.POST_WAKE_READ_SECONDS)
+                ), (minute, second, age, secs)
+                closing_edge = now + timedelta(seconds=sync.band_seconds_left_at_open(now))
+                assert wake + timedelta(seconds=sync.wake_to_push_seconds()) <= closing_edge
+                if (closing_edge - wake).total_seconds() < 2 * sync.wake_to_push_seconds():
+                    edge_cases += 1
+    # …and the sweep actually visits the edge this is about, rather than proving
+    # a property about waits that all land 20 minutes clear of it.
+    assert edge_cases, "the sweep never reached the band's closing edge"
+
+
+def test_the_two_charges_are_derived_from_measurements_and_are_what_decline_it(
+    monkeypatch,
+):
+    """Two claims in one, because the second is what makes the first matter.
+
+    Derived: `wake_to_push_seconds` is the re-read plus the in-flight read this
+    file already measured, never a third literal free to drift from either. And
+    load-bearing: zeroing the charges restores the specimen's old behaviour
+    exactly, so these two — and not some other gate reached first — are what
+    declines it.
+
+    Every `setattr` here is on an INPUT and never on the total, which is the only
+    form that can tell a derivation from a coincidence: `= 43` equals the sum
+    today, behaves identically today, and stops tracking the moment either half is
+    re-measured. That mutant survives a test that patches the total."""
+    assert sync.wake_to_push_seconds() == (
+        sync.POST_WAKE_READ_SECONDS + sync.INFLIGHT_READ_SECONDS
+    )
+    assert _specimen_wait() == 0
+    monkeypatch.setattr(sync, "POST_WAKE_READ_SECONDS", 0)
+    monkeypatch.setattr(sync, "INFLIGHT_READ_SECONDS", 0)
+    assert sync.wake_to_push_seconds() == 0
+    assert _specimen_wait() == SPECIMEN_SLEPT_S
+    monkeypatch.setattr(sync, "INFLIGHT_READ_SECONDS", 600)
+    assert sync.wake_to_push_seconds() == 600
+    # A costlier fleet read is a shorter usable band, with no second edit.
+    assert sync.wait_seconds(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=sync.min_cycle_interval_min() - 8, now=_at(50),
+    ) == 0
+
+
+def test_the_charge_declines_only_sleeps_that_could_not_have_reached_the_push(
+    monkeypatch,
+):
+    """The blast radius, computed two ways rather than asserted.
+
+    Every sleep the charge removes is one whose own run would have died at a gate
+    it was always going to reach: `decide` HOLDing on a band that shut during the
+    re-read, or the final band check HOLDing after the fleet read. Nothing that
+    could have pushed is declined — which is why declining costs nothing, and is
+    the claim a reader of this change is entitled to see swept."""
+    floor = sync.min_cycle_interval_min()
+    charged = {}
+    for scenario, post_wake, inflight in (
+        ("now", sync.POST_WAKE_READ_SECONDS, sync.INFLIGHT_READ_SECONDS),
+        ("before", 0, 0),
+    ):
+        monkeypatch.setattr(sync, "POST_WAKE_READ_SECONDS", post_wake)
+        monkeypatch.setattr(sync, "INFLIGHT_READ_SECONDS", inflight)
+        charged[scenario] = {
+            (m, s, a): sync.wait_seconds(
+                main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                heavy_release_age_min=a, now=_at(m).replace(second=s),
+            )
+            for m in range(60)
+            for s in (0, 13, 31, 47, 59)
+            for a in (None, 0, 5, floor - 48, floor - 30, floor - 8, floor - 1, floor)
+        }
+    monkeypatch.undo()
+    removed = [k for k, v in charged["before"].items() if v and not charged["now"][k]]
+    assert removed, "the charge removes nothing — this test proves nothing"
+    for key in removed:
+        minute, second, age = key
+        now = _at(minute).replace(second=second)
+        wake = now + timedelta(seconds=charged["before"][key])
+        doomed_at_the_verdict = not sync.inside_window(
+            wake + timedelta(seconds=sync.POST_WAKE_READ_SECONDS)
+        )
+        closing_edge = now + timedelta(seconds=sync.band_seconds_left_at_open(now))
+        doomed_at_the_final_check = (
+            wake + timedelta(seconds=sync.wake_to_push_seconds()) > closing_edge
+        )
+        assert doomed_at_the_verdict or doomed_at_the_final_check, key
+    # Nothing is GAINED either: the charge may only ever remove a sleep.
+    assert not [k for k, v in charged["now"].items() if v and not charged["before"][k]]
+
+
+def test_a_sleep_that_fits_exactly_lands_the_push_on_a_zero_and_is_not_taken():
+    """The deadline is the band's closing EDGE, so `>` re-admits the defect.
+
+    `band_seconds_left` is 0 AT the edge, not at the second after it — the band is
+    minute-inclusive and 14:59:00 is already outside. So a sleep whose charge fits
+    the remainder EXACTLY puts the push on a zero, and the final band check that
+    stands in front of it HOLDs: the same lost cycle this ship is about, one gate
+    further down and one second wide.
+
+    Reachable rather than theoretical: it needs only a trigger whose second is
+    `-wake_to_push_seconds()` mod 60, which for an arbitrary arrival is 1 in 60 of
+    the floor-driven sleeps that reach the edge at all. Found by mutating `>=` back
+    to `>` after the fix, which is the only reason it is not still in there."""
+    floor = sync.min_cycle_interval_min()
+    now = _at(50).replace(second=(-sync.wake_to_push_seconds()) % 60)
+    # The exact fit, stated rather than assumed.
+    assert 8 * 60 + sync.wake_to_push_seconds() == sync.band_seconds_left_at_open(now)
+    secs = sync.wait_seconds(
+        main_live=A, heavy_live=B, heavy_is_ancestor=True,
+        heavy_release_age_min=floor - 8, now=now,
+    )
+    assert secs == 0
+    # …and this is what taking it would have bought: a push on a closed band.
+    would_push_at = now + timedelta(seconds=8 * 60 + sync.wake_to_push_seconds())
+    assert sync.band_seconds_left(would_push_at) == 0
+    assert not sync.inside_window(would_push_at)
+
+
+def test_judging_the_wake_is_sound_only_because_the_deadline_covers_the_re_read(
+    monkeypatch,
+):
+    """`decide` is still asked about the WAKE, which is not when it is called. The
+    deadline is what makes that sound, and this is the invariant that says so.
+
+    Charging the re-read at the `decide` call as well would be unreachable code —
+    once the deadline has proved the band is open all the way to the PUSH, it is
+    open at the verdict too, `wake_to_push_seconds()` earlier. So the equivalence
+    is asserted instead of duplicated: weakening the deadline separates the two
+    instants and fails this, rather than silently re-opening the hour.
+
+    The second half proves that is a real dependency and not a restatement —
+    with the charges zeroed, a sleep exists whose two readings DISAGREE."""
+    floor = sync.min_cycle_interval_min()
+    grid = [
+        (m, s, a)
+        for m in range(60)
+        for s in (0, 13, 17, 31, 43, 47, 59)
+        for a in (None, 0, 5, floor - 48, floor - 30, floor - 8, floor - 1, floor)
+    ]
+
+    def _readings(minute, second, age):
+        now = _at(minute).replace(second=second)
+        secs = sync.wait_seconds(
+            main_live=A, heavy_live=B, heavy_is_ancestor=True,
+            heavy_release_age_min=age, now=now,
+        )
+        if not secs:
+            return None
+        projected = None if age is None else age + (secs + 59) // 60
+        return tuple(
+            sync.decide(
+                main_live=A, heavy_live=B, heavy_is_ancestor=True,
+                heavy_release_age_min=projected,
+                now=now + timedelta(seconds=secs + extra),
+            ).code
+            for extra in (0, sync.POST_WAKE_READ_SECONDS)
+        )
+
+    agreed = 0
+    for key in grid:
+        readings = _readings(*key)
+        if readings is None:
+            continue
+        assert readings == (PUSH, PUSH), (key, readings)
+        agreed += 1
+    assert agreed > 200, agreed
+
+    # Now take the deadline's charge away and sweep again. The two readings come
+    # apart, and every sleep that separates them is one the old rule took and the
+    # run then woke up to lose — so the agreement above is the deadline's doing and
+    # not a property of the arithmetic.
+    charge = sync.POST_WAKE_READ_SECONDS
+    monkeypatch.setattr(sync, "POST_WAKE_READ_SECONDS", 0)
+    monkeypatch.setattr(sync, "INFLIGHT_READ_SECONDS", 0)
+    assert sync.wake_to_push_seconds() == 0
+    disagreed = []
+    for minute, second, age in grid:
+        now = _at(minute).replace(second=second)
+        secs = sync.wait_seconds(
+            main_live=A, heavy_live=B, heavy_is_ancestor=True,
+            heavy_release_age_min=age, now=now,
+        )
+        if not secs:
+            continue
+        if not sync.inside_window(now + timedelta(seconds=secs + charge)):
+            disagreed.append((minute, second, age, secs))
+    assert disagreed, "the deadline is not what holds the two readings together"
+
+
+def test_the_post_wake_charge_covers_every_step_between_the_sleep_and_the_verdict():
+    """`POST_WAKE_READ_SECONDS` is measured over `read_facts` then `decide`, so it
+    is only true while those are the only two things in there. A third read added
+    after the sleep is band this constant does not know it is spending."""
+    code = _workflow_code()
+    after_sleep = code[code.index('sleep "$WAIT_S"'):]
+    between = after_sleep[:after_sleep.index("heavy_sync_decision.py decide")]
+    assert between.count("read_facts") == 1, between
+    for reaches_out in ("curl", "ls-remote", "git fetch", "heavy_sync_decision.py "):
+        assert reaches_out not in between, (reaches_out, between)
+
+
+def test_the_run_still_owes_an_in_flight_read_and_a_final_band_check_after_the_verdict():
+    """Why the deadline charges `INFLIGHT_READ_SECONDS` too, pinned on the
+    workflow rather than left in a comment: `decide` is not the last gate between
+    the wake and the push, so a sleep landing with only the re-read's worth of
+    band still loses the cycle — one gate further down."""
+    code = _workflow_code()
+    between = code[
+        code.index("heavy_sync_decision.py decide"):code.index("git push heroku-heavy")
+    ]
+    assert "celery/inspect" in between
+    assert "heavy_sync_decision.py inflight" in between
+    assert "heavy_sync_decision.py band-seconds-left" in between
+    assert "the band closed while the fleet was being read" in between
+
+
 def test_the_floors_own_clock_is_read_from_the_budget_and_not_from_a_number(monkeypatch):
     """`seconds_until_floor_clears` may not become a second opinion about the
     floor, and its polarity on an unreadable age is `decide`'s: proceed."""
