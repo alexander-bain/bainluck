@@ -1,0 +1,18 @@
+<!doctype html>
+<html><body>
+  <h2>Fixture</h2>
+
+  <!-- rung labels: the /economics false-positive class. None is a move. -->
+  <div><span>-0.2%</span></div>
+  <div><span>&lt;-0.3%</span></div>
+  <div><span>-0.3% to -0.1%</span></div>
+
+  <!-- QuantityGroup: glyph + accessible name, correctly united -->
+  <div><span aria-label="up 45.0 points">&#9650;45.0 pts</span></div>
+
+  <!-- TeamChampionshipPath: no accessible name, mono + movement colour -->
+  <div><span class="text-[11px] font-mono text-accent-live">+9.7 pts</span></div>
+
+  <!-- THE DEFECT: bare magnitude, no unit -->
+  <div><span class="text-[11px] font-mono text-accent-danger" id="bare">-9.7</span></div>
+</body></html>
