@@ -86,6 +86,92 @@ private struct EvolutionRoundBoundary: Identifiable {
     let label: String
 }
 
+// MARK: - Outcome Colour
+
+/// What colour an Evolution outcome is drawn in — #7036's fifth arm.
+///
+/// **One function, four marks.** `EvolutionChartView.colorForOutcome` is a choke
+/// point: everything the chart paints per outcome comes out of it. The plotted
+/// LINE (`chartForegroundStyleScale`), the crosshair tooltip's 6pt dot, the
+/// leaderboard row's 6pt dot, and the `color:` handed to `TeamLogoView`, whose
+/// `initialsFallback` paints the outcome's letters in it. All four sit on
+/// `Color.cardBackground`, which is white. So one floor under one function
+/// covers the lot, and there is no second copy for the arms to drift apart on.
+///
+/// **This one is reachable from stored data, unlike arm 4.** Measured on
+/// production 2026-09-20 (`futures_outcomes` ⋈ `teams`): of 16,739 chart-eligible
+/// outcome rows carrying a stored colour, **1,054 (6.3%, 73 clubs) are under
+/// 3:1**. They are not edge rows either — *NBA: Steph Curry Next Team* draws
+/// Golden State at 97% in `#fdb927` (1.73:1), and *NFC South Division Winner*
+/// serves four lines of which New Orleans `#d3bc8d` (1.85:1) and Carolina
+/// `#7bafd4` (2.35:1) are both under it. A reader opening that chart sees two of
+/// four lines missing and a legend whose dots are blank.
+///
+/// **The fallback is the palette slot the outcome would have had anyway.** An
+/// outcome with no stored colour already takes `paletteHexes[index % count]`;
+/// flooring hands a too-pale one the same thing. That is deliberately not a new
+/// colour: it cannot introduce a collision class the palette does not already
+/// have, because two outcomes at different display positions take different
+/// slots exactly as before. Every entry clears the floor by a wide margin — the
+/// palest is `#0e7490` at 5.36:1 — which is asserted rather than trusted, so a
+/// future palette edit that drops a pastel in fails a test instead of a render.
+enum EvolutionOutcomeColour {
+
+    /// 10-colour indexed palette, optimised for light backgrounds.
+    ///
+    /// Hexes rather than `Color`s because a `Color` cannot be compared in a
+    /// test, and the whole point of this arm is that the RESOLVED value is
+    /// assertable.
+    ///
+    /// 🪤 **It no longer "matches the web EvolutionChart", whatever the line
+    /// this replaced said.** `lib/seriesColors.ts` says in as many words that the
+    /// web adopted the flagship `SERIES_COLORS` and dropped "its bespoke
+    /// crimson-led duplicate" — which is this list. So the same market's chart is
+    /// blue-led on the web and red-led here. That divergence is real and it is
+    /// NOT this arm's to fix: repainting every Evolution chart in the app is a
+    /// visible redesign, not a contrast floor. The stale claim is removed rather
+    /// than left to be inherited as a reason not to look.
+    ///
+    /// Pinned by test, because this list is now load-bearing in a second way: it
+    /// is what a FLOORED outcome falls onto, so editing it silently repaints
+    /// clubs that do have a stored colour, not just the ones that do not.
+    static let paletteHexes: [String] = [
+        "#c41e3a", // red (leader)
+        "#005eb8", // blue
+        "#1d4ed8", // indigo
+        "#0e7490", // teal
+        "#b91c1c", // dark red
+        "#0369a1", // sky
+        "#92400e", // amber
+        "#4338ca", // violet
+        "#be185d", // pink
+        "#065f46", // emerald
+    ]
+
+    /// The palette slot for a display position, wrapping past the tenth.
+    static func fallbackHex(index: Int) -> String {
+        paletteHexes[index % paletteHexes.count]
+    }
+
+    /// The hex to draw this outcome's line, dot and badge letters in.
+    static func markHex(_ storedHex: String?, index: Int) -> String {
+        TeamTextContrast.textHexOnCard(storedHex, fallback: fallbackHex(index: index))
+    }
+
+    /// The same answer, resolved the way the chart resolves it: find the named
+    /// outcome in the payload the chart is holding, then floor its colour.
+    ///
+    /// The lookup lives here rather than in the view because the view's payload
+    /// is `@State private` — a test can reach this with a real decoded
+    /// `ProbabilityTimelineResponse` and cannot reach it there at all. An
+    /// unnamed outcome (the Field row, `_combined`, a name the payload does not
+    /// carry) has no stored colour to judge and takes its palette slot, which is
+    /// what it took before this arm.
+    static func markHex(name: String, outcomes: [TimelineOutcomeMeta]?, index: Int) -> String {
+        markHex(outcomes?.first(where: { $0.name == name })?.primaryColor, index: index)
+    }
+}
+
 // MARK: - EvolutionChartView
 
 /// Multi-outcome probability evolution chart with interactive crosshair,
@@ -139,28 +225,15 @@ struct EvolutionChartView: View {
 
     // MARK: - Colors
 
-    /// 10-color palette matching the web EvolutionChart, optimized for light backgrounds.
-    private static let evolutionColors: [Color] = [
-        Color(hex: "#c41e3a"), // red (leader)
-        Color(hex: "#005eb8"), // blue
-        Color(hex: "#1d4ed8"), // indigo
-        Color(hex: "#0e7490"), // teal
-        Color(hex: "#b91c1c"), // dark red
-        Color(hex: "#0369a1"), // sky
-        Color(hex: "#92400e"), // amber
-        Color(hex: "#4338ca"), // violet
-        Color(hex: "#be185d"), // pink
-        Color(hex: "#065f46"), // emerald
-    ]
-
     private static let combinedColor = Color(hex: "#111827")
 
+    /// Every per-outcome mark the chart draws comes out of here — the plotted
+    /// line, the crosshair dot, the leaderboard dot, and the colour handed to
+    /// `TeamLogoView`, which paints the outcome's initials in it. #7036's floor
+    /// sits under all four at once because they all sit on the white card.
     private func colorForOutcome(name: String, index: Int) -> Color {
-        if let meta = data?.outcomes.first(where: { $0.name == name }),
-           let hex = meta.primaryColor {
-            return Color(hex: hex)
-        }
-        return Self.evolutionColors[index % Self.evolutionColors.count]
+        Color(hex: EvolutionOutcomeColour.markHex(
+            name: name, outcomes: data?.outcomes, index: index))
     }
 
     // MARK: - Tournament Dates
