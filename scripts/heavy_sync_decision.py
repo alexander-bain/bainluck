@@ -217,6 +217,71 @@ def min_cycle_interval_min() -> int:
     return round(24 * 60 / ACCEPTED_CYCLES_PER_DAY)
 
 
+#: The band recurs once an hour because the rebuild it is derived against is
+#: hourly (:data:`REBUILD_START_MIN`). Named so the licence below is counted in
+#: BANDS — the unit the veto's own message promises in — rather than in minutes
+#: that would have to be re-derived if the rebuild ever moved off the hour.
+BAND_PERIOD_MIN = 60
+
+#: HOW MANY BANDS THE IN-FLIGHT VETO IS LICENSED TO COST (#5886, the inversion).
+#:
+#: The veto is a COST gate — :func:`inflight_verdict`'s own docstring prices it:
+#: "A killed heavy job self-heals on its next beat — the 09:53:58Z matcher
+#: restarted at 10:05 and succeeded at 10:09:37, and the cost was one lost pass."
+#: And its message to the log states the bound it believes it is working under:
+#: "the next trigger re-reads and re-judges". ONE more band.
+#:
+#: MEASURED 2026-09-20 (latency/748), that promise is false three quarters of the
+#: time, because the fleet the gate asks about is essentially never idle inside
+#: the band. Censused over every successful run of this workflow in ~24 h, from
+#: the run logs already banked:
+#:
+#:     in-flight readings      106 BUSY · 6 IDLE · 0 UNKNOWN   = 94.6% busy
+#:     runs reaching PUSH      8
+#:     runs that pushed        2
+#:     killed by this gate     6 of 8
+#:
+#: and NO minute of the band clears — the worst is :58 at 3/4 busy, the best :38
+#: at 4/5. It is not one dodgeable resident either: `match_prediction_markets`
+#: appears in 68 of the 106, but `rebuild_typeahead_index` (34),
+#: `precompute_backfill_winners_status` (29) and nine others fill the rest, which
+#: is the reading the workflow header already reached from the other side ("no
+#: 25-minute window clears all three. So instead of predicting the worker, ask
+#: it"). Asking it does not help when the answer is always yes.
+#:
+#: So the veto had no expiry, and a cost gate that can be starved indefinitely is
+#: not a cost gate — it is the failure wearing a green conclusion. `bainluck-heavy`
+#: reached 5h16m on `704cdc47` against this file's own 180-min floor while #7260's
+#: merged fix (66 upcoming games restored to the reader) sat dark.
+#:
+#: 1, and the number is the veto's own sentence rather than a tuning knob: the
+#: cycle floor is the first moment a sync is permitted, and "the next trigger
+#: re-judges" licenses exactly one band beyond it. Checked against the world
+#: rather than only against itself — 53 real intervals from
+#: `heroku releases -a bainluck-heavy`, steady state since v17:
+#:
+#:     183-246 min   the body of the distribution: floor + at most one band
+#:     284/285/286/310 min   the tail this clause truncates
+#:
+#: so it is silent on the normal cycle and fires on the tail: 13 of 53 intervals
+#: (25%) exceed the expiry, i.e. ~2 firings a day, each costing the one lost pass
+#: the gate above already prices. Raising it to 2 bands (300 min) would have let
+#: today's 5h16m episode stand, which is the episode.
+VETO_BUDGET_BANDS = 1
+
+
+def veto_expiry_min() -> int:
+    """The heavy-release age past which the in-flight veto stops being a cost gate.
+
+    Derived from the floor and not typed in, for :func:`min_cycle_interval_min`'s
+    reason: moving the accepted cycle budget must move this too, or the licence
+    stops meaning "one band past the first moment a sync was allowed" and becomes
+    a number with a story attached (``test_moving_the_accepted_budget_moves_the
+    _veto_expiry``).
+    """
+    return min_cycle_interval_min() + VETO_BUDGET_BANDS * BAND_PERIOD_MIN
+
+
 def window_bounds() -> tuple[int, int]:
     """The (open, close) minutes past the hour, derived — never asserted.
 
@@ -1017,6 +1082,53 @@ def inflight_verdict(
     return Decision(IDLE, "IDLE", "no heavy job is in flight")
 
 
+def veto_expired(heavy_release_age_min: int | None) -> Decision:
+    """Has the in-flight veto outlived the licence its own message claims?
+
+    Asked ONLY at the band's closing edge, and only of a run that has already
+    spent the whole band watching for an idle moment and not found one. So this
+    never takes an idle opportunity away — it decides what to do with a band that
+    is about to be lost anyway (``test_the_expiry_is_only_ever_asked_at_the_edge``).
+
+    THE POLARITY IS THE OPPOSITE OF EVERY OTHER COST GATE IN THIS FILE, and that
+    is deliberate rather than an oversight to be tidied up. Elsewhere an
+    unreadable fact PROCEEDS, because proceeding is the ship and the harm of one
+    extra cycle is small. Here "proceed" means cycling the dyno on top of a job we
+    can SEE running, so it is the exception that has to prove its premise: an age
+    we could not read cannot establish starvation, so the ordinary veto stands and
+    the run holds. An unreadable age must never become a licence to kill a job.
+
+    ``--dispatched`` is not a case here: an attended run's in-flight verdict is
+    BYPASSED before the loop ever reaches its edge.
+    """
+    expiry = veto_expiry_min()
+    if heavy_release_age_min is None:
+        return Decision(
+            BUSY,
+            "LICENSED",
+            "heavy's release age is unreadable, so starvation cannot be established "
+            f"— the {expiry}-min veto expiry needs a fact it does not have, and an "
+            "unreadable age is never a licence to cycle a running job",
+        )
+    if heavy_release_age_min < expiry:
+        return Decision(
+            BUSY,
+            "LICENSED",
+            f"heavy was released {heavy_release_age_min} min ago, inside the "
+            f"{expiry}-min veto expiry ({min_cycle_interval_min()}-min cycle floor "
+            f"+ {VETO_BUDGET_BANDS} band) — the in-flight veto still holds, and the "
+            "next trigger re-reads and re-judges",
+        )
+    return Decision(
+        IDLE,
+        "EXPIRED",
+        f"heavy was released {heavy_release_age_min} min ago, past the {expiry}-min "
+        f"veto expiry — the veto has now cost more than the one lost pass it saves "
+        "(#5886), so this run cycles worker-heavy rather than deferring a cycle it "
+        "has already deferred",
+    )
+
+
 # ---------------------------------------------------------------------------
 # READBACK — did the push actually become the release heavy is running? (#5722)
 # ---------------------------------------------------------------------------
@@ -1266,6 +1378,18 @@ def main(argv: list[str] | None = None) -> int:
         help="an attended workflow_dispatch run: bypasses the in-flight veto, "
         "never the never-backwards guard",
     )
+    x = sub.add_parser(
+        "veto-expired",
+        help="at the band's closing edge only: has the in-flight veto outlived the "
+        "one band its own message licenses it to cost? (#5886)",
+    )
+    x.add_argument(
+        "--heavy-release-age-min",
+        default="",
+        help="minutes since heavy's current release. Empty or unparseable means "
+        "UNREADABLE, and here — unlike every other cost gate in this file — that "
+        "HOLDS: an age we cannot read cannot prove starvation.",
+    )
     sub.add_parser(
         "band-seconds-left",
         help="print how many seconds of the sync band are left (0 outside it) — "
@@ -1410,6 +1534,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(secs)
         return 0
+
+    if args.command == "veto-expired":
+        # The VERDICT on stdout and the code on exit, `inflight`'s contract — the
+        # workflow branches on the code and prints the line. Not `age`'s
+        # number-alone-always-zero contract: this one IS a verdict.
+        decision = veto_expired(_age_arg(args.heavy_release_age_min))
+        print(f"{decision.verdict}: {decision.reason}")
+        return decision.code
 
     if args.command == "band-seconds-left":
         # The NUMBER ALONE on stdout, and always exit 0 — `age`'s contract, for

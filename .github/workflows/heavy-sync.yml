@@ -398,6 +398,12 @@ jobs:
           # back to the single read the gate used before, so it cannot cost a
           # cycle — only the band can, exactly as before.
           IDLE_STREAK=0
+          # Set only by the expiry branch below, and read once after the loop so
+          # the summary line cannot claim a clear fleet on a run that knowingly
+          # cycled a busy one. Initialised HERE rather than defaulted at the read:
+          # a `${VETO_EXPIRED:-}` with no initialiser is how a `set -u` file grows
+          # a variable nobody can find the origin of.
+          VETO_EXPIRED=
           while true; do
             # Removed FIRST: with `--fail` curl writes no body, so a failed read
             # would otherwise leave the PREVIOUS iteration's payload in place and
@@ -478,8 +484,46 @@ jobs:
                 echo "The band closes in ${BAND_LEFT}s — pushing on one idle read"
                 echo "rather than losing the cycle to a confirmation."
               else
-                echo "The band closes in ${BAND_LEFT}s — holding rather than pushing"
-                echo "past the edge that keeps the next accuracy rebuild whole."
+                # #5886, THE INVERSION — AND THE ONLY PLACE THE VETO CAN EXPIRE.
+                #
+                # A run reaching this line has spent the entire band watching for
+                # an idle moment and not found one, so nothing is being taken
+                # away here: the band is lost either way, and the only question
+                # left is whether it is lost WITH a cycle or without one.
+                # Censused over ~24 h of this workflow's own run logs, the answer
+                # used to be "without" 6 times in 8, because the fleet is busy on
+                # 94.6% of readings and no minute of the band clears — so the
+                # veto's message, "the next trigger re-reads and re-judges", was
+                # promising a next trigger that is vetoed too. `veto-expired`
+                # holds that promise to one band past the cycle floor and says so.
+                #
+                # THE AGE IS THE ONE `read_facts` STAMPED, deliberately not
+                # re-read here. It was taken up to a band ago, so it UNDER-states
+                # the drift — the error runs toward keeping the veto, which is the
+                # safe direction for an escalation, and it costs one Platform API
+                # call nothing else needs
+                # (`test_the_stamped_age_understates_the_drift_at_the_edge`).
+                set +e
+                VETO_OUT="$(python3 scripts/heavy_sync_decision.py veto-expired \
+                  --heavy-release-age-min "${HEAVY_AGE_MIN:-}")"
+                VETO=$?
+                set -e
+                printf '%s\n' "$VETO_OUT"
+                # Read the VALUE (gotcha #54). Only a clean 0 is an expiry; an
+                # exit this branch is not computing is a harness story, and a
+                # harness story must not be able to cycle a running job — the
+                # opposite polarity to the in-flight gate above, for the reason
+                # `veto_expired`'s docstring gives.
+                if [ "$VETO" -eq 0 ]; then
+                  echo "The band closes in ${BAND_LEFT}s — pushing onto a busy"
+                  echo "worker-heavy: the veto has outlived its licence, and one"
+                  echo "lost pass is what it was always priced at."
+                  INFLIGHT=0
+                  VETO_EXPIRED=1
+                else
+                  echo "The band closes in ${BAND_LEFT}s — holding rather than pushing"
+                  echo "past the edge that keeps the next accuracy rebuild whole."
+                fi
               fi
               break
             fi
@@ -493,7 +537,13 @@ jobs:
           done
 
           case "$INFLIGHT" in
-            0) echo "In flight: clear to cycle worker-heavy." ;;
+            0) if [ -n "$VETO_EXPIRED" ]; then
+                 echo "In flight: a heavy job IS running and is being cycled anyway"
+                 echo "— the veto expired (#5886). The killed pass self-heals on its"
+                 echo "next beat; the drift it was buying does not."
+               else
+                 echo "In flight: clear to cycle worker-heavy."
+               fi ;;
             1) echo "Decision: HOLD — a heavy job is mid-run, exiting green."
                exit 0 ;;
             *) echo "::warning::the in-flight gate exited $INFLIGHT, which is a"
