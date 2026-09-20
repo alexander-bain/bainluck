@@ -153,6 +153,60 @@ export function thinBucketKey(thinFloor: number): string {
   return `● size = sample count · faded + dashed = thin (n<${thinFloor})`;
 }
 
+/** The `n=` label's type size, in the chart's own user units. */
+export const N_LABEL_FONT_PX = 9;
+
+/** Clearance between the marker's edge and the label's nearest edge. */
+const N_LABEL_GAP = 3;
+
+/**
+ * Baseline offset for a label placed BELOW its point: the gap plus the type's ascent, so
+ * the label's top clears the marker. 11 is the value the always-below `showAllN` branch
+ * has drawn at since L2-103 — the two placements are the same mark and share it.
+ */
+export const N_LABEL_BELOW_OFFSET = 11;
+
+export interface NLabelPlacement {
+  /** SVG baseline y for the label. */
+  y: number;
+  /** true when the label was flipped under its point to stay inside the plot. */
+  below: boolean;
+}
+
+/**
+ * #7434 — WHY THE `n=` LABEL HAS TO BE ABLE TO DODGE DOWNWARD.
+ *
+ * The label is drawn above its point, and the thin-bucket key (`thinBucketKey`) is drawn
+ * right-anchored in the pad band ABOVE the plot, at `padT - 10`. Those two never meet
+ * while points sit in the middle of the plot — but a point pinned at 100% actual sits at
+ * `py(100) === padT`, so its label's baseline lands at `padT - r - 3`, which is inside the
+ * key's own line. Both become unreadable.
+ *
+ * Measured on production 2026-09-20, all-markets cohort, 390px: the DataGolf panel drew
+ * five `n=` labels and 5 of 5 intersected the key's bounding box, while the sportsbook
+ * shape panels drew 18 and intersected it 0 times. That is not a coincidence of content —
+ * DataGolf's five buckets are ALL at the ceiling (36 outcomes, 36 winners, #6211), and the
+ * collision needs a point at the ceiling. So the population that triggers it is exactly
+ * the censored population whose sample sizes a reader most needs to read: #6211 item 3
+ * rules the flat line at 100% stays drawn precisely so it reads as an alarm, and the `n=`
+ * labels are the part that says how little is behind it.
+ *
+ * The rule is an invariant, not an offset: the label stays inside the plot. The key lives
+ * entirely above `padT` (baseline `padT - 10`, descenders ~2.5 below it), so "top of the
+ * label is at or below the plot top" is sufficient to clear it, and it keeps clearing it
+ * if the key ever moves within that band or changes length. `N_LABEL_FONT_PX` is used as
+ * the ascent, which over-states a 9px cap height (~6.5) — deliberately, so the flip
+ * happens a little before a reader could see the two marks touch.
+ *
+ * It does NOT hide anything: the label is moved, never dropped, and the flipped position
+ * is the one `showAllN` has always drawn at.
+ */
+export function nLabelPlacement(pointY: number, r: number, plotTop: number): NLabelPlacement {
+  const aboveBaseline = pointY - r - N_LABEL_GAP;
+  if (aboveBaseline - N_LABEL_FONT_PX >= plotTop) return { y: aboveBaseline, below: false };
+  return { y: pointY + r + N_LABEL_BELOW_OFFSET, below: true };
+}
+
 export function curveRuns(ns: number[], thinFloor: number): CurveRun[] {
   const runs: CurveRun[] = [];
   for (let i = 0; i + 1 < ns.length; i++) {
@@ -366,18 +420,31 @@ export default function CalibrationChart({
                     strokeWidth={thin ? 1.5 : 0}
                     strokeDasharray={thin ? "2,2" : undefined}
                   />
-                  {thin && !(showAllN && singleSeries) && (
-                    <text
-                      x={px(d.midpoint)} y={py(d.actual) - r - 3}
-                      textAnchor="middle" fill="#a8a29e" fontSize="9"
-                    >
-                      n={d.n}
-                    </text>
-                  )}
+                  {thin && !(showAllN && singleSeries) && (() => {
+                    // #7434: above the point unless that would put it in the key's band.
+                    const place = nLabelPlacement(py(d.actual), r, padT);
+                    return (
+                      <text
+                        x={px(d.midpoint)} y={place.y}
+                        textAnchor="middle" fill="#a8a29e" fontSize={N_LABEL_FONT_PX}
+                        // #7434: a flipped label lands over its own CI bar (a ceiling point's
+                        // bar runs the height of the plot), and either placement can land on a
+                        // gridline. A white halo behind the glyphs costs nothing and is the same
+                        // treatment for both, so the fix does not trade one illegibility for
+                        // another. Applied to the always-below label too — one mark, one rule.
+                        stroke="white" strokeWidth="2.5" paintOrder="stroke"
+                        data-n-label-below={place.below ? "true" : "false"}
+                      >
+                        n={d.n}
+                      </text>
+                    );
+                  })()}
                   {showAllN && singleSeries && (
                     <text
-                      x={px(d.midpoint)} y={py(d.actual) + r + 11}
-                      textAnchor="middle" fill="#a8a29e" fontSize="9"
+                      x={px(d.midpoint)} y={py(d.actual) + r + N_LABEL_BELOW_OFFSET}
+                      textAnchor="middle" fill="#a8a29e" fontSize={N_LABEL_FONT_PX}
+                      stroke="white" strokeWidth="2.5" paintOrder="stroke"
+                      data-n-label-below="true"
                     >
                       {d.n.toLocaleString()}
                     </text>
