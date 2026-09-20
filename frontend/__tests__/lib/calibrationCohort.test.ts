@@ -644,6 +644,57 @@ describe("the calibration page renders these strings and not its own", () => {
     expect(RENDERED).not.toContain("where real trading moved the price");
     expect(RENDERED).not.toMatch(/well[- ]traded/i);
     expect(RENDERED).not.toMatch(/thinly[- ]traded|thin\/untraded/i);
+    // #7341 — the same claim, one verb over. This test banned three LITERAL
+    // phrases, and the methodology card said "where real trading OCCURRED" for
+    // months underneath all three of them. Added here rather than only in the
+    // card-scoped test below, because the lesson is that the claim travels and
+    // the spelling does not.
+    expect(RENDERED).not.toMatch(/real trading (occurred|happened|took place)/i);
+  });
+
+  // =========================================================================
+  // #7341 — THE "What's included?" CARD CANNOT DENY THE ASYMMETRY BELOW IT
+  // =========================================================================
+  //
+  // The card used to close on "We only include markets where real trading
+  // occurred — outcomes with zero bids or no trading volume are excluded". The
+  // never-traded filter is asymmetric: Kalshi drops every never-traded outcome,
+  // Polymarket only those inside its 0.45–0.55 placeholder band. So the page
+  // published `exclusion_symmetry.poly_never_traded_in_curve` (19,805 on the
+  // 2026-09-19 payload) — outcomes with no bid and no trade in any snapshot,
+  // counted anyway — four blocks under a card that said there were none.
+  //
+  // This is scoped to the card because that is where the universal claim lives;
+  // "Kalshi excludes EVERY never-traded outcome" is TRUE and must keep passing,
+  // which a page-wide ban on that shape would break. The three bans below were
+  // each checked to fire on the pre-fix text and to read zero on the fixed one,
+  // and the positive assertion was checked in both directions too — otherwise
+  // this is a test that would pass on the defect it is named for.
+  test("the 'What's included?' card states the never-traded asymmetry rather than denying it (#7341)", () => {
+    const match = RENDERED.match(/What&rsquo;s included\?<\/strong>([\s\S]*?)<\/li>/);
+    // A null match — or a window that lost the sentence this test is about —
+    // makes every assertion below vacuously true. Pin the window first.
+    expect(match).not.toBeNull();
+    const card = match![1];
+    expect(card).toContain("resolved outcomes");
+    expect(card.length).toBeGreaterThan(300);
+
+    // The CLAIM, in the shapes it can take — not one spelling of it.
+    expect(card).not.toMatch(/only include\w*\s*(markets|outcomes)?[^.]*\btrad/i);
+    expect(card).not.toMatch(/real trading (occurred|happened|took place)/i);
+    expect(card).not.toMatch(/no trading volume are excluded/i);
+
+    // And the repair: the card names the asymmetry it used to deny. Without
+    // this, deleting the sentence outright would pass the bans above.
+    expect(card).toMatch(/placeholder band/i);
+    expect(card).toMatch(/still counted/i);
+
+    // Keyed on the asymmetry being LIVE. While the page publishes the residual
+    // count, the card above it cannot claim the opposite. If the asymmetry is
+    // ever actually closed and that block goes with it, this guard is revisited
+    // alongside it rather than quietly passing on a page that no longer has the
+    // problem — so assert the link instead of assuming it.
+    expect(SOURCE).toContain("exclusion_symmetry.poly_never_traded_in_curve");
   });
 
   test("the activity partition note reaches the DOM under its own hook", () => {
