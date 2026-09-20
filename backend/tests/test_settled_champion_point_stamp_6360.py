@@ -18,6 +18,8 @@ on a past `resolution_date` and every existing freeze behaviour are untouched.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.routes.futures import _apply_settled_winner_freeze
 from app.utils.settlement_stamp import (
     BASIS_CLOCK,
@@ -32,6 +34,19 @@ from app.utils.settlement_stamp import (
 # A fixed clock. Every anchor below is an offset FROM it and nothing branches on
 # the real time (gotcha #44).
 NOW = datetime(2026, 9, 15, 11, 33, 24, tzinfo=timezone.utc)
+
+
+class _FrozenDatetime(datetime):
+    """``datetime`` with ``now()`` pinned to :data:`NOW`.
+
+    Subclassed rather than mocked so ``isinstance`` and the other constructors
+    (``fromisoformat``) keep working for the module under patch. Mirrors the
+    existing idiom in ``test_seasonal_sport_guess_honest_empty.py``.
+    """
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: D102 - stdlib signature
+        return NOW if tz is None else NOW.astimezone(tz)
 
 
 def _outcome(oid, name, prob=0.5, is_winner=False):
@@ -158,7 +173,27 @@ class TestLastChartedTimestamp:
 
 
 class TestTheFreezeOnTheSpecimenShape:
-    """End-to-end on the Vuelta's shape: settled market, future `resolution_date`."""
+    """End-to-end on the Vuelta's shape: settled market, future `resolution_date`.
+
+    🪤 #7611 — THIS CLASS IS THE ONE THAT READS A CLOCK THE SUITE DOES NOT OWN.
+    Every class above calls the ladder directly and injects ``now=NOW``, so the
+    module comment about gotcha #44 held for them. This one goes through
+    ``_apply_settled_winner_freeze``, which takes no ``now`` and reads
+    ``datetime.now(timezone.utc)`` itself (``routes/futures.py``) — so the
+    specimen's ``resolution_date`` was "future" only against the FROZEN ``NOW``,
+    while the code compared it to the WALL clock. ``NOW + 5d10h`` is
+    2026-09-20 21:33:24Z; at that instant the wall clock caught up, the
+    "future" date became past, the ladder correctly took its
+    ``BASIS_RESOLUTION_DATE`` arm, and master went red for every lane with one
+    test and no diff. Freezing the route's clock is what makes the word
+    "future" in this docstring true at any wall time, and it is why the offsets
+    below can stay small and readable instead of being inflated to buy years.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _freeze_the_route_clock(self, monkeypatch):
+        """Pin the clock ``_apply_settled_winner_freeze`` reads to ``NOW``."""
+        monkeypatch.setattr("app.routes.futures.datetime", _FrozenDatetime)
 
     def _vuelta(self):
         champ = _outcome(229691385, "Other", prob=1.0, is_winner=True)
@@ -196,6 +231,23 @@ class TestTheFreezeOnTheSpecimenShape:
         market, oh, champ, rider = self._vuelta()
         _apply_settled_winner_freeze(market, oh, {champ.id: "Other"})
         assert _stamp_of(oh[champ.id]) >= _stamp_of(oh[rider.id])
+
+    def test_the_route_clock_is_frozen_so_this_class_cannot_drift_again(self):
+        """🪤 #7611 — the strawman for the fixture above.
+
+        ``monkeypatch.setattr`` takes the target as a STRING, so it fails silent
+        in exactly one direction that matters: if ``routes/futures.py`` ever
+        stops doing ``from datetime import datetime`` (an ``import datetime``
+        and a ``datetime.datetime.now`` would do it), the patch lands on a name
+        nothing reads, the class quietly goes back on the wall clock, and the
+        assertions above pass or fail on the date the suite is run. That is the
+        #7611 failure mode returning by a different door, so it is asserted
+        rather than assumed.
+        """
+        from app.routes import futures as futures_module
+
+        assert futures_module.datetime.now(timezone.utc) == NOW
+        assert futures_module.datetime.now() == NOW
 
     def test_a_charted_champion_on_a_future_schedule_lands_beside_its_own_last_point(self):
         """The other branch of the same defect: the champion HAS snapshots.
