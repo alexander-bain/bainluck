@@ -40,8 +40,16 @@ from pathlib import Path
 
 import pytest
 
+from tests.lib_rig_tree import copy_rig_script
+
 REPO = Path(__file__).resolve().parents[2]
 SHOOT = REPO / "tools" / "native-shoot.sh"
+
+# A UDID no machine has and the reserved set does not contain. The script picks a
+# simulator before it resolves anything, and these tests stop at `--resolve-only`
+# long before simctl — pinning it keeps the band hermetic (no `xcrun simctl list`
+# per test) and stops resolution tests from grading which devices this Mac owns.
+DISPOSABLE_SIM = "00000000-0000-4000-8000-00000000BEEF"
 
 pytestmark = [
     pytest.mark.skipif(not SHOOT.is_file(), reason="native-shoot.sh is not in this checkout"),
@@ -74,13 +82,24 @@ def shoot(derived, *args, src_root, env_extra=None):
     """
     env = dict(os.environ)
     env["NATIVE_SHOOT_DERIVED"] = str(derived)
+    env["NATIVE_SHOOT_SIM"] = DISPOSABLE_SIM
     if env_extra:
         env.update(env_extra)
     p = subprocess.run(
         ["bash", str(src_root / "tools" / "native-shoot.sh"), "probe", "", "--resolve-only", *args],
         capture_output=True, text=True, timeout=120, env=env,
     )
-    return p.returncode, p.stdout + p.stderr
+    out = p.stdout + p.stderr
+    # AN INCOMPLETE TREE IS A FIXTURE FAULT, NOT A RESULT. The script has no
+    # `set -e`: a sibling it sources that the fixture did not copy prints
+    # "No such file" and "command not found" to stderr and the run CARRIES ON,
+    # so a test asserting on resolution output can pass over a tree that never
+    # loaded the guard. This is the failure of 2026-09-18 made loud at its cause.
+    for tell in ("No such file or directory", "command not found"):
+        assert tell not in out, (
+            f"the synthetic tree is incomplete — the script reported {tell!r}:\n{out}"
+        )
+    return p.returncode, out
 
 
 def _tree_with_script(tmp_path, src_mtime):
@@ -88,10 +107,13 @@ def _tree_with_script(tmp_path, src_mtime):
 
     SRC_ROOT is resolved from the SCRIPT's own toplevel, so the script has to
     live in the synthetic tree for the staleness check to measure it.
+
+    The copy is `copy_rig_script`, not a hand-listed one: the script sources
+    siblings out of its own directory, and a list written here goes one file
+    behind the day a new one is factored out (it did — see lib_rig_tree.py).
     """
     root = tmp_path / "tree"
-    (root / "tools").mkdir(parents=True)
-    (root / "tools" / "native-shoot.sh").write_text(SHOOT.read_text())
+    copy_rig_script(SHOOT, root / "tools")
     ios = root / "ios" / "Bain Luck"
     ios.mkdir(parents=True)
     src = ios / "Thing.swift"
@@ -229,6 +251,25 @@ def test_resolve_only_installs_nothing(tmp_path, old_source_tree):
     assert rc == 0, out
     assert "nothing installed, nothing shot" in out
     assert "shot " not in out
+
+
+def test_a_reserved_simulator_is_refused_before_anything_resolves(tmp_path, old_source_tree):
+    """The guard the tree copy exists to carry, proven by behaviour.
+
+    This script's own documented remedy for a stuck alert is ERASE AND RE-SHOOT,
+    so pointing it at a device holding Alex's signed-in account destroys evidence
+    no lane can re-create. Refusal is exit 7, and it happens before resolution —
+    every other test here would still pass if the guard were merely present and
+    never consulted.
+    """
+    reserved = "76D961F0-8575-479F-ABCE-652D8A79DBF9"
+    make_app(tmp_path, "Bain_Luck-aaa", time.time() - 10)
+    rc, out = shoot(
+        tmp_path, src_root=old_source_tree, env_extra={"NATIVE_SHOOT_SIM": reserved}
+    )
+    assert rc == 7, f"a reserved simulator was not refused (exit {rc}):\n{out}"
+    assert "RESERVED" in out
+    assert "Bain Luck.app" not in out, "it resolved a binary before refusing"
 
 
 def test_the_script_parses():

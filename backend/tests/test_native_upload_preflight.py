@@ -53,6 +53,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.lib_rig_tree import copy_rig_script
+
 REPO = Path(__file__).resolve().parents[2]
 UPLOAD = REPO / "tools" / "native-upload.sh"
 
@@ -120,9 +122,7 @@ def rig(tmp_path):
             (self.project / "project.pbxproj").write_text(
                 "CURRENT_PROJECT_VERSION = 7;\n\t\tCURRENT_PROJECT_VERSION = 1;\n"
             )
-            (tmp_path / "tools").mkdir()
-            self.script = tmp_path / "tools" / "native-upload.sh"
-            self.script.write_text(UPLOAD.read_text())
+            self.script = copy_rig_script(UPLOAD, tmp_path / "tools")
 
             self.options = tmp_path / "ExportOptions.plist"
             self.options.write_text(GOOD_EXPORT_OPTIONS)
