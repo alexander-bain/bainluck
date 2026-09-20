@@ -48,8 +48,13 @@ export const STORY_BLEND = {
   // Proof line is written to survive without live stats; the page fills in the
   // exact figure when the calibration API responds.
   proofLead: "And we grade ourselves in public:",
+  // #7564: the measured sentence this stands in for reads the traded-market
+  // cohort (449,027 outcomes, 0.9pp), so the fallback names the same population
+  // and the same verb — "within" is a bound and the figure is an average. The
+  // magnitudes stay deliberately vague: this copy renders exactly when the
+  // payload could not be read, so it must not imply a measurement.
   proofBody:
-    "across nearly a million resolved outcomes, our numbers land within about two points of what actually happened.",
+    "across hundreds of thousands of traded markets, our numbers land an average of about a point from what actually happened.",
   proofCta: "Check our calibration",
 };
 
