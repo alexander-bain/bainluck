@@ -11,6 +11,7 @@ from app.services.odds_api import OddsAPIService
 from app.tasks.base import get_task_session, run_async
 from app.utils.market_settlement import settled_values
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +425,17 @@ async def _poll_futures_odds():
                             existing.probability_change_24h = None
                             stats.setdefault("stale_zeroed", 0)
                             stats["stale_zeroed"] += 1
+
+                    # #6598: the ranks above were derived against
+                    # `ranked_outcomes`, which is the legs the API responded
+                    # with — and the block immediately above has just nulled the
+                    # price of every leg it did NOT respond with, without
+                    # renumbering them. Re-derive across the market's whole
+                    # field, last. `session.execute` autoflushes the ORM
+                    # assignments above first, so the statement sees them
+                    # (gotcha #5 — this is the one path in the three that writes
+                    # through ORM attributes rather than Core).
+                    await session.execute(rerank_market_field_stmt(market_id))
 
                 except Exception as e:
                     stats["errors"].append(f"{sport_key}: {str(e)}")

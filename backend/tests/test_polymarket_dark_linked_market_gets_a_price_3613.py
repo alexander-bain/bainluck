@@ -106,6 +106,7 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql.expression import Insert
 
 from app.services.polymarket_api import PolymarketEvent, PolymarketMarket
 from app.tasks import polymarket as poly
@@ -303,10 +304,20 @@ async def _execute(
 
 
 def _writes(session, table_name):
+    """Every INSERT this pass emitted against ``table_name``.
+
+    ``Insert``-only, and that is the helper's own claim rather than a narrowing:
+    `_legs` below reads ``external_id`` off each element and every assertion in
+    this file says "the INSERT". The filter became load-bearing with #6598,
+    which added a field-wide `UPDATE futures_outcomes SET rank = …` after the
+    leg writes — a statement on the same table with no ``external_id`` to read,
+    which made `_legs` raise a KeyError on a pass that had done nothing wrong.
+    """
     return [
         s
         for s in session.statements
-        if getattr(getattr(s, "table", None), "name", None) == table_name
+        if isinstance(s, Insert)
+        and getattr(getattr(s, "table", None), "name", None) == table_name
     ]
 
 

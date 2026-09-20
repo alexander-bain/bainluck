@@ -29,6 +29,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
     build_content_understanding,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
@@ -3252,6 +3253,23 @@ async def _process_event_batch(
                         event.id, (event.title or "")[:80], retired,
                     )
 
+                # #6598: the ranks written above were derived against THIS
+                # BATCH. The batch is not the field — `_retire_unpriced_legs`
+                # has just nulled prices without renumbering anyone, and a leg
+                # whose book was unreadable this pass never entered
+                # `outcome_data` at all and still carries a number from an
+                # older, differently-sized field. Re-derive across every leg of
+                # the market, last, so it sees the finished state.
+                _reranked = (
+                    await session.execute(
+                        rerank_market_field_stmt(futures_market_id)
+                    )
+                ).rowcount
+                if _reranked:
+                    stats["ranks_rederived"] = (
+                        stats.get("ranks_rederived", 0) + _reranked
+                    )
+
             except Exception as e:
                 stats["errors"].append(f"{event.id}: {str(e)}")
                 continue
@@ -3655,6 +3673,16 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                             {"id": row["id"]},
                         )
                         stats["display_labels_corrected"] += 1
+
+                    # #6598: same rule as the main poll. This pass INSERTs legs
+                    # with `on_conflict_do_nothing`, so a market that already
+                    # held legs now carries two numberings — the batch's 1..N
+                    # beside whatever its existing rows were last given. Only
+                    # worth a statement when this market actually gained legs.
+                    if stats["outcomes_created"] > _created_before_this_market:
+                        await session.execute(
+                            rerank_market_field_stmt(row["id"])
+                        )
 
                     # Per-market commit: one bad market may not roll back a whole
                     # batch's worth of prices (gotcha #13 / #42).

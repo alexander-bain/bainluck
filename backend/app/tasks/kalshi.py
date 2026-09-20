@@ -45,6 +45,7 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.settled_price import (  # noqa: E402  # #5246
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -2232,6 +2233,27 @@ async def _poll_kalshi_markets():
                             )
                         stats["unpriced_outcomes_recorded"] += len(unpriced_data)
 
+                    # #6598. The three passes above each numbered their OWN
+                    # population: the priced upsert ranked `outcome_data` 1..N,
+                    # the null-out block withdrew prices from legs it never
+                    # renumbered, and this placeholder pass continues from
+                    # `len(outcome_data)` but writes `on_conflict_do_nothing`,
+                    # so an already-present unpriced leg keeps whatever number
+                    # an older, differently-sized field gave it. Re-derive
+                    # across the market's whole field, after all three, which is
+                    # also the only place the "an unpriced leg never outranks a
+                    # priced one" intent stated just above becomes true for the
+                    # legs this pass did not insert.
+                    _reranked = (
+                        await session.execute(
+                            rerank_market_field_stmt(futures_market_id)
+                        )
+                    ).rowcount
+                    if _reranked:
+                        stats["ranks_rederived"] = (
+                            stats.get("ranks_rederived", 0) + _reranked
+                        )
+
                 except SoftTimeLimitExceeded:
                     # #150: the soft limit fired DURING this event's processing.
                     # The per-event `except` tuple below does NOT catch it (it's
@@ -3977,6 +3999,16 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         ).all()
                     }
                     rank_base = len(existing)
+                    # #6598: what this market's field looked like before the
+                    # loop, so the re-rank below can tell "this pass changed the
+                    # field" from "this pass wrote nothing". An unreadable book
+                    # writes nothing and must stay that way (#3518's control).
+                    _wrote_before = (
+                        stats["outcomes_created_priced"]
+                        + stats["outcomes_created_unpriced"]
+                        + stats["outcomes_withdrawn_cleared"]
+                        + stats["outcomes_repriced"]
+                    )
                     # #4316, same reason as the main poll: name the legs as a
                     # set so this backfill cannot mint the collision either.
                     venue_names = kalshi_outcome_names(row.name, venue_markets)
@@ -4218,6 +4250,22 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                             )
                         )
                         stats["snapshots_written"] += 1
+
+                    # #6598: this pass mints legs at `rank_base + offset` and
+                    # clears withdrawn ones without renumbering anybody, so it
+                    # leaves the market carrying numbers from two fields. Last,
+                    # before the commit, re-derive across the whole field —
+                    # but only when this pass actually moved the field. A market
+                    # whose books were all unreadable wrote nothing, and "wrote
+                    # nothing" is a state #3518's control asserts on.
+                    _wrote_now = (
+                        stats["outcomes_created_priced"]
+                        + stats["outcomes_created_unpriced"]
+                        + stats["outcomes_withdrawn_cleared"]
+                        + stats["outcomes_repriced"]
+                    )
+                    if _wrote_now > _wrote_before:
+                        await session.execute(rerank_market_field_stmt(row.id))
 
                     # Per-market commit: one bad market may not roll back a whole
                     # series' worth of prices (gotcha #13 / #42).
