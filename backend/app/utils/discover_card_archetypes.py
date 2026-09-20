@@ -210,12 +210,50 @@ _MONTHS = {
     "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
 }
 
+# #7403 -- A DAY IS A DATE BUCKET TOO, and it is the one the venues actually
+# write. The month-granularity shapes above are the Kalshi/manual phrasing
+# ("Before October", "March 2027"); Polymarket's "by when?" ladders are
+# day-granularity and carry no framing word at all. Live on production
+# 2026-09-19, the Discover bundle card for "Iran leadership change?" served:
+#
+#     1  June 30, 2027   26%
+#     2  December 31     15%
+#     3  November 30      9%
+#     4  October 31       6%
+#     5  Field and 2 more outcomes
+#
+# Six outcomes summing to 55.5%, strictly nested and monotone in time — a
+# cumulative ladder, drawn as a ranked field of rivals with a "Field" row,
+# directly under the card's own subtitle "26% chance BY June 30, 2027". Every
+# label was refused here: `month`+`monthyear` wants four digits after the month,
+# `month2` wants nothing after it at all, so "June 30, 2027" and "December 31"
+# both fell through, `_date_bucket_points` returned [], and the cascade dropped
+# to the `count >= 4` field arm.
+#
+# A bare month ("October") still needs its before/by framing — it is a common
+# English word and a label as often as a cutoff. A month WITH A DAY does not:
+# "December 31" is not a word, it is a date, so the day is its own framing.
+#: Days in each month, February read leap-tolerantly for the year-less case.
+_MONTH_DAYS = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+               7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+
+
+def _month_length(month: int, year: int | None) -> int:
+    """How many days this month has -- exactly, when the year is known."""
+    if month == 2 and year is not None:
+        leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+        return 29 if leap else 28
+    return _MONTH_DAYS.get(month, 31)
+
+
 _DATE_BUCKET_RE = re.compile(
     r"""
     ^\s*
     (?:(?P<lead>before|by|prior\s+to|on\s+or\s+before|in|during|after|from)\s+)?
     (?:
-        (?P<month>[a-z]+)\s+(?P<monthyear>\d{4})
+        (?P<monthd>[a-z]+)\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?
+        (?:\s*,?\s*(?P<dayyear>\d{4}))?
+      | (?P<month>[a-z]+)\s+(?P<monthyear>\d{4})
       | (?P<month2>[a-z]+)
       | (?P<year>\d{4})
     )
@@ -226,13 +264,19 @@ _DATE_BUCKET_RE = re.compile(
 )
 
 
-def _parse_date_bucket(label: str) -> tuple[int | None, int] | None:
-    """Parse a date-bucket outcome label into ``(year_or_None, month)``.
+def _parse_date_bucket(label: str) -> tuple[int | None, int, int] | None:
+    """Parse a date-bucket outcome label into ``(year_or_None, month, day)``.
 
-        "Before October"     -> (None, 10)
-        "Before 2027"        -> (2027, 1)
-        "March 2027"         -> (2027, 3)
-        "2029 or later"      -> (2029, 1)
+        "Before October"     -> (None, 10, 0)
+        "Before 2027"        -> (2027, 1, 0)
+        "March 2027"         -> (2027, 3, 0)
+        "2029 or later"      -> (2029, 1, 0)
+        "December 31"        -> (None, 12, 31)
+        "June 30, 2027"      -> (2027, 6, 30)
+
+    Day ``0`` means "this bucket names no day", and it sorts BEFORE every real
+    day of the same month — which is the correct reading: "Before October" is a
+    cutoff at the top of the month, so it precedes "October 31".
 
     Returns None for anything that is not confidently a date bucket. The
     refusal is the load-bearing half: this parser runs over every outcome label
@@ -242,9 +286,28 @@ def _parse_date_bucket(label: str) -> tuple[int | None, int] | None:
     m = _DATE_BUCKET_RE.match(label or "")
     if not m:
         return None
+    if m.group("day"):
+        # The month-name lookup is the guard, not the digits: "Over 2" and
+        # "Top 5" reach here with the same shape and are refused by it.
+        month = _MONTHS.get(m.group("monthd").lower())
+        if not month:
+            return None
+        day = int(m.group("day"))
+        dayyear = m.group("dayyear")
+        year = int(dayyear) if dayyear else None
+        if year is not None and not 1900 <= year <= 2999:
+            return None
+        # A day the month does not have is not a date, and this arm's whole
+        # licence is that "December 31" is unambiguously one. "Feb 30" parses
+        # to a shape and means nothing, so it is refused rather than placed.
+        # With no year to check against, February is read leap-tolerantly —
+        # the parser never guesses a year, here or anywhere else in it.
+        if not 1 <= day <= _month_length(month, year):
+            return None
+        return (year, month, day)
     if m.group("monthyear"):
         month = _MONTHS.get(m.group("month").lower())
-        return (int(m.group("monthyear")), month) if month else None
+        return (int(m.group("monthyear")), month, 0) if month else None
     if m.group("month2"):
         # A bare month name only -- no year to anchor it yet.
         month = _MONTHS.get(m.group("month2").lower())
@@ -252,11 +315,11 @@ def _parse_date_bucket(label: str) -> tuple[int | None, int] | None:
             return None
         # A lone month with no qualifier ("October") is a label, not a bucket;
         # require the "before/by/after" framing that makes it a cutoff.
-        return (None, month) if m.group("lead") else None
+        return (None, month, 0) if m.group("lead") else None
     year = int(m.group("year"))
     if not 1900 <= year <= 2999:
         return None
-    return (year, 1)
+    return (year, 1, 0)
 
 
 def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -269,16 +332,16 @@ def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if len(outcomes) < 2:
         return []
 
-    parsed: list[tuple[dict[str, Any], int | None, int]] = []
+    parsed: list[tuple[dict[str, Any], int | None, int, int]] = []
     for outcome in outcomes:
         label = _clean_text(outcome.get("name") or outcome.get("label"))
         got = _parse_date_bucket(label)
         if got is None:
             return []
-        parsed.append((outcome, got[0], got[1]))
+        parsed.append((outcome, got[0], got[1], got[2]))
 
-    years = [y for _, y, _ in parsed if y is not None]
-    if years and any(y is None for _, y, _ in parsed):
+    years = [y for _, y, _, _ in parsed if y is not None]
+    if years and any(y is None for _, y, _, _ in parsed):
         # "Before October" alongside "Before 2027" means October of the year
         # BEFORE the first dated bucket -- that is what makes the sequence a
         # sequence. Anchoring month-only buckets to the earliest named year
@@ -291,7 +354,7 @@ def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         anchor = 2000
 
     points: list[dict[str, Any]] = []
-    for outcome, year, month in parsed:
+    for outcome, year, month, day in parsed:
         resolved_year = year if year is not None else anchor
         if resolved_year is None:
             return []
@@ -299,7 +362,12 @@ def _date_bucket_points(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "source": "date_bucket",
                 "label": _clean_text(outcome.get("name") or outcome.get("label")),
-                "value": resolved_year * 100 + month,
+                # #7403 -- YYYYMMDD, widened from YYYYMM so two rungs in one
+                # month cannot tie. `value` is an ordering key and nothing else
+                # (`FuturesCard.buildHeatmapRows` reads it only as `sortValue`),
+                # so the scale may move as long as every rung on one board is
+                # built in this same pass — which it is.
+                "value": resolved_year * 10000 + month * 100 + day,
                 "unit": "date",
                 "direction": "before",
                 "probability": (

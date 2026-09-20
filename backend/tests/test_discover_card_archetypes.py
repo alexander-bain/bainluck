@@ -174,12 +174,27 @@ def test_entity_titles_are_not_a_threshold_ladder():
 
 
 def test_date_labels_are_not_a_threshold_ladder():
-    # BEFORE: "June 30, 2027" scored 30 (the day of month).
+    # BEFORE: "June 30, 2027" scored 30 (the day of month), so three dates drew
+    # a magnitude ladder of 30 / 31 / 30.
+    #
+    # RE-AIMED at #7403, which gave day-granularity dates the ladder whose axis
+    # is TIME. These labels now earn rungs — and the thing this guard exists to
+    # forbid is unchanged and asserted harder: not one of them is a MAGNITUDE
+    # rung at its day-of-month. Deleting the assertion would have retired the
+    # only test standing between a date and a fake number line.
     points = _points(
         "Will Samuel Alito announce his retirement by...?",
         ["June 30, 2027", "December 31", "September 30"],
     )
-    assert points == []
+    assert [p["source"] for p in points] == ["date_bucket"] * 3
+    assert {p["unit"] for p in points} == {"date"}
+    # The defect itself: no rung sits at a bare day of month.
+    assert not [p for p in _values(points) if p < 1000]
+    # And the axis is time, so the order is chronological, not label order.
+    assert [p["label"] for p in points] == [
+        "September 30", "December 31", "June 30, 2027",
+    ]
+    assert _values(points) == sorted(_values(points))
 
 
 def test_real_numeric_ladders_still_render():

@@ -81,7 +81,10 @@ class TestTheIPhoneCardBecomesALadder:
         )
         values = [p["value"] for p in card["threshold_points"]]
         assert values == sorted(values)
-        assert values == [202604, 202607, 202610, 202701]
+        # #7403 widened the encoding from YYYYMM to YYYYMMDD so two rungs in one
+        # month cannot tie. A bucket that names no day carries day 00, which is
+        # why these four are unchanged apart from the two trailing zeroes.
+        assert values == [20260400, 20260700, 20261000, 20270100]
 
     def test_movement_rides_along_so_the_mover_can_be_marked(self):
         # `top_outcomes` is the top THREE, so a rung outside it had no movement
@@ -108,14 +111,25 @@ class TestTheIPhoneCardBecomesALadder:
 
 class TestParsingDateBuckets:
     @pytest.mark.parametrize("label,expected", [
-        ("Before October", (None, 10)),
-        ("Before Oct", (None, 10)),
-        ("By December", (None, 12)),
-        ("After March", (None, 3)),
-        ("Before 2027", (2027, 1)),
-        ("By 2030", (2030, 1)),
-        ("March 2027", (2027, 3)),
-        ("2029 or later", (2029, 1)),
+        # Month granularity — day 0, meaning "this bucket names no day".
+        ("Before October", (None, 10, 0)),
+        ("Before Oct", (None, 10, 0)),
+        ("By December", (None, 12, 0)),
+        ("After March", (None, 3, 0)),
+        ("Before 2027", (2027, 1, 0)),
+        ("By 2030", (2030, 1, 0)),
+        ("March 2027", (2027, 3, 0)),
+        ("2029 or later", (2029, 1, 0)),
+        # #7403 — day granularity, which is how Polymarket writes a "by when?"
+        # ladder. No before/by framing, because the day IS the framing.
+        ("December 31", (None, 12, 31)),
+        ("June 30, 2027", (2027, 6, 30)),
+        ("Jan 1", (None, 1, 1)),
+        ("December 31st", (None, 12, 31)),
+        ("Mar 3, 2026", (2026, 3, 3)),
+        ("By December 31", (None, 12, 31)),
+        ("Feb 29", (None, 2, 29)),
+        ("Feb 29, 2028", (2028, 2, 29)),
     ])
     def test_parsed(self, label, expected):
         assert _parse_date_bucket(label) == expected
@@ -144,7 +158,10 @@ class TestParsingDateBuckets:
             ],
             outcome_count=3,
         )
-        assert [p["value"] for p in card["threshold_points"]] == [202701, 202801, 203001]
+        # #7403: YYYYMMDD, with day 00 for a bucket that names no day.
+        assert [p["value"] for p in card["threshold_points"]] == [
+            20270100, 20280100, 20300100,
+        ]
 
 
 class TestNotADateBucket:
@@ -163,6 +180,20 @@ class TestNotADateBucket:
         "Before 1600",        # outside the 1900–2999 window a market can mean
         "Before 12345",       # not a year at all
         "",
+        # #7403 — the day arm's own refusals. "<word> <number>" is the single
+        # commonest outcome shape on the site, so the month-name lookup and the
+        # calendar bound are what keep it from swallowing half of them.
+        "Over 2",
+        "Top 5",
+        "Above 5",
+        "Under 10",
+        "Tier 3",
+        "Group 4",
+        "Feb 30",             # a shape, not a date — the month has no 30th
+        "February 30",
+        "April 31",
+        "Dec 32",
+        "Feb 29, 2027",       # 2027 is not a leap year, so this day does not exist
     ])
     def test_refused(self, label):
         assert _parse_date_bucket(label) is None
@@ -202,3 +233,136 @@ class TestNotADateBucket:
             outcome_count=1,
         )
         assert not any(p.get("source") == "date_bucket" for p in card["threshold_points"])
+
+
+# ---------------------------------------------------------------------------
+# #7403 — A DAY-GRANULARITY LADDER IS A LADDER.
+#
+# The month-granularity shapes above are how Kalshi and our own copy write a
+# "by when?" question. Polymarket writes the same question in days, with no
+# before/by framing at all, and every one of those labels was refused — so the
+# cascade fell past the ladder arm to `count >= 4` and drew a ranked FIELD.
+#
+# Live on production 2026-09-19 23:35 PDT, inside the "Middle East" Discover
+# bundle, market 3484764 ("Iran leadership change?"):
+#
+#     1  June 30, 2027   26%
+#     2  December 31     15%
+#     3  November 30      9%
+#     4  October 31       6%
+#     5  Field and 2 more outcomes
+#
+# Six outcomes summing to 55.5%, strictly nested and monotone in time — the
+# definition of a cumulative ladder — ranked 1..4 as if they were rivals, with a
+# "Field" row for the rest, directly beneath the card's OWN subtitle "26% chance
+# BY June 30, 2027". The sibling member of that same expanded bundle (the Strait
+# of Hormuz board) rendered as a proper ladder in the same screenshot, which is
+# what makes this a contradiction rather than a preference.
+
+
+def _iran_outcomes():
+    """Market 3484764 as `/api/futures/3484764` served it, 2026-09-19."""
+    return [
+        {"name": "June 30, 2027", "probability": 0.255},
+        {"name": "December 31", "probability": 0.145},
+        {"name": "November 30", "probability": 0.085},
+        {"name": "October 31", "probability": 0.055},
+        {"name": "September 30", "probability": 0.014},
+        {"name": "March 13", "probability": 0.001},
+    ]
+
+
+class TestADayGranularityLadderIsALadder:
+    def test_the_iran_board_stops_being_a_ranked_field(self):
+        card = classify_discover_card_archetype(
+            name="Iran leadership change?",
+            category="politics",
+            outcomes=_iran_outcomes(),
+            outcome_count=6,
+            group_id="polymarket:255195",
+        )
+        assert card["suggested_format"] == "threshold_heatmap"
+        assert "multi_outcome_distribution" not in card["reasons"]
+
+    def test_every_rung_is_placed_and_none_is_lost(self):
+        card = classify_discover_card_archetype(
+            name="Iran leadership change?",
+            outcomes=_iran_outcomes(),
+            outcome_count=6,
+        )
+        assert len(card["threshold_points"]) == 6
+        assert all(p["source"] == "date_bucket" for p in card["threshold_points"])
+
+    def test_the_order_is_chronological_not_by_probability(self):
+        # The defect's whole shape: ranked by probability, the board reads
+        # 26 / 15 / 9 / 6 and calls the largest window the winner. Read as time,
+        # the probabilities rise monotonically, which is what a cumulative
+        # ladder looks like and what the reader is owed.
+        card = classify_discover_card_archetype(
+            name="Iran leadership change?",
+            outcomes=_iran_outcomes(),
+            outcome_count=6,
+        )
+        assert [p["label"] for p in card["threshold_points"]] == [
+            "March 13", "September 30", "October 31",
+            "November 30", "December 31", "June 30, 2027",
+        ]
+        probabilities = [p["probability"] for p in card["threshold_points"]]
+        assert probabilities == sorted(probabilities)
+
+    def test_the_undated_rungs_are_anchored_to_the_year_before_the_dated_one(self):
+        # "December 31" carries no year; "June 30, 2027" does. The undated rungs
+        # belong to 2026, and the existing anchor rule already says so — this
+        # asserts the day arm did not break it.
+        card = classify_discover_card_archetype(
+            name="Iran leadership change?",
+            outcomes=_iran_outcomes(),
+            outcome_count=6,
+        )
+        by_label = {p["label"]: p["value"] for p in card["threshold_points"]}
+        assert by_label["December 31"] == 20261231
+        assert by_label["June 30, 2027"] == 20270630
+
+    def test_two_rungs_in_one_month_cannot_tie(self):
+        # Why the encoding moved to YYYYMMDD. Under YYYYMM these two rungs
+        # shared a sort value, so their order was whatever the input order was —
+        # an ordering assertion that passes without ever being tested.
+        card = classify_discover_card_archetype(
+            name="When does the Fed cut?",
+            outcomes=[
+                {"name": "October 29", "probability": 0.6},
+                {"name": "October 8", "probability": 0.2},
+                {"name": "October 15", "probability": 0.4},
+            ],
+            outcome_count=3,
+        )
+        assert [p["label"] for p in card["threshold_points"]] == [
+            "October 8", "October 15", "October 29",
+        ]
+
+    def test_a_field_whose_labels_look_like_dates_is_still_a_field(self):
+        # The refusal arm at board level: one label that is not a date and the
+        # whole day-granularity treatment is dropped, exactly as for months.
+        card = classify_discover_card_archetype(
+            name="Who leads after the reshuffle?",
+            outcomes=_iran_outcomes() + [{"name": "No change", "probability": 0.4}],
+            outcome_count=7,
+        )
+        assert card["threshold_points"] == []
+        assert card["suggested_format"] == "outcome_distribution"
+
+    def test_a_numbered_field_does_not_become_a_timeline(self):
+        # "<word> <number>" is the shape the day arm had to be threaded past.
+        card = classify_discover_card_archetype(
+            name="Which tier wins?",
+            outcomes=[
+                {"name": "Tier 1", "probability": 0.4},
+                {"name": "Tier 2", "probability": 0.3},
+                {"name": "Tier 3", "probability": 0.2},
+                {"name": "Tier 4", "probability": 0.1},
+            ],
+            outcome_count=4,
+        )
+        assert not any(
+            p.get("source") == "date_bucket" for p in card["threshold_points"]
+        )
