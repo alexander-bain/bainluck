@@ -207,7 +207,15 @@ describe("🔴 the ship Q478 actually measured is preserved intact", () => {
 
   test("its rungs keep ladder order, April first — item 10's whole point", () => {
     const html = render({ ...RAW, market_type: "quantity" });
-    const at = (s: string) => html.indexOf(s);
+    // Addressed by the rung's own `aria-label` hook for the reason `resultsSection`
+    // above already records: the hero banner prints an outcome name too, so an
+    // unscoped `indexOf` is answered by chrome this test was never about. Since
+    // #7256 the hero names the LEADING rung rather than substituting "Yes", which
+    // is what made the unscoped form start reporting a false order break.
+    const at = (s: string) => html.indexOf(`aria-label="${s}:`);
+    for (const rung of ["Before April", "Before July", "Before October", "Before 2027"]) {
+      expect(at(rung)).toBeGreaterThan(-1);
+    }
     expect(at("Before April")).toBeLessThan(at("Before July"));
     expect(at("Before July")).toBeLessThan(at("Before October"));
     expect(at("Before October")).toBeLessThan(at("Before 2027"));

@@ -104,7 +104,14 @@ describe("the specimen still holds this queue's premise", () => {
 describe("with the shape field served, the page draws the ladder", () => {
   test("the four rungs render in ladder order, April first", () => {
     const html = render(WITH_SHAPE);
-    const at = (s: string) => html.indexOf(s);
+    // ADDRESSED BY THE RUNG'S OWN HOOK, NOT BY A SUBSTRING OF THE PAGE (#7256).
+    // `QuantityGroup` stamps `aria-label="{label}: {pct}"` on each rung and
+    // nothing else on the page carries that shape. A bare `html.indexOf(label)`
+    // finds whichever occurrence comes first, and since #7256 the hero prints the
+    // LEADING outcome's own name — on a cumulative ladder that is the loosest
+    // rung, "Before 2027" — so the plain form measured the hero against the
+    // ladder and reported rung order that had not changed as broken.
+    const at = (s: string) => html.indexOf(`aria-label="${s}:`);
     for (const rung of ["Before April", "Before July", "Before October", "Before 2027"]) {
       expect(at(rung)).toBeGreaterThan(-1);
     }

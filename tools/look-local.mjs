@@ -119,6 +119,7 @@ const page = await browser.newPage({
 
 let served = 0;
 let fetched = 0;
+let upstreamErrors = 0;
 await page.route("**://api.bainluck.com/**", async (route) => {
   const target = route.request().url();
   const key = createHash("sha1").update(target).digest("hex").slice(0, 16);
@@ -133,15 +134,39 @@ await page.route("**://api.bainluck.com/**", async (route) => {
     });
   }
   let body;
+  let status;
   try {
     // curl, not the browser: this process has the session egress the page does not.
-    body = execFileSync("curl", ["-sS", "--max-time", "45", target], {
-      maxBuffer: 64 * 1024 * 1024,
-      encoding: "utf8",
-    });
+    //
+    // 🪤 `-sS` EXITS 0 ON AN HTTP ERROR, so without `-w` the status is invisible
+    // and an error BODY reads exactly like data. ux/1374 lost a before/after to
+    // this: nine `{"detail":"Rate limit exceeded: 60/minute"}` bodies were cached
+    // as if they were payloads and fulfilled as 200, every page rendered "Market
+    // not found", and the two specimens produced byte-identical PNGs while the
+    // census printed a cheerful `fetchedUpstream: 5`. The status goes on its own
+    // trailing line rather than through `-f`, because the BODY of a 429 is the
+    // thing that tells you which limit you hit.
+    const raw = execFileSync(
+      "curl",
+      ["-sS", "--max-time", "45", "-w", "\n%{http_code}", target],
+      { maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+    );
+    const cut = raw.lastIndexOf("\n");
+    status = parseInt(raw.slice(cut + 1), 10);
+    body = raw.slice(0, cut);
   } catch (err) {
     console.error(`  ! upstream failed ${target}: ${err.message}`);
+    upstreamErrors++;
     return route.fulfill({ status: 502, contentType: "application/json", body: "{}" });
+  }
+  // A NON-2xx BODY IS NEVER CACHED. Caching one poisons every later run against
+  // that cache dir — and does it SILENTLY, because a replayed error increments
+  // `servedFromCache`, which is the counter a reader checks to confirm the
+  // before/after saw identical JSON.
+  if (!(status >= 200 && status < 300)) {
+    console.error(`  ! upstream ${status} ${target}: ${body.trim().slice(0, 140)}`);
+    upstreamErrors++;
+    return route.fulfill({ status, contentType: "application/json", body });
   }
   fetched++;
   if (file) fs.writeFileSync(file, body);
@@ -264,8 +289,18 @@ console.log(
     out,
     bytes: fs.statSync(out).size,
     width,
-    api: { servedFromCache: served, fetchedUpstream: fetched },
+    api: { servedFromCache: served, fetchedUpstream: fetched, upstreamErrors },
     census: counts,
     ...(clipped.length ? { clipped: clips } : {}),
   }),
 );
+
+// An API error means the PNG shows an error page, and an error page is not a
+// BEFORE. Exiting non-zero is what stops the caller reading the picture as the
+// subject — the same reason a click that does not land exits above.
+if (upstreamErrors > 0) {
+  console.error(
+    `FATAL: ${upstreamErrors} upstream API error(s) — ${out} photographs an error state, not the page`,
+  );
+  process.exit(5);
+}
