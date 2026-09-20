@@ -98,7 +98,9 @@ from app.routes import events
 from app.routes.events import _format_futures_for_search
 from app.utils.market_label_normalization import (
     _PRO_SPORT_REWRITES,
+    _QUALIFIED_VENUE_LEAGUE_REWRITES,
     _VENUE_LEAGUE_REWRITES,
+    _apply_venue_league_rewrites,
     normalize_market_label,
     rewrite_venue_league_vocabulary,
 )
@@ -259,10 +261,18 @@ class TestSearchIsNotTheRail:
 
 
 class TestTheRailIsUntouched:
-    """0 of 3,530 production names change on the rail. Frozen here.
+    """The rail's NON-WNBA output is frozen. 3,474 of 3,532 names are identical.
 
-    These four are the specimens that would move FIRST if the split ever leaked
-    back into `normalize_market_label`.
+    ⚠️ AMENDED. The original claim here was "0 of 3,530 production names change
+    on the rail", and it was true of the diff that made it. It is no longer: the
+    WNBA repair below moves 58 rail rows on purpose, because the rail splats the
+    same list and had the same defect. Re-measured over the whole population —
+    3,532 names containing `pro `/`all-pro`, master's function vs this branch's —
+    **58 changed, every one a `Women's NBA …` → `WNBA …` repair, 3,474
+    identical**. The number is split rather than deleted so the freeze keeps
+    meaning something: these four specimens are the ones that would move FIRST if
+    the split ever leaked back into `normalize_market_label`, and
+    `TestTheWNBAIsNotTheNBA` owns the 58 that are supposed to move.
     """
 
     @pytest.mark.parametrize(
@@ -314,6 +324,214 @@ class TestWhatItMustNotTouch:
         card = _format_futures_for_search(_Market(raw))
         control = _format_futures_for_search(_Market("NFL: 2027 Champion"))
         assert card == control
+
+
+#: Real WNBA rows, copied verbatim from `futures_markets` (ids in the comments).
+#: Every one of these was rendered `Women's NBA …` by the sha I offered.
+_WNBA_SPECIMENS = [
+    # 12538514 — the one on the WNBA page's awards section.
+    ("Women's Pro Basketball MVP Winner", "WNBA MVP Winner"),
+    # 16756506
+    ("Women's Pro Basketball Finals MVP Winner", "WNBA Finals MVP Winner"),
+    # 12046267
+    ("Women's Pro Basketball Champion", "WNBA Champion"),
+    # 13787860 — an apostrophe in the REMAINDER as well as the qualifier.
+    (
+        "Women's Pro Basketball Commissioner's Cup MVP Winner",
+        "WNBA Commissioner's Cup MVP Winner",
+    ),
+    # 16757153 — the phrase carries a colon suffix, like the NFL specimens.
+    (
+        "Women's Pro Basketball: Any Player to Dunk this Season",
+        "WNBA: Any Player to Dunk this Season",
+    ),
+    # 109231 — mid-sentence, not a prefix. The rule is not anchored.
+    (
+        "Will at least 1 game be played in the Women's Pro Basketball season?",
+        "Will at least 1 game be played in the WNBA season?",
+    ),
+    # 60473144 — mid-sentence at the END of the string.
+    (
+        "Who will be the next commissioner of Women's Pro Basketball?",
+        "Who will be the next commissioner of WNBA?",
+    ),
+    # 110413 — a `#` immediately after the phrase.
+    ("Women's Pro Basketball #1 Overall Pick", "WNBA #1 Overall Pick"),
+]
+
+
+class TestTheWNBAIsNotTheNBA:
+    """The regression that nearly shipped. #7397's second defect.
+
+    `\\bPro Basketball\\b` matches inside `Women's Pro Basketball` — Kalshi's
+    name for the WNBA, 58 markets, 23 of them on `/sport/basketball/wnba`. The
+    first version of this fix turned "Women's Pro Basketball: Las Vegas Aces
+    Total Wins" into "Women's NBA: …" and told a reader the Aces play in the
+    NBA. Renaming a league wrongly is worse than printing the venue's jargon,
+    which is the entire premise of this issue.
+
+    It was invisible to the census that cleared the first sha because that census
+    counted CHANGED ROWS: all 58 sat inside the 1,261 "repairs". A count cannot
+    tell a repair from a new lie. What found it was asking, per league page,
+    whether the league token that came out is the league that page is about.
+    """
+
+    @pytest.mark.parametrize("raw,expected", _WNBA_SPECIMENS)
+    def test_the_served_title_says_wnba(self, raw, expected):
+        assert _served_name(raw, llm_sport_category="basketball") == expected
+
+    @pytest.mark.parametrize("raw,_expected", _WNBA_SPECIMENS)
+    def test_no_wnba_row_is_ever_served_as_the_nba(self, raw, _expected):
+        """The negative, stated as the reader's complaint would be.
+
+        `WNBA` contains `NBA` as a substring, so this cannot be a substring test
+        — `\\bNBA\\b` is the whole point. `WNBA MVP Winner` must pass and
+        `Women's NBA MVP Winner` must fail, and only a word-boundary test
+        separates them.
+        """
+        served = _served_name(raw, llm_sport_category="basketball")
+        assert not re.search(r"\bNBA\b", served), served
+        assert "WNBA" in served, served
+
+    @pytest.mark.parametrize("raw,_expected", _WNBA_SPECIMENS)
+    def test_the_rail_repairs_them_too(self, raw, _expected):
+        """58 rail rows move, deliberately — the rail splats the same list.
+
+        Paired with `TestTheRailIsUntouched`, which freezes the other 3,474.
+        """
+        out = normalize_market_label(raw)
+        assert not re.search(r"\bNBA\b", out), out
+
+    def test_the_aces_row_that_search_serves_today(self):
+        """`GET /api/events/search?q=aces` returns this row on production."""
+        raw = "Women's Pro Basketball: Las Vegas Aces Total Wins"
+        assert (
+            _served_name(raw, llm_sport_category="basketball")
+            == "WNBA: Las Vegas Aces Total Wins"
+        )
+
+    def test_a_real_nba_row_is_still_the_nba(self):
+        """The control. The repair must not make every basketball row a WNBA
+        row — a rule that answered `WNBA` to everything would satisfy every
+        assertion above."""
+        assert _served_name("Pro Basketball Finals MVP Winner") == (
+            "NBA Finals MVP Winner"
+        )
+        assert _served_name("2026 Pro Basketball Cup Champion") == (
+            "2026 NBA Cup Champion"
+        )
+
+    def test_the_possessive_is_not_required(self):
+        """Venue spelling is not ours to rely on; `Womens` occurs in the wild."""
+        assert rewrite_venue_league_vocabulary("Womens Pro Basketball MVP") == (
+            "WNBA MVP"
+        )
+
+    def test_a_typographic_apostrophe_is_handled(self):
+        """Production stores U+0027 today (measured, all 58 rows). This is the
+        arm that means a venue switching to U+2019 is a no-op, not a relapse."""
+        assert rewrite_venue_league_vocabulary("Women’s Pro Basketball MVP") == (
+            "WNBA MVP"
+        )
+
+    def test_the_repair_is_idempotent(self):
+        for raw, expected in _WNBA_SPECIMENS:
+            assert rewrite_venue_league_vocabulary(expected) == expected
+
+
+class TestTheQualifierGuardFailsSafe:
+    """What happens to the qualifier nobody has mapped yet.
+
+    A rule can only rescue a phrase somebody has already seen. This is about the
+    NEXT one: if a league-changing qualifier sits in front of the phrase and no
+    qualified rule claimed it, the venue's words are left alone. Printing
+    "Girls Pro Basketball" is the bug we are fixing; printing "Girls NBA" is a
+    lie, and between the two the jargon is the safe failure.
+    """
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Girls Pro Basketball Champion",
+            "College Pro Football Champion",
+            "NCAA Pro Basketball Thing",
+            "Youth Pro Hockey Thing",
+            "Semi-Pro Football Thing",
+        ],
+    )
+    def test_an_unmapped_qualifier_leaves_the_venue_words_alone(self, raw):
+        assert rewrite_venue_league_vocabulary(raw) == raw
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # 181 production rows are prefixed `2026`, 10 by `2027`.
+            ("2026 Pro Football Champion", "2026 NFL Champion"),
+            ("2027 Pro Football Champion", "2027 NFL Champion"),
+            # Cities are the other common prefix — 3 Milwaukee, 3 Chicago, …
+            ("Milwaukee Pro Basketball Total Wins", "Milwaukee NBA Total Wins"),
+            ("New York Pro Basketball Total Wins", "New York NBA Total Wins"),
+            # Articles and prepositions.
+            ("Will the 2026 Pro Football champs visit?", "Will the 2026 NFL champs visit?"),
+            ("Winner of Pro Baseball Cy Young", "Winner of MLB Cy Young"),
+            ("A Pro Football game this season", "A NFL game this season"),
+        ],
+    )
+    def test_an_ordinary_prefix_still_gets_rewritten(self, raw, expected):
+        """THE OVER-FIRE CONTROL, and the reason the guard is a NAMED list
+        rather than "any preceding word".
+
+        Of the 363 production names where the phrase is not at the start, 191
+        are preceded by a year and most of the rest by a city. A guard that
+        declined on any prefix would refuse all of them — it would pass every
+        assertion in the class above while silently un-fixing the majority of
+        the ship.
+        """
+        assert rewrite_venue_league_vocabulary(raw) == expected
+
+    def test_the_guard_reads_the_text_immediately_before_the_match(self):
+        """Not "does the word appear anywhere". A name that merely MENTIONS
+        women elsewhere must still be rewritten."""
+        raw = "Most women in a Pro Football front office"
+        assert rewrite_venue_league_vocabulary(raw) == (
+            "Most women in a NFL front office"
+        )
+
+
+class TestQualifiedRulesRunFirst:
+    """Order is load-bearing, so it is asserted rather than assumed.
+
+    If the bare rules ran first they would consume `Pro Basketball` out of
+    `Women's Pro Basketball` and the qualified rule would have nothing left to
+    match — the defect, restored, with every qualified rule still present in the
+    file and looking correct.
+    """
+
+    def test_the_qualified_list_is_not_empty(self):
+        """A mutant that empties it would make the ordering test vacuous."""
+        assert _QUALIFIED_VENUE_LEAGUE_REWRITES
+
+    def test_every_qualified_pattern_is_shadowed_by_a_bare_one(self):
+        """Proves the ordering MATTERS for each rule, so the test below is not
+        passing by accident on a rule no bare pattern could have eaten."""
+        for pat, _repl in _QUALIFIED_VENUE_LEAGUE_REWRITES:
+            sample = "Women's Pro Basketball"
+            assert pat.search(sample)
+            assert any(bare.search(sample) for bare, _ in _VENUE_LEAGUE_REWRITES)
+
+    def test_the_applier_consults_the_qualified_list_before_the_bare_list(self):
+        src = inspect.getsource(_apply_venue_league_rewrites)
+        # The two LOOPS, not the first mention of each name — `bare_rules` is
+        # also the signature's parameter, which is line one and would make this
+        # read backwards no matter what the body does.
+        q = src.index("for pat, repl in _QUALIFIED_VENUE_LEAGUE_REWRITES")
+        b = src.index("for pat, repl in bare_rules")
+        assert q < b, "bare rules must not run before the qualified ones"
+
+    def test_both_public_entry_points_share_the_applier(self):
+        """The rail and search cannot drift apart into two rule sets again."""
+        for fn in (rewrite_venue_league_vocabulary, normalize_market_label):
+            assert "_apply_venue_league_rewrites" in inspect.getsource(fn)
 
 
 class TestBothSurfacesCallIt:

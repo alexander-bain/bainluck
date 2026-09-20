@@ -37,14 +37,55 @@ logger = logging.getLogger(__name__)
 # Split in two because the two halves are safe on DIFFERENT surfaces (#7397):
 #
 # `_VENUE_LEAGUE_REWRITES` renames a league and nothing else, so it is sound
-# anywhere, on any sport, with no context — a market called "Pro Football" is an
-# NFL market wherever it is printed.
+# anywhere, on any sport — but only once the QUALIFIED phrases below have had
+# their turn. The first version of this list asserted that "a market called
+# 'Pro Football' is an NFL market wherever it is printed"; that is false for
+# basketball, and the counter-example is in production today.
+#
+# `\bPro Basketball\b` matches happily INSIDE `Women's Pro Basketball`, which is
+# the venue's name for the WNBA — 58 markets, every one of them a real WNBA
+# question, 23 of them on the `/sport/basketball/wnba` page. The bare rule turns
+# "Women's Pro Basketball: Las Vegas Aces Total Wins" into "Women's NBA: Las
+# Vegas Aces Total Wins" and tells a reader the Aces play in the NBA. A wrong
+# league is a worse sentence than the venue's own jargon, which is the whole
+# point of #7397, so the qualified phrases are matched FIRST and consume the
+# text before a bare rule can see it. Order here is load-bearing, not cosmetic.
+_QUALIFIED_VENUE_LEAGUE_REWRITES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bWomen(?:['’]s|s)?\s+Pro Basketball\b", re.I), "WNBA"),
+]
+
 _VENUE_LEAGUE_REWRITES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bPro Basketball\b", re.I), "NBA"),
     (re.compile(r"\bPro Football\b", re.I), "NFL"),
     (re.compile(r"\bPro Hockey\b", re.I), "NHL"),
     (re.compile(r"\bPro Baseball\b", re.I), "MLB"),
 ]
+
+# The backstop for the qualifier we have NOT met yet. A rule above can only
+# rescue a phrase somebody has already seen; this decides what happens to the
+# next one. If a league-changing qualifier sits immediately in front of the
+# phrase and no qualified rule claimed it, we leave the venue's words alone —
+# "Girls Pro Basketball" stays as it is rather than becoming "Girls NBA".
+# Printing the venue's jargon is the bug we are fixing; printing the wrong
+# league is a lie, and between the two the jargon is the safe failure.
+#
+# It has to be a NAMED list rather than "any preceding word", because the
+# population says so: of the 363 names where the phrase is not at the start,
+# 181 are preceded by `2026`, 10 by `2027`, and most of the rest by a city
+# ("Milwaukee Pro Basketball…") or an article. Blocking on any prefix would
+# refuse the 191 year-prefixed rows, which are ordinary NBA/NFL markets. The one
+# league-changing qualifier that actually occurs today is `Women's`, and it is
+# mapped above; everything here beyond it is the guard being early rather than
+# clever, and each addition is cheap to make correct once a real row appears.
+# The separator is `[-\s]+`, not `\s+`: in "Semi-Pro Football" the qualifier is
+# "Semi-" and the hyphen IS the boundary, so a whitespace-only terminator reads
+# that name as an ordinary one and returns "Semi-NFL". Caught by the guard's own
+# test rather than by a reader.
+_LEAGUE_CHANGING_QUALIFIER = re.compile(
+    r"\b(?:women|womens|women['’]s|girls|ladies|college|collegiate|ncaa"
+    r"|university|youth|junior|juniors|amateur|semi)[-\s]+$",
+    re.I,
+)
 
 # `All-Pro` → `All-NBA`, by contrast, is only true once the surface has already
 # filtered to basketball. "All-Pro" is an NFL term, and production carries four
@@ -518,9 +559,33 @@ def rewrite_venue_league_vocabulary(raw_name: str) -> str:
     a silent trim, or a caller comparing against the stored name sees a diff it
     did not ask for.
     """
+    return _apply_venue_league_rewrites(raw_name, _VENUE_LEAGUE_REWRITES)
+
+
+def _apply_venue_league_rewrites(
+    raw_name: str, bare_rules: list[tuple[re.Pattern, str]]
+) -> str:
+    """Qualified phrases first, then the bare rules, which decline a qualifier.
+
+    Shared by `rewrite_venue_league_vocabulary` and `normalize_market_label` so
+    the two cannot drift: the WNBA defect existed in both, because the rail
+    splats the same list.
+    """
     label = raw_name
-    for pat, repl in _VENUE_LEAGUE_REWRITES:
+    for pat, repl in _QUALIFIED_VENUE_LEAGUE_REWRITES:
         label = pat.sub(repl, label)
+
+    for pat, repl in bare_rules:
+        # `re` has no variable-length lookbehind, so the qualifier test runs per
+        # match against the text to its left. Read against `label`, not
+        # `raw_name`: an earlier rule may already have rewritten that text, and
+        # the question is what is in front of this match NOW.
+        def _guarded(match: re.Match, _repl: str = repl) -> str:
+            if _LEAGUE_CHANGING_QUALIFIER.search(match.string[: match.start()]):
+                return match.group(0)
+            return _repl
+
+        label = pat.sub(_guarded, label)
     return label
 
 
@@ -528,9 +593,10 @@ def normalize_market_label(raw_name: str) -> str:
     """Clean a raw market name into a human-readable label."""
     label = raw_name.strip()
 
-    # Step 1: Rewrite "Pro Basketball/Football/etc." → league name
-    for pat, repl in _PRO_SPORT_REWRITES:
-        label = pat.sub(repl, label)
+    # Step 1: Rewrite "Pro Basketball/Football/etc." → league name. Through the
+    # shared applier, so the rail gets the qualified phrases and the qualifier
+    # guard too — it splats the same bare list and had the same WNBA defect.
+    label = _apply_venue_league_rewrites(label, _PRO_SPORT_REWRITES)
 
     # Step 2: Strip league:year prefix ("MLB: 2026 ...", "NHL: ...")
     label = _LEAGUE_PREFIX_RE.sub("", label)
