@@ -1117,26 +1117,45 @@ class TestTheWidthIsBoundedByTheEngineItUses:
         must survive is "the pass PERIOD (the 30s beat)". Production measured
         the period at **42.5-51.7s**, not 30s.
 
-        A threshold T can skip an entry only when `T < 45 - P`. At every period
-        this scheduler can produce, that bound is far below 35 — so `fresh: 0`
-        (observed on 5 of 5 production passes) is arithmetic, not a tuning miss.
-        The test pins the SAFE direction: T must stay high enough that the skip
-        never fires, because a skip would drop an entry with seconds of life
-        left and let it expire before the next pass.
+        A threshold T can skip an entry only when `T < ttl - P`. The test pins
+        the SAFE direction: T must stay high enough that the skip never fires,
+        because a skip would drop an entry with seconds of life left and let it
+        expire before the next pass.
+
+        🔴 LAT-P270 / #3398 — THIS TEST WAS THE HOLE IT WAS GUARDING.
+
+        It read `ttl_s = 45` as a LITERAL. The TTL became 65 (Fable GO ruling 4,
+        2026-08-19) and this assertion could not see it: at 45 the bound is
+        `35 > 15` and passes, while the live bound was `35 > 35` — false, the
+        skip reachable, and the head expiring on 7 of 31 intervals. A guard
+        written against a constant another module owns is a guard with a
+        half-life.
+
+        The TTL is now IMPORTED, and the bound is the real survival floor
+        (`period_max + wall_max`) rather than `ttl - period`, which omits the
+        in-pass write-phase term that let 35 look adequate. Full derivation and
+        the production ring:
+        `tests/test_typeahead_refresh_ahead_survives_to_the_next_pass_3398.py`.
         """
-        ttl_s = 45
-        beat_s = _warm_typeahead_beat_seconds()
-        largest_useful_t = ttl_s - max(beat_s, warmer.MIN_PASS_PERIOD_SECONDS)
-        assert warmer.REFRESH_AHEAD_SECONDS > largest_useful_t, (
-            f"REFRESH_AHEAD_SECONDS={warmer.REFRESH_AHEAD_SECONDS} has dropped "
-            f"to where the `fresh` skip can fire (largest useful T is "
-            f"{largest_useful_t}s). A skip at that margin drops an entry that "
-            f"then expires before the next pass — it buys pass time by "
-            f"re-opening the cold window refresh-ahead exists to close."
+        from app.utils.typeahead_beat_budget import (
+            RESPONSE_CACHE_TTL_S,
+            refresh_ahead_safe_floor_s,
         )
-        assert warmer.REFRESH_AHEAD_SECONDS < ttl_s, (
-            "at or above the 45s TTL the threshold stops being a threshold; "
-            "keep it a bound that COULD fire if the period ever collapsed"
+
+        beat_s = _warm_typeahead_beat_seconds()
+        assert beat_s <= warmer.MIN_PASS_PERIOD_SECONDS, (
+            "the beat now exceeds the floor, so the floor is no longer the "
+            "binding cadence term and the survival floor owes a re-derivation"
+        )
+
+        floor = refresh_ahead_safe_floor_s()
+        assert warmer.REFRESH_AHEAD_SECONDS >= min(floor, RESPONSE_CACHE_TTL_S), (
+            f"REFRESH_AHEAD_SECONDS={warmer.REFRESH_AHEAD_SECONDS} has dropped "
+            f"to where the `fresh` skip can fire (an entry must survive "
+            f"{floor:g}s to reach the next pass that rewrites it). A skip at "
+            f"that margin drops an entry that then expires before the next "
+            f"pass — it buys pass time by re-opening the cold window "
+            f"refresh-ahead exists to close. This is #3398."
         )
 
 
