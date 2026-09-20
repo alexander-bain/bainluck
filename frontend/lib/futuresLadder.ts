@@ -281,6 +281,61 @@ export function buildOutcomeLadderRungs(
 }
 
 /**
+ * ── #7398: THE HEADING OVER A CROSS-MARKET THRESHOLD LADDER ──
+ *
+ * `threshold_groups` is a dict keyed by a SCOPE KEY, and the detail page printed
+ * that key as the section heading. A scope key is a grouping identifier, never
+ * prose: `detect_threshold_groups` builds it from `group:<group_id>`, or from
+ * `compute_threshold_stem`, which substitutes `#` for the numeral it collapses.
+ * So `/futures/60653756` drew **`# OR BELOW`** over a 20-rung Treasury board and
+ * `/futures/60775290` drew **`ABOVE #`** — an internal token on a reader's
+ * screen (notice 34), while the sibling ladder on the same page is headed by a
+ * sentence.
+ *
+ * THE RULE, and it is the one worth keeping: **a scope key is never a heading.**
+ * It is applied to whatever we would print, not only to the key we were handed —
+ * if `group_title` ever arrives as a scope key it is refused just the same.
+ *
+ * WHY THE ANSWER IS SOMETIMES NO HEADING AT ALL. The page's own `<h1>` is
+ * `market.name`, and for a single-market group the payload's `group_title` IS
+ * that name (measured on all three specimens, production 2026-09-20). Repeating
+ * the question in small caps above its own rungs is not context, it is an echo,
+ * so the ladder goes titleless exactly the way the "More outcomes" disclosure
+ * two blocks down already does. A `group_title` that says something the H1 does
+ * not — a cross-market group's event title — is real context and is kept.
+ */
+export function isThresholdScopeKey(key: string | null | undefined): boolean {
+  const k = (key ?? "").trim();
+  if (!k) return true;
+  // `#` is `compute_threshold_stem`'s placeholder; `group:` is the explicit
+  // group-id scope. Either one means we are holding a key, not a title.
+  return k.toLowerCase().startsWith("group:") || k.includes("#");
+}
+
+/** Whitespace/case-insensitive, so an H1 echo is caught however it is spaced. */
+function sameHeading(a: string, b: string | null | undefined): boolean {
+  return a.trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+}
+
+/**
+ * The reader-facing heading for one threshold ladder, or `undefined` for none
+ * (`QuantityGroup`'s `title` is optional — omitted means no title row).
+ */
+export function thresholdLadderTitle(
+  scopeKey: string,
+  groupTitle: string | null | undefined,
+  pageTitle: string | null | undefined,
+): string | undefined {
+  const candidate = (
+    isThresholdScopeKey(scopeKey) ? groupTitle ?? "" : scopeKey
+  ).trim();
+  if (!candidate) return undefined;
+  if (isThresholdScopeKey(candidate)) return undefined;
+  if (sameHeading(candidate, pageTitle)) return undefined;
+  return candidate;
+}
+
+/**
  * True when a rung set wants the roomy label track — any label that is not a short
  * numeric threshold. Dates ("Before October", "2029 or later") need it; "≥ 80"
  * does not.
