@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { SOURCES, tempColorC, toC, tomorrowDateStrUpper } from "./data";
+import { pluralize } from "./temperatureMapHeader";
 import type { CityData } from "./data";
 
 interface MapCanvasProps {
@@ -280,7 +281,10 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
         className="flex items-center justify-between font-mono"
         style={{ padding: "10px 18px", borderTop: "1px solid var(--surface-border)", fontSize: 11, color: "var(--text-muted)" }}
       >
-        <span>{cities.length} cities shown &middot; tap a pin for distribution</span>
+        {/* Reachable at 1 the moment the card's search box narrows to a single
+            city, and #7423 put a count in the header that agrees with this one,
+            so "1 cities shown" now sits under a headline reading "1 city". */}
+        <span>{pluralize(cities.length, "city", "cities")} shown &middot; tap a pin for distribution</span>
         <span>{crossSourceCount} cross-source</span>
       </div>
     </div>

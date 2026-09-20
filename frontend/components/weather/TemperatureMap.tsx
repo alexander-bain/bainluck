@@ -6,6 +6,7 @@ import type { CityData } from "./data";
 import MapCanvas from "./MapCanvas";
 import DistributionPanel from "./DistributionPanel";
 import { SectionHeader } from "./RainForecast";
+import { temperatureMapHeader } from "./temperatureMapHeader";
 import { fetchCities } from "@/lib/weatherApi";
 
 function TemperatureMapSkeleton() {
@@ -15,7 +16,6 @@ function TemperatureMapSkeleton() {
         <SectionHeader
           kicker="Global temperature map"
           title="Tomorrow's high, as a probability distribution."
-          meta="Polymarket & Kalshi"
         />
         <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 items-stretch">
           {/* Map skeleton */}
@@ -76,7 +76,6 @@ export default function TemperatureMap() {
           <SectionHeader
             kicker="Global temperature map"
             title="Tomorrow's high, as a probability distribution."
-            meta="Polymarket & Kalshi"
           />
           <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
             <p className="text-text-secondary text-sm">Failed to load temperature data</p>
@@ -97,7 +96,6 @@ export default function TemperatureMap() {
           <SectionHeader
             kicker="Global temperature map"
             title="Tomorrow's high, as a probability distribution."
-            meta="Polymarket & Kalshi"
           />
           <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
             <p className="text-text-secondary text-sm">No live temperature markets right now</p>
@@ -110,9 +108,11 @@ export default function TemperatureMap() {
 
   if (!allCities) return <TemperatureMapSkeleton />;
 
-  const cities = citySearch.trim()
-    ? allCities.filter(c => c.name.toLowerCase().includes(citySearch.trim().toLowerCase()))
-    : allCities;
+  // ONE list, derived ONCE, and the header is derived from that same list
+  // (#7423). The mark used to read `${allCities.length * 8} markets` over a map
+  // drawn from a different list; both the invented factor and the drift are
+  // structural here rather than remembered. See `temperatureMapHeader`.
+  const { cities, title, meta, scope } = temperatureMapHeader(allCities, citySearch);
 
   const city = cities.find(c => c.id === selected) ?? cities[0];
 
@@ -121,8 +121,8 @@ export default function TemperatureMap() {
       <div className="max-w-[1280px] mx-auto">
         <SectionHeader
           kicker="Global temperature map"
-          title={`${allCities.length} cities. Tomorrow's high, as a probability distribution.`}
-          meta={`Polymarket & Kalshi · ${allCities.length * 8} markets`}
+          title={title}
+          meta={meta}
         />
         <div className="mb-3">
           <input
@@ -132,10 +132,8 @@ export default function TemperatureMap() {
             placeholder="Search cities..."
             className="w-full max-w-xs px-3 py-2 text-sm border border-surface-border rounded-lg bg-surface-card text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent-brand/30 focus:border-accent-brand"
           />
-          {citySearch.trim() && (
-            <span className="ml-2 text-xs text-text-muted">
-              {cities.length} of {allCities.length} cities
-            </span>
+          {scope && (
+            <span className="ml-2 text-xs text-text-muted">{scope}</span>
           )}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-[1.55fr_1fr] gap-3.5 items-stretch">
