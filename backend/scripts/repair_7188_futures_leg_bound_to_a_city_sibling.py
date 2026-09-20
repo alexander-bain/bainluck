@@ -1,4 +1,4 @@
-"""#7188 — 32 futures legs wear a same-city rival's identity.
+"""#7188 — 40 futures legs wear a same-city rival's identity.
 
 ------------------------------------------------------------------------------
 WHAT A READER SEES
@@ -13,10 +13,18 @@ championship ladders:
     market    275  Pro Baseball Champion            'Los Angeles D'   -> 10712 Angels
     market  53675  AFC West Division Winner         'Los Angeles C'   ->   544 Rams
     market  40533  2027 Pro Football Champion       'Los Angeles C'   ->   544 Rams
+    market    275  Pro Baseball Champion            'Chicago C'       -> 10734 White Sox
 
-32 legs, three families. The issue reported the Mets one; measuring the whole
+40 legs, four families. The issue reported the Mets one; measuring the whole
 `futures_outcomes` table rather than the market it was spotted in found the
 Dodgers and Chargers families too, and the Chargers family is the largest.
+
+The Cubs family (8 legs) was added on 2026-09-20, after the first three were
+applied. That census asked "which club did this land on" and so could not see
+it: `Chicago C` is the only family whose WRONG club is not the better-known one
+— a bare `Chicago` alias sits on both clubs and the White Sox row won the
+query. The ticker settles it (all 8 read `-CHC`, and CHC is the Cubs; the two
+`Chicago W` legs in the same markets are bound to the White Sox correctly).
 
 ------------------------------------------------------------------------------
 THE CAUSE IS ALREADY FIXED IN CODE; THIS IS THE ROWS THAT CAUSE ALREADY WROTE
@@ -26,7 +34,7 @@ than a matcher change.** #7188 says `New York M` binds to the Yankees today via
 the bare `New York` alias. It does not: running the DEPLOYED
 ``match_outcome_to_team`` against the real `teams` rows returns **None** — both
 6610 and 10737 carry a bare `New York` alias, so the ambiguity guard already
-refuses the fragment. These 32 rows are **historical write-once residue** from
+refuses the fragment. These 40 rows are **historical write-once residue** from
 before that guard, and nothing that runs today would write them again or take
 them back. ``futures_outcomes.team_id`` is filled by a drain that selects
 ``team_id IS NULL``; a row that is already (wrongly) bound is out of its reach
@@ -137,6 +145,35 @@ REPOINTS: tuple[Repoint, ...] = (
         wrong=544,  # Los Angeles RAMS — the issue's own table says Chargers, and is wrong
         right=556,  # Los Angeles Chargers
         why="15 legs incl. AFC West Division Winner and 2027 Pro Football Champion",
+    ),
+    # Added 2026-09-20 after the first three families were applied. #2010 — the
+    # PARENT issue of #7188 — names three specimens and this is the one the
+    # first pass missed: it censused `futures_outcomes` for legs bound to a
+    # same-city sibling and found the other two, but `Chicago C` was invisible
+    # to that read because it is the only family whose wrong club is not the
+    # better-known one (a "Chicago" alias sits on both clubs, and the White Sox
+    # row won the query).
+    #
+    # The ticker settles it, and it is the authority over the display
+    # abbreviation (gotcha #16). All 8 legs carry `-CHC`:
+    #
+    #   2249  KXMLBPLAYOFFS-26-CHC      Pro Baseball Playoff Qualifiers  [open]
+    #   2269  KXMLBNLCENT-26-CHC        NL Central Division Winner       [resolved]
+    #   2282  KXMLBNL-26-CHC            National League Champion         [open]
+    #   2339  KXMLB-26-CHC              Pro Baseball Champion            [open]
+    #   2400  KXMLBWORSTRECORD-26-CHC   Pro Baseball Worst Record        [open]
+    #   2430  KXMLBBESTRECORD-26-CHC    Pro Baseball Best Record         [open]
+    #   6427  KXNEXTTEAMSKUBAL-26-CHC   Tarik Skubal's next team?        [resolved]
+    #   6457  KXNEXTTEAMMLB-26KMAR-CHC  Ketel Marte's next team?         [resolved]
+    #
+    # CHC is the Cubs; the White Sox are CHW, and the two `Chicago W` legs in
+    # the same markets are bound to the White Sox correctly — the truncation
+    # distinguishes the clubs perfectly, and only the binding lost that.
+    Repoint(
+        leg_names=("Chicago C",),
+        wrong=10734,  # Chicago White Sox
+        right=10714,  # Chicago Cubs  (NOT 856 — that is the preseason twin)
+        why="8 legs incl. NL Central Division Winner and Pro Baseball Champion; every ticker reads -CHC",
     ),
 )
 
@@ -298,7 +335,10 @@ async def run(args) -> int:
             print(f"  {rp.why}")
             for r in rows:
                 if r.on_target:
-                    # 🔴 Measured clean on 2026-09-19 (0/32), and checked at RUN
+                    # 🔴 Measured clean on 2026-09-19 (0/32) and again on
+                    # 2026-09-20 for the Cubs family (0/8 — neither 10714 nor
+                    # the 856 twin holds a leg in any of those 8 markets), and
+                    # checked at RUN
                     # time anyway: between the measurement and the apply, the
                     # drain or a venue re-ingest can add the correct leg, and
                     # repointing onto it would put two legs for one club on one
