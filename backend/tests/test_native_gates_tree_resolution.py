@@ -54,6 +54,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.lib_rig_tree import copy_rig_script
+
 REPO = Path(__file__).resolve().parents[2]
 GATES = REPO / "tools" / "native-gates.sh"
 
@@ -119,8 +121,7 @@ def test_gates_the_cwd_tree_not_the_script_tree(tmp_path):
     b = make_repo(tmp_path / "work_tree")
 
     # The script is invoked BY ITS PATH IN A, with the CWD in B.
-    (a / "tools").mkdir()
-    (a / "tools" / "native-gates.sh").write_text(GATES.read_text())
+    copy_rig_script(GATES, a / "tools")
 
     # B has a real change; A does not.
     (b / "ios" / "Bain Luck" / "Changed.swift").write_text("// only in B\n")
@@ -147,8 +148,7 @@ def test_a_divergent_script_tree_is_announced_not_silent(tmp_path):
     """The old failure was silent. When the two trees differ, say so."""
     a = make_repo(tmp_path / "script_tree")
     b = make_repo(tmp_path / "work_tree")
-    (a / "tools").mkdir()
-    (a / "tools" / "native-gates.sh").write_text(GATES.read_text())
+    copy_rig_script(GATES, a / "tools")
 
     p = subprocess.run(
         ["bash", str(a / "tools" / "native-gates.sh"), "--explain", "--base", "master"],
@@ -165,8 +165,7 @@ def test_a_divergent_script_tree_is_announced_not_silent(tmp_path):
 def test_same_tree_prints_no_divergence_banner(tmp_path):
     """The banner must not cry wolf on the ordinary invocation."""
     b = make_repo(tmp_path / "work_tree")
-    (b / "tools").mkdir()
-    (b / "tools" / "native-gates.sh").write_text(GATES.read_text())
+    copy_rig_script(GATES, b / "tools")
     p = subprocess.run(
         ["bash", str(b / "tools" / "native-gates.sh"), "--explain", "--base", "master"],
         cwd=str(b),
@@ -354,8 +353,7 @@ def test_a_tree_with_no_xcode_project_refuses_by_name(tmp_path):
 def test_a_non_git_cwd_falls_back_to_the_script_tree_and_says_so(tmp_path):
     """Falling back is fine. Falling back silently is not."""
     a = make_repo(tmp_path / "script_tree")
-    (a / "tools").mkdir()
-    (a / "tools" / "native-gates.sh").write_text(GATES.read_text())
+    copy_rig_script(GATES, a / "tools")
     outside = tmp_path / "not_a_repo"
     outside.mkdir()
 
