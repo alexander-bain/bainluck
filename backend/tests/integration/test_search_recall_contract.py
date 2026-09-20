@@ -1672,3 +1672,258 @@ async def test_the_9ers_arm_does_not_fan_out_across_sports(search_with_a_49ers_g
     assert not any("UTEP" in p or "St Kitts" in p for p in pairings), (
         f"the `9ers` arm reached outside the NFL: {pairings!r}"
     )
+
+
+# --------------------------------------------------------------------------
+# #7381 — /typeahead's TEAM arm matches a word START, not a substring
+# --------------------------------------------------------------------------
+# These belong in this file and nowhere else. The rule is one Postgres regex
+# AND-ed onto an ILIKE, so the only instrument that can grade it is the engine
+# that owns both operators — a mocked session returns whatever rows the fake was
+# told to hold and would report this fix working while `?q=nba` still offered
+# Tornado Pekanbaru. That is the same reasoning `test_substring_nickname_9ers…`
+# gives for living here, and it is the reason this file exists at all.
+
+
+@pytest.fixture
+async def typeahead_with_infix_teams(seeded_db, typeahead):
+    """`typeahead`, plus the four team rows #7381 was measured on.
+
+    Three of these are transcribed from production 2026-09-19 rather than
+    invented: `GET /api/events/typeahead?q=nba` offered "Tornado Pekanbaru"
+    (soccer) and "Trinbago Knight Riders" (cricket) and nothing else in the team
+    slots, because `nba` is spelled inside Peka(nba)ru and Tri(nba)go.
+
+    They are NOT seeded alone. A rule that only ever removes rows looks perfect
+    on a noise-only fixture and is indistinguishable from a broken predicate, so
+    each noise row is paired with a row of the SAME shape that must survive:
+
+        Tornado Pekanbaru        `nba` is an infix        -> must be dropped
+        Trinbago Knight Riders   `nba` is an infix        -> must be dropped
+        Charlotte Hornets        `nets` is an infix       -> must be dropped
+        Brooklyn Nets            `nets` starts a word     -> must SURVIVE
+        San Francisco 49ers      `9ers` is an infix of
+                                 its own token, RESCUED
+                                 by its alias row        -> must SURVIVE
+
+    The 49ers row is the important one and it is transcribed, aliases and all,
+    from production: ``alternate_names = ["9ers", "49ers", "niners"]``. It is the
+    escape hatch this whole rule depends on. `9ers` is spelled INSIDE the token
+    "49ers", so the boundary rule cannot match the name — and does not need to,
+    because inside the JSON text the alias is preceded by a quote, which is a
+    word start. Take the aliases away and `9ers` stops reaching the 49ers, which
+    is #4809 / CERT-2527's defect returning through a different door.
+
+    Soccer and cricket are deliberate: `_is_individual_sport` strips tennis, MMA,
+    golf and boxing "teams" out of the pool before the predicate is ever graded,
+    so a tennis specimen (Korpatsch, the production example in the sibling arm
+    #5082) would pass this test for the wrong reason.
+
+    `_TEAM_POOL_SIZE` is 3. The seed is kept small and spread across distinct
+    query terms so that a positive assertion can never fail because the pool
+    filled up — a crowded fixture turns a recall assertion into a ranking one.
+    """
+    from app.models.models import Sport, Team
+    from sqlalchemy import select
+
+    _engine, maker = seeded_db
+    async with maker() as session:
+        nba = (
+            await session.execute(
+                select(Sport).where(Sport.key == "basketball_nba")
+            )
+        ).scalar_one()
+        nfl = (
+            await session.execute(
+                select(Sport).where(Sport.key == "americanfootball_nfl")
+            )
+        ).scalar_one()
+        soccer = Sport(key="soccer_indonesia_liga_1", name="Liga 1")
+        cricket = Sport(key="cricket_caribbean_premier_league", name="CPL")
+        session.add_all([soccer, cricket])
+        await session.flush()
+
+        session.add_all([
+            Team(sport_id=soccer.id, name="Tornado Pekanbaru", abbreviation="TPK"),
+            Team(
+                sport_id=cricket.id,
+                name="Trinbago Knight Riders",
+                abbreviation="TKR",
+            ),
+            Team(sport_id=nba.id, name="Charlotte Hornets", abbreviation="CHA"),
+            Team(
+                sport_id=nba.id,
+                name="Brooklyn Nets",
+                abbreviation="BKN",
+                alternate_names=["Nets", "Brooklyn"],
+            ),
+            Team(
+                sport_id=nfl.id,
+                name="San Francisco 49ers",
+                abbreviation="SF",
+                alternate_names=["9ers", "49ers", "niners"],
+            ),
+        ])
+        await session.commit()
+
+    return typeahead
+
+
+async def test_an_infix_inside_a_word_is_not_a_team_match(typeahead_with_infix_teams):
+    """🔴 #7381's symptom, exactly as a reader met it on production.
+
+    `nba` is the third most-searched query in `search_query_logs` and the two
+    team rows it offered were an Indonesian soccer club and a Caribbean cricket
+    franchise. Neither name contains the word "NBA"; both contain the letters.
+    """
+    texts = _typeahead_texts(await typeahead_with_infix_teams("nba"))
+    offenders = [t for t in texts if "Pekanbaru" in t or "Trinbago" in t]
+    assert offenders == [], (
+        f"`nba` still offers a team matched on an interior substring: {offenders!r}. "
+        "Peka(nba)ru and Tri(nba)go are spelling coincidences inside one word, "
+        "not teams the reader asked for."
+    )
+
+
+async def test_the_word_start_rule_does_not_take_the_real_team_with_the_noise(
+    typeahead_with_infix_teams,
+):
+    """The other direction, and the one that makes the rule safe to ship.
+
+    `nets` is the production case where the noise and the answer sit in the same
+    sport: Charlotte Ho(rnets) is an infix, Brooklyn **Nets** is the team. A
+    filter that dropped both would satisfy the test above and be wrong.
+    """
+    texts = _typeahead_texts(await typeahead_with_infix_teams("nets"))
+    assert any("Brooklyn Nets" in t for t in texts), (
+        f"the real team went out with the noise: {texts!r}. The rule is a word "
+        "BOUNDARY test, not a whole-word one — dropping Brooklyn Nets means the "
+        "predicate is filtering everything, which no recall census would survive."
+    )
+    assert not any("Hornets" in t for t in texts), (
+        f"`nets` still offers Charlotte Ho(rnets): {texts!r}"
+    )
+
+
+async def test_progressive_typing_still_matches_a_partial_word(
+    typeahead_with_infix_teams,
+):
+    """The reason `/typeahead` was left on a substring ILIKE in the first place.
+
+    `_event_name_match` records that `/search`'s whole-word (`to_tsvector`) rule
+    cannot serve the dropdown, because `celt` is not a word of "Celtics" — and it
+    is right. This test is the proof that #7381 took the weaker rule and not that
+    one: every prefix a reader types on the way to a team still matches, at the
+    start of the name AND at the start of a later word.
+
+    If this goes red the fix has been "simplified" into `/search`'s rule and the
+    dropdown has stopped answering keystrokes, which is a far larger regression
+    than the one #7381 repairs.
+    """
+    for prefix, wanted in [
+        ("brook", "Brooklyn Nets"),   # start of the name
+        ("charl", "Charlotte Hornets"),  # start of the name, the noise row's own turn
+        ("knight", "Trinbago Knight Riders"),  # start of the SECOND word
+        ("riders", "Trinbago Knight Riders"),  # start of the THIRD word
+    ]:
+        texts = _typeahead_texts(await typeahead_with_infix_teams(prefix))
+        assert any(wanted in t for t in texts), (
+            f"`{prefix}` no longer reaches {wanted!r}: {texts!r}. A word-boundary "
+            "rule must keep every partial word a reader can type."
+        )
+
+
+async def test_an_alternate_name_is_matched_on_its_own_word_start(
+    typeahead_with_infix_teams,
+):
+    """The third column, which is a JSONB array cast to text.
+
+    `alternate_names` reaches the predicate as `["Nets", "Brooklyn"]`, so every
+    alias is preceded by `"` or `, ` — non-alphanumeric, hence a word start. The
+    column is easy to forget precisely because it does not look like prose, and
+    a fix applied to `name` and `abbreviation` alone would leave the widest of
+    the three arms matching anywhere.
+    """
+    texts = _typeahead_texts(await typeahead_with_infix_teams("nets"))
+    assert any("Brooklyn Nets" in t for t in texts), (
+        f"the alias arm stopped matching at a word start inside the JSON text: "
+        f"{texts!r}"
+    )
+
+
+async def test_a_nickname_spelled_inside_its_own_token_survives_on_its_alias(
+    typeahead_with_infix_teams,
+):
+    """🔴 The rule's one real cost, and the mechanism that pays it.
+
+    `9ers` is spelled INSIDE the token "49ers", so the boundary rule cannot match
+    it against the NAME — by construction, and there is no lexical rule that
+    could: "9ers" in "49ers" and "nets" in "Hornets" are the same shape, and one
+    of them is the defect. `_event_name_match` reached the same wall on `/search`
+    and named the answer: "separating them needs the team registry … the
+    alias/identity layer, not a WHERE clause here."
+
+    On production the 49ers row carries `["9ers", "49ers", "niners"]`, and inside
+    the JSON text every alias is preceded by a quote — a word start. So the alias
+    arm matches and the reader still gets their team. This test is that
+    dependency, made explicit: it is the only thing standing between #7381 and a
+    regression of #4809 / CERT-2527.
+
+    MEASURED over the 250 most-searched verbatim queries of the last 90 days:
+    exactly four team NAMES are lost to this class, and every one of them is a
+    row with no aliases at all — Saskatchewan Roughriders (`riders`), Creighton
+    Bluejays (`blue jays`), Purdue Boilermakers (`oil`), Charlotte 49ers
+    (`9ers`). Each is reachable by its own name, and the repair for all four is
+    an alias row, not a looser predicate. Filed as the follow-up in #7381.
+    """
+    texts = _typeahead_texts(await typeahead_with_infix_teams("9ers"))
+    assert any("San Francisco 49ers" in t for t in texts), (
+        f"`9ers` no longer reaches the 49ers: {texts!r}. The boundary rule cannot "
+        "match `9ers` against the token '49ers', so this row survives ONLY on its "
+        "alias arm — if that arm stopped being searched, or stopped being tested "
+        "at a word start inside the JSON text, #4809's defect is back."
+    )
+
+
+async def test_the_multi_word_branch_carries_the_same_rule(
+    typeahead_with_infix_teams,
+):
+    """`is_multi_word` is a SECOND copy of the team filter, and it is the one
+    `nba champion` — a head query — actually lands in.
+
+    This file's own history is the argument for asserting both: the route's
+    comments record `/search` and `/typeahead` drifting for three cycles by
+    keeping two copies of one rule. Fixing the single-word branch alone would go
+    green on every other test here.
+    """
+    matched = _typeahead_texts(await typeahead_with_infix_teams("knight nba"))
+    assert not any("Trinbago" in t for t in matched), (
+        f"the multi-word branch still matches `nba` inside Tri(nba)go: {matched!r}. "
+        "`knight` word-starts and `nba` does not, so the AND must fail."
+    )
+    # ...and the same two-term query with both terms at word starts still lands.
+    kept = _typeahead_texts(await typeahead_with_infix_teams("knight riders"))
+    assert any("Trinbago Knight Riders" in t for t in kept), (
+        f"the multi-word branch stopped matching a genuine two-word query: {kept!r}"
+    )
+
+
+async def test_the_seeded_teams_that_never_collided_are_untouched(
+    typeahead_with_infix_teams,
+):
+    """The census said 40 of 47 head terms are identical row for row. This is
+    that claim, on the rows this file already had before #7381 existed.
+
+    `bruins` and `celtics` are the file's own pre-existing team specimens, and
+    neither is an infix of anything seeded. If the boundary rule reaches them,
+    the escape or the anchor is wrong — for instance an unescaped term, or an
+    anchor that requires the match to start the WHOLE string rather than a word.
+    """
+    assert any(
+        "Boston Bruins" in t
+        for t in _typeahead_texts(await typeahead_with_infix_teams("bruins"))
+    ), "the pool specimen from LAT-P046 stopped matching"
+    assert any(
+        "Boston Celtics" in t
+        for t in _typeahead_texts(await typeahead_with_infix_teams("celtics"))
+    ), "a plain whole-word team match stopped matching"

@@ -2345,6 +2345,93 @@ def _build_expanded_ilike(column, term: str, expansion: str | None):
     return base
 
 
+# POSIX ERE metacharacters. A search term is user input that reaches `~*` as a
+# BOUND PARAMETER (never interpolated), so this is not an injection guard — it is
+# a correctness one: unescaped, `d'or` is fine but `st.` would match any character
+# where the reader typed a full stop, and `c++` is not a valid regex at all and
+# raises rather than returning nothing.
+_REGEX_METACHAR_RE = re.compile(r"([\\^$.\[\]|()*+?{}])")
+
+
+def _regex_escape(term: str) -> str:
+    """Escape a query term for use inside a Postgres `~*` pattern."""
+    return _REGEX_METACHAR_RE.sub(r"\\\1", term)
+
+
+def _build_word_start_ilike(column, term: str, expansion: str | None):
+    """`_build_expanded_ilike`, restricted to matches that START a word (#7381).
+
+    The ILIKE half is byte-identical to `_build_expanded_ilike`'s and is AND-ed,
+    never replaced, so the trigram index still drives the scan and the regex is a
+    recheck on the rows it already returned. That shape is not a preference:
+    `_event_name_match`'s docstring records (LAT-P002/#1494) that ONE unindexable
+    arm inside a top-level OR forces a seq scan of the whole table.
+
+    **Why the dropdown needs a WEAKER rule than `/search` got.** `/search` fixed
+    this class with `to_tsvector` — a WHOLE-word test (LAT-P034 for events,
+    LAT-P037/#1758 for futures) — and `_event_name_match` explicitly leaves
+    `/typeahead` on its substring ILIKE because a whole-word test cannot serve
+    progressive typing: `lak` is not a word of "Lakers". That reasoning is about
+    a PREFIX, and it does not reach an INFIX. Nobody types `nba` on the way to
+    "Pekanbaru". So the test here is neither "anywhere" nor "a whole word" but
+    "the start of a word": the name's first character, or any character that
+    follows a non-alphanumeric one. `lak` -> Lakers and `yank` -> Yankees still
+    match; `nba` -> Tornado Peka(nba)ru does not.
+
+    It also repairs, in this arm, both losses `_event_name_match` names and
+    accepts: `yank` -> Yankees and `milan` -> "Inter Milano" are word PREFIXES,
+    which a word-boundary rule keeps and a whole-word rule cannot.
+
+    MEASURED on production 2026-09-19, against the real `teams` table (9,914
+    rows) across all three columns, over the **250 most-searched verbatim queries
+    of the last 90 days** — the queries readers actually typed, each tokenised
+    and AND-ed the way the route does, compared as NAME SETS because
+    `_pick_team_row_per_name` collapses same-name rows before the reader sees
+    them. (Comparing matched ROWS instead reports four false losses: a team with
+    a duplicate un-aliased row loses that row and keeps the name.)
+
+    **234 of the 250 queries are identical, name for name.** Of the 16 that move,
+    fifteen shed noise only::
+
+        re   602 -> 128   la   608 -> 118   ni  436 -> 63   ai  228 -> 10
+        nets  13 ->   1   red   62 ->  40   nba   3 ->  0   ipo   5 ->  0
+        pats   2 ->   1   mets   4 ->   2   oil   3 ->  1   open  1 ->  0
+        thun   6 ->   5   riders 4 ->   2   9ers  3 ->  1
+
+    `pats` keeps New England and sheds Tamara Korpatsch (#5082's complaint,
+    reaching the team arm); `nets` keeps Brooklyn and sheds nine Hornets, Shakhtar
+    Donetsk, Volynets and Happinets; `nba` sheds Tornado Pekanbaru, Trinbago
+    Knight Riders and Tsendbaatar Erdenbat and keeps nothing, because nothing it
+    matched was a team. `Red Sox`, `Red Bull` and `Reds` are word starts and
+    survive `red`.
+
+    ⚠️ THE ONE REAL COST, named rather than buried. Four team NAMES across those
+    250 queries are lost for a reason that is not noise: the query is a nickname
+    spelled INSIDE a longer token, and the row carries no aliases —
+    Saskatchewan Rough(riders), Creighton Blue(jays), Purdue B(oil)ermakers,
+    Charlotte 49(ers). No lexical rule separates them from the defect: `9ers` in
+    "49ers" and `nets` in "Hornets" are the same shape.
+
+    The registry is what separates them, and it already works. San Francisco
+    49ers carries `["9ers", "49ers", "niners"]`, New England Patriots carries
+    `["Patriots", "pats"]`, and inside the JSON text each alias follows a quote —
+    a word start — so all three keep matching. That is why the alias column is in
+    this predicate and why `test_a_nickname_spelled_inside_its_own_token_survives_on_its_alias`
+    guards it. The four losses are rows with NO alias row at all; the repair is an
+    alias, not a looser WHERE clause, and `_event_name_match` reached that same
+    conclusion for `yank`/`milan` on `/search` and shipped it.
+    """
+    def _one(t: str):
+        return and_(
+            column.ilike(f"%{t}%"),
+            column.op("~*")(f"(^|[^[:alnum:]]){_regex_escape(t)}"),
+        )
+
+    if expansion:
+        return or_(_one(term), _one(expansion))
+    return _one(term)
+
+
 def _build_futures_name_filter(ilike_futures_filter, fts_q: str):
     """The futures NAME arm: stemmed FTS **OR** substring ILIKE. ONE definition.
 
@@ -9050,10 +9137,14 @@ async def typeahead_search(
                 _build_expanded_ilike(Event.home_team_name, term, exp),
                 _build_expanded_ilike(Event.away_team_name, term, exp),
             ))
+            # #7381: word-START, not anywhere. See `_build_word_start_ilike` for
+            # the measurement and for why the dropdown takes a weaker rule than
+            # `/search`'s whole-word one. Both branches of this `if` carry it —
+            # `nba champion` is a head query and lands HERE, not in the else.
             team_term_conditions.append(or_(
-                _build_expanded_ilike(Team.name, term, exp),
-                _build_expanded_ilike(Team.abbreviation, term, exp),
-                _build_expanded_ilike(cast(Team.alternate_names, String), term, exp),
+                _build_word_start_ilike(Team.name, term, exp),
+                _build_word_start_ilike(Team.abbreviation, term, exp),
+                _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
             ))
             futures_term_conditions.append(
                 _build_expanded_ilike(FuturesMarket.name, term, exp)
@@ -9072,10 +9163,12 @@ async def typeahead_search(
         if sport_alias_keys:
             ilike_event_filter = or_(ilike_event_names, Sport.key.in_(sport_alias_keys))
 
+        # #7381: word-START, not anywhere — `nba` must stop offering "Tornado
+        # Pekanbaru". Same rule as the multi-word branch above.
         team_filter = or_(
-            _build_expanded_ilike(Team.name, term, exp),
-            _build_expanded_ilike(Team.abbreviation, term, exp),
-            _build_expanded_ilike(cast(Team.alternate_names, String), term, exp),
+            _build_word_start_ilike(Team.name, term, exp),
+            _build_word_start_ilike(Team.abbreviation, term, exp),
+            _build_word_start_ilike(cast(Team.alternate_names, String), term, exp),
         )
         ilike_futures_filter = _build_expanded_ilike(FuturesMarket.name, term, exp)
 
