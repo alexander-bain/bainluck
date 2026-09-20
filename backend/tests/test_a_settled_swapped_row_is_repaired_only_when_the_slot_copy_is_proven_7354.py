@@ -510,6 +510,40 @@ class TestEveryLazyImportInTheRailResolves:
         assert checked, f"{module_name}: no function-local imports found to check"
 
 
+class TestBothHalvesOfThePairAnswerHelpWithoutADatabase:
+    """`--help` is the only invocation that must work on any machine.
+
+    The undo shipped without one, so a bare run — the thing a reader reaches for
+    first to find out what the script does — opened a connection and died in a
+    60-line asyncpg traceback. The repair half already had the guard; this is the
+    pair, so the guard is asserted on the pair.
+    """
+
+    @pytest.mark.parametrize("script", [
+        "repair_7354_settled_orientation_swap.py",
+        "restore_7354_settled_orientation_swap.py",
+    ])
+    def test_help_exits_zero_and_opens_no_database(self, script):
+        import subprocess
+
+        backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = dict(os.environ)
+        # A URL nothing can connect to: reaching the DB at all becomes a failure
+        # rather than an accident of whatever this machine happens to be running.
+        env["DATABASE_URL"] = "postgresql+asyncpg://nobody@127.0.0.1:1/nothing"
+
+        proc = subprocess.run(
+            [sys.executable, os.path.join("scripts", script), "--help"],
+            cwd=backend, env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert proc.returncode == 0, (
+            f"{script} --help exited {proc.returncode}\n{proc.stderr[-2000:]}"
+        )
+        assert "--apply" in proc.stdout, (
+            f"{script} --help printed no usage naming --apply:\n{proc.stdout}"
+        )
+
+
 class TestThePlanCarriesItsOwnEvidence:
     def test_a_skipped_plan_names_why_in_words_a_reader_can_check(self):
         for row, ee in (

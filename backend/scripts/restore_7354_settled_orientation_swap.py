@@ -206,5 +206,18 @@ async def run(apply: bool) -> int:
     return 0
 
 
+USAGE = """restore_7354_settled_orientation_swap — the undo for the #7354 repair
+
+  --apply             commit the restore (default is a dry-run that writes nothing)
+  --help              print this and exit without opening a database
+
+Reports `table_missing` and exits 1 before the repair has ever applied — that is
+the expected pre-apply answer, not a failure. Only events still in the state the
+repair left them in are restored; one that has moved on keeps both halves.
+"""
+
 if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(USAGE)
+        sys.exit(0)
     sys.exit(asyncio.run(run("--apply" in sys.argv)))
