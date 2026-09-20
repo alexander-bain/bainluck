@@ -183,6 +183,74 @@ export interface PlayoffGrid {
 export const GRID_SECTION_LABEL = "Chance of reaching";
 
 /**
+ * ═══ #7473: THE SAME SECTION, AFTER THE DRAW HAS BEEN WON ═══
+ *
+ * `GRID_SECTION_LABEL` was interpolated with no condition, so seven days after
+ * the US Open final `/tournaments/us-open` still headed the grid **CHANCE OF
+ * REACHING** over a table in which every cell on the first screen was a grey ✓
+ * or a `—`. The page does settled well everywhere else — "This draw is done",
+ * "Settled. Alexander Zverev won the title.", Won/Out on the board — and this
+ * one string survived the draw being decided. A reader who scrolls that far is
+ * told they are looking at a forecast and shown a record of what happened.
+ *
+ * Past tense, the reader's words, and the same question the ✓/— row answers:
+ * a row of ticks across R16·QF·SF·F IS how far that player got.
+ *
+ * ⚠️ IT IS THE HEADING THAT IS WRONG, NOT THE TABLE. The grid is not 100%
+ * settled — on the day this was filed 31 men's / 7 women's cells still carried
+ * a number — so a change that claimed the table holds no probabilities would
+ * be the same defect pointing the other way. Every one of those numeric cells
+ * belongs to a row below the collapsed five (first at row 29), each is `stale`
+ * or `dark` and each still prints its own number and its own explanation. This
+ * changes four words above them and nothing about them. The page footer's
+ * "Each probability combines…" is likewise CORRECT and untouched: the finished
+ * match rows still print real pre-match percentages.
+ *
+ * The precedent is `PROPS_HEADING` / `PROPS_HEADING_DECIDED` in
+ * `lib/matchDetail.ts` — one section, two names, `decided` the whole switch.
+ */
+export const GRID_SECTION_LABEL_DECIDED = "How far they got";
+
+/**
+ * Has this draw been won?
+ *
+ * Read off the GRID's own cells rather than taken as a prop, because the
+ * heading is a claim about what is in this table and the table is the thing
+ * that knows. The signal is the title column's winner: exactly one row per
+ * draw carries a `settled` title cell noted `won` (`gridCellGlyph` prints its
+ * ✓), and that row existing is what makes every `—` beside it a result instead
+ * of a hole.
+ *
+ * ⚠️ NOT `columnSums`. A title column whose `verdict` is `settled` says the
+ * same thing today, but that verdict is the sum-check's arithmetic — #4174's
+ * subject, and a grid can be coherent or incoherent for reasons that have
+ * nothing to do with whether anybody lifted the trophy. The winning cell is
+ * the fact; the column sum is a check over it.
+ *
+ * ⚠️ AND NOT "every cell is settled". The men's draw was decided on 13
+ * September and still carried 31 numbers a week later. A predicate that waited
+ * for the last stale quote to fall off would have left the heading wrong for
+ * exactly as long as the defect that is being fixed.
+ *
+ * `kind`, not the `"title"` key, so a grid that names its last column anything
+ * else still answers. No title column (a league playoff grid that stops at the
+ * final) ⇒ never decided, and the heading is unchanged — which is right: such
+ * a grid has no cell that could say who won.
+ */
+export function gridIsDecided(grid: PlayoffGrid): boolean {
+  const titleKeys = (grid.columns ?? [])
+    .filter((column) => column.kind === "title")
+    .map((column) => column.key);
+  if (titleKeys.length === 0) return false;
+  return (grid.rows ?? []).some((row) =>
+    titleKeys.some((key) => {
+      const cell = row.cells?.[key];
+      return cell?.state === "settled" && cell.note === "won";
+    })
+  );
+}
+
+/**
  * How wide a numeric column is, and what a name needs beside it.
  *
  * Measured against the layout rather than chosen: `100%` in tabular figures
