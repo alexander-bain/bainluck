@@ -684,6 +684,148 @@ def prices_have_stopped(
     return (now - stamp).total_seconds() / 86400 > max_days
 
 
+#: How far behind its OWN board's newest observation a leg may sit and still be
+#: read as part of the same column (#7537).
+#:
+#: 🔴 A THIRD CLOCK, AND IT MUST NOT BE FOLDED INTO EITHER OF THE OTHER TWO —
+#: the warning above ``PRICES_STOPPED_DAYS`` applied once more, for the same
+#: reason and with its own measurement. The parent stamp asks "is the poller
+#: still visiting this row" (2 days). ``PRICES_STOPPED_DAYS`` asks "has anybody
+#: moved a price on this market" (14 days). This asks a question neither of them
+#: can: **were these legs observed at the same time as each other**. It is a
+#: comparison WITHIN a board, not a measurement against ``now``, and that is the
+#: whole of its meaning.
+#:
+#: DERIVED FROM THE SPREAD DISTRIBUTION, in ``prices_have_stopped``'s own style.
+#: Measured on production 2026-09-20 over the 8,476 open tier-1/2 boards
+#: carrying three or more legs — boards having at least one leg more than X
+#: behind their own newest stamp:
+#:
+#:     > 12h  1825
+#:     >  1d  1735
+#:     >  2d  1447
+#:     >  3d  1395   <- plateau starts
+#:     >  5d  1385
+#:     >  7d  1360   <- chosen, plateau ends
+#:     > 10d  1188
+#:     > 14d  1115
+#:
+#: Flat from 3 to 7 days: **35 boards, 2.5%, across four days**, against 340 in
+#: the two days below it. The population is strongly bimodal — 6,452 of the
+#: 8,476 spread under one hour (a single clean pass), and the tail sits in
+#: weeks — so the constant is not delicately placed between two crowded bands.
+#:
+#: CHOSEN AT THE FAR END OF THE PLATEAU RATHER THAN THE NEAR ONE, which is the
+#: opposite of ``PRICES_STOPPED_DAYS``' choice and is a deliberate difference.
+#: That constant wanted the earliest safe catch. This one governs a WITHHOLD:
+#: the harmful direction is taking a number off a leg somebody is really
+#: quoting, so it buys 2.3x the margin for the 2.5% of catch it gives up. A
+#: board polled daily, or one whose pass straddles several hours (the 6-12h
+#: bucket holds 154 boards; one measured specimen spreads 7.34h), is nowhere
+#: near it.
+#:
+#: NOT THE RETENTION CUTOFF, and deliberately not derived from one. Codex ruled
+#: on 2026-09-20 that "retention is storage policy, not freshness evidence" and
+#: that an exclusion age may not be picked from the 48h collapse bound. This
+#: number comes from the observed spread of live boards and from nothing else.
+OBSERVATION_LAG_DAYS = 7
+
+
+def stale_observation_keys(
+    observations,
+    *,
+    max_lag_days: float = OBSERVATION_LAG_DAYS,
+) -> set:
+    """Keys whose stamp sits too far behind the newest stamp in the same group (#7537).
+
+    ``observations`` is ``(key, stamp)`` per leg, in any order. Returns the keys
+    that were NOT observed alongside the rest of their own board.
+
+    ═══ WHAT A READER SAW ═══
+
+    ``/futures/3971707`` (*Super League Rugby Championship*) printed **Leeds
+    Rhinos 30%** in its hero and its table while the chart above them drew that
+    same outcome at **39.5%**, both carrying the stamp ``14:53:14``. Fourteen
+    legs summing to **1.7200** went into the table's divisor; exactly **three**
+    of them had been observed that day. The other eleven were last written on
+    ``2026-09-06 05:46:08`` — all eleven at that identical microsecond, because
+    a poll pass stamps every row it touches with one ``now``, which is what
+    makes the column readable as a pass at all.
+
+    So the page squeezed three genuinely-quoted prices by the 41% of probability
+    mass held by eleven rows nobody had repriced in a fortnight. ``futures.py``
+    already names this fiction in its own words, one rule over: *"arithmetic
+    over a set that never existed at one instant. That is a second fiction to
+    cover the first."*
+
+    ═══ 🔴 WHY EVERY EVIDENCE-BASED RULE ALREADY SHIPPED MISSES IT ═══
+
+    This codebase screens unsupported prices properly and none of those screens
+    can see this. ``price_is_unsupported`` reads the leg's ``yes_bid`` /
+    ``yes_ask`` / ``last_price``; Hull Kingston Rovers presents
+    ``0.1900 / 0.4700``, a healthy two-sided book, and is spared. **That book is
+    a fossil too.** Kalshi's own API for ``KXSLRCHAMP-26-HKR``, read 2026-09-20,
+    answers ``yes_bid 0.0000 / yes_ask 0.9600 / last_price 0.0000 /
+    volume_24h 0`` — an empty book. Every column an evidence rule consults is
+    frozen at the same stale instant, so each fossil presents as healthy and the
+    rules acquit it on its own stale evidence. Nothing already shipped asks
+    whether the evidence is CURRENT, and that is the gap this fills.
+
+    ═══ IT DOES NOT CLAIM THE LEG IS DELISTED, AND THAT IS THE POINT ═══
+
+    All fourteen tickers read ``status = active`` at the venue. The claim here is
+    strictly the one the stamps support: *this row was not observed when the
+    others were*, so putting it in one divisor with them is arithmetic across
+    two instants. Codex ruled on 2026-09-20 that an old snapshot is not by itself
+    proof a venue stopped quoting, and required that freshness be treated as "a
+    display policy with UNKNOWN/failure behavior rather than proof of delisting".
+    This returns the UNKNOWN set; the caller withholds a number it cannot
+    source, which is the same answer the page already gives an unsupported price.
+
+    ═══ RELATIVE TO THE BOARD, NEVER TO ``now`` — THE COUNTEREXAMPLE IT ANSWERS ═══
+
+    Codex's objection to an absolute age was exact: a leg last written four days
+    ago "is equally compatible with a still-quoted leg whose ingestion has
+    failed for four days". A wall-clock rule cannot tell those apart. This one
+    never asks the wall clock. If ingestion stalls for the whole market every
+    leg ages together, the spread stays at zero, **nothing is stale and nothing
+    is withheld** — our own outage can never blank a board. Only a board the
+    poller demonstrably DID visit, writing some rows and not others, can produce
+    a stale key, and there the split is evidence about the rows rather than
+    about us.
+
+    ═══ THE EMPTY SET IS STRUCTURALLY IMPOSSIBLE, NOT MERELY GUARDED ═══
+
+    The reference is the maximum of the stamps, so the leg holding it is always
+    within zero of it and can never be stale. A caller therefore cannot be left
+    dividing by nothing — the hazard discover/331 measured on 44.8% of the
+    oldest 500 open markets under an absolute-age rule simply has no instance
+    here. Confirmed rather than assumed: over the 7,933 open tier-1/2
+    mutually-exclusive boards, the count of boards with every leg stale is
+    **0**.
+
+    ``None``, or anything that is not a datetime, is NOT stale — ``_as_utc``'s
+    reading and ``prices_have_stopped``' rule: no evidence is not evidence of
+    death, and a writer that never sets the column must not blank its board.
+    A group whose stamps are all unreadable yields the empty set.
+    """
+    stamps: dict = {}
+    for key, value in observations:
+        stamps[key] = _as_utc(value)
+
+    readable = [stamp for stamp in stamps.values() if stamp is not None]
+    if not readable:
+        return set()
+    newest = max(readable)
+
+    cutoff_seconds = max_lag_days * 86400
+    return {
+        key
+        for key, stamp in stamps.items()
+        if stamp is not None and (newest - stamp).total_seconds() > cutoff_seconds
+    }
+
+
 def is_probability_extreme(probability: float | None) -> bool:
     """True if the leader probability is at a dead extreme (<2% or >98%)."""
     if probability is None:
