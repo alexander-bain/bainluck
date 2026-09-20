@@ -302,9 +302,25 @@ export function describeCohort(
   const excluded = unchangedN > 0
     ? ` Excluded: ${fmt(unchangedN)} untraded outcomes, whose price never moved off its opening line.`
     : "";
+  // #7330 — `headline` and `detail` are rendered as ONE sentence flow
+  // (`{cohort.headline} {cohort.detail}`, page.tsx), so this clause is read
+  // immediately after the count the headline just printed. It used to open by
+  // restating that count, and production said:
+  //
+  //   Showing traded markets (449,027) 449,027 traded outcomes (including
+  //   155,127 sportsbook lines). Excluded: 298,001 untraded outcomes…
+  //
+  // Neither half is wrong alone, which is why every per-field assertion over
+  // `detail` passed; the defect exists only in the concatenation. A number
+  // repeated adjacent to itself reads as double-counting, on the one page whose
+  // whole job is to be trusted with numbers.
+  //
+  // "Of those" keeps what the restatement was carrying — that the sportsbook
+  // rows are a SUBSET of the traded cohort, not a third thing beside it, which
+  // is UX-P080 item 3's ruling and the e2e claim `sportsbook_named_as_a_subset`
+  // — and lets the headline be the only place the traded count is printed.
   const detail = hasNotApplicable
-    ? `${fmt(defaultCohortN)} traded outcomes ` +
-      `(including ${fmt(notApplicableN)} sportsbook lines).${excluded}`
+    ? `Of those, ${fmt(notApplicableN)} are sportsbook lines.${excluded}`
     : // No sportsbook rows in this payload: the cohort is the price-moved set
       // and there is no second construction to name.
       `Every traded outcome.${excluded}`;
