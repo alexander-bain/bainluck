@@ -30,6 +30,7 @@ from scripts.repair_7429_kalshi_count_leg_labels import (  # noqa: E402
     classify,
     forward_fix_refusal,
     is_rate_limited,
+    prewrite_verdict,
     unreadable_refusal,
     wrong_app_refusal,
 )
@@ -235,11 +236,60 @@ def test_producer_app_is_heavy_because_the_poll_routes_to_the_heavy_queue():
 
 def test_unreadable_events_block_apply():
     """The measured run's own shape: a plan is not a plan with holes in it."""
-    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    unreadable = [(1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")]
     refusal = unreadable_refusal(_Args(apply=True), unreadable, 252)
     assert refusal is not None
     assert "RSENATESEATS-27" in refusal
     assert "partial" in refusal
+
+
+def test_a_total_outage_refuses_apply_instead_of_reporting_nothing_to_repair():
+    """CERT-3190's named follow-up, at the exact clause that had it.
+
+    When every event 429s, nothing is corroborated, so the plan is empty —
+    and the empty-plan clause used to run FIRST and exit 0 with "nothing to
+    repair". A venue outage reporting itself as a clean population is the
+    precise defect this whole repair exists to stop, one layer up.
+    """
+    unreadable = [(1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")]
+    message, code = prewrite_verdict(_Args(apply=True), [], unreadable, 252)
+    assert code == 2, "an all-unreadable --apply exited as though it had succeeded"
+    assert "REFUSING --apply" in message
+    assert "nothing to repair" not in message
+
+
+def test_an_empty_plan_with_a_blind_spot_is_not_reported_as_a_clean_nothing():
+    """The same hole on the paths the refusal deliberately does not gate.
+
+    `--backup` and the plain dry run may run on a partial read (that is the
+    diagnostic), so they still exit 0 — but they may not print the sentence
+    that means "the venue has nothing for us".
+    """
+    unreadable = [(1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")]
+    for args in (_Args(backup=True), _Args()):
+        message, code = prewrite_verdict(args, [], unreadable, 252)
+        assert code == 0
+        assert "blind spot" in message
+        assert "UNREADABLE" in message
+
+
+def test_an_empty_plan_on_a_clean_read_is_still_a_plain_nothing_to_repair():
+    """The other arm: the loud message must not fire when there is no hole.
+
+    Without this, "blind spot" could be printed unconditionally and both of
+    the tests above would still pass.
+    """
+    message, code = prewrite_verdict(_Args(apply=True), [], [], 252)
+    assert code == 0
+    assert message == "nothing to repair"
+
+
+def test_a_dry_run_with_a_real_plan_still_writes_nothing():
+    """The clause the reordering moved past — pinned so it did not get lost."""
+    plan = [(1, "RSENATESEATS-27-E45", "E45", "45")]
+    message, code = prewrite_verdict(_Args(), plan, [], 252)
+    assert (code, message) == (0, "dry run — nothing written")
+    assert prewrite_verdict(_Args(backup=True), plan, [], 252) == (None, None)
 
 
 def test_a_clean_read_does_not_block_apply():
@@ -249,7 +299,7 @@ def test_a_clean_read_does_not_block_apply():
 
 def test_allow_unreadable_is_the_deliberate_partial():
     """A genuinely dead event must not block the repair forever."""
-    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    unreadable = [(1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")]
     args = _Args(apply=True, allow_unreadable=True)
     assert unreadable_refusal(args, unreadable, 252) is None
 
@@ -262,7 +312,7 @@ def test_backup_alone_is_not_gated_on_readability():
     would make the diagnostic run impossible on exactly the bad afternoon
     you need it.
     """
-    unreadable = [(1, "RSENATESEATS-27", "venue_error")]
+    unreadable = [(1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")]
     assert unreadable_refusal(_Args(backup=True), unreadable, 252) is None
 
 
@@ -375,12 +425,25 @@ async def test_a_non_429_failure_is_not_retried():
 
 
 class _Row:
-    """A candidate row as `run`'s SQL hands it over."""
+    """A candidate row as `run`'s SQL hands it over.
 
-    def __init__(self, id, name, external_id):
+    `event_ticker` is here because `_CANDIDATES_SQL` selects it
+    (`m.external_id AS event_ticker`) and `bucket_event` reads it. The fake
+    used to omit it, which is why the refusal could count leg tickers as
+    events for as long as it did: the only rows the assertions ever saw were
+    ones where the two were indistinguishable.
+    """
+
+    def __init__(self, id, name, external_id, event_ticker=None):
         self.id = id
         self.name = name
         self.external_id = external_id
+        # Default mirrors the real relationship (leg = event + "-E<n>") rather
+        # than reusing the leg ticker, so a test that forgets it still fails
+        # honestly instead of agreeing with a bug.
+        self.event_ticker = (
+            event_ticker if event_ticker is not None else external_id.rsplit("-", 1)[0]
+        )
 
 
 def test_a_failed_venue_read_buckets_unreadable_and_never_silent():
@@ -395,9 +458,30 @@ def test_a_failed_venue_read_buckets_unreadable_and_never_silent():
     plan, refused, silent, already, unreadable = bucket_event(
         rows, None, _exact_count_label, error=Exception("429 Too Many Requests")
     )
-    assert unreadable == [(1, "RSENATESEATS-27-E45", "venue_error")]
+    assert unreadable == [
+        (1, "RSENATESEATS-27-E45", "RSENATESEATS-27", "venue_error")
+    ]
     assert silent == [], "a read we never got is being reported as the venue's answer"
     assert (plan, refused, already) == ([], [], [])
+
+
+def test_the_refusal_counts_events_not_legs():
+    """The count a reader uses to decide whether to force `--allow-unreadable`.
+
+    Every candidate leg carries its own ticker, so folding leg and event into
+    one slot made the measured outage report "252 events" for what was 149.
+    Two legs of ONE event here: an off-by-a-factor message would say 2.
+    """
+    rows = [
+        _Row(1, "E45", "RSENATESEATS-27-E45"),
+        _Row(2, "E57", "RSENATESEATS-27-E57"),
+    ]
+    _, _, _, _, unreadable = bucket_event(
+        rows, None, _exact_count_label, error=Exception("429 Too Many Requests")
+    )
+    refusal = unreadable_refusal(_Args(apply=True), unreadable, 252)
+    assert "2 of 252 candidate rows (1 events)" in refusal
+    assert "RSENATESEATS-27-E45" not in refusal, "a leg ticker is printed as an event"
 
 
 def test_an_answered_event_still_routes_through_the_four_venue_buckets():

@@ -238,7 +238,7 @@ def unreadable_refusal(args, unreadable, candidates):
     if args.allow_unreadable:
         return None
 
-    events = sorted({tkr for _, tkr, _ in unreadable})
+    events = sorted({event for _, _, event, _ in unreadable})
     return (
         f"REFUSING --apply: {len(unreadable)} of {candidates} candidate rows "
         f"({len(events)} events) could not be read from the venue at all. "
@@ -248,6 +248,55 @@ def unreadable_refusal(args, unreadable, candidates):
         "corroborated rows anyway and accept a partial. "
         f"First unreadable events: {', '.join(events[:5])}"
     )
+
+
+def prewrite_verdict(args, plan, unreadable, candidates):
+    """Everything `run` decides between bucketing and writing: (message, code).
+
+    A `code` of None means proceed to the backup/write; anything else is the
+    process exit status and `message` is what the operator reads.
+
+    Extracted for the reason `bucket_event` and `classify` were — a decision
+    inside a coroutine that needs a database and the network is a decision no
+    test can reach — and the ORDER of these three clauses is the whole reason
+    it needed reaching. CERT-3190 shipped them in the wrong one:
+
+        if not plan:  print("nothing to repair"); return 0   # <- fired first
+        ...
+        refusal = unreadable_refusal(...); return 2          # <- never ran
+
+    When Kalshi 429s on every event nothing is corroborated, so the plan is
+    empty for want of an ANSWER rather than for want of work, and that order
+    made a total venue outage exit 0 as a clean population — this repair's own
+    thesis leaking into its exit code (gotcha #53: "it returned" is not "it
+    worked"). The refusal now goes first.
+
+    It is also before the BACKUP, which matters separately: a backup taken
+    from a blind-spotted plan is a manifest of the wrong set, and `--apply`
+    checks coverage against exactly that manifest, so a later reader finds the
+    two agreeing with each other and disagreeing with the venue.
+    """
+    refusal = unreadable_refusal(args, unreadable, candidates)
+    if refusal:
+        return refusal, 2
+
+    if not plan:
+        # Still reachable with a blind spot on a dry run or `--backup`, where
+        # the refusal deliberately stays silent (it gates `--apply` only).
+        # Those runs must still not read as a clean nothing.
+        if unreadable:
+            return (
+                f"nothing to repair — but {len(unreadable)} of {candidates} "
+                "candidate rows were UNREADABLE, so this is a blind spot, "
+                "not an empty population",
+                0,
+            )
+        return "nothing to repair", 0
+
+    if not (args.backup or args.apply):
+        return "dry run — nothing written", 0
+
+    return None, None
 
 
 def wrong_app_refusal(args):
@@ -331,7 +380,18 @@ def bucket_event(rows, venue, label_fn, error=None):
     venue read raised, or None if it answered.
     """
     if error is not None:
-        return [], [], [], [], [(r.id, r.external_id, "venue_error") for r in rows]
+        # The EVENT ticker is carried beside the leg ticker, not derived from
+        # it: `o.external_id` is the leg (`RSENATESEATS-27-E45`) and
+        # `m.external_id` is the event (`RSENATESEATS-27`), and the refusal
+        # counts events. Folding the two made a 252-leg outage report itself
+        # as 252 events and print legs under "First unreadable events".
+        return (
+            [],
+            [],
+            [],
+            [],
+            [(r.id, r.external_id, r.event_ticker, "venue_error") for r in rows],
+        )
 
     plan, refused, silent, already = classify(
         [(r.id, r.name, r.external_id) for r in rows], venue, label_fn
@@ -503,23 +563,10 @@ async def run(args):
         for oid, tkr, sub in refused[: args.show]:
             print(f"    REFUSE  {tkr:<44} venue yes_sub_title={sub!r}")
 
-        if not plan:
-            print("\nnothing to repair")
-            return 0
-
-        if not (args.backup or args.apply):
-            print("\ndry run — nothing written")
-            return 0
-
-        # Before the backup, not just before the write: a backup taken from a
-        # blind-spotted plan is a manifest of the wrong set, and `--apply`
-        # checks coverage against exactly that manifest, so a later reader
-        # would find the two agreeing with each other and disagreeing with
-        # the venue.
-        refusal = unreadable_refusal(args, unreadable, len(rows))
-        if refusal:
-            print(f"\n{refusal}")
-            return 2
+        message, code = prewrite_verdict(args, plan, unreadable, len(rows))
+        if code is not None:
+            print(f"\n{message}")
+            return code
 
         outcome_ids = [oid for oid, _, _, _ in plan]
 
