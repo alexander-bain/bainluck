@@ -28,6 +28,7 @@ from app.utils.odds_math import (
     h2h_pair_on_the_full_board,
     project_scores,
 )
+from app.utils.book_consensus import median_invents_its_answer
 from app.utils.polling_config import compute_effective_interval
 from app.tasks.base import get_task_session, run_async
 from app.tasks.config import (
@@ -848,6 +849,15 @@ async def _ingest_event_odds(
         betting_val = round(avg_home, 4)
         _book_count = len(all_home_probs)
 
+        # #7523: with an EVEN book count the median interpolates its two middle
+        # readings, so a market caught mid-move publishes the empty space
+        # between the books that have repriced and the books that have not.
+        # Event 15305946 (Auxerre leading 2-1 at 85') served `betting 0.5005`
+        # over six books quoting 0.164-0.934 — the midpoint of the gap, quoted
+        # by none of them, rendered "50%" on the top card of Discover, and the
+        # 50/50 is what fired `signal:very_close` and ranked it there.
+        _split_books = median_invents_its_answer(all_home_probs)
+
         # #5426: a partial-coverage caller under the floor is NOT ruling 051's
         # case. Ruling 051 reads a thin book count as evidence the market
         # thinned; for a caller that asked one region for one market it is
@@ -865,6 +875,35 @@ async def _ingest_event_odds(
                 "drop: a narrow fetch's book count is not market evidence "
                 "(#5426).",
                 event_id, _book_count, BETTING_BOOK_FLOOR, betting_val,
+            )
+        elif _split_books is not None:
+            # ── #7523: A SPLIT MARKET IS NOT A CONSENSUS EITHER ──────────────
+            # Ruling 051's sentence, one case over: nothing downstream can tell
+            # "the books say 50%" from "the books say 20% and 80% and we split
+            # the difference". Publishing the midpoint is worse than publishing
+            # nothing, because the midpoint of ANY wide split reads as an even
+            # game — the single most misleading thing a live card can say, and
+            # it arrives on the goal, which is the minute a reader is watching.
+            #
+            # So the key goes, down the same path the floor drop uses, and the
+            # blend re-weights over whatever is still speaking. On the specimen
+            # that is Kalshi's verified live reading and the card prints 84%.
+            # `betting_book_count` is still written below, so the drop is
+            # visible to a human rather than silent (ruling 051's own clause).
+            #
+            # The rejected cheaper fix is in `book_consensus`'s docstring:
+            # `median_low` always returns a price some book quoted, and on this
+            # 3/3 split it returns the STALE cluster — 20% for a team leading
+            # 2-1. A real-but-superseded number is not the answer either.
+            _current = dict(event.win_probability_sources or {})
+            _current.pop("betting", None)
+            logger.info(
+                "event %s: betting DROPPED as a split market — %d books, the "
+                "middle pair %.4f/%.4f disagree by %.1f points (would have "
+                "written the midpoint %.4f, which no book quoted); blend "
+                "re-weights over remaining sources (#7523)",
+                event_id, _book_count, _split_books[0], _split_books[1],
+                (_split_books[1] - _split_books[0]) * 100, betting_val,
             )
         elif _book_count >= BETTING_BOOK_FLOOR:
             _current = stamp_source_reading(
