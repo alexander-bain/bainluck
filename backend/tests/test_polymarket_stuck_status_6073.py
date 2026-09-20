@@ -56,9 +56,26 @@ from app.tasks.polymarket import (
 
 UTC = timezone.utc
 
-#: A fixed clock. Offsets are taken FROM it, never from `utcnow()` — gotcha #44:
-#: an arm that branches on the wall clock changes its mind at midnight.
-NOW = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+#: ⏰ #7611 — THIS WAS A DATETIME LITERAL AND IT WAS DUE TO RED MASTER ON
+#: **2026-09-24T10:00:00Z**. Found by the clock sweep that followed
+#: `test_settled_champion_point_stamp_6360.py` doing exactly this at
+#: 2026-09-20T21:33:24Z and blocking every lane's merge.
+#:
+#: Offsets are taken FROM it and nothing here branches on the wall clock — that
+#: much was already true, and it is not enough. `test_the_pass_rescues_the_row_
+#: and_commits` and its sibling go through `rescue_stuck_future_status_events`,
+#: which supplies the REAL clock; only the `stuck_status_target` arms get
+#: `now=NOW`. So `FUTURE` had to be genuinely ahead of wall time, and
+#: `NOW + 9d22h` off a literal 2026-09-14 stopped being ahead of it on the 24th.
+#: `clock_sweep.py` on the unfixed file: 2/12 points FAILED at the far-future
+#: marks, and a `--at 2026-09-24T12:00` point reproduces it exactly.
+#:
+#: Offset from the clock, no branch, no truncation — the shape gotcha #44
+#: prescribes. `TestTheAnchorCannotAgeOut` in the 6360 file is the worked
+#: example of the guard; here the sweep is the guard, and this file is now
+#: invariant at all 12 of its points.
+ANCHOR_LAG = timedelta(days=1)  # < FUTURE's 9d22h, so FUTURE stays ahead of now
+NOW = datetime.now(UTC) - ANCHOR_LAG
 
 FUTURE = NOW + timedelta(days=9, hours=22)
 PAST = NOW - timedelta(hours=6)
