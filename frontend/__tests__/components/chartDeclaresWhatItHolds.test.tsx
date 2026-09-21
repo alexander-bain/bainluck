@@ -76,7 +76,11 @@ describe("FuturesChart", () => {
     const html = renderToStaticMarkup(<FuturesChart historyData={outcome(holed)} />);
 
     expect(html).toContain('data-series-state="gapped"');
-    expect(html).toContain("No numbers for 14 days in this stretch");
+    // 345.6h is 14.4 days. This read "14 days" until #7491 — understating the
+    // hole, and so our own coverage gap, by ~10h. It now rounds up: a sentence
+    // confessing missing data is wrong in the direction that costs us, not the
+    // one that flatters us. The 14-day FIXTURE is unchanged; only the rounding.
+    expect(html).toContain("No numbers for 15 days in this stretch");
   });
 
   it("does not fire on a single skipped beat", () => {

@@ -157,26 +157,46 @@ function median(sorted: number[]): number {
 }
 
 /**
- * "9 days" / "6 hours" / "20 min" — a SPAN, not an age.
+ * "10 days" / "6 hours" / "20 min" — the size of a HOLE, not an age.
  *
  * Deliberately not `freshnessAge`, which formats an age and suffixes "ago".
  * A hole in the middle of a series did not happen "ago" relative to anything a
  * reader can see, so borrowing that formatter would produce "no numbers for 9
- * days ago". Same rounding rule as its neighbour — always DOWN, so a hole is
- * never flattered into a smaller one.
+ * days ago".
+ *
+ * ⚠️ ROUNDS UP, and the direction is the whole point of this function (#7491).
+ * The predecessor floored and its own docstring gave the reason as "so a hole is
+ * never flattered into a smaller one" — which is exactly what flooring does. A
+ * 3-day-23-hour hole printed "No numbers for 3 days", understating our own gap
+ * by 23 hours; a 9.9-day hole printed "9 days". For a span we are CLAIMING to
+ * cover, rounding down under-claims and is conservative; for a hole we are
+ * CONFESSING, rounding down over-claims our coverage, so the conservative
+ * direction inverts. Both of this function's call sites confess a hole — the
+ * chart's "No numbers for … in this stretch" and /politics' "the longest is …"
+ * — so it rounds up, and the name says which of the two it is.
+ *
+ * `seriesWindowLabel` below still FLOORS and must keep flooring: it names a
+ * window we are claiming, where "29.6 days headed 30d" is the overstatement
+ * #3710 exists to stop. The two are independent implementations that share a
+ * documented rule and not a line of code, which is why this direction could be
+ * inverted without touching that one. The guard asserts both directions at once.
+ *
+ * Each unit is ceiled from the RAW MILLISECONDS rather than from the previous
+ * unit's float, so an exact multiple can never be inflated by rounding dust —
+ * exactly four days is "4 days", not "5".
  */
-export function formatSpan(ms: number): string {
+export function formatGapSpan(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "0 min";
   const hours = ms / HOUR_MS;
   if (hours < 1) {
-    const minutes = Math.max(1, Math.floor(hours * 60));
+    const minutes = Math.max(1, Math.ceil(ms / (60 * 1000)));
     return `${minutes} min`;
   }
   if (hours < 48) {
-    const h = Math.floor(hours);
+    const h = Math.ceil(ms / HOUR_MS);
     return `${h} hour${h === 1 ? "" : "s"}`;
   }
-  const days = Math.floor(hours / 24);
+  const days = Math.ceil(ms / (24 * HOUR_MS));
   return `${days} days`;
 }
 
@@ -201,7 +221,8 @@ export function formatSpan(ms: number): string {
  * the outer edges of everything drawn — since that is the window a reader
  * scanning the column is actually being shown.
  *
- * Rounds DOWN, the same rule `formatSpan` documents, and here the direction is
+ * Rounds DOWN — the opposite of `formatGapSpan` next door, deliberately (#7491),
+ * because that one sizes a hole and this one names a window. Here the direction is
  * load-bearing rather than tidy: rounding up would let a 29.6-day series be
  * headed "30d", which is the overstatement this whole function exists to stop.
  * Compact units because it renders inside a table heading, not a sentence.
@@ -347,7 +368,7 @@ export function seriesFreshness(
     return {
       ...base,
       state: "gapped",
-      note: `No numbers for ${formatSpan(largestGapMs)} in this stretch`,
+      note: `No numbers for ${formatGapSpan(largestGapMs)} in this stretch`,
     };
   }
 

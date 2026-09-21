@@ -153,7 +153,10 @@ describe("#3659 FuturesChart — the solid line does not cross the hole", () => 
     const html = renderToStaticMarkup(<FuturesChart historyData={HOLED} showAxes />);
 
     expect(html).toContain('data-series-state="gapped"');
-    expect(html).toContain("No numbers for 14 days in this stretch");
+    // #7491 rounds a confessed hole UP: 345.6h is 14.4 days, which read as
+    // "14 days". What this test is actually about — one threshold driving both
+    // the caption and the break — is untouched; only the printed number moved.
+    expect(html).toContain("No numbers for 15 days in this stretch");
     expect(seriesPaths(html).filter((p) => p.dash === "1 5")).toHaveLength(1);
   });
 
