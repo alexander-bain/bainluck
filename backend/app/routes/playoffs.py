@@ -637,6 +637,32 @@ def _canon_ticker(value: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
 
+# #7829. Venue ticker suffix → our ``Team.abbreviation``, for the cases where
+# the two spell ONE identifier differently by more than punctuation. Kalshi
+# tickers Texas A&M ``TXAM`` (``KXMARMADROUND-27R32-TXAM``); our abbreviation is
+# ``TA&M``, which :func:`_canon_ticker` reduces to ``TAM``. Same school, same id,
+# two spellings — so without a declared equality the anchor sees zero hits and
+# falls back to the length answer, which is *Texas A&M-CC*, and the Aggies' five
+# bracket cells land on an unserved row.
+#
+# This is a DECLARED equality, never a loosened comparison. A substring or fuzzy
+# test between suffix and abbreviation would reintroduce exactly the guessing
+# #7821 removed, and it is especially unsafe here because the abbreviation column
+# is measurably dirty — *California Golden Bears* carries ``MIA`` and *Florida
+# A&M Rattlers* carries ``MSU``. An alias can only add one named, auditable
+# equivalent that a reader can check against the venue; it cannot widen what any
+# other key matches. The exactly-one-hit rule below still arbitrates, so a second
+# hit still fails closed.
+#
+# Keys and values are both already canonical (see the guard in
+# ``tests/test_grid_ticker_suffix_alias_7829.py``): a non-canonical entry such as
+# ``"TA&M"`` would silently never match, which is the likeliest way to get this
+# map wrong.
+_TICKER_SUFFIX_ALIASES: dict[str, str] = {
+    "TXAM": "TAM",  # Texas A&M Aggies — Kalshi `TXAM`, our `TA&M`
+}
+
+
 def _resolve_ambiguous_merge(
     short_name: str,
     candidates: list[str],
@@ -668,8 +694,15 @@ def _resolve_ambiguous_merge(
       answer may be wrong, but it is wrong in a way that is already measured;
       replacing it with a second guess is how the "fewest remaining words" rule
       traded Florida for California.
+
+    #7829 adds :data:`_TICKER_SUFFIX_ALIASES` — a declared equality for the
+    handful of ids the venue and we spell differently (Kalshi ``TXAM`` vs our
+    ``TA&M``). It widens the suffix SET, never the comparison, so both refusals
+    above are untouched: a key with no alias entry behaves exactly as before, and
+    an aliased key that still hits two candidates still falls back.
     """
     suffixes = {c for c in (_canon_ticker(s) for s in ticker_suffixes.get(short_name, ())) if c}
+    suffixes |= {a for s in suffixes if (a := _TICKER_SUFFIX_ALIASES.get(s))}
     if suffixes:
         hits = [
             c for c in candidates
