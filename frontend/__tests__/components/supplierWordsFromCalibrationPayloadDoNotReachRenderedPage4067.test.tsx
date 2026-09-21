@@ -46,6 +46,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import CalibrationPage from "@/app/calibration/page";
 import type { CalibrationData } from "@/lib/api";
+// #7734 gave eight producer titles reader copy, this fixture's among them. The
+// anchor below goes through the same helper the page does: what this suite claims
+// about the log is that date, title and row count survive while the paragraph
+// does not — not which words the title is made of (pinned by value in
+// `correctionsLogSpeaksReaderEnglish7734`).
+import { correctionTitle } from "@/lib/calibrationCorrections";
 
 // ---------------------------------------------------------------------------
 // The page is a `"use client"` component behind SWR. Mocking the hook — rather
@@ -300,7 +306,7 @@ describe("#4067 — no supplier word from /api/calibration reaches the rendered 
   it("keeps the corrections log's date, title and row count without its paragraph", () => {
     const text = visibleText(renderPage());
     expect(text).toContain("2026-07-11");
-    expect(text).toContain("Soccer 2-way (draw-omission) historical exclusion");
+    expect(text).toContain(correctionTitle("Soccer 2-way (draw-omission) historical exclusion"));
     expect(text).toContain("1,234 rows");
     // What goes is the engineer's paragraph beneath each entry.
     //
