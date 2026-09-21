@@ -248,8 +248,14 @@ _LADDER_RISE_RE = re.compile(
 # The interior rung of a signed ladder. On an UNSIGNED ladder "no change" is not
 # a magnitude at all, and "hold" is a team as often as a rate decision — the
 # bidirectional gate is what makes reading these as zero safe.
+#
+# "maintains" is here because the venue writes it: the eight live "Fed decision
+# in <month>" ladders phrase their hold as "Fed maintains rate", not "No change",
+# and that rung is the modal outcome of the card. Read off the live population
+# rather than guessed — a lexicon written from the two markets in the issue would
+# have left those eight without their most likely outcome.
 _LADDER_ZERO_RE = re.compile(
-    r"\b(?:no\s+change|unchanged|no\s+hike|no\s+cut|hold|holds)\b",
+    r"\b(?:no\s+change|unchanged|no\s+hike|no\s+cut|maintains?|hold|holds)\b",
     re.I,
 )
 
@@ -519,10 +525,13 @@ def _threshold_points(
         [_clean_text(outcome.get("name")) for outcome in outcomes]
     )
 
+    zero_points: list[dict[str, Any]] = []
+
     for outcome in outcomes:
         outcome_name = _clean_text(outcome.get("name"))
         # Exactly ONE rung per outcome, on one scale (UX-P005 class b).
         resolved = _outcome_threshold_value(outcome_name)
+        is_zero_rung = False
         if resolved is None:
             # "No change" carries no number, so it is not threshold-shaped and
             # never was a rung -- yet on a signed axis it is the one rung the
@@ -530,11 +539,15 @@ def _threshold_points(
             if not (signed_axis and _LADDER_ZERO_RE.search(outcome_name)):
                 continue
             resolved = (0.0, "", "exact")
+            is_zero_rung = True
         value, unit, direction = resolved
         if signed_axis and _LADDER_FALL_RE.search(outcome_name):
-            value = -value
+            # `-0.0` is a real float and it reaches the payload: the live "NYC
+            # population change" ladder opens on "Decrease 0-0.99%", whose
+            # magnitude is 0. Normalise it so no served rung is negative zero.
+            value = -value if value else 0.0
             direction = _MIRRORED_DIRECTION.get(direction, direction)
-        points.append(
+        (zero_points if is_zero_rung else points).append(
             {
                 "source": "outcome",
                 "label": outcome_name,
@@ -548,6 +561,15 @@ def _threshold_points(
                 ),
             }
         )
+
+    # A zero rung is an ADDITION to a ladder, never a ladder by itself. The live
+    # "US test scores in Math in 2026?" set is the case: "Significant decrease /
+    # No significant difference / Significant increase" signs the axis on its
+    # direction words while carrying no number anywhere, so admitting its middle
+    # label alone would mint a one-rung "ladder" out of a market that has no
+    # magnitudes at all.
+    if points:
+        points.extend(zero_points)
 
     # Monotonic display: a ladder read top-to-bottom must not double back.
     # Two rungs may legitimately share a value (#4226: a band ladder's

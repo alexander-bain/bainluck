@@ -201,6 +201,94 @@ def test_a_currency_code_is_not_a_basis_point():
     assert _outcome_threshold_value("GBP/USD above 1.30") == (1.3, "", "exact")
 
 
+def test_the_venues_own_word_for_hold_is_the_zero_rung():
+    # The lexicon is read off the live population, not off the two markets in
+    # the issue. Eight live "Fed decision in <month>" ladders phrase their hold
+    # as "Fed maintains rate" — and it is the MODAL outcome, 65% here. A lexicon
+    # of only "no change"/"unchanged" leaves those eight cards without their most
+    # likely outcome while looking entirely correct.
+    points = _ladder(
+        "Fed decision in Jan 2028?",
+        [
+            ("Cut 25bps", 0.20),
+            ("Hike 25bps", 0.05),
+            ("Hike >25bps", 0.02),
+            ("Cut >25bps", 0.08),
+            ("Fed maintains rate", 0.65),
+        ],
+    )
+
+    assert len(points) == 5
+    assert _by_label(points)["Fed maintains rate"] == 0.0
+    assert max(points, key=lambda p: p["probability"])["label"] == "Fed maintains rate"
+
+
+def test_a_zero_rung_is_never_a_ladder_by_itself():
+    # A signed set that carries a hold label and NO number anywhere. Without the
+    # guard this mints a one-rung "ladder" out of a market that has no magnitudes
+    # at all — and a one-row heatmap falls through PAST the distribution branch
+    # to the plain leader card, taking the whole field with it (the UX-P008
+    # failure). Verified to REACH the guard: with it removed this returns a lone
+    # rung at 0.0, so the assertion is not passing for some other reason.
+    points = _ladder(
+        "Central bank decision",
+        [("Rate hike", 0.3), ("Rate cut", 0.3), ("No change", 0.4)],
+    )
+
+    assert points == []
+
+
+def test_a_signed_set_with_no_magnitudes_draws_no_ladder():
+    # The live specimen, "US test scores in Math in 2026?". Its direction words
+    # sign the axis while it carries no number anywhere. Refused one step
+    # earlier than the case above — "No significant difference" is not in the
+    # zero lexicon and deliberately not added to it, because a market with no
+    # magnitudes has no ladder to join.
+    points = _ladder(
+        "US test scores in Math in 2026?",
+        [
+            ("Significant decrease", 0.25),
+            ("No significant difference", 0.5),
+            ("Significant increase", 0.25),
+        ],
+    )
+
+    assert points == []
+
+
+def test_a_percent_change_ladder_signs_the_same_way():
+    # Not a rate market: the live "NYC population change" ladder. Before, every
+    # decrease collided with the increase of the same size — 1.0, 1.0, 2.0, 2.0,
+    # 3.0, 3.0 — so three pairs of opposite outcomes shared three bars.
+    labels = [
+        "Decrease 1-1.99%",
+        "Decrease 0-0.99%",
+        "Decrease 3% or more",
+        "Decrease 2-2.99%",
+        "Increase 0.01-0.99%",
+        "Increase 1-1.99%",
+        "Increase 2-2.99%",
+        "Increase 3%",
+    ]
+    points = _ladder(
+        "NYC population change (July 2025 - July 2027)?",
+        [(label, 0.125) for label in labels],
+    )
+
+    assert [p["label"] for p in points] == [
+        "Decrease 3% or more",
+        "Decrease 2-2.99%",
+        "Decrease 1-1.99%",
+        "Decrease 0-0.99%",
+        "Increase 0.01-0.99%",
+        "Increase 1-1.99%",
+        "Increase 2-2.99%",
+        "Increase 3%",
+    ]
+    # No served rung is negative zero — "Decrease 0-0.99%" has magnitude 0.
+    assert not any(str(p["value"]) == "-0.0" for p in points)
+
+
 def test_the_cumulative_coherence_guard_does_not_eat_a_signed_ladder():
     # Interaction with #4610/#4679/#4680. That guard reads a ladder as CUMULATIVE
     # — each rung a strict subset of every looser one — and drops rungs whose
