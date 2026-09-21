@@ -265,6 +265,20 @@ def _corpus() -> list[tuple]:
     # future reach, `nine_days_ago` below its floor, `future` beyond its reach.
     soon = now + timedelta(hours=1)
     tomorrow = now + timedelta(days=1)
+    # #7857 — band 4's distance. Deliberately far past `future` (+20d): the
+    # specimen missed band 3's ceiling by 466 days, and a fixture that only just
+    # clears it would pass against a build whose ceiling was merely loosened
+    # rather than inverted.
+    years_out = now + timedelta(days=466)
+    # `L4R` alone among band 4's rows is `resolved`, so it is the only one that
+    # can enter band 1's statement at all — and `_CEILING_ONLY` drops band 1's
+    # upper bound and asserts the FURTHEST-FUTURE row parks at the head. At
+    # `years_out` this row displaced `EEE-26DEC31` there and reddened that arm
+    # for a reason that has nothing to do with #7857. It is held just past band
+    # 3's +2d reach instead: that is the only distance its own clause cares
+    # about (it is refused by the inverted band-1 limb, not by the date), and it
+    # leaves the neighbouring guard measuring what it was written to measure.
+    beyond_reach_short = now + timedelta(days=10)
     nine_days_ago = nine_days
     blank = [("leg-a", None, None), ("leg-b", None, None)]
     return [
@@ -403,6 +417,74 @@ def _corpus() -> list[tuple]:
         # own settlement path and this band must not reach into it.
         (
             "early_polymarket", "polymarket", "open", "SSS-26SEP14", None, soon,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        # ------------------------------------------------------------------
+        # #7857 — BAND 4's corpus. Every row here is `resolution_date` BEYOND
+        # band 3's future reach, which is the one thing that makes it band 4's.
+        # `QQQ-26DEC31` above is already such a row and already has an assertion
+        # that band 3 refuses it; band 4 must TAKE it, and that pair is the
+        # cleanest statement of the ship there is.
+        #
+        # The `L4…` prefix is chosen so these sort together and AFTER every
+        # letter the existing corpus uses for a band-4 member, which is what lets
+        # the cursor arms assert an exact walk rather than a set.
+        # ------------------------------------------------------------------
+        #
+        # THE SPECIMEN, in the shape production served it. Kalshi market 112815
+        # "Next Fed rate hike?" — a cumulative ladder whose last rung is dated
+        # 2028 and which the venue settled `yes` on 2026-09-16, 466 days early.
+        # Three legs already carry the venue's tier-3 stamp and none is a winner,
+        # so we hold no answer and the page showed a 95% hero over a live chart.
+        (
+            "longdated_ladder", "kalshi", "open", "L4A-28JAN01", None, years_out,
+            [
+                ("leg-a", False, "api_settlement"),
+                ("leg-b", False, "api_settlement"),
+                ("leg-c", False, "api_settlement"),
+            ],
+        ),
+        # Two more members, purely so the cursor has somewhere to walk TO. A
+        # one-member band cannot tell "the cursor advanced" from "the statement
+        # returned everything it had".
+        (
+            "longdated_second", "kalshi", "open", "L4B-29JAN01", None, years_out,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        (
+            "longdated_third", "kalshi", "open", "L4C-27JUL01", None, years_out,
+            [("leg-a", False, "settlement_sync"), ("leg-b", False, None)],
+        ),
+        # NOT selected — we already hold the venue's answer. Band 3's winner
+        # clause, carried into band 4; without it a graded ladder is re-asked
+        # about for ever and never leaves the cursor's population.
+        (
+            "longdated_graded", "kalshi", "open", "L4X-28JAN01", None, years_out,
+            [("leg-a", True, "api_settlement"), ("leg-b", False, "api_settlement")],
+        ),
+        # NOT selected — no tier-3 leg, so nothing says the venue has settled any
+        # part of this. This is the clause that keeps the band from becoming "every
+        # long-dated Kalshi market in the book", which is most of the book.
+        (
+            "longdated_untouched", "kalshi", "open", "L4Y-28JAN01", None, years_out,
+            blank,
+        ),
+        # NOT selected — not Kalshi. Same reason as `SSS` above.
+        (
+            "longdated_polymarket", "polymarket", "open", "L4Z-28JAN01", None,
+            years_out,
+            [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
+        ),
+        # NOT selected — BAND 2 IS COMING FOR IT, and this row is why the
+        # inverted band-1 clause is correct rather than a hole. It is `resolved`
+        # with one ordinary ungraded leg. Band 1's own window is
+        # `COALESCE(settled_at, resolution_date) <= NOW()`, so a years-out row
+        # fails it — but band 2 has NO date window at all, only `status =
+        # 'resolved'` + a non-authoritative leg + the cursor, so it sweeps this
+        # up on its alphabetical walk. Band 4 must not duplicate that work.
+        (
+            "longdated_band_two_owns_it", "kalshi", "resolved", "L4R-28JAN01",
+            None, beyond_reach_short,
             [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
         ),
     ]
@@ -1215,3 +1297,167 @@ async def test_the_band_respects_its_own_budget(pg_engine):
     assert len(early) == 1
     assert early == (await _select_early(pg_engine))[:1]
     assert await _select_early(pg_engine, limit=0) == []
+
+
+# ---------------------------------------------------------------------------
+# #7857 — BAND 4: the venue settled it YEARS before its own end date
+# ---------------------------------------------------------------------------
+#
+# THE READER-VISIBLE SHIP. `/futures/112815` "Next Fed rate hike?" served a 95%
+# hero, "Resolves Dec 31, 2027" and a live chart over a question Kalshi answered
+# `yes` on 2026-09-16T19:08:29Z. Measured on production 2026-09-21 by running the
+# SHIPPED band-3 clause against that row: every gate passes except the ceiling,
+# which it misses by 466 days.
+#
+# WHY NO OTHER BAND WAS COMING. The venue RETIRED the `FEDHIKE` series into
+# successor `KXFEDHIKE` (read live per notice 26/27: `/markets?series_ticker=
+# FEDHIKE` returns 0 markets in EVERY status; `/markets?series_ticker=KXFEDHIKE`
+# returns the three finalized rungs with their market and event tickers
+# unchanged). Discovery and polling key on the SERIES, so `futures_markets.status`
+# never became `'resolved'` and bands 1-2 are blind to it — gotcha #33 one step
+# on. The grader, though, knocks on `GET /events/{ticker}` with the EVENT ticker,
+# which is what we store, and `/events/FEDHIKE` still answers **200** with the
+# three finalized markets. The door was never shut; only the band that uses it
+# could not see the row. That is why this fix is a selection clause and not a
+# poller change.
+
+
+async def _select_longdated(engine, limit: int = 50, cursor: str = ""):
+    from app.tasks.backfill_winners import (
+        _select_kalshi_early_settled_longdated_tickers,
+    )
+
+    async with engine.connect() as conn:
+        return await _select_kalshi_early_settled_longdated_tickers(
+            conn, limit, cursor
+        )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_ladder_the_venue_settled_years_early_is_selected(pg_engine):
+    """THE SHIP. The specimen's shape reaches a band, and it is this one.
+
+    `L4A-28JAN01` is market 112815's shape: open, dated 466 days out, three legs
+    carrying the venue's tier-3 stamp and not one of them a winner.
+    """
+    longdated = await _select_longdated(pg_engine)
+
+    assert "L4A-28JAN01" in longdated
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_specimen_is_invisible_to_every_other_band(pg_engine):
+    """The control that makes the arm above mean anything.
+
+    If any other band could already see this row, the ship is unnecessary and
+    every assertion in this section is vacuous. Bands 1 and 2 are asked with a
+    budget big enough that only their WHERE clauses can exclude it, and band 3
+    with its own.
+    """
+    fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+    early = await _select_early(pg_engine, limit=2000)
+
+    assert "L4A-28JAN01" not in fresh, "band 1 needs status='resolved'"
+    assert "L4A-28JAN01" not in tail, "band 2 needs status='resolved'"
+    assert "L4A-28JAN01" not in early, "band 3's ceiling is what this ship inverts"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_three_and_band_four_are_disjoint_in_both_directions(pg_engine):
+    """gotcha #34 + gotcha #43 — neither band may take the other's ticker.
+
+    Both directions, because one is not evidence of the other: a band 4 that
+    accidentally widened to band 3's population would still pass "band 3 does not
+    hold L4A". `QQQ-26DEC31` is the corpus's pre-existing row asserting band 3
+    refuses a far-future market; it is band 4's by construction, and that pairing
+    is the ship stated in one line.
+    """
+    early = set(await _select_early(pg_engine, limit=2000))
+    longdated = set(await _select_longdated(pg_engine, limit=2000))
+
+    assert not (early & longdated), (
+        f"the bands overlap on {sorted(early & longdated)} — one cycle would ask "
+        "the venue about the same ticker twice and the budgets stop being additive"
+    )
+    # ... and neither is empty, or "disjoint" is true for a band that selects
+    # nothing at all.
+    assert early and longdated
+    assert "QQQ-26DEC31" in longdated
+    assert "QQQ-26DEC31" not in early
+
+
+@needs_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ticker,why",
+    [
+        ("L4X-28JAN01", "a leg is already a winner — we hold the venue's answer"),
+        ("L4Y-28JAN01", "no tier-3 leg — nothing says the venue settled any of it"),
+        ("L4Z-28JAN01", "not Kalshi"),
+        ("L4R-28JAN01", "resolved with an ordinary ungraded leg — band 2 owns it"),
+    ],
+)
+async def test_band_four_refuses_what_it_must(pg_engine, ticker, why):
+    """Band 3's refusals, carried into band 4 rather than re-derived.
+
+    The limit is deliberately larger than the corpus so a refusal can only be the
+    WHERE clause and never the budget.
+    """
+    longdated = await _select_longdated(pg_engine, limit=2000)
+
+    assert ticker not in longdated, why
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_cursor_walks_forward_and_never_repeats(pg_engine):
+    """The load-bearing arm — this is why the band is a cursor, not a date sort.
+
+    A market leaves this population only when a leg is graded a WINNER, so a
+    ladder the venue has settled only NOes on is permanent. Under `ORDER BY
+    resolution_date ASC LIMIT n` such a row would head every cycle for ever and
+    everything behind it would starve. Walking the whole population one page at a
+    time is the property that makes the band drain; measured on production
+    2026-09-21, 1,190 tickers at 50/cycle is a full sweep in ~12 h.
+    """
+    everything = await _select_longdated(pg_engine, limit=2000)
+    assert len(everything) >= 3, "corpus too small to prove a walk"
+
+    page_one = await _select_longdated(pg_engine, limit=2, cursor="")
+    page_two = await _select_longdated(pg_engine, limit=2, cursor=page_one[-1])
+
+    assert page_one == everything[:2]
+    assert page_two == everything[2:4]
+    assert not set(page_one) & set(page_two), "the cursor re-served a ticker"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_sweep_runs_dry_at_the_end_so_the_caller_can_wrap(pg_engine):
+    """An exhausted cursor returns EMPTY, which is the caller's wrap signal.
+
+    Without this the band walks to `Z` and stops asking for ever, and a market the
+    venue settles next month is never revisited. The caller's `elif` deletes the
+    key on exactly this result.
+    """
+    everything = await _select_longdated(pg_engine, limit=2000)
+
+    assert await _select_longdated(pg_engine, cursor=everything[-1]) == []
+    assert await _select_longdated(pg_engine, cursor="ZZZZZZZZ") == []
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_band_respects_its_own_budget_and_zero_means_zero(pg_engine):
+    """gotcha #34 again: band 4 is additive, never a borrower.
+
+    `limit=0` returning `[]` without touching the server is what lets the budget
+    be turned off in an incident without the statement running at all.
+    """
+    everything = await _select_longdated(pg_engine, limit=2000)
+
+    assert await _select_longdated(pg_engine, limit=1) == everything[:1]
+    assert await _select_longdated(pg_engine, limit=0) == []
