@@ -467,6 +467,10 @@ PRIMARY_REASON_LABELS: list[tuple[str, str]] = [
     ("major_movement_24h", "Big odds movement"),
     ("volume_spike", "Trading surge"),
     ("moderate_movement_24h", "Odds moving"),
+    # (#4842's two day codes have NO rung here, and that is deliberate: this list
+    # reaches the served `headline` through `headline or primary_reason` in
+    # `routes/feed.py`, and the headline is a ranking input — see the note in
+    # `feed_reasons.compose_binary_card_copy`. The day rungs are captions.)
     ("resolving_soon_7d", "Resolving soon"),
     # #4805: the 30d label is IMPORTED, not spelled, because
     # `generate_futures_context_summary` compares the headline it receives
@@ -898,6 +902,52 @@ def compute_futures_highlight(
             # monotonic "resolving soon = timely" signal, so it stays here.
             result.score -= 20
             result.reasons.append("micro_bet")
+            # #4842 — AND THE DISPLAY CODE, WHICH WAS RIDING ON THAT SUPPRESSION.
+            #
+            # This is an `if/elif`, so the arm that suppresses the SCORE also
+            # owned the only door to the resolution copy: days 0-1 were the one
+            # window inside thirty days that could never emit a caption, and a
+            # card resolving tomorrow — the most time-urgent thing on the page —
+            # was the one card that could not say when it resolves. Measured on
+            # production `39b50b84`, `GET /api/feed?limit=250`: 3 of 129 served
+            # cards resolve inside a day and not one of them says so.
+            #
+            # The suppression is a RANKING decision and it is right (a daily oil
+            # close is not Discover content); the caption is copy. They were
+            # never the same decision. Exactly #4695 one rung down this same
+            # ladder — a reason code deleted with the score term beside it —
+            # and restored the same way: `result.score` is untouched here.
+            #
+            # Three bounds, all deliberate:
+            #  * the UNFLOORED horizon classifies the copy (#4805): `.days`
+            #    truncates toward zero, so `days_until == 1` covers 1d00h through
+            #    1d23h59m and "within a day" would be false by nearly a day for
+            #    most of that window.
+            #  * which is why there are TWO rungs rather than one. The elif below
+            #    can never see these rows, so anything this arm does not caption
+            #    keeps the defect — and this issue's own filed specimen (`Will
+            #    "Nvidia" be said during the next episode of the All-In Podcast?`,
+            #    ~30 hours out) sits at 1.25 days, inside the arm and outside
+            #    "within a day". A one-rung fix would have missed its own
+            #    specimen. It does NOT borrow the week rung for that slice:
+            #    `resolving_soon_7d` composes a leader clause and therefore a
+            #    NON-generic headline, which moves the explanation cap — see the
+            #    note at that rung in `feed_reasons.generate_futures_headline`.
+            #  * `>= 0` — `.days` also truncates a PAST resolution to 0 or a
+            #    negative, and both land in this arm. The feed's eligibility gate
+            #    excludes those rows today (see the `stale_past_resolution` note
+            #    above), so this bound is unreachable from the feed and is here
+            #    because "resolves within a day" about a market that resolved
+            #    yesterday is the one sentence this ship must never emit.
+            #
+            # `flags.is_resolving_soon` and the `resolution_proximity` blend are
+            # NOT touched: they are ranking, and a micro-bet is still suppressed.
+            if days_until_exact is not None and days_until_exact >= 0.0:
+                result.reasons.append(
+                    "resolving_soon_1d"
+                    if days_until_exact <= 1.0
+                    else "resolving_soon_2d"
+                )
         elif 0 < days_until <= 30:
             # SINGLE HOME: the interestingness blend owns "resolving soon = timely"
             # (resolution_proximity signal). The flag is kept for display/tags; the
