@@ -54,7 +54,7 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
 
     private func render(_ name: String,
                         _ points: [ChartDataPoint],
-                        minimumSpan: Double) throws -> (png: Data, inkHeight: Int) {
+                        minimumSpan: Double) throws -> (png: Data, inkHeight: Int, image: UIImage) {
         let view = LiveSparklineChart(
             points: points,
             width: Self.width,
@@ -72,7 +72,7 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
         let ink = try Self.inkHeight(of: image)
         print("Sparkline render [\(name)]: \(url.path) "
               + "(\(png.count) bytes, ink \(ink)px of \(Int(Self.height * Self.scale)))")
-        return (png, ink)
+        return (png, ink, image)
     }
 
     /// Whether the glyph draws nothing at all.
@@ -100,12 +100,49 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
         return ink == 0
     }
 
-    /// Vertical extent, in device pixels, of everything actually drawn.
+    // MARK: - Reading the raster
+
+    /// An RGB triple parsed from one of the component's OWN stroke constants, so
+    /// the camera cannot drift from the colours production actually draws.
+    private static func rgb(_ hex: String) -> (r: Int, g: Int, b: Int) {
+        var value: UInt64 = 0
+        Scanner(string: hex.replacingOccurrences(of: "#", with: "")).scanHexInt64(&value)
+        return (Int((value >> 16) & 0xFF), Int((value >> 8) & 0xFF), Int(value & 0xFF))
+    }
+
+    private static var up: (r: Int, g: Int, b: Int) { rgb(LiveSparklineChart.strokeUp) }
+    private static var down: (r: Int, g: Int, b: Int) { rgb(LiveSparklineChart.strokeDown) }
+    private static var flat: (r: Int, g: Int, b: Int) { rgb(LiveSparklineChart.strokeFlat) }
+
+    /// How far a pixel may sit from a stroke colour and still be counted as it.
     ///
-    /// The glyph has no axis, no legend and no background, so the only ink is the
-    /// line — which makes this a direct measurement of "how much did the reader
-    /// see it move", the exact quantity #3313 is about.
-    private static func inkHeight(of image: UIImage) throws -> Int {
+    /// The three strokes are far apart in RGB — the closest pair, flat grey and
+    /// down red, differ by 83 in the red channel alone — so this cannot confuse
+    /// one for another; it exists to absorb antialiasing and colour-space drift.
+    private static let colourTolerance = 40
+
+    /// Vertical extent, in device pixels, of everything drawn IN A GIVEN COLOUR —
+    /// or in any of the glyph's three stroke colours when `matching` is nil.
+    ///
+    /// #7794 WIDENED THIS, AND THAT WAS HALF THE SHIP. The predicate used to be
+    /// `(g > r + 20 && g > b + 20) || (r > g + 20 && r > b + 20)` — green-dominant
+    /// or red-dominant, the only two colours the glyph could draw at the time.
+    /// The moment a flat window started drawing `#9CA3AF`, which is dominant in
+    /// nothing, every grey pixel read as background: `testAFlatMarketStaysFlat`
+    /// would have kept passing its `inkHeight < 12` assertion **against an ink
+    /// height of zero**, measuring an empty image and calling it a still market.
+    /// A measuring instrument keyed to the values it has seen so far fails toward
+    /// "nothing is there", which is the shape of every vacuous guard. The tests
+    /// below therefore assert a POSITIVE ink height everywhere they assert a small
+    /// one.
+    ///
+    /// Channels are un-premultiplied before comparison: the buffer is
+    /// `premultipliedLast`, so an antialiased edge at half alpha carries half of
+    /// each colour channel and would miss an exact-colour test entirely.
+    private static func ink(
+        of image: UIImage,
+        matching target: (r: Int, g: Int, b: Int)? = nil
+    ) throws -> (height: Int, pixels: Int) {
         let cg = try XCTUnwrap(image.cgImage, "no CGImage")
         let w = cg.width, h = cg.height
         var buffer = [UInt8](repeating: 0, count: w * h * 4)
@@ -116,21 +153,30 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue), "no CGContext")
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
 
+        let candidates = target.map { [$0] } ?? [Self.up, Self.down, Self.flat]
+
         var top: Int?
         var bottom: Int?
+        var pixels = 0
         for y in 0..<h {
             var rowHasInk = false
             for x in 0..<w {
                 let i = (y * w + x) * 4
-                let r = Int(buffer[i]), g = Int(buffer[i + 1])
-                let b = Int(buffer[i + 2]), a = Int(buffer[i + 3])
-                // The stroke is #10B981 or #EF4444 on nothing. Antialiasing fades
-                // alpha, so a modest threshold, plus a colour test so a stray
-                // neutral pixel cannot widen the box.
-                let coloured = (g > r + 20 && g > b + 20) || (r > g + 20 && r > b + 20)
-                if a > 60 && coloured {
+                let a = Int(buffer[i + 3])
+                // Antialiasing fades alpha, so a modest threshold; below it the
+                // un-premultiplied colour is too noisy to attribute anyway.
+                guard a > 60 else { continue }
+                let r = min(255, Int(buffer[i]) * 255 / a)
+                let g = min(255, Int(buffer[i + 1]) * 255 / a)
+                let b = min(255, Int(buffer[i + 2]) * 255 / a)
+                let matches = candidates.contains { c in
+                    abs(r - c.r) <= Self.colourTolerance
+                        && abs(g - c.g) <= Self.colourTolerance
+                        && abs(b - c.b) <= Self.colourTolerance
+                }
+                if matches {
                     rowHasInk = true
-                    break
+                    pixels += 1
                 }
             }
             if rowHasInk {
@@ -138,8 +184,12 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
                 bottom = y
             }
         }
-        guard let t = top, let b = bottom else { return 0 }
-        return b - t + 1
+        guard let t = top, let b = bottom else { return (0, pixels) }
+        return (b - t + 1, pixels)
+    }
+
+    private static func inkHeight(of image: UIImage) throws -> Int {
+        try ink(of: image).height
     }
 
     // MARK: - The claim
@@ -173,6 +223,14 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
         let flat = try render("after-flat", flatMarket(now: now), minimumSpan: LiveSparklineChart.minimumSpan)
         let swing = try render("after-swing-control", cubsMarlinsSwing(now: now),
                                minimumSpan: LiveSparklineChart.minimumSpan)
+        // Without this the assertion below is satisfied by an EMPTY IMAGE, and
+        // #7794 made that a live risk rather than a theoretical one: this fixture
+        // now draws flat grey, which the pre-#7794 ink predicate scored as zero.
+        // Every "small" claim in this file is paired with a "present" one.
+        XCTAssertGreaterThan(
+            flat.inkHeight, 0,
+            "the flat fixture drew no measurable ink — the camera is colour-blind "
+            + "to this glyph's stroke, so `< 12` below is measuring nothing")
         // 0.002 of a 0.2 span in a 72px raster is about 1px, plus stroke width.
         XCTAssertLessThan(
             flat.inkHeight, 12,
@@ -205,6 +263,67 @@ final class LiveSparklineRenderSmokeTests: XCTestCase {
         // this test passes for a glyph that never renders under any input.
         XCTAssertFalse(try drawsNothing("empty-control-three-points",
                                         series([0.4, 0.45, 0.5], now: now)))
+    }
+
+    // MARK: - #7794, as a raster
+
+    /// The filed specimen: a 99% favourite whose line was painted the colour for
+    /// *fell* because it gave up one ten-thousandth of a point.
+    ///
+    /// Asserted as INK PER COLOUR rather than by reading the `Direction` back,
+    /// because `direction` returning `.flat` and the reader seeing grey are two
+    /// different claims — the second one is the defect. `LiveSparklineDirectionTests`
+    /// owns the arithmetic; this owns what is on the screen.
+    func testTheNinetyNinePercentFavouriteDrawsGreyAndNoRed() throws {
+        let now = Date()
+        let specimen = series([0.9901, 0.9902, 0.99], now: now)
+
+        // THE BEFORE, stated as arithmetic because the old rule no longer exists
+        // to render: `last >= first` on the raw probabilities called this a fall,
+        // so the fixture is a genuine before/after pair and not a case that was
+        // already grey. Without this line the test below passes just as well on a
+        // specimen the bug never touched.
+        XCTAssertLessThan(0.99, 0.9901, "the specimen must be a RAW fall, or it proves nothing")
+
+        let shot = try render("after-7794-99pct-favourite", specimen,
+                              minimumSpan: LiveSparklineChart.minimumSpan)
+        let grey = try Self.ink(of: shot.image, matching: Self.flat)
+        let red = try Self.ink(of: shot.image, matching: Self.down)
+        let green = try Self.ink(of: shot.image, matching: Self.up)
+
+        XCTAssertGreaterThan(grey.pixels, 0,
+                             "the flat glyph drew no grey — it drew nothing, or another colour")
+        XCTAssertEqual(red.pixels, 0,
+                       "a 99% favourite still paints \(red.pixels) red pixels for a "
+                       + "ten-thousandth of a point — this is #7794")
+        XCTAssertEqual(green.pixels, 0, "a flat window must not claim a rise either")
+
+        // And the label the colour is now derived from says the same thing, in the
+        // same render. One pair of numbers, one answer.
+        XCTAssertEqual(
+            LiveSparklineChart.accessibilityLabel(for: specimen, minutes: 10),
+            "Last 10 minutes: 99% to 99%")
+    }
+
+    /// The partner, and the reason the test above is not satisfied by a glyph that
+    /// paints everything grey: a real move must still carry its colour, and the
+    /// colour matcher must be able to tell the three apart on a real raster.
+    func testARealMoveStillPaintsItsOwnColour() throws {
+        let now = Date()
+
+        let fell = try render("after-7794-real-fall", cubsMarlinsSwing(now: now),
+                              minimumSpan: LiveSparklineChart.minimumSpan)
+        XCTAssertGreaterThan(try Self.ink(of: fell.image, matching: Self.down).pixels, 0,
+                             "a 13-point fall must still be red")
+        XCTAssertEqual(try Self.ink(of: fell.image, matching: Self.flat).pixels, 0,
+                       "a 13-point fall was painted flat grey")
+
+        let rose = try render("after-7794-real-rise", series([0.40, 0.50, 0.62], now: now),
+                              minimumSpan: LiveSparklineChart.minimumSpan)
+        XCTAssertGreaterThan(try Self.ink(of: rose.image, matching: Self.up).pixels, 0,
+                             "a 22-point rise must still be green")
+        XCTAssertEqual(try Self.ink(of: rose.image, matching: Self.flat).pixels, 0,
+                       "a 22-point rise was painted flat grey")
     }
 
     /// A stale series is not a live one. Nothing inside the window means no glyph.

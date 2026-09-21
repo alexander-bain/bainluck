@@ -145,16 +145,108 @@ struct LiveSparklineChart: View {
         return lower...upper
     }
 
-    /// Net direction over the window, which is what the colour encodes.
+    // MARK: - Direction and colour
+
+    /// The stroke colour for each direction this glyph can report.
+    ///
+    /// `#9CA3AF` is `--text-muted` from `globals.css` — the grey the product uses
+    /// for type that is present but is not making a claim, which is exactly what a
+    /// flat ten minutes is. Hex literals rather than `DesignSystem.textMuted`
+    /// because the other two arms of this ternary already are, and because that
+    /// token is an RGB approximation of the same colour (`blue: 0.69` is `0xB0`,
+    /// not `0xAF`) — a glyph whose flat grey is a shade off the web's would be a
+    /// new parity defect shipped inside the fix for one.
+    ///
+    /// ONE CONTRACT with the web: `STROKE_UP` / `STROKE_DOWN` / `STROKE_FLAT` in
+    /// `LiveSparkline.tsx` carry the same three literals, and each side pins them
+    /// in its own test — the arrangement `minimumSpan` / `MIN_SPAN` already uses.
+    static let strokeUp = "#10B981"
+    static let strokeDown = "#EF4444"
+    static let strokeFlat = "#9CA3AF"
+
+    /// What this glyph is entitled to claim about the window.
+    enum Direction {
+        case up, down, flat
+    }
+
+    /// The whole percent this glyph PUBLISHES for a reading.
+    ///
+    /// One function, used by both the colour and the label, so the two channels
+    /// cannot answer differently — that identity is the whole of #7794 and it is
+    /// held by construction here rather than by two call sites agreeing to round
+    /// the same way.
+    ///
+    /// `renderedPercent` is the app's arm of `contracts/rendered_percent.json`
+    /// (#1933/#3867) and is deliberately NOT a local `* 100`: the venues quote on
+    /// a half-percent grid, and `* 100` is half-up on the double the wire value
+    /// BECAME rather than the number it SENT, so 0.565 and 0.585 round opposite
+    /// ways. The label used to do exactly that, which meant this glyph could print
+    /// a percent the hero above it disagreed with.
+    ///
+    /// The clamp runs FIRST and the finiteness guard runs before the clamp, which
+    /// is load bearing in both directions: `max(0, .nan)` is `0` in Swift (every
+    /// NaN comparison is false), so clamping an unrenderable value would turn it
+    /// into a confident `0%` instead of a refusal. The web arm does not clamp;
+    /// the two agree across the whole valid domain, and a probability outside
+    /// 0...1 is a payload defect this glyph should not amplify into `101%`.
+    static func publishedPercent(_ probability: Double) -> Int? {
+        guard probability.isFinite else { return nil }
+        return renderedPercent(min(1, max(0, probability)))
+    }
+
+    /// Net direction over the window, which is what the colour encodes — decided
+    /// on the PUBLISHED percents, not the raw probabilities.
     ///
     /// Net, not peak-to-trough, and that is a real limitation stated rather than
     /// hidden: a market that swung ten points out and came back reads as its small
     /// net move. With the span floor in place the SHAPE now carries that story, so
     /// the colour is a summary beside a legible line rather than the only signal —
     /// which is exactly why the shape fix had to come first.
-    static func isRising(_ windowed: [ChartDataPoint]) -> Bool {
-        guard let first = windowed.first, let last = windowed.last else { return true }
-        return last.probability >= first.probability
+    ///
+    /// #7794 — the rule was `last.probability >= first.probability` on the raw
+    /// numbers with no dead band, so a fall of one ten-thousandth painted the
+    /// whole glyph red. On a 99% favourite at halftime that is the only kind of
+    /// move there is. The proof sat forty lines below in this component's own
+    /// `accessibilityLabel`: a screen reader could be told "Last 10 minutes: 99%
+    /// to 99%" while the line beside it was painted the colour for *fell*.
+    ///
+    /// THE RULE: **ask the string, not the number** — UX-P275's construction
+    /// (#5652), applied to the one pair this glyph publishes.
+    ///
+    /// WHAT IT COSTS, stated rather than discovered later: a tie at whole percent
+    /// can hide just under a point of travel, and that now draws grey. It is the
+    /// honest reading twice over — the endpoints did not move as published, and
+    /// under `minimumSpan` a one-point move is 22pt × 0.01/0.2 ≈ **1.1pt** of
+    /// vertical travel in a 24pt box, less than the 1.5pt stroke drawing it. The
+    /// colour was claiming a direction the line itself cannot show.
+    ///
+    /// Measured on production 2026-09-21 by ux/1413 over 34 live events, every
+    /// ten-minute window carrying `minimumPoints`: of **781** windows, **467
+    /// (60%) render first and last as the same whole percent** — 66 of them
+    /// painted RED, the filed shape, and 401 painted green, a false direction
+    /// that merely read benignly. The **314** windows whose rendered percents
+    /// differ keep the colour they had.
+    static func direction(from first: Double, to last: Double) -> Direction {
+        // A value we cannot publish is a value we cannot compare; claim nothing.
+        guard let from = publishedPercent(first), let to = publishedPercent(last) else {
+            return .flat
+        }
+        if to > from { return .up }
+        if to < from { return .down }
+        return .flat
+    }
+
+    static func direction(_ windowed: [ChartDataPoint]) -> Direction {
+        guard let first = windowed.first, let last = windowed.last else { return .flat }
+        return direction(from: first.probability, to: last.probability)
+    }
+
+    static func stroke(for direction: Direction) -> Color {
+        switch direction {
+        case .up: return Color(hex: strokeUp)
+        case .down: return Color(hex: strokeDown)
+        case .flat: return Color(hex: strokeFlat)
+        }
     }
 
     // MARK: - Body
@@ -166,7 +258,7 @@ struct LiveSparklineChart: View {
             now: now)
         if Self.isDrawable(series) {
             let range = Self.domain(for: series.map(\.probability), minimumSpan: minimumSpan)
-            let rising = Self.isRising(series)
+            let direction = Self.direction(series)
             Chart(series) { point in
                 LineMark(
                     x: .value("Time", point.date),
@@ -174,7 +266,7 @@ struct LiveSparklineChart: View {
                 )
                 .interpolationMethod(.linear)
                 .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                .foregroundStyle(rising ? Color(hex: "#10B981") : Color(hex: "#EF4444"))
+                .foregroundStyle(Self.stroke(for: direction))
             }
             .chartYScale(domain: range)
             .chartXAxis(.hidden)
@@ -196,12 +288,18 @@ struct LiveSparklineChart: View {
         }
     }
 
+    /// What a screen reader is told, on exactly the numbers the colour was decided
+    /// from — `publishedPercent`, never a second local rounding (#7794).
+    ///
+    /// The unrenderable arm is unreachable through `windowed`, which already drops
+    /// non-finite readings, and it refuses rather than printing a fabricated `0%`
+    /// for the same reason `direction` claims nothing there.
     static func accessibilityLabel(for windowed: [ChartDataPoint], minutes: Int) -> String {
-        guard let first = windowed.first, let last = windowed.last else {
+        guard let first = windowed.first, let last = windowed.last,
+              let from = publishedPercent(first.probability),
+              let to = publishedPercent(last.probability) else {
             return "No recent readings"
         }
-        let from = Int((min(1, max(0, first.probability)) * 100).rounded())
-        let to = Int((min(1, max(0, last.probability)) * 100).rounded())
         return "Last \(minutes) minutes: \(from)% to \(to)%"
     }
 }
