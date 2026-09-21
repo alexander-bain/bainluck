@@ -346,7 +346,38 @@ final class CalibrationViewModel: ObservableObject {
         return counts.keys.sorted { (counts[$0] ?? 0) > (counts[$1] ?? 0) }
     }
 
-    /// Normalized, sample-gated categories (top 15 by outcomes), matching the web.
+    /// Normalized, sample-gated categories. The publish bar is the ONLY filter,
+    /// because it is the only one the screen tells the reader about (#7533).
+    ///
+    /// There used to be a `.prefix(15)` on the end of this chain, and
+    /// `topCategoryRows` took a further 10 by ECE on top of it. Neither was
+    /// stated anywhere a reader could see, and between them they contradicted
+    /// the caption directly above the table:
+    ///
+    ///   * the caption says categories are held out for being **below the bar**
+    ///     — measured on `/api/calibration` 2026-09-20, 21 categories cleared
+    ///     the 1,000-outcome bar and **10** were drawn;
+    ///   * the 11 in the gap reached neither list. The niche card below is the
+    ///     backend's `small_sample_categories` — the population **under** the
+    ///     bar — so a category that cleared the bar and lost the slice appeared
+    ///     nowhere, while both lists read as exhaustive;
+    ///   * and the two slices sorted on **different orderings**, so the outcomes
+    ///     slice could cut a row that belonged in the ECE ranking the caption
+    ///     promises. It did: with the slice, rank 7 of the drawn rows was
+    ///     Politics (8.3K, ECE 2.69); without it, rank 7 is `other` (1,356,
+    ///     ECE 2.50) — better calibrated, and dropped for being smaller.
+    ///
+    /// Web deleted the same slice in #7302 and carries no second cap, so this is
+    /// one family rendering one way on both surfaces rather than a native choice.
+    ///
+    /// The eligibility basis stays ALL-COHORT deliberately — do not filter on
+    /// the cohort here. #7195 settled that the bar is applied by the backend on
+    /// the all-cohort count (geopolitics publishes at 1,749 all-cohort against a
+    /// 732 traded count), so cohort-scoping the bar would park a category under
+    /// a 1,000 bar beside a table publishing one at 732 in the same view. The
+    /// COUNTS are cohort-scoped downstream in `categoryRows`; that is a
+    /// different question, and `CalibrationPopulation` is the caption that
+    /// reconciles the two.
     var categories: [String] {
         let bks = buckets
         let minN = minCategoryOutcomes
@@ -355,7 +386,6 @@ final class CalibrationViewModel: ObservableObject {
         return catMap
             .filter { $0.value >= minN }
             .sorted { $0.value > $1.value }
-            .prefix(15)
             .map { $0.key }
     }
 
@@ -407,10 +437,18 @@ final class CalibrationViewModel: ObservableObject {
         return CalibrationRowOrdering.orderedByECE(rows)
     }
 
-    var topCategoryRows: [CalCategoryRow] { Array(categoryRows.prefix(10)) }
+    // #7533 — `topCategoryRows` (`categoryRows.prefix(10)`) is deliberately gone
+    // rather than widened. The table draws `categoryRows`, so the array the
+    // caption describes and the array the `ForEach` iterates are the same one by
+    // construction and cannot drift apart again. A named "top N" property is how
+    // the second cap survived #7302's sweep of the first.
 
     /// Best/worst consider MEASURED rows only. A "Best Calibrated" card naming a
     /// category with no outcomes would be the headline version of #3650.
+    ///
+    /// #7533: these now range over every category that clears the bar, not the
+    /// ten that survived two slices. "Best calibrated" naming the best of an
+    /// arbitrary subset was the headline wearing the table's defect.
     private var measuredCategoryRows: [CalCategoryRow] { categoryRows.filter { $0.ece != nil } }
     var bestCategoryRow: CalCategoryRow? { measuredCategoryRows.first }
     var worstCategoryRow: CalCategoryRow? { measuredCategoryRows.last }
