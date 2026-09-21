@@ -1,0 +1,76 @@
+served edition None — 113 futures cards (incl. bundle members)
+
+ARM 1 — the eight named markets print NO comparative:
+  PASS  Which parties will be part of the next government of New Zeala 
+          copy now: 'Green Party at 68% | Big odds movement in Which parties will be part of the next government of New Zealand? | '
+  PASS  Which parties will be in next Swedish Government?              
+          copy now: 'Liberals (L) up 18 points today | Liberals (L) moved up 18 points today in Which parties will be in next Swedi'
+  PASS  Which parties will win a seat in the 2026 Knesset elections?   
+          copy now: 'Reservists and New Economic Party up 8.5 points today | Reservists and New Economic Party moved up 8.5 points '
+  PASS  Top 5 Most Searched Passings on Google in the US 2026          
+          copy now: 'Dolly Parton at 93% | Odds shifting in Top 5 Most Searched Passings on Google in the US 2026 | Dolly Parton at'
+  PASS  2027 PPA Tour Finals: Player to Qualify (Men's)                
+          copy now: "Ben Johns at 96% | Odds shifting in 2027 PPA Tour Finals: Player to Qualify (Men's) | Ben Johns at 96%"
+  PASS  2027 PPA Tour Finals: To Reach the Final (Men's)               
+          copy now: "CJ Klinger at 87% | Big odds movement in 2027 PPA Tour Finals: To Reach the Final (Men's) | CJ Klinger at 87%"
+  PASS  Dancing with the Stars Season 35 · Winner                      
+          copy now: 'Harry Shum Jr. at 21%, Maura Higgins up 18 points since Sep 8 | Maura Higgins is up 18 points since Sep 8 in D'
+  PASS  Dancing with the Stars Season 35 · Top 3 Finishers             
+          copy now: 'Maura Higgins at 67% | Maura Higgins (67%) in Dancing with the Stars Season 35 · Top 3 Finishers | Maura Higgi'
+  ABSENT  What will be said on the next Lemonade Stand Podcast  (not in this edition)
+  -> 8 of the eight present, 0 still printing a comparative
+
+ARM 2 — exclusive cards KEEP their comparative (the widening control):
+  58 of 105 other cards print a comparative
+  (BEFORE, 17:40Z: 37 exclusive cards printed one; none was expected to move)
+
+VERDICT: PASS
+
+NEEDLE CORRECTION, taken before recording the verdict. The needle "Dancing with
+the Stars Season 35" matched TWO markets, not one. Disambiguated against the
+venue flag rather than left as an implied pass:
+
+  60481084  · Top 3 Finishers   mutually_exclusive = FALSE   <- the intended target
+  60481087  · Winner            mutually_exclusive = TRUE    <- a control, not a target
+  60481086  · 2nd Place         mutually_exclusive = TRUE
+  60481085  · 3rd Place         mutually_exclusive = TRUE
+
+The Winner card prints "Harry Shum Jr. at 21%, Maura Higgins up 18 points since
+Sep 8" — a MOVEMENT sentence, which is what its composer chose and what it chose
+before the fix too. It is not a refusal, so it is not a false positive; it also
+is not evidence for arm 1, and the 8/8 above stands on the seven distinct
+markets plus Top 3 Finishers.
+
+ARM 2's denominator moved with the edition (113 futures here vs 71 at 17:40Z),
+so "58 of 105" is not comparable to "37 of 71" as a raw count. What it does
+prove is the direction: comparatives are not disappearing from the exclusive
+population.
+
+VERDICT: PASS. Half one is live on `a1a4bb53` (release v4880, 19:35Z) and the
+eight named markets have stopped running their coalitions as races.
+
+THE LOOK, 19:45Z, 390px (`aftercheck-7844a-look-1945Z.png`, card crop
+`ppa-card-390-1945Z.png`). A payload receipt is not a reader receipt, and the
+door next to the one an after-check reads is where the last miss was (#7747).
+The NZ card had rotated to position 17 in this edition; the card FOUND on screen
+is one of the other seven, and it is better evidence than the specimen:
+
+    🏓 PICKLEBALL · Resolves May 10, 2027
+    2027 PPA Tour Finals: To Reach the Final (Men's)
+    CJ Klinger at 87%  See more            <- HALF ONE, DELIVERED. No comparative.
+     1  CJ Klinger            87%
+     2  Gabriel Tardio        70%
+     3  Jonathan Truong       50%
+     4  Federico Staksrud     48%  ▾10 pts
+     5  Field and 23 more outcomes
+
+The caption has stopped saying "CJ Klinger leads" — that is half one on a
+reader's screen. The board directly beneath it still numbers four pickleball
+players who can ALL reach the final 1-2-3-4, sums them to 255%, and then claims
+a residual field. That is half two's ship, photographed as its own BEFORE.
+
+Controls in the same shot, genuinely exclusive and correctly numbered — nothing
+widened: Brazil Presidential Election (61/39/1/<1, "Flávio Bolsonaro leads"),
+UEFA CL League Phase Winner (18/4/3/3, "Barcelona leads at 18%"), UEFA CL 2027
+Home country of champion (32/29/17/14, "England leads at 32%"), Women's Pro
+Basketball Champion (46/12/12/11, "Minnesota leads at 46%").
