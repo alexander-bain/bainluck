@@ -506,10 +506,19 @@ def _settled_event(draxl_won=True):
 
 
 class _SettleRow:
-    def __init__(self):
+    """One row of the settlement cohort.
+
+    `group_type` is a CONSTRUCTOR ARGUMENT rather than something a subclass
+    overrides, because it is the whole variable of the negRisk arms below: the
+    rail picks its grading branch on it, and a `_NegRiskRow(_SettleRow)` that
+    reassigned the attribute said the same thing less clearly and earned a
+    CodeQL `py/overwritten-inherited-attribute` warning for saying it.
+    """
+
+    def __init__(self, group_type=None):
         self.id = SETTLE_MARKET_ID
         self.external_id = SETTLE_EVENT_ID
-        self.group_type = None
+        self.group_type = group_type
         self.poly_event_id = SETTLE_EVENT_ID
 
 
@@ -704,7 +713,7 @@ class TestBothSidesOfTheFightAreGraded:
         )
 
 
-class _NegRiskRow(_SettleRow):
+def _negrisk_row():
     """The same sole-moneyline market, written as negRisk.
 
     `tasks/polymarket.py` assigns `group_type` on `event.neg_risk` BEFORE it
@@ -712,10 +721,7 @@ class _NegRiskRow(_SettleRow):
     `negrisk` and still reaches `_parent_outcome_data`'s single-market branch —
     it can carry a companion, and at settlement it takes the OTHER branch.
     """
-
-    def __init__(self):
-        super().__init__()
-        self.group_type = "negrisk"
+    return _SettleRow(group_type="negrisk")
 
 
 def _ladder_event():
@@ -756,7 +762,7 @@ class TestTheNegRiskRouteGradesBothSidesToo:
     async def test_the_companion_is_graded_on_the_negrisk_route(self, monkeypatch):
         recorder = _GradeRecorder({SETTLE_CID, f"{SETTLE_CID}_side1"})
         bw = _install_settlement(
-            monkeypatch, recorder, _settled_event(draxl_won=True), row=_NegRiskRow()
+            monkeypatch, recorder, _settled_event(draxl_won=True), row=_negrisk_row()
         )
 
         await bw._backfill_polymarket_winners_from_api(limit=10)
@@ -769,7 +775,7 @@ class TestTheNegRiskRouteGradesBothSidesToo:
     async def test_it_inverts_on_the_negrisk_route_as_well(self, monkeypatch):
         recorder = _GradeRecorder({SETTLE_CID, f"{SETTLE_CID}_side1"})
         bw = _install_settlement(
-            monkeypatch, recorder, _settled_event(draxl_won=False), row=_NegRiskRow()
+            monkeypatch, recorder, _settled_event(draxl_won=False), row=_negrisk_row()
         )
 
         await bw._backfill_polymarket_winners_from_api(limit=10)
@@ -789,7 +795,7 @@ class TestTheNegRiskRouteGradesBothSidesToo:
         stored = {f"{SETTLE_CID}_leg{i}" for i in range(3)}
         recorder = _GradeRecorder(stored)
         bw = _install_settlement(
-            monkeypatch, recorder, _ladder_event(), row=_NegRiskRow()
+            monkeypatch, recorder, _ladder_event(), row=_negrisk_row()
         )
 
         await bw._backfill_polymarket_winners_from_api(limit=10)
