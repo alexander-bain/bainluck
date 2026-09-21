@@ -287,7 +287,19 @@ def test_the_interval_guard_catches_its_own_specimen():
 #: WHOLE token is left in the statement as literal SQL with nothing bound to it.
 #: Postgres is then handed a bare colon and answers `syntax error at or near
 #: ":"` before a row is read.
-POSTFIX_CAST_BIND = re.compile(r"(?<![:\w]):([a-z_][a-z_0-9]*)::", re.IGNORECASE)
+#:
+#: 🔴 The optional `{...}` group is not decoration, and it is the whole reason
+#: this constant was widened after 7167. The narrow form could not match
+#: `f"(:id{i}::bigint, ...)"` — an f-string replacement field sits BETWEEN the
+#: name and the cast, so the literal `:name::` never appears in the source and
+#: the scan read the file as clean while the token it builds at runtime kept
+#: the drain's apply path dead. The widened form was first written into the
+#: rail-specific guard in `test_repair_polymarket_leg_label_q499.py`; it
+#: belongs HERE, because the next rail to make this mistake will not be that
+#: rail.
+POSTFIX_CAST_BIND = re.compile(
+    r"(?<![:\w]):([a-z_][a-z_0-9]*)(\{[^{}]*\})?::", re.IGNORECASE
+)
 
 
 def test_no_raw_sql_uses_the_postfix_cast_bind_spelling():
@@ -346,6 +358,11 @@ def test_the_postfix_cast_guard_catches_its_own_specimen():
         "           AND (:after_id::bigint IS NULL OR fo.id > :after_id::bigint)",
         "           AND (:sport::text IS NULL OR fm.llm_sport_category = :sport::text)",
         "         LIMIT :cap::int",
+        # The INTERPOLATED spelling, `repair_polymarket_leg_label.py:632`
+        # verbatim as it stood until `ba25a12d2`. This one is why the constant
+        # carries a `{...}` group: the narrow pattern read it as clean, so the
+        # rail's SELECT was repaired while its APPLY path stayed dead.
+        'f"(:id{i}::bigint, :old{i}::text, :new{i}::text)"',
     ):
         assert POSTFIX_CAST_BIND.findall(broken), broken
 
@@ -357,9 +374,20 @@ def test_the_postfix_cast_guard_catches_its_own_specimen():
     for fixed in (
         "AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))",
         "LIMIT CAST(:cap AS int)",
+        # The fix for the interpolated specimen above. A guard that flags its
+        # own fix fires once and gets deleted.
+        "CAST(:id{i} AS bigint)",
         # A `::` cast of a COLUMN or a literal is not a bind and never was.
         "SELECT fo.id::text FROM futures_outcomes fo",
         "WHERE fm.status = 'open'::text",
+        # 🔴 The one the `{...}` group makes newly dangerous: `'{}'` is a brace
+        # pair immediately before `::`, so a careless widening matches it. It
+        # stays silent only because the group still needs a `[a-z_]` bind name
+        # in front of the brace and `'` is not one. Asserted so the next edit
+        # to that pattern cannot lose it.
         "SELECT '{}'::jsonb",
+        # A timestamp inside a docstring (`espn_tennis_anchor.py:43`). Rejected
+        # by the `(?<![:\\w])` lookbehind, not by the name class.
+        "2026-09-02T21:0xZ::",
     ):
         assert not POSTFIX_CAST_BIND.findall(fixed), fixed
