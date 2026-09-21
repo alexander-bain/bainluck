@@ -112,6 +112,9 @@ def _fake_market(market_id: int, name: str):
         "llm_league": None,
         "llm_gender": None,
         "llm_level": None,
+        # #7808. The model default, which is what the overwhelming majority of
+        # rows carry; this fixture's two-leg Yes/No field is exclusive.
+        "mutually_exclusive": True,
     }
     # Keyed, then ordered by `OUTCOME_COLUMNS` — the same idiom as the market
     # values above, and for the same reason. A positional literal here would

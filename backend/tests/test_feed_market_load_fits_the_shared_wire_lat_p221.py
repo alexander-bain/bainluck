@@ -416,7 +416,12 @@ NULL_RATE = 0.23
 #: the alarm line. That residual is the mean-vs-census 1% (700 x 48 = 33,600
 #: against a censused 33,923) plus high-water semantics, and it is small enough
 #: that the two instruments are now measuring the same artifact.
-MEASURED_NODES = 187_953
+#: 2026-09-21, #7808: 187,953 -> 188,653. `mutually_exclusive` joins
+#: `MARKET_COLUMNS`, and the delta is +700 on 700 markets — EXACTLY one node per
+#: market row, which is the whole check on this number: a scalar column is worth
+#: one node each and nothing else moved. The fixture derives its own shape from
+#: `fs.MARKET_COLUMNS`, so the constant is the only thing that needed a human.
+MEASURED_NODES = 188_653
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -1160,8 +1165,22 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: in nodes (so the rows that do fit walk to more). The ordering invariant below
 #: still holds — 460,855 against a 500,000 cap — but on 92% of it where it used
 #: to sit at 89%, and that margin is now the honest one.
-DECODE_BUDGET_OUTCOMES = 28_818
-DECODE_BUDGET_NODES = 460_855
+#: 2026-09-21, #7808, `mutually_exclusive`: 28,818 -> 28,755 outcomes and
+#: 460,855 -> 460,673 nodes. Re-bisected by the method above and NOT scaled —
+#: ceiling proven over the cap by doubling, then one-outcome granularity: 28,755
+#: encodes to 6,290,844 B against the 6,291,456 B cap (612 B of margin) and
+#: 28,756 to 6,291,471 B, which does not fit
+#: (`artifacts/d385-7808b/rebisect_decode_budget.py`).
+#:
+#: The two constants moved in OPPOSITE directions again, and for a duller reason
+#: than LAT-P276's: one more scalar cell per MARKET row makes each row heavier in
+#: bytes, so fewer outcomes fit the envelope — and because the crossing point is
+#: now 63 outcomes lower, the artifact at that crossing walks slightly FEWER
+#: nodes. Nothing about the per-row node arithmetic changed; the population did.
+#: The ordering invariant still holds — 460,673 against a 500,000 cap, 92.1% of
+#: it, where LAT-P276 left it at 92%.
+DECODE_BUDGET_OUTCOMES = 28_755
+DECODE_BUDGET_NODES = 460_673
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.

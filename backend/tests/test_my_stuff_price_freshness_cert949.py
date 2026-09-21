@@ -392,7 +392,8 @@ class TestTheSnapshotCarriesIt:
         then `(4, 31, 12, 2)` -> `(5, 32, 12, 2)` for #5809's
         `top_price_observed_at`, the third, then `(5, 32, 12, 2)` ->
         `(6, 31, 13, 2)` when #5809 was completed: that market column removed and
-        `price_observed_epoch` added to the OUTCOME row.
+        `price_observed_epoch` added to the OUTCOME row, then
+        `(6, 31, 13, 2)` -> `(7, 32, 13, 2)` for #7808's `mutually_exclusive`.
 
         The third rot is the one this tuple was really written for. Both widths
         moved in the SAME commit and in OPPOSITE directions, so a v5 entry read
@@ -407,7 +408,7 @@ class TestTheSnapshotCarriesIt:
             len(fms.OUTCOME_ROW_COLUMNS),
             len(fms.SPORT_COLUMNS),
         )
-        assert shape == (6, 31, 13, 2), (
+        assert shape == (7, 32, 13, 2), (
             "the snapshot wire shape changed. Bump `SNAPSHOT_SCHEMA_VERSION` "
             "(it is part of the shared cache key, so the bump is what stops this "
             "build reading a predecessor's rows) and update this tuple."
