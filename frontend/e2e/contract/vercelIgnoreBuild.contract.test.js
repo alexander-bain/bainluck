@@ -305,6 +305,18 @@ describe("#7846 — a production build is skipped only when the live website is 
         "tools/look.sh": "#!/bin/sh\necho hi\n",
       },
     ],
+    // #7846 part c — INSIDE the `frontend/` root, so the "Vercel cannot read it"
+    // argument does not apply; these are excluded on the measured evidence
+    // recorded beside them in the hook.
+    ["jest unit tests only", { "frontend/__tests__/lib/chartCeiling.test.ts": "it('x', () => {});\n" }],
+    ["e2e/contract suites only", { "frontend/e2e/contract/abortRecord.contract.test.js": "// x\n" }],
+    [
+      "a jest test + repo-root tooling, the exact shape of the 19:41Z a3b5626f4 build",
+      {
+        "frontend/__tests__/teamDesignatorParityAcrossClients.test.ts": "it('x', () => {});\n",
+        "tools/chart-fixture-replay-7569.mjs": "export const x = 1;\n",
+      },
+    ],
   ];
 
   for (const [label, changes] of SKIPPABLE) {
@@ -362,6 +374,28 @@ describe("#7846 — a production build is skipped only when the live website is 
       "frontend/scripts/, which top-level scripts/ must not swallow",
       { "frontend/scripts/vercel-ignore-build.sh": "#!/usr/bin/env bash\nexit 1\n" },
     ],
+    // 🪤 #7846 part c excludes two directories INSIDE the build root. A commit
+    // that edits a test AND the source it covers is the common case, and it is
+    // the one where an over-broad exclusion strands a real web change.
+    [
+      "real source alongside its jest test",
+      {
+        "frontend/__tests__/lib/chartCeiling.test.ts": "it('x', () => {});\n",
+        "frontend/lib/chartCeiling.ts": "export const ceiling = 2;\n",
+      },
+    ],
+    // 🪤 And the mirror of the frontend/scripts/ row above: the hook's own
+    // contract suite lives in `frontend/e2e/`, so part c means a contract-only
+    // commit skips. That is correct — a test is not a build input — but only
+    // because the hook ITSELF is still an input. If both were excluded the
+    // filter could never be corrected by deploying a fix to it.
+    [
+      "the hook alongside the e2e suite that covers it",
+      {
+        "frontend/e2e/contract/vercelIgnoreBuild.contract.test.js": "// x\n",
+        "frontend/scripts/vercel-ignore-build.sh": "#!/usr/bin/env bash\nexit 1\n",
+      },
+    ],
   ];
 
   for (const [label, changes] of MUST_BUILD_INPUTS) {
@@ -375,6 +409,63 @@ describe("#7846 — a production build is skipped only when the live website is 
       );
     });
   }
+
+  // --- the premise under part c's two in-root exclusions --------------------
+  //
+  // `frontend/__tests__/` and `frontend/e2e/` are excluded because `next build`
+  // provably never reads them — measured by injecting a parse error into one
+  // file in each and watching `npm run build` still exit 0. That is a statement
+  // about THREE properties of the real repo, not about the hook. If any of them
+  // changes, the exclusion starts stranding real web changes and the site
+  // silently stops updating. So the premise is pinned here rather than trusted.
+  test("part c's premise still holds: next build cannot read the excluded test dirs", () => {
+    const nextConfig = fs.readFileSync(path.join(REPO_ROOT, "frontend", "next.config.mjs"), "utf8");
+
+    // 1. Type-checking is off at build time, so tsconfig's `**/*.ts` — which
+    //    DOES match frontend/__tests__/**/*.ts — never runs. Turn this back on
+    //    and a type error in a test file fails the production build.
+    assert.match(
+      nextConfig,
+      /ignoreBuildErrors:\s*true/,
+      "next.config.mjs no longer sets typescript.ignoreBuildErrors — frontend/__tests__/ is a build input again and must come OFF the exclusion list"
+    );
+
+    // 2. No `eslint.dirs` override. Absent one, `next build` lints its defaults
+    //    (app, pages, components, lib, src) and neither excluded directory is
+    //    among them. Adding one that names them makes them build inputs.
+    const eslintDirs = nextConfig.match(/eslint:\s*\{[^}]*dirs:\s*\[([^\]]*)\]/s);
+    if (eslintDirs) {
+      assert.doesNotMatch(
+        eslintDirs[1],
+        /__tests__|e2e/,
+        "next.config.mjs now lints an excluded directory — it is a build input again"
+      );
+    }
+
+    // 3. No import edge out of the build graph into either directory. A single
+    //    `import ... from "../__tests__/fixtures"` in app/, components/ or lib/
+    //    would pull test files into the bundle.
+    const offenders = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) {
+          const src = fs.readFileSync(full, "utf8");
+          if (/(?:from|require\()\s*['"][^'"]*(?:__tests__|\/e2e\/)/.test(src)) offenders.push(full);
+        }
+      }
+    };
+    for (const dir of ["app", "components", "lib"]) {
+      const full = path.join(REPO_ROOT, "frontend", dir);
+      if (fs.existsSync(full)) walk(full);
+    }
+    assert.deepStrictEqual(
+      offenders,
+      [],
+      "build-graph source now imports from an excluded test directory, which makes it a build input"
+    );
+  });
 
   // --- the reason this compares against the LIVE commit and not HEAD^ -------
   test("an undeployed web change is never stranded by a later backend-only push", () => {

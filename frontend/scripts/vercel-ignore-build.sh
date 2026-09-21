@@ -93,6 +93,18 @@ NON_WEB_PATHS=(
   ':(top,exclude)artifacts/' # lane measurement output (probes, PNGs, JSONL)
   ':(top,exclude)tools/'     # repo-root lane tooling (look.sh, merge-gate.sh)
   ':(top,exclude)scripts/'   # repo-root Python lane tooling (claim_lane_lock.py)
+  # Added by #7846 part c. These two live INSIDE the Vercel root, so the "outside
+  # the build root" argument above does not reach them — they are excluded on
+  # measured evidence instead. Probe: a hard parse error was injected into one
+  # file in each directory (`SyntaxError: Unexpected token ')'` / `TS1005`) and
+  # `npm run build` still exited 0. `next build` never reads them, because
+  # nothing under app/, components/ or lib/ imports them, next.config.mjs sets
+  # `typescript.ignoreBuildErrors` (so the build prints "Skipping validation of
+  # types" and tsconfig's `**/*.ts` never runs), and no `eslint.dirs` override
+  # widens lint past its defaults. The contract suite pins that premise, so
+  # removing either half of it fails loudly instead of stranding a web change.
+  ':(top,exclude)frontend/__tests__/' # jest unit tests; not in the module graph
+  ':(top,exclude)frontend/e2e/'       # contract + playwright suites; tsconfig already excludes e2e
 )
 # 🪤 `:(top,...)` anchors at the repo root, so `scripts/` above excludes ONLY the
 # top-level directory — `frontend/scripts/` (which holds THIS hook) is still a
