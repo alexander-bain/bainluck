@@ -212,6 +212,34 @@ async def test_the_stamp_is_a_core_jsonb_merge_and_not_an_orm_assignment():
     assert "jsonb" in sql
 
 
+@pytest.mark.asyncio
+async def test_the_stamp_does_not_move_the_rows_data_freshness_clock():
+    """`updated_at` is pinned to itself, so the `onupdate` cannot fire (CERT-949).
+
+    The column is `onupdate=func.now()`, so SQLAlchemy appends `updated_at=now()`
+    to any `update()` that omits it — and this write is bookkeeping about the
+    CACHE, touching no market data. 58 call sites read the column as "this
+    market's data changed": it is the cache version for three payload caches
+    (`max(FuturesMarket.updated_at)`), a recency cutoff in `taxonomy` and
+    `data_quality`, and a 14-day staleness fence in `admin_judgments`. CERT-949
+    is the record of exactly this going wrong the other way round — the hook
+    enricher's six-hourly `market_metadata` write made stale markets read hours
+    fresh. Dropping the pin is silent: nothing else fails.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    captured = []
+    session = SimpleNamespace(execute=lambda stmt: _record(captured, stmt))
+    await fill._stamp_bank_marker(session, 42, _real_marker())
+
+    sql = str(captured[0].compile(dialect=postgresql.dialect())).lower()
+    set_clause = sql.split(" where ")[0]
+    assert "updated_at=futures_markets.updated_at" in set_clause.replace(" = ", "="), (
+        "the onupdate fired: this write would tell 58 readers the market's data moved"
+    )
+    assert "updated_at=now()" not in set_clause.replace(" = ", "=")
+
+
 def _record(captured, stmt):
     captured.append(stmt)
 

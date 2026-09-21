@@ -41,6 +41,8 @@ once per market. It exists because the bank is Redis-only under `allkeys-lru`:
 when eviction takes the bank it also takes the only evidence the bank existed,
 and `plan_on_demand_fill` then cannot tell a market whose history was evicted
 from one that never had any — so the recovery is silently abandoned for ever.
+It pins `updated_at` to itself so the row's data-freshness clock does NOT move
+(CERT-949, and #7351's D1 byte-equality contract): see `_stamp_bank_marker`.
 """
 
 from __future__ import annotations
@@ -737,6 +739,20 @@ async def _stamp_bank_marker(session: Any, market_id: int, marker: dict) -> None
     sibling writing a different key of the same column is not clobbered by a
     read-modify-write. Does NOT commit: the caller owns the transaction, and
     `get_task_session` commits it on a clean exit.
+
+    🔴 `updated_at` IS PINNED TO ITSELF, AND THAT IS THE POINT (CERT-949). The
+    column is `onupdate=func.now()`, so SQLAlchemy appends `updated_at=now()` to
+    any `update()` that omits it — and 58 call sites read it as "this market's
+    DATA changed": `max(FuturesMarket.updated_at)` is the cache version for the
+    concept / related-futures / game-markets payloads, `taxonomy` and
+    `data_quality` select on `updated_at >= cutoff`, and `admin_judgments` calls
+    a row stale at `updated_at < now - 14d`. This write is bookkeeping about the
+    CACHE and touches no market data, so letting it bump that clock would tell
+    all of them a lie — the exact lie CERT-949 is the record of, where the
+    six-hourly hook enricher's `market_metadata` write made stale markets read as
+    hours fresh. Self-assigning the column emits `updated_at=futures_markets.
+    updated_at` and suppresses the `onupdate`; the served detail payload is then
+    byte-identical across a fill, which is #7351's D1 contract.
     """
     from sqlalchemy import cast, func, literal, update
     from sqlalchemy.dialects.postgresql import JSONB
@@ -749,7 +765,8 @@ async def _stamp_bank_marker(session: Any, market_id: int, marker: dict) -> None
         .values(
             market_metadata=func.coalesce(
                 FuturesMarket.market_metadata, cast(literal("{}"), JSONB)
-            ).op("||")(cast(literal(json.dumps({BANK_MARKER_KEY: marker})), JSONB))
+            ).op("||")(cast(literal(json.dumps({BANK_MARKER_KEY: marker})), JSONB)),
+            updated_at=FuturesMarket.updated_at,
         )
     )
 

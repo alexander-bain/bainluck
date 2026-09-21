@@ -1653,7 +1653,25 @@ def test_D1_history_alone_changed_price_rank_movement_and_detail_are_byte_equal(
 
 
 def test_D2_the_whole_lifecycle_writes_no_shared_table(venue, broker):
+    # 🔴 THE ONE ALLOWED WRITE, AND WHY THE ASSERTION STAYS STRONG (#7736). This
+    # test was written when the fill wrote NOTHING to Postgres. #7736 added a
+    # single bookkeeping key — `market_metadata->'venue_history_bank'`, at most
+    # once per market — because the bank is Redis-only under `allkeys-lru` and an
+    # eviction otherwise takes the only evidence the bank ever existed. So the
+    # `futures_markets` digest STRIPS exactly that one key and nothing else: every
+    # other column of every row, `updated_at` INCLUDED, must still be byte-equal,
+    # and the marker is asserted positively below so stripping it cannot hide a
+    # fill that silently stopped writing it. `updated_at` is load-bearing here —
+    # it is `onupdate=func.now()` and 58 call sites read it as "the market's data
+    # changed" (CERT-949), so the write pins it to itself.
+    _MARKER = "venue_history_bank"
     tables = ("futures_odds_snapshots", "futures_outcomes", "futures_markets")
+    _row_text = {
+        "futures_markets": (
+            "jsonb_set(to_jsonb(t), '{market_metadata}', "
+            f"coalesce(t.market_metadata, '{{}}'::jsonb) - '{_MARKER}')::text"
+        ),
+    }
 
     async def _digest():
         from sqlalchemy import text
@@ -1663,11 +1681,27 @@ def test_D2_the_whole_lifecycle_writes_no_shared_table(venue, broker):
         out = {}
         async with engine.connect() as conn:
             for table in tables:
+                row = _row_text.get(table, "t::text")
                 out[table] = tuple((await conn.execute(text(
-                    f"SELECT count(*), md5(coalesce(string_agg(t::text, '|' ORDER BY t.id), '')) FROM {table} t"
+                    f"SELECT count(*), md5(coalesce(string_agg({row}, '|' ORDER BY t.id), '')) FROM {table} t"
                 ))).one())
         await engine.dispose()
         return out
+
+    async def _marker_rows():
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(DB_URL)
+        async with engine.connect() as conn:
+            # `jsonb_exists(...)`, never the `?` operator: a bare `?` in a
+            # `text()` is a paramstyle marker to some drivers (gotcha #45).
+            rows = (await conn.execute(text(
+                f"SELECT id FROM futures_markets "
+                f"WHERE jsonb_exists(market_metadata, '{_MARKER}') ORDER BY id"
+            ))).scalars().all()
+        await engine.dispose()
+        return [int(r) for r in rows]
 
     _seed_specimen()
     before = _arun(_digest())
@@ -1677,6 +1711,9 @@ def test_D2_the_whole_lifecycle_writes_no_shared_table(venue, broker):
     _timeline(), broker.run_enqueued(), _history()
     assert _arun(_digest()) == before, "a shared table was written (snapshots / outcomes / markets)"
     assert before["futures_odds_snapshots"][0] == 9
+    # Non-vacuity: the stripped key is really there, on the one market that was
+    # filled — so the strip above is narrowing a real write, not papering a no-op.
+    assert _arun(_marker_rows()) == [MARKET_ID]
 
 
 def test_D3_reverting_the_reader_integration_makes_the_named_contract_fail_again(venue, broker, monkeypatch):
