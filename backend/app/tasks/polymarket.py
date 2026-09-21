@@ -8,7 +8,7 @@ with source="polymarket".
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, select, text
@@ -804,6 +804,10 @@ async def _poll_polymarket_markets():
         "outcomes_updated": 0,
         "snapshots_created": 0,
         "legs_retired": 0,  # #4000: prices withdrawn because the venue quotes none
+        # #2027: seeded at zero so a quiet poll and a poll that never asked
+        # read differently. The refusal is the ship; the count is how anyone
+        # tells that it happened without opening the database.
+        "opening_refused_hindsight": 0,
         "errors": [],
         "by_category": {},
         "crypto_skipped": 0,
@@ -1154,9 +1158,10 @@ async def _poll_polymarket_markets():
 
     stats["total_api_events"] = len(seen_ids)
     logger.info(
-        "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d errors | by_category: %s",
+        "Polymarket poll: %d API events → %d processed, %d markets, %d outcomes, %d snapshots, %d crypto skipped, %d openings refused as hindsight (#2027), %d errors | by_category: %s",
         stats["total_api_events"], stats["events_processed"], stats["markets_processed"],
         stats["outcomes_updated"], stats["snapshots_created"], stats["crypto_skipped"],
+        stats.get("opening_refused_hindsight", 0),
         len(stats["errors"]), stats["by_category"],
     )
     return stats
@@ -2192,6 +2197,55 @@ def submarket_is_open(event, market) -> bool:
     )
 
 
+def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
+    """Whether an opening stamped now would be a hindsight price (#2027).
+
+    Pure. The writer stamping ``opening_probability`` must be able to say
+    which of two facts it asserts — "first quote for a live market" or
+    "what the book looked like after it settled" (ruling 075, second
+    clause). It has both signals in hand and asked neither: the venue's
+    own ``closed`` flags, and the capture time against ``resolution_date``
+    (ruling 103's predicate, ``opening_captured_at > resolution_date``).
+
+    ``market`` is the sub-market DTO on the decomposed path, None on the
+    parent-field path. Naive stamps are read as UTC; an unparseable stamp
+    refuses nothing, so a bad clock cannot blank live openings.
+
+    Datetime/date handling is exact, never truncated: an aware datetime
+    compares at its full timestamp (``datetime`` is checked BEFORE
+    ``date`` because ``datetime`` subclasses ``date`` — the reverse order
+    truncates ``2026-09-20T20:00Z`` to midnight and wrongly refuses a live
+    market captured at noon). A pure ``date`` compares at UTC midnight.
+
+    Provenance: ``resolution_date`` at every call site is the parent
+    ``event.end_date`` — decomposed sub-markets carry no per-market date,
+    so the child check reads the parent event's date openly, not as a
+    substituted child fact.
+    """
+    if getattr(event, "closed", False) or getattr(event, "archived", False):
+        return True
+    if market is not None and getattr(market, "closed", False):
+        return True
+    if resolution_date is not None and now is not None:
+        try:
+            res = resolution_date
+            if isinstance(res, datetime):
+                if res.tzinfo is None:
+                    res = res.replace(tzinfo=timezone.utc)
+            elif isinstance(res, date):
+                res = datetime(res.year, res.month, res.day, tzinfo=timezone.utc)
+            else:
+                return False
+            cmp_now = now
+            if isinstance(cmp_now, datetime) and cmp_now.tzinfo is None:
+                cmp_now = cmp_now.replace(tzinfo=timezone.utc)
+            if cmp_now > res:
+                return True
+        except Exception:
+            return False
+    return False
+
+
 async def _process_event_batch(
     events, stats, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot,
     pg_insert, probability_to_american, compute_market_tier,
@@ -2650,6 +2704,16 @@ async def _process_event_batch(
                         # share this one value so an upsert cannot disagree with
                         # itself about whether the leg still trades.
                         sub_open = submarket_is_open(event, market)
+                        # #2027: the second signal the opening gates never
+                        # asked for. A sub-market first seen through the
+                        # `closed=True` sweep (or past its resolution_date)
+                        # quotes the settled book, not a price — stamping it
+                        # as the opening is the hindsight capture.
+                        # `resolution_date` here is the parent event.end_date:
+                        # sub-markets carry no per-market date (see helper).
+                        _sub_hindsight = opening_capture_is_hindsight(
+                            event, market, resolution_date, now
+                        )
                         sub_set = {
                             "name": sub_name,
                             "market_tier": sub_tier,
@@ -2781,6 +2845,16 @@ async def _process_event_batch(
                             )
                             stats[f"pair_opening_{sub_pair_verdict}"] = (
                                 stats.get(f"pair_opening_{sub_pair_verdict}", 0) + 1
+                            )
+                            sub_has_open = False
+
+                        # #2027: the settled book is not an opening (ruling
+                        # 103). Current price, book and snapshot still write;
+                        # only the opening stamp is refused, so the row keeps
+                        # its provenance and no existing row is rewritten.
+                        if sub_has_open and _sub_hindsight:
+                            stats["opening_refused_hindsight"] = (
+                                stats.get("opening_refused_hindsight", 0) + 1
                             )
                             sub_has_open = False
 
@@ -2949,6 +3023,13 @@ async def _process_event_batch(
                             sub_under_has_open = _is_tradeable_opening(
                                 under_prob, sub_has_trading
                             ) and sub_pair_verdict == PAIR_OPENING_OK
+                            # #2027: same refusal as the Over leg above —
+                            # the settled book is not an opening.
+                            if sub_under_has_open and _sub_hindsight:
+                                stats["opening_refused_hindsight"] = (
+                                    stats.get("opening_refused_hindsight", 0) + 1
+                                )
+                                sub_under_has_open = False
                             sub_under_opening = under_prob if sub_under_has_open else None
                             # These two used to be gated on the OVER leg's
                             # `sub_opening_at` and on bare `sub_has_trading`, so an
@@ -3165,6 +3246,20 @@ async def _process_event_batch(
                     ) or (
                         od.get("last_price") is not None and od["last_price"] > 0
                     )
+                    # #2027: the parent-field twin of the sub-market refusal
+                    # above. `_process_event_batch` is fed by the `closed=True`
+                    # settled-sports sweep as well as the open poll, so a
+                    # settled quote with a last trade behind it passes the
+                    # liquidity test — and is still the answer, not a price
+                    # (ruling 103). Current price, book and snapshot still
+                    # write; only the opening stamp is refused.
+                    if has_real_trading and opening_capture_is_hindsight(
+                        event, None, resolution_date, now
+                    ):
+                        stats["opening_refused_hindsight"] = (
+                            stats.get("opening_refused_hindsight", 0) + 1
+                        )
+                        has_real_trading = False
                     opening_prob = prob if has_real_trading else None
                     opening_american = american if has_real_trading else None
                     opening_at = now if has_real_trading else None
@@ -3313,7 +3408,11 @@ _LINKED_POLY_BOOKS_SQL = text(
            fm.name,
            fm.event_id,
            fm.category,
-           fm.market_tier
+           fm.market_tier,
+           -- #2027: carried, not filtered on. The pass still reaches a market
+           -- whose resolution is behind us (its event can still read `live`);
+           -- what it may not do is stamp that capture as the OPENING line.
+           fm.resolution_date
       FROM futures_markets fm
       JOIN events e ON e.id = fm.event_id
      WHERE fm.source = 'polymarket'
@@ -3425,8 +3524,13 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
       the same reason as the poll: an impossible field is not a price.
 
     ``opening_probability`` is written only under the poll's own
-    ``has_real_trading`` test, so a first sighting through this path cannot bank
-    an opening the poll would have declined to bank.
+    ``has_real_trading`` test AND its own hindsight refusal
+    (:func:`opening_capture_is_hindsight`, #2027), so a first sighting through
+    this path cannot bank an opening the poll would have declined to bank.
+    That sentence is the whole reason the second gate is here: this pass
+    CREATES first legs, which is precisely the population #2027 measured, and
+    a claim of inheritance that the code does not implement is worse than no
+    claim at all.
     """
     import asyncio
     import time as _time
@@ -3450,6 +3554,10 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
         "markets_absent_at_venue": 0,
         "markets_unpriced_at_venue": 0,
         "incoherent_fields_skipped": 0,
+        # #2027: present at zero, always. "We stopped minting hindsight
+        # openings" has to be a number somebody can read, and a key that only
+        # appears when it fires cannot tell a quiet pass from a blind one.
+        "opening_refused_hindsight": 0,
         "outcomes_created": 0,
         "snapshots_written": 0,
         "display_labels_corrected": 0,
@@ -3486,6 +3594,7 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                 "name": r.name,
                 "category": r.category,
                 "market_tier": r.market_tier,
+                "resolution_date": r.resolution_date,
             }
             for r in rows
         ]
@@ -3556,6 +3665,16 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                     # every leg lost the `ON CONFLICT DO NOTHING` race.
                     _created_before_this_market = stats["outcomes_created"]
 
+                    # #2027: the poll's hindsight refusal, inherited whole, once
+                    # per market because it is a property of the market and its
+                    # capture time — not of a leg. `market=None`: this pass reads
+                    # the parent field, exactly as the poll's parent-field site
+                    # does, and `resolution_date` is that market's own stored
+                    # date (the parent event.end_date the poll wrote).
+                    _hindsight = opening_capture_is_hindsight(
+                        event, None, row.get("resolution_date"), now
+                    )
+
                     for rank, od in enumerate(outcome_data, 1):
                         prob = od["prob"]
                         american = (
@@ -3570,6 +3689,11 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                         ) or (
                             od.get("last_price") is not None and od["last_price"] > 0
                         )
+                        if has_real_trading and _hindsight:
+                            stats["opening_refused_hindsight"] = (
+                                stats.get("opening_refused_hindsight", 0) + 1
+                            )
+                            has_real_trading = False
 
                         created_id = (
                             await session.execute(

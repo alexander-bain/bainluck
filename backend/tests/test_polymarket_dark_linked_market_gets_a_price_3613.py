@@ -145,7 +145,7 @@ def _market(cid, question, price, bid, ask, *, outcomes=None, last=None, vol24=N
 TITLE = "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)"
 
 
-def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
+def _gandra_event(*, priced: bool = True, closed: bool = False) -> PolymarketEvent:
     """The specimen event: one tradeable moneyline, three untradeable props."""
     markets = [
         _market(
@@ -165,7 +165,7 @@ def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
         title=TITLE,
         slug="ufc-ozz-rya18-2026-09-19",
         active=True,
-        closed=False,
+        closed=closed,
         neg_risk=False,
         tags=["Sports", "MMA", "UFC"],
         start_date=datetime(2026, 9, 5, 22, 1, 28, tzinfo=UTC),
@@ -191,6 +191,7 @@ class _Row:
         event_id=15305793,
         category="championship",
         market_tier=5,
+        resolution_date=None,
     ):
         self.id = ident
         self.external_id = external_id
@@ -198,6 +199,10 @@ class _Row:
         self.event_id = event_id
         self.category = category
         self.market_tier = market_tier
+        # #2027. Defaults to NULL — the specimen's own value, and the one that
+        # must not by itself refuse an opening: most dark rows have no stored
+        # resolution date and are perfectly ordinary live markets.
+        self.resolution_date = resolution_date
 
 
 class _SelectorResult:
@@ -981,3 +986,102 @@ class TestItIsActuallyScheduled:
         assert "_refresh_linked_polymarket_books" in inspect.getsource(
             refresh_linked_polymarket_books
         )
+
+
+# ---------------------------------------------------------------------------
+# #2027 — the inherited refusal, which was a docstring sentence and no code.
+#
+# This pass CREATES a market's first legs, which is exactly the population
+# #2027 measured: a market first seen after it settled, stamped with the
+# settled book as its `opening_probability` and keeping it forever, because
+# opening is COALESCEd and nothing earlier exists to read. The docstring
+# claimed the poll's gate was inherited whole; until now the only thing
+# inherited was `has_real_trading`, which a settled book passes.
+# ---------------------------------------------------------------------------
+
+
+class TestTheOpeningIsRefusedInHindsight:
+    @pytest.mark.asyncio
+    async def test_the_live_dark_market_still_gets_its_opening(self, monkeypatch):
+        """The control, and the reason the two arms below are not vacuous.
+
+        Nothing in this file asserted `opening_probability` before #2027, so a
+        refusal that fired on everything would have looked exactly like this
+        file passing.
+        """
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["opening_probability"] == MONEYLINE_PRICE
+        assert leg["opening_captured_at"] is not None
+        assert stats["opening_refused_hindsight"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_settled_venue_event_is_priced_but_never_opened(
+        self, monkeypatch
+    ):
+        """`closed=True` at the venue: the reader still gets a price, the curve
+        does not get a forecast made after the answer (ruling 103)."""
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event(closed=True)},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["current_probability"] == MONEYLINE_PRICE, (
+            "the refusal is narrow — the price a reader sees still lands"
+        )
+        assert leg["opening_probability"] is None
+        assert leg["opening_american_odds"] is None
+        assert leg["opening_captured_at"] is None
+        assert stats["opening_refused_hindsight"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_a_resolution_already_behind_us_refuses_the_opening(
+        self, monkeypatch
+    ):
+        """The flag-lag arm. Gamma leaves `closed=false` on events it has
+        already settled, so the date is the second signal (gotcha #53): our own
+        stored `resolution_date` is in the past, and this capture is therefore
+        the settled book however the venue labels itself.
+        """
+        stats, session, _ = await _execute(
+            [
+                _Row(
+                    60280227,
+                    "972409",
+                    TITLE,
+                    resolution_date=datetime(2026, 5, 4, tzinfo=UTC),
+                )
+            ],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["current_probability"] == MONEYLINE_PRICE
+        assert leg["opening_probability"] is None
+        assert stats["opening_refused_hindsight"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_a_future_resolution_does_not_refuse_the_opening(
+        self, monkeypatch
+    ):
+        """Precision: a stored date that is still ahead of us says nothing
+        against the capture, and must not blank a live market's opening."""
+        stats, session, _ = await _execute(
+            [
+                _Row(
+                    60280227,
+                    "972409",
+                    TITLE,
+                    resolution_date=datetime(2099, 1, 1, tzinfo=UTC),
+                )
+            ],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _legs(session)["0xf5200a"]["opening_probability"] == MONEYLINE_PRICE
+        assert stats["opening_refused_hindsight"] == 0
