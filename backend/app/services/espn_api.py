@@ -669,16 +669,24 @@ class ESPNAPIService:
         logger.info(f"Fetched {len(teams)} teams for {sport_key}")
         return teams
 
-    async def get_standings_clinch(self, sport_key: str) -> Optional[dict[str, str]]:
-        """``{espn_team_id: claim}`` from ESPN's standings — the clinch authority.
+    async def get_standings_reading(self, sport_key: str) -> Optional[dict[str, dict]]:
+        """ESPN's standings as grid authority: ``{"claims": …, "records": …}``.
 
-        See :mod:`app.utils.espn_clinch` for what a claim is and why it is read
-        off the ``description`` rather than the letter or the numeric value.
+        ``claims`` is ``{espn_team_id: clinch claim}`` (#7663) and ``records``
+        is ``{espn_team_id: "95-60"}`` (#7675). See :mod:`app.utils.espn_clinch`
+        for what a claim is and why it is read off the ``description`` rather
+        than the letter or the numeric value, and for why a record is trimmed
+        from ``overall`` rather than rebuilt from the W/L/T stats.
 
-        Returns ``{}`` when ESPN answers with no clinch state (an out-of-season
-        or not-yet-played league, which is an answer), and ``None`` when ESPN
-        did not answer — gotcha #53, the two must not collapse: a caller that
-        blanked cells on a dark authority would erase the grid.
+        Both readings come from ONE body and are therefore one fetch. They are
+        returned together rather than by two methods so that a caller wanting
+        both cannot accidentally ask ESPN for the same standings twice.
+
+        Returns both maps EMPTY when ESPN answers with nothing to report (an
+        out-of-season or not-yet-played league, which is an answer), and
+        ``None`` when ESPN did not answer — gotcha #53, the two must not
+        collapse: a caller that blanked cells on a dark authority would erase
+        the grid.
 
         No ``season`` parameter. ESPN's season-less standings body already
         labels itself ``season.year: 2027`` while serving 2026's played table,
@@ -687,9 +695,11 @@ class ESPNAPIService:
         ESPN choose, and requiring games played on the entry, is the pair that
         makes the reading safe.
         """
+        empty: dict[str, dict] = {"claims": {}, "records": {}}
+
         path = self._get_espn_path(sport_key)
         if not path:
-            return {}
+            return empty
 
         sport, league = path
         url = f"{ESPN_STANDINGS_BASE}/{sport}/{league}/standings"
@@ -699,11 +709,28 @@ class ESPNAPIService:
         except ESPNAuthorityDark:
             return None
         if not data:
-            return {}
+            return empty
 
-        from app.utils.espn_clinch import parse_standings_clinch
+        from app.utils.espn_clinch import (
+            is_preseason_standings,
+            parse_standings_clinch,
+            parse_standings_records,
+        )
 
-        return parse_standings_clinch(data)
+        # A PRESEASON table is not an authority on anything the grid shows
+        # (#7675). Measured 2026-09-21 the NHL and NBA standings were both
+        # reporting preseason, and serving those records would have put a
+        # preseason record beside 25 NHL clubs — the very defect this reading
+        # exists to remove. Gated here, at the boundary, so one check covers
+        # both readings and neither parser has to know about the other.
+        if is_preseason_standings(data):
+            logger.info("ESPN standings for %s are preseason — no reading", sport_key)
+            return empty
+
+        return {
+            "claims": parse_standings_clinch(data),
+            "records": parse_standings_records(data),
+        }
 
     async def get_team(self, sport_key: str, team_id: str) -> Optional[ESPNTeam]:
         """
