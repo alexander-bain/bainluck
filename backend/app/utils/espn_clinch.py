@@ -1,4 +1,10 @@
-"""Reading ESPN's ``clincher`` standings stat as a playoff-grid state (#7663).
+"""Reading ESPN's standings as playoff-grid authority (#7663, #7675).
+
+Two readings come off the one standings body, and they are parsed together
+because they are one fetch: the ``clincher`` stat as a terminal grid state
+(#7663, below) and the ``overall`` stat as the club's season record (#7675,
+:func:`season_record`).
+
 
 ESPN publishes, per team per season, a ``clincher`` stat saying whether the club
 has clinched something or been eliminated. That is the AUTHORITY on a question
@@ -31,6 +37,7 @@ table above is testable without a network or a database.
 """
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +164,230 @@ def parse_standings_clinch(payload: dict) -> dict[str, str]:
             claims[str(team_id)] = claim
 
     return claims
+
+
+#: A servable record is digits separated by hyphens and nothing else: ``95-60``
+#: (MLB, W-L), ``2-0`` (NFL), ``3-1-1`` (EPL, W-D-L), ``2-0-0`` (NHL, W-L-OTL).
+#: Anything else makes no claim rather than printing a string nobody designed
+#: for that column.
+_RECORD_SHAPE = re.compile(r"^\d+(?:-\d+)+$")
+
+
+def season_record(display_value) -> str | None:
+    """ESPN's ``overall`` display value as a record the grid can print.
+
+    🔴 **THE DISPLAY VALUE IS NOT ALWAYS THE RECORD.** Measured 2026-09-21
+    across the five grids, the ``overall`` stat (``type: total``) reads:
+
+    ====== ======================= ==========================================
+    league ``overall.displayValue`` note
+    ====== ======================= ==========================================
+    MLB    ``95-60``               W-L
+    NFL    ``2-0``                 W-L
+    EPL    ``3-1-1``               W-D-L
+    NHL    ``2-0-0, 4 PTS``        **carries a points suffix**
+    NBA    ``0-0``                 preseason; no games played
+    ====== ======================= ==========================================
+
+    So NHL's value cannot be served raw — the record column would print
+    ``2-0-0, 4 PTS``. The suffix is cut at the comma and the remainder must
+    match :data:`_RECORD_SHAPE`, which is also what refuses a shape no league
+    here has published.
+
+    Deliberately NOT rebuilt from the ``wins``/``losses``/``ties``/``otLosses``
+    stats: the ORDER differs per sport (W-L, W-D-L, W-L-OTL) and a per-sport
+    composition table would be a fifth place for the league to be wrong. ESPN
+    already composed it correctly for its own sport; this only trims it.
+    """
+    if not isinstance(display_value, str):
+        return None
+    text = display_value.split(",")[0].strip()
+    if not text or not _RECORD_SHAPE.match(text):
+        return None
+    return text
+
+
+#: ESPN's abbreviation for a preseason season-type. Measured 2026-09-21: the
+#: NAME differs by sport ("Preseason" in the NHL, "Spring Training" in MLB) but
+#: the abbreviation is ``pre`` in both, so the abbreviation is the key and the
+#: names below are the backstop.
+_PRESEASON_ABBREVIATION = "pre"
+_PRESEASON_NAMES = ("preseason", "pre-season", "spring training", "exhibition")
+
+
+def _standings_season_type(payload: dict) -> dict | None:
+    """The ``seasons[].types[]`` entry the standings body is reporting under."""
+    if not isinstance(payload, dict):
+        return None
+
+    season_type = None
+    for node in _iter_group_nodes(payload):
+        standings = node.get("standings")
+        if isinstance(standings, dict) and standings.get("seasonType") is not None:
+            season_type = standings.get("seasonType")
+            break
+    if season_type is None:
+        return None
+
+    seasons = payload.get("seasons")
+    if not isinstance(seasons, list):
+        return None
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        for type_entry in season.get("types") or []:
+            if isinstance(type_entry, dict) and str(type_entry.get("id")) == str(season_type):
+                return type_entry
+    return None
+
+
+def is_preseason_standings(payload: dict) -> bool:
+    """Is this standings body reporting a PRESEASON table? (#7675)
+
+    🔴 **THE SEASON-TYPE NUMBER IS NOT A KEY EITHER** — the same trap as the
+    clinch letter, one field over. Measured 2026-09-21, the standings node's
+    ``seasonType`` read:
+
+    ====== ============ ==================================================
+    league ``seasonType`` what ``seasons[].types[]`` resolves it to
+    ====== ============ ==================================================
+    NHL    ``1``        **Preseason** (``pre``) — games are being played
+    NBA    ``1``        **Preseason** (``pre``)
+    MLB    ``2``        Regular Season (``reg``)
+    NFL    ``2``        Regular Season (``reg``)
+    EPL    ``1``        "2026-27 English Premier League" — soccer has ONE
+                        type; ``1`` here is the whole season
+    ====== ============ ==================================================
+
+    So ``seasonType == 1`` means preseason in the NHL and means the live
+    Premier League table in England. A numeric test would either serve NHL
+    preseason records or drop the EPL rows this ship exists to fix. The id is
+    resolved through the body's own ``types`` table and the NAME is read —
+    exactly as :func:`clinch_claim` reads the description.
+
+    This matters because a preseason record is the defect, not the fix: it is
+    the same shape as the spring-training ``10-18-1`` in
+    ``_get_team_metadata``'s docstring. Without this gate the overlay wrote
+    preseason records onto 25 NHL rows on the day it was built.
+
+    **Fails OPEN.** An unresolvable or absent season type returns ``False`` and
+    the reading proceeds — losing the authority on a body we merely could not
+    label would cost more than the case it guards.
+    """
+    type_entry = _standings_season_type(payload)
+    if not isinstance(type_entry, dict):
+        return False
+
+    abbreviation = type_entry.get("abbreviation")
+    if isinstance(abbreviation, str) and abbreviation.strip().lower() == _PRESEASON_ABBREVIATION:
+        return True
+
+    name = type_entry.get("name")
+    if isinstance(name, str):
+        lowered = name.strip().lower()
+        return any(word in lowered for word in _PRESEASON_NAMES)
+    return False
+
+
+def parse_standings_records(payload: dict) -> dict[str, str]:
+    """``{espn_team_id: record}`` from an ESPN v2 standings body (#7675).
+
+    Same body, same id join and same played-games gate as
+    :func:`parse_standings_clinch` — see there for why the key is the ESPN id
+    as a string and never a name.
+
+    The played-games gate is what keeps a not-yet-started season from
+    overwriting a real record with ``0-0``: measured 2026-09-21, 29 of 30 NBA
+    clubs sat at ``0-0`` in preseason, and every one of them makes no claim
+    here, so the NBA grid is left exactly as it was found.
+    """
+    records: dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return records
+
+    for entry in _iter_entries(payload):
+        team = entry.get("team")
+        if not isinstance(team, dict):
+            continue
+        team_id = team.get("id")
+        if team_id is None:
+            continue
+
+        stats = entry.get("stats")
+        if not isinstance(stats, list):
+            continue
+
+        overall = None
+        played = 0
+        for stat in stats:
+            if not isinstance(stat, dict):
+                continue
+            name = stat.get("name")
+            if name == "overall":
+                overall = stat.get("displayValue")
+            elif name in ("wins", "losses", "ties", "otLosses"):
+                try:
+                    played += int(float(stat.get("value") or 0))
+                except (TypeError, ValueError):
+                    pass
+
+        if played <= 0:
+            continue
+        record = season_record(overall)
+        if record is not None:
+            records[str(team_id)] = record
+
+    return records
+
+
+def apply_record_overlay(rows: list[tuple[str, dict]], records: dict[str, str]) -> int:
+    """Serve ESPN's record for each club it names. Returns the count changed.
+
+    ``rows`` is ``(espn_id, team_row)`` pairs; a club with no ESPN id, or one
+    ESPN makes no claim about, keeps whatever ``Team.current_record`` gave it.
+
+    D27, and nothing cleverer: the authority's record REPLACES ours rather than
+    being consulted only when ours looks wrong. There is no plausibility
+    threshold here on purpose — "a record implying more games than the season
+    has played" would be a second, weaker way of asking the question the
+    authority already answers, and it would need a per-league matchweek the
+    grid does not have.
+
+    Measured over all five grids on 2026-09-21, same minute: MLB 30 of 30
+    already identical (so the shape is right and nothing churns), NBA untouched
+    (preseason, no games played), and 30 rows corrected — the 3 EPL clubs
+    serving a COMPLETED PRIOR SEASON in matchweek 5 (Brighton ``14-11-12`` = 37
+    games, Bournemouth ``12-16-7``, Tottenham ``10-11-17`` = 38), plus 2 NFL and
+    25 NHL rows where our sync simply lagged a game behind.
+    """
+    written = 0
+
+    for espn_id, team in rows:
+        record = records.get(str(espn_id)) if espn_id else None
+        if record is None:
+            continue
+        if team.get("record") == record:
+            continue
+        team["record"] = record
+        written += 1
+
+    return written
+
+
+def _iter_group_nodes(node: dict):
+    """Every group node in the tree, this one first, then its descendants.
+
+    The sibling of :func:`_iter_entries`: that one yields the leaf entries, this
+    one yields the nodes that CARRY them, which is where ``seasonType`` lives.
+    """
+    if not isinstance(node, dict):
+        return
+    yield node
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict):
+                yield from _iter_group_nodes(child)
 
 
 def _iter_entries(node: dict):

@@ -3572,21 +3572,25 @@ def _grid_leg_is_terminal(graded: bool, probability: float) -> bool:
     return graded and (probability <= 0 or probability >= 1.0)
 
 
-#: How long one league's ESPN clinch reading is reused. The grid itself caches
-#: for 3900s, so this only collapses the cold rebuilds of sibling leagues and
-#: dynos; 900s keeps a clinch visible within a quarter hour of ESPN posting it,
-#: which matters in the last week of a season when several land per day.
-_CLINCH_CACHE_TTL = 900
+#: How long one league's ESPN standings reading is reused. The grid itself
+#: caches for 3900s, so this only collapses the cold rebuilds of sibling leagues
+#: and dynos; 900s keeps a clinch visible within a quarter hour of ESPN posting
+#: it, which matters in the last week of a season when several land per day.
+_STANDINGS_CACHE_TTL = 900
+
+#: Both readings ESPN's standings give the grid, empty. The shape every failure
+#: path returns, so no caller has to distinguish "absent" from "nothing to say".
+_EMPTY_READING: dict[str, dict] = {"claims": {}, "records": {}}
 
 
-async def _espn_clinch_claims(config) -> dict[str, str]:
-    """ESPN's clinch/elimination claims for one league's teams (#7663).
+async def _espn_standings_reading(config) -> dict[str, dict]:
+    """ESPN's standings reading for one league: clinch claims and records.
 
-    ``{}`` for every failure mode there is — no sport key, no ESPN mapping, ESPN
-    dark, Redis down, a parse that raises. **This may never be able to blank or
-    badge a grid on its own absence.** The grid rendered without it is exactly
-    the grid we serve today, so failing open costs a correction and failing
-    closed would cost the page.
+    ``{"claims": {}, "records": {}}`` for every failure mode there is — no sport
+    key, no ESPN mapping, ESPN dark, Redis down, a parse that raises. **This may
+    never be able to blank or badge a grid, or empty a record, on its own
+    absence.** The grid rendered without it is exactly the grid we serve today,
+    so failing open costs a correction and failing closed would cost the page.
 
     Read on the request path deliberately rather than from a task: it runs only
     on a cold rebuild (hourly per league, ~12s of work already), one bounded
@@ -3596,11 +3600,15 @@ async def _espn_clinch_claims(config) -> dict[str, str]:
     """
     sport_key = next((k for k in (getattr(config, "sport_keys", None) or []) if k), None)
     if not sport_key:
-        return {}
+        return dict(_EMPTY_READING)
 
     import json
 
-    cache_key = f"grid:clinch:{sport_key}"
+    # `standings`, not the old `clinch`: the cached VALUE changed shape from a
+    # claims map to a two-key reading, and a key that outlived its shape would
+    # be read back as `{"331": "out"}.get("claims")` — a silent empty reading
+    # for the whole TTL. A new shape gets a new key.
+    cache_key = f"grid:standings:{sport_key}"
     rc = None
     try:
         from app.tasks.redis_state import get_async_redis_client
@@ -3613,38 +3621,40 @@ async def _espn_clinch_claims(config) -> dict[str, str]:
         rc = get_async_redis_client()
         cached = await rc.get(cache_key)
         if cached:
-            return json.loads(cached)
+            stored = json.loads(cached)
+            if isinstance(stored, dict) and "claims" in stored:
+                return stored
     except Exception as exc:
         # Fail open, but never silently: the swallow is what hid #7677 for the
         # whole life of the feature. The read below still runs.
-        logger.warning("Grid clinch cache read failed for %s: %s", sport_key, exc)
+        logger.warning("Grid standings cache read failed for %s: %s", sport_key, exc)
         rc = None
 
-    claims: dict[str, str] = {}
+    reading: dict[str, dict] = dict(_EMPTY_READING)
     try:
         from app.services.espn_api import ESPNAPIService
 
         espn = ESPNAPIService()
         try:
-            fetched = await espn.get_standings_clinch(sport_key)
+            fetched = await espn.get_standings_reading(sport_key)
         finally:
             await espn.close()
-        # `None` is ESPN dark and `{}` is ESPN answering "nobody has clinched".
-        # Both leave the grid alone, but only the second may be cached — caching
-        # a dark read would hold the outage for a quarter hour past its end.
+        # `None` is ESPN dark and an empty reading is ESPN answering "nothing to
+        # report". Both leave the grid alone, but only the second may be cached
+        # — caching a dark read would hold the outage a quarter hour past its end.
         if fetched is None:
-            return {}
-        claims = fetched
+            return dict(_EMPTY_READING)
+        reading = fetched
     except Exception as exc:
-        logger.warning("ESPN clinch read failed for %s: %s", sport_key, exc)
-        return {}
+        logger.warning("ESPN standings read failed for %s: %s", sport_key, exc)
+        return dict(_EMPTY_READING)
 
     if rc is not None:
         try:
-            await rc.set(cache_key, json.dumps(claims), ex=_CLINCH_CACHE_TTL)
+            await rc.set(cache_key, json.dumps(reading), ex=_STANDINGS_CACHE_TTL)
         except Exception as exc:
-            logger.warning("Grid clinch cache write failed for %s: %s", sport_key, exc)
-    return claims
+            logger.warning("Grid standings cache write failed for %s: %s", sport_key, exc)
+    return reading
 
 
 def _grid_dedup_rank(entry: dict) -> tuple:
@@ -5217,19 +5227,46 @@ async def get_playoff_grid(
     # live, and before `propagate_elimination` so a club ESPN eliminates reaches
     # the pennant and championship cells down the existing ladder rather than a
     # second copy of it.
-    clinch_claims = await _espn_clinch_claims(config)
-    if clinch_claims:
-        from app.utils.espn_clinch import apply_clinch_overlay
+    standings_reading = await _espn_standings_reading(config)
+    clinch_claims = standings_reading.get("claims") or {}
+    espn_records = standings_reading.get("records") or {}
 
-        clinch_rows = [
+    # One `(espn_id, row)` list, shared by both overlays. Built only when ESPN
+    # gave us something, so a dark authority costs nothing at all.
+    espn_rows = (
+        [
             ((team_meta.get(norm_name) or {}).get("espn_id"), row)
             for norm_name, row in row_by_entity.items()
         ]
-        clinch_fixes = apply_clinch_overlay(clinch_rows, clinch_claims, config.columns)
+        if (clinch_claims or espn_records)
+        else []
+    )
+
+    if clinch_claims:
+        from app.utils.espn_clinch import apply_clinch_overlay
+
+        clinch_fixes = apply_clinch_overlay(espn_rows, clinch_claims, config.columns)
         if clinch_fixes:
             logger.info(
                 "Playoff grid %s: %d cell(s) set from ESPN standings",
                 config.slug, clinch_fixes,
+            )
+
+    # The RECORD beside the club's name comes from the same body (#7675). The
+    # grid was printing a COMPLETED PRIOR SEASON for three EPL clubs in
+    # matchweek 5 — Brighton `14-11-12` (37 games) next to seventeen clubs
+    # printing five — because `_get_team_metadata` matches on a name, every one
+    # of those clubs owns several `teams` rows, and the row that wins is not the
+    # row the ESPN sync updates. Correcting the served value is a display-side
+    # choice that does not wait on the duplicate rows being merged (#2693/D35).
+    if espn_records:
+        from app.utils.espn_clinch import apply_record_overlay
+
+        record_fixes = apply_record_overlay(espn_rows, espn_records)
+        if record_fixes:
+            logger.info(
+                "Playoff grid %s: %d record(s) set from ESPN standings",
+                config.slug, record_fixes,
             )
 
     from app.utils.playoff_grid import (

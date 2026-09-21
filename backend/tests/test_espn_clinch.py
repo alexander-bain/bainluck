@@ -146,6 +146,9 @@ def _entry(team_id, description, wins=80, losses=70):
     stats = [
         {"name": "wins", "value": wins},
         {"name": "losses", "value": losses},
+        # Every real ESPN standings entry carries `overall` (`type: total`), so
+        # the fixture does too — it is what #7675 reads the record off.
+        {"name": "overall", "type": "total", "displayValue": f"{wins}-{losses}"},
     ]
     if description is not None:
         stats.append(
@@ -326,7 +329,7 @@ def test_no_claims_means_the_grid_is_returned_exactly_as_it_arrived():
 
 
 # ---------------------------------------------------------------------------
-# The wire: ESPNAPIService.get_standings_clinch
+# The wire: ESPNAPIService.get_standings_reading
 # ---------------------------------------------------------------------------
 
 import httpx  # noqa: E402
@@ -373,7 +376,7 @@ ONE_OF_EACH = {
 }
 
 
-async def test_get_standings_clinch_reads_the_right_host_and_parses():
+async def test_get_standings_reading_reads_the_right_host_and_parses():
     seen = {}
 
     def handler(request):
@@ -382,11 +385,13 @@ async def test_get_standings_clinch_reads_the_right_host_and_parses():
 
     svc = _standings_service(handler)
     try:
-        claims = await svc.get_standings_clinch("baseball_mlb")
+        reading = await svc.get_standings_reading("baseball_mlb")
     finally:
         await svc.close()
 
-    assert claims == {"2": CLINCH_BERTH, "9": CLINCH_OUT, "15": CLINCH_DIVISION}
+    assert reading["claims"] == {"2": CLINCH_BERTH, "9": CLINCH_OUT, "15": CLINCH_DIVISION}
+    # One body, both readings, one request (#7675).
+    assert reading["records"] == {"2": "80-70", "9": "80-70", "15": "80-70", "16": "80-70"}
     # The `apis/v2` host, not `apis/site/v2` — the wrong one answers 200 with an
     # empty body and would disable this authority silently and permanently.
     assert seen["url"] == f"{ESPN_STANDINGS_BASE}/baseball/mlb/standings"
@@ -400,13 +405,15 @@ async def test_espn_dark_is_none_and_an_empty_answer_is_an_empty_dict():
     a client that returns ``None`` for everything."""
     dark = _standings_service(lambda request: httpx.Response(500))
     try:
-        assert await dark.get_standings_clinch("baseball_mlb") is None
+        assert await dark.get_standings_reading("baseball_mlb") is None
     finally:
         await dark.close()
 
     empty = _standings_service(lambda request: httpx.Response(200, json={"children": []}))
     try:
-        assert await empty.get_standings_clinch("baseball_mlb") == {}
+        assert await empty.get_standings_reading("baseball_mlb") == {
+            "claims": {}, "records": {}
+        }
     finally:
         await empty.close()
 
@@ -420,7 +427,9 @@ async def test_a_sport_espn_does_not_map_makes_no_claim_and_no_request():
 
     svc = _standings_service(handler)
     try:
-        assert await svc.get_standings_clinch("not_a_real_sport_key") == {}
+        assert await svc.get_standings_reading("not_a_real_sport_key") == {
+            "claims": {}, "records": {}
+        }
     finally:
         await svc.close()
     assert called == []
@@ -430,7 +439,7 @@ async def test_a_sport_espn_does_not_map_makes_no_claim_and_no_request():
 # The route helper: it may never be able to blank a grid on its own absence
 # ---------------------------------------------------------------------------
 
-from app.routes.playoffs import _espn_clinch_claims  # noqa: E402
+from app.routes.playoffs import _espn_standings_reading  # noqa: E402
 
 
 class _Config:
@@ -454,7 +463,7 @@ class _FakeESPN:
             return self
         return _make
 
-    async def get_standings_clinch(self, sport_key):
+    async def get_standings_reading(self, sport_key):
         self.calls += 1
         if isinstance(self.result, Exception):
             raise self.result
@@ -496,56 +505,84 @@ def _patch(monkeypatch, espn, redis):
     monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", _client)
 
 
-async def test_espn_dark_yields_no_claims_and_is_not_cached(monkeypatch):
+#: The shape every failure path returns: both readings present, both empty.
+EMPTY = {"claims": {}, "records": {}}
+
+
+def _reading(claims=None, records=None):
+    return {"claims": dict(claims or {}), "records": dict(records or {})}
+
+
+async def test_espn_dark_yields_no_reading_and_is_not_cached(monkeypatch):
     """Caching a dark read would hold the outage for a quarter hour past its end."""
     espn, redis = _FakeESPN(None), _FakeRedis()
     _patch(monkeypatch, espn, redis)
 
-    assert await _espn_clinch_claims(_Config()) == {}
+    assert await _espn_standings_reading(_Config()) == EMPTY
     assert redis.sets == []
     assert espn.closed
 
 
-async def test_an_espn_that_raises_yields_no_claims_rather_than_a_500(monkeypatch):
+async def test_an_espn_that_raises_yields_no_reading_rather_than_a_500(monkeypatch):
     espn, redis = _FakeESPN(RuntimeError("boom")), _FakeRedis()
     _patch(monkeypatch, espn, redis)
 
-    assert await _espn_clinch_claims(_Config()) == {}
+    assert await _espn_standings_reading(_Config()) == EMPTY
     assert redis.sets == []
 
 
 async def test_redis_being_down_does_not_stop_the_read(monkeypatch):
-    espn, redis = _FakeESPN({"2": CLINCH_BERTH}), _FakeRedis(fail=True)
+    espn, redis = _FakeESPN(_reading({"2": CLINCH_BERTH})), _FakeRedis(fail=True)
     _patch(monkeypatch, espn, redis)
 
-    assert await _espn_clinch_claims(_Config()) == {"2": CLINCH_BERTH}
+    assert await _espn_standings_reading(_Config()) == _reading({"2": CLINCH_BERTH})
 
 
 async def test_an_honest_empty_answer_is_cached_but_a_dark_one_is_not(monkeypatch):
-    espn, redis = _FakeESPN({}), _FakeRedis()
+    espn, redis = _FakeESPN(EMPTY), _FakeRedis()
     _patch(monkeypatch, espn, redis)
 
-    assert await _espn_clinch_claims(_Config()) == {}
-    assert [k for k, _v, _ex in redis.sets] == ["grid:clinch:baseball_mlb"]
+    assert await _espn_standings_reading(_Config()) == EMPTY
+    assert [k for k, _v, _ex in redis.sets] == ["grid:standings:baseball_mlb"]
 
 
 async def test_a_cached_reading_short_circuits_the_fetch(monkeypatch):
-    espn, redis = _FakeESPN({"9": CLINCH_OUT}), _FakeRedis(stored='{"2": "berth"}')
+    espn = _FakeESPN(_reading({"9": CLINCH_OUT}))
+    redis = _FakeRedis(stored='{"claims": {"2": "berth"}, "records": {"2": "95-60"}}')
     _patch(monkeypatch, espn, redis)
 
-    assert await _espn_clinch_claims(_Config()) == {"2": CLINCH_BERTH}
+    assert await _espn_standings_reading(_Config()) == _reading(
+        {"2": CLINCH_BERTH}, {"2": "95-60"}
+    )
     assert espn.calls == 0
 
 
+async def test_a_cache_entry_from_the_old_claims_only_shape_is_refetched(monkeypatch):
+    """#7675 changed the cached VALUE's shape, so it changed the cached KEY.
+
+    Belt and braces: even handed the old shape under the new key, the reading
+    is refetched rather than read as `{"331": "out"}.get("claims")` — which
+    would be a silently empty reading for the whole 900s TTL.
+    """
+    espn = _FakeESPN(_reading({"9": CLINCH_OUT}, {"9": "0-2-3"}))
+    redis = _FakeRedis(stored='{"2": "berth"}')
+    _patch(monkeypatch, espn, redis)
+
+    assert await _espn_standings_reading(_Config()) == _reading(
+        {"9": CLINCH_OUT}, {"9": "0-2-3"}
+    )
+    assert espn.calls == 1
+
+
 async def test_a_league_with_no_sport_key_makes_no_claim_and_no_call(monkeypatch):
-    espn, redis = _FakeESPN({"2": CLINCH_BERTH}), _FakeRedis()
+    espn, redis = _FakeESPN(_reading({"2": CLINCH_BERTH})), _FakeRedis()
     _patch(monkeypatch, espn, redis)
 
     class _Bare:
         slug = "custom"
         sport_keys = []
 
-    assert await _espn_clinch_claims(_Bare()) == {}
+    assert await _espn_standings_reading(_Bare()) == EMPTY
     assert espn.calls == 0
 
 
@@ -584,6 +621,351 @@ def test_the_route_does_not_await_the_redis_factory():
 
     from app.routes import playoffs
 
-    source = inspect.getsource(playoffs._espn_clinch_claims)
+    source = inspect.getsource(playoffs._espn_standings_reading)
     assert "await get_async_redis_client()" not in source
     assert "get_async_redis_client()" in source
+
+
+# ---------------------------------------------------------------------------
+# #7675: the record beside the club's name
+# ---------------------------------------------------------------------------
+# The defect: in EPL matchweek 5 the grid printed Brighton `14-11-12` — a
+# COMPLETED PRIOR SEASON, 37 games — beside seventeen clubs printing five.
+# Every one of those clubs owns several `teams` rows sharing one `espn_id`, and
+# the row `_get_team_metadata` picks by name is not the row the ESPN sync
+# updates. The authority settles it.
+
+from app.utils.espn_clinch import (  # noqa: E402
+    apply_record_overlay,
+    parse_standings_records,
+    season_record,
+)
+
+
+#: Read off ESPN's `apis/v2` standings on 2026-09-21, same minute as the grids:
+#: `(league, overall.displayValue, expected served record)`.
+MEASURED_OVERALL = [
+    ("mlb", "95-60", "95-60"),          # W-L
+    ("nfl", "2-0", "2-0"),              # W-L
+    ("epl", "3-1-1", "3-1-1"),          # W-D-L
+    ("nhl", "2-0-0, 4 PTS", "2-0-0"),   # W-L-OTL + a POINTS SUFFIX
+    ("nba", "0-0", "0-0"),              # preseason; the played gate drops it
+]
+
+
+@pytest.mark.parametrize("league,display_value,expected", MEASURED_OVERALL)
+def test_every_measured_overall_value_reads_correctly(league, display_value, expected):
+    assert season_record(display_value) == expected, f"{league}: {display_value!r}"
+
+
+def test_the_nhl_points_suffix_is_cut_rather_than_printed():
+    """The one league whose `overall` is not already a record.
+
+    `2-0-0, 4 PTS` served raw would print exactly that in a column eighteen
+    other rows fill with `2-0-0`. This is the reason the value is trimmed at
+    all, so it is pinned on its own rather than only inside the table.
+    """
+    assert season_record("2-0-0, 4 PTS") == "2-0-0"
+    assert "PTS" not in (season_record("2-0-0, 4 PTS") or "")
+
+
+@pytest.mark.parametrize(
+    "display_value",
+    ["", "   ", None, 4.0, {"a": 1}, "E-10", "2-0-0 (4 PTS)", "--", "2", "1st", "-"],
+)
+def test_a_shape_no_league_publishes_makes_no_claim(display_value):
+    """No claim beats a wrong one: the record column keeps `current_record`."""
+    assert season_record(display_value) is None
+
+
+def _rec_entry(team_id, overall, wins=3, losses=1, ties=1):
+    return {
+        "team": {"id": team_id, "displayName": f"Team {team_id}"},
+        "stats": [
+            {"name": "wins", "value": wins},
+            {"name": "losses", "value": losses},
+            {"name": "ties", "value": ties},
+            {"name": "overall", "type": "total", "displayValue": overall},
+        ],
+    }
+
+
+def test_records_parse_walks_nested_groups_and_keys_on_the_string_team_id():
+    payload = {
+        "children": [
+            {"standings": {"entries": [_rec_entry(331, "3-1-1")]}},
+            {"children": [{"standings": {"entries": [_rec_entry(349, "0-3-2")]}}]},
+        ],
+        "standings": {"entries": [_rec_entry(367, "0-2-3")]},
+    }
+    assert parse_standings_records(payload) == {
+        "331": "3-1-1",
+        "349": "0-3-2",
+        "367": "0-2-3",
+    }
+
+
+def test_an_unplayed_season_yields_no_record_so_the_nba_grid_is_untouched():
+    """29 of 30 NBA clubs sat at `0-0` in preseason on the measured day.
+
+    Without the played gate every one of them would overwrite a real record
+    with `0-0` the moment ESPN publishes an empty table.
+    """
+    payload = {
+        "standings": {"entries": [_rec_entry(1, "0-0", wins=0, losses=0, ties=0)]}
+    }
+    assert parse_standings_records(payload) == {}
+
+
+def test_an_entry_with_no_overall_stat_makes_no_record_claim():
+    payload = {
+        "standings": {
+            "entries": [
+                {
+                    "team": {"id": 5, "displayName": "Team 5"},
+                    "stats": [{"name": "wins", "value": 3},
+                              {"name": "losses", "value": 1}],
+                }
+            ]
+        }
+    }
+    assert parse_standings_records(payload) == {}
+
+
+@pytest.mark.parametrize("payload", [None, [], "nope", {}])
+def test_records_parse_never_raises_on_a_shape_it_did_not_expect(payload):
+    assert parse_standings_records(payload) == {}
+
+
+def test_the_wrong_espn_host_yields_no_records_either():
+    assert parse_standings_records(
+        {"fullViewLink": {"text": "Full Standings", "href": "https://espn.com"}}
+    ) == {}
+
+
+# --- the overlay -----------------------------------------------------------
+
+#: The three specimens from the production LOOK, with the sibling row that held
+#: the right answer all along: `(espn_id, club, served, ESPN same-minute)`.
+EPL_SPECIMENS = [
+    ("331", "Brighton & Hove Albion", "14-11-12", "3-1-1"),
+    ("349", "Bournemouth", "12-16-7", "0-3-2"),
+    ("367", "Tottenham Hotspur", "10-11-17", "0-2-3"),
+]
+
+
+def test_the_three_prior_season_records_are_corrected():
+    rows = [(eid, {"name": name, "record": served}) for eid, name, served, _ in EPL_SPECIMENS]
+    records = {eid: espn for eid, _n, _s, espn in EPL_SPECIMENS}
+
+    assert apply_record_overlay(rows, records) == 3
+    assert [row["record"] for _eid, row in rows] == ["3-1-1", "0-3-2", "0-2-3"]
+
+
+def test_a_corrected_record_implies_the_matchweek_the_other_clubs_are_playing():
+    """The reader's actual complaint: 37 games in a 5-game season.
+
+    Asserting the VALUE alone would pass on any string; what made this a defect
+    is the game count, so the game count is what is asserted.
+    """
+    rows = [("331", {"name": "Brighton & Hove Albion", "record": "14-11-12"})]
+    assert sum(int(p) for p in rows[0][1]["record"].split("-")) == 37
+
+    apply_record_overlay(rows, {"331": "3-1-1"})
+    assert sum(int(p) for p in rows[0][1]["record"].split("-")) == 5
+
+
+def test_a_club_with_no_espn_id_keeps_what_it_had():
+    """Hull City and Coventry City have `espn_id IS NULL` (#7676).
+
+    ESPN has records for both, but the join is on the id and never on a name,
+    so they are left exactly as found rather than matched by text.
+    """
+    rows = [(None, {"name": "Hull City", "record": None}),
+            ("", {"name": "Coventry City", "record": "1-0-4"})]
+
+    assert apply_record_overlay(rows, {"306": "2-2-1", "388": "1-0-4"}) == 0
+    assert rows[0][1]["record"] is None
+    assert rows[1][1]["record"] == "1-0-4"
+
+
+def test_a_club_espn_makes_no_claim_about_keeps_what_it_had():
+    rows = [("999", {"name": "Someone", "record": "7-7"})]
+    assert apply_record_overlay(rows, {"331": "3-1-1"}) == 0
+    assert rows[0][1]["record"] == "7-7"
+
+
+def test_an_already_correct_record_is_not_counted_as_a_correction():
+    """30 of 30 MLB rows were already identical on the measured day.
+
+    If those counted, the log line would report 30 corrections per rebuild on a
+    league where nothing changed, and the count would stop meaning anything.
+    """
+    rows = [("30", {"name": "Tampa Bay Rays", "record": "95-60"})]
+    assert apply_record_overlay(rows, {"30": "95-60"}) == 0
+    assert rows[0][1]["record"] == "95-60"
+
+
+def test_an_empty_authority_changes_nothing():
+    rows = [(eid, {"name": name, "record": served}) for eid, name, served, _ in EPL_SPECIMENS]
+    before = [row["record"] for _e, row in rows]
+
+    assert apply_record_overlay(rows, {}) == 0
+    assert [row["record"] for _e, row in rows] == before
+
+
+def test_an_empty_espn_id_never_joins_an_empty_keyed_authority_entry():
+    """The falsy-`espn_id` guard, on the only input that can reach it.
+
+    `parse_standings_records` only skips an entry whose id is `None`, so an
+    ESPN entry carrying `"id": ""` becomes the key `""`. A club whose own
+    `espn_id` is `""` would then join it — two rows with no identity matching
+    each other and the club taking a stranger's record. `str(None)` is
+    `"None"`, so a NULL id cannot reach this; the empty string is the specimen
+    that can, and without the guard this test takes `9-9-9`.
+    """
+    rows = [("", {"name": "Coventry City", "record": "1-0-4"})]
+
+    assert apply_record_overlay(rows, {"": "9-9-9"}) == 0
+    assert rows[0][1]["record"] == "1-0-4"
+
+
+# ---------------------------------------------------------------------------
+# #7675: a PRESEASON table is not an authority on anything
+# ---------------------------------------------------------------------------
+# The same trap as the clinch letter, one field over: the standings node's
+# `seasonType` is an INTEGER whose meaning is per-sport. `1` is Preseason in
+# the NHL and the NBA, and is the whole live Premier League season in England.
+
+from app.utils.espn_clinch import is_preseason_standings  # noqa: E402
+
+
+def _body(season_type, types, entries=()):
+    return {
+        "standings": {"seasonType": season_type, "entries": list(entries)},
+        "seasons": [{"year": 2027, "types": types}],
+    }
+
+
+#: Read off ESPN on 2026-09-21: `(league, seasonType, types, is preseason)`.
+MEASURED_SEASON_TYPES = [
+    ("nhl", 1, [{"id": "1", "name": "Preseason", "abbreviation": "pre"},
+                {"id": "2", "name": "Regular Season", "abbreviation": "reg"}], True),
+    ("nba", 1, [{"id": "1", "name": "Preseason", "abbreviation": "pre"},
+                {"id": "2", "name": "Regular Season", "abbreviation": "reg"}], True),
+    ("mlb", 2, [{"id": "1", "name": "Spring Training", "abbreviation": "pre"},
+                {"id": "2", "name": "Regular Season", "abbreviation": "reg"}], False),
+    ("nfl", 2, [{"id": "1", "name": "Preseason", "abbreviation": "pre"},
+                {"id": "2", "name": "Regular Season", "abbreviation": "reg"}], False),
+    ("epl", 1, [{"id": "1", "name": "2026-27 English Premier League",
+                 "abbreviation": "2026-27 English Premier League"}], False),
+]
+
+
+@pytest.mark.parametrize("league,season_type,types,expected", MEASURED_SEASON_TYPES)
+def test_every_measured_season_type_reads_correctly(league, season_type, types, expected):
+    assert is_preseason_standings(_body(season_type, types)) is expected, league
+
+
+def test_season_type_1_is_preseason_in_the_nhl_and_the_live_table_in_england():
+    """Why the id is resolved through the body's own table instead of compared.
+
+    Both bodies say `seasonType: 1`. One is the NHL's exhibition schedule, the
+    other is the Premier League in matchweek 5. Any numeric test serves NHL
+    preseason records or drops the EPL rows this ship exists to fix — the exact
+    shape of the letter trap that `clinch_claim` exists to avoid.
+    """
+    nhl = _body(1, [{"id": "1", "name": "Preseason", "abbreviation": "pre"}])
+    epl = _body(1, [{"id": "1", "name": "2026-27 English Premier League",
+                     "abbreviation": "2026-27 English Premier League"}])
+
+    assert is_preseason_standings(nhl) is True
+    assert is_preseason_standings(epl) is False
+
+
+def test_mlbs_preseason_is_named_spring_training_not_preseason():
+    """The NAME differs by sport, so one spelling is not enough.
+
+    A gate keyed only on the word "preseason" reads MLB's Spring Training table
+    as a regular season — and a spring-training record (`10-18-1`) is the
+    documented defect in `_get_team_metadata`.
+    """
+    body = _body(1, [{"id": "1", "name": "Spring Training", "abbreviation": "pre"}])
+    assert is_preseason_standings(body) is True
+
+
+def test_a_preseason_name_is_caught_even_when_the_abbreviation_is_not_pre():
+    """The name backstop, for a sport whose abbreviation we have not measured."""
+    body = _body(1, [{"id": "1", "name": "Exhibition", "abbreviation": "exh"}])
+    assert is_preseason_standings(body) is True
+
+
+def test_the_pre_abbreviation_is_caught_even_when_the_name_is_unrecognised():
+    """The other half of the pair — the case ONLY the abbreviation can catch.
+
+    Both measured names ("Preseason", "Spring Training") are in the name list,
+    so the abbreviation branch is unreachable through them and would be dead
+    code justified by a comment. A league that calls its warm-up competition
+    something we have never read, while still abbreviating it `pre`, is the
+    specimen that makes the branch load-bearing.
+    """
+    body = _body(1, [{"id": "1", "name": "Torneo de Verano", "abbreviation": "pre"}])
+    assert is_preseason_standings(body) is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None, [], "nope", {},
+        {"standings": {"seasonType": 1}, "seasons": []},
+        {"standings": {"seasonType": 1}, "seasons": [{"types": []}]},
+        {"standings": {"seasonType": 9}, "seasons": [{"types": [{"id": "1",
+         "name": "Preseason", "abbreviation": "pre"}]}]},
+        {"seasons": [{"types": [{"id": "1", "name": "Preseason",
+         "abbreviation": "pre"}]}]},
+    ],
+)
+def test_an_unresolvable_season_type_fails_open(payload):
+    """Losing the authority on a body we merely could not label costs more.
+
+    Every one of these proceeds to the reading rather than refusing it.
+    """
+    assert is_preseason_standings(payload) is False
+
+
+async def test_a_preseason_body_yields_no_reading_at_all(monkeypatch):
+    """Both readings, not just the record: nobody clinches in the preseason."""
+    body = _body(
+        1,
+        [{"id": "1", "name": "Preseason", "abbreviation": "pre"}],
+        entries=[_entry(2, "Clinched Playoff Berth")],
+    )
+    svc = _standings_service(lambda request: httpx.Response(200, json=body))
+    try:
+        assert await svc.get_standings_reading("icehockey_nhl") == {
+            "claims": {}, "records": {}
+        }
+    finally:
+        await svc.close()
+
+
+async def test_a_regular_season_body_with_the_same_entries_does_yield_a_reading():
+    """The control: identical entries, season type 2, and the reading lands.
+
+    Without this the preseason test above would pass on a client that returned
+    nothing for everything.
+    """
+    body = _body(
+        2,
+        [{"id": "1", "name": "Preseason", "abbreviation": "pre"},
+         {"id": "2", "name": "Regular Season", "abbreviation": "reg"}],
+        entries=[_entry(2, "Clinched Playoff Berth")],
+    )
+    svc = _standings_service(lambda request: httpx.Response(200, json=body))
+    try:
+        reading = await svc.get_standings_reading("icehockey_nhl")
+    finally:
+        await svc.close()
+
+    assert reading["claims"] == {"2": CLINCH_BERTH}
+    assert reading["records"] == {"2": "80-70"}
