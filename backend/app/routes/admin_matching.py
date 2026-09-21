@@ -5145,7 +5145,7 @@ async def match_receipts(
         link_changes_for_market_query,
         link_changes_off_event_query,
     )
-    from app.utils.matcher_pass_runs import read_pass_run
+    from app.utils.matcher_pass_runs import never_attempted_floor, read_pass_run
 
     def _serialize(r: MarketMatchReceipt) -> dict:
         return {
@@ -5488,6 +5488,32 @@ async def match_receipts(
         receipt_witness=PHASE_PASS3_BACKLOG in phases_seen,
     )
 
+    # THE SAME COUNT, SCOPED TO MARKETS THE PASS HAS ALREADY HAD A TURN AT
+    # (#7801). Published BESIDE the raw number, never instead of it: the raw
+    # count is the honest census of the table and narrowing it in place would
+    # hide the composition, which is the mistake `by_source` exists to avoid.
+    # The reconciliation alarm reds on THIS one, because the difference between
+    # them is a market ingested since the pass last ran — a race, not a skip.
+    # `read_pass_run` above passes `receipt_witness`, which can only add a
+    # `True` and never moves `last_run_at`, so the floor is unaffected by it.
+    never_floor = never_attempted_floor(backlog_run.last_run_at)
+    never_past_floor = await db.scalar(
+        select(func.count())
+        .select_from(FuturesMarket)
+        .where(
+            *_open_unlinked,
+            # A NULL birth time cannot be excused by a floor it cannot be
+            # compared against, so it counts (gotcha #53).
+            or_(
+                FuturesMarket.created_at.is_(None),
+                FuturesMarket.created_at < never_floor,
+            ),
+            ~select(MarketMatchReceipt.id)
+            .where(MarketMatchReceipt.market_id == FuturesMarket.id)
+            .exists(),
+        )
+    )
+
     return {
         "totals": {
             "receipts": totals.receipts,
@@ -5523,6 +5549,22 @@ async def match_receipts(
         },
         "coverage": {
             "open_unlinked_without_receipt": int(never or 0),
+            "never_attempted_past_floor": int(never_past_floor or 0),
+            "never_attempted_floor": never_floor.isoformat(),
+            "never_attempted_floor_note": (
+                "never_attempted_past_floor is open_unlinked_without_receipt "
+                "restricted to markets that already existed when the backlog "
+                "pass last ran, and it is the number the matching "
+                "reconciliation alarm reds on (#7801). The gap between the two "
+                "is markets ingested since that run: they have no receipt "
+                "because nothing has had a turn at them yet, which is a race "
+                "and not a skip — measured 2026-09-21, Polymarket's hourly "
+                "poll made the unscoped count red once an hour and green one "
+                "matcher cycle later. The floor is the LATER of the pass's "
+                "last run and a bounded grace, so a dead pass cannot buy "
+                "permanent silence; see never_attempted_floor() for why both "
+                "arms are needed. backlog_pass.last_run_at is the first arm."
+            ),
             "target": 0,
             "by_source": by_source,
             "receipt_phase_labels_now": phases_seen,
@@ -5538,7 +5580,11 @@ async def match_receipts(
                 "source IN (kalshi, polymarket) AND event_id IS NULL AND "
                 "status = 'open' — copied from _phase1_pass3_backlog_scan's "
                 "base_where. Nothing is excluded, because nothing in it is out "
-                "of the matcher's scope: Pass 3 selects exactly this set."
+                "of the matcher's scope: Pass 3 selects exactly this set. This "
+                "is the denominator of open_unlinked_without_receipt. "
+                "never_attempted_past_floor adds ONE clause on top of it — "
+                "created_at IS NULL OR created_at < never_attempted_floor — "
+                "and nothing else."
             ),
             "note": (
                 "Above 0 means some open unlinked market has never been "

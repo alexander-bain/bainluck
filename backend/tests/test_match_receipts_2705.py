@@ -1966,3 +1966,102 @@ def test_the_history_request_is_still_made_when_the_commit_lands(monkeypatch):
     queue = []
     asyncio.run(_link_one(_CommitFailsSession(fail=False), queue))
     assert queue == [(1, 42)]
+
+
+# =============================================================================
+# The coverage block publishes BOTH counts, and says which one the alarm reads
+# (#7801)
+# =============================================================================
+
+
+class TestTheCoverageBlockPublishesTheScopedCountBesideTheRawOne:
+    """``open_unlinked_without_receipt`` is the honest census of the table and
+    stays. But a market ingested since the backlog pass last ran has no receipt
+    because nothing has had a turn at it, and counting that as "never attempted"
+    made the reconciliation alarm red once per Polymarket poll and green one
+    matcher cycle later — ~20 auto-filed-and-auto-closed p1 issues on
+    2026-09-21 alone. The alarm now reds on ``never_attempted_past_floor``.
+
+    Published BESIDE, never INSTEAD: narrowing the headline in place would hide
+    the composition, which is the mistake ``by_source`` exists to prevent, and a
+    reader who could not see both could not tell a race from a stall.
+    """
+
+    @staticmethod
+    def _coverage(scalar, pass_run=None, never_rows=()):
+        from unittest.mock import patch
+
+        from app.utils.matcher_pass_runs import STATUS_NO_RECORD, PassRunFact
+
+        fact = pass_run or PassRunFact(
+            phase=mr.PHASE_PASS3_BACKLOG, has_run=None, status=STATUS_NO_RECORD,
+        )
+        db = _FakeDB(
+            [
+                _FakeResult([]),
+                _FakeResult([_Row(receipts=0, linked=0, oldest=None, newest=None)]),
+                _FakeResult([]),
+                _FakeResult(list(never_rows)),
+                _FakeResult([]),
+                _FakeResult([]),
+            ],
+            scalar=scalar,
+        )
+
+        async def _fake_read(_db, _phase, **_kw):
+            return fact
+
+        with patch("app.utils.matcher_pass_runs.read_pass_run", _fake_read):
+            out = _call(
+                db=db, market_id=None, external_id=None, event_id=None,
+                reject_reason=None, source=None, limit=50,
+            )
+        return out["coverage"], db
+
+    def test_both_counts_and_the_floor_are_published(self):
+        cov, _ = self._coverage(
+            scalar=2, never_rows=[_Row(source="polymarket", n=223)],
+        )
+        assert cov["open_unlinked_without_receipt"] == 223
+        assert cov["never_attempted_past_floor"] == 2
+        assert cov["never_attempted_floor"]
+
+    def test_the_scoped_count_has_its_own_query_and_is_not_the_raw_one(self):
+        """If it were derived from the raw count the two could never disagree,
+        and the field would be decoration on the exact reading it exists to
+        correct: 223 raw, 0 past the floor, which is what production held at
+        12:33:05Z on 2026-09-21."""
+        cov, _ = self._coverage(
+            scalar=0, never_rows=[_Row(source="polymarket", n=223)],
+        )
+        assert cov["open_unlinked_without_receipt"] == 223
+        assert cov["never_attempted_past_floor"] == 0
+
+    def test_the_floor_is_the_policys_answer_for_the_published_pass_run(self):
+        """The two must be reconcilable by a reader: the floor is derived from
+        the ``backlog_pass`` block printed beside it, not from a private clock."""
+        from datetime import datetime, timezone
+
+        from app.utils.matcher_pass_runs import PassRunFact, never_attempted_floor
+
+        ran_at = datetime(2026, 9, 21, 12, 20, 0, 62114, tzinfo=timezone.utc)
+        cov, _ = self._coverage(
+            scalar=0,
+            pass_run=PassRunFact(
+                phase=mr.PHASE_PASS3_BACKLOG, has_run=True, status="ok",
+                last_run_at=ran_at,
+            ),
+        )
+        assert cov["backlog_pass"]["last_run_at"] == ran_at.isoformat()
+        assert cov["never_attempted_floor"] == never_attempted_floor(
+            ran_at
+        ).isoformat()
+
+    def test_the_denominator_prose_names_the_one_clause_that_was_added(self):
+        """The block's whole defence of ``target: 0`` is that its denominator is
+        Pass 3's own set, stated in prose. A second, narrower count published
+        without amending that sentence makes the sentence false for one of
+        them."""
+        cov, _ = self._coverage(scalar=0)
+        assert "created_at" in cov["denominator"]
+        assert "never_attempted_floor" in cov["denominator"]
