@@ -8258,12 +8258,20 @@ _EXPIRING_WARMER_BEATS = {
     # skips = 67 executions against ~220 fires over 2,196 s, 2026-08-20T02:5xZ).
     # Two thirds of the warmer's firing opportunities were discarded unexecuted.
     #
-    # 120 is `_LOCK_TTL_SECONDS`, deliberately a CONSTANT and not the sampled
-    # worst wall: the lock cannot be held past its own TTL, so a message older
-    # than that is provably not waiting on the lock and IS genuinely superseded —
-    # the discard the bound was always meant to make. A sampled maximum would not
-    # do, because this program has now read one as a bound and been wrong twice
-    # (42.6 by 11.3 s, then 53.920 by 7.36 s).
+    # 120 is `MAX_LIVE_MESSAGES * CURRENT_BEAT_INTERVAL_S` (12 x 10 s) — a
+    # STRUCTURAL cap on how many of this beat's messages may be alive at once, not
+    # the sampled worst wall. A sampled maximum would not do, because this program
+    # has now read one as a bound and been wrong twice (42.6 by 11.3 s, then
+    # 53.920 by 7.36 s).
+    #
+    # 🔴 **THIS LINE USED TO READ "120 is `_LOCK_TTL_SECONDS`" AND THAT IS NO
+    # LONGER TRUE OF EITHER HALF.** #7510 took the warmer's lock TTL to 45 and gave
+    # it a renewal holder, so (a) the mirror the derivation read was stale for a
+    # month, and (b) a renewed lock is bounded by the pass, not by its own TTL, so
+    # "a message older than the TTL is provably not waiting on the lock" stopped
+    # being an argument. The value is unchanged at 120; what it is a fact ABOUT is
+    # not. See `derive_message_expiry_s` for the severance and why the sibling's
+    # one-entry-life form would have been a 2.7x cut here.
     #
     # WHAT IT BUYS, claimed no wider than it was measured:
     #   1. The discard stops. Two thirds of fires became executions rather than

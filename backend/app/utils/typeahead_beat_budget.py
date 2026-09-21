@@ -488,16 +488,34 @@ RING_WALL_SAMPLE_PASSES = 26
 # `worker-background` shared by 57 beats. See `derive_message_expiry_s` below and
 # `background_slot_occupancy()` at the bottom of this module.
 #
-# Mirrored from `tasks/typeahead_warmer._LOCK_TTL_SECONDS`.
-LOCK_TTL_S = 120
+#: Mirrored from `tasks/typeahead_warmer._LOCK_TTL_SECONDS`, and a MIRROR is all
+#: it is — `test_the_mirrored_lock_ttl_equals_the_warmers_own_constant` asserts
+#: the two agree, because for a month they did not and nothing said so.
+#:
+#: ⚠️ **WAS `120`, AND THE DRIFT IS THE REASON THIS COMMENT EXISTS.** #7510 took
+#: the warmer's lock TTL 120 -> 45 (a killed child cannot release, and 120 against
+#: a 65 s entry emptied the head on every recycle). This mirror did not follow,
+#: so the module spent that month deriving from a lock TTL that had not existed
+#: since the morning. Nothing caught it because nothing compared them.
+LOCK_TTL_S = 45
+
+#: How many of this beat's messages may be alive in the broker at once.
+#: STRUCTURAL, not sampled: `expires / beat_s` of them coexist by construction and
+#: all but one are destined for the lock- or floor-skip path, measured at <= 71 ms
+#: (`PASS_ONLY_NOOP_MAX_S`). The cap is what keeps raising the bound a bounded act
+#: rather than an open one. Same constant, same job, as
+#: `search_head_warmer.MAX_LIVE_MESSAGES`; the two beats differ in period so the
+#: seconds differ (12 x 10 s here, 9 x 20 s there).
+MAX_LIVE_MESSAGES = 12
 
 
 def derive_message_expiry_s(
     *,
     beat_s: float = CURRENT_BEAT_INTERVAL_S,
     worst_wall_s: float = RING_WALL_MAX_S,
-    lock_ttl_s: float = LOCK_TTL_S,
+    entry_life_s: float = RESPONSE_CACHE_TTL_S,
     margin_s: float = SAFETY_MARGIN_S,
+    max_live: int = MAX_LIVE_MESSAGES,
 ) -> float:
     """How long a `warm-typeahead` message must be allowed to live. Derived.
 
@@ -529,18 +547,62 @@ def derive_message_expiry_s(
 
     ## The derived value
 
-    The only thing that can legitimately delay a `warm_typeahead` message is the
-    run lock, so the message must outlive the longest possible lock hold. That is
-    **not** the sampled worst wall — this program has now been wrong twice by
-    reading a finite maximum as a bound (42.6 by 11.3 s, 53.920 by 7.36 s). It is
-    `_LOCK_TTL_SECONDS`, a CONSTANT: the lock cannot be held past its own TTL, so
-    a message older than that is provably not waiting on the lock and is
-    genuinely superseded. Deriving from the constant rather than the sample is
-    what makes this value immune to the next wall measurement moving again.
+    The bound is `max_live * beat_s` — a structural cap on how many of this
+    beat's messages may be alive at once — floored by two quantities it must
+    clear, each a REFUSAL rather than a smaller number:
 
-    The sampled wall is retained as a corroboration, not as the input: the
-    derived value must also clear `worst_wall_s + margin_s`, and a run where it
-    does not is a REFUSAL rather than a smaller number.
+    * `worst_wall_s + margin_s`, so a message published during a pass survives to
+      that pass's end. This is the safety property the whole derivation exists
+      for, and it is now compared against the WALL directly.
+    * `entry_life_s`, so a fire outlives the entries it was published for. Below
+      one entry lifetime a queued fire can only ever arrive after the head it was
+      scheduled to refresh has already gone.
+
+    🔴 **THIS USED TO DERIVE FROM `LOCK_TTL_S` AND THIS SEVERS IT, WHICH IS THE
+    POINT RATHER THAN A TIDY-UP.** The old argument ran: the only thing that can
+    legitimately delay a message is the run lock, the lock cannot be held past its
+    own TTL, so a message older than that TTL is provably not waiting on the lock
+    and is genuinely superseded. **Both halves of that are now false.**
+
+    1. #7510 gave the warmer a renewal holder (`_LOCK_RENEW_SECONDS`), so the lock
+       is re-`expire`d for as long as the pass runs. A renewed lock is bounded by
+       the PASS, not by its own TTL, and "held past its own TTL" is exactly what
+       the holder exists to do. The premise was true until the holder shipped.
+    2. The same change took the TTL 120 -> 45. Had this stayed coupled, the mirror
+       correction three lines above would have cut the delivery bound 120 -> 45 as
+       a silent side effect of a repair aimed at the residual-lock hole — on the
+       one beat whose delivered-fire ratio #3364 MEASURED to track this exact
+       number::
+
+           expires 300 -> 0.87   warm-event-concepts
+           expires 120 -> 0.37   warm-typeahead        <- this beat
+           expires 110 -> 0.23   flush-search-gin-pending-lists
+           expires  20 -> 0.03   warm-search-head
+
+       So the "obvious" repair of the drift was a ~2.7x cut in warm-up delivery to
+       the search box, arriving as tidying. It is the same trap #3655 severed on
+       the sibling beat, left un-severed here because LAT-P075 wrote the coupled
+       version and #3655 only ever touched `search_head_warmer`.
+
+    The two constants answer two different questions — "how long may a residual
+    lock suppress passes" and "how long is a queued fire still worth delivering" —
+    and a congested `worker-background` is precisely when they pull apart. **The
+    wired value does not move (120 = 12 x 10 s); what moves is what it is a fact
+    ABOUT.**
+
+    ⚠️ What the old argument still buys, kept because a reader will ask whether
+    the new bound is permissive enough: 120 > 45, so every message this warmer
+    could itself be holding off behind its own lock still survives.
+
+    ⚠️ And why the bound is NOT one entry life, which is the shape the sibling
+    settled on: `search_head_warmer`'s entry life (180 s) is above its old wired
+    value, so deriving from it moved nothing. Typeahead's is 65 s, BELOW the wired
+    120, so the same formula here would be the 2.7x cut arriving by a second road.
+    The sibling's argument for capping at one entry life is redundancy — "one more
+    recovery fire behind the nine already queued buys nothing" — and redundancy is
+    bounded by `max_live`, which is therefore where this beat bounds it. Staleness
+    is the wrong axis: once the head is cold a delivered fire is worth MORE, not
+    less, because nothing else repopulates it.
 
     ## What it costs, stated
 
@@ -550,19 +612,30 @@ def derive_message_expiry_s(
     unchanged — this bound touches delivery, never the publish rate — so #1609's
     background-queue arrival share is untouched in both directions.
     """
-    if beat_s <= 0 or worst_wall_s <= 0 or lock_ttl_s <= 0:
-        raise ValueError("beat, wall and lock TTL must all be positive")
+    if beat_s <= 0 or worst_wall_s <= 0 or entry_life_s <= 0 or max_live <= 0:
+        raise ValueError("beat, wall, entry life and live-message cap must all be positive")
     if margin_s < 0:
         raise ValueError("margin must not be negative")
 
-    corroboration = worst_wall_s + margin_s
-    if lock_ttl_s < corroboration:
+    expires_s = float(max_live) * float(beat_s)
+
+    # Each of these is a REFUSAL, never a quietly raised value — ruling 075's
+    # shape. A bound that cannot do its job must say so, not grow until it can.
+    survives_a_pass = worst_wall_s + margin_s
+    if expires_s < survives_a_pass:
         raise ValueError(
-            f"lock TTL {lock_ttl_s}s is below the measured worst wall plus margin "
-            f"({corroboration:.3f}s) — the lock can expire under a live pass, and "
-            f"no message expiry derived from it would be safe"
+            f"expires {expires_s}s ({max_live} x {beat_s}s) is below the measured worst "
+            f"pass wall plus margin ({survives_a_pass:.3f}s) — a message published during "
+            f"a pass still cannot survive to the lock release, which is the discard this "
+            f"bound exists to stop"
         )
-    return float(lock_ttl_s)
+    if expires_s < entry_life_s:
+        raise ValueError(
+            f"expires {expires_s}s ({max_live} x {beat_s}s) is below one entry lifetime "
+            f"({entry_life_s}s) — a queued fire could only ever arrive after the head it "
+            f"was scheduled to refresh had already expired"
+        )
+    return expires_s
 
 
 def executable_fire_fraction(
