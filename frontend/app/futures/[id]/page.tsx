@@ -54,7 +54,7 @@ import {
   asOfLabel,
   gradedWinner,
   movementExplanation as movementExplanationHelper,
-  heroOutcomeLabel,
+  boardOutcomeLabel,
   movementWindowLabel,
   noPricedOutcomesNote,
   partitionOutcomesByPrice,
@@ -450,8 +450,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // deterministic from opening vs current — no per-source detail, blend-only).
   // Pure logic in lib/futuresDetailDisplay.ts (unit-tested).
   const movementExplanation = useMemo(
-    () => movementExplanationHelper(leader),
-    [leader]
+    () => movementExplanationHelper(leader, market?.name),
+    [leader, market?.name]
   );
 
   // D102 / #4568 — the rows that print a number, and the numberless ones folded
@@ -802,7 +802,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         outcomeName={
           heroNamesNobody || !heroOutcome
             ? undefined
-            : heroOutcomeLabel(heroOutcome.name)
+            : boardOutcomeLabel(heroOutcome.name, market.name)
         }
         movement={!isResolved && leader?.probability_change_24h != null ? leader.probability_change_24h * 100 : null}
         // UX-P233 (board item 11): the pill used to render a bare "↓ 71.5 pts"
@@ -1036,7 +1036,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                   the featured row. Unchanged in behaviour (it already tested
                   `is_winner`); it now asks the same helper as the hero above it so
                   the two can never drift into naming different champions. */}
-              Settled{gradedChampion ? ` — ${heroOutcomeLabel(gradedChampion.name)} won.` : "."}
+              {/* #6765 — the market name is passed here for the same reason it is
+                  passed to the hero three hundred lines up: this sentence sits on
+                  the board whose `<h1>` already asked the question, so "Settled —
+                  Korea Open: A vs B Set 1 O/U 9.5 won." is the title again plus
+                  four words. The helper refuses every shape it cannot shorten, so
+                  a normal champion's name reaches this sentence untouched. */}
+              Settled{gradedChampion ? ` — ${boardOutcomeLabel(gradedChampion.name, market?.name)} won.` : "."}
             </p>
           )}
         </div>

@@ -10,6 +10,7 @@ import {
   isNumericLadder,
   flagUrl,
 } from "@/lib/images";
+import { boardOutcomeLabel } from "@/lib/futuresDetailDisplay";
 import { SHAPE_QUANTITY, type MarketShape } from "@/lib/marketShape";
 import { isAuthoritativeResolution } from "@/lib/resolutionAuthority";
 
@@ -472,6 +473,26 @@ export default function OutcomeRow({
   const isIntl = isInternationalSport(marketCategory ?? null);
   const outcomeFlag = isIntl ? flagUrl(outcome.name) : null;
 
+  // #6765 — THE ROW STOPS REPEATING THE QUESTION THE <h1> ALREADY ASKED, and
+  // this is the half of that defect a reader actually loses information to.
+  //
+  // `marketName` has been threaded in from both call sites since #4483 and had
+  // NO consumer — the prop existed, the page filled it, and nothing read it.
+  // What that cost is visible on `/futures/61645756` at 390px: the name span is
+  // `truncate`, so three different sub-markets whose names all begin with the
+  // 45-character board name render as three IDENTICAL rows —
+  // `Korea Open: Alevtina Ibragimova vs Yeon…` three times, ranked 1, 3 and 4,
+  // with no way to tell which is Set 1 and which is the match total. The hero
+  // above merely wastes a line; here the truncation destroys the distinction.
+  //
+  // Only the PAINTED text changes. `title` and `data-outcome-name` keep the full
+  // served name deliberately: the tooltip is the reader's way back to it, and the
+  // attribute is an IDENTITY key that `futuresDetailOutcomeOrder` and
+  // `settledBoardRankBadge6325` read to assert row ORDER — a probe asking "which
+  // rows, in what order" must not have to know this page's shortening rule. The
+  // guard for this ship asserts both halves so the pair cannot drift apart.
+  const outcomeLabel = boardOutcomeLabel(outcome.name, marketName);
+
   return (
     <div
       // UX-P230: the rendered order is the thing under guard — name it on the row
@@ -567,7 +588,7 @@ export default function OutcomeRow({
               isLeader ? "font-semibold text-text-primary" : "text-text-primary"
             }`}
           >
-            {outcome.name}
+            {outcomeLabel}
           </span>
           {/* #4788: the verdict carries its own testid. Read off the ROW's
               `textContent`, this word has no boundary after it — the pill and the

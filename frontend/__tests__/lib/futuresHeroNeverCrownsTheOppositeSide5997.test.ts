@@ -29,10 +29,10 @@
 // members. The arms that actually fired were `USA`, `TCU`, `PSG`, `BTS`,
 // `October 1 - 31, 2026`, `$92` — real answers, overwritten with one the board
 // did not carry. Full table and both production specimens: the block comment on
-// `heroOutcomeLabel`.
+// `boardOutcomeLabel`.
 
 import {
-  heroOutcomeLabel,
+  boardOutcomeLabel,
   leaderLabel,
   movementExplanation,
   statesItsOwnSide,
@@ -50,8 +50,8 @@ describe("a name that states its own side is never replaced by \"Yes\"", () => {
     ["Fewer than 3", "Fewer than 3"],
     ["At most 2", "At most 2"],
     ["<=50", "<=50"],
-  ])("heroOutcomeLabel(%p) is %p", (served, expected) => {
-    expect(heroOutcomeLabel(served)).toBe(expected);
+  ])("boardOutcomeLabel(%p) is %p", (served, expected) => {
+    expect(boardOutcomeLabel(served)).toBe(expected);
   });
 
   it.each([
@@ -63,13 +63,13 @@ describe("a name that states its own side is never replaced by \"Yes\"", () => {
     // by different rungs (the <=3-char rule and the threshold rule), and a fix
     // written as "only stop for negatives" would print "Yes" over "Over 5.5"
     // while the row beside it said "Under 5.5". Both sides state a side.
-    expect(heroOutcomeLabel(served)).toBe(expected);
+    expect(boardOutcomeLabel(served)).toBe(expected);
   });
 
   it("no longer substitutes for a name that carries no answer either (#7256)", () => {
     // ⚠️ THIS ASSERTION IS INVERTED FROM WHAT #5997 WROTE, DELIBERATELY.
     //
-    // It used to read `expect(heroOutcomeLabel("May 18")).toBe("Yes")` and was
+    // It used to read `expect(boardOutcomeLabel("May 18")).toBe("Yes")` and was
     // labelled THE CONTROL — the thing that would go red if anyone deleted the
     // substitution wholesale. #7256 deleted it wholesale, because the behaviour
     // this control protected is the behaviour Alex filed as a bug: a 3-rung date
@@ -82,16 +82,16 @@ describe("a name that states its own side is never replaced by \"Yes\"", () => {
     //
     // #5997's actual ship is untouched and is asserted above: a name that states
     // its own side is never replaced. That now holds a fortiori.
-    expect(heroOutcomeLabel("May 18")).toBe("May 18");
-    expect(heroOutcomeLabel("2026")).toBe("2026");
-    expect(heroOutcomeLabel("Option A")).toBe("Option A");
-    expect(heroOutcomeLabel("Q3 2026")).toBe("Q3 2026");
-    expect(heroOutcomeLabel("42.5")).toBe("42.5");
+    expect(boardOutcomeLabel("May 18")).toBe("May 18");
+    expect(boardOutcomeLabel("2026")).toBe("2026");
+    expect(boardOutcomeLabel("Option A")).toBe("Option A");
+    expect(boardOutcomeLabel("Q3 2026")).toBe("Q3 2026");
+    expect(boardOutcomeLabel("42.5")).toBe("42.5");
   });
 
   it("never touches a real entity name", () => {
-    expect(heroOutcomeLabel("Kendrick Lamar")).toBe("Kendrick Lamar");
-    expect(heroOutcomeLabel("Manchester City")).toBe("Manchester City");
+    expect(boardOutcomeLabel("Kendrick Lamar")).toBe("Kendrick Lamar");
+    expect(boardOutcomeLabel("Manchester City")).toBe("Manchester City");
   });
 
   it("keeps `statesItsOwnSide` itself unchanged", () => {
