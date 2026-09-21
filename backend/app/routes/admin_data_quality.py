@@ -3814,7 +3814,13 @@ async def backfill_progress(
                     "hours 5/11/17/23 UTC; the first run after deploy writes one."
                 )
     except Exception as e:
-        cursor["error"] = str(e)[:200]
+        # Type only, never the message: the sibling tiles' `str(e)[:200]` is a
+        # `py/stack-trace-exposure` sink, and a new line has no reason to add
+        # another instance of it. The distinctions a reader of THIS tile needs
+        # — Redis unreachable vs. a receipt that would not parse — are carried
+        # by the class name; the detail belongs in the log, not the response.
+        logger.warning("backfill-progress gamma_cursor tile failed: %s", e)
+        cursor["error"] = type(e).__name__
     result["gamma_cursor"] = cursor
 
     # ── worker load (live) ──────────────────────────────────────────────────

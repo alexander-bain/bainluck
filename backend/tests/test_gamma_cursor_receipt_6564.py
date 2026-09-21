@@ -283,6 +283,30 @@ class TestAdminSurface:
         assert tile["last_run"]["deferred"] == 9_688
 
     @pytest.mark.asyncio
+    async def test_a_broken_tile_reports_its_class_and_not_the_message(self):
+        """`py/stack-trace-exposure`: the sibling tiles publish `str(e)[:200]`
+        and CodeQL rates that medium. A new tile has no reason to add another
+        instance — the reader's real question (Redis unreachable vs. a receipt
+        that would not parse) is answered by the class name, and the message
+        goes to the log."""
+        from app.routes import admin_data_quality
+
+        rc = MagicMock()
+        rc.get.side_effect = ValueError("redis://user:hunter2@10.0.0.1:6379 refused")
+        rc.llen.return_value = 0
+
+        with patch("app.tasks.redis_state.get_redis_client", return_value=rc), \
+             patch.object(admin_data_quality, "_check_admin_secret", return_value=None):
+            result = await admin_data_quality.backfill_progress(
+                request=MagicMock(), secret="x", bust=False
+            )
+
+        assert result["gamma_cursor"]["error"] == "ValueError"
+        assert "hunter2" not in json.dumps(result["gamma_cursor"])
+        # The tile failing must not take the rest of the response with it.
+        assert "phase_throughput" in result
+
+    @pytest.mark.asyncio
     async def test_an_absent_cursor_reads_as_a_wrap_not_an_error(self):
         """The rail DELETES the key to wrap back to the oldest row, so absence
         is a legitimate state meaning "resumes at 0" — not a failure, and not
