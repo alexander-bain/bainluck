@@ -59,9 +59,9 @@ WHAT THE WRITE ACTUALLY IS
 --------------------------
 ``UPDATE events SET status = 'voided' WHERE id = :i AND status = :before`` — a
 compare-and-swap on the status this script read, so a row another writer has
-moved on (a game that has since gone ``live``, a re-void by any other arm) is
-skipped and reported by id rather than overwritten. Nothing else on the row is
-touched: no score, no blend, no ``commence_time``.
+moved on is never overwritten on a stale read: the swap simply matches nothing,
+and the row is re-read and re-attempted against the status it moved to (below).
+Nothing else on the row is touched: no score, no blend, no ``commence_time``.
 
 🔴 THE SWAP IS THE CLAIM, SO THE BANK IS WRITTEN AFTER IT AND ONLY ON A WIN.
 The UPDATE goes first; the bank row is inserted only when it matched. Both are
@@ -79,6 +79,29 @@ that lose it lose it *because* something moved them out of ``scheduled``, which
 is the column ``candidates()`` filters on. Those ids are therefore carried out of
 the loop and re-read by id, and the run prints ``NOT CLEAN`` — otherwise the
 worst result of the pass reports as ``0 revived rows remain``.
+
+🔴 AND REPORTING A LOST ROW IS NOT DISPOSING OF IT (CERT-3197). Reporting was
+this script's whole answer to a lost swap, on the argument that "voiding a live
+fixture is not in this ship". That argument is wrong on this population, and it
+is wrong in the reader's direction: the row that loses the swap loses it by
+kicking off, so the outcome it bought was a duplicate that is not merely still on
+the site but now the LIVE card for a game whose canonical row is live beside it —
+the exact harm of the ship — while ``run()`` exited 0 and called it out of scope.
+A row that this pass has already decided is a duplicate does not stop being one
+by starting. So a lost swap is now re-attempted against the status the row
+actually moved to — an atomic own, never a blind overwrite, because every attempt
+is a compare-and-swap on a status just read — and the screen is re-asked before
+each retry, so the take-back happens only while a canonical row a reader can
+reach still holds the fixture. :func:`own_or_dispose` is that loop, and the four
+ways it can legitimately stop writing (the row is gone; another arm retired it;
+its canonical has disappeared, which makes this the last card and keeping it
+correct; it was owned) are named outcomes rather than one silent ``skipped``.
+
+When none of those is reached — something keeps moving the row and it is still
+reader-visible beside its canonical — the pass has failed at the thing it exists
+to do, and **it exits nonzero**. An operator, a wrapper and a re-run all read the
+exit code before they read the prose; a pass that prints ``NOT CLEAN`` and exits
+0 is telling the truth to a human and the opposite to everything else.
 
 Scope is the #7260 arm's OWN record — the join to
 ``backup_unreachable_suspended_5532`` — for the reason
@@ -126,6 +149,28 @@ PRODUCER_APP = "bainluck"
 
 #: Where the pre-repair statuses go. One row per event taken back.
 BANK_TABLE = "bak_7594_revoid_published_reversed_twins"
+
+#: How many times a lost compare-and-swap is re-issued against the status the
+#: row actually moved to before the pass declares the row unresolved.
+#:
+#: Bounded rather than "until it wins" because the competing writer is a beat
+#: that fires forever: an unbounded retry against a row something is rewriting
+#: every second is a pass that never returns, which is a worse outcome than a
+#: named failure. Three is enough for the shape that actually occurs here — a
+#: single `scheduled → live` kickoff, where attempt two wins — and anything that
+#: survives three swaps is a row under continuous write that this script should
+#: be reporting rather than fighting.
+LOST_RACE_ATTEMPTS = 3
+
+#: Why a row `own_or_dispose` did not write was safe to leave, in the operator's
+#: words. Every non-writing outcome has an entry, so a new one added to that
+#: function without a reason a reader can check raises a `KeyError` on the very
+#: first run rather than printing a blank.
+_WHY_LEFT_ALONE = {
+    "gone": "the row no longer exists",
+    "already_retired": "another arm retired it first",
+    "last_row_standing": "its canonical disappeared, so this is the only card",
+}
 
 
 def wrong_app_refusal(args) -> str | None:
@@ -227,6 +272,101 @@ async def candidates(s):
     ).scalars().all()
 
 
+async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
+    """Take this row back, or establish that not writing it is safe. (CERT-3197)
+
+    Returns ``(outcome, status)``, where ``outcome`` is one of:
+
+    ``took``
+        The compare-and-swap matched. ``status`` is what it swapped FROM, which
+        is what the bank records and what the undo will restore — not the status
+        the row had when the pass first read it, if a retry won on a later one.
+    ``gone``
+        The row no longer exists. Nothing to take back.
+    ``already_retired``
+        Some other arm retired it while this pass was running. The reader's
+        screen is in the state this repair wanted; writing again would only
+        overwrite someone else's terminal status with our own.
+    ``last_row_standing``
+        The counterpart disappeared under us, so this row is now the only card
+        for the fixture. Voiding it would delete the game from the site — the
+        #7260 defect, arrived at from the other side — so it is KEPT.
+    ``unresolved``
+        Still reader-visible beside a surviving canonical after every attempt.
+        The caller must not report this pass as clean, and must not exit 0.
+
+    🔴 EVERY WRITE HERE IS A COMPARE-AND-SWAP ON A STATUS THIS FUNCTION JUST
+    READ. "Own the row" is not "overwrite whatever is there": a retry re-reads
+    the status, re-asks the shipped screen, and swaps from the value it read, so
+    a third writer landing between the read and the retry loses the same way the
+    first race lost, and is retried the same way rather than silently clobbered.
+
+    🔴 THE SCREEN IS RE-ASKED BEFORE EVERY RETRY, and that is what makes taking
+    a started game back safe. The condition is not "this row is a duplicate" but
+    "a row a reader can still reach holds this fixture RIGHT NOW" — so if the
+    canonical is what moved, the retry stops and keeps this row instead. The
+    pass can never take back the last card for a game, whatever the race does.
+    """
+    from sqlalchemy import text
+
+    from app.utils.event_completion import is_retired_event_status
+
+    before = event.status
+    for _attempt in range(LOST_RACE_ATTEMPTS + 1):
+        moved = (
+            await s.execute(
+                text(
+                    "UPDATE events SET status = :after "
+                    "WHERE id = :i AND status = :before"
+                ),
+                {
+                    "after": UNREACHABLE_SUSPENDED_TERMINAL,
+                    "i": event.id,
+                    "before": before,
+                },
+            )
+        ).rowcount
+        if moved:
+            # Banked only when the bank exists. A bare plan is allowed to run
+            # without `--backup` (that is what makes it readable before anything
+            # is authorised), and an INSERT into a table no one has created yet
+            # would fail the whole pass with `undefined_table` — turning the
+            # safest invocation into the only one that errors.
+            if bank:
+                await s.execute(
+                    text(
+                        f"INSERT INTO {BANK_TABLE} "
+                        "(event_id, status_before, status_after, taken_at) "
+                        "VALUES (:i, :b, :a, now()) "
+                        "ON CONFLICT (event_id) DO NOTHING"
+                    ),
+                    {
+                        "i": event.id,
+                        "b": before,
+                        "a": UNREACHABLE_SUSPENDED_TERMINAL,
+                    },
+                )
+            return "took", before
+
+        # Lost. Read the row BY ID — never from the ORM object, which still
+        # holds the status this pass read, and never from `candidates()`, whose
+        # predicate is the thing the row has just left.
+        now_status = (
+            await s.execute(
+                text("SELECT status FROM events WHERE id = :i"), {"i": event.id}
+            )
+        ).scalar()
+        if now_status is None:
+            return "gone", None
+        if is_retired_event_status(now_status):
+            return "already_retired", now_status
+        if not await _row_has_surviving_counterpart(s, event):
+            return "last_row_standing", now_status
+        before = now_status
+
+    return "unresolved", before
+
+
 async def run(args) -> int:
     from sqlalchemy import bindparam, text
 
@@ -264,7 +404,7 @@ async def run(args) -> int:
         ids = await candidates(s)
         print(f"{len(ids)} revived rows are still ahead of their kickoff")
 
-        taken, skipped, lost, kept = [], [], [], 0
+        taken, disposed, unresolved, kept = [], [], [], 0
         for event_id in ids:
             event = await s.get(Event, event_id)
             if event is None:
@@ -281,76 +421,32 @@ async def run(args) -> int:
                 f"{event.id} {event.home_team_name} v {event.away_team_name} "
                 f"{event.commence_time}"
             )
-            before = event.status
             # 🔴 THE WRITE IS THE CLAIM ON THE ROW, AND THE BANK RECORDS ONLY
-            # WHAT THAT CLAIM WON. The compare-and-swap is issued FIRST and the
-            # bank entry is written only on `rowcount > 0`.
-            #
-            # It used to be the other way round, on the reasoning that a bank
-            # entry preceding its write is what makes the write reversible. Both
-            # statements are in one transaction, so that ordering buys nothing
-            # for durability — neither can commit without the other — and it
-            # costs correctness on the race this cohort is most exposed to.
-            # These are upcoming games, and the arm that moves `scheduled` to
-            # `live` is firing continuously. Lose that race and the old order
-            # committed a bank row for a write that never happened: the UPDATE
-            # matched nothing, the row was reported skipped, and the bank still
-            # claimed we had put the event on `status_after`.
-            #
-            # That orphan is not inert. `restore_…` restores on
-            # `e.status = b.status_after` — what WE wrote — so the day any other
-            # arm legitimately moves that event to the terminal status, the undo
-            # matches a row it never touched and drags it back to `scheduled`,
-            # re-publishing a duplicate on a claim this repair never earned.
-            # Banking after the swap makes that unrepresentable rather than
-            # merely unlikely.
-            moved = (
-                await s.execute(
-                    text(
-                        "UPDATE events SET status = :after "
-                        "WHERE id = :i AND status = :before"
-                    ),
-                    {
-                        "after": UNREACHABLE_SUSPENDED_TERMINAL,
-                        "i": event.id,
-                        "before": before,
-                    },
-                )
-            ).rowcount
-            if moved:
-                # Banked only when the bank exists. A bare plan is allowed to run
-                # without `--backup` (that is what makes it readable before
-                # anything is authorised), and an INSERT into a table no one has
-                # created yet would fail the whole pass with `undefined_table` —
-                # turning the safest invocation into the only one that errors.
-                if args.backup:
-                    await s.execute(
-                        text(
-                            f"INSERT INTO {BANK_TABLE} "
-                            "(event_id, status_before, status_after, taken_at) "
-                            "VALUES (:i, :b, :a, now()) "
-                            "ON CONFLICT (event_id) DO NOTHING"
-                        ),
-                        {
-                            "i": event.id,
-                            "b": before,
-                            "a": UNREACHABLE_SUSPENDED_TERMINAL,
-                        },
-                    )
-                taken.append(label)
+            # WHAT THAT CLAIM WON — see `own_or_dispose`, which owns both the
+            # swap and the bank so the two orderings cannot be separated by a
+            # later edit. A lost swap is re-attempted against the status the row
+            # moved to, and the outcomes where not writing is correct are named
+            # rather than collapsed into one `skipped`.
+            outcome, status = await own_or_dispose(s, event, bank=args.backup)
+            if outcome == "took":
+                taken.append((label, status))
+            elif outcome == "unresolved":
+                unresolved.append((event.id, status, label))
             else:
-                # Compare-and-swap lost: something moved this row between the
-                # read and the write. Reported by id, never overwritten, and
-                # NOT banked — see above.
-                lost.append(event.id)
-                skipped.append(label)
+                disposed.append((event.id, outcome, status, label))
             # Flush so the next row's screen sees this one as retired.
             await s.flush()
 
-        for label in taken:
-            print(("  took back " if args.apply else "  would take back ") + label)
-        for label in skipped:
-            print("  SKIPPED, moved under us: " + label)
+        for label, status in taken:
+            verb = "  took back " if args.apply else "  would take back "
+            # The status it was swapped FROM is printed because after a retry it
+            # is no longer the one `candidates()` selected on, and it is what the
+            # undo restores.
+            print(f"{verb}{label} (from '{status}')")
+        for event_id, outcome, status, label in disposed:
+            print(f"  LEFT ALONE ({_WHY_LEFT_ALONE[outcome]}, now '{status}'): {label}")
+        for event_id, status, label in unresolved:
+            print(f"  NOT TAKEN BACK, still '{status}' beside its canonical: {label}")
 
         if not args.apply:
             # 🔴 THE PLAN IS THE APPLY, ROLLED BACK. The loop above must write
@@ -376,6 +472,19 @@ async def run(args) -> int:
                     "running commit carries the fix before reading this as done."
                 )
             print("plan only. Re-run with --backup --apply.")
+            if unresolved:
+                # The plan predicts the apply's EXIT CODE too, not just its
+                # list. Its writes are discarded, so an unresolved row here is a
+                # statement about the population rather than a change left
+                # half-made — but it is the same statement, and an operator who
+                # reads `$?` before the prose should learn it from the safe
+                # invocation.
+                print(
+                    f"NOT CLEAN: {len(unresolved)} row(s) were rewritten by "
+                    "something else faster than this pass could own them. The "
+                    "apply would report the same."
+                )
+                return 1
             return 0
 
         await s.commit()
@@ -383,8 +492,9 @@ async def run(args) -> int:
         # Read the column back rather than trusting the counters (hot-list #53).
         left = len(await candidates(s))
         print(
-            f"done: took back {len(taken)}, skipped {len(skipped)}, kept {kept} "
-            f"orphans; {left} revived rows remain ahead of their kickoff"
+            f"done: took back {len(taken)}, left alone {len(disposed)}, "
+            f"unresolved {len(unresolved)}, kept {kept} orphans; "
+            f"{left} revived rows remain ahead of their kickoff"
         )
 
         # 🔴 `left` IS NOT A CLEANLINESS SCORE, AND ON ITS OWN IT LIES ABOUT
@@ -398,39 +508,60 @@ async def run(args) -> int:
         #
         # It cannot be fixed by widening the read-back's predicate either: once
         # the game has started the row fails `commence_time > now()` too. So the
-        # lost ids are carried out of the loop and re-read BY ID, which no
+        # unresolved ids are carried out of the loop and re-read BY ID, which no
         # population predicate can hide.
-        if lost:
+        if unresolved:
+            from app.utils.event_completion import is_retired_event_status
+
             # An expanding bindparam rather than `= ANY(:ids)`: the same
             # statement then runs on Postgres and on the sqlite rail the race
             # test drives the real loop over, so the reporting path a lost race
             # depends on is covered by a test instead of being the one branch
             # that only production ever executes.
+            #
+            # And it is read AFTER the commit, not reused from the loop: the
+            # verdict this pass leaves behind has to be a statement about the
+            # committed database. A row something else retired in the meantime
+            # is resolved however it got there, and saying otherwise would make
+            # the exit code fire on a screen that is already correct.
+            ids_unresolved = [event_id for event_id, _s, _l in unresolved]
             now_status = dict(
                 (
                     await s.execute(
                         text("SELECT id, status FROM events WHERE id IN :ids").bindparams(
                             bindparam("ids", expanding=True)
                         ),
-                        {"ids": lost},
+                        {"ids": ids_unresolved},
                     )
                 ).all()
             )
+            still_visible = [
+                event_id
+                for event_id in ids_unresolved
+                if event_id in now_status
+                and not is_retired_event_status(now_status[event_id])
+            ]
             print(
-                f"NOT CLEAN: {len(lost)} row(s) moved under this pass and were "
-                f"NOT taken back. They are absent from the {left} above because "
-                "they are no longer 'scheduled'."
+                f"NOT CLEAN: {len(still_visible)} row(s) kept moving under this "
+                f"pass and are STILL on the site beside their canonical row. "
+                f"They are absent from the {left} above because they are no "
+                "longer 'scheduled'."
             )
-            for event_id in lost:
-                print(f"  {event_id} is now '{now_status.get(event_id, '?')}'")
+            for event_id in ids_unresolved:
+                print(f"  {event_id} is now '{now_status.get(event_id, 'deleted')}'")
             print(
-                "These have left this repair's population by its own definition "
-                "(revived AND still ahead of kickoff), so re-running will not "
-                "reach them — a started game is not taken off the site by this "
-                "script, and voiding a live fixture is not in this ship. The "
-                "forward #7594 guard stops new ones; an already-live duplicate "
-                "is #2693's. Report these ids there rather than re-running."
+                f"Each was re-attempted {LOST_RACE_ATTEMPTS} times against the "
+                "status it had actually moved to, and something rewrote it every "
+                "time. Re-run the script: the population is defined by the "
+                "#7260 arm's ledger, not by 'scheduled', so a started game is "
+                "still reachable by a later pass."
             )
+            if still_visible:
+                # 🔴 THE EXIT CODE IS THE PART A WRAPPER READS. Printing NOT
+                # CLEAN and returning 0 told a human the truth and everything
+                # else the opposite (CERT-3197).
+                return 1
+            print("...and all of them have since been retired by another arm.")
         return 0
 
 

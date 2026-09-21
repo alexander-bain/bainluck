@@ -527,19 +527,31 @@ class _AsyncSession:  # pragma: no cover - test rail
     connection because sqlite serialises writers; what the test needs is that
     the row's status has changed between the read and the compare-and-swap, and
     that is exactly what this produces.
+
+    `before_every_update` is the same hook left armed: a writer that keeps
+    rewriting the row rather than one that moved it once. It is what makes the
+    unresolved outcome reachable at all — with a hook that fires once, the
+    pass's retry wins on attempt two, which is the shape production actually
+    has (a single `scheduled -> live` kickoff).
     """
 
-    def __init__(self, session, before_update=None):
+    def __init__(self, session, before_update=None, before_every_update=None):
         self._s = session
         self._before_update = before_update
+        self._before_every_update = before_every_update
         self.sql: list[str] = []
+        self.updates = 0
 
     async def execute(self, statement, params=None):
         sql = str(statement)
         self.sql.append(sql)
-        if sql.strip().upper().startswith("UPDATE EVENTS") and self._before_update:
-            hook, self._before_update = self._before_update, None
-            hook(self._s)
+        if sql.strip().upper().startswith("UPDATE EVENTS"):
+            self.updates += 1
+            if self._before_update:
+                hook, self._before_update = self._before_update, None
+                hook(self._s)
+            if self._before_every_update:
+                self._before_every_update(self._s, self.updates)
         return self._s.execute(statement, params if params is not None else {})
 
     async def get(self, model, pk):
@@ -588,7 +600,14 @@ def _a_revived_twin_and_its_canonical_row():
     )
 
 
-async def _drive(module, monkeypatch, session, args, before_update=None):
+async def _drive(
+    module,
+    monkeypatch,
+    session,
+    args,
+    before_update=None,
+    before_every_update=None,
+):
     """Run a script's real `run()` over `session`, returning the async wrapper.
 
     `module` is the repair or the restore. The producer app is read off the
@@ -602,7 +621,11 @@ async def _drive(module, monkeypatch, session, args, before_update=None):
         "scripts.repair_7594_revoid_published_reversed_twins"
     ).PRODUCER_APP
 
-    shim = _AsyncSession(session, before_update=before_update)
+    shim = _AsyncSession(
+        session,
+        before_update=before_update,
+        before_every_update=before_every_update,
+    )
     monkeypatch.setenv("HEROKU_APP_NAME", producer)
     monkeypatch.setattr(base, "get_task_session", lambda: shim)
     code = await module.run(args)
@@ -621,9 +644,38 @@ def _status(session, event_id):
     ).scalar()
 
 
+def _cards_a_reader_can_reach(session):
+    """Rows for the fixture that are not retired — what the site would show.
+
+    The ship's acceptance is a count on the page, so the tests assert one, and
+    not merely "the revived row moved". A pass that took BOTH halves back would
+    satisfy every status assertion in this file and delete the game.
+    """
+    from app.utils.event_completion import is_retired_event_status
+
+    return [
+        (event_id, status)
+        for event_id, status in session.execute(
+            sa_text("SELECT id, status FROM events ORDER BY id")
+        ).all()
+        if not is_retired_event_status(status)
+    ]
+
+
 @pytest.mark.asyncio
-class TestALostRaceBanksNothingAndIsNotReportedClean:
-    """CERT-3194's required repair, 7594-CONCURRENT-TAKEBACK-CANNOT-STRAND-OR-MISBANK."""
+class TestALostRaceIsOwnedOrReportedByTheExitCode:
+    """Both required repairs on the race, in the order they were demanded.
+
+    CERT-3194, `7594-CONCURRENT-TAKEBACK-CANNOT-STRAND-OR-MISBANK`: the bank
+    records only what a swap won, so a lost race can never leave an orphan row
+    for the undo to claim.
+
+    CERT-3197, `7594-LOST-RACE-CANNOT-EXIT-SUCCESS-WITH-A-LIVE-TWIN`: banking
+    nothing was necessary and not sufficient — the row was still on the site,
+    now live beside its canonical, and the pass exited 0. The swap is now
+    re-attempted against the status the row moved to while a canonical still
+    survives, and when that cannot be done the pass says so in `$?`.
+    """
 
     async def test_the_control_a_clean_pass_really_does_bank_and_void(
         self, repair, monkeypatch, capsys
@@ -650,19 +702,32 @@ class TestALostRaceBanksNothingAndIsNotReportedClean:
         assert _bank_rows(session, repair) == [
             (revived.id, "scheduled", UNREACHABLE_SUSPENDED_TERMINAL)
         ]
+        # THE ZERO-EXIT ONE-CANONICAL-CARD CONTROL (CERT-3197). The nonzero exit
+        # this file now asserts elsewhere means nothing unless the clean path is
+        # shown to exit 0, and "took the row back" means nothing unless the game
+        # is still on the site afterwards.
+        assert _cards_a_reader_can_reach(session) == [(_canonical.id, "scheduled")]
         out = capsys.readouterr().out
         assert "took back 1" in out
         assert "NOT CLEAN" not in out
 
-    async def test_a_row_that_goes_live_under_the_pass_is_not_banked(
+    async def test_a_row_that_goes_live_under_the_pass_is_owned_on_its_new_status(
         self, repair, monkeypatch, capsys
     ):
-        """The misbank. The whole defect in one assertion.
+        """CERT-3197's repair: the kickoff race is WON, not reported.
 
-        Under the old order the INSERT preceded the UPDATE, so this pass
-        committed a bank row asserting a `status_after` it never wrote.
+        The row that loses the swap loses it by kicking off, so the old
+        behaviour — skip it, print it, exit 0 — bought a duplicate that was not
+        merely still on the site but now the LIVE card beside its canonical. The
+        pass re-reads the status the row actually moved to and swaps from THAT.
+
+        🔴 And the bank records `live`, not `scheduled`. It is the anti-misbank
+        property in its sharpest form: the undo restores `status_before`, so
+        banking the status this pass first read — rather than the one its winning
+        swap actually took the row off — would put a live game back as
+        `scheduled` on a restore.
         """
-        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
         _ledger(session, repair, [revived.id])
 
         def kickoff(s):
@@ -680,47 +745,185 @@ class TestALostRaceBanksNothingAndIsNotReportedClean:
         )
 
         assert code == 0
-        # The compare-and-swap correctly refused to overwrite the live row...
-        assert _status(session, revived.id) == "live"
-        # ...and nothing was banked for a write that never happened.
-        assert _bank_rows(session, repair) == []
-        assert "SKIPPED, moved under us" in capsys.readouterr().out
+        assert _status(session, revived.id) == UNREACHABLE_SUSPENDED_TERMINAL
+        assert _bank_rows(session, repair) == [
+            (revived.id, "live", UNREACHABLE_SUSPENDED_TERMINAL)
+        ]
+        assert _cards_a_reader_can_reach(session) == [(canonical.id, "scheduled")]
+        assert "took back 1" in capsys.readouterr().out
 
-    async def test_the_lost_row_is_not_reported_as_a_clean_sweep(
+    async def test_apply_never_returns_zero_when_the_lost_row_remains_live(
         self, repair, monkeypatch, capsys
     ):
-        """The false clean.
+        """CERT-3197's required repair, and the reason it is an EXIT CODE.
 
-        `candidates()` filters `status = 'scheduled'`, and this row lost the
-        swap precisely because something moved it out of `scheduled`. So the
-        read-back counts zero and the pass's worst outcome would otherwise print
-        as `0 revived rows remain ahead of their kickoff`.
+        A writer that keeps moving the row — here a game flapping between `live`
+        and `suspended`, which is the shape of a delay — outruns every attempt.
+        That is a legitimate outcome for the pass to have; what is not
+        legitimate is reporting it as success. `NOT CLEAN` on stdout and `0` to
+        the shell told a human the truth and everything that reads `$?` the
+        opposite.
+
+        Nothing is banked, because nothing was written: the bank records only
+        what a swap won.
         """
-        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
         _ledger(session, repair, [revived.id])
 
-        def kickoff(s):
+        def flapping(s, attempt):
             s.execute(
-                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
-                {"i": revived.id},
+                sa_text("UPDATE events SET status = :st WHERE id = :i"),
+                {"st": "live" if attempt % 2 else "suspended", "i": revived.id},
             )
 
-        await _drive(
+        code, _shim = await _drive(
             session=session,
             module=repair,
             monkeypatch=monkeypatch,
             args=_args(apply=True, backup=True),
-            before_update=kickoff,
+            before_every_update=flapping,
         )
 
+        assert code == 1
+        assert _status(session, revived.id) not in (UNREACHABLE_SUSPENDED_TERMINAL,)
+        assert _bank_rows(session, repair) == []
+        # The duplicate really is still reader-visible — the thing the exit code
+        # is reporting. Both rows, not one.
+        assert len(_cards_a_reader_can_reach(session)) == 2
         out = capsys.readouterr().out
-        # The misleading line is still printed — it is a true statement about
-        # the `scheduled` population — but it is no longer the last word.
-        assert "0 revived rows remain" in out
         assert "NOT CLEAN" in out
-        # Named by id, and by where it actually went, which no population
-        # predicate can hide.
-        assert f"{revived.id} is now 'live'" in out
+        assert f"{revived.id} is now" in out
+
+    async def test_the_pass_gives_up_after_a_bounded_number_of_attempts(
+        self, repair, monkeypatch
+    ):
+        """It must stop. The competing writer is a beat and fires forever.
+
+        Without a bound, a row under continuous write is not a failed take-back
+        but a pass that never returns — a worse outcome than a named failure,
+        and one no exit code can report.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def flapping(s, attempt):
+            s.execute(
+                sa_text("UPDATE events SET status = :st WHERE id = :i"),
+                {"st": "live" if attempt % 2 else "suspended", "i": revived.id},
+            )
+
+        _code, shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_every_update=flapping,
+        )
+
+        # Read off the constant so the two cannot drift, and pinned to a literal
+        # so the assertion is not satisfied by any bound whatsoever — a loop that
+        # retried fifty times would still honour `LOST_RACE_ATTEMPTS + 1` if the
+        # constant were the only thing this compared against.
+        assert repair.LOST_RACE_ATTEMPTS == 3
+        assert shim.updates == repair.LOST_RACE_ATTEMPTS + 1
+
+    async def test_a_row_deleted_under_the_pass_is_not_an_error(
+        self, repair, monkeypatch, capsys
+    ):
+        """The `gone` outcome. A row that no longer exists is not a failure.
+
+        Reachable: the twin authority (#2693) deletes rows this repair's
+        population overlaps with. Without its own arm the retry would re-read
+        `None`, find no counterpart for a row that is not there, and the pass
+        would report it as an unresolved duplicate — a nonzero exit for a
+        database that is in exactly the state the ship wants.
+        """
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def deleted(s):
+            s.execute(
+                sa_text("DELETE FROM events WHERE id = :i"), {"i": revived.id}
+            )
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=deleted,
+        )
+
+        assert code == 0
+        assert _bank_rows(session, repair) == []
+        assert _cards_a_reader_can_reach(session) == [(canonical.id, "scheduled")]
+        assert "the row no longer exists" in capsys.readouterr().out
+
+    async def test_the_last_card_for_a_fixture_is_never_taken_back_by_a_retry(
+        self, repair, monkeypatch, capsys
+    ):
+        """The safety condition on owning a started row, and it is re-asked.
+
+        The retry's licence is not "this row was a duplicate when the pass
+        started" but "a row a reader can reach holds this fixture RIGHT NOW". So
+        when the canonical is what moved, the pass stops and KEEPS this row —
+        otherwise a race could leave the game absent from the site, which is the
+        #7260 defect arrived at from the other side.
+        """
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def kickoff_and_lose_the_canonical(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
+                {"i": revived.id},
+            )
+            s.execute(
+                sa_text("UPDATE events SET status = :s WHERE id = :i"),
+                {"s": UNREACHABLE_SUSPENDED_TERMINAL, "i": canonical.id},
+            )
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=kickoff_and_lose_the_canonical,
+        )
+
+        assert code == 0
+        assert _status(session, revived.id) == "live"
+        assert _bank_rows(session, repair) == []
+        assert _cards_a_reader_can_reach(session) == [(revived.id, "live")]
+        assert "its canonical disappeared" in capsys.readouterr().out
+
+    async def test_a_row_another_arm_retired_first_is_left_alone(
+        self, repair, monkeypatch, capsys
+    ):
+        """Resolved is resolved. The reader's screen is already correct."""
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def someone_else_retires_it(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'merged' WHERE id = :i"),
+                {"i": revived.id},
+            )
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=someone_else_retires_it,
+        )
+
+        assert code == 0
+        # Not overwritten with OUR terminal status — it is someone else's write.
+        assert _status(session, revived.id) == "merged"
+        assert _bank_rows(session, repair) == []
+        assert _cards_a_reader_can_reach(session) == [(canonical.id, "scheduled")]
+        assert "another arm retired it first" in capsys.readouterr().out
 
     async def test_the_undo_cannot_later_claim_a_row_the_repair_never_wrote(
         self, repair, restore, monkeypatch, capsys
@@ -732,14 +935,18 @@ class TestALostRaceBanksNothingAndIsNotReportedClean:
         moves that event to the terminal status, an undo would match a row this
         repair never touched and put it back on `scheduled`, re-publishing the
         duplicate. With nothing banked there is nothing for it to match.
+
+        Driven through the unresolved outcome, because that is now the only way
+        a row leaves this pass unwritten and still reader-visible: a single
+        kickoff is won on the retry and legitimately banked.
         """
         session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
         _ledger(session, repair, [revived.id])
 
-        def kickoff(s):
+        def flapping(s, attempt):
             s.execute(
-                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
-                {"i": revived.id},
+                sa_text("UPDATE events SET status = :st WHERE id = :i"),
+                {"st": "live" if attempt % 2 else "suspended", "i": revived.id},
             )
 
         await _drive(
@@ -747,7 +954,7 @@ class TestALostRaceBanksNothingAndIsNotReportedClean:
             module=repair,
             monkeypatch=monkeypatch,
             args=_args(apply=True, backup=True),
-            before_update=kickoff,
+            before_every_update=flapping,
         )
         capsys.readouterr()
 
@@ -770,3 +977,44 @@ class TestALostRaceBanksNothingAndIsNotReportedClean:
         # NOT dragged back to `scheduled`.
         assert _status(session, revived.id) == UNREACHABLE_SUSPENDED_TERMINAL
         assert "restored 0" in capsys.readouterr().out
+
+    async def test_the_undo_returns_a_row_owned_late_to_the_status_it_was_owned_from(
+        self, repair, restore, monkeypatch, capsys
+    ):
+        """The restore's "some other status" clause, now that it is reachable.
+
+        `restore_…` has always restored `status_before` rather than a hard-coded
+        `scheduled`, and until the retry landed there was no way for the bank to
+        hold anything else. A row owned on its new status banks `live`, so the
+        undo must put back a LIVE game — not the `scheduled` the pass first read,
+        which would take a game in progress off the schedule to undo a fix.
+        """
+        session, (revived, _canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def kickoff(s):
+            s.execute(
+                sa_text("UPDATE events SET status = 'live' WHERE id = :i"),
+                {"i": revived.id},
+            )
+
+        await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=kickoff,
+        )
+        capsys.readouterr()
+        assert _status(session, revived.id) == UNREACHABLE_SUSPENDED_TERMINAL
+
+        code, _shim = await _drive(
+            session=session,
+            module=restore,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True),
+        )
+
+        assert code == 0
+        assert _status(session, revived.id) == "live"
+        assert "restored 1" in capsys.readouterr().out
