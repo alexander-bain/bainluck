@@ -94,13 +94,21 @@ MUTANTS = [
 ]
 
 
+# Named rather than wrapped across two lines inside the argv list: two adjacent
+# string literals there are indistinguishable from a missing comma, which is a
+# whole test class silently not running — and CodeQL flags exactly that shape.
+GUARD_TEST = (
+    "-only-testing:BainLuckTests/"
+    + "TheEvolutionCardFitsTheScreenAtEveryTypeSize4445Tests"
+)
+
+
 def run_swift():
     p = subprocess.run(
         ["xcodebuild", "-project", str(ROOT / "ios/Bain Luck/Bain Luck.xcodeproj"),
          "-scheme", "Bain Luck", "-destination", f"id={SIM}",
          "-disableAutomaticPackageResolution",
-         "-only-testing:BainLuckTests/"
-         "TheEvolutionCardFitsTheScreenAtEveryTypeSize4445Tests",
+         GUARD_TEST,
          "-only-testing:BainLuckTests/EvolutionControlBarLayoutTests",
          "-only-testing:BainLuckTests/EvolutionLeaderboardWidthTests",
          "OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -disable-sandbox", "test"],
