@@ -417,18 +417,38 @@ def compute_movers(
     return movers[:limit]
 
 
+# Sort weights for cells that carry no probability. "Eliminated" is a DECIDED
+# zero. A row with no cell at all for this column has not been decided by
+# anyone — nobody priced it — and it is not the same fact, so it sorts below.
+_SORT_WON = 1.0
+_SORT_ELIMINATED = 0.0
+_SORT_NO_CELL = -1.0
+
+
 def _championship_sort_value(team: dict, championship_col: str) -> float:
     """Sort weight for a team's championship cell.
 
     Live cells sort by probability. A settled cell has no probability, so it
     sorts by its terminal result: a confirmed champion belongs at the top, an
     eliminated team at the bottom — the same place its 100%/0% would have put it.
+
+    A row with NO cell for this column is not a result at all and sorts below
+    both. #7754: an unresolvable venue name ("Oakland Athletics", which our
+    `Athletics` row does not match) minted a 31st row on a 30-seat MLB grid
+    carrying only a division cell. It fell through to the same ``0.0`` as the
+    thirteen clubs whose championship cell says `eliminated`, and ``list.sort``
+    is stable, so position inside that tied block was ARRIVAL ORDER. The
+    phantom landed at rank 24 and the Cincinnati Reds — a real club — were cut
+    by the cap. Measured on all six live grids the day this shipped, no
+    published row lacks a championship cell, so this reaches nothing else.
     """
-    cell = team["cells"].get(championship_col) or {}
+    cell = team["cells"].get(championship_col)
+    if not cell:
+        return _SORT_NO_CELL
     prob = cell.get("merged_probability")
     if prob is not None:
         return float(prob)
-    return 1.0 if cell.get("state") == "won" else 0.0
+    return _SORT_WON if cell.get("state") == "won" else _SORT_ELIMINATED
 
 
 def sort_teams_by_championship(
@@ -436,9 +456,44 @@ def sort_teams_by_championship(
     championship_col: str,
     max_teams: int,
 ) -> list[dict]:
-    """Sort teams by championship probability (descending) and cap to max."""
-    teams.sort(key=lambda t: -_championship_sort_value(t, championship_col))
-    return teams[:max_teams]
+    """Sort teams by championship probability (descending) and cap to max.
+
+    Ties break toward the row that resolved to a real club, so the cap never
+    spends its last seat on a row we could not identify while cutting an
+    equally-ranked club we could. That is a TIE-BREAK, deliberately not a
+    blanket preference for a non-null ``team_id``: measured on production
+    2026-09-21, wncaab carries three rows with a null ``team_id`` that are real
+    tournament schools our name matching missed (`Ohio St.`, `North Carolina
+    St.`, `Iowa St.`) and mls carries `New York RB`. All four hold a real
+    championship price. Dropping them for a lower-priced club would be this
+    same defect pointed the other way, so a row that outranks on a real price
+    keeps its seat whether or not we could name it.
+
+    The cap is the last thing that can silently lose a club, so it says so.
+    """
+    teams.sort(
+        key=lambda t: (
+            -_championship_sort_value(t, championship_col),
+            t.get("team_id") is None,
+        )
+    )
+    if len(teams) <= max_teams:
+        return teams
+
+    kept = teams[:max_teams]
+    dropped = teams[max_teams:]
+    logger.info(
+        "Grid cap on %s: %d candidates for %d seats, dropped %d "
+        "(%d identified clubs dropped, %d unidentified rows kept a seat): %s",
+        championship_col,
+        len(teams),
+        max_teams,
+        len(dropped),
+        sum(1 for t in dropped if t.get("team_id") is not None),
+        sum(1 for t in kept if t.get("team_id") is None),
+        ", ".join(t.get("name", "?") for t in dropped[:10]),
+    )
+    return kept
 
 
 # Regex for outcomes that are NOT team names (thresholds, dates, generic text)

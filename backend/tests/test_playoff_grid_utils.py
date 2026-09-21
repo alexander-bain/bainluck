@@ -1,5 +1,6 @@
 """Tests for utils/playoff_grid.py — extracted championship grid logic."""
 
+import logging
 from types import SimpleNamespace
 
 from app.utils.playoff_grid import (
@@ -18,6 +19,32 @@ def _make_team(name, champ_prob=0.0, trend=None):
     if trend is not None:
         cells["championship"]["trend_24h"] = trend
     return {"name": name, "short_name": name[:3].upper(), "team_id": hash(name), "cells": cells, "logo_url": None, "primary_color": None}
+
+
+def _make_eliminated_team(name, team_id):
+    """A club whose championship cell EXISTS and says it is out.
+
+    A settled cell carries no probability, so it reaches the sort's fallback
+    branch — the same branch a row with no cell at all used to reach.
+    """
+    return {
+        "name": name, "short_name": name[:3].upper(), "team_id": team_id,
+        "cells": {"championship": {"state": "eliminated", "sources": []}},
+        "logo_url": None, "primary_color": None,
+    }
+
+
+def _make_row_without_championship_cell(name):
+    """The #7754 phantom: a venue name that resolved to no club in `teams`.
+
+    It reached the grid on a division market and has no championship cell, no
+    crest, no record and a null `team_id`.
+    """
+    return {
+        "name": name, "short_name": name[:3].upper(), "team_id": None,
+        "cells": {"division": {"merged_probability": 0.002, "state": "live"}},
+        "logo_url": None, "primary_color": None,
+    }
 
 
 class TestNormalizeColumnSums:
@@ -230,6 +257,82 @@ class TestSortTeamsByChampionship:
         teams = [_make_team(f"T{i}", 0.1) for i in range(20)]
         result = sort_teams_by_championship(teams, "championship", max_teams=5)
         assert len(result) == 5
+
+    def test_a_row_with_no_cell_sorts_below_an_eliminated_club(self):
+        # #7754. `_championship_sort_value` returned 0.0 both for a club whose
+        # championship cell says `eliminated` and for a row with no
+        # championship cell at all. Those are not the same fact, and because
+        # `list.sort` is stable the tie fell to arrival order.
+        #
+        # TWO rows tied at 0.0 under the old rule is the whole specimen, and
+        # the assertion is on ORDER, not membership: a one-row fixture passes
+        # whether or not the tie is broken. The phantom is listed FIRST so
+        # arrival order alone would keep it above the real club.
+        phantom = _make_row_without_championship_cell("Oakland Athletics")
+        reds = _make_eliminated_team("Cincinnati Reds", team_id=10713)
+
+        result = sort_teams_by_championship(
+            [phantom, reds], "championship", max_teams=10
+        )
+
+        assert [t["name"] for t in result] == ["Cincinnati Reds", "Oakland Athletics"]
+
+    def test_the_last_seat_goes_to_the_decided_club_not_the_undecided_row(self):
+        # The reader-visible half: MLB's cap is exactly the league size, so the
+        # 31st candidate always costs somebody their row.
+        phantom = _make_row_without_championship_cell("Oakland Athletics")
+        reds = _make_eliminated_team("Cincinnati Reds", team_id=10713)
+
+        result = sort_teams_by_championship([phantom, reds], "championship", max_teams=1)
+
+        assert [t["name"] for t in result] == ["Cincinnati Reds"]
+
+    def test_a_tie_at_the_cap_goes_to_the_row_that_resolved_to_a_real_club(self):
+        # Both rows are eliminated, so both score 0.0 on merit. Arrival order
+        # favours the unidentified one; the tie-break must not.
+        unidentified = _make_eliminated_team("Oakland Athletics", team_id=None)
+        reds = _make_eliminated_team("Cincinnati Reds", team_id=10713)
+
+        result = sort_teams_by_championship(
+            [unidentified, reds], "championship", max_teams=1
+        )
+
+        assert [t["name"] for t in result] == ["Cincinnati Reds"]
+
+    def test_an_unidentified_row_that_outranks_on_a_real_price_keeps_its_seat(self):
+        # The tie-break must not become a blanket preference for a non-null
+        # `team_id`. Measured on production 2026-09-21: wncaab carries three
+        # rows with a null `team_id` that are REAL tournament schools our name
+        # matching missed — `Ohio St.`, `North Carolina St.`, `Iowa St.` — and
+        # mls carries `New York RB`. Every one holds a real championship price.
+        # Cutting them for a lower-priced club would be #7754 pointed the other
+        # way.
+        ohio_state = _make_team("Ohio St.", 0.08)
+        ohio_state["team_id"] = None
+        longshot = _make_team("Rutgers Scarlet Knights", 0.01)
+
+        result = sort_teams_by_championship(
+            [longshot, ohio_state], "championship", max_teams=1
+        )
+
+        assert [t["name"] for t in result] == ["Ohio St."]
+
+    def test_the_cap_logs_what_it_dropped(self, caplog):
+        # `teams[:max_teams]` was a `.slice` doing a filter's job in silence,
+        # while `team_count` still reported a full grid. A lost club now leaves
+        # a trace.
+        teams = [_make_team(f"T{i}", 0.5 - i * 0.01) for i in range(8)]
+
+        with caplog.at_level(logging.INFO, logger="app.utils.playoff_grid"):
+            sort_teams_by_championship(teams, "championship", max_teams=5)
+
+        assert "8 candidates for 5 seats, dropped 3" in caplog.text
+        assert "T7" in caplog.text
+
+    def test_the_cap_is_silent_when_it_drops_nothing(self):
+        teams = [_make_team("A", 0.5), _make_team("B", 0.4)]
+        result = sort_teams_by_championship(teams, "championship", max_teams=30)
+        assert [t["name"] for t in result] == ["A", "B"]
 
 
 class TestIsValidGridOutcome:
