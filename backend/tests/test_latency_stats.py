@@ -234,6 +234,29 @@ class TestCacheBucket:
         )
         assert produced, "could not parse any cache_status producer — the regex rotted"
 
+        # A DERIVED GUARD GOES VACUOUS THE MOMENT ITS DERIVATION ROTS PARTWAY.
+        # `assert produced` only catches TOTAL rot: if a later refactor moves
+        # some call sites to a constant or an f-string, this regex keeps
+        # parsing the survivors, `missing` stays empty, and the test passes
+        # while the value it was written to catch sails into `other` — the
+        # #2143 defect again, now with a green test on top of it. So the
+        # derivation is pinned by the floor it is known to reach today
+        # (2026-09-21: exactly these ten, all written as `cache_status = "…"`).
+        # Removing a value from `feed.py` is legitimate and updates this pin
+        # deliberately; a value silently disappearing from the PARSE is the rot,
+        # and it is now red.
+        floor = {
+            "miss", "hit", "stale_hit", "error", "coalesced", "last_good",
+            "unavailable", "disabled", "disabled_debug",
+            "disabled_reviewed_filter",
+        }
+        unparsed = floor - produced
+        assert not unparsed, (
+            f"the producer parse no longer reaches {sorted(unparsed)} — either "
+            f"feed.py genuinely stopped writing them (update this pin in the "
+            f"same commit) or the regex rotted and this guard is now vacuous"
+        )
+
         missing = produced - set(_CACHE_BUCKETS)
         assert not missing, (
             f"feed.py writes X-Feed-Cache values the latency rail cannot name: "
