@@ -26,7 +26,6 @@ is that test, and it is the one a "tidy-up" to `rowcount`-based advancement
 fails.
 """
 
-import re
 from unittest.mock import patch
 
 import pytest
@@ -151,13 +150,13 @@ def test_the_task_dispatches_the_drain_and_not_the_pipeline():
     throughout the nine-week outage #5111 records. This drives the registered
     task and observes the drain being called.
     """
-    import app.tasks as tasks_pkg
+    from app.tasks import repair_openings_from_first_snapshot
 
     with patch.object(
         bw, "_repair_openings_from_first_snapshot", autospec=True
     ) as drain:
         drain.return_value = _Awaited({"restored": 0})
-        tasks_pkg.repair_openings_from_first_snapshot(scan=7)
+        repair_openings_from_first_snapshot(scan=7)
 
     drain.assert_called_once()
     assert drain.call_args.kwargs["scan"] == 7, (
