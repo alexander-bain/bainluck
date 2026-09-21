@@ -114,6 +114,15 @@ const SCHEDULED = JSON.parse(
     "utf8"
   )
 );
+/** #7660's specimen: Chiefs–Colts live in the 3rd, carrying a believed
+ *  polymarket arm (0.97) beside a distrusted kalshi one (0.2). The controls
+ *  below that used to run on SCHEDULED run on this instead — see the header. */
+const LIVE = JSON.parse(
+  readFileSync(
+    join(__dirname, "fixtures/impliedSpread.14780544.live.json"),
+    "utf8"
+  )
+);
 
 const CHART_SOURCE = readFileSync(
   join(__dirname, "../components/ScoreDifferentialChart.tsx"),
@@ -153,40 +162,81 @@ function renderChart(
   );
 }
 
+/** A trusted arm, so these assertions turn on the state and the source alone.
+ *  #7660 added the ARM as a third input of the rule and gates on its
+ *  `confidence`; passing a believed one here keeps each assertion below about
+ *  the one clause it names. The live fixture it added is what proves the two
+ *  clauses are independent — see `impliedSpreadConfidenceFloor7660.test.tsx`. */
+const COHERENT = {
+  spread: -7.5,
+  home_margin: 7.5,
+  confidence: 0.97,
+  contracts: [
+    { threshold: 3.5, probability: 0.8 },
+    { threshold: 7.5, probability: 0.5 },
+    { threshold: 10.5, probability: 0.3 },
+  ],
+};
+
 describe("#6142 — the rule itself", () => {
   it("draws a venue snapshot on a game that has not finished", () => {
-    expect(impliedSpreadSnapshotDrawn({ source: "kalshi", isFinal: false })).toBe(true);
-    expect(impliedSpreadSnapshotDrawn({ source: "polymarket", isFinal: false })).toBe(true);
+    expect(impliedSpreadSnapshotDrawn({ source: "kalshi", isFinal: false, arm: COHERENT })).toBe(true);
+    expect(impliedSpreadSnapshotDrawn({ source: "polymarket", isFinal: false, arm: COHERENT })).toBe(true);
   });
 
   it("draws no venue snapshot once the game is final", () => {
-    expect(impliedSpreadSnapshotDrawn({ source: "kalshi", isFinal: true })).toBe(false);
-    expect(impliedSpreadSnapshotDrawn({ source: "polymarket", isFinal: true })).toBe(false);
+    expect(impliedSpreadSnapshotDrawn({ source: "kalshi", isFinal: true, arm: COHERENT })).toBe(false);
+    expect(impliedSpreadSnapshotDrawn({ source: "polymarket", isFinal: true, arm: COHERENT })).toBe(false);
   });
 
   it("never draws the sportsbook arm — it is already the projected-margin line", () => {
     // Both states: this clause moved into the shared rule and did not change
     // meaning on the way. The settled fixture carries a real sportsbook arm.
-    expect(impliedSpreadSnapshotDrawn({ source: "sportsbook", isFinal: false })).toBe(false);
-    expect(impliedSpreadSnapshotDrawn({ source: "sportsbook", isFinal: true })).toBe(false);
+    expect(impliedSpreadSnapshotDrawn({ source: "sportsbook", isFinal: false, arm: COHERENT })).toBe(false);
+    expect(impliedSpreadSnapshotDrawn({ source: "sportsbook", isFinal: true, arm: COHERENT })).toBe(false);
   });
 
   it("reads the production payloads' own source sets, in payload order", () => {
     const settledArms = SETTLED.pm_spread_data.implied_spreads;
-    const scheduledArms = SCHEDULED.pm_spread_data.implied_spreads;
+    const liveArms = LIVE.pm_spread_data.implied_spreads;
 
     // Strawman guard: if these fixtures ever stop carrying the arms the
     // assertions below are about, every expectation underneath goes vacuously
     // true. State what the wire holds before asking what is drawn from it.
     expect(Object.keys(settledArms)).toEqual(["kalshi", "sportsbook"]);
-    expect(Object.keys(scheduledArms)).toEqual(["polymarket", "kalshi"]);
+    expect(Object.keys(liveArms)).toEqual([
+      "kalshi",
+      "polymarket",
+      "sportsbook",
+    ]);
 
     expect(drawnImpliedSpreadSources(settledArms, true)).toEqual([]);
-    expect(drawnImpliedSpreadSources(settledArms, false)).toEqual(["kalshi"]);
-    expect(drawnImpliedSpreadSources(scheduledArms, false)).toEqual([
-      "polymarket",
-      "kalshi",
-    ]);
+    // #7660 moved these. The settled fixture's only non-sportsbook arm is
+    // `kalshi` at confidence 0.2, so un-finaling it no longer draws it; and on
+    // the live wire the distrusted `kalshi` arm is FIRST in payload order and
+    // the believed `polymarket` arm second, so this pair states the filter.
+    expect(drawnImpliedSpreadSources(settledArms, false)).toEqual([]);
+    expect(drawnImpliedSpreadSources(liveArms, false)).toEqual(["polymarket"]);
+  });
+
+  it("keeps payload order when more than one arm survives", () => {
+    // The claim above used to carry this too, and can no longer: every
+    // production fixture here now has exactly one drawable arm, so an order
+    // assertion over them would pass on a function that sorted, reversed or
+    // hard-coded. Stated on a record whose order is the only thing in question.
+    const believed = { spread: -3, home_margin: 3, confidence: 0.9 };
+    expect(
+      drawnImpliedSpreadSources(
+        { polymarket: believed, kalshi: believed },
+        false
+      )
+    ).toEqual(["polymarket", "kalshi"]);
+    expect(
+      drawnImpliedSpreadSources(
+        { kalshi: believed, polymarket: believed },
+        false
+      )
+    ).toEqual(["kalshi", "polymarket"]);
   });
 
   it("treats an absent or empty payload as nothing to draw, in either state", () => {
@@ -214,11 +264,17 @@ describe("#6142 — the chart, on the production wire", () => {
     // Identical bytes into both renders; `eventStatus` is the only difference.
     // This is the arm a fix keyed on anything the settled payload merely
     // happens to carry cannot pass.
-    const asFinal = renderChart(SETTLED);
-    const asLive = renderChart(SETTLED, { eventStatus: "live" });
+    //
+    // #7660 moved it onto the LIVE wire. It has to run on a payload with a
+    // drawable arm, and SETTLED's only one is kalshi at confidence 0.2, which
+    // is now withheld in BOTH states — on that fixture this control would read
+    // "none" either way and prove nothing about `eventStatus` at all.
+    const asFinal = renderChart(LIVE, { eventStatus: "completed" });
+    const asLive = renderChart(LIVE);
 
+    expect(LIVE.status).toBe("live");
     expect(seriesAttr(asFinal, "data-implied-spread-series")).toBe("none");
-    expect(seriesAttr(asLive, "data-implied-spread-series")).toBe("kalshi");
+    expect(seriesAttr(asLive, "data-implied-spread-series")).toBe("polymarket");
   });
 
   it("`closed` is final too, not just `completed`", () => {
@@ -229,12 +285,23 @@ describe("#6142 — the chart, on the production wire", () => {
     ).toBe("none");
   });
 
-  it("CONTROL: an unplayed game still draws both venues' snapshots", () => {
+  it("CONTROL: a game that has not finished still draws a venue snapshot", () => {
+    // #6142 wrote this as "an unplayed game still draws it, FROM BOTH VENUES",
+    // on the scheduled fixture, guarding against a fix that deleted the line
+    // outright. #7660 narrowed what it can claim and kept what it protects: on
+    // that fixture both arms are now withheld (polymarket 0.3, kalshi 0.2), so
+    // the live wire carries the control instead — a non-final game still draws,
+    // and what it draws is the believed arm rather than nothing.
+    expect(LIVE.status).toBe("live");
+    const markup = renderChart(LIVE);
+    expect(seriesAttr(markup, "data-implied-spread-series")).toBe("polymarket");
+
+    // The coverage #7660 knowingly gave up, asserted so it cannot change by
+    // accident: a non-final game whose only arms are distrusted draws none.
     expect(SCHEDULED.status).toBe("scheduled");
-    const markup = renderChart(SCHEDULED);
-    expect(seriesAttr(markup, "data-implied-spread-series")).toBe(
-      "polymarket,kalshi"
-    );
+    expect(
+      seriesAttr(renderChart(SCHEDULED), "data-implied-spread-series")
+    ).toBe("none");
   });
 
   it("CONTROL: the settled card still draws — this is a suppression, not a blank", () => {
