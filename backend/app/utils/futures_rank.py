@@ -29,8 +29,18 @@ that was derived against a different field. So the derivation scope has to be
 the market, and the only moment the market's field is knowable is after its
 write: hence one statement, run at each poller's per-market boundary.
 
-This also means no backfill is owed. Every open market re-derives its own field
-on its next poll; the fossils drain on the ordinary poll cadence.
+🔴 THE SENTENCE THAT USED TO BE HERE SAID "no backfill is owed — every open
+market re-derives its own field on its next poll", AND IT WAS MEASURED WRONG
+(#7640). It is true only of a market something polls. This ship's own
+after-check found **86,205 rows across 13,965 open markets** already wrong at
+release, and splitting them by whether anything schedules them:
+`refresh_stale_futures_prices` admits on `market_tier = 1` OR
+`volume >= HIGH_VALUE_VOLUME_FLOOR`, and **10,145 of those markets fail both
+arms**. A tier-5, $3k-volume fantasy board is repaired only if an unrelated
+socket flush happens to touch it, which may be never — while the team page
+renders it regardless of tier or volume. The drain is
+`scripts/repair_7640_stale_futures_ranks.py`, which re-derives with the
+statement below rather than a copy of it.
 
 ── COMPETITION RANKING: TIES SHARE A NUMBER ─────────────────────────────────
 
@@ -108,7 +118,33 @@ from sqlalchemy import func, select, update
 
 from app.models.models import FuturesOutcome
 
-__all__ = ["rerank_market_field_stmt", "rerank_market_fields_stmt"]
+__all__ = [
+    "field_rank_expr",
+    "rerank_market_field_stmt",
+    "rerank_market_fields_stmt",
+]
+
+
+def field_rank_expr():
+    """The ordering itself — partition, direction, tie rule and NULL placement.
+
+    Lifted out of the UPDATE below because #7640 needed a SELECT that asks the
+    same question ("which stored ranks disagree with the field?") and the only
+    safe way to ask it is with this expression, not with a hand-written copy in
+    another module's SQL. A repair that re-derives `rank` from its own window
+    function is a second opinion about the ordering, and a second opinion is
+    exactly the defect #6598 exists to end — it would "fix" boards to a rule the
+    live writers do not follow, and the next poll would undo it.
+
+    Everything discriminating lives here: ``PARTITION BY market_id`` (the field
+    is the market), ``rank()`` not ``row_number()`` (ties share a number), and
+    ``DESC NULLS LAST`` (an unpriced leg never outranks a priced one). Change
+    one of them and every consumer changes with it, which is the point.
+    """
+    return func.rank().over(
+        partition_by=FuturesOutcome.market_id,
+        order_by=FuturesOutcome.current_probability.desc().nullslast(),
+    )
 
 
 def rerank_market_fields_stmt(market_ids: Sequence[int]):
@@ -134,12 +170,7 @@ def rerank_market_fields_stmt(market_ids: Sequence[int]):
     ranked = (
         select(
             FuturesOutcome.id.label("id"),
-            func.rank()
-            .over(
-                partition_by=FuturesOutcome.market_id,
-                order_by=FuturesOutcome.current_probability.desc().nullslast(),
-            )
-            .label("rnk"),
+            field_rank_expr().label("rnk"),
         )
         .where(FuturesOutcome.market_id.in_(market_ids))
         .subquery("field_rank")

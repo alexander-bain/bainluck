@@ -3346,6 +3346,42 @@ jobs:
           print("#7147 settled-final write gate GREEN on all", t, "tests")
           PY
 
+      - name: "#7640 stale-rank repair apply/restore round trip (real Postgres)"
+        # `scripts/repair_7640_stale_futures_ranks.py` rewrites
+        # `futures_outcomes.rank` on ~13,000 open markets under D51(b), which
+        # permits the write only because there is a backup and a one-command
+        # restore. Four of the five things that grant rests on are decided by a
+        # planner and cannot be read off the source: `rank()`'s tie behaviour
+        # over a real `Numeric(7,6)` field with a genuine NULL in it,
+        # `IS DISTINCT FROM` making a healthy board zero row writes (the whole
+        # resumability claim), RETURNING handing back the POST-update rank
+        # beside an UNTOUCHED `last_updated`, and — the one the grant turns on —
+        # the undo SPARING a row a poller rewrote after the repair.
+        #
+        # That last one is why `rank` alone cannot carry the test: a poller that
+        # re-derives a board arrives at the same number the repair wrote, so
+        # "the row still holds what we wrote" is true whether or not anybody
+        # touched it. The gate seeds that exact collision and requires the row
+        # back out of the server unreverted.
+        #
+        # LAST in the job and after the #7147 step for the reason that step
+        # states: its fixture drops and recreates the schema, so anything it
+        # leaves behind is gone before the next run and nothing it seeds can
+        # reach a neighbour that has already executed.
+        #
+        # Same skip-detection as every gate here — a skipped gate reads exactly
+        # like a passing one, and this file would skip silently on every other
+        # runner in the matrix.
+        run: |
+          set -o pipefail
+          python -m pytest \
+            tests/integration/test_repair_7640_rank_roundtrip_real_postgres.py \
+            -v -s -rs 2>&1 | tee /tmp/rankrepair7640.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/rankrepair7640.txt; then
+            echo "::error::#7640 rank repair round trip SKIPPED — the gate did not run"
+            exit 1
+          fi
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
