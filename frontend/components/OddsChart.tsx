@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
 import {
   ComposedChart,
   Line,
@@ -28,6 +28,10 @@ import {
   computeWinProbYAxis,
 } from "@/lib/eventKeyStats";
 import { chartTooltipPair } from "@/lib/drawPricedWinner";
+import {
+  chartTooltipViewportShift,
+  VIEWPORT_BOTTOM_OBSTRUCTION_ATTR,
+} from "@/lib/chartTooltipViewportFit";
 import { separateLinesLabel, sourceHex, sourceLabel } from "@/lib/sourceColors";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -388,6 +392,69 @@ interface ResolvedSource {
  * gap, and the next attempt at it should start from that gap rather than from
  * "the faint lines are anonymous", which Alex has now considered and accepted.
  */
+
+/**
+ * #7848 — the tooltip card, lifted back onto the screen when recharts has pinned
+ * it to a plot that is shorter than the card.
+ *
+ * The rule itself is `chartTooltipViewportShift` (see that file for why recharts
+ * puts the card at the plot's top, and why the applied shift has to be fed back
+ * in). This carries it, and exists AT MODULE SCOPE on purpose: `CustomTooltip` is
+ * redefined on every render of the chart, so a hook owned by it would have a new
+ * component identity each time and lose its state. This type is stable, so the
+ * shift survives the reader moving along the chart.
+ *
+ * `useLayoutEffect`, not `useEffect`: the correction has to land in the same frame
+ * the card is painted in, or the reader sees the card flash at the wrong place
+ * first. It runs on every render with no dependency array because the card's
+ * height changes with its contents — a point with five sources and a scoring play
+ * is 174px taller than one with a bare blend reading.
+ */
+function ViewportFittedTooltipCard({
+  className,
+  children,
+}: {
+  className: string;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof window === "undefined") return;
+    const rect = el.getBoundingClientRect();
+    // The mobile nav is painted over the bottom of the page, so the viewport's
+    // bottom edge is not where the readable area ends. `display:none` on desktop
+    // gives a zero rect, which the rule reads as "nothing in the way".
+    const obstruction = document
+      .querySelector(`[${VIEWPORT_BOTTOM_OBSTRUCTION_ATTR}]`)
+      ?.getBoundingClientRect();
+    const next = chartTooltipViewportShift({
+      rectTop: rect.top,
+      rectBottom: rect.bottom,
+      appliedShift: shift,
+      viewportHeight: window.innerHeight,
+      bottomObstructionTop: obstruction?.height ? obstruction.top : null,
+    });
+    // The rule is idempotent, so this settles after one pass; the epsilon only
+    // keeps sub-pixel rect noise from scheduling renders forever.
+    if (Math.abs(next - shift) > 0.5) setShift(next);
+  });
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      /* Reported so the probe and the guard can read the correction that was
+         applied, instead of inferring it from two rects. */
+      data-tooltip-viewport-shift={Math.round(shift)}
+      style={shift > 0 ? { transform: `translateY(-${shift}px)` } : undefined}
+    >
+      {children}
+    </div>
+  );
+}
 
 /**
  * Win probability chart with two display modes:
@@ -1701,7 +1768,13 @@ export default function OddsChart({
            The underscores are load-bearing: Tailwind turns `_` into a space, and `calc(100vw-7rem)`
            without spaces around the minus is INVALID CSS that the browser drops silently — which
            would look exactly like a shipped fix that changed nothing. Asserted in the guard test. */
-        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-surface-border max-w-[min(24rem,calc(100vw_-_7rem))]">
+        /* #7848 — the same card also ran off the BOTTOM: recharts pins it at the
+           plot's top (`viewBox.y`) whenever it is taller than the plot, and this
+           one is 303–477px against a ~300px inline plot, so it ended at y=923 on
+           an 844px screen and the last source rows were simply off the display.
+           The wrapper lifts it back onto the viewport; it is a no-op on every
+           surface that already fitted, the fullscreen modal included. */
+        <ViewportFittedTooltipCard className="bg-surface-card p-3 rounded-lg shadow-lg border border-surface-border max-w-[min(24rem,calc(100vw_-_7rem))]">
           {/* Game state header — score, period, clock */}
           {hasGameState ? (
             <div className="mb-2 pb-2 border-b border-surface-border">
@@ -1848,7 +1921,7 @@ export default function OddsChart({
               })}
             </div>
           )}
-        </div>
+        </ViewportFittedTooltipCard>
       );
     }
     return null;
