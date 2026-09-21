@@ -6515,7 +6515,9 @@ def _strip_mixed_binary_meta(outcomes: list) -> list:
     return outcomes
 
 
-def _outcomes_are_cumulative_ladder(all_sorted_outcomes: list) -> bool:
+def _outcomes_are_cumulative_ladder(
+    all_sorted_outcomes: list, question: str | None = None,
+) -> bool:
     """Is this futures field ONE cumulative ladder? (#7641)
 
     The object-shaped twin of `_leader_is_ladder_rung`. That one answers for the
@@ -6529,18 +6531,28 @@ def _outcomes_are_cumulative_ladder(all_sorted_outcomes: list) -> bool:
     of one sentence and a distribution for the purpose of the numbers in it.
 
     `dates=True` (#7650) — see `_leader_is_ladder_rung`, which passes it too.
+
+    `question` (#7674) is the market's RAW name, and raw deliberately: this asks
+    what the field IS, not what the card calls it. `clean_market_display_name`
+    already strips the ` at ___` blank off the EXCLUSIVE twin of this shape, so
+    reading the cleaned name would make the answer depend on a display rule that
+    is free to change for display reasons. Passed here and at
+    `_leader_is_ladder_rung` together, for the reason documented there.
     """
     return (
         cumulative_outcome_ladder(
             [{"name": getattr(o, "name", None)} for o in all_sorted_outcomes],
             name_key="name",
             dates=True,
+            question=question,
         )
         is not None
     )
 
 
-def _feed_display_scale(all_sorted_outcomes: list) -> float:
+def _feed_display_scale(
+    all_sorted_outcomes: list, question: str | None = None,
+) -> float:
     """The single display-probability divisor for one futures card (Queue 283,
     #1487).
 
@@ -6609,8 +6621,28 @@ def _feed_display_scale(all_sorted_outcomes: list) -> float:
     nowhere: the date grammar is additive and is tried last, so a magnitude leg's
     reading is byte-identical. Census + control:
     `artifacts/d352-7650/sibling-census.py`.
+
+    ── #7674: AND THE RUNG WHOSE COMPARATOR IS IN THE QUESTION ──
+
+    Third shape, same defect. Polymarket's strike series writes the comparator
+    once, in the question, with a blank where the leg goes — so the legs are
+    bare magnitudes, no grammar above reads them, and the field divides by the
+    sum of its own nested rungs:
+
+      `Google (GOOGL) closes above ___ on September 21?`  `$345`
+          page .91 / sum 1.939 -> card .4693   (44.1 pts)
+
+    The larger gap than either prior fix, on the largest in the feed. The
+    ``all_sum > 2.0`` arm is what has been holding the 7-rung WEEKLY version of
+    this card (sum 4.12) at raw, which is the same proxy #7641 was written about
+    and the same reason only the SHORT ladder slipped through.
+
+    Read with the market's raw name. MEASURED 2026-09-21 on the deployed feed,
+    91 futures cards cross-read against their own `/api/futures/{id}`:
+    1 card repaired, 0 other fields flip at any of the four sites the gate
+    feeds, 0 regressions.
     """
-    if _outcomes_are_cumulative_ladder(all_sorted_outcomes):
+    if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
     displayed = [
         o for o in all_sorted_outcomes[:3] if getattr(o, "current_probability", None)
@@ -6771,6 +6803,7 @@ def _printed_outcome_name(
 def _normalize_feed_probabilities(
     top_outcomes: list[dict],
     all_sorted_outcomes: list,
+    question: str | None = None,
 ) -> list[dict]:
     """Normalize feed-card probabilities for independent binary markets.
 
@@ -6788,7 +6821,7 @@ def _normalize_feed_probabilities(
     Delegates the eligibility/divisor decision to ``_feed_display_scale`` so the
     mini-list shares one basis with the distribution + headline (Queue 283).
     """
-    scale = _feed_display_scale(all_sorted_outcomes)
+    scale = _feed_display_scale(all_sorted_outcomes, question)
     if scale == 1.0:
         return top_outcomes
     for o in top_outcomes:
@@ -6976,7 +7009,9 @@ async def _team_names_by_id(db: AsyncSession, outcomes: list[Any]) -> dict[int, 
     return {team_id: name for team_id, name in result.all() if name}
 
 
-def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
+def _leader_is_ladder_rung(
+    outcomes_data: list[dict], question: str | None = None,
+) -> bool:
     """#4640: is the card's LEADER a rung of ONE cumulative ladder?
 
     Same contract as `_leader_outcome_is_team` above — `outcomes_data[0]` IS the
@@ -6999,9 +7034,14 @@ def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
     same way or the card calls it a ladder for its copy and a distribution for its
     numbers, which `test_both_ladder_predicates_answer_the_same_field_the_same_way`
     pins.
+
+    `question` (#7674) likewise, and it is the same pairing argument one shape
+    further on: a strike ladder whose comparator lives in the question must be a
+    ladder for the copy AND for the divisor, or the card declines to name a
+    favorite on a field it is still dividing.
     """
     return cumulative_outcome_ladder(
-        outcomes_data, name_key="name", dates=True
+        outcomes_data, name_key="name", dates=True, question=question
     ) is not None
 
 
@@ -7744,7 +7784,7 @@ def _score_market_trace(
             leader_name=leader_name,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_team_name=_leader_outcome_team_name(outcomes_data),
-            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=leader_prob,
             source_count=source_count,
@@ -7762,7 +7802,7 @@ def _score_market_trace(
         leader_name=leader_name,
         leader_is_team=_leader_outcome_is_team(outcomes_data),
         leader_team_name=_leader_outcome_team_name(outcomes_data),
-        leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+        leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
         leader_deadline_preposition=deadline_preposition,
         leader_probability=leader_prob,
         source_count=source_count,
@@ -7913,7 +7953,7 @@ def _score_market_trace(
                 leader_name=leader_name,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_team_name=_leader_outcome_team_name(outcomes_data),
-                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=leader_prob,
                 source_count=source_count,
@@ -10361,11 +10401,13 @@ async def _score_sports_mode_futures(
             sorted_outcomes,
             lambda o: o.name,
             lambda o: float(o.current_probability) if o.current_probability else None,
+            market.name,
         )
         sorted_outcomes = drop_incoherent_ladder_outcomes(
             sorted_outcomes,
             lambda o: o.name,
             lambda o: float(o.current_probability) if o.current_probability else None,
+            market.name,
         )
         outcomes_data = []
         leader_name = None
@@ -10426,7 +10468,7 @@ async def _score_sports_mode_futures(
         # mini-list, distribution, and headline/context leader copy. Sports mode
         # draws every outcome surface from card_outcomes (no mixed-binary
         # strip). leader_prob stays RAW for hook staleness/eligibility below.
-        _display_scale = _feed_display_scale(card_outcomes)
+        _display_scale = _feed_display_scale(card_outcomes, market.name)
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
         probs_available = [
@@ -10687,7 +10729,7 @@ async def _score_sports_mode_futures(
             top_outcomes_data, market.name
         )
         top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, card_outcomes
+            top_outcomes_data, card_outcomes, market.name
         )
         # #2088 criterion 3: the printed percents and the reason they may not total
         # 100. AFTER the scale, so the rule is applied to the displayed basis.
@@ -10721,7 +10763,7 @@ async def _score_sports_mode_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_team_name=_leader_outcome_team_name(outcomes_data),
-                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
@@ -10742,7 +10784,7 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_team_name=_leader_outcome_team_name(outcomes_data),
-            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
@@ -10832,7 +10874,7 @@ async def _score_sports_mode_futures(
             leader_name=_h_leader,
             leader_is_team=_leader_outcome_is_team(outcomes_data),
             leader_team_name=_leader_outcome_team_name(outcomes_data),
-            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+            leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
             leader_deadline_preposition=deadline_preposition,
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
@@ -11897,6 +11939,7 @@ async def _score_futures(
                 lambda o: (
                     float(o.current_probability) if o.current_probability else None
                 ),
+                market.name,
             )
             sorted_outcomes = drop_incoherent_ladder_outcomes(
                 sorted_outcomes,
@@ -11904,6 +11947,7 @@ async def _score_futures(
                 lambda o: (
                     float(o.current_probability) if o.current_probability else None
                 ),
+                market.name,
             )
 
             # #6552 — completion happens at the print step, never in place.
@@ -11978,7 +12022,7 @@ async def _score_futures(
             # numbers. leader_prob stays RAW below for the eligibility filters
             # (is_locked_near_certain / runtime filters); only the COPY leader is
             # scaled, so surfacing/ranking is unchanged.
-            _display_scale = _feed_display_scale(card_outcomes)
+            _display_scale = _feed_display_scale(card_outcomes, market.name)
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
             # --- Staleness filters ---
@@ -12152,7 +12196,7 @@ async def _score_futures(
             # outcomes whose raw probabilities are meaningful — normalizing them
             # flattens an 81% leader to 33% when the top 3 are all high.
             top_outcomes_data = _normalize_feed_probabilities(
-                top_outcomes_data, card_outcomes
+                top_outcomes_data, card_outcomes, market.name
             )
             # #2088 criterion 3: the printed percents and the reason they may not
             # total 100. AFTER the scale, so the rule sees the displayed basis.
@@ -12191,7 +12235,7 @@ async def _score_futures(
                     leader_name=_h_leader,
                     leader_is_team=_leader_outcome_is_team(outcomes_data),
                     leader_team_name=_leader_outcome_team_name(outcomes_data),
-                    leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                    leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
                     leader_deadline_preposition=deadline_preposition,
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
@@ -12212,7 +12256,7 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_team_name=_leader_outcome_team_name(outcomes_data),
-                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
@@ -12592,7 +12636,7 @@ async def _score_futures(
                 leader_name=_h_leader,
                 leader_is_team=_leader_outcome_is_team(outcomes_data),
                 leader_team_name=_leader_outcome_team_name(outcomes_data),
-                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data),
+                leader_is_ladder_rung=_leader_is_ladder_rung(outcomes_data, market.name),
                 leader_deadline_preposition=deadline_preposition,
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
