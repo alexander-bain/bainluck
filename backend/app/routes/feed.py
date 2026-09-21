@@ -6515,6 +6515,28 @@ def _strip_mixed_binary_meta(outcomes: list) -> list:
     return outcomes
 
 
+def _outcomes_are_cumulative_ladder(all_sorted_outcomes: list) -> bool:
+    """Is this futures field ONE cumulative ladder? (#7641)
+
+    The object-shaped twin of `_leader_is_ladder_rung`. That one answers for the
+    copy on a list of already-serialized dicts; this one answers for the DIVISOR,
+    which is decided earlier, on the outcome rows themselves (ORM on the live
+    path, rebuilt snapshot rows on the cached one — `name` is in
+    `OUTCOME_COLUMNS`, so both carry it).
+
+    Both delegate to `cumulative_outcome_ladder` and neither re-implements the
+    grammar, so the card cannot decide it is looking at a ladder for the purpose
+    of one sentence and a distribution for the purpose of the numbers in it.
+    """
+    return (
+        cumulative_outcome_ladder(
+            [{"name": getattr(o, "name", None)} for o in all_sorted_outcomes],
+            name_key="name",
+        )
+        is not None
+    )
+
+
 def _feed_display_scale(all_sorted_outcomes: list) -> float:
     """The single display-probability divisor for one futures card (Queue 283,
     #1487).
@@ -6533,7 +6555,41 @@ def _feed_display_scale(all_sorted_outcomes: list) -> float:
     Eligibility mirrors the historical ``_normalize_feed_probabilities`` decision
     exactly (displayed-count threshold, the 2.0 ladder cutoff), so top_outcomes
     and the other surfaces cannot drift.
+
+    ── #7641: THE 2.0 CUTOFF IS A PROXY FOR LADDER-NESS, AND SHORT LADDERS SLIP UNDER IT ──
+
+    The bullet above already promises ``1.0`` for "threshold/cumulative ladders
+    whose raw probabilities are individually meaningful", and the ``all_sum > 2.0``
+    arm is how it kept that promise. But a sum is not a structure: a ladder only
+    sums past 2.0 once it has enough rungs, so a SHORT one is divided by its own
+    nested legs as if they were an independent-binary field.
+
+    MEASURED on the deployed feed 2026-09-21 (every futures card cross-read
+    against its own ``/api/futures/{id}``; the split is exactly the divisor):
+
+      `Traffic through the Panama Canal?`  `Above 175`  page .965 / sum 1.65 -> card .5848  (38.0 pts)
+      `Paramount+ App Downloads`           `Above 83`   page .660 / sum 1.58 -> card .4177  (24.2 pts)
+
+    A reader is shown a 58% coin-flip where the market says 96.5%.
+
+    The gate is `cumulative_outcome_ladder`, the same discriminator #4640 already
+    uses on this file for the leader copy, and NOT
+    ``futures_markets.mutually_exclusive``. That column cannot do this job: an
+    independent-binary field and a cumulative ladder are BOTH non-exclusive, and
+    normalizing the former is the entire reason this function exists (gotcha #58,
+    and #4079's ``test_7`` pins a 1.40-sum independent field that must keep
+    dividing). Nestedness is the property that makes a sum meaningless, and only
+    the outcome list can prove it.
+
+    Deliberately NOT covered: date-shaped rungs ("Before Jan 1, 2027"). The
+    grammar in `ladder_monotonicity` is numeric, that module is shared with
+    calibration's ladder collapse and `outcome_display`'s incoherent-rung drop,
+    and widening it would move those populations too. Measured live and filed as
+    its own ship (#7650); this gate leaves those cards exactly as they are today
+    rather than half-fixing the class here.
     """
+    if _outcomes_are_cumulative_ladder(all_sorted_outcomes):
+        return 1.0
     displayed = [
         o for o in all_sorted_outcomes[:3] if getattr(o, "current_probability", None)
     ]
