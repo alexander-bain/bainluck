@@ -104,7 +104,46 @@ TIMING_SPLIT_ENABLED = os.getenv("TIMING_SPLIT_ENABLED", "1").strip().lower() no
 # value collapses to "other". Warm hits dominate the /api/feed population, so a
 # single blended p95 cannot express the cold tail; the bucket is what makes the
 # cold number measurable.
-_CACHE_BUCKETS = frozenset({"miss", "hit", "stale_hit", "error"})
+#
+# #2143: THE ALLOWLIST IS THE WRITER'S DOMAIN, NOT A HAND-PICKED SUBSET OF IT.
+# It used to be the four values someone expected to care about, so the six other
+# values `routes/feed.py` really writes — `coalesced`, `last_good`,
+# `unavailable`, `disabled`, `disabled_debug`, `disabled_reviewed_filter` — all
+# collapsed into one opaque `other`. Measured on production 2026-09-21 21:42Z,
+# that bucket was 35 of 95 bucketed `/api/feed` samples: 37% of the traffic this
+# rail exists to describe, in a bucket whose members have nothing in common.
+# They are not even the same SHAPE of serve — `coalesced` waited on another
+# request's build, `last_good` served a degraded payload, `disabled*` bypassed
+# the cache entirely — so their latencies cannot be pooled, and #2143's
+# acceptance ("miss p50 under 300 ms with the miss share unchanged or better")
+# is ungradeable while a third of the denominator is unlabelled.
+#
+# THIS IS CERT-1873'S FOLLOW-UP APPLIED TO ITS OWN ORIGIN. That cert found the
+# same too-tight set in `utils/client_timing_contract.py`, fixed it there, and
+# recorded in its comment that the bad set had been copied FROM THIS FILE —
+# which was then left as it was. `test_cache_status_domain_matches_its_producer`
+# has guarded the copy ever since; nothing guarded the original.
+#
+# WIDENING COSTS NO KEYS. The bucket rides the sorted-set MEMBER
+# (`f"{now}:{duration_ms:.1f}:{bucket}"`, see `dispatch` below), never a key
+# name, so a wider vocabulary adds bytes to a bounded member list and not one
+# Redis key — the explicit reason #1500 put it in the member in the first place.
+# The allowlist still fails closed: a value outside this set is still `other`,
+# so no caller-controlled string can mint a bucket.
+_CACHE_BUCKETS = frozenset(
+    {
+        "miss",
+        "hit",
+        "stale_hit",
+        "error",
+        "coalesced",
+        "last_good",
+        "unavailable",
+        "disabled",
+        "disabled_debug",
+        "disabled_reviewed_filter",
+    }
+)
 _BUCKET_OTHER = "other"
 _BUCKET_NONE = "none"
 

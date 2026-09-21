@@ -193,15 +193,62 @@ class TestCacheBucket:
     @pytest.mark.parametrize("header,expected", [
         ("miss", "miss"), ("hit", "hit"), ("stale_hit", "stale_hit"),
         ("error", "error"), ("MISS", "miss"), ("  hit ", "hit"),
+        # #2143: the six the rail used to pool into one opaque `other`.
+        ("coalesced", "coalesced"), ("last_good", "last_good"),
+        ("unavailable", "unavailable"), ("disabled", "disabled"),
+        ("disabled_debug", "disabled_debug"),
+        ("disabled_reviewed_filter", "disabled_reviewed_filter"),
     ])
     def test_allowlisted_buckets(self, header, expected):
         from app.middleware.latency import _cache_bucket
 
         assert _cache_bucket(MagicMock(headers={"x-feed-cache": header})) == expected
 
+    def test_bucket_allowlist_covers_everything_its_writer_emits(self):
+        """The allowlist is DERIVED from the writer, never restated beside it.
+
+        #2143. `_CACHE_BUCKETS` was four hand-picked values while
+        `routes/feed.py` wrote ten, so `coalesced`, `last_good`, `unavailable`
+        and the three `disabled*` values all landed in `other` — 37% of
+        production `/api/feed` samples (35 of 95 bucketed, 2026-09-21 21:42Z)
+        pooled into one bucket whose members have different serve shapes and
+        therefore incomparable latencies.
+
+        Restating the ten values here would reproduce the original defect one
+        layer down, so this parses the producer's own call sites — the same
+        authority, and the same regex, as
+        `test_cache_status_domain_matches_its_producer` in
+        `test_client_timing_contract.py`, which has guarded the COPY of this set
+        since CERT-1873 while the original went unguarded.
+        """
+        import pathlib
+        import re
+
+        from app.middleware.latency import _CACHE_BUCKETS
+
+        feed = pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
+        text = feed.read_text()
+        produced = set(re.findall(r'cache_status\s*=\s*"([a-z_]+)"', text))
+        produced |= set(
+            re.findall(r'_set_feed_cache_status\([^,]+,\s*"([a-z_]+)"\)', text)
+        )
+        assert produced, "could not parse any cache_status producer — the regex rotted"
+
+        missing = produced - set(_CACHE_BUCKETS)
+        assert not missing, (
+            f"feed.py writes X-Feed-Cache values the latency rail cannot name: "
+            f"{sorted(missing)} — they pool into `other`, and a pooled bucket "
+            f"cannot grade a per-bucket latency claim (#2143)"
+        )
+
     def test_unknown_value_collapses_to_other(self):
         """Bounded dimension — an unexpected header value can never mint a new
-        bucket (Redis is Premium-0/50MB with allkeys-lru)."""
+        bucket (Redis is Premium-0/50MB with allkeys-lru).
+
+        Widening the allowlist to the writer's real domain (#2143) does not
+        relax this: the dimension is still closed, so no caller-controlled
+        header value can mint a bucket of its own.
+        """
         from app.middleware.latency import _cache_bucket
 
         assert _cache_bucket(MagicMock(headers={"x-feed-cache": "weird"})) == "other"
