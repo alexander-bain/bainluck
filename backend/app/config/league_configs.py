@@ -1121,10 +1121,27 @@ _SLUG_ALIASES: dict[str, str] = {
 }
 
 
+def resolve_league_slug(slug: str) -> str:
+    """Map a URL slug onto the ONE slug the rest of the system is keyed on.
+
+    ``get_league_config`` has always resolved aliases, so every caller that only
+    needed the config was already alias-safe. A caller that does anything else
+    with the slug — a cache key, a task name, a ``league_slug`` column
+    comparison, an ``== "ncaa-basketball"`` branch — was not, and that gap is
+    #7766: ``/api/playoffs/ncaab`` and ``/api/playoffs/ncaa-basketball`` built
+    and cached two payloads for one league, and the page requests the alias.
+
+    An unknown slug is returned unchanged. This resolves, it does not validate:
+    the caller's existing "do we have a config for this?" check is still the
+    guard (and in ``routes/playoffs.py`` it is also the taint guard — see
+    ``_schedule_grid_refresh``).
+    """
+    return _SLUG_ALIASES.get(slug, slug)
+
+
 def get_league_config(slug: str) -> LeagueConfig | None:
     """Look up a league config by URL slug."""
-    canonical = _SLUG_ALIASES.get(slug, slug)
-    return LEAGUE_CONFIGS.get(canonical)
+    return LEAGUE_CONFIGS.get(resolve_league_slug(slug))
 
 
 def get_all_league_slugs() -> list[str]:

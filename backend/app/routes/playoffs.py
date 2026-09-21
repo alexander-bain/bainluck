@@ -17,7 +17,12 @@ from sqlalchemy import select, or_, and_, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config.league_configs import LeagueConfig, get_league_config, get_all_league_slugs
+from app.config.league_configs import (
+    LeagueConfig,
+    get_league_config,
+    get_all_league_slugs,
+    resolve_league_slug,
+)
 from app.models import (
     FuturesMarket,
     FuturesOddsSnapshot,
@@ -3513,6 +3518,11 @@ def _schedule_grid_refresh(league_slug: str) -> bool:
     ``get_all_league_slugs()`` answers both at once, and it is the honest guard
     rather than a sanitiser: a slug we have no config for has no grid to
     rebuild, so there is nothing here to do for it.
+
+    That registry holds no aliases, which is why the route resolves the path
+    slug BEFORE it reaches here (#7766): until it did, every read of
+    ``/api/playoffs/ncaab`` fell through this ``return False`` and #7109's
+    repair never fired on the one slug the page requests.
     """
     from functools import partial
 
@@ -3555,6 +3565,30 @@ async def get_playoff_grid_cached(
 ):
     """Return championship progression grid for a league (Redis-cached, 1h TTL)."""
     import json
+
+    # 🔴 #7766. RESOLVE THE ALIAS FIRST, AND USE THE RESOLVED SLUG FOR EVERYTHING
+    # BELOW. `get_league_config` resolves aliases, so the build LOOKED
+    # alias-safe; nothing else here did. Keyed on the raw path slug,
+    # `/api/playoffs/ncaab` and `/api/playoffs/ncaa-basketball` were two grids
+    # for one league — and the page requests the alias
+    # (`frontend/lib/playoffLeagues.ts`, `/sport/basketball/ncaab`), so the
+    # alias is the arm a reader actually sees. Measured 2026-09-21 09:55Z: the
+    # alias keys were 164 m stale against 29 m on the canonical, because the
+    # hourly warm beat iterates canonical `GRID_WARM_LEAGUES` and #7109's
+    # refresh-behind resolves against `get_all_league_slugs()`, which holds no
+    # aliases — so the one repair built for a self-sustaining lapse could not
+    # fire on the only slug that had one.
+    #
+    # Staleness was the symptom that found it; the divergence is worse than a
+    # clock. `get_playoff_grid` branches on the RAW slug — the NCAA/WNCAA
+    # bracket lookups (`league_slug == "ncaa-basketball"`, twice) and the
+    # `MatchingOverride.league_slug` query — so a build entered through the
+    # alias silently skips them. Measured the same minute: `/ncaab` carried a
+    # seed and a region on 41 of 68 teams where `/ncaa-basketball` carried 67.
+    # Resolving here is therefore not only the cache fix; it is what makes the
+    # two doors build the same grid, which is the precondition for them sharing
+    # a key at all.
+    league_slug = resolve_league_slug(league_slug)
 
     # Only cache default/simple requests (no debug, default params)
     cache_eligible = not debug and hours is None and top == 10
