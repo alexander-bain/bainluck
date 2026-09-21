@@ -33,15 +33,24 @@ from app.tasks import repair_polymarket_leg_label as rail
 
 
 class _Result:
-    def __init__(self, rows=(), scalar=0):
+    def __init__(self, rows=(), scalar=0, one=None):
         self._rows = list(rows)
         self._scalar = scalar
+        self._one = one
 
     def fetchall(self):
         return self._rows
 
     def scalar_one(self):
         return self._scalar
+
+    def one(self):
+        if self._one is None:
+            raise AssertionError(
+                "the rail called .one() on a statement this fake was not "
+                "routing — it would otherwise read as a legitimate refusal"
+            )
+        return self._one
 
 
 class _Session:
@@ -52,9 +61,15 @@ class _Session:
     a count.
     """
 
-    def __init__(self, page=(), remaining=0, landed=None, census_rows=()):
+    def __init__(
+        self, page=(), remaining=0, landed=None, census_rows=(), out_of_scope=(0, 0)
+    ):
         self.page = list(page)
         self.remaining = remaining
+        #: ``(legs, markets)`` the complement-of-scope count answers, or ``None``
+        #: to make that count RAISE — the arm that proves the rail reports
+        #: "unmeasured" instead of a reassuring zero.
+        self.out_of_scope = out_of_scope
         #: ids the compare-and-set is allowed to return. ``None`` = all of them,
         #: which is the un-raced case.
         self.landed = landed
@@ -68,7 +83,7 @@ class _Session:
     @property
     def page_sql(self) -> str:
         for sql, _p in self.statements:
-            if "LIMIT :cap::int" in sql:
+            if "LIMIT CAST(:cap AS int)" in sql:
                 return sql
         raise AssertionError(
             "the rail never issued its page query — every pager assertion in "
@@ -78,7 +93,7 @@ class _Session:
     @property
     def page_params(self) -> dict:
         for sql, params in self.statements:
-            if "LIMIT :cap::int" in sql:
+            if "LIMIT CAST(:cap AS int)" in sql:
                 return params
         raise AssertionError("the rail never issued its page query")
 
@@ -103,8 +118,15 @@ class _Session:
             if self.landed is not None:
                 ids = [i for i in ids if i in self.landed]
             return _Result(rows=[(i,) for i in ids])
-        if "LIMIT :cap::int" in sql:
+        if "LIMIT CAST(:cap AS int)" in sql:
             return _Result(rows=self.page)
+        # Routed BEFORE the generic count: the complement-of-scope query also
+        # starts `SELECT count(`, and reading it as the remaining-count would
+        # hand the rail a number that means the opposite of what it asked for.
+        if "IS DISTINCT FROM 'open'" in sql:
+            if self.out_of_scope is None:
+                raise RuntimeError("out-of-scope count failed")
+            return _Result(one=tuple(self.out_of_scope))
         if upper.startswith("SELECT COUNT("):
             return _Result(scalar=self.remaining)
         if "GROUP BY" in upper:
@@ -562,7 +584,7 @@ async def test_a_page_select_that_never_finishes_returns_the_incoming_cursor(
     class _PageDies(_Session):
         async def execute(self, stmt, params=None):
             sql = " ".join(str(stmt).split())
-            if "LIMIT :cap::int" in sql:
+            if "LIMIT CAST(:cap AS int)" in sql:
                 raise RuntimeError("canceling statement due to statement timeout")
             return await super().execute(stmt, params)
 
@@ -618,7 +640,7 @@ async def test_the_cursor_is_exclusive_and_the_next_call_asks_past_it(monkeypatc
     await rail.repair(second, apply=True, after_id=out["next_cursor"]["after_id"])
 
     assert second.page_params["after_id"] == 9
-    assert "fo.id > :after_id" in second.page_sql, (
+    assert "fo.id > CAST(:after_id AS bigint)" in second.page_sql, (
         "the cursor is not exclusive, so the last leg of every page is examined "
         "twice"
     )
@@ -696,10 +718,21 @@ def test_the_census_and_the_pager_share_one_population_predicate():
         "the collapse predicate is written more than once; the census and the "
         "pager can now disagree about their own population"
     )
-    assert src.count("{COLLAPSED_LEG_PREDICATE}") == 3, (
-        "the shared predicate is no longer interpolated into all three "
-        "statements (page, census, remaining count)"
+    assert src.count("{COLLAPSED_LEG_PREDICATE}") == 4, (
+        "the shared predicate is no longer interpolated into all four "
+        "statements (page, census, remaining count, out-of-scope count). The "
+        "out-of-scope count is the one that MOST needs it: its whole job is to "
+        "be the same cohort on the other side of the status test, so a second "
+        "spelling there would compare two different populations and report the "
+        "difference as a finding."
     )
+    # The scope test is written once for the same reason, and the two halves
+    # must be complements — if they ever overlap or leave a gap, the rail's
+    # "in scope 0, out of scope N" sentence stops adding up to the whole defect.
+    assert src.count("fm.status = 'open'") == 1
+    assert src.count("fm.status IS DISTINCT FROM 'open'") == 1
+    assert src.count("{IN_SCOPE_STATUS_SQL}") == 3
+    assert src.count("{OUT_OF_SCOPE_STATUS_SQL}") == 1
 
 
 def test_the_predicate_is_the_null_safe_spelling_that_makes_the_query_run():
@@ -896,4 +929,190 @@ def test_the_drain_is_attended_only_and_is_not_on_the_beat():
     for name, entry in schedule.items():
         assert "repair_polymarket_leg_label" not in str(entry.get("task", "")), (
             f"beat entry {name!r} schedules the attended drain"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 7167 — the rail could not execute its own page select for 16 days
+# ---------------------------------------------------------------------------
+
+
+async def test_every_statement_this_rail_emits_actually_binds_its_parameters():
+    """The guard for 7167's CLASS, and it compiles the REAL statement.
+
+    From 2026-09-05 to 2026-09-21 this rail errored on every invocation:
+    `text()` will not read a bind name followed by a colon, so `:cap::int` was
+    passed to Postgres as literal SQL with nothing bound to it and the page
+    select died on `syntax error at or near ":"`.
+
+    🔴 THE SUITE COULD NOT SEE IT, AND THAT IS THE POINT OF THIS TEST. Every
+    pager assertion here runs against a fake session that is handed the SQL as
+    a STRING — nothing in the old suite ever asked SQLAlchemy to parse it, so
+    the broken spelling was not merely unnoticed, it was load-bearing: four
+    pins IDENTIFIED the page query by the substring `LIMIT :cap::int`. A pin
+    can hold a broken spelling as correct forever. Compiling cannot.
+
+    🔴 AND IT COMPILES WHAT THE RAIL ACTUALLY ISSUED, NOT A RE-RENDERING OF IT.
+    A reconstructed copy of the SQL is a second spelling that drifts, and it
+    would specifically miss a bind SMUGGLED INTO A COMMENT — a `:word` inside a
+    `--` line is a BIND to `text()`, this rail's SQL now carries a long comment
+    explaining the very defect, and a hand-built copy would simply omit it.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.dialects.postgresql import asyncpg as asyncpg_dialect
+
+    dialect = asyncpg_dialect.dialect()
+
+    # Drive the rail so the fake session records its real statements.
+    session = _Session(page=[], out_of_scope=(1, 1))
+    await rail.repair(session, apply=False, sport="tennis", after_id=7)
+    assert session.statements, "the rail issued nothing — this guard is vacuous"
+
+    expected = {
+        "LIMIT CAST(:cap AS int)": {"after_id", "sport", "cap"},
+        "IS DISTINCT FROM 'open'": {"sport"},
+    }
+    seen = 0
+    for marker, want in expected.items():
+        for sql, _params in session.statements:
+            if marker not in sql:
+                continue
+            seen += 1
+            compiled = text(sql).compile(dialect=dialect)
+            bound = set(compiled.params)
+            assert bound == want, (
+                f"{marker!r}: SQLAlchemy bound {sorted(bound)}, not "
+                f"{sorted(want)} — either a parameter spelled `name` followed "
+                "by a colon was silently dropped, or a `:word` in a comment was "
+                "smuggled in as an extra bind nobody supplies"
+            )
+            # The compiled text is what Postgres receives. A surviving colon
+            # means a parameter marker was never substituted.
+            assert ":" not in str(compiled), (
+                f"{marker!r}: a literal colon survives compilation — Postgres "
+                'will answer `syntax error at or near ":"`. '
+                f"Compiled: {compiled!s}"
+            )
+            break
+    assert seen == len(expected), (
+        f"only {seen} of {len(expected)} statements were found and compiled; "
+        f"statements seen: {[s[:80] for s, _ in session.statements]}"
+    )
+
+
+def test_no_statement_in_this_rail_uses_the_postfix_cast_bind_spelling():
+    """The cheap half of the guard above, stated over the real source.
+
+    `CAST(x AS t)` is not a style preference here. Both halves of every pair are
+    cast because asyncpg prepares with no parameter types: untyped, the first
+    occurrence fixes the parameter as `unknown` and the later comparison can no
+    longer resolve it (the sibling rail `repair_kalshi_fabricated_loss` carries
+    the same note — and its comment cited THIS file as the exemplar that got it
+    right, which it did not).
+    """
+    import re
+
+    src = inspect.getsource(rail)
+    offenders = []
+    for i, line in enumerate(src.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("--"):
+            continue  # the comments that WARN about it must stay legal
+        if re.search(r"(?<![:\w]):([a-z_][a-z_0-9]*)::", line):
+            offenders.append(f"{i}: {stripped}")
+    assert not offenders, (
+        "a bind written `name` + `::type` is dropped by text() and reaches "
+        f"Postgres as literal SQL: {offenders}"
+    )
+
+
+async def test_an_empty_page_does_not_report_the_defect_drained():
+    """🔴 THE REGRESSION THE 7167 FIX WOULD OTHERWISE HAVE INTRODUCED.
+
+    Fixing the binds makes the page select run. Its scope — markets we still
+    hold `open` — was measured EMPTY on production 2026-09-21, while 25,469
+    collapsed legs sat one status away. So the first thing the repaired rail
+    would have done is return `terminal: ok`, `scan_exhausted: true`,
+    "no collapsed legs remain in this population": a drain that had never
+    executed once, reporting that it had finished. A louder failure replaced by
+    a quiet false success is a worse bug than the one being fixed.
+    """
+    session = _Session(page=[], out_of_scope=(25469, 25402))
+    out = await rail.repair(session, apply=False)
+
+    assert out["terminal"] == "ok"
+    assert out["scan_exhausted"] is True
+    assert out["out_of_scope_measured"] is True
+    assert out["out_of_scope_legs"] == 25469
+    assert "25469" in out["reason"]
+    assert "25402" in out["reason"]
+    # The exact sentence that must no longer be sayable on its own.
+    assert out["reason"] != "no collapsed legs remain in this population"
+
+
+async def test_an_empty_page_with_an_empty_complement_may_say_it_is_done():
+    """The other side of the guard above — otherwise it only proves the rail
+    can be pessimistic, which is not the claim."""
+    session = _Session(page=[], out_of_scope=(0, 0))
+    out = await rail.repair(session, apply=False)
+
+    assert out["out_of_scope_measured"] is True
+    assert out["out_of_scope_legs"] == 0
+    assert "in scope or out of it" in out["reason"]
+
+
+async def test_an_unmeasurable_complement_is_never_reported_as_zero():
+    """gotcha #53. A counter that answered 0 on a timeout would reintroduce the
+    lie it exists to prevent, one layer down — and it would do it silently,
+    because `None` and `0` render the same way in a terminal an operator skims.
+    """
+    session = _Session(page=[], out_of_scope=None)
+    out = await rail.repair(session, apply=False)
+
+    assert out["out_of_scope_measured"] is False
+    assert out["out_of_scope_legs"] is None
+    assert "NOT a statement that the defect is drained" in out["reason"]
+
+
+async def test_the_census_reports_the_cohort_its_own_scope_excludes():
+    """The census answered `measured: true, total_legs: 0` on production while
+    the defect stood at 25,469 legs. The three original fields are unchanged —
+    they describe this rail's scope, which is what they always meant — and the
+    new ones are what stop that zero being read as "Q499 is finished"."""
+    session = _Session(census_rows=[], out_of_scope=(25469, 25402))
+    out = await rail.census(session)
+
+    assert out["measured"] is True
+    assert out["total_legs"] == 0
+    assert out["out_of_scope_measured"] is True
+    assert out["out_of_scope_legs"] == 25469
+    assert out["out_of_scope_markets"] == 25402
+
+
+async def test_this_rails_sql_carries_no_dash_comment():
+    """A `--` comment inside the SQL is two hazards, both found on this rail.
+
+    Found while writing the 7167 guard: the explanation of the bind fix was
+    first written as a `--` block INSIDE the page SQL, and compiling the
+    statement the rail actually issued is what exposed it.
+
+    1. SQLAlchemy does not treat a `--` line as a comment. Any colon-prefixed
+       word in it becomes a BIND nobody supplies — the exact failure
+       `test_no_sql_comment_smuggles_a_bind_parameter` was written for, after a
+       comment citing this file's own line numbers compiled them into `$1`/`$2`.
+    2. A `--` comment survives only as long as the newline after it does. Any
+       layer that collapses the statement to one line — a logger, a recorder, a
+       normaliser — turns the rest of the query into comment text.
+
+    Both are avoided completely by explaining the SQL in Python, above it.
+    """
+    session = _Session(page=[], out_of_scope=(1, 1))
+    await rail.repair(session, apply=False, sport="tennis", after_id=7)
+    await rail.census(_Session(census_rows=[], out_of_scope=(1, 1)))
+    assert session.statements, "no statements issued — this guard is vacuous"
+
+    for sql, _params in session.statements:
+        assert "--" not in sql, (
+            "this rail's SQL carries a `--` comment; put the explanation in a "
+            f"Python comment above the statement instead: {sql[:160]}"
         )
