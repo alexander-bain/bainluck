@@ -14492,6 +14492,57 @@ _GENERIC_PLACE_QUALIFIERS = frozenset({
     "saint",
 })
 
+# A word that names a club TYPE rather than a club — the same defect as the set
+# above, in the slot a soccer name puts it in. `'Arkansas State Red Wolves'` put
+# the qualifier in the middle; `'Leeds United'` puts it LAST, which is the
+# mascot slot, so the bare token survives into the pattern list (#7858).
+#
+# Production, 2026-09-21 20:40Z, `/api/events/15311082/related-futures`
+# (Arsenal vs Leeds United, EPL): `'Leeds United'` emitted a bare `'United'`, and
+# of the 23 futures served as LEEDS UNITED'S OWN, 19 were another club —
+# Manchester United x4, Newcastle, Sheffield, Atlanta, D.C., Minnesota, Loudoun,
+# New Mexico, Incheon (K-League), three Thai League 1 clubs, Scunthorpe, Boston
+# United, and the UNITED ARAB EMIRATES twice. A reader was shown Leeds's odds of
+# winning the Thai League, the K-League, MLS Cup and the 2027 AFC Asian Cup.
+# Control on the same payload: `'Arsenal'` is one token, so the `len(parts) > 1`
+# branch never runs and all 7 of its rows were Arsenal's.
+#
+# #6806's whole-token rule does NOT catch this. `'United'` occupies whole tokens
+# inside `'United Arab Emirates'`, so the boundary check passes it; the token
+# rule only ever refused the INTERIOR case (`'Lech'` in `'Anderlecht'`). What is
+# wrong here is the pattern, not the boundary.
+#
+# THE RECALL CENSUS, run against production 2026-09-21 21:0xZ before these three
+# moved (the arm #5798 left owed for `'Jaguars'`/`'Carolina'`). A bare token can
+# only be load-bearing where a row names the club by the designator ALONE — if
+# the designator is preceded by the club's own place word, the row carries the
+# full name and stays matched. Rows where the designator is NOT preceded by an
+# alphabetic word, per table, minus the ones that are not a club at all:
+#
+#   united | 795 outcome / 1,621 market bare-shape rows -> residue is United
+#          | States, United Arab Emirates, United Kingdom, `United21` (a
+#          | Counter-Strike tournament), `876 United` (Jamaica — carries its own
+#          | full name on every row), `United Chiba` (reachable on `Chiba`) and
+#          | `United of Manchester` (reachable on `Manchester`).   LOSS 0
+#   city   | 1 row, `CITY THE ANIMATION`.                          LOSS 0
+#   town   | 0 rows.                                               LOSS 0
+#
+# Every club row keeps its full-name pattern and, where the place word is >= 4
+# characters, its city pattern: Manchester United still matches on "Manchester
+# United" and "Manchester"; Leeds on "Leeds United" and "Leeds"; `876 United`
+# and `Ayr United`, whose place words are too short to emit, on their full names.
+#
+# NOT MOVED, and each needs the same census first: `county` (Derby/Notts),
+# `rovers` (Blackburn/Bristol/Doncaster), `albion`, `wanderers`, `athletic`.
+# `fc`/`afc`/`sc` never reach here — the `len(short) >= 4` gate already drops
+# them, which is why "Barrow AFC" was never the leak on the page above.
+_CLUB_TYPE_DESIGNATORS = frozenset({
+    "united", "city", "town",
+})
+
+#: The bare tokens `_team_name_patterns` will not emit, from both families.
+_NON_DISTINCTIVE_BARE_TOKENS = _GENERIC_PLACE_QUALIFIERS | _CLUB_TYPE_DESIGNATORS
+
 
 def _team_name_patterns(full_name: str) -> list[str]:
     """Build ILIKE-safe patterns for matching a team in outcome names.
@@ -14499,9 +14550,11 @@ def _team_name_patterns(full_name: str) -> list[str]:
     Returns escaped patterns suitable for use in ILIKE '%pattern%' queries.
     Includes full name, city/location, and mascot/short name.
 
-    A standalone word in `_GENERIC_PLACE_QUALIFIERS` is never emitted — see the
-    comment above it. Multi-word patterns that CONTAIN one are untouched, so
-    "Ohio State" and "South Alabama" still match; only the bare word goes.
+    A standalone word in `_NON_DISTINCTIVE_BARE_TOKENS` — a place qualifier
+    (#5798) or a club-type designator (#7858) — is never emitted; see the two
+    comment blocks above it. Multi-word patterns that CONTAIN one are untouched,
+    so "Ohio State", "South Alabama" and "Kansas City" still match; only the
+    bare word goes.
 
     Examples:
         "Texas Rangers" → ["Texas Rangers", "Rangers", "Texas"]
@@ -14511,6 +14564,10 @@ def _team_name_patterns(full_name: str) -> list[str]:
         "Arkansas State Red Wolves"
             → ["Arkansas State Red Wolves", "Wolves", "Arkansas State Red",
                "Arkansas"]                              # no bare "State"
+        "Leeds United" → ["Leeds United", "Leeds"]      # no bare "United"
+        "Kansas City Chiefs"
+            → ["Kansas City Chiefs", "Chiefs", "Kansas City", "Kansas"]
+                                                        # no bare "City"
     """
     if not full_name:
         return []
@@ -14525,7 +14582,7 @@ def _team_name_patterns(full_name: str) -> list[str]:
         # Gated too: a two-word row like "Penn State" puts the qualifier in the
         # mascot slot, and that is the same bare "State" token.
         short = parts[-1]
-        if len(short) >= 4 and short.lower() not in _GENERIC_PLACE_QUALIFIERS:
+        if len(short) >= 4 and short.lower() not in _NON_DISTINCTIVE_BARE_TOKENS:
             escaped_short = _escape_like(short)
             if escaped_short.lower() != escaped_full.lower():
                 patterns.append(escaped_short)
@@ -14543,7 +14600,7 @@ def _team_name_patterns(full_name: str) -> list[str]:
         # individual words ≥4 chars. Kalshi uses just "Boston" not "Boston Red".
         if len(parts) >= 3:
             for word in parts[:-1]:
-                if len(word) >= 4 and word.lower() not in _GENERIC_PLACE_QUALIFIERS:
+                if len(word) >= 4 and word.lower() not in _NON_DISTINCTIVE_BARE_TOKENS:
                     escaped_word = _escape_like(word)
                     if escaped_word.lower() not in [p.lower() for p in patterns]:
                         patterns.append(escaped_word)
