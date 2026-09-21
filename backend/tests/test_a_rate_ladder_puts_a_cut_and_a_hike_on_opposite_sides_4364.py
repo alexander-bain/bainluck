@@ -201,6 +201,28 @@ def test_a_currency_code_is_not_a_basis_point():
     assert _outcome_threshold_value("GBP/USD above 1.30") == (1.3, "", "exact")
 
 
+def test_the_cumulative_coherence_guard_does_not_eat_a_signed_ladder():
+    # Interaction with #4610/#4679/#4680. That guard reads a ladder as CUMULATIVE
+    # — each rung a strict subset of every looser one — and drops rungs whose
+    # price contradicts a neighbour. A signed rate ladder is the opposite shape:
+    # its rungs are EXCLUSIVE outcomes, so its prices are humped and under a
+    # cumulative reading would look incoherent. All five rungs must survive
+    # whatever shape the prices take, or the fix above gives with one hand and
+    # the guard takes back with the other.
+    shapes = {
+        "humped": [0.02, 0.08, 0.62, 0.24, 0.04],
+        "rising": [0.05, 0.10, 0.20, 0.30, 0.35],
+        "falling": [0.35, 0.30, 0.20, 0.10, 0.05],
+        "flat": [0.20, 0.20, 0.20, 0.20, 0.20],
+        "bimodal": [0.40, 0.05, 0.10, 0.05, 0.40],
+    }
+    labels = [name for name, _ in SARB_OUTCOMES]
+    for shape, probabilities in shapes.items():
+        points = _ladder("Central bank rate decision", list(zip(labels, probabilities)))
+        assert len(points) == 5, f"{shape}: lost a rung to the cumulative guard"
+        assert [p["value"] for p in points] == [-25.0, -25.0, 0.0, 25.0, 25.0], shape
+
+
 # ── THE SAFETY ARGUMENT: signing is a property of the SET ──
 
 
