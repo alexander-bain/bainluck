@@ -3725,9 +3725,12 @@ async def backfill_progress(
 ):
     """Unified backfill/calibration progress — the answer to "#1052 unmeasurable".
 
-    Combines four tiles (Queue #179):
+    Combines five tiles (Queue #179):
       - phase_throughput: backfill_winners last-run per-phase timing + which phase
         the budget guard stopped before, and the dedicated calibration_prices task.
+      - gamma_cursor: where the Polymarket winner rail's ascending cursor sits and
+        how far the last run moved it (#6564). Liveness was already observable;
+        PROGRESS was not, and a rail can be perfectly alive and still not advance.
       - worker_load: realtime/background/celery queue depths + heartbeat age.
       - census: the heavy sampled DENSITY + JUNE-GAP ledger, served from the Redis
         cache written every 15 min by precompute_backfill_progress (pass bust=true
@@ -3743,7 +3746,15 @@ async def backfill_progress(
     import json as _json
     from app.tasks.redis_state import get_redis_client, get_task_metrics
 
-    result: dict = {"tiles": ["phase_throughput", "worker_load", "census", "cal_coverage"]}
+    result: dict = {
+        "tiles": [
+            "phase_throughput",
+            "gamma_cursor",
+            "worker_load",
+            "census",
+            "cal_coverage",
+        ]
+    }
 
     if bust:
         from app.tasks import celery_app
@@ -3769,6 +3780,42 @@ async def backfill_progress(
     except Exception as e:
         phase["error"] = str(e)[:200]
     result["phase_throughput"] = phase
+
+    # ── gamma cursor (live) ─────────────────────────────────────────────────
+    # #6564. The Polymarket winner rail is cursor-paced ascending by market id,
+    # and how far that cursor moves per run is the difference between a drain
+    # that keeps up with arrivals and one that never will. Until now the only
+    # emission was a dyno log line, so the question was unanswerable a few
+    # hours after the fact and the rail's liveness — which is fine — was the
+    # only thing anyone could check.
+    #
+    # Both halves are published because they can disagree and the disagreement
+    # is the interesting case: `live` is what the next run will actually resume
+    # from, `last_run` is what the previous run decided. A `last_run.cursor_op`
+    # of "set" beside an absent `live` means the key expired or was wrapped
+    # between the two, which reads as a full restart of a 275k-row backlog.
+    from app.tasks.backfill_winners import _POLY_API_RUN_RECEIPT_KEY
+
+    cursor: dict = {}
+    try:
+        if rc is not None:
+            raw_cursor = rc.get("bainluck:pm_winner_backfill_offset")
+            if isinstance(raw_cursor, bytes):
+                raw_cursor = raw_cursor.decode()
+            cursor["live"] = int(raw_cursor) if raw_cursor else None
+            # An absent key is not an error: the rail deletes it to wrap back
+            # to the oldest row, so None legitimately means "starts at 0".
+            cursor["live_present"] = raw_cursor is not None
+            raw_receipt = rc.get(_POLY_API_RUN_RECEIPT_KEY)
+            cursor["last_run"] = _json.loads(raw_receipt) if raw_receipt else None
+            if cursor["last_run"] is None:
+                cursor["detail"] = (
+                    "No receipt banked yet. The scheduled sweep fires at :45 on "
+                    "hours 5/11/17/23 UTC; the first run after deploy writes one."
+                )
+    except Exception as e:
+        cursor["error"] = str(e)[:200]
+    result["gamma_cursor"] = cursor
 
     # ── worker load (live) ──────────────────────────────────────────────────
     worker: dict = {}
