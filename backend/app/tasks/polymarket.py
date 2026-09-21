@@ -30,6 +30,12 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
     build_content_understanding,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
+from app.utils.settled_price import (  # #5246 / #7767
+    SETTLED_NO_PRICE,
+    SETTLED_YES_PRICE,
+    settled_price_set_sql,
+    settlement_pending_sql,
+)
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
 from app.utils.event_completion import (  # #6073
@@ -5161,6 +5167,44 @@ def _extract_outcome_name(question: str, event_title: str) -> str:
     return cleaned[:60]
 
 
+def settle_outcomes_stmt(price: str, is_winner: str):
+    """`_sync_polymarket_resolved_status`'s settling UPDATE, for one side.
+
+    #7767. A module-level builder rather than two `text()` blocks inline in the
+    sweep, for one reason: the real-Postgres gate
+    (`tests/integration/test_polymarket_resolved_candidate_sql_pg.py`) can then
+    EXECUTE the shipped statement instead of a retyped copy of it, which is that
+    file's own standing rule — "a copy would pass while the shipped query was
+    broken, which is the whole failure mode". There is no second spelling of
+    this SQL anywhere.
+
+    Three clauses, each carrying its own rule:
+
+    * :func:`settled_price_set_sql` (#5246) writes the terminal price, nulls the
+      american odds, and stamps `price_changed_at` only on a real move (#2024).
+    * :func:`settlement_pending_sql` (#7767) decides whether the row still needs
+      the write. It replaced `resolution_source <> 'api_settlement'`, which
+      keyed the skip on the one column a half-finished settlement already had
+      right and so sealed 217 legs out of their own repair.
+    * ``DUPLICATE_CONDITION_LEG_SQL`` (Q487) keeps a suffixed duplicate of an
+      id-anchored leg from being settled beside the row it duplicates.
+
+    :param price: :data:`SETTLED_YES_PRICE` or :data:`SETTLED_NO_PRICE`; both
+        fragments are driven off this one literal, so the side the WHERE tests
+        for is by construction the side the SET writes.
+    :param is_winner: the matching SQL boolean literal.
+    """
+    return text(
+        "UPDATE futures_outcomes fo\n"
+        "   SET is_winner = " + is_winner + ",\n"
+        "       resolution_source = 'api_settlement',\n"
+        "       " + settled_price_set_sql(price) + "\n"
+        " WHERE fo.external_id = ANY(:cids)\n"
+        "   AND " + settlement_pending_sql(price) + "\n"
+        "   AND " + DUPLICATE_CONDITION_LEG_SQL
+    )
+
+
 async def _sync_polymarket_resolved_status():
     """Mark finished Polymarket markets resolved, addressing Gamma by event id.
 
@@ -5805,32 +5849,65 @@ async def _sync_polymarket_resolved_status():
                     # Scoped by the shared duplicate-leg rule, not by market id:
                     # the container_member rows are the legitimate target and must
                     # keep being written.
+                    # #7767 — THE SKIP TESTS THE SETTLEMENT, NOT ITS STAMP.
+                    #
+                    # These two statements already wrote the right price; what
+                    # they could not do was REVISIT a leg. The guard here was
+                    # `COALESCE(fo.resolution_source,'') != 'api_settlement'`,
+                    # which keys the skip on the one column a half-finished
+                    # settlement already has right — so a leg that reached
+                    # `api_settlement` by any other route kept whatever price it
+                    # was carrying, permanently, and this rail (the only one that
+                    # reads `outcomePrices` on an OPEN board) was sealed out of it.
+                    #
+                    # WHAT A READER SAW. `/futures/113360` — "How many different
+                    # countries will Israel strike in 2026?" — printed **100%** in
+                    # the board's largest type for leg `0`, beside "4" at 76%, and
+                    # drew it as a flat green line at 100% all week. Gamma has that
+                    # leg `closed: true`, `umaResolutionStatus: resolved`,
+                    # `outcomePrices: ["0","1"]` — resolved NO — while its
+                    # `lastTradePrice` sits at `1` against a `0.001` ask, which is
+                    # where the stored number came from. We held the verdict
+                    # (`is_winner=false`, `api_settlement`) and published over it.
+                    #
+                    # REACH, executed rather than reasoned (Gamma event 79926 run
+                    # through `settled_legs` on 2026-09-21): all four graded legs
+                    # of that board are in `terminal_condition_ids`, and the
+                    # specimen's `settlement_prices` entry is `(0.0, 1.0)` — so it
+                    # is in `loser_cids` on every run and was refused by the guard
+                    # alone. 217 legs on 96 open boards are in this state.
+                    #
+                    # Idempotence is kept, and by a stricter test than before: a
+                    # row whose grade, side and price already match is still
+                    # skipped, so the steady state writes nothing. `IS DISTINCT
+                    # FROM` rather than `!=` because both columns are nullable.
+                    #
+                    # #6110 IS OBEYED IN BOTH DIRECTIONS. The winner statement
+                    # writes 1.0 over a settled champion carrying a losing price
+                    # for exactly the same reason, so this preserves a crowned leg
+                    # rather than only declining to delete it.
+                    #
+                    # 🔴 AND THIS NEVER WRITES ON THE STRENGTH OF OUR OWN GRADE,
+                    # which is what makes re-touching a graded row safe. Both cid
+                    # lists are built above from `terminal_cids` + the
+                    # `settlement_prices` this pass just read off Gamma, so a row
+                    # is written only where the VENUE's current `outcomePrices`
+                    # are terminal for that condition. `resolution_source` enters
+                    # the statement in one place only — the skip — where it
+                    # decides whether the write is still NEEDED, never whether it
+                    # is WARRANTED. A leg carrying a fabricated grade (#3617's
+                    # class) is therefore not zeroed by this: it is written only
+                    # if Gamma also says the contract is over.
                     if winner_cids:
                         r_w = await session.execute(
-                            text("""
-                                UPDATE futures_outcomes fo
-                                SET current_probability = 1.0,
-                                    is_winner = true,
-                                    resolution_source = 'api_settlement'
-                                WHERE fo.external_id = ANY(:cids)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
-                            """),
+                            settle_outcomes_stmt(SETTLED_YES_PRICE, "true"),
                             {"cids": winner_cids},
                         )
                         page_outcomes_updated += r_w.rowcount
 
                     if loser_cids:
                         r_l = await session.execute(
-                            text("""
-                                UPDATE futures_outcomes fo
-                                SET current_probability = 0.0,
-                                    is_winner = false,
-                                    resolution_source = 'api_settlement'
-                                WHERE fo.external_id = ANY(:cids)
-                                  AND COALESCE(fo.resolution_source, '') != 'api_settlement'
-                                  AND """ + DUPLICATE_CONDITION_LEG_SQL + """
-                            """),
+                            settle_outcomes_stmt(SETTLED_NO_PRICE, "false"),
                             {"cids": loser_cids},
                         )
                         page_outcomes_updated += r_l.rowcount

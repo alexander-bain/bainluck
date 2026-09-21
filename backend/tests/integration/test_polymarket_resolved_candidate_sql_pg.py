@@ -28,10 +28,25 @@ mock session or a source assertion.
 
 Opt-in on `SEARCH_TEST_DATABASE_URL`, following
 `test_provenance_enum_real_postgres.py`: it skips where no Postgres exists and
-runs in the `search-recall` CI job, which provides one. There is no local
-Postgres in the agent sandbox (initdb fails on shmget), so **CI is the
-environment that runs this**, and the job's own "Verify the gate is actually
-armed" step exists precisely so a skipped gate cannot read as a passing one.
+runs in the `search-recall` CI job, which provides one. The job's own "Verify
+the gate is actually armed" step exists precisely so a skipped gate cannot read
+as a passing one.
+
+🔴 AND THIS FILE CAN BE RUN BY HAND, which the earlier wording denied ("there is
+no local Postgres in the agent sandbox") and #7767 found to be half true. You
+cannot MINT a cluster — `initdb` dies on `shmget` — but a lane VM already has one
+running, and every table here is built by this file in a private schema rather
+than from `Base.metadata.create_all`. Nothing in them needs PG15, so:
+
+    createdb -U bain <db>
+    SEARCH_TEST_DATABASE_URL="postgresql+asyncpg://bain@127.0.0.1:5432/<db>" \
+      python3 -m pytest tests/integration/test_polymarket_resolved_candidate_sql_pg.py -q
+
+runs the whole file locally in about two seconds. That matters because it is the
+only cheap way to prove a case here can FAIL: mutate the fix back to the defect
+and watch the gate red. The suites that genuinely are CI-only are the ones that
+build the app schema — they die at setup with `syntax error at or near "NULLS"`,
+because `uq_container_anchor` is `NULLS NOT DISTINCT` and the VM's server is 14.
 
 The statements under test are imported from the modules that ship them — never
 retyped here. A copy would pass while the shipped query was broken, which is the
@@ -42,6 +57,7 @@ from __future__ import annotations
 
 import os
 import re
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
@@ -453,3 +469,251 @@ class TestTheMixedParentGuardSelectsTheRightRows:
             "the settled child of a mixed event was withheld, so the guard is "
             f"over-refusing and the ship does nothing. statuses={status}"
         )
+
+
+# --- #7767: the settling UPDATEs, EXECUTED -----------------------------------
+#
+# The sibling gates above prove the sweep's SELECTs are legal SQL. These prove
+# the two statements the sweep WRITES with do the thing the ship claims, on rows
+# that reproduce the production shapes — because #7767 was not a syntax error
+# and not a missing clause. Both statements already wrote the correct price;
+# they were simply never allowed to reach the rows that needed it, and a source
+# assertion can only say the predicate changed, never that the change repairs
+# the leg or that it leaves the healthy ones alone.
+#
+# Imported from `app.tasks.polymarket`, never retyped, for the reason this
+# file's own docstring gives: a copy would pass while the shipped statement was
+# broken, which is the whole failure mode.
+
+_SETTLE_GATE_SCHEMA = "poly_settle_gate_7767"
+
+
+@pytest.fixture
+async def futures_outcomes_table(pg_session):
+    """The five rows that decide this ship, and why each one is here.
+
+    `specimen` is `/futures/113360`'s hero, to the value: graded a loser by us,
+    resolved NO at Gamma, published at 1.0 off a `lastTradePrice` its own book
+    prices out. `crowned_at_a_losing_price` is the #6110 direction — a leg we
+    graded a WINNER carrying a loser's number — which the same rule must also
+    correct rather than merely decline to delete. The two `already_*` rows are
+    the controls that keep this from being a rule that rewrites the world every
+    six hours, and `ungraded` is the capability control: the statements must
+    still perform their original job.
+    """
+    await pg_session.execute(
+        text(f"DROP SCHEMA IF EXISTS {_SETTLE_GATE_SCHEMA} CASCADE")
+    )
+    await pg_session.execute(text(f"CREATE SCHEMA {_SETTLE_GATE_SCHEMA}"))
+    await pg_session.execute(
+        text(f"SET search_path TO {_SETTLE_GATE_SCHEMA}, public")
+    )
+    # `current_probability` carries the production type, not `float`: the skip
+    # casts to `numeric(7,6)` and a looser column would let 0.9999995 read as
+    # equal to 1.0 here while differing in production.
+    await pg_session.execute(
+        text(
+            """
+            CREATE TABLE futures_outcomes (
+                id serial PRIMARY KEY,
+                market_id integer NOT NULL,
+                external_id varchar(200) NOT NULL,
+                name varchar(300) NOT NULL,
+                current_probability numeric(7,6),
+                current_american_odds integer,
+                is_winner boolean,
+                resolution_source varchar(50),
+                price_changed_at timestamptz
+            )
+            """
+        )
+    )
+    await pg_session.execute(
+        text(
+            """
+            INSERT INTO futures_outcomes
+                (market_id, external_id, name, current_probability,
+                 current_american_odds, is_winner, resolution_source,
+                 price_changed_at)
+            VALUES
+                (113360, '0xspecimen', '0', 1.0, NULL, false,
+                 'api_settlement', now() - interval '4 days'),
+                (113360, '0xcrowned', 'winner', 0.42, -120, true,
+                 'api_settlement', now() - interval '4 days'),
+                (113360, '0xalready_lost', 'lost', 0.0, NULL, false,
+                 'api_settlement', now() - interval '4 days'),
+                (113360, '0xalready_won', 'won', 1.0, NULL, true,
+                 'api_settlement', now() - interval '4 days'),
+                (113360, '0xungraded', 'ungraded', 0.31, 225, NULL, NULL,
+                 now() - interval '4 days')
+            """
+        )
+    )
+    await pg_session.commit()
+    yield pg_session
+    await pg_session.execute(
+        text(f"DROP SCHEMA IF EXISTS {_SETTLE_GATE_SCHEMA} CASCADE")
+    )
+    await pg_session.commit()
+
+
+class TestSettlingWritesReachTheLegsTheyGraded:
+    """#7767 — `/futures/113360` printed 100% for an outcome Gamma resolved NO."""
+
+    #: The venue's answer for this board, as `settled_legs` returns it: the
+    #: specimen and the already-lost control are NO, the two winners are YES.
+    _LOSERS = ["0xspecimen", "0xalready_lost", "0xungraded"]
+    _WINNERS = ["0xcrowned", "0xalready_won"]
+
+    async def _settle(self, session):
+        """Run both shipped statements once; return (winner_rows, loser_rows)."""
+        from app.tasks.polymarket import settle_outcomes_stmt
+
+        won = await session.execute(
+            settle_outcomes_stmt("1.0", "true"), {"cids": self._WINNERS}
+        )
+        lost = await session.execute(
+            settle_outcomes_stmt("0.0", "false"), {"cids": self._LOSERS}
+        )
+        await session.commit()
+        return won.rowcount, lost.rowcount
+
+    async def _read(self, session):
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT external_id, current_probability, is_winner, "
+                    "current_american_odds, resolution_source "
+                    "FROM futures_outcomes ORDER BY external_id"
+                )
+            )
+        ).fetchall()
+        return {r[0]: r[1:] for r in rows}
+
+    async def test_the_published_price_stops_contradicting_our_own_verdict(
+        self, futures_outcomes_table
+    ):
+        """The ship. A leg we graded NO stops being published at 100%."""
+        session = futures_outcomes_table
+        before = await self._read(session)
+        assert before["0xspecimen"][0] == Decimal("1.000000"), "bad fixture"
+
+        await self._settle(session)
+        after = await self._read(session)
+
+        price, is_winner, odds, source = after["0xspecimen"]
+        assert price == Decimal("0.000000"), (
+            "the hero of /futures/113360 is still published at "
+            f"{price} for an outcome Gamma resolved NO — the settling write "
+            "cannot reach a leg that already carries its own grade"
+        )
+        assert is_winner is False and source == "api_settlement"
+        assert odds is None, "american odds for a resolved contract are undefined"
+
+    async def test_a_settled_winner_carrying_a_losing_price_is_also_corrected(
+        self, futures_outcomes_table
+    ):
+        """#6110's direction, which the same seal blocked and is worse.
+
+        A champion shown at 42% is the mirror of the specimen, and a rule that
+        only looked at losers would leave it there.
+        """
+        session = futures_outcomes_table
+        await self._settle(session)
+        price, is_winner, odds, _ = (await self._read(session))["0xcrowned"]
+
+        assert price == Decimal("1.000000") and is_winner is True
+        assert odds is None
+
+    async def test_a_leg_already_holding_its_settlement_is_not_rewritten(
+        self, futures_outcomes_table
+    ):
+        """Idempotence, measured as rowcount rather than as an unchanged value.
+
+        A statement that rewrote every settled leg on every six-hourly run would
+        produce the same table and a great deal of churn, so reading the values
+        back cannot tell the two apart. The controls sit inside the SAME
+        `ANY(:cids)` list as the rows that do change, so the counts below are
+        the skip.
+        """
+        session = futures_outcomes_table
+        won, lost = await self._settle(session)
+        assert (won, lost) == (1, 2), (
+            f"expected exactly the crowned leg and the specimen+ungraded to be "
+            f"written, got winners={won} losers={lost}"
+        )
+
+        won_again, lost_again = await self._settle(session)
+        assert (won_again, lost_again) == (0, 0), (
+            "the steady state still writes rows, so every settled leg is "
+            "churned on every run"
+        )
+
+    async def test_the_settled_champion_keeps_its_crown(
+        self, futures_outcomes_table
+    ):
+        """#6110's trap, stated as a control rather than as a promise.
+
+        `resolution_source IS NOT NULL` alone would delete the champion from
+        every board the moment a championship is decided. `is_winner` is the
+        discriminator and this is the row that proves it is being read.
+        """
+        session = futures_outcomes_table
+        await self._settle(session)
+        price, is_winner, _, source = (await self._read(session))["0xalready_won"]
+
+        assert (price, is_winner, source) == (
+            Decimal("1.000000"),
+            True,
+            "api_settlement",
+        )
+
+    async def test_an_ungraded_leg_is_still_graded(self, futures_outcomes_table):
+        """Capability control: the original job of these statements survives.
+
+        A predicate tightened until it only admitted damaged rows would pass
+        every test above and stop the sweep settling anything new.
+        """
+        session = futures_outcomes_table
+        await self._settle(session)
+        price, is_winner, odds, source = (await self._read(session))["0xungraded"]
+
+        assert (price, is_winner, source) == (
+            Decimal("0.000000"),
+            False,
+            "api_settlement",
+        )
+        assert odds is None
+
+    async def test_the_change_stamp_moves_only_for_the_legs_that_moved(
+        self, futures_outcomes_table
+    ):
+        """#2024: `price_changed_at` records that the PRICE moved, not that a
+        write ran. The two controls must keep their old stamp."""
+        session = futures_outcomes_table
+        stamps_before = {
+            r[0]: r[1]
+            for r in (
+                await session.execute(
+                    text(
+                        "SELECT external_id, price_changed_at FROM futures_outcomes"
+                    )
+                )
+            ).fetchall()
+        }
+        await self._settle(session)
+        stamps_after = {
+            r[0]: r[1]
+            for r in (
+                await session.execute(
+                    text(
+                        "SELECT external_id, price_changed_at FROM futures_outcomes"
+                    )
+                )
+            ).fetchall()
+        }
+
+        for moved in ("0xspecimen", "0xcrowned", "0xungraded"):
+            assert stamps_after[moved] > stamps_before[moved], moved
+        for held in ("0xalready_lost", "0xalready_won"):
+            assert stamps_after[held] == stamps_before[held], held
