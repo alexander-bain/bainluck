@@ -62,28 +62,39 @@ jest.mock("@/components/Analytics", () => ({
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Footer = require("@/components/Footer").default;
 
-/** Every `<a href=…>label</a>` in the rendered footer, in document order. */
-function footerLinks(): Array<{ href: string; label: string }> {
-  const html = renderToStaticMarkup(React.createElement(Footer));
+const HTML = renderToStaticMarkup(React.createElement(Footer));
+
+/**
+ * Every `<a href=…>text</a>` in the rendered footer whose content is PURE TEXT,
+ * in document order.
+ *
+ * Two things this deliberately does not do, both of them CodeQL findings the
+ * first draft earned:
+ *
+ *   - it does not strip tags out of the content (`/<[^>]*>/g` is
+ *     `js/incomplete-multi-character-sanitization` — an incomplete tag strip,
+ *     and CodeQL is right that a regex is not an HTML parser), and
+ *   - it does not decode entities (#7716's `js/double-escaping`).
+ *
+ * Instead the content pattern is `[^<]*`, so an anchor wrapping markup does not
+ * match AT ALL rather than being mangled into a label. That is only safe
+ * because nothing may hide in the gap, which is what `the only anchor with
+ * nested markup is the brand` asserts below. No label in this footer contains
+ * an HTML entity either, so an undecoded `&amp;` would surface as a loud
+ * failure rather than a silent pass.
+ */
+function textLinks(): Array<{ href: string; label: string }> {
   const found: Array<{ href: string; label: string }> = [];
-  const anchor = /<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  const anchor = /<a\b[^>]*\bhref="([^"]*)"[^>]*>([^<]*)<\/a>/g;
   for (;;) {
-    const match = anchor.exec(html);
+    const match = anchor.exec(HTML);
     if (match === null) break;
-    found.push({
-      href: match[1],
-      // Nested markup is stripped and entities are decoded so the comparison is
-      // against the WORDS a reader sees, not against the span soup around them.
-      label: match[2]
-        .replace(/<[^>]*>/g, "")
-        .replace(/&amp;/g, "&")
-        .trim(),
-    });
+    found.push({ href: match[1], label: match[2].trim() });
   }
   return found;
 }
 
-const LINKS = footerLinks();
+const LINKS = textLinks();
 
 describe("#7738 — the footer names the accuracy page in reader words", () => {
   // ═══ THE SHIP ═══
@@ -125,6 +136,18 @@ describe("#7738 — the footer names the accuracy page in reader words", () => {
     // line. A floor well under that catches an empty or truncated render
     // without pinning the count, which is editorial.
     expect(LINKS.length).toBeGreaterThanOrEqual(8);
+  });
+
+  test("the only anchor with nested markup is the brand", () => {
+    // This is what makes `[^<]*` safe. A text-only pattern skips an anchor
+    // whose label is wrapped in a span — so a future `<span>Calibration</span>`
+    // would vanish from `LINKS` and every ban above would pass on a footer that
+    // still says it. Counting the anchors the pattern did NOT reach closes that
+    // hole: the brand lockup (a 🍀 span and a wordmark span) is the one, and a
+    // second one is a red that sends the reader back here.
+    const everyAnchor = HTML.match(/<a\b/g) ?? [];
+    expect(everyAnchor).toHaveLength(LINKS.length + 1);
+    expect(HTML).toContain(">Bain Luck</span>");
   });
 
   test("the parser reads LABELS, not just hrefs", () => {
