@@ -66,7 +66,21 @@ export default function BottomNav() {
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50" ref={browseRef} aria-label="Mobile navigation">
+    <nav
+      className="md:hidden fixed bottom-0 left-0 right-0 z-50"
+      ref={browseRef}
+      aria-label="Mobile navigation"
+      /* #7848 — this bar is painted OVER the page at z-50, so the bottom of the
+         viewport is not the bottom of what a reader can see: the last 57px of any
+         overlay are behind it. Anything that positions itself against the bottom
+         of the screen reads this marker and stops above it. Today that is the
+         win-probability chart tooltip (`chartTooltipViewportShift`), whose card is
+         taller than its plot. Marked here rather than matched on the class list so
+         the coupling is greppable from both ends and a restyle cannot silently
+         break it — `md:hidden` means the element is display:none on desktop, and a
+         zero-height rect is read as "no obstruction". */
+      data-viewport-bottom-obstruction=""
+    >
       {browseOpen && (
         <>
           <div

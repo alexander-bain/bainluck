@@ -26,10 +26,19 @@
 // `worstOverflowBottom`) and deliberately excluded from the verdict. Do not "tidy" them into
 // the exit code without a fix for them; that silently retires this after-check.
 //
+// 🟢 THE FIX FOR THE VERTICAL HALF IS #7848, and it did NOT tidy them in: the numbers are
+// still out of the default verdict, so the paragraph above still holds and #1833's
+// after-check still measures the axis it was written for. `VERTICAL=1` selects the OTHER
+// axis for the exit code — one run, one axis, named in `out.axis` so a banked JSON says
+// which question it answered. Measured against production on 2026-09-21 before the fix:
+// default exit 0 (horizontal clean since #1833), `VERTICAL=1` exit 1 (4 of 5 positions,
+// worst 79px). A probe that has only ever been seen green cannot pay an after-check.
+//
 // Usage: node chart-tooltip-clip-1833.mjs <url> [widthPx]
 //        CORS_SHIM=1 to point at a local dev server (see below).
-// Exit:  0 no horizontal clipping at any sampled position · 1 CLIPPED (defect served) ·
-//        2 bad usage · 3 no win-probability chart on the page · 4 could not read (no tooltip)
+//        VERTICAL=1  verdict on bottom overflow (#7848) instead of side shear (#1833).
+// Exit:  0 no clipping on the selected axis at any sampled position · 1 CLIPPED (defect
+//        served) · 2 bad usage · 3 no win-probability chart on the page · 4 could not read
 import { createRequire } from 'module';
 import { existsSync, readdirSync } from 'fs';
 
@@ -66,26 +75,25 @@ if (proxy) {
   if (!isLocal) args.push('--proxy-bypass-list=<-loopback>');
 }
 
-const browser = await chromium.launch({ headless: true, args });
-const page = await browser.newPage({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
-
 // CORS_SHIM=1 — point this probe at a LOCAL dev server. api.bainluck.com allows the production
 // origin, so a page served from localhost gets "Failed to fetch", renders the error card and no
 // chart at all: exit 3, which reads as "this page has no chart" rather than "I could not talk to
-// the API". The shim re-serves the same API responses with a permissive CORS header; it changes
-// nothing about the page's own layout, which is what is being measured. Off by default so a
-// production run is never touched by it.
+// the API". So drop the origin check for a local run. It changes nothing about the page's own
+// layout, which is the only thing being measured. Off by default, so a production run is never
+// touched by it.
+//
+// 🪤 It turns the CHECK off in chromium rather than re-serving the responses. The obvious form —
+// `route.fetch()` then `route.fulfill()` with a permissive header — cannot work in this sandbox:
+// `route.fetch` is playwright's OWN network stack and does not honour `--proxy-server`, so every
+// API call dies `connect EPERM` and the page renders with no chart. That arrives as exit 3, "no
+// recharts surface", which reads as a verdict about the PAGE rather than about the harness, so it
+// is worth naming. The browser's own fetches do go through the proxy; leave them alone.
 if (process.env.CORS_SHIM === '1') {
-  await page.route('**://api.bainluck.com/**', async (route) => {
-    try {
-      const res = await route.fetch();
-      const headers = { ...res.headers(), 'access-control-allow-origin': '*' };
-      await route.fulfill({ response: res, headers });
-    } catch {
-      await route.abort();
-    }
-  });
+  args.push('--disable-web-security');
 }
+
+const browser = await chromium.launch({ headless: true, args });
+const page = await browser.newPage({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
 
 // Measure one chart surface: hover across the plot and report the worst overflow seen.
 // `root` scopes the query: once the fullscreen modal is open the INLINE chart is still in the
@@ -124,6 +132,21 @@ async function measure(label, root = '', idx = 0) {
         width: Math.round(r.width), height: Math.round(r.height),
         vw: document.documentElement.clientWidth,
         vh: document.documentElement.clientHeight,
+        // 🔴 THE VIEWPORT IS NOT THE READABLE AREA. The mobile nav is `fixed
+        // bottom-0 z-50`, 57px tall, painted OVER the page — so a card whose
+        // bottom sits at 836 on an 844px screen still has its last rows hidden,
+        // and measuring against `vh` alone scores that as clean. It did: the
+        // first cut of #7848's fix passed this probe at 0 of 5 while the
+        // screenshot showed the ESPN row behind the bar. Read the same marker
+        // the fix reads, so probe and fix cannot disagree about where the
+        // bottom is. Absent or `display:none` (desktop) => the viewport bottom.
+        readableBottom: (() => {
+          const o = document.querySelector('[data-viewport-bottom-obstruction]');
+          const or = o && o.getBoundingClientRect();
+          return or && or.height > 0
+            ? Math.min(document.documentElement.clientHeight, Math.round(or.top))
+            : document.documentElement.clientHeight;
+        })(),
         maxWidth: getComputedStyle(card || w).maxWidth,
         // The tooltip text, so a clipped card can be named by what the reader loses.
         text: (card || w).innerText.replace(/\s+/g, ' ').slice(0, 90),
@@ -132,7 +155,7 @@ async function measure(label, root = '', idx = 0) {
     if (!m) { samples.push({ frac, tooltip: null }); continue; }
     const overflowLeft = Math.max(0, 0 - m.left);
     const overflowRight = Math.max(0, m.right - m.vw);
-    const overflowBottom = Math.max(0, m.bottom - m.vh);
+    const overflowBottom = Math.max(0, m.bottom - m.readableBottom);
     const overflowTop = Math.max(0, 0 - m.top);
     samples.push({
       frac, ...m, overflowLeft, overflowRight, overflowTop, overflowBottom,
@@ -205,8 +228,15 @@ try {
   }
 
   const readable = out.surfaces.filter((s) => s.withTooltip > 0);
+  // VERTICAL=1 moves the bottom-overflow numbers INTO the verdict. Off by default,
+  // so #1833's after-check keeps measuring exactly what it always measured: the two
+  // defects share a card but not an axis, and one exit code cannot pay both. See the
+  // note at the top of the file.
+  out.axis = process.env.VERTICAL === '1' ? 'vertical (#7848)' : 'horizontal (#1833)';
+  const offending = (s) =>
+    process.env.VERTICAL === '1' ? s.clippedVerticallyPositions > 0 : s.clippedPositions > 0;
   if (readable.length === 0) exit = 4;
-  else if (readable.some((s) => s.clippedPositions > 0)) exit = 1;
+  else if (readable.some(offending)) exit = 1;
   out.verdict = exit === 1 ? 'CLIPPED' : exit === 4 ? 'COULD-NOT-READ' : 'clean';
   console.log(JSON.stringify(out, null, 2));
 } catch (e) {
