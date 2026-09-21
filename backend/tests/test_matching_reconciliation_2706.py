@@ -42,6 +42,31 @@ import pytest
 import app.tasks.matching_reconciliation as mrec
 
 
+def _backlog_ran_at(last_run_at):
+    """Patch the durable Pass 3 run fact ``check_receipt_coverage`` reads.
+
+    Patched rather than seeded into the session fakes ON PURPOSE. Those fakes
+    answer queries positionally so that a silently-added query runs the queue
+    dry and raises — letting ``read_pass_run``'s own snapshot read consume a
+    slot would spend that guard and shift every later check's answer by one.
+    """
+    from unittest.mock import patch as _patch
+
+    from app.utils.matcher_pass_runs import PassRunFact
+
+    fact = PassRunFact(
+        phase="pass3_backlog",
+        has_run=None if last_run_at is None else True,
+        status="no_record" if last_run_at is None else "ok",
+        last_run_at=last_run_at,
+    )
+
+    async def _fake(_db, _phase, **_kw):
+        return fact
+
+    return _patch("app.utils.matcher_pass_runs.read_pass_run", _fake)
+
+
 class _Result:
     def __init__(self, rows):
         self._rows = rows
@@ -533,12 +558,14 @@ def test_market_multi_event_stays_scoped_to_open():
 
 
 def test_receipt_coverage_is_red_while_any_market_has_never_been_attempted():
-    out = asyncio.run(mrec.check_receipt_coverage(_Session(scalar=4503)))
+    with _backlog_ran_at(None):
+        out = asyncio.run(mrec.check_receipt_coverage(_Session(scalar=4503)))
     assert out["red"] is True and out["count"] == 4503
 
 
 def test_receipt_coverage_is_green_at_zero():
-    out = asyncio.run(mrec.check_receipt_coverage(_Session(scalar=0)))
+    with _backlog_ran_at(None):
+        out = asyncio.run(mrec.check_receipt_coverage(_Session(scalar=0)))
     assert out["red"] is False
 
 
@@ -1056,7 +1083,8 @@ def _run_with_github(session, monkeypatch, open_issues):
             return False
 
     monkeypatch.setattr(mrec, "get_task_session", _Factory())
-    result = asyncio.run(mrec._run_matching_reconciliation(file_issues=True))
+    with _backlog_ran_at(None):
+        result = asyncio.run(mrec._run_matching_reconciliation(file_issues=True))
     return result, created, comments, closed
 
 

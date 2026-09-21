@@ -66,7 +66,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -304,3 +304,65 @@ async def read_pass_run(
         rows_attempted=_payload_int(payload, "rows_attempted"),
         eligible_total=_payload_int(payload, "eligible_total"),
     )
+
+
+#: How long a market may sit unattempted before "the backlog pass has not had
+#: its turn yet" stops being an available explanation.
+#:
+#: IT NEVER DECIDES ANYTHING ON THE HEALTHY PATH, and that is the design. Pass 3
+#: runs every matcher cycle (~15 min), so ``last_run_at`` is minutes old and is
+#: always the later of the two arms in ``never_attempted_floor``. This constant
+#: binds only when the pass run is unknown or frozen — which is exactly when the
+#: pass-run arm alone would go blind. Chosen well above the cycle so a slow or
+#: skipped cycle cannot trip it, and well below the hours-to-days stall the
+#: coverage check exists to catch (the 8/28 ingest wave).
+NEVER_ATTEMPTED_MAX_GRACE_S: float = 2 * 60 * 60
+
+
+def never_attempted_floor(
+    last_run_at: Optional[datetime],
+    *,
+    now: Optional[datetime] = None,
+    max_grace_s: float = NEVER_ATTEMPTED_MAX_GRACE_S,
+) -> datetime:
+    """The birth time before which "never attempted" is a finding, not a race.
+
+    A market ingested since the backlog pass last ran has NO receipt for a
+    reason that is not a defect: nothing has had the chance to write one yet.
+    Counting it as "never attempted" makes the coverage check red once per
+    Polymarket poll and green again one cycle later — measured 2026-09-21, that
+    flap filed and auto-closed ~20 p1 issues a day (counts of 50, 24, 8, 3 and
+    once **2**), each open for 13–14 minutes, which is what buries the stall the
+    check is for. The floor is the fix: only markets that already existed when
+    the pass last looked can be said to have never been looked at.
+
+    THE TWO ARMS, AND WHY BOTH. The answer is the LATER of:
+
+    * ``last_run_at`` — the pass's last opportunity. Precise and
+      self-calibrating; no cadence is hardcoded.
+    * ``now - max_grace_s`` — the failsafe.
+
+    The pass-run arm ALONE FAILS CLOSED, which is the trap this signature exists
+    to avoid. If Pass 3 dies, ``last_run_at`` freezes; every market ingested
+    after it is then younger than the floor forever, so the check goes green and
+    stays green precisely when the backlog has genuinely stopped draining. The
+    grace arm keeps advancing whatever the pass does, so a frozen or unknown
+    ``last_run_at`` costs at most ``max_grace_s`` of silence and the check then
+    reddens on its own. Taking the later of the two keeps the precision of the
+    first and the fail-open of the second.
+
+    ``last_run_at is None`` (no durable row, or the store did not answer — never
+    read as "it never ran", see ``PassRunFact``) leaves the grace arm alone,
+    which is the same conservative answer.
+
+    Pure, so the policy is testable without a database or a clock.
+    """
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    grace_floor = reference - timedelta(seconds=max_grace_s)
+    if last_run_at is None:
+        return grace_floor
+    if last_run_at.tzinfo is None:
+        last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+    return max(last_run_at, grace_floor)

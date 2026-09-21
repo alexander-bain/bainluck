@@ -503,7 +503,34 @@ async def check_receipt_coverage(session) -> dict:
     reason. Receipts (#2705) closed that, so the question becomes countable —
     and the number that matters is not "how many are unlinked" but "how many
     have never been LOOKED AT". Above 0, the 8/28 wave can happen again.
+
+    SCOPED TO MARKETS THAT EXISTED WHEN THE PASS LAST LOOKED (#7801). The first
+    version counted every receiptless market, including ones ingested seconds
+    earlier, and a market the backlog pass has not yet had a turn at is not a
+    market that was skipped. Polymarket polls hourly and Pass 3 runs every
+    matcher cycle, so the check went red on the cycle after each poll and green
+    on the next one — measured on production 2026-09-21, ~20 auto-filed p1
+    issues a day, every one closed 13–14 minutes later, with counts of 50, 24,
+    8, 3 and once **2**. That is not a check with a false positive now and then;
+    it is a check whose output carries no information, and the stall it exists
+    to catch (the 8/28 wave) would have arrived as the 21st identical issue.
+    The floor removes the race and nothing else: measured against the 223 rows
+    live at 12:33Z, all 223 were born in one 34-second window six minutes after
+    the pass ran, and **0** were older than either arm of the floor.
+
+    ``never_attempted_floor`` is deliberately the LATER of the pass's last run
+    and a bounded grace, so a dead Pass 3 cannot buy permanent silence — read
+    its docstring before widening either arm.
     """
+    from app.utils.match_receipts import PHASE_PASS3_BACKLOG
+    from app.utils.matcher_pass_runs import never_attempted_floor, read_pass_run
+
+    # No ``receipt_witness``: this is the conservative direction. Without it an
+    # absent durable row leaves ``last_run_at`` None, the grace arm alone holds
+    # the floor, and the check counts MORE, not less.
+    backlog_run = await read_pass_run(session, PHASE_PASS3_BACKLOG)
+    floor = never_attempted_floor(backlog_run.last_run_at)
+
     n = await session.scalar(text(
         """
         SELECT count(*)
@@ -511,16 +538,21 @@ async def check_receipt_coverage(session) -> dict:
         WHERE fm.source IN ('kalshi', 'polymarket')
           AND fm.event_id IS NULL
           AND fm.status = 'open'
+          -- A NULL birth time is not evidence of youth. It cannot be excused by
+          -- a floor it cannot be compared against, so it counts (gotcha #53).
+          AND (fm.created_at IS NULL OR fm.created_at < :floor)
           AND NOT EXISTS (
               SELECT 1 FROM market_match_receipts r WHERE r.market_id = fm.id
           )
         """
-    ))
+    ).bindparams(floor=floor))
     n = int(n or 0)
     return _finding(
         "receipt_coverage", n > 0, n,
-        f"{n} open unlinked market(s) have never been attempted — while this is "
-        "above 0, a whole ingest wave can sit unlooked-at (ARTIFACT-M-20260902-N)",
+        f"{n} open unlinked market(s) that already existed when the backlog "
+        f"pass last ran ({floor.isoformat()}) have never been attempted — "
+        "while this is above 0, a whole ingest wave can sit unlooked-at "
+        "(ARTIFACT-M-20260902-N)",
     )
 
 
@@ -765,7 +797,12 @@ def receipts_hint_for(finding: dict) -> str | None:
     if finding["key"] == "receipt_coverage":
         return (
             "Coverage summary: `GET /api/admin/match-receipts` — "
-            "`coverage.open_unlinked_without_receipt` is this number, and "
+            "`coverage.never_attempted_past_floor` is this number and "
+            "`coverage.never_attempted_floor` is the birth time it is scoped "
+            "to. `coverage.open_unlinked_without_receipt` is the UNSCOPED "
+            "count and will read higher right after a Polymarket poll; the "
+            "difference is markets the backlog pass has not had a turn at yet, "
+            "which is a race and not a finding (#7801). "
             "`funnel.backlog_dropped` on the matcher's last run says how many "
             "eligible markets that cycle did not reach. Read "
             "`coverage.by_source` and its per-source "
