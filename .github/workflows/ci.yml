@@ -3381,7 +3381,21 @@ jobs:
           # request, and B15 requires that the durable copy is NOT served once
           # past the 36 h the cache declared — the tier makes that TTL real, not
           # longer.
-          EXPECTED = 47
+          # 48 with #7547: C9's fixture moved to the two-minute cadence our live
+          # poll writes, and its ORIGINAL ninety-minute fixture became C9b, where
+          # the same points are the POSITIVE case — a dense-but-coarse chart asks
+          # for fine history and the minute candles reach the served payload.
+          # 49 with CERT-3255's required repair: C9c walks twenty refused coarse
+          # reads across ONE real Redis and requires the thin reserve to be where
+          # they found it — the depletion only exists BETWEEN requests, so it
+          # cannot be shown on a double that is fresh per assertion.
+          # 50 with CERT-3258's required repair: C9d is the QUIET minute tier —
+          # C9b's candles are consecutive minutes, so the layering could measure
+          # the venue's grain off its own gaps and be right by luck. C9d's are
+          # 124 minutes apart, which is what a 1-minute tier reports on a market
+          # that traded twice, and it is the only arm that fails when the tier
+          # label does not survive the bank.
+          EXPECTED = 50
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

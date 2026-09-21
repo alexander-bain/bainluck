@@ -60,7 +60,7 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 SCHEMA = "generic-market-history"
 
@@ -127,6 +127,21 @@ def claim_key(market_id: int) -> str:
 
 def budget_key(hour_stamp: str) -> str:
     return f"futures:generic-history-budget:{CACHE_VERSION}:{hour_stamp}"
+
+
+def coarse_budget_key(hour_stamp: str) -> str:
+    """The COARSE share of the hour, counted on its OWN key (#7547).
+
+    🔴 A SECOND KEY, NOT A SECOND READING OF THE FIRST. Two caps over one counter
+    reads like an accounting detail and is not: a coarse request that is REFUSED
+    for exceeding the coarse share still had to touch the counter to find that
+    out, and on a shared key that touch is indistinguishable from work done. The
+    thin reserve then drains at the rate coarse charts are turned AWAY — fastest
+    exactly when coarse traffic is heaviest — and the reader who pays is the one
+    with no line at all. Separate keys make a refusal unable to reach the other
+    population's budget at all, rather than merely unlikely to.
+    """
+    return f"futures:generic-history-budget-coarse:{CACHE_VERSION}:{hour_stamp}"
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +565,10 @@ def merge_last_good(
 
 
 def unclaimed_instants(
-    venue_times: Sequence[datetime], capture_times: Iterable[datetime]
+    venue_times: Sequence[datetime],
+    capture_times: Iterable[datetime],
+    *,
+    venue_tiers: Iterable[str | None] = (),
 ) -> set[datetime]:
     """The venue instants that say something our own captures did not.
 
@@ -561,17 +579,188 @@ def unclaimed_instants(
     so here a capture always stands and the venue fills only the instants no
     capture claims. That is also what keeps a capture written AFTER the cache
     was built: it is a capture, and captures are never displaced.
+
+    🔴 **A CAPTURE'S CLAIM IS SIZED BY THE TIER IT IS REFUSING, NOT BY ITS OWN
+    SPACING (#7547).** `layer_tiers` defaults each tier's claim to half that
+    tier's OWN median spacing, capped at 30 minutes. That default is right when
+    tiers are comparable and catastrophic here, because our captures are the
+    COARSE tier and the venue is the fine one. Measured on production
+    2026-09-21 — 150 sampled open Kalshi futures legs, median gap taken PER
+    SERIES and then across series — our capture cadence is **62.2 min**
+    (p25 60.1, p75 120.2). Half of that is capped to 30 min, so every capture
+    claims a 60-minute band and consecutive captures TILE WITH NO GAP: a
+    minute-resolution venue tier has nowhere to land and the reader is served
+    `points_served: 0` from a bank that was built, fetched and paid for. Nothing
+    counts that loss — the points were never candidates, so they are not
+    `unsupported_points_withheld` either.
+
+    A capture exists here to veto a venue point that RESTATES IT, and against a
+    1-minute tier that is ±30 s. So the cap handed down is the venue tier's own
+    resolution rather than the default half-hour: it only ever narrows the claim
+    to the grain actually being refused, and on a coarse venue tier it changes
+    nothing (a 135-minute venue tier still caps at 30 min).
+
+    🔴 **THE GRAIN IS TAKEN FROM WHAT THE FETCH DECLARED, NOT FROM THE GAPS IT
+    OBSERVED.** Measuring it (:func:`claim_radius_seconds`) is wrong here for the
+    same reason the 30-minute default is wrong, one layer down: **both venues emit
+    a bucket only for a bucket with something to say.** A 1-minute Kalshi tier on
+    a market that traded twice in two hours reports 124-minute spacing, so a
+    measured radius comes back capped at the full 30 minutes — and every one of
+    those sparse, real, hard-won minute observations is then refused by a capture
+    20 minutes away. The bank is served empty again, by a different route, and a
+    quiet market is exactly the market a venue fill exists to repair.
+
+    So the cap is :func:`futures_chart_series.finest_declared_resolution_seconds`
+    of the banked points' own tier labels, halved: `candle_calls` asked for
+    `period_interval`, `clob_calls` asked for `fidelity`, and the fill stamps
+    that onto each point. Halved, because a claim reaches both ways and two
+    readings inside one bucket of each other are the duplicate this refuses — so
+    a 1-minute tier claims ±30 s and a venue point 20 minutes from a capture
+    survives, while a second reading 20 seconds away is still a duplicate.
+
+    When NOTHING declares — a bank written before the labels existed, or the
+    fill's unpaired-price fallback — the measurement is still the best available
+    answer and is used unchanged. That is a narrowing of this function's reach,
+    not a silent default: an undeclared grain is not evidence of a coarse one.
+
+    The bank this reads is already compacted to
+    :data:`futures_chart_series.TARGET_POINTS_PER_OUTCOME` (400) by
+    `compact_by_band` before it is stored — measured on the largest production
+    bank, `generic-history:108599`, whose busiest leg holds 392 points — so
+    admitting minute resolution here cannot flood the serve path: the flood was
+    already spent at bank time, by budget, keeping the biggest moves.
     """
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
         return set()
-    from app.utils.futures_chart_series import layer_tiers
+    from app.utils.futures_chart_series import (
+        MAX_CLAIM_RADIUS_SECONDS,
+        claim_radius_seconds,
+        finest_declared_resolution_seconds,
+        layer_tiers,
+    )
 
     captures = sorted({ts for ts in capture_times if ts is not None})
     # The values are irrelevant to the claim; the instants are what is layered.
-    merged = layer_tiers([[(ts, 0.0) for ts in captures], [(ts, 0.0) for ts in venue]])
+    venue_tier = [(ts, 0.0) for ts in venue]
+    declared = finest_declared_resolution_seconds(venue_tiers)
+    if declared is not None:
+        # NARROWS ONLY. The declared grain of the COARSE tiers is enormous — a
+        # daily candle halves to twelve hours — and this cap governs what OUR
+        # captures may claim, so an unclamped declaration would hand the tier of
+        # last resort a twelve-hour veto and re-open the staleness
+        # `MAX_CLAIM_RADIUS_SECONDS` exists to stop. The declaration may make the
+        # claim finer than the default; it may never make it coarser.
+        cap_s = min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
+    else:
+        cap_s = claim_radius_seconds(venue_tier)
+    merged = layer_tiers(
+        [[(ts, 0.0) for ts in captures], venue_tier],
+        cap_s=cap_s,
+    )
     capture_set = set(captures)
     return {ts for ts, _ in merged if ts not in capture_set}
+
+
+#: How much coarser than the venue's fine tier our own captures must be spaced
+#: before a chart that already clears the thin gate is worth one venue request.
+#:
+#: DERIVED, NOT PICKED. The tier a fill would fetch is ONE MINUTE
+#: (`futures_chart_series.KALSHI_FINE_INTERVAL`), so an order of magnitude
+#: coarser than that is a series the fetch can visibly improve. Ten minutes
+#: therefore. What that admits and refuses, on the two cadences this codebase
+#: actually writes: our hourly captures sit at 60× the fine interval and are
+#: firmly IN; a live-polled market's 2-minute captures sit at 2× and are firmly
+#: OUT, so the markets whose lines our own polls already draw honestly never
+#: spend a venue request on getting denser.
+COARSE_CAPTURE_MULTIPLE = 10
+
+#: How much of the reader's window the fine tier must be able to cover before
+#: coarseness is worth acting on.
+#:
+#: The fine tier reaches `FINE_TIER_HOURS` back and no further, so on a long
+#: window a fill improves only the newest sliver of a line the reader sees
+#: compacted to ~80 points — real cost, invisible benefit. At half the window or
+#: better, most of what is on screen improves. This is what keeps the trigger off
+#: the long bands: 1D (24h) and 1W (168h) qualify against a 144h fine tier, 1M
+#: (720h) and ALL do not.
+COARSE_TRIGGER_MIN_WINDOW_COVERAGE = 0.5
+
+
+def captures_are_coarse(
+    capture_times_by_line: Iterable[Sequence[datetime]],
+    *,
+    window_hours: float | None,
+    fine_tier_hours: float | None = None,
+) -> bool:
+    """Is this chart DENSE BUT COARSE — the state the thin gate cannot see?
+
+    `plan_on_demand_fill`'s `chart_is_thin` asks how MANY points a window holds,
+    and refuses a fill when there are plenty. #7547 is the measurement showing
+    that count and resolution are different questions: `futures_markets` 40533
+    served ten of ten outcomes at 97 points each across a week — comfortably past
+    the thin gate — with 0–2 one-cent moves and four lines dead flat, because
+    every one of those points was an HOURLY capture of a market the venue had
+    published 643 one-cent moves on. A chart can be full and still be wrong about
+    the week, and a gate that counts rows can never tell.
+
+    So this asks the other question: are our own captures spaced coarsely enough
+    that the fine tier would say something they cannot? Two bounds, both of which
+    have to hold, because widening what a fill can SEE is widening outbound venue
+    traffic on a public GET:
+
+      * the DENSEST line's median gap is at least `COARSE_CAPTURE_MULTIPLE` ×
+        the fine interval. Densest — the smallest median gap — and not the
+        average, because one abandoned outcome must not make a well-captured
+        market look coarse. Median and not the mean, because a single overnight
+        hole would otherwise speak for a line sampled every minute around it;
+      * the fine tier can cover at least `COARSE_TRIGGER_MIN_WINDOW_COVERAGE` of
+        the window that was asked for.
+
+    🪤 PER LINE, NEVER POOLED. Ten outcomes captured once an hour produce a
+    MERGED stream with a six-minute median gap, which reads as fine data and is
+    not: it is ten coarse lines. That is the same row-versus-line confusion the
+    thin gate's own comment warns about at the call site, and pooling here would
+    reproduce it exactly — with the failure pointing the safe way for the venue
+    and the wrong way for the reader, so nothing would ever look broken.
+
+    :param capture_times_by_line: one sequence of capture instants PER OUTCOME.
+    :param window_hours: the window the reader asked for.
+    :param fine_tier_hours: reach of the fine tier; defaults to the shipped one.
+    """
+    if not window_hours or window_hours <= 0:
+        return False
+
+    from app.utils.futures_chart_series import (
+        FINE_TIER_HOURS,
+        KALSHI_FINE_INTERVAL,
+    )
+
+    reach = FINE_TIER_HOURS if fine_tier_hours is None else fine_tier_hours
+    if not reach or reach <= 0:
+        return False
+    if (reach / window_hours) < COARSE_TRIGGER_MIN_WINDOW_COVERAGE:
+        return False
+
+    coarse_at = KALSHI_FINE_INTERVAL * 60 * COARSE_CAPTURE_MULTIPLE
+    densest: Optional[float] = None
+    for times in capture_times_by_line:
+        stamps = sorted({ts for ts in (times or ()) if ts is not None})
+        if len(stamps) < 2:
+            # One point is not a spacing. A line this sparse is the THIN gate's
+            # case, and answering "coarse" for it here would let this predicate
+            # quietly become a second, looser thin gate.
+            continue
+        gaps = sorted(
+            (stamps[i + 1] - stamps[i]).total_seconds() for i in range(len(stamps) - 1)
+        )
+        median = gaps[len(gaps) // 2]
+        if densest is None or median < densest:
+            densest = median
+
+    if densest is None:
+        return False
+    return densest >= coarse_at
 
 
 def as_snapshot_rows(

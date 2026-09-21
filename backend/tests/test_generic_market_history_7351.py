@@ -178,6 +178,196 @@ def test_a_capture_always_stands_and_venue_points_fill_only_unclaimed_instants()
     assert gmh.unclaimed_instants([far], []) == {far}
 
 
+def test_hourly_captures_do_not_swallow_a_minute_resolution_venue_tier():
+    """#7547 — the whole ship, as arithmetic.
+
+    Our real futures cadence, measured on production 2026-09-21 over 150 sampled
+    open Kalshi legs (median gap PER SERIES, then across series): 62.2 min. Half
+    of that caps to 30 min, so before this fix every capture claimed a 60-minute
+    band, consecutive captures tiled with NO GAP, and a minute-resolution venue
+    tier had nowhere to land — `points_served: 0` off a bank we had already paid
+    to build, counted by nothing.
+
+    The venue points here sit 20 and 21 minutes from a capture: comfortably
+    inside the old 30-minute claim, and nowhere near restating it.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    fine = [captures[3] + timedelta(minutes=20), captures[3] + timedelta(minutes=21)]
+
+    assert gmh.unclaimed_instants(fine, captures) == set(fine)
+
+
+def test_a_coarse_venue_tier_still_meets_the_thirty_minute_cap():
+    """The claim is NARROWED to the grain refused, never switched off.
+
+    Same captures as above, but a venue tier of its own hourly candles — so the
+    resolution being refused is 60 min, its half is 30, and a venue point 20 min
+    from a capture IS a restatement and is still refused. Without this, "size the
+    claim by the venue tier" reads as "let everything through", which is a
+    different change that happens to pass the test above.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    restating = captures[3] + timedelta(minutes=20)
+    hourly = [restating] + [captures[3] + timedelta(minutes=60 * i + 20) for i in (1, 2, 3)]
+
+    assert restating not in gmh.unclaimed_instants(hourly, captures)
+
+
+def test_a_quiet_minute_tier_is_not_read_as_a_coarse_one():
+    """#7547, CERT-3258's BLOCK: a sparse fine tier must survive the captures.
+
+    Both venues emit a bucket only for a bucket with something to say, so a
+    1-minute tier on a market that traded twice in two hours REPORTS 124-minute
+    spacing. Measuring the grain off those gaps returns the full 30-minute cap —
+    and the captures, 62 min apart, then tile exactly as they did before the fix
+    and refuse both observations. Two in, zero served, off a bank we paid to
+    build: the same reader-visible failure by a different route.
+
+    The fetch declared its grain (`period_interval=1`), so the grain is known.
+    Both points here sit 20 minutes from a capture — nowhere near restating one.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    # 124 minutes apart: exactly the specimen the BLOCK executed.
+    sparse_minutes = sorted(
+        [captures[3] + timedelta(minutes=20), captures[1] + timedelta(minutes=20)]
+    )
+    labels = ["kalshi_candle_1m"] * len(sparse_minutes)
+
+    # Undeclared, this is the defect — the measurement reads 124-minute spacing.
+    assert gmh.unclaimed_instants(sparse_minutes, captures) == set()
+    # Declared, both real observations reach the reader.
+    assert (
+        gmh.unclaimed_instants(sparse_minutes, captures, venue_tiers=labels)
+        == set(sparse_minutes)
+    )
+
+
+def test_a_declared_minute_tier_still_refuses_a_point_that_restates_a_capture():
+    """The other half of the clause: NARROWER, not switched off.
+
+    A declared 1-minute tier claims ±30 s, so a venue observation 20 SECONDS
+    from one of our captures is still the duplicate this layering exists to
+    refuse. Without this assertion "bind to the declared grain" would pass the
+    test above while meaning "serve everything", which is a different change.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    duplicate = captures[3] + timedelta(seconds=20)
+    genuine = captures[1] + timedelta(minutes=20)
+    points = sorted([duplicate, genuine])
+
+    served = gmh.unclaimed_instants(
+        points, captures, venue_tiers=["kalshi_candle_1m"] * 2
+    )
+
+    assert duplicate not in served
+    assert genuine in served
+
+    # And the claim is HALF the bucket, not a whole one. A reading 45 s away is
+    # in the next bucket and is a second observation, not a restatement; without
+    # the halving the radius would be 60 s and this point would vanish. Pinned
+    # because "bind to the declared grain" is otherwise satisfied by using it
+    # whole, which quietly doubles what a capture may veto.
+    next_bucket = captures[2] + timedelta(seconds=45)
+    assert next_bucket in gmh.unclaimed_instants(
+        sorted([duplicate, next_bucket, genuine]),
+        captures,
+        venue_tiers=["kalshi_candle_1m"] * 3,
+    )
+
+
+def test_a_declared_coarse_tier_never_widens_the_capture_claim():
+    """A declaration may make the claim finer. It may never make it coarser.
+
+    A daily candle declares 1,440 minutes, whose half is TWELVE HOURS. Handed
+    down unclamped that would give our captures — the tier of last resort, which
+    carries the series' fresh right-hand edge — a twelve-hour veto, which is the
+    staleness `MAX_CLAIM_RADIUS_SECONDS` exists to prevent.
+
+    🪤 THE OFFSET IS THE WHOLE TEST. A capture's claim is `min(cap_s, its own
+    half-spacing)`, so dropping the clamp is invisible at any offset below that
+    half-spacing — the first version of this asserted a point 20 min out, which
+    is refused either way, and the mutation that deletes the clamp survived it.
+    With captures 90 min apart the two rules diverge between 30 min (clamped)
+    and 45 min (not), so both arms are asserted inside that window.
+    """
+    captures = [NOW - timedelta(minutes=90 * i) for i in range(6)]
+    restating = captures[3] + timedelta(minutes=20)        # inside 30 min: refused
+    beyond_the_cap = captures[1] + timedelta(minutes=36)   # outside 30, inside 45
+    daily = sorted([restating, beyond_the_cap])
+
+    served = gmh.unclaimed_instants(
+        daily, captures, venue_tiers=["kalshi_candle_1440m"] * 2
+    )
+
+    assert restating not in served
+    assert beyond_the_cap in served
+
+
+def test_an_undeclared_or_unparseable_tier_falls_back_to_measuring():
+    """No declaration is not a declaration of "coarse".
+
+    Old banks predate the label and the fill stamps a bare `kalshi_candle` when a
+    price could not be paired with its book, so the fallback is a live path, not
+    a theoretical one. It must behave exactly as the measured version did.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    fine = sorted([captures[3] + timedelta(minutes=20), captures[3] + timedelta(minutes=21)])
+
+    measured = gmh.unclaimed_instants(fine, captures)
+    for unparseable in ([], ["kalshi_candle", "polymarket_clob"], [None, ""]):
+        assert gmh.unclaimed_instants(fine, captures, venue_tiers=unparseable) == measured
+
+
+def test_the_declared_grain_is_read_by_prefix_not_by_a_trailing_m():
+    """`polymarket_clob_1m_f60` is a SIXTY-minute tier, not a one-minute one.
+
+    That `1m` is Polymarket's named range — one month — and the grain is the
+    `f<n>` fidelity beside it. A regex that takes the first `(\\d+)m` it finds
+    reads this tier as minute-resolution and hands the captures a 30-second
+    claim on a series whose points are an hour apart, which is this whole
+    defect inverted. Kalshi's label is the one where the trailing `m` IS minutes.
+    """
+    from app.utils.futures_chart_series import (
+        declared_resolution_seconds,
+        finest_declared_resolution_seconds,
+    )
+
+    assert declared_resolution_seconds("polymarket_clob_1m_f60") == 3600.0
+    assert declared_resolution_seconds("polymarket_clob_144h_f1") == 60.0
+    assert declared_resolution_seconds("polymarket_clob_max_f720") == 720 * 60.0
+    assert declared_resolution_seconds("kalshi_candle_1m") == 60.0
+    assert declared_resolution_seconds("kalshi_candle_1440m") == 1440 * 60.0
+    # No declaration, and a zero is not one either.
+    for unstated in (None, "", "kalshi_candle", "polymarket_clob", "kalshi_candle_0m"):
+        assert declared_resolution_seconds(unstated) is None
+
+    # A bank holds the layered output of several calls; the FINEST governs, or
+    # the presence of one daily point would widen the claim refusing a minute.
+    assert finest_declared_resolution_seconds(
+        ["kalshi_candle_1440m", "kalshi_candle_1m", "kalshi_candle_60m"]
+    ) == 60.0
+    assert finest_declared_resolution_seconds(["kalshi_candle", None]) is None
+
+
+def test_layer_tiers_cap_s_binds_every_tier_not_just_the_first():
+    """`cap_s` is the override the caller above depends on.
+
+    A coarse first tier claims 30 min by default and swallows the second tier's
+    point 10 min away; handed a 60-second cap it claims 60 s and the point
+    stands. Asserted on `layer_tiers` directly so the knob cannot be quietly
+    dropped from the signature while `unclaimed_instants` keeps compiling.
+    """
+    from app.utils.futures_chart_series import layer_tiers
+
+    # Ascending — `layer_tiers` requires each tier sorted and does not sort for
+    # you (`unclaimed_instants` sorts before calling it).
+    coarse = [(NOW - timedelta(minutes=120 * i), 0.5) for i in reversed(range(4))]
+    near = (coarse[1][0] + timedelta(minutes=10), 0.9)
+
+    assert near[0] not in {ts for ts, _ in layer_tiers([coarse, [near]])}
+    assert near[0] in {ts for ts, _ in layer_tiers([coarse, [near]], cap_s=60)}
+
+
 def test_last_good_points_survive_a_venue_that_answers_with_less():
     old = [gmh.VenuePoint(NOW - timedelta(hours=h), 0.2) for h in (30, 20, 10)]
     fresh = [gmh.VenuePoint(NOW - timedelta(hours=10), 0.25), gmh.VenuePoint(NOW - timedelta(hours=1), 0.3)]
@@ -207,6 +397,10 @@ class _Redis:
 
     def incr(self, key):
         self.kv[key] = int(self.kv.get(key, 0)) + 1
+        return self.kv[key]
+
+    def decr(self, key):
+        self.kv[key] = int(self.kv.get(key, 0)) - 1
         return self.kv[key]
 
     def expire(self, key, seconds):

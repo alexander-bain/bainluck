@@ -81,9 +81,32 @@ TICKER = "KXCAPGAINDOWN-26AUG-27JAN01"
 #: requests exactly (asserted in `test_B1`).
 FROZEN_NOW = datetime.fromtimestamp(1789875752, tz=timezone.utc)  # 2026-09-20T03:42:32Z
 
-#: The three requests that produced the Kalshi fixture bytes, verbatim.
+from app.utils.futures_chart_series import (  # noqa: E402 — after the skip gate
+    FINE_TIER_HOURS as _FINE_TIER_HOURS,
+    KALSHI_MAX_CANDLES_PER_REQUEST as _KALSHI_BUDGET,
+)
+
+#: The three requests that produced the Kalshi fixture bytes, verbatim — except
+#: the fine tier's `start_ts`, which #7547 moved and which is therefore DERIVED.
+#:
+#: ⚠️ THE FINE BYTES ANSWER A NARROWER ASK THAN THE ONE NOW MADE, AND THAT IS
+#: STATED RATHER THAN HIDDEN. `kalshi-1m-24h.json` is Kalshi's real answer for
+#: `start_ts = end_ts − 24h`, fetched 2026-09-20T03:42:32Z. #7547 widened the fine
+#: tier to `FINE_TIER_HOURS` (144h) because a reader scrubbing 1W was being served
+#: a week drawn from hours, so the fill now asks for six days of minutes and the
+#: saved bytes answer one day of them. Replaying them against the wider ask is
+#: CONSERVATIVE in the only direction that matters — a sub-window of the venue's
+#: real answer can under-serve this file's assertions, never invent a candle — so
+#: every admitted/rejected timestamp below still comes from bytes Kalshi sent.
+#: What it does NOT do is prove the venue serves the extra five days; that is
+#: proved against the venue itself and recorded on #7547, not here.
+#:
+#: Derived from `FINE_TIER_HOURS` rather than written as 1789357352 so the day the
+#: tier moves again this constant moves with it instead of reddening as a literal
+#: nobody can date.
 RECORDED_KALSHI_REQUESTS = [
-    {"period_interval": 1, "start_ts": 1789789352, "end_ts": 1789875752, "file": "kalshi-1m-24h.json"},
+    {"period_interval": 1, "start_ts": 1789875752 - int(_FINE_TIER_HOURS * 3600),
+     "end_ts": 1789875752, "file": "kalshi-1m-24h.json"},
     {"period_interval": 60, "start_ts": 1787197352, "end_ts": 1789875752, "file": "kalshi-60m-31d.json"},
     {"period_interval": 1440, "start_ts": 1787093355, "end_ts": 1789875752, "file": "kalshi-1440m-life.json"},
 ]
@@ -1467,7 +1490,32 @@ def test_C4_an_exclusive_fields_venue_instants_must_answer_for_themselves(venue,
     # The phone's reader plots the RAW scale by ruling (#7284) and may serve them.
     tl = _timeline(FIELD_MARKET_ID)
     assert tl["venue_history"]["points_served"] == 12
-    assert len(venue.provider_requests()) == 3, "four tickers ride ONE batched request per tier"
+
+    # 🔴 WHAT THE WIDENED FINE TIER COSTS AT THE VENUE, DERIVED AND STATED.
+    # Four tickers used to ride ONE batched request per tier — three requests for
+    # the market. Kalshi's candlestick budget is `tickers × periods ≤ 9,000`, and
+    # #7547 took the fine tier from 24h to 144h, so ONE ticker's minute window is
+    # now 8,640 periods and no second ticker fits beside it. The fine tier is
+    # therefore one request per ticker while the hourly and daily tiers still
+    # batch, and a four-outcome field costs six requests instead of three.
+    #
+    # That is the venue's arithmetic, not a regression in the batcher, so it is
+    # asserted as arithmetic: `ticker_batches` is asked how it splits this field,
+    # and the number of requests must equal the number of batches it names. A
+    # literal 6 here would go stale the moment either constant moves, and — worse
+    # — would read as a number someone chose.
+    from collections import Counter
+
+    from app.utils.futures_chart_series import ticker_batches
+
+    fine_periods = int(_FINE_TIER_HOURS * 60)
+    fine_batches = len(ticker_batches(["a", "b", "c", "d"], periods=fine_periods,
+                                      max_candles=_KALSHI_BUDGET))
+    by_interval = Counter(r["period_interval"] for r in venue.provider_requests())
+    assert by_interval == Counter({1: fine_batches, 60: 1, 1440: 1}), (
+        f"{what}: the fine tier splits into {fine_batches} request(s) at "
+        f"{fine_periods} periods per ticker; the coarser tiers still batch"
+    )
 
 
 def test_C4b_an_exclusive_field_with_a_hole_at_the_venue_instant_is_refused(venue, broker):
@@ -1693,10 +1741,26 @@ def test_C8_one_point_stays_one_point_and_an_empty_book_midpoint_is_withheld(ven
     assert [u["reason"] for u in unpriced] == ["no_supported_price_in_candle"]
 
 
-def test_C9_a_dense_market_spends_nothing_and_every_cell_it_served_is_unchanged(venue, broker):
+def test_C9_a_finely_captured_market_spends_nothing_and_every_cell_it_served_is_unchanged(venue, broker):
+    """The fence: a chart our own polls already draw FINELY asks the venue nothing.
+
+    ⚠️ THIS TEST'S FIXTURE MOVED, AND THE REASON IS THE POINT (#7547 / CERT-3252).
+    It used to seed 100 captures NINETY MINUTES apart and call that dense. Dense
+    it is — five times the thin gate's threshold — but ninety minutes is sixty
+    times the venue's fine interval, so those hundred points cannot carry a
+    market that moves by the minute. Counting rows could not tell the two states
+    apart, and the fill this test asserts we do not spend is exactly the fill
+    such a chart SHOULD spend. That original fixture is not deleted: it is now
+    the specimen of `test_C9b`, where it is the positive case.
+
+    What this fence is really about is the cadence our live poll actually writes
+    — two minutes — so that is what it seeds now. The claim is unchanged and is
+    now true for the right reason: a market we already observe at the venue's own
+    resolution never converts a page view into an outbound venue request.
+    """
     dense_id, oid = 59165500, 219755001
-    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
-                for i in range(100)]
+    captures = [(FROZEN_NOW - timedelta(minutes=2 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(500)]
     _arun(_seed([{"id": dense_id, "source": "kalshi", "external_id": "KXDENSE-26", "name": "Dense market",
                   "outcomes": [{"id": oid, "external_id": "KXDENSE-26-Y", "name": "Yes", "p": 0.40,
                                 "captures": captures}]}]))
@@ -1718,6 +1782,175 @@ def test_C9_a_dense_market_spends_nothing_and_every_cell_it_served_is_unchanged(
     warm_cells = dict(_timeline_points(warm_t))
     assert all(warm_cells[ts] == v for ts, v in _timeline_points(cold_t)), "a captured cell moved"
     assert set(_history_points(cold_h)) <= set(_history_points(warm_h)), "a captured point was displaced"
+
+
+def test_C9b_a_dense_but_coarse_chart_asks_for_fine_history_and_serves_what_comes_back(venue, broker):
+    """#7547 — the state the density fence cannot see, through both real routes.
+
+    C9's original fixture, unchanged: 100 captures ninety minutes apart. That is
+    five times the thin gate's threshold, so `chart_is_thin` is False and the old
+    planner answered `chart_not_thin` — which is why widening the fine retrieval
+    tier from 24h to 144h changed nothing a reader could see. CERT-3252 measured
+    the same shape on production: `/api/futures/40533/history?hours=168` served
+    960 points at `state=cold`, `points_served=0`, `fill=chart_not_thin`, on ten
+    lines whose median capture gap was 3,607 s.
+
+    The assertion is not that a fill was PLANNED. It is that the minute candles
+    the venue answers with reach the served payload — the composition CERT-3252
+    found broken, end to end, through the route a reader actually calls.
+    """
+    coarse_id, oid = 59165501, 219755002
+    ticker = "KXCOARSE-26-Y"
+    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(100)]
+    _arun(_seed([{"id": coarse_id, "source": "kalshi", "external_id": "KXCOARSE-26",
+                  "name": "Coarsely captured market",
+                  "outcomes": [{"id": oid, "external_id": ticker, "name": "Yes", "p": 0.40,
+                                "captures": captures}]}]))
+
+    # Minute candles INSIDE the widened fine tier and outside the old 24h one —
+    # the six-day band this ship exists to reach. Truncated to the minute, which
+    # is the grain the venue's fine tier answers on.
+    def _minutes_ago(minutes: float) -> int:
+        return int((FROZEN_NOW - timedelta(minutes=minutes)).timestamp()) // 60 * 60
+
+    fine_ts = [_minutes_ago(m) for m in (4000, 4001, 4002)]
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {1: {"markets": [{"market_ticker": ticker, "candlesticks": [
+        _candle(ts, "0.30", "0.32") for ts in fine_ts]}]}}
+
+    cold_t, cold_h = _timeline(coarse_id), _history(coarse_id)
+    assert cold_t["venue_history"]["fill"] == "requested", cold_t["venue_history"]
+    assert broker.calls, "a coarse chart planned no fill"
+
+    broker.run_enqueued()
+    warm_h = _history(coarse_id)
+    gained = sorted(set(_history_points(warm_h, oid)) - set(_history_points(cold_h, oid)))
+    assert gained == sorted((_iso(ts), 0.31) for ts in fine_ts), gained
+
+    # The venue was asked at the FINE interval, over a window wider than the 24h
+    # the tier used to stop at — the retrieval half of this ship, stated on the
+    # recorded request rather than inferred from the points that came back.
+    fine_calls = [r for r in venue.requests if r["venue"] == "kalshi" and r["period_interval"] == 1]
+    assert fine_calls, "the fine tier was never requested"
+    assert max(c["end_ts"] - c["start_ts"] for c in fine_calls) > 24 * 3600
+
+    # And the fence still holds for the market next door: captures are never
+    # displaced by the venue points that arrive.
+    assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
+
+
+def test_C9d_a_quiet_minute_tier_survives_our_captures_and_a_restatement_does_not(venue, broker):
+    """🔴 CERT-3258's finding, replayed through the real routes.
+
+    C9b's candles are three CONSECUTIVE minutes, so the layering could measure
+    the venue's grain off its own gaps and get the right answer by luck. This is
+    the case where measuring cannot: **Kalshi emits a candle only for a minute
+    with something to say**, so a quiet market's 1-minute tier reports 124-minute
+    spacing, a measured claim radius comes back capped at the full 30 minutes,
+    and our 62-minute captures — the production median, `p25` 60.1 / `p75` 120.2
+    over 150 sampled open legs — tile straight over every one of them. Two real
+    observations in, zero served, off a bank the reader already paid to build.
+
+    The fetch DECLARED its grain (`period_interval=1`), so the grain is known and
+    is not inferred. What this file adds over the unit guards in
+    `tests/test_generic_market_history_7351.py` is the seam they cannot reach:
+    that the tier label survives the fill, the compaction and the bank, and is
+    still on the point when the reader lays the tiers over each other. Bind the
+    cap to the declared resolution and forget to carry the label, and every unit
+    guard stays green while the reader is served exactly nothing.
+
+    The third candle restates a capture to the second, and must NOT be served:
+    "narrower" is the claim, not "switched off".
+    """
+    quiet_id, oid = 59165502, 219755003
+    ticker = "KXQUIET-26-Y"
+    # :32 in `FROZEN_NOW`, so the captures land on an exact minute boundary and
+    # the restating candle below can be a true zero-second duplicate rather than
+    # one that merely rounds to within the claim.
+    captures = [
+        (FROZEN_NOW - timedelta(minutes=62 * i, seconds=32), round(0.40 + 0.001 * (i % 7), 4))
+        for i in range(40)
+    ]
+    _arun(_seed([{"id": quiet_id, "source": "kalshi", "external_id": "KXQUIET-26",
+                  "name": "Quietly traded market",
+                  "outcomes": [{"id": oid, "external_id": ticker, "name": "Yes", "p": 0.40,
+                                "captures": captures}]}]))
+
+    def _at(capture_index: int, *, plus_minutes: int) -> int:
+        stamp = captures[capture_index][0] + timedelta(minutes=plus_minutes)
+        return int(stamp.timestamp()) // 60 * 60
+
+    # Two genuine observations 124 minutes apart, each 20 minutes from one of our
+    # captures: far inside the measured 30-minute claim, nowhere near restating.
+    genuine = [_at(32, plus_minutes=20), _at(30, plus_minutes=20)]
+    assert genuine[1] - genuine[0] == 124 * 60
+    # And one that IS a restatement — the same instant as a capture.
+    restating = _at(20, plus_minutes=0)
+
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {1: {"markets": [{"market_ticker": ticker, "candlesticks": [
+        _candle(ts, "0.30", "0.32") for ts in sorted(genuine + [restating])]}]}}
+
+    cold_h = _history(quiet_id)
+    assert _history(quiet_id) and broker.calls, "a coarse chart planned no fill"
+
+    broker.run_enqueued()
+    warm_h = _history(quiet_id)
+    gained = sorted(set(_history_points(warm_h, oid)) - set(_history_points(cold_h, oid)))
+
+    assert gained == sorted((_iso(ts), 0.31) for ts in genuine), gained
+    assert (_iso(restating), 0.31) not in set(_history_points(warm_h, oid))
+    # A capture is never displaced, whatever the grain of what arrives.
+    assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
+
+
+def test_C9c_refused_coarse_reads_cannot_spend_the_thin_reserve_on_one_real_redis(venue, broker):
+    """🔴 CERT-3255's finding, replayed on a REAL Redis through the real routes.
+
+    The reserve was two caps over one counter, advanced before the cap was
+    consulted, so a coarse read that was REFUSED — no claim kept, no dispatch, no
+    venue request — had still spent a unit of the hour finding that out. The
+    graded sequence: the coarse share is gone, twenty more coarse readers arrive
+    and are turned away, and then an EMPTY chart asks. It was answered
+    `hourly_cap` at a counter of 61, having been starved entirely by refusals.
+
+    It takes a shared Redis across requests to see: every counter here is read
+    from the same instance the app writes, and the twenty refusals are twenty
+    real HTTP reads of the same route a crawler would walk. A per-assertion
+    double cannot express the depletion, because the depletion IS the crossing.
+    """
+    from app.tasks.generic_market_history_fill import COARSE_FILL_CAP
+    from app.utils.generic_market_history import budget_key, coarse_budget_key
+
+    hour = FROZEN_NOW.strftime("%Y%m%d%H")
+    bkey, ckey = budget_key(hour), coarse_budget_key(hour)
+
+    coarse_id, oid = 59165502, 219755003
+    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(100)]
+    _seed_specimen()
+    _arun(_seed([{"id": coarse_id, "source": "kalshi", "external_id": "KXCOARSE2-26",
+                  "name": "Coarsely captured market, budget", "outcomes": [
+                      {"id": oid, "external_id": "KXCOARSE2-26-Y", "name": "Yes", "p": 0.40,
+                       "captures": captures}]}]))
+
+    # The hour as it stands after forty coarse fills really ran: forty against
+    # coarseness's share, and the same forty against the hour.
+    _redis().set(bkey, COARSE_FILL_CAP)
+    _redis().set(ckey, COARSE_FILL_CAP)
+
+    refusals = [_timeline(coarse_id)["venue_history"]["fill"] for _ in range(20)]
+    assert refusals == ["coarse_hourly_cap"] * 20, refusals
+    assert broker.calls == [], "a refused coarse read dispatched a fill"
+    assert int(_redis().get(bkey)) == COARSE_FILL_CAP, (
+        "twenty refusals did no work and must have cost the hour nothing"
+    )
+    assert int(_redis().get(ckey)) == COARSE_FILL_CAP, "the coarse counter drifted"
+
+    # The empty chart this ship's reserve exists for. It was refused here.
+    assert _timeline()["venue_history"]["fill"] == "requested"
+    assert int(_redis().get(bkey)) == COARSE_FILL_CAP + 1
 
 
 def test_C10_the_concept_envelope_and_its_cache_are_untouched(venue, broker):

@@ -97,9 +97,40 @@ KALSHI_FINE_INTERVAL = 1
 KALSHI_HOURLY_INTERVAL = 60
 KALSHI_COARSE_INTERVAL = 1440
 
-#: The fine tier covers exactly the window the "1D" switch shows. Asking for more
-#: minute data than the switch can display is paying for pixels that do not exist.
-FINE_TIER_HOURS = 24
+#: How far back the 1-minute tier reaches, on BOTH venues.
+#:
+#: This was 24 — "exactly the window the 1D switch shows", on the reasoning that
+#: more minute data than the switch can display is paying for pixels that do not
+#: exist. That reasoning is wrong, and #7547 is the measurement that shows why:
+#: :data:`RANGE_BANDS` gives the 1W band (24–168h) its own 90-point budget, and
+#: :func:`compact_series` spends a budget BY VALUE CHANGE. Finer input therefore
+#: does not buy more points, it changes WHICH 90 survive — measured on
+#: `futures_markets` 40533 (kalshi `KXSB-27-*`, `volume_24h` 3.9M) over a week
+#: containing a full NFL Sunday, through this module's own compactor at the
+#: unchanged budget of 90:
+#:
+#:     hourly feed   75 points kept of 90 allowed    32 moves   total variation 0.46
+#:     minute feed   90 points kept of 90 allowed    87 moves   total variation 1.78
+#:
+#: Same budget, same payload size, 2.7× the real movement, nothing fabricated.
+#: What a reader was served before this: ten of ten outcomes at exactly 97 points
+#: with 0–2 one-cent moves across seven days, four of them dead flat.
+#:
+#: 144h (6 days) rather than the full 168h of the band because 144 is the widest
+#: value inside BOTH venues' measured ceilings while still costing ONE request per
+#: ticker (see :data:`KALSHI_FINE_TIER_MAX_HOURS` and
+#: :data:`CLOB_WINDOW_MAX_HOURS`). The remaining 144–168h of the band is layered
+#: in underneath by the hourly tier — :func:`layer_tiers` is finest-first, so that
+#: seam is neither a gap nor a duplicate.
+FINE_TIER_HOURS = 144
+
+#: 🔴 Polymarket's explicit-window form (`startTs`/`endTs`) is capped by a
+#: DURATION, not a bucket count — measured 2026-09-21 on two tokens: 15 days is
+#: served, 16 days is refused, and 16 days is refused at `fidelity=60` too, where
+#: it is only 384 buckets. So a coarser fidelity cannot buy the wall back:
+#:
+#:     {"error":"invalid filters: 'startTs' and 'endTs' interval is too long"}
+CLOB_WINDOW_MAX_HOURS = 15 * 24  # 360
 
 #: The hourly tier is skipped for a market whose life is shorter than this — the
 #: fine and coarse tiers already overlap it, and a third call buys nothing.
@@ -141,8 +172,71 @@ VENUE_WEIGHTS: dict[str, float] = {
 MAX_CLAIM_RADIUS_SECONDS = 30 * 60
 
 
+#: A banked point's tier label → the grain the venue was ASKED for, in minutes.
+#:
+#: 🔴 **A QUIET MINUTE IS NOT A COARSE ONE (#7547).** :func:`claim_radius_seconds`
+#: measures a tier off the gaps it observes, which is the only thing available
+#: when nobody declared anything — but both venues OMIT a bucket with nothing to
+#: say, so a 1-minute tier that traded twice in two hours reports 124-minute
+#: spacing and is read as coarser than our own captures. It is not coarser; it is
+#: quiet. The fetch named its grain, so the grain is known and does not need to be
+#: inferred: `candle_calls` sends `period_interval` and `clob_calls` sends
+#: `fidelity`, and the fill stamps both onto every point it banks.
+#:
+#: ⚠️ **PARSE BY PREFIX, NEVER BY A TRAILING `m`.** `polymarket_clob_1m_f60`
+#: contains the substring `_1m_` and is a SIXTY-minute tier — that `1m` is
+#: Polymarket's named range ("one month"), not a grain. The grain is always the
+#: `f<n>` fidelity, in minutes. A regex that reads the first `(\d+)m` it finds
+#: calls that tier 1-minute and hands the captures a 30-second claim on a series
+#: whose points are half a day apart.
+_DECLARED_GRAIN_PATTERNS = (
+    # Kalshi: `period_interval` in minutes, stamped by the candle book.
+    re.compile(r"^kalshi_candle_(\d+)m$"),
+    # Polymarket: the CLOB `fidelity`, also in minutes, after the span label.
+    re.compile(r"^polymarket_clob_.+_f(\d+)$"),
+)
+
+
+def declared_resolution_seconds(tier_label: str | None) -> Optional[float]:
+    """The grain the venue was asked for, in seconds, or None if unstated.
+
+    None is a real answer and is not a zero: it means this point carries no
+    declaration (an old bank written before the label existed, or the
+    `kalshi_candle` / `polymarket_clob` fallbacks the fill stamps when a price
+    could not be paired with the book it came from). A caller must then fall back
+    to measuring, because guessing a grain here would be the same inference error
+    in the other direction.
+    """
+    if not tier_label:
+        return None
+    for pattern in _DECLARED_GRAIN_PATTERNS:
+        match = pattern.match(tier_label)
+        if match:
+            minutes = int(match.group(1))
+            return float(minutes * 60) if minutes > 0 else None
+    return None
+
+
+def finest_declared_resolution_seconds(
+    tier_labels: Iterable[str | None],
+) -> Optional[float]:
+    """The finest grain DECLARED across a set of banked points, or None.
+
+    The finest, because a bank holds the layered output of several calls and the
+    reader must not let the presence of a daily point widen the claim that is
+    refusing a minute one. A label nobody declared is skipped rather than treated
+    as coarse; if nothing declares, the answer is None and the caller measures.
+    """
+    declared = [
+        seconds
+        for seconds in (declared_resolution_seconds(label) for label in tier_labels)
+        if seconds is not None
+    ]
+    return min(declared) if declared else None
+
+
 def claim_radius_seconds(
-    points: Sequence[Point], *, cap_s: int = MAX_CLAIM_RADIUS_SECONDS
+    points: Sequence[Point], *, cap_s: float = MAX_CLAIM_RADIUS_SECONDS
 ) -> float:
     """How close another tier's point may come before it is a near-duplicate.
 
@@ -164,12 +258,20 @@ def claim_radius_seconds(
     return min(float(cap_s), max(0.0, median / 2.0))
 
 
-def layer_tiers(tiers: Sequence[Sequence[Point]]) -> list[Point]:
+def layer_tiers(
+    tiers: Sequence[Sequence[Point]], *, cap_s: float = MAX_CLAIM_RADIUS_SECONDS
+) -> list[Point]:
     """Stitch tiers into ONE series, finest first, without gaps or duplicates.
 
     `tiers` is ordered by priority — finest/most-trusted first. A lower-priority
     point is dropped only when a higher-priority tier already has a point within
     that tier's own :func:`claim_radius_seconds`; everywhere else it is kept.
+
+    `cap_s` overrides :data:`MAX_CLAIM_RADIUS_SECONDS` for every tier. A caller
+    passes it when it knows the RESOLUTION BEING REFUSED and the default cap is
+    therefore the wrong yardstick — see :func:`generic_market_history.unclaimed_instants`,
+    where a tier of hourly captures would otherwise claim half an hour either
+    side and leave a minute-resolution venue tier nowhere to land.
 
     🔴 **CLAIMING BY PROXIMITY, NOT BY SPAN, AND THE TEST THAT FORCED IT.** The
     first version of this had each tier claim the closed interval between its
@@ -202,7 +304,7 @@ def layer_tiers(tiers: Sequence[Sequence[Point]]) -> list[Point]:
         pts = list(tier)
         if not pts:
             continue
-        radius = claim_radius_seconds(pts)
+        radius = claim_radius_seconds(pts, cap_s=cap_s)
         kept: list[Point] = []
         for ts, value in pts:
             epoch = ts.timestamp()
@@ -645,12 +747,34 @@ def _thin_by_smallest_move(points: list[Point], target: int) -> list[Point]:
 
 
 class ClobCall(tuple):
-    """One `prices-history` call: ``(interval, fidelity)``."""
+    """One `prices-history` call: ``(interval, fidelity, lookback)``.
+
+    ``lookback`` is None for the NAMED-RANGE form (`interval=1d|1m|max`), which
+    is what the two coarser tiers use. When it is set, the fetcher sends the
+    EXPLICIT-WINDOW form (`startTs`/`endTs`) instead and ``interval`` is carried
+    only as the label the series is tagged with.
+
+    🔴 The two forms are not interchangeable, and the fine tier needs the second
+    one. The CLOB enforces a MINIMUM fidelity per named range, in its own words
+    (measured 2026-09-21, both refusals are 400s):
+
+        interval=1w&fidelity=1 → "minimum 'fidelity' for '1w' range is 5"
+        interval=1m&fidelity=1 → "minimum 'fidelity' for '1m' range is 10"
+
+    and `interval=max&fidelity=1` is worse than a refusal — it is ACCEPTED and
+    silently served at ~600s spacing. So a fine tier reaching past one day cannot
+    be bought by naming a wider range: it answers with points but not with the
+    resolution asked for, which is the module docstring's documented failure mode
+    wearing a second face. `startTs`/`endTs` is not subject to the floor and
+    returns true 60s data (measured: 8,640 pts over 144.0h, p90 gap 64s).
+    """
 
     __slots__ = ()
 
-    def __new__(cls, interval: str, fidelity: int):
-        return super().__new__(cls, (interval, fidelity))
+    def __new__(
+        cls, interval: str, fidelity: int, lookback: Optional[timedelta] = None
+    ):
+        return super().__new__(cls, (interval, fidelity, lookback))
 
     @property
     def interval(self) -> str:
@@ -659,6 +783,10 @@ class ClobCall(tuple):
     @property
     def fidelity(self) -> int:
         return self[1]
+
+    @property
+    def lookback(self) -> Optional[timedelta]:
+        return self[2]
 
 
 class CandleCall(tuple):
@@ -688,8 +816,11 @@ def clob_calls(lifetime_hours: float) -> list[ClobCall]:
 
     Two calls is the floor and, for most markets, the whole plan:
 
-      * ``interval=1d, fidelity=1``   — the last day at 1-minute, which is what
-        the "1D" switch draws and the only tier that can show an in-match swing.
+      * ``startTs=now-FINE_TIER_HOURS, fidelity=1`` — the last six days at
+        1-minute. This is the EXPLICIT-WINDOW form, not `interval=1d`, and the
+        reason is on :class:`ClobCall`: the named ranges enforce a minimum
+        fidelity (5 for `1w`, 10 for `1m`) and `max` silently serves 10-minute
+        buckets, so no named range can carry a week of minutes.
       * ``interval=max, fidelity=720`` — 12-hourly for the market's entire life,
         the ONLY measured way past the ~31-day retention wall (module docstring).
 
@@ -701,7 +832,11 @@ def clob_calls(lifetime_hours: float) -> list[ClobCall]:
 
     Order is priority order for :func:`layer_tiers` — finest first, always.
     """
-    calls = [ClobCall("1d", CLOB_FINE_FIDELITY)]
+    calls = [
+        ClobCall(
+            "1d", CLOB_FINE_FIDELITY, timedelta(hours=min(FINE_TIER_HOURS, CLOB_WINDOW_MAX_HOURS))
+        )
+    ]
     if lifetime_hours >= HOURLY_TIER_MIN_LIFETIME_HOURS:
         calls.append(ClobCall("1m", CLOB_HOURLY_FIDELITY))
     calls.append(ClobCall("max", CLOB_COARSE_FIDELITY))
@@ -747,6 +882,18 @@ def candle_calls(lifetime_hours: float) -> list[CandleCall]:
 #: Sized at 9,000 rather than 10,000 so a period boundary landing one candle
 #: over does not turn the finest tier into a zero.
 KALSHI_MAX_CANDLES_PER_REQUEST = 9000
+
+#: 🔴 The widest the 1-minute tier can reach on Kalshi and still be ONE request
+#: for one ticker. Derived from the budget above rather than written as 150, so
+#: that lowering the budget lowers this with it instead of leaving a constant
+#: that quietly asks for more than the venue will give. A 7-day minute request is
+#: refused in the venue's own words (measured 2026-09-21):
+#:
+#:     {"details":"requested candlesticks across all markets: 10080,
+#:                 max candlesticks: 10000"}
+#:
+#: :data:`FINE_TIER_HOURS` is held under this by `test_fine_tier_fits_both_venues`.
+KALSHI_FINE_TIER_MAX_HOURS = KALSHI_MAX_CANDLES_PER_REQUEST // 60
 
 
 def ticker_batches(

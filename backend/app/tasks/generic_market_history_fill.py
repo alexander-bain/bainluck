@@ -65,6 +65,7 @@ from app.utils.generic_market_history import (
     build_payload,
     cache_key,
     claim_key,
+    coarse_budget_key,
     durable_identity,
     kalshi_contract,
     market_had_bank,
@@ -101,6 +102,28 @@ CLAIM_TTL_SECONDS = 15 * 60
 #: into outbound venue traffic (`event_chart_backfill.ON_DEMAND_HOURLY_CAP`'s
 #: lesson). 60 markets × ≤37 requests is far inside either venue's limits.
 HOURLY_FILL_CAP = 60
+
+#: Ceiling on fills started in one clock hour by a chart that is merely COARSE —
+#: dense enough to clear the thin gate, spaced too far apart to carry the venue's
+#: movement (#7547).
+#:
+#: A SEPARATE CEILING BECAUSE THE TWO POPULATIONS ARE NOT THE SAME SIZE. A thin
+#: chart is rare: it takes a market our polls have barely touched. A coarse one
+#: is the NORM — our futures captures are hourly, so on the 1D and 1W bands most
+#: markets on the site now qualify. Sharing one budget would therefore let coarse
+#: fills spend the whole hour most hours, and the charts that would lose the race
+#: are exactly the empty ones #7351 shipped to repair: the reader with NO line at
+#: all would wait behind readers who already have one. That is the starvation a
+#: cap which is also the recall's limit always produces, so the fix is two caps,
+#: not a bigger one. A third of every hour is unspendable by coarseness.
+#:
+#: IT IS A SHARE OF `HOURLY_FILL_CAP`, NOT AN ADDITION TO IT. Coarse fills are
+#: counted twice — once here and once against the hour — so the total a reader
+#: can send at the venues is still `HOURLY_FILL_CAP`, and what this buys is only
+#: WHO may spend the last twenty. Two independent ceilings would have been the
+#: easier code and would have raised outbound traffic to 100/hour, which is the
+#: thing the hourly cap exists to refuse.
+COARSE_FILL_CAP = HOURLY_FILL_CAP * 2 // 3
 
 #: How old the last ATTEMPT may be before a reader asks again. Under this the
 #: captures cover the difference. Applies to an EMPTY or DEGRADED answer too —
@@ -479,12 +502,41 @@ def next_settled_empty_attempts(last_good: dict | None, payload: dict, *,
     return settled_empty_attempts(last_good) + 1
 
 
+def _take_one(client: Any, key: str, cap: int) -> int | None:
+    """Spend one unit of an hourly budget, or give it straight back.
+
+    Returns the units spent INCLUDING this one, or None when the cap refused it.
+
+    🔴 A REFUSAL COSTS NOTHING, and that is the whole contract. The obvious
+    shape — INCR, compare, and leave the increment where it is — charges every
+    request that ASKS, so a population large enough to be turned away often
+    empties the budget purely by being turned away. #7547 measured it: twenty
+    refused coarse reads walked a shared counter from 40 to 60 and the next thin
+    market was refused at 61, having started no fill at all.
+
+    INCR-then-undo rather than GET-then-INCR because INCR is atomic: two racing
+    callers cannot both be handed the hour's last unit. The undo is the same
+    atomic operation in reverse, so the counter never drifts — a process killed
+    between the two leaves the unit spent until the key expires, which is the
+    safe direction (one fill fewer, never one more).
+    """
+    spent = int(client.incr(key))
+    # Set every time: an INCR whose EXPIRE was lost to a crash would otherwise
+    # cap that hour's key forever.
+    client.expire(key, 7200)
+    if spent > cap:
+        client.decr(key)
+        return None
+    return spent
+
+
 def plan_on_demand_fill(
     market: Any,
     outcomes: Sequence[Any],
     payload: dict | None,
     *,
     chart_is_thin: bool,
+    chart_is_coarse: bool = False,
     now: datetime | None = None,
     rc: Any = None,
 ) -> dict:
@@ -498,13 +550,19 @@ def plan_on_demand_fill(
     🔴 A REDIS FAILURE REFUSES THE CLAIM (fail closed), exactly as
     `event_chart_backfill.claim_on_demand_fill` does and for its reason: with no
     Redis there is no dedupe, and the caller is a public GET.
+
+    `chart_is_coarse` is the SECOND way past the density fence, and it exists
+    because counting points cannot see the state #7547 measured: a chart full of
+    HOURLY captures of a market the venue publishes by the minute. It defaults
+    False, so a caller that does not measure resolution behaves exactly as before.
+    See `generic_market_history.captures_are_coarse` for what it may mean.
     """
     stamp = now or datetime.now(timezone.utc)
     if not market_is_fillable(market, outcomes):
         return {"enqueue": False, "reason": "source_has_no_venue_history"}
     age = payload_age_seconds(payload, now=stamp)
     if age is None:
-        if not chart_is_thin:
+        if not chart_is_thin and not chart_is_coarse:
             # A chart our own polls already draw densely does not spend a venue
             # request to get denser. It is the thin chart this ship is for.
             #
@@ -528,7 +586,11 @@ def plan_on_demand_fill(
             return {"enqueue": False, "reason": "settled_and_already_answered"}
         if age <= REFRESH_AFTER_SECONDS:
             return {"enqueue": False, "reason": "answered_recently"}
-        if not chart_is_thin and not (payload or {}).get("outcomes"):
+        if (
+            not chart_is_thin
+            and not chart_is_coarse
+            and not (payload or {}).get("outcomes")
+        ):
             return {"enqueue": False, "reason": "chart_not_thin"}
 
     try:
@@ -536,12 +598,19 @@ def plan_on_demand_fill(
         key = claim_key(market.id)
         if not client.set(key, stamp.isoformat(), nx=True, ex=CLAIM_TTL_SECONDS):
             return {"enqueue": False, "reason": "already_claimed"}
-        bkey = budget_key(stamp.strftime("%Y%m%d%H"))
-        spent = client.incr(bkey)
-        # Set every time: an INCR whose EXPIRE was lost to a crash would
-        # otherwise cap that hour's key forever.
-        client.expire(bkey, 7200)
-        if spent > HOURLY_FILL_CAP:
+        hour = stamp.strftime("%Y%m%d%H")
+        bkey, ckey = budget_key(hour), coarse_budget_key(hour)
+        # A chart that is thin spends against the full hour; one that is only
+        # coarse must ALSO fit inside coarseness's own share, so an empty chart
+        # is never queued behind a merely-improvable one.
+        if not chart_is_thin:
+            if _take_one(client, ckey, COARSE_FILL_CAP) is None:
+                client.delete(key)
+                return {"enqueue": False, "reason": "coarse_hourly_cap"}
+        if _take_one(client, bkey, HOURLY_FILL_CAP) is None:
+            if not chart_is_thin:
+                # Hand back the coarse unit this request will now never use.
+                client.decr(ckey)
             client.delete(key)
             return {"enqueue": False, "reason": "hourly_cap"}
         return {"enqueue": True, "reason": "claimed"}
@@ -820,10 +889,19 @@ async def build_generic_history(
                 try:
                     for call in clob_calls(lifetime):
                         tier = await fetch_clob_tier(
-                            polymarket_service, contract["token_id"], call, stats=stats
+                            polymarket_service, contract["token_id"], call,
+                            stats=stats, now=now,
                         )
                         for ts, _p in tier:
-                            labels.setdefault(ts, f"polymarket_clob_{call.interval}_f{call.fidelity}")
+                            # The fine tier is an explicit WINDOW, not a named
+                            # range, so labelling it by `call.interval` would
+                            # tag six days of minutes as "1d".
+                            span = (
+                                f"{int(call.lookback.total_seconds() // 3600)}h"
+                                if call.lookback is not None
+                                else call.interval
+                            )
+                            labels.setdefault(ts, f"polymarket_clob_{span}_f{call.fidelity}")
                         tiers.append(tier)
                         await asyncio.sleep(REQUEST_PAUSE_SECONDS)
                 except Exception as exc:  # noqa: BLE001 — one outcome, not the market

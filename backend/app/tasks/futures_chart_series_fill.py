@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Sequence
 
 from app.utils.futures_chart_series import (
+    KALSHI_MAX_CANDLES_PER_REQUEST,
     CandleCall,
     ClobCall,
     Point,
@@ -239,9 +240,16 @@ def claim_on_demand_fill(market_id: int, *, ttl_seconds: int = 900) -> bool:
 
 
 async def fetch_clob_tier(
-    service: Any, token_id: str, call: ClobCall, *, stats: dict
+    service: Any, token_id: str, call: ClobCall, *, stats: dict,
+    now: Optional[datetime] = None,
 ) -> list[Point]:
     """One `prices-history` call, normalised into points.
+
+    A call carrying a ``lookback`` is sent as the EXPLICIT-WINDOW form and every
+    other call by name — see :class:`ClobCall` for why the fine tier cannot use a
+    named range. ``end_ts`` is always now: the venue ignores a past one and
+    answers with a lone anchor point plus the recent window, which a median
+    reads as healthy.
 
     An EMPTY answer is a real answer ("this token holds no series at this
     fidelity") and is recorded as such. A FAILURE is not — `get_prices_history`
@@ -251,10 +259,16 @@ async def fetch_clob_tier(
     """
     from app.services.polymarket_api import PolymarketHistoryUnavailable
 
+    kwargs: dict = {"token_id": token_id, "fidelity": call.fidelity}
+    if call.lookback is not None:
+        end = now or datetime.now(timezone.utc)
+        kwargs["start_ts"] = int((end - call.lookback).timestamp())
+        kwargs["end_ts"] = int(end.timestamp())
+    else:
+        kwargs["interval"] = call.interval
+
     try:
-        history = await service.get_prices_history(
-            token_id=token_id, interval=call.interval, fidelity=call.fidelity
-        )
+        history = await service.get_prices_history(**kwargs)
     except PolymarketHistoryUnavailable as exc:
         stats["fetch_errors"] = stats.get("fetch_errors", 0) + 1
         logger.warning("futures chart series: clob %s/%s failed for %s: %s",
@@ -309,9 +323,18 @@ async def fetch_candle_tier(
     start = now - call.lookback if call.lookback is not None else (
         listed_at or now - timedelta(hours=DEFAULT_LIFETIME_HOURS)
     )
+    # Chunk against the BATCHED budget, not `candle_windows`' own default of
+    # 5,000. That default is `event_chart_backfill`'s single-ticker constant —
+    # half the venue's ceiling, for one market — and carrying it here would split
+    # the 144h fine tier into two 5,000-period windows when one 8,640-period
+    # request is inside the measured 10,000-candle limit. Two windows would
+    # double this tier's request count for every ticker in the field and buy
+    # nothing: `ticker_batches` below already sizes the group from the window, so
+    # a wider window makes the group smaller rather than the request bigger.
     windows = candle_windows(
         int(start.timestamp()), int(now.timestamp()),
         period_minutes=call.period_interval,
+        max_periods=KALSHI_MAX_CANDLES_PER_REQUEST,
     )
     if not windows:
         return {}
