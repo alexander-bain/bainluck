@@ -37,10 +37,30 @@ _SPORTS_BRACKET_RE = re.compile(
     r"wimbledon|french open|us open|australian open)\b",
     re.I,
 )
+# A venue writes its unit glued to the number as often as spaced: "25bps" has no
+# word boundary after the 5, so the trailing `\b` refused the whole match and the
+# label scored NOTHING while "25 bps" scored 25 (#4364). The bound therefore
+# admits ONE extra thing — a basis-point unit sitting directly against the digits
+# — and nothing else.
+#
+# It is deliberately not the general "the number ended" relaxation, which is the
+# obvious fix and is wrong: measured over 12,077 production outcome labels it
+# changed 3,477 of them, because a digit against a letter is far more often an
+# ORDINAL than a unit. "ARI Cardinals wins 2Q by over 7.5 points" stopped scoring
+# 7.5 and started scoring 2 — the quarter number — and the gamer tag "Rad3on"
+# acquired a rung at 3. Same class as #4226 and #3567: a number inside a name.
+#
+# The k/m/b/t suffix carries `(?![a-z])` for the matching reason: in "25bps" the
+# `b` is the head of "bps", not a billions suffix, and consuming it left the
+# bound stranded mid-word.
 _COMPACT_VALUE_RE = re.compile(
-    r"(\$?)\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmbt])?\b",
+    r"(\$?)\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*([kmbt](?![a-z]))?(?:\b|(?=bps\b|bp\b))",
     re.I,
 )
+
+#: A basis-point unit written against its number — the one glued unit #4364
+#: admits, and the only label shape allowed to borrow a comparator below.
+_GLUED_BPS_RE = re.compile(r"\d(?:bps|bp)\b", re.I)
 
 
 def _compact_value_thresholds(label: str) -> list[tuple[float, str, str]]:
@@ -76,7 +96,8 @@ def _clean_text(value: Any) -> str:
 _THRESHOLD_SHAPED_RE = re.compile(
     r"[$%<>+]"                     # $6,000 · 45% · <130m · 9m+
     r"|\d\s*[kmbt]\b"              # 6m · 1.5t
-    r"|\b(?:bps|bp)\b"             # 1 (25 bps)
+    r"|(?<![a-z])(?:bps|bp)\b"     # 1 (25 bps) · 25bps
+
     r"|\b(?:under|over|above|below|at least|at most|more than|less than)\b",
     re.I,
 )
@@ -173,12 +194,99 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
         if value < _MAX_LADDER_SCALE_SPREAD:
             # A bare leading number in a range label inherits the label's suffix.
             value *= _suffix_multiplier(label)
+        if direction == "exact" and _GLUED_BPS_RE.search(label):
+            # `_compact_value_thresholds` is a VALUE parser -- it hardcodes
+            # "exact" and has never read a comparator. That was invisible while
+            # every comparator label fell through to `extract_threshold`, and
+            # #4364's unit fix ended it for exactly one shape: "Hike more than
+            # 25bps" now matches compact and would silently lose its "more
+            # than". Borrow the direction back rather than restate the
+            # comparator vocabulary here -- and borrow it ONLY for the shape
+            # this fix newly admitted, so no label that already parsed changes
+            # its direction. Applied unconditionally it moved 3,399 labels,
+            # reading "$1.00-$1.10T" and "$134-$136" -- bands, whose direction
+            # is "exact" by construction -- as "above".
+            extracted = extract_threshold(label)
+            if extracted and extracted[2] != "exact":
+                direction = extracted[2]
         return value, unit, direction
     extracted = extract_threshold(label)
     if not extracted:
         return None
     value, unit, direction = extracted
     return value * _suffix_multiplier(label), unit, direction
+
+
+# ── SIGNED AXES (#4364) ──
+#
+# "Hike more than 25bps" and "Cut more than 25bps" both parse to +25: the
+# comparator is read, the DIRECTION word is not. Production 2026-09-09 served
+# two such cards on page one (South African Reserve Bank September, Bank of
+# Japan December) as two-rung ladders whose rungs are semantic opposites drawn
+# at one identical coordinate — and with the three middle outcomes ("Hike
+# 25bps", "Cut 25bps", "No change") absent altogether, so the reader got the two
+# LEAST likely outcomes, stacked, and no modal outcome at all.
+#
+# Signing is decided by the SET, never by a label on its own, and that is the
+# whole safety argument. A ladder earns a signed axis only when both directions
+# are represented in it — which is what makes zero an interior point rather than
+# an end. So one-directional ladders are untouched by construction: "Above 52 /
+# Above 58 / Above 67" carries no fall word, a weather ladder of "falls below"
+# rungs carries no rise word, and the 277 band ladders #4226 measured carry no
+# direction word at all. Negating on a per-label token instead — the obvious
+# implementation — would have moved every one of them.
+# The vocabulary is POLICY VERBS, and deliberately excludes the ordinary-English
+# direction words — "up", "down", "rise", "fall", "drop". Measured over every
+# open market (70 sign), those five are load-bearing for NOTHING: removing all of
+# them loses exactly two markets and both are false positives —
+# "Top U.S. Selling Vinyl Album: 2026" and its CD twin, which sign on the single
+# track title "The Rise and Fall of a Midwest Princess" (one label supplying both
+# halves of the gate) alongside "The Fall Off" and "Hurry Up Tomorrow". The
+# load-bearing tokens are `hike`/`cut` (43 markets each) and
+# `increase`/`decrease` (25 each); the rest are unused today and kept because
+# they are unambiguous policy verbs a venue may yet use.
+_LADDER_FALL_RE = re.compile(
+    r"\b(?:cut|cuts|lower|lowers|decrease|decreases|"
+    r"decline|declines|ease|eases)\b",
+    re.I,
+)
+_LADDER_RISE_RE = re.compile(
+    r"\b(?:hike|hikes|raise|raises|increase|increases|climb|climbs)\b",
+    re.I,
+)
+# The interior rung of a signed ladder. On an UNSIGNED ladder "no change" is not
+# a magnitude at all, and "hold" is a team as often as a rate decision — the
+# bidirectional gate is what makes reading these as zero safe.
+#
+# "maintains" is here because the venue writes it: the eight live "Fed decision
+# in <month>" ladders phrase their hold as "Fed maintains rate", not "No change",
+# and that rung is the modal outcome of the card. Read off the live population
+# rather than guessed — a lexicon written from the two markets in the issue would
+# have left those eight without their most likely outcome.
+_LADDER_ZERO_RE = re.compile(
+    r"\b(?:no\s+change|unchanged|no\s+hike|no\s+cut|maintains?|hold|holds)\b",
+    re.I,
+)
+
+#: Flipping a rung to the far side of zero flips what "more than" points at:
+#: "Cut more than 25bps" is not above -25, it is below it.
+_MIRRORED_DIRECTION = {"above": "below", "below": "above"}
+
+#: Reading order within one value, so a tie is resolved by meaning rather than
+#: by the order the venue happened to list its outcomes in. An open-ended bucket
+#: reaching away from zero sorts outside the exact rung it shares a value with.
+_DIRECTION_SORT_RANK = {"below": 0, "exact": 1, "above": 2}
+
+
+def _ladder_axis_is_signed(labels: list[str]) -> bool:
+    """Do these labels describe movement in BOTH directions?
+
+    The trigger for signing, and deliberately a property of the SET: a lone
+    "Cut 25bps" on a ladder of cuts is a magnitude, not a negative number.
+    """
+    return any(_LADDER_FALL_RE.search(label) for label in labels) and any(
+        _LADDER_RISE_RE.search(label) for label in labels
+    )
 
 
 # ── DATE BUCKETS (UX-1052 item 4) ──
@@ -421,14 +529,34 @@ def _threshold_points(
 
     points: list[dict[str, Any]] = []
 
+    # #4364 -- decided once, over the whole set, before any label is scored.
+    signed_axis = _ladder_axis_is_signed(
+        [_clean_text(outcome.get("name")) for outcome in outcomes]
+    )
+
+    zero_points: list[dict[str, Any]] = []
+
     for outcome in outcomes:
         outcome_name = _clean_text(outcome.get("name"))
         # Exactly ONE rung per outcome, on one scale (UX-P005 class b).
         resolved = _outcome_threshold_value(outcome_name)
+        is_zero_rung = False
         if resolved is None:
-            continue
+            # "No change" carries no number, so it is not threshold-shaped and
+            # never was a rung -- yet on a signed axis it is the one rung the
+            # reader most needs, and usually the modal outcome.
+            if not (signed_axis and _LADDER_ZERO_RE.search(outcome_name)):
+                continue
+            resolved = (0.0, "", "exact")
+            is_zero_rung = True
         value, unit, direction = resolved
-        points.append(
+        if signed_axis and _LADDER_FALL_RE.search(outcome_name):
+            # `-0.0` is a real float and it reaches the payload: the live "NYC
+            # population change" ladder opens on "Decrease 0-0.99%", whose
+            # magnitude is 0. Normalise it so no served rung is negative zero.
+            value = -value if value else 0.0
+            direction = _MIRRORED_DIRECTION.get(direction, direction)
+        (zero_points if is_zero_rung else points).append(
             {
                 "source": "outcome",
                 "label": outcome_name,
@@ -443,8 +571,26 @@ def _threshold_points(
             }
         )
 
+    # A zero rung is an ADDITION to a ladder, never a ladder by itself. The live
+    # "US test scores in Math in 2026?" set is the case: "Significant decrease /
+    # No significant difference / Significant increase" signs the axis on its
+    # direction words while carrying no number anywhere, so admitting its middle
+    # label alone would mint a one-rung "ladder" out of a market that has no
+    # magnitudes at all.
+    if points:
+        points.extend(zero_points)
+
     # Monotonic display: a ladder read top-to-bottom must not double back.
-    points.sort(key=lambda p: float(p["value"]))
+    # Two rungs may legitimately share a value (#4226: a band ladder's
+    # open-ended first bucket collides with the bucket above it, and 277
+    # production markets do). Where they do, the open-ended one reads outside
+    # the exact one rather than wherever the venue happened to list it.
+    points.sort(
+        key=lambda p: (
+            float(p["value"]),
+            _DIRECTION_SORT_RANK.get(p.get("direction"), 1),
+        )
+    )
 
     # #4610 — and neither must its PRICES. On a cumulative ladder ("Above 52",
     # "Above 58", "Above 67") each rung is a strict subset of every looser rung,
