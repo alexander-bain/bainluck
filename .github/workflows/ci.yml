@@ -568,6 +568,51 @@ jobs:
             exit 1
           fi
 
+      - name: "#6354 the Browse list serves no answer-less row (real Postgres)"
+        # PILLAR: TRUTH. SHIP: the iPhone Browse tab stops opening on rows that
+        # show a name, a category chip and no number.
+        #
+        # The fix is a WHERE clause, so a session double cannot observe it — a
+        # guard built on one is green before the fix and green after it. The
+        # server is the oracle, and this step is what arms it: the file is
+        # `skipif`-gated on SEARCH_TEST_DATABASE_URL, which this job already
+        # provisions, and every real-Postgres file in this repo is selected by
+        # an explicitly named step. A new one that nobody wires is COLLECTED BY
+        # CI AND EXECUTED BY NOTHING, which reads exactly like a passing gate.
+        #
+        # It also cannot be run on a developer's machine: `Base.metadata` now
+        # carries `uq_container_anchor … NULLS NOT DISTINCT`, which is
+        # PostgreSQL 15+, so `create_all` raises a syntax error on the 14.x
+        # Homebrew default. CI's postgres:15 service is the only place this
+        # executes.
+        #
+        # Three refusals, not one: a skip, a zero count, and a short count.
+        # pytest exits 0 when every test skips AND when it collects nothing, so
+        # the exit code alone cannot tell "8 passed" from "0 collected".
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_faceted_answerless_rows_6354_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/faceted6354.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/faceted6354.txt; then
+            echo "::error::#6354 faceted answerability contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/faceted6354.txt; then
+            echo "::error::#6354 faceted answerability contract collected NOTHING"
+            exit 1
+          fi
+          # 8 in the delivered gate: two strawman guards that prove the harness
+          # can serve a market at all and can serve the DEFECT (without them a
+          # green row proves only that the rig is inert), then the no-rows case,
+          # `total`/`hasMore`, the facet-chip promise, the garbage-named residue,
+          # the NULL-named outcome that must still count, and the equivalence of
+          # the Python formatter and the POSIX gate over one shared name set.
+          PASSED=$(grep -oE "[0-9]+ passed" /tmp/faceted6354.txt | tail -1 | grep -oE "[0-9]+")
+          if [ "${PASSED:-0}" -lt 8 ]; then
+            echo "::error::#6354 expected 8 passing contracts, saw ${PASSED:-0} — a case was lost, not fixed"
+            exit 1
+          fi
+
       - name: Tennis twin sweep write/undo contract (real Postgres)
         # #2878 / CERT-2142. The sweep's whole effect is one jsonb element
         # appended to `events.event_tags`, and its idempotence claim lives

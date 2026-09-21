@@ -206,11 +206,21 @@ class TestTheWiring:
     async def test_build_hub_reads_one_league_payload_per_tour(self, monkeypatch):
         read: list[str] = []
 
+        # 🔴 The id is POSITIONAL, not `hash(sport_key) % 1000`, and that is a fix
+        # rather than a style choice. `merge_league_sections` deduplicates by
+        # market `id`, `hash()` on a `str` is salted per PROCESS, and 1000 buckets
+        # means roughly one CI process in a thousand gave both tours the same id —
+        # the women's card was dropped as a duplicate and this test failed with
+        # `{'tennis_atp winner'} == {'tennis_atp winner', 'tennis_wta winner'}`,
+        # which reads exactly like the merge regression it exists to catch. Seen
+        # once on 2026-09-21 (run 35586742069, shard 3), on a branch whose diff
+        # touches neither the hub nor this file. A fixture's identity must not be
+        # drawn from a source that changes between runs.
         async def _league(*, sport_key, db=None, **kwargs):
             read.append(sport_key)
             return {
                 "sections": {
-                    "futures": [_card(hash(sport_key) % 1000, f"{sport_key} winner")]
+                    "futures": [_card(len(read), f"{sport_key} winner")]
                 }
             }
 

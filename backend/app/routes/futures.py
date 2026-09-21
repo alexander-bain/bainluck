@@ -11,7 +11,7 @@ from statistics import mean, median
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -1169,6 +1169,121 @@ async def _rebuild_futures_categories() -> None:
         _publish_futures_categories(await _build_futures_categories(session))
 
 
+#: A market that holds at least one `futures_outcomes` row (#6354).
+#:
+#: `/faceted` is the iPhone Browse tab's list — `FuturesListViewModel.load()` opens on
+#: `?page=1&per_page=20&sort=soonest` — and it had no outcome gate, so a row we ingested
+#: but never filled arrived as a name, a category chip and no number. Measured on
+#: production 2026-09-15, the app's own query, three sorts x five screens:
+#:
+#:     soonest (THE DEFAULT)   44 / 100 answer-less   (page 1 alone: 12 of 20)
+#:     newest                  10 / 100
+#:     trending                 0 / 100
+#:
+#: 🔴 THE DEFAULT SORT IS THE ONLY ONE THAT SURFACES THEM, and `trending` is clean by
+#: accident rather than by design: it orders on `max(abs(probability_change_24h))
+#: … nulls_last()`, and a market with no outcome rows has no movement, so that sort
+#: fences them out on its way past. `soonest` orders on `resolution_date asc`, which
+#: carries no such property, and the soonest-resolving rows are exactly the churn that
+#: never got outcomes. So the LIST is worse than the CORPUS — 25% of the scope is
+#: answer-less, 44% of the first five screens is — and anyone re-measuring this on
+#: `trending` will read a clean 0% and conclude there is nothing here.
+#:
+#: 🔴 IT ASKS FOR A *DRAWABLE* ROW, NOT MERELY A ROW. The formatter below counts outcomes
+#: AFTER `_GARBAGE_OUTCOME_RE`, so a gate on bare row existence would let a market whose
+#: every row is named `player AB` through and it would still serve `outcome_count: 0` —
+#: the same blank card by a different road. Measured on this population, same filter, same
+#: day, that residue is currently EMPTY:
+#:
+#:     in scope                                     24,888
+#:     no outcome rows at all                        6,259  (841 of them tier 1-2)
+#:     rows present but every one garbage-named          0
+#:
+#: An empty set is a reason to keep a gate honest, not a reason to leave a hole in it: the
+#: predicate mirrors the formatter so the two agree BY CONSTRUCTION, and the contract a
+#: guard asserts is the true one — every row this route serves has `outcome_count > 0`.
+#:
+#: The mirror is behavioural, not textual, and a real-Postgres test grades it by running
+#: both engines over the same names. Two places they would otherwise diverge:
+#:
+#:   * `re.match` anchors only at the start, so `_GARBAGE_OUTCOME_RE`'s own trailing `$`
+#:     is what makes it a full match; POSIX `~*` is unanchored and needs both anchors
+#:     written out.
+#:   * **A NULL name is a REAL outcome to the formatter** (`o.name or ""` makes it `""`,
+#:     which the regex does not match) and would be a NULL — hence not-true, hence
+#:     EXCLUDED — to a bare `!~*`. Hence the `IS NULL` arm.
+#:
+#:     🔴 It is DEFENCE, not a live path, and the first version of this comment said
+#:     otherwise. `futures_outcomes.name` is `NOT NULL` — in the model and on production,
+#:     where `information_schema` reads `is_nullable = NO` and there are 0 NULL names in
+#:     ~1.1M rows — so no reachable row exercises this arm today. It stays because it
+#:     costs nothing, fails safe, and is what the predicate would need the day the column
+#:     becomes nullable; `test_the_is_null_arm_is_defence_and_the_schema_says_so` asserts
+#:     that day has not come and fails loudly when it does.
+#:
+#:   * **`$` IS NOT `$`.** Python's `$` matches at the end of the string OR immediately
+#:     before a single trailing newline; POSIX `$` matches only at the end. So
+#:     `"player AB\n"` is GARBAGE to the formatter (`outcome_count: 0`) and NOT garbage
+#:     to a bare `…{1,3}$` gate — the market passes the gate and still serves a blank
+#:     row, which is precisely the defect this predicate exists to remove, reintroduced
+#:     by the gate meant to close it. The trailing `\n?` is what mirrors Python's `$`; it
+#:     must not become a whitespace class, which would swallow a trailing space that
+#:     Python's `$` rejects and start hiding real rows.
+#:
+#:   * **`\s` IS NOT `[[:space:]]`, AND WHETHER IT IS DEPENDS ON THE SERVER.** Python's
+#:     `\s` on a `str` is Unicode and fixed: 29 characters, exactly `str.isspace()`.
+#:     `[[:space:]]` is the server's, and it is decided by the database's ctype — so the
+#:     two agree on one machine and disagree on the next, which is the worst shape a
+#:     predicate can have. MEASURED, both engines, same names: on PostgreSQL 14 at
+#:     `en_US.UTF-8` the old `[[:space:]]` form diverged on `\x85` (NEL) and `\x1c` (file
+#:     separator); on CI's server it diverged on `\xa0` (NBSP) as well. Each divergence is
+#:     the same defect as the newline one — garbage to the formatter, answerable to the
+#:     gate, blank row served.
+#:
+#:     So the class is no longer asked of the server. It is WRITTEN OUT from Python's own
+#:     set below, which makes the two engines agree BY CONSTRUCTION rather than by a
+#:     measurement that was only ever true of the machine it was taken on. It also closes
+#:     the mirror-image hole nobody had looked for: a locale whose `[[:space:]]` is WIDER
+#:     than `\s` would make the gate stricter than the formatter and start hiding rows
+#:     that do have a visible outcome.
+#:
+#: It goes in `conditions` — the list shared by the count query, the data query and the
+#: facet counts — deliberately, and NOT as a filter over `formatted`. Filtering after the
+#: `LIMIT` would hand the app short pages, a `total` that disagrees with what it can
+#: actually scroll to, and facet chips that promise more than the list holds.
+
+#: Every character Python's `\s` matches on a `str`, written out so the SQL mirror does
+#: not have to ask the server what whitespace is. Hardcoded rather than derived, because
+#: deriving it means scanning 1.1M code points at import; `test_the_written_out_space_
+#: class_is_exactly_pythons` does that scan instead and fails if a Python upgrade ever
+#: adds one. Ordered by code point. No character here is `]`, `^`, `-` or `\`, so every
+#: one is literal inside the bracket expression and none needs escaping.
+_PYTHON_SPACE_CHARS = (
+    "\t\n\v\f\r"  # HT LF VT FF CR
+    "\x1c\x1d\x1e\x1f"  # the four ASCII separators — NOT in POSIX `[[:space:]]`
+    " "  # SPACE
+    "\x85"  # NEL — diverged on PostgreSQL 14 / en_US.UTF-8
+    "\xa0"  # NBSP — diverged on CI's server
+    " "  # OGHAM SPACE MARK
+    "           "  # EN QUAD…HAIR
+    "  "  # LINE / PARAGRAPH SEPARATOR
+    "  "  # NARROW NBSP, MEDIUM MATHEMATICAL SPACE
+    "　"  # IDEOGRAPHIC SPACE
+)
+
+_GARBAGE_OUTCOME_SQL = "^player[" + _PYTHON_SPACE_CHARS + "]+[A-Za-z]{1,3}\\n?$"
+
+_HAS_ANY_OUTCOME_ROW = exists().where(
+    and_(
+        FuturesOutcome.market_id == FuturesMarket.id,
+        or_(
+            FuturesOutcome.name.is_(None),
+            ~FuturesOutcome.name.op("~*")(_GARBAGE_OUTCOME_SQL),
+        ),
+    )
+)
+
+
 @router.get("/faceted")
 async def faceted_futures_search(
     tags: Optional[str] = Query(None, description="JSON array of tags"),
@@ -1203,7 +1318,7 @@ async def faceted_futures_search(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    # Base conditions — open, non-game-level, unresolved
+    # Base conditions — open, non-game-level, unresolved, ANSWERABLE
     now = datetime.now(timezone.utc)
     conditions = [
         FuturesMarket.status == "open",
@@ -1212,6 +1327,7 @@ async def faceted_futures_search(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
+        _HAS_ANY_OUTCOME_ROW,
     ]
 
     if category:
@@ -1355,13 +1471,24 @@ async def faceted_futures_search(
         })
 
     # Facet counts
+    # #6354: the same answerability gate as `conditions` above, in SQL because this half
+    # is raw. A facet chip is a PROMISE ABOUT THE LIST — tapping "Tennis (812)" must not
+    # land on 400 rows — so the counter and the thing it counts share one definition. The
+    # two are written separately (ORM there, text here) and drift silently if only one
+    # moves, which is why a guard test asserts a tag's facet count equals the `total` of
+    # the request filtered to that tag.
     facet_sql = """
         SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
         FROM futures_markets, jsonb_array_elements_text(market_tags) AS tag
         WHERE status = 'open' AND event_id IS NULL
           AND (resolution_date IS NULL OR resolution_date >= :now)
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = futures_markets.id
+                AND (fo.name IS NULL OR fo.name !~* :garbage_outcome)
+          )
     """
-    facet_params: dict = {"now": now}
+    facet_params: dict = {"now": now, "garbage_outcome": _GARBAGE_OUTCOME_SQL}
     if category:
         facet_sql += " AND llm_sport_category = :category"
         facet_params["category"] = category
