@@ -993,7 +993,15 @@ class ESPNAPIService:
         """Extract home/away scores and period scores from the summary header.
 
         Returns ``{"home_score": int, "away_score": int,
-        "home_period_scores": [int, ...], "away_period_scores": [int, ...]}``.
+        "home_period_scores": [int | None, ...],
+        "away_period_scores": [int | None, ...]}``.
+
+        A null/unparseable linescore entry is a HOLE (``None``), never a zero
+        and never an exception (#1926: ESPN serves null linescores on
+        completed games). Every downstream reader refuses a window containing
+        a non-int, so ``None`` keeps the period COUNT right (inning/quarter
+        alignment) while withholding verdicts; a stored 0 would publish
+        results off numbers nobody reported.
         """
         header = data.get("header", {})
         competitions = header.get("competitions", [])
@@ -1018,11 +1026,18 @@ class ESPNAPIService:
                 score = None
 
             period_scores = []
-            for ls in comp.get("linescores", []):
+            for ls in comp.get("linescores", []) or []:
+                if not isinstance(ls, dict):
+                    period_scores.append(None)
+                    continue
+                raw = ls.get("displayValue")
+                if raw is None or (isinstance(raw, str) and not raw.strip()):
+                    period_scores.append(None)
+                    continue
                 try:
-                    period_scores.append(int(ls.get("displayValue", 0)))
+                    period_scores.append(int(raw))
                 except (ValueError, TypeError):
-                    period_scores.append(0)
+                    period_scores.append(None)
 
             if comp.get("homeAway") == "home":
                 result["home_score"] = score

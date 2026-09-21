@@ -777,3 +777,140 @@ class TestParseHeaderPeriodScores:
 
     def test_no_competitions_returns_empty(self, client):
         assert client._parse_header_scores({"header": {"competitions": []}}) == {}
+
+    def test_null_linescore_entries_are_holes_not_a_crash_1926(self, client):
+        # ESPN serves null linescore entries on completed games (issue body:
+        # "PIT linescores: [None x8]"). The old code raised AttributeError,
+        # which the backfill swallowed as stats["errors"] with NO box-score
+        # write at all — players, scoring plays and the final-score
+        # correction were lost with the periods.
+        data = {
+            "header": {
+                "competitions": [{
+                    "competitors": [
+                        {"homeAway": "home", "score": "4", "linescores": [None] * 8},
+                        {"homeAway": "away", "score": "3", "linescores": [None] * 9},
+                    ]
+                }]
+            }
+        }
+        out = client._parse_header_scores(data)
+        assert out["home_period_scores"] == [None] * 8
+        assert out["away_period_scores"] == [None] * 9
+        # Count preserved (inning alignment), finals intact.
+        assert out["home_score"] == 4
+        assert out["away_score"] == 3
+
+    def test_null_display_values_are_holes_not_zeros_1926(self, client):
+        # A null value coerced to 0 would publish verdicts off numbers nobody
+        # reported (e.g. every "Over" in that game grading a fabricated 0).
+        data = {
+            "header": {
+                "competitions": [{
+                    "competitors": [
+                        {"homeAway": "home", "score": "4",
+                         "linescores": [{"displayValue": None}] * 8},
+                        {"homeAway": "away", "score": "3",
+                         "linescores": [{"displayValue": "1"}, {"displayValue": None}]},
+                    ]
+                }]
+            }
+        }
+        out = client._parse_header_scores(data)
+        assert out["home_period_scores"] == [None] * 8
+        assert out["away_period_scores"] == [1, None]
+
+    def test_unplayed_inning_marker_is_a_hole_1926(self, client):
+        # ESPN marks an unplayed inning (home 9th, team leading) "x".
+        # Storing it as 0 would be a fabricated scoreless inning.
+        data = {
+            "header": {
+                "competitions": [{
+                    "competitors": [
+                        {"homeAway": "home", "score": "4",
+                         "linescores": [{"displayValue": str(v)}
+                                        for v in [0, 1, 0, 2, 0, 0, 0, 1]]
+                                        + [{"displayValue": "x"}]},
+                        {"homeAway": "away", "score": "3",
+                         "linescores": [{"displayValue": "0"}] * 8},
+                    ]
+                }]
+            }
+        }
+        out = client._parse_header_scores(data)
+        assert out["home_period_scores"] == [0, 1, 0, 2, 0, 0, 0, 1, None]
+        assert len(out["home_period_scores"]) == 9
+
+    def test_a_parsed_hole_reaches_the_grader_as_a_refusal_1926(self, client):
+        # THE SEAM, AND WHY IT IS TESTED HERE RATHER THAN ON EITHER SIDE OF IT.
+        #
+        # The three tests above prove the parser emits `None`; the reader suites
+        # prove a grader refuses a window holding one. Neither proves they MEET:
+        # this ship's whole claim is that a hole travels from ESPN's payload to
+        # the grader and comes out as no verdict, and a parser that quietly went
+        # back to zeros would leave both suites green while the page published
+        # "0 runs — hit" off a number nobody reported.
+        #
+        # So this drives the REAL parser into the REAL grader, no fixtures
+        # between them, on BOTH shapes ESPN serves — and they fail the old code
+        # in two different ways, which is why both are here. Null ENTRIES used
+        # to raise, losing the write loudly. Null VALUES used to become zeros
+        # and grade: "Over 4.5 runs" against a fabricated 0–0 returned a
+        # confident `hit=False`, a wrong verdict nothing in the pipeline could
+        # see. The silent arm is the one this ship is really about.
+        from app.utils.period_window_grade import grade_period_window
+
+        def _seam(home_ls, away_ls):
+            out = client._parse_header_scores({
+                "header": {
+                    "competitions": [{
+                        "competitors": [
+                            {"homeAway": "home", "score": "4",
+                             "linescores": home_ls},
+                            {"homeAway": "away", "score": "3",
+                             "linescores": away_ls},
+                        ]
+                    }]
+                }
+            })
+            return grade_period_window(
+                "inning", 1, 5,
+                "Tampa Bay vs Atlanta: First 5 Innings", None,
+                "Over 4.5 runs in the first 5 innings",
+                out["home_period_scores"], out["away_period_scores"],
+                "Atlanta Braves", "Tampa Bay Rays",
+            )
+
+        # The silent arm goes FIRST deliberately. Asserted after the crash arm
+        # it would never execute against the old parser — the AttributeError
+        # ends the test before it — so it would be an unproven line pretending
+        # to be a guard. Ordered this way, reverting the parser fails HERE, on
+        # the false verdict, which is what this test is for.
+        assert _seam([{"displayValue": None}] * 8,
+                     [{"displayValue": None}] * 9) is None
+        # Null entries — the issue's own specimen ("PIT linescores: [None x8]").
+        assert _seam([None] * 8, [None] * 9) is None
+
+        # And the control: the same seam on a healthy line score still grades,
+        # so the refusal above is the hole talking and not a dead path.
+        healthy = client._parse_header_scores({
+            "header": {
+                "competitions": [{
+                    "competitors": [
+                        {"homeAway": "home", "score": "4",
+                         "linescores": [{"displayValue": str(v)}
+                                        for v in [0, 1, 0, 2, 0]]},
+                        {"homeAway": "away", "score": "3",
+                         "linescores": [{"displayValue": str(v)}
+                                        for v in [0, 0, 3, 0, 0]]},
+                    ]
+                }]
+            }
+        })
+        assert grade_period_window(
+            "inning", 1, 5,
+            "Tampa Bay vs Atlanta: First 5 Innings", None,
+            "Over 4.5 runs in the first 5 innings",
+            healthy["home_period_scores"], healthy["away_period_scores"],
+            "Atlanta Braves", "Tampa Bay Rays",
+        ) is not None
