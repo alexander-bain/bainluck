@@ -7,6 +7,7 @@ import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
+import { withoutBoardNamePrefix } from "@/lib/futuresDetailDisplay";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -103,6 +104,23 @@ interface FuturesChartProps {
    *  false, so every existing caller renders exactly as before; a caller that knows
    *  it is settled (SettledPathChart, a resolved futures page) passes it. */
   settled?: boolean;
+  /** #7813: the name of the board whose `<h1>` is on screen above this chart, so a
+   *  series label that merely repeats it can drop the repeat (#6765's rule, applied
+   *  to the legend and the hover tooltip).
+   *
+   *  ⚠️ THIS IS A PAGE RULE, NOT A NAME RULE, and that is why it is a prop rather
+   *  than something the chart looks up. On `/futures/[id]` the board's name IS the
+   *  `<h1>`, so `Korea Open: Alevtina Ibragimova vs Yeon-Woo Ku Set 1 Winner` in a
+   *  legend entry wraps to two lines to say `Set 1 Winner`. On an event page the
+   *  board's name is NOT on screen — `WinnerEvolutionChart`, `RaceToTitleChart`,
+   *  `SettledPathChart` and `TwoSidedTimeline` draw a market the page never names —
+   *  and there the prefix is the only thing telling the reader which match the line
+   *  belongs to. The golf hub is the same case. So exactly one of this component's
+   *  eight call sites passes this, the other seven pass nothing, and with it absent
+   *  `seriesLabel` below is the identity function: their markup is byte-identical.
+   *  `__tests__/components/aChartLegendStopsRepeatingTheBoard7813.test.tsx` holds
+   *  both halves — the frozen no-prop legend controls and the call-site census. */
+  marketName?: string | null;
 }
 
 export function FuturesChart({
@@ -126,10 +144,27 @@ export function FuturesChart({
   showCombinedProbability = false,
   allowZoom = false,
   settled = false,
+  marketName,
 }: FuturesChartProps) {
   const effectiveShowLegend = showLegend ?? !mini;
   const effectiveShowAxes = showAxes ?? !mini;
   const palette = greenTheme ? GREEN_COLORS : goldTheme ? GOLD_COLORS : DEFAULT_COLORS;
+
+  // #7813: the label a series prints in the legend and in the hover tooltip.
+  //
+  // The ternary is deliberate rather than leaning on `withoutBoardNamePrefix`'s
+  // own no-board refusal, because that helper TRIMS the name it returns, and a
+  // trim is a change: routed through it unconditionally, the seven call sites
+  // that name no board would render a whitespace-padded series name differently
+  // than they do today. Guarded this way the helper is never reached without a
+  // board and those surfaces return the argument itself.
+  //
+  // The board is trimmed FIRST so the guard and the helper agree on what "no
+  // board" means — `undefined`, `null`, `""` and `"   "` are one case, a page
+  // with no question on screen, and not a board whose name is three spaces.
+  const board = marketName?.trim();
+  const seriesLabel = (name: string): string =>
+    board ? withoutBoardNamePrefix(name, board) : name;
 
   // Filter to selected outcomes, or show top 5 if none selected
   const displayedOutcomes = useMemo(() => {
@@ -347,7 +382,10 @@ export function FuturesChart({
         return best !== null
           ? {
               outcomeId: outcome.outcome_id,
-              name: outcome.name,
+              // #7813: the tooltip is the legend's second printing of the same
+              // labels, in a `max-w-[120px]` span, so a repeated board name
+              // truncates all of a board's series to one indistinguishable string.
+              name: seriesLabel(outcome.name),
               prob: best,
               color: colorFor(outcome, idx),
             }
@@ -870,7 +908,7 @@ export function FuturesChart({
                 className="w-3 h-3 rounded-full"
                 style={{ backgroundColor: colorFor(outcome, idx) }}
               />
-              <span className="text-text-primary">{outcome.name}</span>
+              <span className="text-text-primary">{seriesLabel(outcome.name)}</span>
             </button>
           ))}
         </div>
@@ -886,7 +924,7 @@ export function FuturesChart({
                 className="w-3 h-3 rounded-full flex-shrink-0"
                 style={{ backgroundColor: colorFor(outcome, idx) }}
               />
-              <span className="text-text-primary truncate max-w-[160px]">{outcome.name}</span>
+              <span className="text-text-primary truncate max-w-[160px]">{seriesLabel(outcome.name)}</span>
             </span>
           ))}
         </div>
