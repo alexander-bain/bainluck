@@ -67,6 +67,30 @@ final class CalibrationPublishedCategoryLabelTests7722: XCTestCase {
         "rugbyleague_nrl", "aussierules_afl", "other",
     ]
 
+    // MARK: - 0. The sweeps are about something
+
+    /// 🔴 Both sweeps below iterate a list, and a list can be emptied. Every
+    /// `for … in` assertion in this file passes against an empty population, so
+    /// without this the population itself is the soft spot: delete three strings
+    /// and the guard goes green while the screen goes wrong. Asserted as a count
+    /// and by name, because "non-empty" would still admit the wrong three.
+    func testTheSweptPopulationsAreNotEmptyAndAreAboutTheOffendingRows() {
+        XCTAssertEqual(Self.publishedCategories.count, 21,
+                       "the published set moved — re-measure it before trusting this file")
+        XCTAssertEqual(Self.fallbackCategories.count, 3,
+                       "the uncurated set moved — re-measure it before trusting this file")
+        for key in ["aussierules_afl", "rugbyleague_nrl"] {
+            XCTAssertTrue(Self.publishedCategories.contains(key),
+                          "'\(key)' has left the population this file is about")
+            XCTAssertTrue(Self.fallbackCategories.contains(key),
+                          "'\(key)' is no longer swept as an uncurated row")
+        }
+        for key in Self.fallbackCategories {
+            XCTAssertTrue(Self.publishedCategories.contains(key),
+                          "'\(key)' is swept as a published row and is not one")
+        }
+    }
+
     // MARK: - 1. The defect
 
     func testTheTwoRowsThatPrintedDatabaseKeysNowNameTheirLeague() {
