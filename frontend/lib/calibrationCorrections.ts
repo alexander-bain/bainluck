@@ -71,3 +71,144 @@ export function orderCorrections(
     return 0;
   });
 }
+
+/**
+ * Reader copy for `/calibration`'s **data corrections log** (#7729).
+ *
+ * WHY THIS EXISTS.
+ *
+ * `corrections[9].title` on the live payload is
+ *
+ *     Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)
+ *
+ * and `Queue #186` is our handoff directory's own numbering. It renders, at
+ * 390px, on a public page, in the one slot this card gives a reader — and it
+ * resolves to nothing a reader can open. It is the only one of the thirteen
+ * titles that carries one; the other twelve are clean.
+ *
+ * ── THIS IS #4067 / CERT-2295, ONE FIELD LATER ──────────────────────────────
+ *
+ * That cert named the specimen exactly: *"a notice-33 supplier word inside a
+ * notice-34 method note, quoting our own issue number at a reader."* The repair
+ * moved the render off `description` (the backend's auditor paragraph) and onto
+ * `title`, on the reasoning that the title is the page's copy. The reasoning was
+ * right and the field was not: `title` is written in the same file, by the same
+ * hand, in the same sitting as the paragraph below it, so it inherits the same
+ * prose. Moving one field left was a narrowing, not a fence.
+ *
+ * ── WHY THE PAGE FIXES IT AND NOT THE PRODUCER ──────────────────────────────
+ *
+ * Two reasons, and the second is the load-bearing one.
+ *
+ * `precompute_calibration_main` is a `HEAVY_TASK`, and `bainluck-heavy` runs
+ * behind master (notice 48). The served artifact has been stamped
+ * `2026-09-15T11:16:10Z` for six days (#6868). A one-word edit in the producer
+ * would be correct and invisible for an unbounded time.
+ *
+ * And presentation is the page's, which is the rule this card already lives
+ * under — `NAMED_EXCLUSION_LABELS` next door is a closed map for the same
+ * reason, and `orderCorrections` above took the sort for the same reason: a
+ * rule applied upstream fixes the rows published today and nothing appended
+ * after them.
+ *
+ * ── THE MAP IS CLOSED AND THE STRIP IS A FLOOR, NOT THE FIX ─────────────────
+ *
+ * `CORRECTION_TITLE_OVERRIDES` is keyed on the producer's exact string, so a
+ * title the page has chosen words for is a deliberate, reviewable pair and never
+ * a guess. That is the fix.
+ *
+ * `withheldInternalReference` is the floor under it: a title the map has no
+ * entry for still may not carry a tracker id, so the fragment carrying one is
+ * WITHHELD — dropped, never rewritten (#4113, notice 34: the page may remove its
+ * own words, it may not invent a reader's). A reader loses a fragment that meant
+ * nothing to them and gains no paragraph about the loss.
+ *
+ * The floor is not a licence to skip the map. It cannot produce good copy — run
+ * on the specimen above it yields *"…— corrected discriminator"*, which is still
+ * jargon in the slot the page controls. It exists so that the day the producer
+ * grows a title nobody mapped, the leak is a missing clause rather than a
+ * tracker id on a trust panel. `correctionsNeedingCopy` counts exactly those
+ * rows so the gap travels as a data attribute (notice 34's failing-self-audit
+ * remedy) and the suite can pin it at zero against the producer's own source.
+ */
+export const CORRECTION_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
+  // The producer's own words for what changed: the earlier rule kept any row
+  // that had a live bid behind it, and a snapshot-level verify disproved that —
+  // real-bid rows are corrupt too (a scorer and a non-scorer in one market both
+  // carrying 0.995 with a live 0.99 bid). The test moved to the captured price
+  // itself. `precompute_calibration.py`'s `description` for this entry is the
+  // source; none of its series tickers, issue numbers or column names travel.
+  "Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)":
+    "Player-prop prices (Kalshi): corrected the test for which prices to drop",
+};
+
+/**
+ * Fragments of a title that exist for us, not for a reader.
+ *
+ * A tracker id in any of the shapes this repo actually writes — `Queue #186`,
+ * `#4067`, `CERT-2295`, `L2-74`, `CAL-P114`, `OPS-557`, `q271` — inside a
+ * trailing parenthetical or after an em-dash. Anchored to those two carriers on
+ * purpose: an id in the MIDDLE of a sentence cannot be cut without changing what
+ * the sentence says, so those are left to the map and counted, not mangled.
+ *
+ * Written as one alternation over the id shapes rather than a bare `#\d+` so a
+ * real reader number — a price, a year, a count — is never eaten.
+ */
+// The `\b` on the named prefixes is load-bearing: without it the single-letter
+// arms (`D`, `q`) match mid-word — `3D2`, `Iraq2024` — and the floor would start
+// cutting clauses out of titles that carry no tracker id at all. `#\d{2,}` takes
+// no boundary because `#` is not a word character, so `\b` before it would
+// require a word character IN FRONT of the hash and the common shape (a hash
+// after a space) would stop matching.
+const TRACKER_ID = String.raw`(?:\b(?:Queue|Issue|CERT|OPS|CAL-P|L2|UX-P|D|q)[\s-]?#?\d+|#\d{2,})`;
+const TRAILING_PARENTHETICAL = new RegExp(String.raw`\s*\((?:[^()]*\s)?${TRACKER_ID}[^()]*\)\s*$`);
+const TRAILING_DASH_CLAUSE = new RegExp(String.raw`\s*[—–-]\s*[^—–]*${TRACKER_ID}[^—–]*$`);
+
+/** Does this title still carry something written for our own tracker? */
+export function carriesInternalReference(title: string): boolean {
+  return new RegExp(TRACKER_ID).test(title);
+}
+
+/**
+ * The title with any trailing tracker fragment withheld.
+ *
+ * Returns the title unchanged when the reference is not in a carrier this can
+ * cut cleanly — that row is a `correctionsNeedingCopy`, and the honest answer
+ * is to say so rather than to guess at a cut.
+ */
+export function withheldInternalReference(title: string): string {
+  const cut = title.replace(TRAILING_PARENTHETICAL, "").replace(TRAILING_DASH_CLAUSE, "");
+  const trimmed = cut.trim();
+  return trimmed.length > 0 ? trimmed : title;
+}
+
+/**
+ * What the page prints for one correction: the map's words, else the producer's
+ * title with any trailing tracker fragment withheld.
+ */
+export function correctionTitle(title: string | null | undefined): string {
+  if (!title) return "";
+  const override = CORRECTION_TITLE_OVERRIDES[title];
+  if (override !== undefined) return override;
+  return carriesInternalReference(title) ? withheldInternalReference(title) : title;
+}
+
+/**
+ * Rows whose producer title carries a tracker id and that the map has no words
+ * for — the ones running on the floor rather than on chosen copy.
+ *
+ * Never rendered as prose. Published as a data attribute so the gap is readable
+ * by a probe the day the producer grows a title nobody mapped, the same contract
+ * `NAMED_EXCLUSION_LABELS`'s `unlistedRules` carries next door.
+ */
+export function correctionsNeedingCopy(
+  corrections: readonly CalibrationCorrection[] | null | undefined,
+): number {
+  if (!corrections || !corrections.length) return 0;
+  return corrections.filter(c => {
+    const title = c?.title;
+    if (!title) return false;
+    if (CORRECTION_TITLE_OVERRIDES[title] !== undefined) return false;
+    return carriesInternalReference(title);
+  }).length;
+}
