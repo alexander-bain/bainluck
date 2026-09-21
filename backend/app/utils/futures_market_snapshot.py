@@ -593,8 +593,7 @@ def outcome_prints_a_price(outcome: Any) -> bool:
     """Whether a card rendering this leg would put a NUMBER beside it (#6256).
 
     THE ONE PREDICATE BOTH SIDES OF THE CARD MUST AGREE ON. The futures
-    serializers decide what to print with
-    `float(o.current_probability) if o.current_probability else None`, and
+    serializers decide what to PRINT by calling this function, and
     `displayed_price_stamp` decides what may date the mark. #6256 is what
     happens when those two disagree: the Premier Lacrosse League Championship
     card printed two probabilities observed 41 minutes earlier, a third row
@@ -612,6 +611,15 @@ def outcome_prints_a_price(outcome: Any) -> bool:
     than the serializer, the specimen in #6256 would still date its mark from a
     row showing `—`. When #6195 lands, this predicate and the serializers change
     in one place together — which is the whole reason it is one function.
+
+    #4679 IS NOT THAT CHANGE, AND THE DISTINCTION IS THE POINT. It swept the ten
+    `float(o.current_probability) if o.current_probability else None` reads in
+    `routes/feed.py` to `is not None`, so a 0% rung is now COUNTED — by
+    `incoherent_ladder_verdict`'s `priced_rungs` and by the suppression filters.
+    It deliberately did not touch the two PRINT sites, which call this function,
+    so a 0% leg still renders `—` and still cannot date the mark. What the card
+    counts and what the card prints are now answered in two places on purpose;
+    #6195 is what merges them back.
 
     `__dict__.get`, never `getattr`, for this module's usual reason (gotcha
     #42). The `__slots__` carrier with no instance dict answers `False`, the

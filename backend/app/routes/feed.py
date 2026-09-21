@@ -10363,6 +10363,10 @@ async def _score_sports_mode_futures(
         # all rendering 0% — the "No" is the `_yes`/`_no` leg of ONE of those
         # people's own sub-markets, duplicating a bare rung this market already
         # holds. Dropped before the sort, so it can never win the leader pick.
+        # #4679: this one stays truthy on purpose. It is a SORT KEY, and `0.0`
+        # and `0` sort identically, so the `is not None` sweep that fixed the ten
+        # `else None` reads below would change nothing here. Its twin in
+        # `_score_futures` is the same call for the same reason.
         sorted_outcomes = sorted(
             drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
             key=lambda o: float(o.current_probability) if o.current_probability else 0,
@@ -10382,7 +10386,7 @@ async def _score_sports_mode_futures(
         sorted_outcomes = display_rank_order(
             sorted_outcomes,
             lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability else None,
+            lambda o: float(o.current_probability) if o.current_probability is not None else None,
         )
         # #4610: and neither may a rung whose price contradicts its own ladder.
         # Same insertion point and the same reason as the two filters above —
@@ -10400,13 +10404,13 @@ async def _score_sports_mode_futures(
         ladder_refused = ladder_treatment_collapsed(
             sorted_outcomes,
             lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability else None,
+            lambda o: float(o.current_probability) if o.current_probability is not None else None,
             market.name,
         )
         sorted_outcomes = drop_incoherent_ladder_outcomes(
             sorted_outcomes,
             lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability else None,
+            lambda o: float(o.current_probability) if o.current_probability is not None else None,
             market.name,
         )
         outcomes_data = []
@@ -10416,7 +10420,7 @@ async def _score_sports_mode_futures(
         display_names = _card_display_names(sorted_outcomes[:10])
 
         for o in sorted_outcomes[:10]:
-            prob = float(o.current_probability) if o.current_probability else None
+            prob = float(o.current_probability) if o.current_probability is not None else None
             change = (
                 float(o.probability_change_24h) if o.probability_change_24h else None
             )
@@ -10462,7 +10466,7 @@ async def _score_sports_mode_futures(
         card_outcomes = drop_dominant_field_outcomes(
             sorted_outcomes,
             lambda o: o.name,
-            lambda o: float(o.current_probability) if o.current_probability else None,
+            lambda o: float(o.current_probability) if o.current_probability is not None else None,
         )
         # Queue 283 (#1487): ONE display-probability basis, shared by the
         # mini-list, distribution, and headline/context leader copy. Sports mode
@@ -11847,6 +11851,8 @@ async def _score_futures(
             # Q480: one condition, one outcome — see the sibling call in the card
             # builder. This is the SCORING half of the same market, so the leg must
             # go here too or the card and its score disagree about what is on it.
+            # #4679: sort key — see the sibling in the sports-mode serializer.
+            # Truthy is correct here and only here.
             sorted_outcomes = sorted(
                 drop_duplicate_legs(market.outcomes, lambda o: o.external_id),
                 key=lambda o: float(o.current_probability) if o.current_probability else 0,
@@ -11924,7 +11930,7 @@ async def _score_futures(
                 sorted_outcomes,
                 lambda o: o.name,
                 lambda o: (
-                    float(o.current_probability) if o.current_probability else None
+                    float(o.current_probability) if o.current_probability is not None else None
                 ),
             )
 
@@ -11937,7 +11943,7 @@ async def _score_futures(
                 sorted_outcomes,
                 lambda o: o.name,
                 lambda o: (
-                    float(o.current_probability) if o.current_probability else None
+                    float(o.current_probability) if o.current_probability is not None else None
                 ),
                 market.name,
             )
@@ -11945,7 +11951,7 @@ async def _score_futures(
                 sorted_outcomes,
                 lambda o: o.name,
                 lambda o: (
-                    float(o.current_probability) if o.current_probability else None
+                    float(o.current_probability) if o.current_probability is not None else None
                 ),
                 market.name,
             )
@@ -11954,7 +11960,7 @@ async def _score_futures(
             display_names = _card_display_names(sorted_outcomes[:10])
 
             for o in sorted_outcomes[:10]:  # Score based on top 10 outcomes
-                prob = float(o.current_probability) if o.current_probability else None
+                prob = float(o.current_probability) if o.current_probability is not None else None
                 change = (
                     float(o.probability_change_24h) if o.probability_change_24h else None
                 )
@@ -12012,7 +12018,7 @@ async def _score_futures(
                 card_outcomes,
                 lambda o: o.name,
                 lambda o: (
-                    float(o.current_probability) if o.current_probability else None
+                    float(o.current_probability) if o.current_probability is not None else None
                 ),
             )
             # Queue 283 (#1487): ONE display-probability basis for this card.
