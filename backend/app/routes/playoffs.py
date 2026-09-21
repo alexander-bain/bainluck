@@ -3605,11 +3605,19 @@ async def _espn_clinch_claims(config) -> dict[str, str]:
     try:
         from app.tasks.redis_state import get_async_redis_client
 
-        rc = await get_async_redis_client()
+        # NOT awaited (#7677). `get_async_redis_client` is a plain `def` that
+        # returns the client; only the client's own calls are coroutines.
+        # Awaiting the factory raised `TypeError` into the `except` below on
+        # every single request, so `rc` was always `None` and this cache never
+        # once engaged — a permanent failure wearing a transient one's clothes.
+        rc = get_async_redis_client()
         cached = await rc.get(cache_key)
         if cached:
             return json.loads(cached)
-    except Exception:
+    except Exception as exc:
+        # Fail open, but never silently: the swallow is what hid #7677 for the
+        # whole life of the feature. The read below still runs.
+        logger.warning("Grid clinch cache read failed for %s: %s", sport_key, exc)
         rc = None
 
     claims: dict[str, str] = {}
@@ -3634,8 +3642,8 @@ async def _espn_clinch_claims(config) -> dict[str, str]:
     if rc is not None:
         try:
             await rc.set(cache_key, json.dumps(claims), ex=_CLINCH_CACHE_TTL)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Grid clinch cache write failed for %s: %s", sport_key, exc)
     return claims
 
 

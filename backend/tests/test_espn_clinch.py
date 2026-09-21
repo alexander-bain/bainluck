@@ -484,7 +484,13 @@ class _FakeRedis:
 def _patch(monkeypatch, espn, redis):
     monkeypatch.setattr("app.services.espn_api.ESPNAPIService", espn.factory())
 
-    async def _client():
+    # A PLAIN `def`, because the real `get_async_redis_client` is a plain `def`
+    # (#7677). This double used to be `async def` — strictly more permissive
+    # than production — so the suite proved something production could not do:
+    # the route awaited the factory, raised `TypeError` into its own fail-open
+    # `except` on every request, and the clinch cache never engaged once. A
+    # double that accepts more than the real thing asserts the wrong contract.
+    def _client():
         return redis
 
     monkeypatch.setattr("app.tasks.redis_state.get_async_redis_client", _client)
@@ -541,3 +547,43 @@ async def test_a_league_with_no_sport_key_makes_no_claim_and_no_call(monkeypatch
 
     assert await _espn_clinch_claims(_Bare()) == {}
     assert espn.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# #7677: the shape of the Redis factory, asserted against the real thing
+# ---------------------------------------------------------------------------
+# The double above is only honest while production's factory really is a plain
+# `def`. If someone makes `get_async_redis_client` a coroutine function, every
+# test above keeps passing (a `def` double satisfies a `def` call site) while
+# the route silently stops caching again — the exact failure #7677 was. So the
+# contract is asserted against the real symbol, not against the double.
+
+
+def test_the_redis_factory_is_not_a_coroutine_function():
+    """`get_async_redis_client` is a plain `def`; the route must not await it.
+
+    It is the CLIENT's methods that are awaitable, not the factory. Awaiting
+    the factory raises `TypeError: object Redis can't be used in 'await'
+    expression`, which a fail-open `except` turns into a cache that is never
+    once populated and never once complained.
+    """
+    import inspect
+
+    from app.tasks.redis_state import get_async_redis_client
+
+    assert inspect.iscoroutinefunction(get_async_redis_client) is False
+
+
+def test_the_route_does_not_await_the_redis_factory():
+    """Read the call site itself: `await get_async_redis_client()` is the bug.
+
+    A behavioural test cannot see this — the `except` swallows it and the
+    function returns the same `{}` either way — so the source is the specimen.
+    """
+    import inspect
+
+    from app.routes import playoffs
+
+    source = inspect.getsource(playoffs._espn_clinch_claims)
+    assert "await get_async_redis_client()" not in source
+    assert "get_async_redis_client()" in source
