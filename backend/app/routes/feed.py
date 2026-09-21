@@ -11868,6 +11868,22 @@ async def _score_futures(
             # above EXPIRED_RUNG_MAX_PROBABILITY already resolved YES — it is
             # the ladder's answer ("In which month will SpaceX IPO?" -> "June"
             # at 99.95%), not a ghost — and stripping it would hide the leader.
+            # #7784: and the observation stamp, because that exemption holds only
+            # for a price seen AT OR AFTER the rung's own deadline — a board that
+            # stopped repricing months ago has nothing but forecasts on it. Sent
+            # from here as well as from the detail page so the two surfaces keep
+            # ONE membership rule (#7274); a rung with no stamp is unaffected.
+            #
+            # 🔴 THROUGH `_outcome_observed_at`, NEVER OFF `o.last_updated`, and
+            # that reader's own docstring is the reason: the CACHED path — which
+            # is the path nearly every card is served from — rehydrates legs with
+            # `price_observed_epoch` and no `last_updated` at all. Read the column
+            # directly and every cached leg resolves to "no stamp", the new rule
+            # is silently inert exactly where the reader is, and the card goes
+            # back to disagreeing with the detail page about membership. A test
+            # built on ORM rows cannot see that, because ORM rows carry the
+            # column. An outcome with neither carrier answers `None`, which is
+            # the honest degradation and leaves such a rung where it is today.
             expired_rungs = _expired_ladder_rungs(
                 [
                     (
@@ -11875,6 +11891,7 @@ async def _score_futures(
                         float(o.current_probability)
                         if o.current_probability is not None
                         else None,
+                        _outcome_observed_at(o),
                     )
                     for o in sorted_outcomes
                 ],

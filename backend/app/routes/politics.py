@@ -387,7 +387,20 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     # full `outcomes` list, so the ladder's arity does not move.
     priced = [o for o in outcomes if o.current_probability is not None]
     expired = expired_ladder_rungs(
-        [(o.name, float(o.current_probability)) for o in priced],
+        # #7784: the stamp rides along with the price. The exemption this
+        # docstring names — a past-dated rung at or above
+        # `EXPIRED_RUNG_MAX_PROBABILITY` is the ladder's ANSWER — needs the price
+        # to have been observed at or after the rung's own deadline, and on a
+        # board that stopped repricing it never was. Here that decides a SORT,
+        # not a drop ("DEMOTED, NEVER DROPPED", above), so the widened rule can
+        # only move such a rung below the live ones; a rung with no stamp keeps
+        # the place it has today — which is also why the read is a `getattr`
+        # with a default: a carrier without the column degrades to NO EVIDENCE,
+        # never to an exception that empties the row (gotcha #42).
+        [
+            (o.name, float(o.current_probability), getattr(o, "last_updated", None))
+            for o in priced
+        ],
         now,
     )
     ranked = sorted(
