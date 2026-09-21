@@ -48,6 +48,7 @@ import {
   anchorPeriodLabels,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
+import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -1712,10 +1713,36 @@ export default function OddsChart({
                 ) : (
                   <span className="text-xs text-text-muted">{label}</span>
                 )}
+                {/* #7860 — ESPN's period detail ALREADY CONTAINS THE CLOCK, so appending
+                    `_clock` printed it twice. Measured on production 2026-09-21 by hovering
+                    the real chart: `/events/14780544` (KC 33-30 IND) served
+                    `period: "9:44 - 2nd Quarter"` beside `game_clock: "9:44"`, and the card
+                    rendered `9:44 - 2nd Quarter 9:44`. At the whistle both fields read
+                    "Final" and the card said `Final Final`. Across four completed games,
+                    454 of 487 NFL rows (93%) and 64 of 127 NHL rows (50%) printed a repeat.
+
+                    The rule is NOT written here. `trustedLiveClock` has decided exactly this
+                    since #6684 and three other surfaces already go through it (EventCard,
+                    FeedCard, the event-page header) — this tooltip was the one call site
+                    still concatenating by hand. Its two clauses cover both shapes seen:
+                    `alreadySpelledOut` (a clock-shaped token the period already contains)
+                    and `repeatsPeriod` ("Final"/"Final").
+
+                    NO SPORT KEY IS PASSED, and that is deliberate rather than an omission:
+                    this component never receives one, and `sportVocab(undefined)` returns
+                    `UNSCORED_IN_POINTS`, whose `gameHasAClock` is `true` — so the sport arm
+                    of the helper (the one that DELETES a clock) cannot fire here. Every
+                    change this makes is the removal of a token already on the line.
+
+                    The outer `_period &&` guard is KEPT so this stays a pure deletion: with
+                    a clock but no period the helper alone would render a bare "9:44" where
+                    today nothing renders, and widening is not what this fixes. */}
                 {matchingPoint._period && (
                   <span className="text-xs text-text-muted whitespace-nowrap">
-                    {matchingPoint._period as string}
-                    {matchingPoint._clock ? ` ${matchingPoint._clock as string}` : ""}
+                    {formatLiveClockLabel(
+                      matchingPoint._period as string,
+                      matchingPoint._clock as string | undefined,
+                    )}
                   </span>
                 )}
               </div>
