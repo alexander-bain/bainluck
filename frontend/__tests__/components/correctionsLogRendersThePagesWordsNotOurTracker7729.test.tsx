@@ -162,10 +162,14 @@ function renderPage(corrections: unknown[] = CORRECTIONS): string {
 describe("#7729 — what the corrections log puts on a reader's screen", () => {
   it("renders the section it is claiming about", () => {
     // The precondition for every `not.toContain` below. An absent section is
-    // free to pass all of them.
+    // free to pass all of them. Anchored on a DATE rather than a title: #7734
+    // gave eight of the thirteen titles reader copy, so a title is no longer a
+    // fixed string, while the date column is the payload's own and is not the
+    // page's to reword.
     const text = visibleText(correctionsMarkup(renderPage()));
     expect(text).toContain("data corrections log");
-    expect(text).toContain("Polymarket hockey sign-flip");
+    expect(text).toContain("2026-07-09");
+    expect(text).toContain("Premature golf resolutions");
   });
 
   it("does not print our queue id", () => {
@@ -190,10 +194,9 @@ describe("#7729 — what the corrections log puts on a reader's screen", () => {
     );
   });
 
-  it("leaves the other three entries exactly as the payload wrote them", () => {
+  it("leaves the two entries no fix has re-worded exactly as the payload wrote them", () => {
     const text = visibleText(correctionsMarkup(renderPage()));
     for (const title of [
-      "Polymarket hockey sign-flip",
       "Premature golf resolutions",
       "The one-question markets we were throwing away are now scored",
     ]) {
@@ -201,9 +204,24 @@ describe("#7729 — what the corrections log puts on a reader's screen", () => {
     }
   });
 
+  it("prints #7734's words for the hockey entry, and not the producer's", () => {
+    // The fourth fixture row. It rendered verbatim until #7734 and is the reason
+    // this suite's other assertions could not stay keyed on it.
+    const text = visibleText(correctionsMarkup(renderPage()));
+    expect(text).toContain(
+      "Hockey player props (Polymarket): over and under prices were the wrong way round, now re-scored"
+    );
+    expect(text).not.toContain("sign-flip");
+  });
+
   it("still puts #7363's row counts beside their own titles", () => {
     const text = visibleText(correctionsMarkup(renderPage()));
-    expect(text).toContain("Polymarket hockey sign-flip 36,207 rows");
+    // The adjacency check that matters most after #7734: the count belongs to the
+    // row, and the row now renders a string the page chose rather than the one the
+    // payload sent. A helper that detached the two would show up exactly here.
+    expect(text).toContain(
+      "Hockey player props (Polymarket): over and under prices were the wrong way round, now re-scored 36,207 rows"
+    );
     expect(text).toContain("Premature golf resolutions 230 rows");
     // And still exactly two, not four.
     expect(text.match(/ rows/g)?.length).toBe(2);

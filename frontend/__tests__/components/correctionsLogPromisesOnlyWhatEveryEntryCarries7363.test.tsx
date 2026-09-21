@@ -50,6 +50,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import CalibrationPage from "@/app/calibration/page";
 import type { CalibrationData } from "@/lib/api";
+// #7734 gave eight of the thirteen producer titles reader copy, so two of this
+// file's four fixture rows no longer render the string the payload sent. The
+// anchors below go through the same helper the page does: what this suite claims
+// is that the ROW rendered and carries the right count, not what its words are —
+// the words are pinned by value in `correctionsLogSpeaksReaderEnglish7734`.
+import { correctionTitle } from "@/lib/calibrationCorrections";
 
 jest.mock("swr", () => ({
   __esModule: true,
@@ -225,8 +231,8 @@ describe("#7363 — the corrections log promises only what every entry carries",
     const text = visibleText(html);
     expect(text).toContain("Technical: data corrections log");
     expect(text).toContain("(4)");
-    expect(text).toContain("Polymarket hockey sign-flip");
-    expect(text).toContain("DataGolf survivorship exclusion");
+    expect(text).toContain(correctionTitle("Polymarket hockey sign-flip"));
+    expect(text).toContain(correctionTitle("DataGolf survivorship exclusion"));
     expect(html).toContain('data-testid="calibration-corrections"');
   });
 
@@ -269,7 +275,7 @@ describe("#7363 — the corrections log promises only what every entry carries",
     // page and went red on "23**0 rows**" — the real count of a real entry. A
     // digit-suffix ban is a substring collision waiting for a round number.
     const section = correctionsSection(renderPage());
-    expect(section).toContain("DataGolf survivorship exclusion");
+    expect(section).toContain(correctionTitle("DataGolf survivorship exclusion"));
     expect(section).toContain("The one-question markets we were throwing away are now scored");
 
     // Exactly as many counts as the payload supplies — two, not four.

@@ -140,6 +140,62 @@ export const CORRECTION_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
   // source; none of its series tickers, issue numbers or column names travel.
   "Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)":
     "Player-prop prices (Kalshi): corrected the test for which prices to drop",
+
+  // ── #7734: the eight July titles that were engineer shorthand ──────────────
+  //
+  // Each line below is the producer's own `description` for that row, said once,
+  // in the vocabulary the September entries already use ("Prices nobody could
+  // have traded at", "A price ladder is one forecast, not forty"). No claim
+  // moves: no count, no exclusion basis, no regrade. What changes is that the
+  // one slot this card gives a reader is now written for one.
+
+  // "Player-threshold props stored the OVER probability against the Under/No
+  // side (gotcha #17). Re-graded the Polymarket half."
+  "Polymarket hockey sign-flip":
+    "Hockey player props (Polymarket): over and under prices were the wrong way round, now re-scored",
+
+  // "Symmetric exclusion of did-not-play / withdrew outcomes so the golf curve
+  // isn't inflated by non-participants."
+  "DataGolf survivorship exclusion":
+    "Golf: players who withdrew or never teed off are no longer scored",
+
+  // "Illiquid poly props stamped a no-signal ~0.50 midpoint … now excluded from
+  // the curve by bid presence — read-side only, no regrade."
+  "Polymarket no-bid placeholder exclusion":
+    "Polymarket prices with no offer behind them, parked near 50%, are no longer scored",
+
+  // "Resolved 2-outcome mutually-exclusive markets must have exactly one winner.
+  // Zero-winner (void) and two-winner (impossible) markets are data artifacts."
+  "Malformed-binary exclusion":
+    "Yes-or-no markets that settled with no winner, or with two, are no longer scored",
+
+  // "Golf winner/round-leader outcomes priced >=0.80 in a mutually-exclusive
+  // market with >=2 such outcomes are one-sided-ask placeholders … genuine
+  // single leaders stay in." The copy names the two-at-once shape, which is the
+  // part that makes the price impossible rather than merely confident.
+  "Golf FIELD one-sided-ask placeholder exclusion":
+    "Golf: prices that put two players in one event both above 80% to win are no longer scored",
+
+  // "Mutually-exclusive markets with >=3 outcomes are one question and must sum
+  // to ~1.0, but sources stamp each candidate at its one-sided ask so the sum
+  // inflated to 2.4-5.3. Now each such market's probabilities are divided by the
+  // per-market sum."
+  "Multi-candidate probability normalization":
+    "Markets with several candidates now add up to 100%, instead of well over it",
+
+  // "Soccer game-odds were captured 2-way (home/away only) — no draw column — so
+  // every soccer moneyline row … structurally dropped the ~25% draw mass … is
+  // excluded from the curve; soccer spreads/totals are kept." The copy says
+  // win-or-lose rather than naming the market type: it is the reader's phrase for
+  // the rows that went, and it keeps the scope honest (spreads and totals stayed).
+  "Soccer 2-way (draw-omission) historical exclusion":
+    "Soccer: older win-or-lose prices left the draw out, so they are no longer scored",
+
+  // "Polymarket packs a whole esports match (cumulative Total-Kills ladders per
+  // game, per-game winners, first-blood props) into one non-partition market …
+  // neither sums to ~1.0 nor buckets as a clean prediction."
+  "Esports match-bundle exclusion":
+    "Esports markets that pack a whole match into one question are no longer scored",
 };
 
 /**

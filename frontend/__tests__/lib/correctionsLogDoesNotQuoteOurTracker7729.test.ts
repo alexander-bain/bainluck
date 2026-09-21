@@ -101,15 +101,31 @@ const SPECIMEN =
   "Kalshi player-prop threshold exclusion — corrected discriminator (Queue #186)";
 
 /**
- * The other twelve, exactly as they render today.
+ * The change's blast radius, in two halves (notice 50).
  *
- * These are the change's blast radius. #7729 moves one string; if it moves a
- * thirteenth, that is a regression and it is invisible from the specimen
- * assertion alone.
+ * This list was originally the other twelve titles, asserted byte-identical:
+ * #7729 moved one string, and a thirteenth moving was a regression invisible
+ * from the specimen assertion alone.
+ *
+ * #7734 then gave eight of those twelve reader copy on purpose. A control whose
+ * whole content is "nothing else moved" cannot be re-snapshotted to say
+ * "eight else moved" — that is a control rewritten to match its subject. So the
+ * assertion is SPLIT instead: the four rows no fix has re-worded stay
+ * byte-identical here, and the eight that moved are pinned BY VALUE in
+ * `correctionsLogSpeaksReaderEnglish7734.test.ts`, which is where the judgment
+ * that they should move is recorded. Neither half can quietly widen: a ninth row
+ * moving reddens this file, and copy drifting on the eight reddens that one.
  */
-const UNTOUCHED_TITLES = [
-  "Polymarket hockey sign-flip",
+const STILL_BYTE_IDENTICAL = [
   "Premature golf resolutions",
+  "Prices nobody could have traded at",
+  "A price ladder is one forecast, not forty",
+  "The one-question markets we were throwing away are now scored",
+];
+
+/** Re-worded by #7734, listed here so this suite's universe stays the thirteen. */
+const REWORDED_BY_7734 = [
+  "Polymarket hockey sign-flip",
   "DataGolf survivorship exclusion",
   "Polymarket no-bid placeholder exclusion",
   "Malformed-binary exclusion",
@@ -117,9 +133,6 @@ const UNTOUCHED_TITLES = [
   "Multi-candidate probability normalization",
   "Soccer 2-way (draw-omission) historical exclusion",
   "Esports match-bundle exclusion",
-  "Prices nobody could have traded at",
-  "A price ladder is one forecast, not forty",
-  "The one-question markets we were throwing away are now scored",
 ];
 
 describe("the specimen: what a reader sees on 2026-07-13", () => {
@@ -157,16 +170,43 @@ describe("the specimen: what a reader sees on 2026-07-13", () => {
   });
 });
 
-describe("the other twelve are byte-identical", () => {
-  it.each(UNTOUCHED_TITLES)("passes through unchanged: %j", (title) => {
+describe("the four rows no fix has re-worded are byte-identical", () => {
+  it.each(STILL_BYTE_IDENTICAL)("passes through unchanged: %j", (title) => {
     expect(correctionTitle(title)).toBe(title);
   });
 
   it("and none of them is silently running on an override", () => {
     // An override for a title that needs none is a second place the page's copy
     // can drift from the producer's, with nothing pointing at it.
-    for (const title of UNTOUCHED_TITLES) {
+    for (const title of STILL_BYTE_IDENTICAL) {
       expect(CORRECTION_TITLE_OVERRIDES[title]).toBeUndefined();
+    }
+  });
+});
+
+describe("the eight #7734 re-worded still run on the map, not the floor", () => {
+  it.each(REWORDED_BY_7734)("is chosen copy, not a cut: %j", (title) => {
+    // #7729's own property, re-asserted over the wider map: these titles carry no
+    // tracker id, so the floor is a no-op on them and anything they render has to
+    // have come from a deliberate map entry.
+    expect(carriesInternalReference(title)).toBe(false);
+    expect(withheldInternalReference(title)).toBe(title);
+    expect(CORRECTION_TITLE_OVERRIDES[title]).toBeDefined();
+    expect(correctionTitle(title)).toBe(CORRECTION_TITLE_OVERRIDES[title]);
+  });
+
+  it("together with the four and the specimen, the split covers thirteen real rows", () => {
+    // The arithmetic that keeps the split honest: a row quietly dropped from both
+    // halves would leave each half green while the suite stopped covering it.
+    // Asserted as "these thirteen are real and distinct", NOT as "the producer has
+    // only thirteen" — appending a fourteenth correction is a legitimate change
+    // and reddening this file for it would be the wrong kind of red (it reddens
+    // #7734's closure test, which is the one that asks for words).
+    const covered = new Set([SPECIMEN, ...STILL_BYTE_IDENTICAL, ...REWORDED_BY_7734]);
+    expect(covered.size).toBe(13);
+    const produced = new Set(producerCorrectionTitles());
+    for (const title of covered) {
+      expect({ title, inProducer: produced.has(title) }).toEqual({ title, inProducer: true });
     }
   });
 });
@@ -231,15 +271,27 @@ describe("the floor, and what it must not eat", () => {
   it("leaves a reader's numbers alone", () => {
     // The floor's own risk. Each of these carries a number that is content, not
     // a tracker, and a fix that ate one would be a worse defect than #7729.
+    //
+    // Asserted through `withheldInternalReference` — the floor itself — rather
+    // than through `correctionTitle`, because the map now short-circuits it for
+    // eight producer titles (#7734) and a control that runs through the map is no
+    // longer measuring the floor at all. The `correctionTitle` arm stays for the
+    // ones with no override, which is where the two agree.
     const readerNumbers = [
       "Two golfers both priced above 80% to win the same event",
       "Prices we captured in 2026 and never re-read",
       "A price ladder is one forecast, not forty",
+      // A live producer title carrying reader numbers AND parentheses — the exact
+      // shape `TRAILING_PARENTHETICAL` could over-cut. It has map words now, so
+      // only the floor arm applies to it.
       "Soccer 2-way (draw-omission) historical exclusion",
     ];
     for (const title of readerNumbers) {
-      expect(correctionTitle(title)).toBe(title);
+      expect(withheldInternalReference(title)).toBe(title);
       expect(carriesInternalReference(title)).toBe(false);
+      if (CORRECTION_TITLE_OVERRIDES[title] === undefined) {
+        expect(correctionTitle(title)).toBe(title);
+      }
     }
   });
 
@@ -264,7 +316,7 @@ describe("the floor, and what it must not eat", () => {
 
 describe("the counter the page publishes", () => {
   it("is zero on the live thirteen", () => {
-    const live = [SPECIMEN, ...UNTOUCHED_TITLES].map((title, i) =>
+    const live = [SPECIMEN, ...STILL_BYTE_IDENTICAL, ...REWORDED_BY_7734].map((title, i) =>
       row(title, `2026-02-${String(i + 1).padStart(2, "0")}`)
     );
     expect(correctionsNeedingCopy(live)).toBe(0);
