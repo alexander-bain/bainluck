@@ -535,10 +535,29 @@ def discard_ceiling_verdict(
     }
 
 
-#: Import-time reading, kept as a name because ``sentry_filter`` reads it on the
-#: exception path where a function call per event is not free. Recomputed by
-#: :func:`discard_ceiling_per_day` for any caller that has a ``now``.
-DISCARD_CEILING_PER_DAY = discard_ceiling_per_day()
+#: There is deliberately NO module-level ``DISCARD_CEILING_PER_DAY``.
+#:
+#: One existed until 2026-09-21 as an import-time reading, on the stated grounds
+#: that ``sentry_filter`` read it "on the exception path where a function call
+#: per event is not free". That rationale had been false since
+#: ``C-CERT-SENTRY-R4`` (2026-08-17) moved every read onto the live derivation:
+#: ``sentry_filter`` calls :func:`discard_ceiling_per_day` /
+#: :func:`discard_ceiling_reading` from the CENSUS path — once per operator
+#: read, not once per event — and never touched the constant again. The name
+#: survived R4 as an unread value whose comment still described the arrangement
+#: R4 had removed, and that comment went on to be quoted as evidence in #7633.
+#:
+#: Keeping it was not free. The ceiling is a function of the clock
+#: (:func:`cycle_length_days` anchors on ``BILLING_CYCLE_RESET_DAY``), so a value
+#: frozen at import disagrees with its own deriver by one day of need from
+#: ``00:00Z`` on the 21st of each month — reddening the guard test on unmodified
+#: shas, for every lane, monthly.
+#:
+#: So: one definition, and it is a function of the clock it claims to be a
+#: function of. Callers that need a ``now`` pass one; callers that do not get the
+#: live reading. Re-introducing a frozen module-level ceiling is forbidden by
+#: name in ``test_sentry_ceiling_1894.py``, and the R4 census guards plant one as
+#: a decoy to prove no read path picks it up.
 
 
 def discard_ceiling_reading(
