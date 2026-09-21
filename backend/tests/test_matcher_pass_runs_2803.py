@@ -487,6 +487,140 @@ class TestPass3RecordsItsOwnRun:
         )
         assert recorded[0]["phase"] == mr.PHASE_PASS3_BACKLOG
 
+    # ---- the id watermark (#7801) -------------------------------------------
+    #
+    # The run says how far it GOT, not only that it went. `ran_at` is the task's
+    # start, so a time floor built on it claims the pass looked at everything
+    # born before then — false whenever the cap truncated the id-ordered
+    # never-attempted queue, which filed 187 rows as "never attempted" at
+    # 19:27:41Z on 2026-09-21 and auto-closed them one cycle later.
+
+    @staticmethod
+    def _run_pass3_with(never_ids, stale_rows=(), time_remaining=700,
+                        processed_ids=None):
+        from app.tasks import prediction_market_matching as pmm
+
+        stats = {"funnel": {}, "errors": []}
+        recorded: list[dict] = []
+
+        async def _fake_record(**kw):
+            recorded.append(kw)
+            return {"status": "ok"}
+
+        class _Session(_FakeSession):
+            """First execute is the never-attempted query; the second is the
+            stale top-up, which returns (id, last_attempted_at) pairs."""
+
+            def __init__(self):
+                super().__init__(eligible=36966)
+                self._calls = 0
+
+            async def execute(self, _stmt):
+                self._calls += 1
+                return _FakeResult(
+                    list(never_ids) if self._calls == 1 else list(stale_rows)
+                )
+
+        async def _load(_session, market_id):
+            return None  # "row gone": still REACHED, which is the point
+
+        # A list decays across calls, because the real budget does and the two
+        # thresholds do not overlap: the pass is SKIPPED below
+        # `_BACKLOG_MIN_SECONDS_REMAINING` (480) and the loop breaks below
+        # `_BACKLOG_DOWNSTREAM_RESERVE_SECONDS` (420), so no single value can
+        # put the loop in its break branch. The last value repeats.
+        budget = (
+            list(time_remaining) if isinstance(time_remaining, (list, tuple))
+            else [time_remaining]
+        )
+
+        def _time_remaining():
+            return budget.pop(0) if len(budget) > 1 else budget[0]
+
+        with patch.object(pmm._pass_runs, "record_pass_run", _fake_record), \
+                patch.object(pmm, "_load_market_row", _load):
+            asyncio.run(
+                pmm._phase1_pass3_backlog_scan(
+                    _Session(), stats, NOW,
+                    set() if processed_ids is None else set(processed_ids), [],
+                    _time_remaining,
+                )
+            )
+        assert len(recorded) == 1
+        return stats, recorded[0]
+
+    def test_the_run_records_the_last_never_attempted_id_it_reached(self):
+        _stats, rec = self._run_pass3_with(never_ids=[101, 102, 103])
+        assert rec["never_attempted_max_id"] == 103
+
+    def test_an_empty_never_attempted_queue_records_no_id_bound(self):
+        """Nothing was never-attempted, so there is nothing to bound — and the
+        reader must get None, not 0. A bound of 0 would count nothing at all."""
+        _stats, rec = self._run_pass3_with(never_ids=[])
+        assert rec["never_attempted_max_id"] is None
+
+    def test_the_stale_top_up_does_not_advance_the_watermark(self):
+        """THE SEAM. `backlog` is the never-attempted prefix plus a stale tail,
+        and only the prefix says anything about coverage — the stale rows
+        already HAVE receipts. A watermark taken from the end of the whole list
+        would jump to 999 and excuse every id below it, silently."""
+        _stats, rec = self._run_pass3_with(
+            never_ids=[101, 102], stale_rows=[(998, NOW), (999, NOW)],
+        )
+        assert rec["never_attempted_max_id"] == 102
+
+    def test_a_row_skipped_because_another_pass_took_it_still_counts_as_reached(
+        self,
+    ):
+        """It was looked at. Leaving it above the watermark would re-indict it
+        every cycle for as long as it stayed unlinked."""
+        _stats, rec = self._run_pass3_with(
+            never_ids=[101, 102, 103], processed_ids=[103],
+        )
+        assert rec["never_attempted_max_id"] == 103
+
+    def test_a_pass_cut_off_by_the_budget_records_only_how_far_it_got(self):
+        """THE DEFECT ITSELF. Under the downstream reserve the loop breaks with
+        rows unreached, and the old code recorded the task start regardless —
+        asserting the pass had looked at all of them."""
+        from app.tasks.prediction_market_matching import (
+            _BACKLOG_DOWNSTREAM_RESERVE_SECONDS,
+        )
+
+        # Budget enough to start, enough to reach 101, then gone.
+        _stats, rec = self._run_pass3_with(
+            never_ids=[101, 102, 103],
+            time_remaining=[700, 700, _BACKLOG_DOWNSTREAM_RESERVE_SECONDS - 1],
+        )
+        assert rec["never_attempted_max_id"] == 101, (
+            "the pass recorded a watermark past the row the budget cut it off at"
+        )
+
+    def test_the_envelope_carries_the_watermark_through_to_the_payload(self):
+        """The recorded kwarg is worth nothing if the envelope drops it."""
+        from app.utils.matcher_pass_runs import build_pass_run_envelope
+
+        env = build_pass_run_envelope(
+            phase=mr.PHASE_PASS3_BACKLOG, ran_at=NOW, rows_attempted=3000,
+            eligible_total=27278, never_attempted_max_id=61833237,
+        )
+        assert env.payload["never_attempted_max_id"] == 61833237
+
+    def test_an_older_payload_without_the_key_reads_as_no_bound(self):
+        """The schema version is deliberately NOT bumped, so rows written
+        before this deploy must degrade to "no id bound" — which counts MORE —
+        rather than to `wrong_version`, which blinds the floor's precise arm."""
+        from app.utils.matcher_pass_runs import (
+            PASS_RUN_SCHEMA_VERSION,
+            build_pass_run_envelope,
+        )
+
+        env = build_pass_run_envelope(
+            phase=mr.PHASE_PASS3_BACKLOG, ran_at=NOW, rows_attempted=1,
+        )
+        assert env.schema_version == PASS_RUN_SCHEMA_VERSION
+        assert env.payload["never_attempted_max_id"] is None
+
     def test_the_real_pass_survives_a_failed_write_and_is_still_not_a_no(self):
         """CERT-824 END TO END, through the real functions rather than a fake.
 

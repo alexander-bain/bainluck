@@ -5145,7 +5145,11 @@ async def match_receipts(
         link_changes_for_market_query,
         link_changes_off_event_query,
     )
-    from app.utils.matcher_pass_runs import never_attempted_floor, read_pass_run
+    from app.utils.matcher_pass_runs import (
+        never_attempted_floor,
+        never_attempted_id_bound,
+        read_pass_run,
+    )
 
     def _serialize(r: MarketMatchReceipt) -> dict:
         return {
@@ -5497,17 +5501,29 @@ async def match_receipts(
     # `read_pass_run` above passes `receipt_witness`, which can only add a
     # `True` and never moves `last_run_at`, so the floor is unaffected by it.
     never_floor = never_attempted_floor(backlog_run.last_run_at)
+    # THE SECOND BOUND IS AN ID (#7801). Pass 3 drains its never-attempted queue
+    # in id order under a cap, so a time floor alone counts the tail the pass has
+    # not reached. None (no watermark, older payload, or a stale pass) means no
+    # id bound and counts MORE — see never_attempted_id_bound.
+    never_id_bound = never_attempted_id_bound(
+        backlog_run.last_run_at, backlog_run.never_attempted_max_id,
+    )
+    _never_bounds = [
+        # A NULL birth time cannot be excused by a floor it cannot be
+        # compared against, so it counts (gotcha #53).
+        or_(
+            FuturesMarket.created_at.is_(None),
+            FuturesMarket.created_at < never_floor,
+        ),
+    ]
+    if never_id_bound is not None:
+        _never_bounds.append(FuturesMarket.id <= never_id_bound)
     never_past_floor = await db.scalar(
         select(func.count())
         .select_from(FuturesMarket)
         .where(
             *_open_unlinked,
-            # A NULL birth time cannot be excused by a floor it cannot be
-            # compared against, so it counts (gotcha #53).
-            or_(
-                FuturesMarket.created_at.is_(None),
-                FuturesMarket.created_at < never_floor,
-            ),
+            *_never_bounds,
             ~select(MarketMatchReceipt.id)
             .where(MarketMatchReceipt.market_id == FuturesMarket.id)
             .exists(),
@@ -5551,19 +5567,31 @@ async def match_receipts(
             "open_unlinked_without_receipt": int(never or 0),
             "never_attempted_past_floor": int(never_past_floor or 0),
             "never_attempted_floor": never_floor.isoformat(),
+            "never_attempted_id_bound": never_id_bound,
             "never_attempted_floor_note": (
                 "never_attempted_past_floor is open_unlinked_without_receipt "
-                "restricted to markets that already existed when the backlog "
-                "pass last ran, and it is the number the matching "
-                "reconciliation alarm reds on (#7801). The gap between the two "
-                "is markets ingested since that run: they have no receipt "
-                "because nothing has had a turn at them yet, which is a race "
-                "and not a skip — measured 2026-09-21, Polymarket's hourly "
-                "poll made the unscoped count red once an hour and green one "
-                "matcher cycle later. The floor is the LATER of the pass's "
-                "last run and a bounded grace, so a dead pass cannot buy "
-                "permanent silence; see never_attempted_floor() for why both "
-                "arms are needed. backlog_pass.last_run_at is the first arm."
+                "restricted to markets the backlog pass has already had a turn "
+                "at, and it is the number the matching reconciliation alarm "
+                "reds on (#7801). TWO BOUNDS, because the pass is bounded two "
+                "ways. (1) never_attempted_floor, a TIME: markets ingested "
+                "since the pass last ran have no receipt because nothing has "
+                "had a turn at them yet, which is a race and not a skip — "
+                "measured 2026-09-21, Polymarket's hourly poll made the "
+                "unscoped count red once an hour and green one matcher cycle "
+                "later. It is the LATER of the pass's last run and a bounded "
+                "grace, so a dead pass cannot buy permanent silence; see "
+                "never_attempted_floor() for why both arms are needed, and "
+                "backlog_pass.last_run_at is the first of them. "
+                "(2) never_attempted_id_bound, an ID: Pass 3 drains its "
+                "never-attempted queue in id order under a per-cycle cap, so a "
+                "fresh ingest wave sits at the TAIL of that ordering and is "
+                "what the cap cuts — on 2026-09-21 the 19:20Z pass reached id "
+                "61833237 and the 19:35Z pass resumed at 61833238, and the 187 "
+                "rows between them filed a p1 that auto-closed one cycle "
+                "later. null means no id bound, which counts MORE: no "
+                "watermark recorded, an older payload, or a pass gone stale — "
+                "a stale pass is deliberately not honoured, because a frozen "
+                "watermark would excuse every id above it forever."
             ),
             "target": 0,
             "by_source": by_source,
@@ -5582,9 +5610,10 @@ async def match_receipts(
                 "base_where. Nothing is excluded, because nothing in it is out "
                 "of the matcher's scope: Pass 3 selects exactly this set. This "
                 "is the denominator of open_unlinked_without_receipt. "
-                "never_attempted_past_floor adds ONE clause on top of it — "
-                "created_at IS NULL OR created_at < never_attempted_floor — "
-                "and nothing else."
+                "never_attempted_past_floor adds TWO clauses on top of it — "
+                "created_at IS NULL OR created_at < never_attempted_floor, and "
+                "(when never_attempted_id_bound is non-null) id <= "
+                "never_attempted_id_bound — and nothing else."
             ),
             "note": (
                 "Above 0 means some open unlinked market has never been "

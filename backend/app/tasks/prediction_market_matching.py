@@ -3140,6 +3140,11 @@ async def _phase1_pass3_backlog_scan(
     )
     backlog = [int(mid) for mid in never_result.scalars().all()]
     stats["funnel"]["backlog_never_attempted"] = len(backlog)
+    # THE NEVER-ATTEMPTED PREFIX, BY LENGTH. `backlog` is about to be extended
+    # with the stale tail, and only the prefix carries the id watermark: the
+    # stale rows already have receipts, so how far we got through them says
+    # nothing about coverage (#7801).
+    never_attempted_count = len(backlog)
 
     if len(backlog) < _BACKLOG_SCAN_MAX:
         stale_result = await session.execute(
@@ -3174,8 +3179,15 @@ async def _phase1_pass3_backlog_scan(
 
     receipts: list[MatchReceipt] = []
     budget_exhausted = False
+    # The id watermark published with the run (#7801). It advances on REACHING a
+    # never-attempted row, not on attempting one: a row skipped because another
+    # pass already took it (`processed_ids`) or because it vanished under us was
+    # still looked at, and leaving it above the watermark would re-indict it
+    # forever. None while the prefix is empty — no never-attempted rows means no
+    # id bound is needed, which is what `never_attempted_id_bound` reads it as.
+    never_attempted_max_id: Optional[int] = None
     try:
-        for market_id in backlog:
+        for backlog_index, market_id in enumerate(backlog):
             if _time_remaining() < _BACKLOG_DOWNSTREAM_RESERVE_SECONDS:
                 logger.info(
                     "Phase 1 Pass 3 stopped at the downstream reserve after %d/%d "
@@ -3184,6 +3196,8 @@ async def _phase1_pass3_backlog_scan(
                 )
                 budget_exhausted = True
                 break
+            if backlog_index < never_attempted_count:
+                never_attempted_max_id = market_id
             if market_id in processed_ids:
                 continue
             processed_ids.add(market_id)
@@ -3218,13 +3232,21 @@ async def _phase1_pass3_backlog_scan(
         # per-phase row cannot be touched by another pass. In the `finally` on
         # purpose — a pass that died partway through still ran, and the coverage
         # reader needs to know that more, not less.
+        # AND THE RUN SAYS HOW FAR IT GOT, NOT ONLY THAT IT WENT. `ran_at` is the
+        # task's start, so the time floor alone claims the pass looked at
+        # everything born before then — false whenever the cap truncated the
+        # id-ordered never-attempted queue, which is what filed 187 rows as
+        # "never attempted" at 19:27Z on 2026-09-21 and auto-closed them one
+        # cycle later (#7801). The watermark is the second bound.
         run_stage = await _pass_runs.record_pass_run(
             phase=_receipts.PHASE_PASS3_BACKLOG,
             ran_at=now,
             rows_attempted=stats["funnel"]["backlog_scanned"],
             eligible_total=stats["funnel"].get("backlog_eligible_total"),
+            never_attempted_max_id=never_attempted_max_id,
         )
         stats["funnel"]["backlog_run_recorded"] = run_stage.get("status")
+        stats["funnel"]["backlog_never_attempted_max_id"] = never_attempted_max_id
 
 
 async def _relink_collapsed_game_markets(session) -> int:
