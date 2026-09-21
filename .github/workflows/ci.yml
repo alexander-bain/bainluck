@@ -127,8 +127,15 @@ jobs:
                      || echo '${{ github.event.pull_request.base.sha }}')"
             HEAD='${{ github.event.pull_request.head.sha }}'
           else
-            BASE='${{ github.event.before }}'
             HEAD='${{ github.sha }}'
+            # #7610. NOT `github.event.before` on its own: that is the previous
+            # PUSH, not the last thing that reached a dyno, so a delta whose own
+            # run never deployed is never reclassified by anybody. The resolver
+            # is always an ancestor of the fallback, so the range can only widen.
+            BASE="$(bash .github/scripts/ci-deploy-base.sh \
+                      '${{ github.event.before }}' "$HEAD" \
+                     || echo '${{ github.event.before }}')"
+            [ -n "$BASE" ] || BASE='${{ github.event.before }}'
           fi
           # `|| echo full` is the last fail-safe: if the script cannot run at
           # all, we run everything.
@@ -3750,10 +3757,19 @@ jobs:
         run: |
           set -uo pipefail
           # The decision lives in a script so a guard test can execute it.
+          # #7610: and the BASE it decides against lives in one too. Diffing from
+          # `github.event.before` stranded a backend delta forever whenever a push
+          # did not release — the next push's base moved past it and this gate
+          # never saw it again. `ci-deploy-base.sh` returns the deployed sha when
+          # it is BELOW the fallback, so the range only ever grows.
+          BASE="$(bash .github/scripts/ci-deploy-base.sh \
+                    '${{ github.event.before }}' '${{ github.sha }}' \
+                   || echo '${{ github.event.before }}')"
+          [ -n "$BASE" ] || BASE='${{ github.event.before }}'
           # `|| echo true` is the last fail-safe: if the script itself cannot run,
           # we release.
           REQUIRED="$(bash .github/scripts/heroku-release-required.sh \
-                        '${{ github.event.before }}' '${{ github.sha }}' || echo true)"
+                        "$BASE" '${{ github.sha }}' || echo true)"
           case "$REQUIRED" in
             true|false) ;;
             *) echo "unparseable decision '$REQUIRED' — defaulting to release"; REQUIRED=true ;;
