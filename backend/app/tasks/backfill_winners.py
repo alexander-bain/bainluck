@@ -173,6 +173,52 @@ _FRESH_SETTLEMENT_MAX_SHARE = 0.2
 _EARLY_SETTLED_MAX_TICKERS = 100
 _EARLY_SETTLED_FUTURE_DAYS = 2
 
+#: #7857 — BAND 4's budget, and it is a CURSOR budget, not a cap on the population.
+#:
+#: Band 3 bounds itself to `resolution_date <= NOW() + _EARLY_SETTLED_FUTURE_DAYS`,
+#: which reads "the venue settled this at about the time it said it would". A
+#: market the venue decides YEARS early fails that gate by its own end date, and
+#: the band whose entire name is "early settled" is the one that cannot see it.
+#: Measured on production 2026-09-21 with the SHIPPED band-3 clause, specimen
+#: `FEDHIKE` (market 112815, "Next Fed rate hike?"): every band-3 gate passes
+#: except the ceiling, which it misses by **466 days**.
+#:
+#: WHY THIS IS A SEPARATE BAND WITH A SEPARATE BUDGET RATHER THAN A WIDER CEILING
+#: — the same reason band 3 is separate from bands 1-2 (gotcha #34). Band 3 is
+#: ALREADY AT ITS CAP: 1,485 tickers eligible against 100 slots, and its queue
+#: head sits on the window FLOOR (2026-09-19 03:55Z, an 8h45m slice of a 3-day
+#: window). Lifting the ceiling would add ~1,189 future-dated tickers to the SAME
+#: `resolution_date ASC` ordering, where a 2028-dated ladder sorts behind all of
+#: them. The widening would have been INERT for the specimen that motivated it.
+#:
+#: WHY A CURSOR AND NOT `ORDER BY resolution_date ASC` — a fixed LIMIT over a
+#: stable ordering asks about the SAME first N rows every cycle. A market only
+#: leaves this population when a leg is graded a WINNER, so a head of rows the
+#: venue has settled only NOes (a ladder whose deciding rung is years out) is
+#: permanent, and everything behind it starves for ever. Band 2 solved exactly
+#: this for the 71k-ticker tail with an alphabetical cursor; this is that pattern,
+#: with its OWN Redis key so it can never move band 2's.
+#:
+#: 50 and not 100: at 48 cycles/day (the half-hourly fast lane runs this band too)
+#: a cursor sweeps the whole 1,189 in ~12 h, so the budget buys latency, not
+#: reach — and the cost is a fixed 50 `GET /events/{ticker}` per cycle whatever
+#: the population does.
+_EARLY_SETTLED_LONGDATED_MAX_TICKERS = 50
+
+#: Band 4's cursor key. Its OWN, never band 2's
+#: (`bainluck:kalshi_winner_backfill_cursor`): the two bands walk different
+#: populations in the same alphabet, so one key would have each band skipping
+#: every ticker the other had just passed (gotcha #34).
+_LONGDATED_CURSOR_KEY = "bainluck:kalshi_winner_longdated_cursor"
+
+
+def _read_longdated_cursor(rc) -> str:
+    """Band 4's cursor, decoded. Redis hands back bytes or str depending on the
+    client, and an absent key is the empty cursor — i.e. start of the alphabet,
+    which is the correct cold-start and the correct post-wrap state alike."""
+    raw = rc.get(_LONGDATED_CURSOR_KEY)
+    return raw.decode() if isinstance(raw, bytes) else (raw or "")
+
 
 def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     """Split a cycle's ticker budget into (recency band, alphabetical tail band).
@@ -476,6 +522,97 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
         {
             "limit": limit,
             "floor_days": _FRESH_SETTLEMENT_FLOOR_DAYS,
+            "future_days": _EARLY_SETTLED_FUTURE_DAYS,
+        },
+    )
+    return [r[0] for r in rows.all()]
+
+
+async def _select_kalshi_early_settled_longdated_tickers(
+    session, limit: int, cursor: str
+) -> list[str]:
+    """Band 4 — the venue settled it YEARS before its own end date.
+
+    #7857. Band 3 answers "the venue settled this at about the time it said it
+    would"; its `resolution_date <= NOW() + _EARLY_SETTLED_FUTURE_DAYS` ceiling is
+    a recency proxy, and an early settlement is precisely the event that makes the
+    stored end date the wrong clock to read. This band is band 3's population with
+    that ceiling INVERTED, so the two are disjoint by construction and neither can
+    take a ticker from the other (gotcha #34).
+
+    The rest of the membership test is band 3's, unchanged and for its reasons:
+    a TIER-3 leg proves the venue has already settled part of this market, no
+    winner proves we hold no answer, and the inverted band-1 clause proves nobody
+    else is coming. `AUTHORITATIVE_SOURCES_SQL` is imported rather than retyped so
+    this band can never drift from the tier-3 set the three bands above test
+    against.
+
+    THE SPECIMEN (production 2026-09-21, venue read per notice 26/27). Market
+    112815 "Next Fed rate hike?", `external_id` `FEDHIKE`, served at
+    `/futures/112815` as a **95% hero with a live chart over an answered
+    question**. Kalshi finalized its three top rungs `result='yes'` at
+    2026-09-16T19:08:29Z; we store all six legs `is_winner=false`. Running the
+    SHIPPED band-3 clause against that row, every gate passes except the ceiling,
+    which it misses by 466 days (`resolution_date` 2028-01-01).
+
+    WHY NOTHING ELSE WAS EVER GOING TO ASK, and why the fix is here rather than in
+    the poller. The venue RETIRED the `FEDHIKE` series into successor `KXFEDHIKE`
+    (read live: `/markets?series_ticker=FEDHIKE` returns 0 in every status, while
+    `/markets?series_ticker=KXFEDHIKE` returns the three finalized rungs, their
+    market and event tickers UNCHANGED). Discovery and polling are keyed on the
+    SERIES, so they went dark and `futures_markets.status` never became
+    `'resolved'` — which is what blinds bands 1 and 2 (gotcha #33, one step on).
+    But this band's grader knocks on `GET /events/{ticker}`, and the EVENT ticker
+    is what we store: `/events/FEDHIKE` still answers **200** with the three
+    finalized markets. The door we need was never shut; only the band that uses
+    it could not see the row.
+
+    ORDERED BY CURSOR, NOT BY DATE, AND THAT IS THE LOAD-BEARING CHOICE. A market
+    leaves this population only when a leg is graded a WINNER. A ladder the venue
+    has settled only NOes on — deciding rung years out — therefore stays for ever,
+    and under `ORDER BY resolution_date ASC LIMIT n` it would sit at the head of
+    every cycle and starve everything behind it. Band 2 solved this exact shape
+    for the 71k-ticker tail with an alphabetical cursor; this is that pattern,
+    on its own Redis key.
+    """
+    if limit <= 0:
+        return []
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.resolution_date IS NOT NULL
+              AND fm.resolution_date > NOW() + make_interval(days => :future_days)
+              AND fm.external_id > :cursor
+              AND NOT EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND fo.is_winner IS TRUE
+              )
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+              )
+              -- Band 1's two gates, inverted, exactly as band 3 carries them: a
+              -- market it would take is not this band's business.
+              AND NOT (
+                  fm.status = 'resolved'
+                  AND EXISTS (
+                      SELECT 1 FROM futures_outcomes fo
+                      WHERE fo.market_id = fm.id
+                        AND COALESCE(fo.resolution_source, '') NOT IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                        AND COALESCE(fo.resolution_source, '') <> 'ungradeable_result'
+                  )
+              )
+            GROUP BY fm.external_id
+            ORDER BY fm.external_id ASC
+            LIMIT :limit
+        """),
+        {
+            "limit": limit,
+            "cursor": cursor,
             "future_days": _EARLY_SETTLED_FUTURE_DAYS,
         },
     )
@@ -832,6 +969,7 @@ async def _backfill_kalshi_winners(
         "fresh_graded": 0,
         "tail_selected": 0,
         "early_selected": 0,
+        "longdated_selected": 0,
         "errors": [],
     }
 
@@ -864,7 +1002,39 @@ async def _backfill_kalshi_winners(
         early_tickers = await _select_kalshi_early_settled_tickers(
             session, _EARLY_SETTLED_MAX_TICKERS
         )
+        # #7857 — band 4, the long-dated half of the same question. Its own
+        # budget AND its own cursor: it is disjoint from band 3 by the inverted
+        # ceiling, and it must never touch band 2's key (gotcha #34). It runs in
+        # the fast lane too — its cost is a fixed
+        # `_EARLY_SETTLED_LONGDATED_MAX_TICKERS` lookups whatever the population
+        # does, which is the whole reason it is a cursor and not a date sort.
+        _longdated_cursor = _read_longdated_cursor(_rc)
+        longdated_tickers = await _select_kalshi_early_settled_longdated_tickers(
+            session, _EARLY_SETTLED_LONGDATED_MAX_TICKERS, _longdated_cursor
+        )
     fresh_set = set(fresh_tickers)
+
+    # Band 4's cursor advances on band 4 alone, and WRAPS when the sweep runs dry
+    # — without the wrap the band asks about the alphabetical tail for ever and
+    # never revisits a market the venue settles later.
+    #
+    # 🔴 WHY THIS IS SAFE IN THE FAST LANE AND BAND 2's IDENTICAL BRANCH IS NOT.
+    # The docstring below warns that a plain `elif _last_cursor: delete` would
+    # reset band 2's 71k-ticker walk every half hour, and it is right — but the
+    # reason is that band 2's statement DOES NOT RUN in the fast lane, so its
+    # empty result is structural and says nothing. Band 4's statement runs on
+    # every cycle of both lanes, so an empty result here is INFORMATIVE: it means
+    # the cursor genuinely reached the end of the population. Same two lines,
+    # opposite meaning, because one emptiness is measured and the other is
+    # assumed. That is the distinction `_use_tail_cursor` exists to hold, and it
+    # is why band 4 deliberately does not consult it.
+    if longdated_tickers:
+        _rc.setex(_LONGDATED_CURSOR_KEY, 86400 * 14, longdated_tickers[-1])
+    elif _longdated_cursor:
+        _rc.delete(_LONGDATED_CURSOR_KEY)
+        logger.info(
+            "Kalshi winner backfill: long-dated cursor wrapped, will restart next run"
+        )
 
     # The cursor advances on the TAIL band alone. A recency ticker can sort
     # anywhere in the alphabet, so letting one set the cursor would skip every
@@ -883,10 +1053,13 @@ async def _backfill_kalshi_winners(
     stats["fresh_selected"] = len(fresh_tickers)
     stats["tail_selected"] = len(tail_tickers)
     stats["early_selected"] = len(early_tickers)
+    stats["longdated_selected"] = len(longdated_tickers)
 
     tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
     _selected = set(tickers)
     tickers += [t for t in early_tickers if t not in _selected]
+    _selected = set(tickers)
+    tickers += [t for t in longdated_tickers if t not in _selected]
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
@@ -894,11 +1067,12 @@ async def _backfill_kalshi_winners(
 
     logger.info(
         "Kalshi winner backfill: %d tickers to look up "
-        "(%d just-settled, %d tail, %d early-settled)",
+        "(%d just-settled, %d tail, %d early-settled, %d long-dated)",
         len(tickers),
         len(fresh_tickers),
         len(tail_tickers),
         len(early_tickers),
+        len(longdated_tickers),
     )
 
     service = KalshiAPIService()

@@ -105,8 +105,10 @@ def test_a_degenerate_budget_spends_nothing_on_the_recency_band(limit):
 # ---------------------------------------------------------------------------
 
 class _FakeRedis:
-    def __init__(self, cursor: str = ""):
+    def __init__(self, cursor: str = "", longdated_cursor: str = ""):
         self.store = {"bainluck:kalshi_winner_backfill_cursor": cursor} if cursor else {}
+        if longdated_cursor:
+            self.store["bainluck:kalshi_winner_longdated_cursor"] = longdated_cursor
         self.setex_calls: list[tuple[str, int, str]] = []
         self.deleted: list[str] = []
 
@@ -196,6 +198,8 @@ async def _drive(
     answers=None,
     limit=2000,
     fast_lane_only=False,
+    longdated=None,
+    longdated_cursor="",
 ):
     """Run the real `_backfill_kalshi_winners` with the SELECTION stubbed.
 
@@ -215,10 +219,19 @@ async def _drive(
         }
         return list(fresh), (list(tail) if include_tail else [])
 
-    rc = _FakeRedis(cursor)
+    # #7857 — band 4's stub. Records the cursor it was HANDED, which is the only
+    # way to prove the caller read band 4's own key and not band 2's.
+    async def _fake_longdated(session, limit_, cursor_):
+        _fake_longdated.seen = {"limit": limit_, "cursor": cursor_}
+        return list(longdated or [])
+
+    rc = _FakeRedis(cursor, longdated_cursor=longdated_cursor)
     session = _LoopSession()
     venue = _FakeKalshi(answers)
 
+    monkeypatch.setattr(
+        bw, "_select_kalshi_early_settled_longdated_tickers", _fake_longdated
+    )
     monkeypatch.setattr(bw, "_select_kalshi_settlement_tickers", _fake_select)
     monkeypatch.setattr(bw, "get_task_session", _SessionCM(session))
     monkeypatch.setattr(
@@ -231,7 +244,7 @@ async def _drive(
     stats = await bw._backfill_kalshi_winners(
         limit=limit, fast_lane_only=fast_lane_only
     )
-    return stats, rc, venue, _fake_select
+    return stats, rc, venue, _fake_select, _fake_longdated
 
 
 @pytest.mark.asyncio
@@ -244,7 +257,7 @@ async def test_a_ticker_that_settled_below_the_cursor_is_asked_about_this_cycle(
     offers it. Before this change the venue was not asked; now it is, in the
     same cycle.
     """
-    stats, _rc, venue, _ = await _drive(
+    stats, _rc, venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXMLBHIT-26SEP092210CINLAD"],
         tail=["KXNEWGLENN-262", "KXRAIN-26SEP09"],
@@ -267,7 +280,7 @@ async def test_the_cursor_is_advanced_from_the_tail_band_and_never_from_a_fresh_
     band — the next cycle would resume past `ZZZ` and never look at the ~40k
     tickers between `KXNEWGLENN` and there.
     """
-    _stats, rc, _venue, _ = await _drive(
+    _stats, rc, _venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["ZZZTOPOFTHEALPHABET-26SEP10"],
         tail=["KXNEWGLENN-262"],
@@ -286,7 +299,7 @@ async def test_an_exhausted_tail_wraps_the_cursor_and_still_runs_the_recency_ban
     settlements are piling up, so the early return threw away exactly the work
     this ship exists to do.
     """
-    stats, rc, venue, _ = await _drive(
+    stats, rc, venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXMLBHIT-26SEP092210CINLAD"],
         tail=[],
@@ -316,7 +329,7 @@ async def test_the_fast_lane_never_touches_the_tail_cursor(monkeypatch):
     An emptiness that is structural must never be read as an emptiness that is
     informative.
     """
-    _stats, rc, _venue, _ = await _drive(
+    _stats, rc, _venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXNFLRECYDS-26SEP13DALNYG"],
         tail=["KXNEWGLENN-262"],
@@ -335,7 +348,7 @@ async def test_the_omnibus_still_wraps_on_the_same_inputs(monkeypatch):
     the test above passes just as happily against a build where the wrap branch
     was deleted outright — which would be a real regression of #4057.
     """
-    _stats, rc, _venue, _ = await _drive(
+    _stats, rc, _venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXNFLRECYDS-26SEP13DALNYG"],
         tail=[],
@@ -353,7 +366,7 @@ async def test_the_fast_lane_does_not_read_the_cursor_either(monkeypatch):
     statement for it to be an input to. Passing the real value would be a live
     coupling to a band this caller has no business observing.
     """
-    _stats, _rc, _venue, sel = await _drive(
+    _stats, _rc, _venue, sel, _ld = await _drive(
         monkeypatch,
         fresh=["KXNFLRECYDS-26SEP13DALNYG"],
         tail=["KXNEWGLENN-262"],
@@ -371,7 +384,7 @@ async def test_the_fast_lane_asks_the_venue_about_the_same_fresh_tickers(monkeyp
     band 1 is character-for-character the set `:45` would have asked about. What
     the fast lane drops is band 2, and only band 2.
     """
-    stats, _rc, venue, _ = await _drive(
+    stats, _rc, venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXNFLRECYDS-26SEP13DALNYG", "KXNFLREC-26SEP13DALNYG"],
         tail=["KXNEWGLENN-262", "KXRAIN-26SEP09"],
@@ -385,7 +398,7 @@ async def test_the_fast_lane_asks_the_venue_about_the_same_fresh_tickers(monkeyp
 @pytest.mark.asyncio
 async def test_a_ticker_in_both_bands_costs_one_venue_fetch(monkeypatch):
     """Dedup. The two bands are selected independently and can overlap."""
-    stats, _rc, venue, _ = await _drive(
+    stats, _rc, venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXRAIN-26SEP09"],
         tail=["KXRAIN-26SEP09", "KXSNOW-26SEP09"],
@@ -406,7 +419,7 @@ async def test_the_recency_bands_grades_are_counted_apart_from_the_tails(monkeyp
     markets look identical in them. Post-deploy this is the number that says
     whether tonight's settlements were graded tonight.
     """
-    stats, _rc, _venue, _ = await _drive(
+    stats, _rc, _venue, _, _ld = await _drive(
         monkeypatch,
         fresh=["KXMLBHIT-26SEP092210CINLAD"],
         tail=["KXNEWGLENN-262"],
@@ -433,7 +446,7 @@ async def test_the_selection_is_handed_the_whole_cycle_budget_not_a_pre_split_on
     `_select_kalshi_settlement_tickers` applies `_fresh_settlement_budget`. A
     caller that pre-split it would halve the cycle silently.
     """
-    _stats, _rc, _venue, sel = await _drive(
+    _stats, _rc, _venue, sel, _ld = await _drive(
         monkeypatch, fresh=[], tail=["KXA-1"], cursor="", limit=2000
     )
     # `include_tail` is asserted here too, not omitted: the omnibus is the caller
@@ -574,3 +587,175 @@ def test_the_fast_lane_beat_keeps_its_minutes_queue_and_expiry():
             f":{minute:02d} is a multiple of five, where every */5, */10, */15 "
             "and */30 beat in this schedule fires"
         )
+
+
+# ---------------------------------------------------------------------------
+# #7857 — band 4's CALLER wiring: its own key, its own advance, its own wrap
+# ---------------------------------------------------------------------------
+#
+# The PG gate proves the STATEMENT selects the right rows. None of it touches the
+# caller, and the caller is where the cursor lives — which is where the damage
+# would be. `bainluck:kalshi_winner_longdated_cursor` and
+# `bainluck:kalshi_winner_backfill_cursor` are one typo apart, and a band 4 that
+# advanced band 2's key would reset a 71k-ticker alphabetical walk on every cycle
+# while looking entirely healthy (gotcha #34).
+
+_LD_KEY = "bainluck:kalshi_winner_longdated_cursor"
+_TAIL_KEY = "bainluck:kalshi_winner_backfill_cursor"
+
+
+@pytest.mark.asyncio
+async def test_band_four_is_asked_about_and_reaches_the_venue(monkeypatch):
+    """The ship end-to-end through the caller: selected → asked → graded.
+
+    The venue answers `finalized`/`yes`, which is what production says about the
+    specimen's three rungs, so this also pins that the long-dated band's tickers
+    flow into the SAME grader as every other band rather than a parallel one.
+    """
+    stats, _rc, venue, _sel, _ld = await _drive(
+        monkeypatch,
+        fresh=[],
+        tail=[],
+        longdated=["FEDHIKE"],
+        answers={"FEDHIKE": _finalized_event("FEDHIKE-27DEC31")},
+    )
+
+    assert "FEDHIKE" in venue.asked
+    assert stats["longdated_selected"] == 1
+    assert stats["winners_set"] == 1, (
+        "the long-dated band selected the ticker but no grade was written — the "
+        "band is decorative unless its tickers reach the writer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_band_four_advances_its_OWN_key_and_never_the_tail_cursor(monkeypatch):
+    """gotcha #34, and the one-typo failure this file exists to catch.
+
+    The tail is deliberately NON-empty. With `tail=[]` band 2 wraps itself — its
+    own correct behaviour — and the delete it issues would be indistinguishable
+    from band 4 having stamped on its key. Both bands must be live for this arm
+    to be about band 4 at all.
+    """
+    _stats, rc, _venue, _sel, _ld = await _drive(
+        monkeypatch,
+        fresh=[],
+        tail=["T-26SEP10"],
+        cursor="KXN",
+        longdated=["AAA-28JAN01", "BBB-28JAN01"],
+    )
+
+    assert (_LD_KEY, 86400 * 14, "BBB-28JAN01") in rc.setex_calls
+    # Band 2 still advances to its OWN last ticker, and no band-4 value ever
+    # lands on its key — the two halves of "they do not share a counter".
+    assert (_TAIL_KEY, 86400 * 14, "T-26SEP10") in rc.setex_calls
+    assert not [
+        c for c in rc.setex_calls if c[0] == _TAIL_KEY and c[2].startswith("BBB")
+    ], (
+        "band 4's cursor value landed on band 2's key — a 71k-ticker walk would "
+        "restart from wherever band 4 happened to stop"
+    )
+    assert rc.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_band_four_reads_its_own_cursor_back(monkeypatch):
+    """A cursor that is written and never read is a cursor that does not exist.
+
+    Without this arm the band re-serves page one for ever and the sweep the whole
+    design rests on never happens — and every other arm here still passes.
+    """
+    _stats, _rc, _venue, _sel, ld = await _drive(
+        monkeypatch,
+        fresh=[],
+        tail=[],
+        longdated_cursor="KXFEDHIKE",
+        longdated=["L-28JAN01"],
+    )
+
+    assert ld.seen["cursor"] == "KXFEDHIKE"
+    assert ld.seen["limit"] == bw._EARLY_SETTLED_LONGDATED_MAX_TICKERS
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_band_four_wraps_its_own_key(monkeypatch):
+    """Empty sweep + a cursor = the population is done; restart at 'A' next time.
+
+    Without the wrap the band walks to Z once and then asks about nothing for
+    ever, which reads exactly like a healthy idle band.
+    """
+    _stats, rc, _venue, _sel, _ld = await _drive(
+        monkeypatch,
+        fresh=[],
+        tail=[],
+        longdated_cursor="ZZZZ",
+        longdated=[],
+    )
+
+    assert _LD_KEY in rc.deleted
+    assert _TAIL_KEY not in rc.deleted
+
+
+@pytest.mark.asyncio
+async def test_a_cold_band_four_does_not_delete_a_key_it_never_had(monkeypatch):
+    """The control for the arm above — `elif`, not `else`.
+
+    An empty sweep on a cold cursor is the ordinary steady state once the
+    population is drained; issuing a DELETE on every such cycle would be a
+    pointless write and would mask a real wrap in the logs.
+    """
+    _stats, rc, _venue, _sel, _ld = await _drive(
+        monkeypatch, fresh=[], tail=[], longdated=[]
+    )
+
+    assert rc.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_the_fast_lane_runs_band_four_because_its_emptiness_is_measured(
+    monkeypatch,
+):
+    """The distinction that makes band 4's wrap safe where band 2's would not be.
+
+    Band 2's statement does not RUN in the fast lane, so its empty tail is
+    structural and deleting on it would reset the walk every half hour. Band 4's
+    statement runs on every cycle of both lanes, so its emptiness is a
+    measurement. This arm pins that band 4 really is asked in the fast lane — if
+    it were ever gated on `_use_tail_cursor` the wrap would become the same trap.
+    """
+    _stats, rc, _venue, _sel, ld = await _drive(
+        monkeypatch,
+        fresh=[],
+        tail=["T-26SEP10"],
+        cursor="KXN",
+        fast_lane_only=True,
+        longdated=["L-28JAN01"],
+    )
+
+    assert ld.seen["cursor"] == ""
+    assert (_LD_KEY, 86400 * 14, "L-28JAN01") in rc.setex_calls
+    # ... and band 2's cursor is still untouched in the fast lane (#1121).
+    assert not [c for c in rc.setex_calls if c[0] == _TAIL_KEY]
+    assert _TAIL_KEY not in rc.deleted
+
+
+@pytest.mark.asyncio
+async def test_band_four_is_deduped_against_the_bands_above_it(monkeypatch):
+    """The four bands are selected independently and may name the same ticker.
+
+    Asking the venue twice in one cycle is wasted quota, and `tickers_queried`
+    would over-report the band's reach.
+    """
+    stats, _rc, venue, _sel, _ld = await _drive(
+        monkeypatch,
+        fresh=["DUP-26SEP10"],
+        tail=[],
+        longdated=["DUP-26SEP10"],
+        answers={"DUP-26SEP10": _finalized_event("DUP-26SEP10-LEG")},
+    )
+
+    assert venue.asked.count("DUP-26SEP10") == 1
+    assert stats["longdated_selected"] == 1, (
+        "the dedup must not rewrite the band's own receipt — selection and "
+        "querying are different counts"
+    )
