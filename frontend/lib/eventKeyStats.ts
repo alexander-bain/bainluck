@@ -1699,6 +1699,11 @@ export interface WinProbYAxis {
 const WIN_PROB_Y_MIN_SAMPLES = 12;
 /** Narrowest window we will ever show, so a 2-point wobble is not magnified into drama. */
 const WIN_PROB_Y_MIN_SPAN = 20;
+/**
+ * Share of the plot's height the p2..p98 core must keep before we prefer the
+ * true extremes over the percentile window (#7837). See rule 1b.
+ */
+const WIN_PROB_Y_MIN_CORE_SHARE = 0.5;
 /** Grid the axis snaps to; 50 is a multiple of all three, so it is always ON the grid. */
 const WIN_PROB_Y_STEPS = [5, 10, 25];
 const WIN_PROB_Y_MAX_INTERVALS = 5;
@@ -1739,6 +1744,31 @@ function percentile(sorted: number[], q: number): number {
  *    0.6% of the series that is ~2px at the left edge, against a whole chart
  *    flattened today.
  *
+ * 1b. …BUT ONLY WHERE THE EXTREMES WOULD ACTUALLY FLATTEN THE CORE (#7837).
+ *    "Confined to the plot by a clip path" means a point outside the domain is
+ *    drawn as a line running off the frame, and rule 1 applied unconditionally
+ *    spends that on series whose extremes are not noise but the story. Measured
+ *    over the whole NFL slate of 2026-09-20 (14 games, blend series inside each
+ *    chart's own rendered window), two came out clipped AFTER rule 4's outward
+ *    snap, and they are the two games a reader would open:
+ *
+ *      14780544  KC 33–30 IND (OT)   216 pts  true 24.2–100.0  axis [40, 90]
+ *      14782150  TB–CLE              219 pts  true  0.0– 91.6  axis [25, 100]
+ *
+ *    On the first, Kansas City's two near-losses (24.2%) ran off the bottom and
+ *    the win ran off the top — while the trailing callout printed `100%` against
+ *    an axis whose highest tick said 90%. The label and the scale contradicted
+ *    each other on the decisive moment of the game.
+ *
+ *    The separator is not sample count (3.2% of that series was outside, vs
+ *    0.63% on the tennis page) but how much of the plot the core would give up:
+ *    the core band is 63% of the full range on both NFL specimens and 8.9% on
+ *    15306813, whose 21–92 spike is the case rule 1 exists for. So we take the
+ *    true extremes whenever the core keeps at least `WIN_PROB_Y_MIN_CORE_SHARE`
+ *    of the height, and keep the percentile window when it would not. The other
+ *    12 games of that slate are unchanged — rule 4's snap had already absorbed
+ *    their extremes — so this moves exactly the domains that were clipping.
+ *
  * 2. 50 is forced in IF THE SERIES TOUCHES IT, and only then. The chart stamps
  *    its crossing diamonds at y=50 and draws a dashed reference line there,
  *    so a domain that excluded 50 while the line crossed it would clip a marker
@@ -1770,6 +1800,17 @@ export function computeWinProbYAxis(values: number[]): WinProbYAxis {
   const sorted = [...finite].sort((a, b) => a - b);
   let lo = percentile(sorted, 0.02);
   let hi = percentile(sorted, 0.98);
+
+  // Rule 1b — the zoom is for extremes that would FLATTEN the core, not for
+  // extremes that describe it. Compared BEFORE any of the widening rules below,
+  // so the comparison is core-vs-full and not core-vs-whatever-rule-3-imposed.
+  const fullLo = sorted[0];
+  const fullHi = sorted[sorted.length - 1];
+  const fullSpan = fullHi - fullLo;
+  if (fullSpan > 0 && (hi - lo) / fullSpan >= WIN_PROB_Y_MIN_CORE_SHARE) {
+    lo = fullLo;
+    hi = fullHi;
+  }
 
   // Rule 2 — decided on the extremes, because one crossing print is one marker.
   const touchesEven = sorted[0] <= 50 && sorted[sorted.length - 1] >= 50;
