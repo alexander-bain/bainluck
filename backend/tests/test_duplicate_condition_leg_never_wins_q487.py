@@ -241,7 +241,15 @@ def test_the_ast_scan_actually_found_the_known_writes():
     by_file: dict[str, int] = {}
     for name, _, _, _ in writes:
         by_file[name] = by_file.get(name, 0) + 1
-    assert by_file == {"backfill_winners.py": 5, "polymarket.py": 2}, (
+    # #7767: polymarket.py went 2 -> 1. Not a shrinking population — the two
+    # settling UPDATEs (winner and loser) were byte-identical apart from the
+    # side they write, and became ONE parameterised builder,
+    # `settle_outcomes_stmt(price, is_winner)`, so the real-Postgres gate can
+    # execute the shipped statement rather than a retyped copy. Both call sites
+    # still run it, both still splice DUPLICATE_CONDITION_LEG_SQL, and the
+    # sibling assertions below still see the predicate on every write this
+    # scan finds. Re-classified by hand 2026-09-21.
+    assert by_file == {"backfill_winners.py": 5, "polymarket.py": 1}, (
         f"the in-class population changed: {by_file}. Re-classify by hand before "
         "adjusting this number — a shrinking population is how this guard goes "
         "vacuous."

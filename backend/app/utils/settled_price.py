@@ -49,6 +49,12 @@ _PRICE_TYPE = "numeric(7,6)"
 SETTLED_YES_PRICE = "1.0"
 SETTLED_NO_PRICE = "0.0"
 
+#: The grade these two prices belong to. Spelled here rather than imported so
+#: this module keeps its empty import list, and pinned to
+#: `kalshi_market_status.VENUE_SETTLEMENT_SOURCE` by a guard test so the copy
+#: cannot drift away from the constant the graders write.
+SETTLED_SOURCE = "api_settlement"
+
 
 def settled_price_set_sql(price: str, alias: str = "fo") -> str:
     """SQL set-clause fragment writing the terminal price for a settled leg.
@@ -84,6 +90,51 @@ def settled_price_set_sql(price: str, alias: str = "fo") -> str:
             WHEN {ref} IS DISTINCT FROM CAST({price} AS {_PRICE_TYPE})
             THEN NOW() ELSE {stamp} END
     """
+
+
+def settlement_pending_sql(price: str, alias: str = "fo") -> str:
+    """WHERE fragment: this row does NOT already hold exactly this settlement.
+
+    #7767. A settling UPDATE wants to skip rows it has already written — but
+    the obvious way to express that, `resolution_source <> 'api_settlement'`,
+    keys the skip on the ONE column a half-finished settlement already got
+    right. `_sync_polymarket_resolved_status` writes the grade and the price in
+    one statement and guarded it that way, so any row that arrived at
+    `api_settlement` by some OTHER route — graded by a writer that wrote no
+    price, or minted at the last trade — was sealed out of the only rail that
+    reads `outcomePrices` and could have corrected it. A repair rail whose
+    lookup keys on the same column as the damage can never repair that column.
+
+    Measured on production 2026-09-21: 217 Polymarket legs on 96 open boards
+    carry `api_settlement` + `is_winner = false` over a live-looking price, 27
+    of them at 20% or more. `/futures/113360` ("How many different countries
+    will Israel strike in 2026?") printed **100%** as the board's hero for leg
+    `0`, which Gamma resolved NO (`closed: true`, `outcomePrices ["0","1"]`) —
+    while its `lastTradePrice` stayed `1` against a `0.001` ask.
+
+    So the skip tests the whole settlement rather than its stamp: a row is left
+    alone only when the grade, the side AND the price already agree with what
+    this statement would write. `IS DISTINCT FROM` and not `<>`, because
+    `current_probability` and `is_winner` are both nullable and a NULL on either
+    side of `<>` is NULL — which is not TRUE, so the row would be skipped for
+    being unreadable, i.e. exactly backwards.
+
+    Pairs with :func:`settled_price_set_sql`; the same `price` literal drives
+    both, so the side the WHERE tests for is by construction the side the SET
+    writes and the two cannot be given different answers.
+
+    :param price: :data:`SETTLED_YES_PRICE` or :data:`SETTLED_NO_PRICE`.
+    :param alias: the table alias, or ``""`` for an unaliased statement.
+    """
+    if price not in (SETTLED_YES_PRICE, SETTLED_NO_PRICE):
+        raise ValueError(f"settlement price must be 0.0 or 1.0, got {price!r}")
+    won = "true" if price == SETTLED_YES_PRICE else "false"
+    ref = f"{alias}." if alias else ""
+    return f"""(
+        COALESCE({ref}resolution_source, '') <> '{SETTLED_SOURCE}'
+        OR {ref}current_probability IS DISTINCT FROM CAST({price} AS {_PRICE_TYPE})
+        OR {ref}is_winner IS DISTINCT FROM {won}
+    )"""
 
 
 def settled_price_values(is_winner: bool) -> dict:

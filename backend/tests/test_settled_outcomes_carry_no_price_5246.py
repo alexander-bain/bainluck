@@ -284,8 +284,39 @@ NON_KALSHI_SETTLEMENT_WRITERS = {
     "app/tasks/kalshi.py": set(),
     "app/routes/admin_data_quality.py": set(),
     "app/tasks/repair_kalshi_fabricated_loss.py": set(),
-    "app/tasks/polymarket.py": {"_sync_polymarket_resolved_status"},
-    "app/tasks/tournament_price_refresh.py": {"_settle_resolved_outcomes"},
+    "app/tasks/polymarket.py": set(),
+    "app/tasks/tournament_price_refresh.py": {"_write_refreshed_prices"},
+}
+
+#: #7767 — THE POLYMARKET EXEMPTION ABOVE IS SPENT, AND ITS PREMISE WAS WRONG.
+#:
+#: The paragraph over `NON_KALSHI_SETTLEMENT_WRITERS` deferred Polymarket "on
+#: evidence rather than convenience", on the reasoning that a settled Polymarket
+#: leg "already carries a near-terminal price rather than a frozen mid-market
+#: quote", and recorded the gap as "forward-only, and it is tracked" because
+#: "the DATA half of #5246 covers both — the repair clears any `api_settlement`
+#: loser on an open market whatever its source".
+#:
+#: The measurement it asked for was taken on production 2026-09-21 and refutes
+#: both halves:
+#:
+#: * **The price is not near-terminal.** 217 Polymarket legs on 96 OPEN boards
+#:   carry `api_settlement` + `is_winner = false` over a live-looking price, 27
+#:   of them at 20% or more. `/futures/113360` printed **100%** as its hero for a
+#:   leg Gamma had resolved NO.
+#: * **The data half does not reach them.** That repair's candidate query is
+#:   source-agnostic as described, but #5515's venue precondition then gates
+#:   every write on `VENUE_READABLE_SOURCES = {"kalshi"}`, so a Polymarket row
+#:   reaches `venue_verdict` only to be refused `no_venue_reader:polymarket`.
+#:   The coverage sentence describes the query; the behaviour is decided by a
+#:   later clause that narrowed it.
+#:
+#: So the writer is enforced here rather than excused. It is kept in its own map
+#: because the enforcement test below it is Kalshi-named and Kalshi-argued, and
+#: folding a Polymarket rail into a set called `LIVE_KALSHI_…` would make the
+#: census lie about what it covers.
+LIVE_POLYMARKET_SETTLEMENT_WRITERS = {
+    "app/tasks/polymarket.py": {"settle_outcomes_stmt"},
 }
 
 
@@ -464,8 +495,10 @@ def test_no_settlement_writer_lives_in_a_file_the_census_cannot_see():
     the alternative is what shipped, which was passing quietly on an unread one.
     """
     discovered = _discovered_settlement_files()
-    classified = set(LIVE_KALSHI_SETTLEMENT_WRITERS) | set(
-        NON_KALSHI_SETTLEMENT_WRITERS
+    classified = (
+        set(LIVE_KALSHI_SETTLEMENT_WRITERS)
+        | set(LIVE_POLYMARKET_SETTLEMENT_WRITERS)
+        | set(NON_KALSHI_SETTLEMENT_WRITERS)
     )
     unclassified = discovered - classified
     assert not unclassified, (
@@ -498,13 +531,26 @@ def test_the_census_file_list_is_not_secretly_a_hand_written_list():
 def test_the_settlement_writer_census_has_not_moved():
     """Positive control. A scan that finds nothing passes the test below.
 
-    If this fails, a Kalshi settlement writer was added, removed or renamed —
-    classify it by hand and add it to the set, because the test below can only
-    police writers it knows about.
+    If this fails, a settlement writer was added, removed or renamed — classify
+    it by hand and add it to the set, because the test below can only police
+    writers it knows about.
+
+    #7767 widened this over EVERY classified file rather than only the ones with
+    a `LIVE_KALSHI_SETTLEMENT_WRITERS` key. The old loop never opened a file that
+    appeared solely in the exemption map, so an exempt entry could name a
+    function that no longer existed and nothing said so — `tournament_price_
+    refresh.py` was carrying `_settle_resolved_outcomes` while the writer in it
+    had been `_write_refreshed_prices` for some time. An exemption is a claim
+    about a real writer; a claim about a function that is not there excuses
+    nothing and hides whatever replaced it.
     """
-    for path, expected in LIVE_KALSHI_SETTLEMENT_WRITERS.items():
+    enforced = {**LIVE_KALSHI_SETTLEMENT_WRITERS, **LIVE_POLYMARKET_SETTLEMENT_WRITERS}
+    for path in set(enforced) | set(NON_KALSHI_SETTLEMENT_WRITERS):
         found = set(_settlement_writers(path))
-        assert found == expected | NON_KALSHI_SETTLEMENT_WRITERS[path], path
+        expected = enforced.get(path, set()) | NON_KALSHI_SETTLEMENT_WRITERS.get(
+            path, set()
+        )
+        assert found == expected, path
 
 
 def test_every_live_kalshi_api_settlement_writer_sets_terminal_price():
@@ -552,6 +598,121 @@ def test_every_live_kalshi_api_settlement_writer_sets_terminal_price():
             assert "price_changed_at" in body or via_helper, (
                 f"{path}::{name} moves the price without the #2024 change stamp"
             )
+
+
+#: The exact predicate that caused #7767, kept as a literal so the seal cannot
+#: come back by being retyped. It reads as an idempotence guard and behaves as a
+#: permanent lock: it keys the skip on `resolution_source`, which is the column a
+#: half-finished settlement already got right.
+_SEALED_GUARD = "resolution_source, '') != 'api_settlement'"
+
+
+def test_every_live_polymarket_api_settlement_writer_sets_terminal_price():
+    """#7767, the Polymarket half of the same population.
+
+    Same argument as the Kalshi test above — a settlement writer is a
+    POPULATION, not a place — applied to the rail the original ship exempted.
+    """
+    for path, names in LIVE_POLYMARKET_SETTLEMENT_WRITERS.items():
+        writers = _settlement_writers(path)
+        for name in names:
+            body = writers[name]
+            assert (
+                "settled_price_set_sql(" in body or "settled_price_values(" in body
+            ), (
+                f"{path}::{name} stamps api_settlement without writing a "
+                f"terminal price through the shared clause"
+            )
+
+
+def test_the_polymarket_settling_writes_are_not_sealed_by_their_own_grade():
+    """🔴 THE DEFECT ITSELF: the guard that made 217 legs unrepairable.
+
+    The two statements always wrote the right price. What they could not do was
+    come BACK to a leg, because the skip was
+    `COALESCE(fo.resolution_source,'') != 'api_settlement'` — so any row that
+    reached that grade by another route kept whatever price it was carrying, and
+    the only rail that reads `outcomePrices` on an open board was locked out of
+    it for good.
+
+    Asserted on the shipped statements, both sides, and on the ABSENCE of the
+    old literal — a regression here would be someone restoring the simpler
+    predicate because it reads like the obvious idempotence guard.
+    """
+    from app.tasks.polymarket import settle_outcomes_stmt
+
+    for label, price, won in (("winners", "1.0", "true"), ("losers", "0.0", "false")):
+        sql = str(settle_outcomes_stmt(price, won))
+        assert _SEALED_GUARD not in sql, (
+            f"{label}: the sealed guard is back — a leg already stamped "
+            f"api_settlement can never have its price corrected again"
+        )
+        # The skip must test the whole settlement: grade, side AND price.
+        assert f"IS DISTINCT FROM CAST({price} AS" in sql, label
+        assert f"is_winner IS DISTINCT FROM {won}" in sql, label
+        # Still idempotent — the grade is part of the test, not absent from it.
+        assert "COALESCE(fo.resolution_source, '') <> 'api_settlement'" in sql, label
+        # And the terminal price still lands (the #5246 clause).
+        assert f"current_probability={price}" in sql, label
+
+
+def test_the_settlement_skip_uses_is_distinct_from_and_not_a_plain_inequality():
+    """Both columns it tests are nullable, so `<>` would invert the answer.
+
+    `NULL <> 0.0` is NULL, which is not TRUE, so under `<>` a row with no stored
+    price or no stored verdict is SKIPPED — the rows most obviously in need of
+    the write are the ones a plain inequality declines to write.
+    """
+    from app.utils.settled_price import SETTLED_NO_PRICE, settlement_pending_sql
+
+    sql = settlement_pending_sql(SETTLED_NO_PRICE)
+    for column in ("current_probability", "is_winner"):
+        assert f"{column} IS DISTINCT FROM" in sql, column
+        assert f"{column} <> " not in sql, column
+        assert f"{column} != " not in sql, column
+
+
+def test_the_settlement_skip_refuses_a_price_that_is_not_a_settlement():
+    """Same closed literal set as the SET clause, for the same reason.
+
+    The two fragments are spliced into one statement off one `price` argument.
+    If the WHERE accepted "a probability we are fairly confident about" while
+    the SET refused it, the pair could be handed different answers.
+    """
+    from app.utils.settled_price import settlement_pending_sql
+
+    for illegal in ("0.97", "0.5", "1", "0", "", "0.0; DROP TABLE"):
+        with pytest.raises(ValueError):
+            settlement_pending_sql(illegal)
+
+
+def test_the_two_settling_statements_test_for_the_side_they_write():
+    """The WHERE's side and the SET's side come from one literal, by construction.
+
+    A pair that disagreed would either never fire or would write the wrong side
+    of the book over a settled leg, and both halves are generated from the same
+    `price` argument precisely so that cannot be arranged by accident.
+    """
+    from app.tasks.polymarket import settle_outcomes_stmt
+
+    winners = str(settle_outcomes_stmt("1.0", "true"))
+    losers = str(settle_outcomes_stmt("0.0", "false"))
+    assert "SET is_winner = true" in winners and "current_probability=1.0" in winners
+    assert "is_winner IS DISTINCT FROM true" in winners
+    assert "SET is_winner = false" in losers and "current_probability=0.0" in losers
+    assert "is_winner IS DISTINCT FROM false" in losers
+    # The duplicate-leg rule (Q487) is not dropped by the extraction.
+    for sql in (winners, losers):
+        assert "dup_twin" in sql
+
+
+def test_the_settled_source_constant_has_not_drifted_from_the_graders():
+    """`settled_price` spells the grade rather than importing it, to keep its
+    import list empty. This is the pin that stops the copy drifting."""
+    from app.utils.kalshi_market_status import VENUE_SETTLEMENT_SOURCE
+    from app.utils.settled_price import SETTLED_SOURCE
+
+    assert SETTLED_SOURCE == VENUE_SETTLEMENT_SOURCE
 
 
 #: The writers CERT-2641 found outside the first census, and what each owes.
