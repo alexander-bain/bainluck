@@ -48,7 +48,12 @@ Absent is not zero (ruling 051). A leg we hold NO price for still prints `—` a
 still may not date the mark — `test_control_*` below, and the NULL specimen in
 `test_unpriced_leg_cannot_date_the_mark_6256.py`, are what keep that distinction
 load-bearing rather than rhetorical. This fix makes `0.0` printable; it does not
-make `None` printable, and it changes no row's MEMBERSHIP of the ladder.
+make `None` printable.
+
+It does NOT change membership of the SEARCH ladder (`test_control_the_count_badge_
+does_not_move`). It does change membership on the FEED, in one bounded place that
+#4679's handover did not name — see the final section of this file, which
+measures the reach rather than waving at it.
 
 ═══ NOT VACUOUS ═══
 
@@ -356,3 +361,116 @@ def test_control_the_count_badge_does_not_move():
     """
     assert _format_futures_for_search(_sports_emmy_board(), None)["outcome_count"] == 6
     assert _format_futures_for_search(_unpriced_board(), None)["outcome_count"] == 6
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# THE CONSEQUENCE THE HANDOVER DID NOT NAME — feed leg MEMBERSHIP
+# ══════════════════════════════════════════════════════════════════════════
+#
+# #4679's boundary note named two print sites and `displayed_price_stamp`. It
+# did not name `_drop_stale_observation_legs`, which also calls the shared
+# predicate — and there the predicate decides MEMBERSHIP, not formatting:
+#
+#     survivors = [o for o in outcomes
+#                  if o.id not in stale_ids or not _outcome_prints_a_price(o)]
+#
+# A leg more than 7 days behind its market's newest stamp is dropped IF it
+# prints a number. Making `0.0` printable therefore moves a stale zero leg from
+# "kept, rendered as a dash" to "dropped". Measured on production 2026-09-21
+# over open markets: 672 zero legs on 238 markets sit past that lag, of which
+# **97 legs on 86 cards** fall inside the three-leg slice a Discover card draws
+# — so that is the bound on what a reader can see change here.
+#
+# KEPT RATHER THAN EXEMPTED, and the reason is that the alternative is worse. A
+# 7-day-stale `0%` is a freshness claim this codebase declines to make for every
+# other price; exempting zeros would print the one number whose staleness we
+# have specifically decided not to vouch for. The existing rule now applies
+# uniformly instead of having a hole shaped like `0.0`, and #7180's finding cuts
+# the same way — a row the reader cannot read is a wasted slot, not a courtesy.
+#
+# These two tests exist so that consequence is asserted rather than discovered.
+
+
+def _feed_legs(market, outcomes):
+    from app.routes.feed import _drop_stale_observation_legs
+
+    return [o.name for o in _drop_stale_observation_legs(market, outcomes)]
+
+
+def _dated(outcome, stamp):
+    outcome.last_updated = stamp
+    return outcome
+
+
+def test_a_fresh_zero_leg_survives_the_feed_stale_filter():
+    """The common case, and the one the ship depends on.
+
+    Both production specimens are this shape: market 13886744's six rows share
+    one stamp, so nothing is stale and every zero reaches the card to print
+    `0%`. If this fails, the fix cannot be seen on its own specimen.
+    """
+    from datetime import datetime, timezone
+
+    same = datetime(2026, 8, 6, 20, 49, 38, tzinfo=timezone.utc)
+    board = _sports_emmy_board()
+    for outcome in board.outcomes:
+        _dated(outcome, same)
+
+    surviving = _feed_legs(board, board.outcomes)
+    for name in _ELIMINATED:
+        assert name in surviving, (
+            f"{name} was dropped from a board whose legs share one stamp: "
+            f"{surviving}"
+        )
+
+
+def test_a_stale_zero_leg_is_dropped_by_the_same_rule_that_drops_a_stale_price():
+    """The named consequence — asserted beside its control so it reads as a rule.
+
+    The point is the PAIR: a 7-day-lagged leg is dropped whether its number is
+    `0.0` or `0.55`, and a leg we hold no price for is still kept however old it
+    is (nothing about `None` changed). Before #6195 the zero row behaved like
+    the `None` row here; it now behaves like the priced row, which is the whole
+    content of "a zero is a price".
+    """
+    from datetime import datetime, timezone
+
+    fresh = datetime(2026, 8, 6, tzinfo=timezone.utc)
+    lagged = datetime(2026, 5, 12, tzinfo=timezone.utc)
+
+    board = _sports_emmy_board()
+    legs = board.outcomes
+    _dated(legs[0], fresh)                      # FOX MLB, 0.99 — the newest
+    _dated(legs[1], lagged)                     # NBA Finals, 0.0
+    _dated(legs[2], fresh)
+    _dated(legs[3], fresh)
+    _dated(legs[4], fresh)
+    _dated(legs[5], fresh)
+
+    surviving = _feed_legs(board, legs)
+    assert "NBA Finals" not in surviving, (
+        f"a 3-month-stale 0% was served as a current price: {surviving}"
+    )
+
+    # CONTROL A — the same lag on a leg with an ordinary price is dropped too,
+    # so the rule is about staleness and not about zero.
+    board_priced = _sports_emmy_board()
+    priced = board_priced.outcomes
+    priced[1].current_probability = 0.55
+    for outcome in priced:
+        _dated(outcome, fresh)
+    _dated(priced[1], lagged)
+    assert "NBA Finals" not in _feed_legs(board_priced, priced)
+
+    # CONTROL B — the same lag on an UNPRICED leg is kept, because a dash makes
+    # no freshness claim. This is the branch #6195 did not touch, and it is what
+    # stops this test from reading as "drop everything old".
+    board_null = _sports_emmy_board()
+    nulls = board_null.outcomes
+    nulls[1].current_probability = None
+    for outcome in nulls:
+        _dated(outcome, fresh)
+    _dated(nulls[1], lagged)
+    assert "NBA Finals" in _feed_legs(board_null, nulls), (
+        "an unpriced leg makes no claim about freshness and must still be kept"
+    )
