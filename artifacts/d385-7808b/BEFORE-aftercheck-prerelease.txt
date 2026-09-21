@@ -1,0 +1,8 @@
+market 61308736: 2027 US Open Men's Singles Winner
+top_outcomes, in served order (names only, by design):
+    1. Jakub Mensik
+    2. Jannik Sinner
+    3. Carlos Alcaraz
+
+FAIL: 'Jakub Mensik' is on the card at position 1; his book bids 4c and nobody is buying him
+FAIL: and he is LEADING it

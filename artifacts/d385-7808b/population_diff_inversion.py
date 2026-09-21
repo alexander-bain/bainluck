@@ -1,4 +1,4 @@
-import json, os, subprocess, sys
+import json, os, subprocess
 SQL = """
 WITH base AS (
   SELECT o.market_id, o.name, o.current_probability AS p,

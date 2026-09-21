@@ -20,7 +20,10 @@ from app.utils.feed_market_quality import (  # noqa: E402
     classify_market_quality,
 )
 
-d = json.load(open(os.path.join(os.path.dirname(__file__), "nonexclusive_specimens.json")))
+with open(
+    os.path.join(os.path.dirname(__file__), "nonexclusive_specimens.json")
+) as fh:
+    d = json.load(fh)
 rows = [dict(zip(d["columns"], r)) for r in d["rows"]]
 by = {}
 for r in rows:
