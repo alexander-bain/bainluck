@@ -16,11 +16,24 @@ import { useState, useMemo } from "react";
 import { motion } from "@/components/motion";
 import type { ChampionshipGridData, PlayoffTeam, LeagueTab, PlayoffStage } from "@/lib/playoff-types";
 import TeamNameLink from "./TeamNameLink";
+import { probabilityCellText } from "@/lib/probabilityCellText";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The 10px SUMMARY cell's bare number — no `%`, because at that width the
+ * column header carries the unit. Its top end is NOT guarded here: the one
+ * call site that uses it (`prob >= 0.995 ? "99+" : fmt(prob)`) guards the top
+ * itself, which is why a bare `Math.round` is safe in this body and ONLY there.
+ *
+ * #7670: do not reach for this from a cell that prints `NN%`. That vocabulary
+ * belongs to `probabilityCellText`, which guards both ends in the function
+ * rather than trusting each caller to remember. The per-source breakdown table
+ * below called this one WITHOUT the caller-side top guard and printed `100%`
+ * for a 0.9972 source; it now calls the helper.
+ */
 function fmt(p: number): string {
   if (p > 0 && p <= 0.01) return "<1";
   const pct = Math.round(p * 100);
@@ -128,7 +141,9 @@ function SourceBreakdown({ team, stageKeys, stageLabels }: { team: PlayoffTeam; 
                 const srcData = stage?.sources.find((s) => s.source === sourceName);
                 return (
                   <td key={key} className="text-center py-0.5 font-mono" style={{ color: "var(--text-secondary)" }}>
-                    {srcData ? `${fmt(srcData.probability)}%` : "—"}
+                    {srcData && Number.isFinite(srcData.probability)
+                      ? probabilityCellText(srcData.probability)
+                      : "—"}
                   </td>
                 );
               })}

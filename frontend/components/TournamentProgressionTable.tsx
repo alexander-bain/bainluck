@@ -8,6 +8,7 @@ import type { ProgressionCellStatus } from "@/lib/gridCellState";
 import { GRID_CELL_TERMINAL_GLYPH, progressionSortValue } from "@/lib/gridCellState";
 import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDisplay";
 import { legendName } from "@/lib/contenderChart";
+import { probabilityCellText } from "@/lib/probabilityCellText";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -315,11 +316,12 @@ function cellDisplay(
  */
 function formatProb(p: number | null): string {
   if (p === null || p === undefined || !Number.isFinite(p)) return "—";
-  const pct = p * 100;
-  if (pct >= 10) return `${Math.round(pct)}%`;
-  if (pct >= 1) return `${pct.toFixed(1)}%`;
-  if (pct >= 0.1) return `${pct.toFixed(1)}%`;
-  return "<0.1%";
+  // #7670: this function guarded its FLOOR (`<0.1%` rather than a `0%` that
+  // claims impossibility) and rounded its CEILING, which claimed certainty for
+  // the mirror reason — Boston printed `100%` at a served 0.9972, two rows
+  // under clubs showing ✓ for actually having clinched. Both ends now live in
+  // one place, shared with the grid's own renderer.
+  return probabilityCellText(p);
 }
 
 /**
