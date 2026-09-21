@@ -24,7 +24,7 @@
  * ═══ WHY THE GUARD RENDERS THE COMPONENT INSTEAD OF CALLING THE HELPER ═══
  *
  * `futuresHeroNeverCrownsTheOppositeSide5997.test.ts` unit-tests
- * `heroOutcomeLabel` and is the right place for the predicate's own arms. It
+ * `boardOutcomeLabel` and is the right place for the predicate's own arms. It
  * cannot see this defect's shape, because what a reader met was a COMPOSITION:
  * the page computes the label with one function and `FuturesHero` decides
  * whether and where to draw it. A hero that dropped `outcomeName` entirely, or
@@ -41,7 +41,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import { FuturesHero } from "../../components/FuturesHero";
-import { heroOutcomeLabel } from "@/lib/futuresDetailDisplay";
+import { boardOutcomeLabel } from "@/lib/futuresDetailDisplay";
 
 /** Both renderings of the same props: [label, sparklinePoints]. */
 const RENDERINGS: [string, number[] | undefined][] = [
@@ -93,7 +93,7 @@ describe("#7256 — the hero names an answer the board actually carries", () => 
     test.each(SPECIMENS)(
       "$market: the hero says $leader, never \"Yes\"",
       ({ leader, probability }) => {
-        const html = hero(points, heroOutcomeLabel(leader), probability);
+        const html = hero(points, boardOutcomeLabel(leader), probability);
 
         // The name is drawn, and is addressable — without this the negative
         // assertion below would pass on a hero that drew no name at all.
@@ -115,7 +115,7 @@ describe("#7256 — the hero names an answer the board actually carries", () => 
     // these verbatim since #5997 and still does; retiring the substitution
     // cannot reach them, and a reader on a binary market sees no change.
     for (const served of ["Yes", "No", "Over 5.5", "Under 100"]) {
-      const html = hero(undefined, heroOutcomeLabel(served), 0.6);
+      const html = hero(undefined, boardOutcomeLabel(served), 0.6);
       expect(nameSlot(html)).toBe(served);
     }
   });
@@ -125,7 +125,7 @@ describe("#7256 — the hero names an answer the board actually carries", () => 
     // so this is the unreachable direction — asserted because the old
     // substitution's last defensible case was exactly "the name says nothing",
     // and the honest answer to that is silence, not "Yes" (notice 34 / D102).
-    const html = hero(undefined, heroOutcomeLabel("   "), 0.6);
+    const html = hero(undefined, boardOutcomeLabel("   "), 0.6);
     expect(html).not.toContain('data-testid="hero-outcome-name"');
     expect(html).not.toContain(">Yes<");
   });

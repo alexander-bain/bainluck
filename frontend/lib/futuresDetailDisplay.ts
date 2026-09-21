@@ -338,21 +338,92 @@ export function leaderLabel(leader: MovementLeader | null): string | null {
  * value on `{outcomeName && …}`, so a blank one leaves the space empty rather
  * than explaining it (notice 34 / D102).
  */
-export function heroOutcomeLabel(name: string): string {
-  return name.trim();
+export function boardOutcomeLabel(name: string, marketName?: string | null): string {
+  return withoutBoardNamePrefix(name.trim(), marketName);
 }
+
+/**
+ * #6765 — A BOARD DOES NOT REPEAT ITS OWN QUESTION ON EVERY LINE.
+ *
+ * `/futures/61645756` at 390px, 2026-09-21, prints this and nothing between the
+ * two lines:
+ *
+ *     Korea Open: Alevtina Ibragimova vs Yeon-Woo Ku          ← the <h1>
+ *     70%
+ *     Korea Open: Alevtina Ibragimova vs Yeon-Woo Ku Set 1 O/U 9.5
+ *
+ * On these in-play tennis and table-tennis boards the venue's OUTCOME name is
+ * the whole question plus a few words, so the only information in the second
+ * line is `Set 1 O/U 9.5` and the reader has to re-read a 45-character prefix to
+ * reach it. The same prefix then appears on every row of All Outcomes, where the
+ * row is `truncate`d — three different sub-markets rendered as three visually
+ * IDENTICAL rows ending in `…`, which is the worse half of this defect and the
+ * reason the fix is not confined to the hero.
+ *
+ * ═══ THE RULE IS A BOUNDARY, NOT A LENGTH ═══
+ *
+ * Strip the board's own name when the outcome name STARTS with it AND the next
+ * character is a separator. Both clauses matter: the boundary test is what stops
+ * a board called `Italy` eating the first word of `Italymania`, and no tuned
+ * length constant appears here because a threshold is exactly the kind of number
+ * that drifts. Measured on production 2026-09-21 over every open futures market
+ * — 194 outcome rows on 66 boards carry their board's name as a strict prefix,
+ * and **0 of them break at a non-separator**, so a boundary test costs the fix
+ * nothing and buys it the whole hostile family.
+ *
+ * ═══ IT CAN ONLY EVER REMOVE A REPEAT, NEVER THE ANSWER ═══
+ *
+ * Three refusals, each of which returns the name untouched:
+ *
+ *   - no board name to compare against (every other surface, unchanged);
+ *   - the outcome name is the board name EXACTLY, or shorter — there is no
+ *     remainder, and printing nothing is worse than printing a repeat;
+ *   - the remainder is only separators. A row is never left blank by this.
+ *
+ * So the worst case is today's behaviour. Measured over the same 194 rows: the
+ * shortest surviving remainder is 12 characters (`Set 1 Winner`), 0 rows strip to
+ * empty, and the median line loses 43 characters of prefix.
+ *
+ * The comparison is case-insensitive and the remainder is sliced from the
+ * ORIGINAL string, so a board that shouts its name does not re-case the answer.
+ *
+ * ⚠️ THIS IS A PAGE RULE, NOT A NAME RULE. It may only be applied where the board
+ * name is on screen beside the outcome — `/futures/[id]`, whose `<h1>` IS the
+ * market name. A card on Discover or a search result carries the outcome name
+ * with no question above it, and there the prefix is the only thing naming the
+ * match. That is why the market name is a parameter rather than something this
+ * function looks up, and why `FuturesChart`'s legend is deliberately NOT changed
+ * here: it is drawn on five surfaces and takes no market name (#7813).
+ */
+export function withoutBoardNamePrefix(name: string, marketName?: string | null): string {
+  const label = name.trim();
+  const board = (marketName ?? "").trim();
+  if (!board || label.length <= board.length) return label;
+  if (label.slice(0, board.length).toLowerCase() !== board.toLowerCase()) return label;
+  if (!BOARD_PREFIX_SEPARATOR.test(label.charAt(board.length))) return label;
+  const remainder = label.slice(board.length).replace(BOARD_PREFIX_LEADING, "").trim();
+  return remainder || label;
+}
+
+/** The characters a venue puts between a board's name and the rest of an outcome
+ *  name. Space and colon are the only two seen in the measured population (43
+ *  and 2 of 45 heroes); the rest are here because a separator list that is
+ *  narrower than the punctuation a venue actually uses fails CLOSED — an
+ *  unrecognised separator leaves the repeat on the page, which is today. */
+const BOARD_PREFIX_SEPARATOR = /[\s:;,\-–—|·/]/;
+const BOARD_PREFIX_LEADING = /^[\s:;,\-–—|·/]+/;
 
 /*
  * `isGenericOutcomeName` was DELETED by #7256, not narrowed.
  *
- * It existed for one caller — `heroOutcomeLabel` above — and answered one
+ * It existed for one caller — `boardOutcomeLabel` above — and answered one
  * question: "is this name too bare to print, so that 'Yes' reads better?" The
  * production count of the family it was written to rescue (`Option A`,
  * `Choice 1`, `Bucket 3`) is zero, and every other arm it fired on was a real
  * answer being overwritten. With the substitution retired there is no caller
  * left, and an exported predicate that nothing calls is worse than no predicate:
  * the next reader would take its existence as evidence that the hero still
- * substitutes. The arms it recognised are recorded in `heroOutcomeLabel`'s
+ * substitutes. The arms it recognised are recorded in `boardOutcomeLabel`'s
  * measurement table rather than kept as code.
  *
  * `statesItsOwnSide` (#5997) is the predicate that survives, and it is still
@@ -562,10 +633,26 @@ export function futuresUnfurlCopy<
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements
  * under 1 point read as "roughly flat" rather than noisy decimals.
+ *
+ * #6765 — `marketName` is OPTIONAL and shortens nothing on its own: it is handed
+ * to the same `withoutBoardNamePrefix` the hero and the rows use, so a caption on
+ * a board whose outcome names repeat its title reads "Set 1 O/U 9.5 up 22.0 pts
+ * from opening." instead of the `<h1>` plus five words. It is applied to the
+ * LABEL rather than to `leader.name`, which keeps `leaderLabel`'s #5997 rule
+ * exactly where it is — a label that came back "Yes" or "No" has no board prefix
+ * to lose, so the two rules cannot interact.
  */
-export function movementExplanation(leader: MovementLeader | null): string | null {
+export function movementExplanation(
+  leader: MovementLeader | null,
+  marketName?: string | null,
+): string | null {
   if (!leader) return null;
-  const label = leaderLabel(leader);
+  // `leaderLabel` is typed `string | null` for its own null-leader arm, which this
+  // function has already returned on. The guard keeps the old shape EXACTLY — a
+  // null label reaches the template literals below as it always did — rather than
+  // coercing it to "" and inventing a caption with no subject.
+  const served = leaderLabel(leader);
+  const label = served === null ? served : withoutBoardNamePrefix(served, marketName);
   const cur = leader.probability;
   const open = leader.opening_probability;
 
