@@ -126,6 +126,16 @@ MARKET_COLUMNS: tuple[str, ...] = (
     "llm_league",
     "llm_gender",
     "llm_level",
+    # #7808: the venue's own "exactly one of these can win" flag. Same rule as
+    # `market_type` above, and the sharper half of it — unloaded, the attribute
+    # does not merely read `None` on the cached path, it does not EXIST on the
+    # snapshot at all, and `classify_fabricated_book`'s caller raises
+    # AttributeError inside the per-item scorer, which drops the whole card
+    # (gotcha #42). Loaded but absent from the wire it would be worse than
+    # either: the direct path would re-lead an incoherent field and the cached
+    # path would not, so a reader's card would change its named favourite as the
+    # cache turned over — a DIFFERENT feed, not a cheaper one.
+    "mutually_exclusive",
 )
 
 #: Columns loaded for each `FuturesOutcome`.
@@ -404,7 +414,16 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: for: a same-width swap is invisible to it, and this commit is one column out
 #: and one column in. Under v6 a v5 entry is never read and expires under its
 #: TTL, which is the whole cost — one 2.9 MB rebuild per worker, once.
-SNAPSHOT_SCHEMA_VERSION = 6
+#:
+#: v7 — `mutually_exclusive` appended to `MARKET_COLUMNS` (#7808). Arity alone
+#: WOULD catch an in-flight v6 entry here (a market row one value short), and the
+#: bump is still the right instrument rather than the incidental one: the column
+#: decides whether a field whose prices do not add up may be re-led, so a v6 row
+#: read as if it were v7 would leave `mutually_exclusive` absent on the cached
+#: path and the clause silently off — the card naming a different favourite
+#: depending on which path served it. Under v7 those entries are never read and
+#: expire under their own TTL.
+SNAPSHOT_SCHEMA_VERSION = 7
 
 
 class _Snapshot:

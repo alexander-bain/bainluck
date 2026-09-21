@@ -1,0 +1,21 @@
+317 candidate fields
+=== candidate fields (exclusive, sum>1.25, a bid-backed leg): 317 fields read, 17 changed, 17 leader changes, 0 cards newly dropped
+ 52755831 kalshi     Division with the Most Total Wins          hid  1 more | NFC West                 -> NFC North                 | card dropped: False->False
+ 56775542 kalshi     New Orleans: Stage of Elimination          hid  1 more | Regular Season           -> Wildcard Round            | card dropped: False->False
+ 57774200 kalshi     US real GDP growth in 2033?                hid  1 more | 3.1% to 3.5%             -> 1.6% to 2.0%              | card dropped: False->False
+ 59165017 kalshi     Pro Football Playoffs: NFC #7 Seed         hid  5 more | Philadelphia             -> San Francisco             | card dropped: False->False
+ 59165018 kalshi     Pro Football Playoffs: NFC #6 Seed         hid  9 more | Washington               -> Seattle                   | card dropped: False->False
+ 59165021 kalshi     Pro Football Playoffs: NFC #3 Seed         hid  7 more | Washington               -> Dallas                    | card dropped: False->False
+ 59165025 kalshi     Pro Football Playoffs: AFC #5 Seed         hid  6 more | Pittsburgh               -> Baltimore                 | card dropped: False->False
+ 59165026 kalshi     Pro Football Playoffs: AFC #4 Seed         hid  9 more | Los Angeles C            -> Jacksonville              | card dropped: False->False
+ 59165027 kalshi     Pro Football Playoffs: AFC #3 Seed         hid  9 more | Baltimore                -> Buffalo                   | card dropped: False->False
+ 59165028 kalshi     Pro Football Playoffs: AFC #2 Seed         hid  7 more | New York J               -> Buffalo                   | card dropped: False->False
+ 59165065 kalshi     Top Fantasy D/ST                           hid  3 more | MIN Vikings D/ST         -> HOU Texans D/ST           | card dropped: False->False
+ 59693483 kalshi     Lightweight Title on Dec 31, 2027?         hid  2 more | Islam Makhachev          -> Arman Tsarukyan           | card dropped: False->False
+ 59699623 kalshi     Big 12: Passing Yards Leader               hid 12 more | Noah Fifita              -> Scotty Fox Jr.            | card dropped: False->False
+ 61003887 kalshi     Australian Open Women's Singles Winner     hid  3 more | Amanda Anisimova         -> Aryna Sabalenka           | card dropped: False->False
+ 61072451 kalshi     Joey Porter Jr. Next Team                  hid  1 more | Dallas                   -> New York G                | card dropped: False->False
+ 61308736 kalshi     2027 US Open Men's Singles Winner          hid  1 more | Jakub Mensik             -> Jannik Sinner             | card dropped: False->False
+ 61485073 kalshi     VALORANT Champions Shanghai Group B winn   hid  1 more | EDward Gaming            -> Team Vitality             | card dropped: False->False
+
+=== controls (ladders, O/U pairs, coherent fields): 8 fields read, 0 changed, 0 leader changes, 0 cards newly dropped

@@ -11945,6 +11945,14 @@ async def _score_futures(
                 # ("closes above $200"), which legitimately sum past 100% and must
                 # never be judged by the exclusive-sum rule.
                 is_exclusive=(market.group_type == "negrisk"),
+                # #7808: the venue's OWN exclusivity flag, which is a different
+                # question from the negRisk sum gate above — it says "exactly one of
+                # these can win", which is what makes "this leg outranks a leg
+                # somebody is bidding for" mean anything. A field whose legs can all
+                # happen (ten quarterbacks each throwing 40 touchdowns) carries False
+                # and is never judged by that clause; measured, it is the only thing
+                # sparing six such fields, four of which reach a card.
+                field_is_mutually_exclusive=bool(market.mutually_exclusive),
             )
             if phantom_drop_card:
                 continue

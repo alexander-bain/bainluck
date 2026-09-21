@@ -750,10 +750,161 @@ def book_has_a_buyer(yes_bid: "float | None") -> bool:
     return yes_bid is not None and float(yes_bid) > EMPTY_BOOK_MAX_BID
 
 
+def refuse_unbid_legs_that_outrank_a_bid_leg(
+    outcomes: "list[tuple[float | None, float | None, float | None]]",
+    already_refused: "list[bool]",
+    *,
+    field_is_mutually_exclusive: bool,
+) -> "list[bool]":
+    """Legs nobody is bidding for that outrank a leg somebody IS (#7808, half two).
+
+    🔴 THE READER. `2027 US Open Men's Singles Winner`, photographed at 390px on
+    2026-09-21, named **Jakub Mensik the 74% favourite** for a major two years out.
+    The venue's own listing (read before any claim, notice 26/27: Kalshi
+    `/events/KXATP-27USO?with_nested_markets=true`, 25 active markets) says what that
+    number is: Mensik's book is **bid 4c / ask 74c**, his 0.74 is a single stale fill
+    at the top of it, and the identical 74c ask sits on Zverev, Medvedev, Fritz, Fils,
+    Jodar, Paul and Vacherot — one maker's blanket quote across the field, not a price
+    per player. Sinner (bid 7c) and Alcaraz (bid 7c) are the only legs anyone is
+    actually buying, at 31% and 27%. So the card named the one man nobody will pay 5c
+    for and the field's own prices added up to 155%.
+
+    THE CLAUSE, in one sentence: on a mutually exclusive field whose prices do not add
+    up, a leg with no buyer may not outrank a leg that has one. It is the mirror of
+    the #7808 clause directly above — that one says a leg with a real buyer is never
+    ERASED, this one says a leg with no buyer is never PRINTED ABOVE one. Both turn on
+    the same bid, which is the only number in these books that somebody stood behind.
+
+    THREE GUARDS, AND EACH ONE IS A SPECIMEN THAT WOULD OTHERWISE BREAK:
+
+    1. ``field_is_mutually_exclusive``. A FIELD WHOSE LEGS CAN ALL HAPPEN IS NOT A
+       FIELD, and "this leg outranks one somebody is bidding for" means nothing on
+       it. `Pro Football: 40+ Passing Touchdowns Season` is the case: ten
+       quarterbacks, any number of whom can throw 40 in the same season, prices
+       summing to 2.65, and Patrick Mahomes at 84% on a book that bids nothing.
+       He is not a manufactured favourite — he is the likeliest of ten things that
+       can all be true. Without this guard the card would tell a reader the man
+       likeliest to throw 40 touchdowns is JARED GOFF, at 24%.
+
+       MEASURED RATHER THAN ASSERTED, because on every cumulative specimen in the
+       guard file — SpaceX summing to 8.00, NVIDIA to 3.31 — flipping this flag on
+       changes NOTHING, and a guard whose stated defence is idle on every specimen
+       it is tested against is not a guard. Over the 1,883 non-exclusive open
+       fields that clear guard 2: 10 would have a leg hidden if this flag were
+       ignored, on 6 of those this flag is the ONLY clause declining (guard 3
+       catches the rest), and 4 of the 6 reach a reader's card — this one, `Which
+       abortion-related measures will pass in 2026?`, DeVonta Smith's receiving
+       yards and `Virslīga (Latvia): Teams relegated`. So it is load-bearing, and
+       for six fields, not for the rung ladders an earlier draft of this comment
+       claimed: a rung ladder reads as `numeric_outcome_ladder` and Discover
+       suppresses that whole family before this function is ever asked.
+    2. THE FIELD MUST ALREADY BE INCOHERENT (``sum > FEED_EXCLUSIVE_SUM_MAX``). A
+       two-sided complement is the case: `Cam Skattebo: Rushing Yards O/U 29.5` serves
+       Over 0.78 with NO bid and Under 0.22 bid-backed, so the bid test alone hides
+       Over and leaves the card claiming "Under 22%" — the far-side landing this
+       repo has been bitten by before. Over+Under = 1.00 exactly, so the field is
+       coherent and this function returns before looking at a single leg.
+    3. HIDING MUST REPAIR THE FIELD, OR NOTHING IS HIDDEN. The survivors must
+       themselves land inside ``[FEED_EXCLUSIVE_SUM_MIN, FEED_EXCLUSIVE_SUM_MAX]``,
+       the band this module already calls definitional. This is what makes the clause
+       SELF-LIMITING rather than a knob: `New Orleans: Stage of Elimination` sums to
+       1.41 and hiding "Regular Season" (0.61, no bid) leaves 0.80 — inside the band,
+       so it IS repaired, and it is one of the three specimens below I am least sure of;
+       `Carolina: Stage of Elimination` sums to 1.29, hiding its leader leaves 0.59,
+       and the whole field is left exactly as it is. A field that cannot be made to
+       add up is not a field this clause knows how to fix, so it does not touch it.
+
+    MEASURED ON PRODUCTION 2026-09-21, over the 17,809 open markets priced in the last
+    two days (`artifacts/d385-7808b/`). The first four rows are a SQL model of each
+    successive guard, costed against the one before it; the last row is THIS FUNCTION,
+    imported and run over the real rows of all 317 fields that reach its body, which
+    is the only number the ship claims:
+
+        bid test alone                     4,315 legs hidden, 283 cards dropped
+        + exclusive fields only            2,292 legs hidden, 149 cards dropped
+        + only legs outranking a bid leg     424 legs, 80 fields
+        + field must be incoherent           395 legs, 51 fields
+        + hiding must repair the field  ->  78 legs, 17 of 317 fields, 0 cards dropped
+
+    ``verify_on_production_rows.py`` also runs eight controls — two NFL win-total
+    ladders, two Polymarket O/U pairs, `California Attorney General winner?` (Bonta at
+    99% on a 2c bid, a field that adds up and must keep its leader), `Carolina: Stage
+    of Elimination`, `2027 Men's Rugby World Cup Winner`, `Koevermans vs. Akli` — and
+    changes NOTHING on any of them.
+
+    The 17 are named in `artifacts/d385-7808b/repairable_fields.txt`. Fourteen read as
+    plain repairs — `Australian Open Women's Singles Winner` goes from Anisimova (no
+    bid) to **Aryna Sabalenka**, `AFC #2 Seed` from the Jets to Buffalo, `NFC #7 Seed`
+    from Philadelphia to San Francisco, `Top Fantasy D/ST` from the Vikings to the
+    Texans. THREE I AM NOT SURE OF, named rather than buried: `New Orleans: Stage of
+    Elimination` (Regular Season 61% → Wildcard Round — missing the playoffs may well
+    be the true answer for that team), `Big 12: Passing Yards Leader` (Noah Fifita, a
+    starting QB, → Scotty Fox Jr.) and `Lightweight Title on Dec 31, 2027?` (Makhachev
+    → Tsarukyan). All three are fields whose own prices sum past 125%, so the card was
+    not telling the truth before either; the claim here is that it tells it better,
+    not that these three are certainly right.
+
+    ``already_refused`` is the phantom mask this runs after, so both the incoherence
+    test and the repair test are taken over the field as the card would ACTUALLY serve
+    it. Returns a mask of ADDITIONAL refusals, all-False when it declines.
+    """
+    n = len(outcomes)
+    declined = [False] * n
+    if not field_is_mutually_exclusive:
+        return declined
+
+    def _p(i: int) -> "float | None":
+        p = outcomes[i][0]
+        return None if p is None else float(p)
+
+    live = {
+        i for i in range(n) if not already_refused[i] and _p(i) is not None
+    }
+    if sum(_p(i) for i in live) <= FEED_EXCLUSIVE_SUM_MAX:
+        return declined
+
+    bid_backed = [i for i in live if book_has_a_buyer(outcomes[i][1])]
+    if not bid_backed:
+        return declined
+    best_bid_backed = max(_p(i) for i in bid_backed)
+
+    def _outranks_a_buyer(i: int) -> bool:
+        _p_i, bid, ask = outcomes[i]
+        if bid is None and ask is None:
+            # No order book at all — a model price (DataGolf, odds_api) or a derived
+            # complement. Same pass-through :func:`is_fabricated_midpoint` gives it.
+            return False
+        spread = (1.0 if ask is None else float(ask)) - (
+            0.0 if bid is None else float(bid)
+        )
+        if spread < FEED_PHANTOM_MIN_SPREAD:
+            return False
+        return not book_has_a_buyer(bid) and float(_p_i) > best_bid_backed
+
+    mask = [i in live and _outranks_a_buyer(i) for i in range(n)]
+    if not any(mask):
+        return declined
+
+    survivors = [i for i in live if not mask[i]]
+    # Two surviving legs WITH a book is the same floor the drop arms in
+    # :func:`phantom_book_leaves_nothing_real` use, so this clause can never be the
+    # reason a card leaves the feed — it re-leads a card or it does nothing.
+    if sum(1 for i in survivors if outcomes[i][1] is not None or outcomes[i][2] is not None) < 2:
+        return declined
+    if not (
+        FEED_EXCLUSIVE_SUM_MIN
+        <= sum(_p(i) for i in survivors)
+        <= FEED_EXCLUSIVE_SUM_MAX
+    ):
+        return declined
+    return mask
+
+
 def classify_fabricated_book(
     outcomes: "list[tuple[float | None, float | None, float | None]]",
     *,
     is_exclusive: bool,
+    field_is_mutually_exclusive: bool = False,
 ) -> "tuple[list[bool], bool]":
     """Decide a whole card's fate in one pure call (#1574).
 
@@ -830,6 +981,20 @@ def classify_fabricated_book(
     phantom = [
         is_fabricated_midpoint(p, b, a) and not book_has_a_buyer(b)
         for (p, b, a) in outcomes
+    ]
+    # #7808 half two: and a leg nobody is bidding for may not outrank one somebody is,
+    # on a field whose prices do not add up. Runs AFTER the phantom mask and is handed
+    # it, so its incoherence and repair tests see the field the card would serve.
+    phantom = [
+        ph or inverted
+        for ph, inverted in zip(
+            phantom,
+            refuse_unbid_legs_that_outrank_a_bid_leg(
+                outcomes,
+                phantom,
+                field_is_mutually_exclusive=field_is_mutually_exclusive,
+            ),
+        )
     ]
     keep_mask = [not x for x in phantom]
     if not any(phantom):

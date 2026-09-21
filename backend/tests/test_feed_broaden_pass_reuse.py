@@ -100,6 +100,13 @@ class _Market:
         self.canonical_market_key = None
         self.group_id = None
         self.group_type = None
+        # #7808: the scorer reads the venue's exclusivity flag, so a double that
+        # omits it raises inside the per-market try/except and this file's whole
+        # subject — that a POISONED market is skipped and its healthy siblings
+        # are not — passes for the wrong reason: every market skipped, `ids`
+        # empty, the poison indistinguishable from the fixture. The model
+        # default is True.
+        self.mutually_exclusive = True
         self.image_url = None
         self.hook_description = None
         self.hook_generated_at = None
