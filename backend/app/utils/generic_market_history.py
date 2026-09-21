@@ -549,7 +549,10 @@ def merge_last_good(
 
 
 def unclaimed_instants(
-    venue_times: Sequence[datetime], capture_times: Iterable[datetime]
+    venue_times: Sequence[datetime],
+    capture_times: Iterable[datetime],
+    *,
+    venue_tiers: Iterable[str | None] = (),
 ) -> set[datetime]:
     """The venue instants that say something our own captures did not.
 
@@ -577,10 +580,32 @@ def unclaimed_instants(
 
     A capture exists here to veto a venue point that RESTATES IT, and against a
     1-minute tier that is ±30 s. So the cap handed down is the venue tier's own
-    :func:`claim_radius_seconds` — the venue's resolution, measured off the
-    venue's own instants rather than picked. On a coarse venue tier this changes
-    nothing (a 135-minute venue tier still caps at 30 min); it only ever narrows
-    the claim to the grain actually being refused.
+    resolution rather than the default half-hour: it only ever narrows the claim
+    to the grain actually being refused, and on a coarse venue tier it changes
+    nothing (a 135-minute venue tier still caps at 30 min).
+
+    🔴 **THE GRAIN IS TAKEN FROM WHAT THE FETCH DECLARED, NOT FROM THE GAPS IT
+    OBSERVED.** Measuring it (:func:`claim_radius_seconds`) is wrong here for the
+    same reason the 30-minute default is wrong, one layer down: **both venues emit
+    a bucket only for a bucket with something to say.** A 1-minute Kalshi tier on
+    a market that traded twice in two hours reports 124-minute spacing, so a
+    measured radius comes back capped at the full 30 minutes — and every one of
+    those sparse, real, hard-won minute observations is then refused by a capture
+    20 minutes away. The bank is served empty again, by a different route, and a
+    quiet market is exactly the market a venue fill exists to repair.
+
+    So the cap is :func:`futures_chart_series.finest_declared_resolution_seconds`
+    of the banked points' own tier labels, halved: `candle_calls` asked for
+    `period_interval`, `clob_calls` asked for `fidelity`, and the fill stamps
+    that onto each point. Halved, because a claim reaches both ways and two
+    readings inside one bucket of each other are the duplicate this refuses — so
+    a 1-minute tier claims ±30 s and a venue point 20 minutes from a capture
+    survives, while a second reading 20 seconds away is still a duplicate.
+
+    When NOTHING declares — a bank written before the labels existed, or the
+    fill's unpaired-price fallback — the measurement is still the best available
+    answer and is used unchanged. That is a narrowing of this function's reach,
+    not a silent default: an undeclared grain is not evidence of a coarse one.
 
     The bank this reads is already compacted to
     :data:`futures_chart_series.TARGET_POINTS_PER_OUTCOME` (400) by
@@ -592,14 +617,30 @@ def unclaimed_instants(
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
         return set()
-    from app.utils.futures_chart_series import claim_radius_seconds, layer_tiers
+    from app.utils.futures_chart_series import (
+        MAX_CLAIM_RADIUS_SECONDS,
+        claim_radius_seconds,
+        finest_declared_resolution_seconds,
+        layer_tiers,
+    )
 
     captures = sorted({ts for ts in capture_times if ts is not None})
     # The values are irrelevant to the claim; the instants are what is layered.
     venue_tier = [(ts, 0.0) for ts in venue]
+    declared = finest_declared_resolution_seconds(venue_tiers)
+    if declared is not None:
+        # NARROWS ONLY. The declared grain of the COARSE tiers is enormous — a
+        # daily candle halves to twelve hours — and this cap governs what OUR
+        # captures may claim, so an unclamped declaration would hand the tier of
+        # last resort a twelve-hour veto and re-open the staleness
+        # `MAX_CLAIM_RADIUS_SECONDS` exists to stop. The declaration may make the
+        # claim finer than the default; it may never make it coarser.
+        cap_s = min(declared / 2.0, float(MAX_CLAIM_RADIUS_SECONDS))
+    else:
+        cap_s = claim_radius_seconds(venue_tier)
     merged = layer_tiers(
         [[(ts, 0.0) for ts in captures], venue_tier],
-        cap_s=claim_radius_seconds(venue_tier),
+        cap_s=cap_s,
     )
     capture_set = set(captures)
     return {ts for ts, _ in merged if ts not in capture_set}

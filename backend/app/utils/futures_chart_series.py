@@ -172,6 +172,69 @@ VENUE_WEIGHTS: dict[str, float] = {
 MAX_CLAIM_RADIUS_SECONDS = 30 * 60
 
 
+#: A banked point's tier label → the grain the venue was ASKED for, in minutes.
+#:
+#: 🔴 **A QUIET MINUTE IS NOT A COARSE ONE (#7547).** :func:`claim_radius_seconds`
+#: measures a tier off the gaps it observes, which is the only thing available
+#: when nobody declared anything — but both venues OMIT a bucket with nothing to
+#: say, so a 1-minute tier that traded twice in two hours reports 124-minute
+#: spacing and is read as coarser than our own captures. It is not coarser; it is
+#: quiet. The fetch named its grain, so the grain is known and does not need to be
+#: inferred: `candle_calls` sends `period_interval` and `clob_calls` sends
+#: `fidelity`, and the fill stamps both onto every point it banks.
+#:
+#: ⚠️ **PARSE BY PREFIX, NEVER BY A TRAILING `m`.** `polymarket_clob_1m_f60`
+#: contains the substring `_1m_` and is a SIXTY-minute tier — that `1m` is
+#: Polymarket's named range ("one month"), not a grain. The grain is always the
+#: `f<n>` fidelity, in minutes. A regex that reads the first `(\d+)m` it finds
+#: calls that tier 1-minute and hands the captures a 30-second claim on a series
+#: whose points are half a day apart.
+_DECLARED_GRAIN_PATTERNS = (
+    # Kalshi: `period_interval` in minutes, stamped by the candle book.
+    re.compile(r"^kalshi_candle_(\d+)m$"),
+    # Polymarket: the CLOB `fidelity`, also in minutes, after the span label.
+    re.compile(r"^polymarket_clob_.+_f(\d+)$"),
+)
+
+
+def declared_resolution_seconds(tier_label: str | None) -> Optional[float]:
+    """The grain the venue was asked for, in seconds, or None if unstated.
+
+    None is a real answer and is not a zero: it means this point carries no
+    declaration (an old bank written before the label existed, or the
+    `kalshi_candle` / `polymarket_clob` fallbacks the fill stamps when a price
+    could not be paired with the book it came from). A caller must then fall back
+    to measuring, because guessing a grain here would be the same inference error
+    in the other direction.
+    """
+    if not tier_label:
+        return None
+    for pattern in _DECLARED_GRAIN_PATTERNS:
+        match = pattern.match(tier_label)
+        if match:
+            minutes = int(match.group(1))
+            return float(minutes * 60) if minutes > 0 else None
+    return None
+
+
+def finest_declared_resolution_seconds(
+    tier_labels: Iterable[str | None],
+) -> Optional[float]:
+    """The finest grain DECLARED across a set of banked points, or None.
+
+    The finest, because a bank holds the layered output of several calls and the
+    reader must not let the presence of a daily point widen the claim that is
+    refusing a minute one. A label nobody declared is skipped rather than treated
+    as coarse; if nothing declares, the answer is None and the caller measures.
+    """
+    declared = [
+        seconds
+        for seconds in (declared_resolution_seconds(label) for label in tier_labels)
+        if seconds is not None
+    ]
+    return min(declared) if declared else None
+
+
 def claim_radius_seconds(
     points: Sequence[Point], *, cap_s: float = MAX_CLAIM_RADIUS_SECONDS
 ) -> float:

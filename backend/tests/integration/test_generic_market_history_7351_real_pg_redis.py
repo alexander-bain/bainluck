@@ -1840,6 +1840,71 @@ def test_C9b_a_dense_but_coarse_chart_asks_for_fine_history_and_serves_what_come
     assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
 
 
+def test_C9d_a_quiet_minute_tier_survives_our_captures_and_a_restatement_does_not(venue, broker):
+    """🔴 CERT-3258's finding, replayed through the real routes.
+
+    C9b's candles are three CONSECUTIVE minutes, so the layering could measure
+    the venue's grain off its own gaps and get the right answer by luck. This is
+    the case where measuring cannot: **Kalshi emits a candle only for a minute
+    with something to say**, so a quiet market's 1-minute tier reports 124-minute
+    spacing, a measured claim radius comes back capped at the full 30 minutes,
+    and our 62-minute captures — the production median, `p25` 60.1 / `p75` 120.2
+    over 150 sampled open legs — tile straight over every one of them. Two real
+    observations in, zero served, off a bank the reader already paid to build.
+
+    The fetch DECLARED its grain (`period_interval=1`), so the grain is known and
+    is not inferred. What this file adds over the unit guards in
+    `tests/test_generic_market_history_7351.py` is the seam they cannot reach:
+    that the tier label survives the fill, the compaction and the bank, and is
+    still on the point when the reader lays the tiers over each other. Bind the
+    cap to the declared resolution and forget to carry the label, and every unit
+    guard stays green while the reader is served exactly nothing.
+
+    The third candle restates a capture to the second, and must NOT be served:
+    "narrower" is the claim, not "switched off".
+    """
+    quiet_id, oid = 59165502, 219755003
+    ticker = "KXQUIET-26-Y"
+    # :32 in `FROZEN_NOW`, so the captures land on an exact minute boundary and
+    # the restating candle below can be a true zero-second duplicate rather than
+    # one that merely rounds to within the claim.
+    captures = [
+        (FROZEN_NOW - timedelta(minutes=62 * i, seconds=32), round(0.40 + 0.001 * (i % 7), 4))
+        for i in range(40)
+    ]
+    _arun(_seed([{"id": quiet_id, "source": "kalshi", "external_id": "KXQUIET-26",
+                  "name": "Quietly traded market",
+                  "outcomes": [{"id": oid, "external_id": ticker, "name": "Yes", "p": 0.40,
+                                "captures": captures}]}]))
+
+    def _at(capture_index: int, *, plus_minutes: int) -> int:
+        stamp = captures[capture_index][0] + timedelta(minutes=plus_minutes)
+        return int(stamp.timestamp()) // 60 * 60
+
+    # Two genuine observations 124 minutes apart, each 20 minutes from one of our
+    # captures: far inside the measured 30-minute claim, nowhere near restating.
+    genuine = [_at(32, plus_minutes=20), _at(30, plus_minutes=20)]
+    assert genuine[1] - genuine[0] == 124 * 60
+    # And one that IS a restatement — the same instant as a capture.
+    restating = _at(20, plus_minutes=0)
+
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {1: {"markets": [{"market_ticker": ticker, "candlesticks": [
+        _candle(ts, "0.30", "0.32") for ts in sorted(genuine + [restating])]}]}}
+
+    cold_h = _history(quiet_id)
+    assert _history(quiet_id) and broker.calls, "a coarse chart planned no fill"
+
+    broker.run_enqueued()
+    warm_h = _history(quiet_id)
+    gained = sorted(set(_history_points(warm_h, oid)) - set(_history_points(cold_h, oid)))
+
+    assert gained == sorted((_iso(ts), 0.31) for ts in genuine), gained
+    assert (_iso(restating), 0.31) not in set(_history_points(warm_h, oid))
+    # A capture is never displaced, whatever the grain of what arrives.
+    assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
+
+
 def test_C9c_refused_coarse_reads_cannot_spend_the_thin_reserve_on_one_real_redis(venue, broker):
     """🔴 CERT-3255's finding, replayed on a REAL Redis through the real routes.
 

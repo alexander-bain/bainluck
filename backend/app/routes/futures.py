@@ -4667,7 +4667,14 @@ class _GenericVenueHistory:
             rows = [r for r in self.rows.get(oid, ()) if r.captured_at >= cutoff]
             if not rows:
                 continue
-            free = unclaimed_instants([r.captured_at for r in rows], captured.get(oid, ()))
+            # #7547 — the tier labels travel with the instants. Without them the
+            # layering measures the venue's grain off the gaps it happens to see,
+            # and a quiet minute-tier reads as coarse (see `unclaimed_instants`).
+            free = unclaimed_instants(
+                [r.captured_at for r in rows],
+                captured.get(oid, ()),
+                venue_tiers=[getattr(r, "tier", "") for r in rows],
+            )
             kept.extend(r for r in rows if r.captured_at in free)
         return kept
 
