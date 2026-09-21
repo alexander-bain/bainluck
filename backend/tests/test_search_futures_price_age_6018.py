@@ -463,18 +463,23 @@ class TestItAgreesWithTheFuturesCardOnWhatPrintsAPrice:
     tests exist to fail if a later edit here quietly forks it.
     """
 
-    def test_a_zero_leg_does_not_date_the_card_while_it_renders_a_dash(self):
-        """🔴 The truthiness is inherited ON PURPOSE and is #6195, not a bug here.
+    def test_a_zero_leg_dates_the_card_because_it_now_renders_a_number(self):
+        """🔴 #6195 LANDED AND THIS TEST INVERTED — by design, and with no edit
+        to `_served_prices_as_of`.
 
-        `float(p) if p else None` means a `0.0` leg renders `—` today, so it may
-        not date a mark today — exactly as `outcome_prints_a_price` decides for
-        the futures card. If this file instead asserted `is not None`, search
-        would date its pip from a row showing a dash while Discover did not, and
-        the two surfaces would disagree about the same market.
+        Its predecessor asserted the opposite and said why: a `0.0` leg rendered
+        `—`, so it could not date a mark. The prediction in its docstring was
+        that when #6195 made such a leg render `0%` it would "regain its vote
+        through the shared predicate, with no edit to this helper" — that is
+        exactly what happened, and this file is the receipt. The scope key was
+        `outcome_prints_a_price` rather than a rule local to search precisely so
+        that one edit moved both surfaces at once.
 
-        When #6195 lands and a `0.0` leg renders `0%`, this test is the one that
-        must be re-read: the leg regains its vote through the shared predicate,
-        with no edit to `_served_prices_as_of`.
+        The reader-facing claim is unchanged in kind and is still the safe
+        direction: the pip may only be as fresh as the OLDEST number on the
+        card. `Eliminated 0%` is a number, it was last seen in May, and a pip
+        reading "today" over it would vouch for a four-month-old row with the
+        favourite's clock.
         """
         fresh = datetime(2026, 9, 18, 10, 8, tzinfo=UTC)
         stale_zero = datetime(2026, 5, 12, 16, 15, tzinfo=UTC)
@@ -482,6 +487,30 @@ class TestItAgreesWithTheFuturesCardOnWhatPrintsAPrice:
             outcomes=[
                 _Outcome(1, fresh, name="Favourite", prob=0.97),
                 _Outcome(2, stale_zero, name="Eliminated", prob=0.0),
+            ],
+        )
+
+        assert _served_prices_as_of(
+            market, [{"id": 1}, {"id": 2}]
+        ) == stale_zero.isoformat()
+
+    def test_an_absent_price_still_does_not_date_the_card(self):
+        """THE CONTROL #6195 OWES, and the reason the test above is not a
+        weakening.
+
+        Identical to the inverted case in every respect but one: the second
+        leg's price is `None` rather than `0.0`. It renders `—`, so it still may
+        not speak for the number beside it and the pip stays fresh. Without this
+        row, flipping the assertion above is indistinguishable from deleting the
+        #6256 rule altogether — absent is not zero (ruling 051), and this is the
+        line that holds the two apart.
+        """
+        fresh = datetime(2026, 9, 18, 10, 8, tzinfo=UTC)
+        stale_blank = datetime(2026, 5, 12, 16, 15, tzinfo=UTC)
+        market = _Market(
+            outcomes=[
+                _Outcome(1, fresh, name="Favourite", prob=0.97),
+                _Outcome(2, stale_blank, name="Unpriced", prob=None),
             ],
         )
 
@@ -497,7 +526,11 @@ class TestItAgreesWithTheFuturesCardOnWhatPrintsAPrice:
 
         stale = datetime(2026, 5, 12, tzinfo=UTC)
         fresh = datetime(2026, 9, 18, tzinfo=UTC)
-        for prob, printable in ((None, False), (0.0, False), (0.06, True)):
+        # `0.0` moved from False to True with #6195. The pairing is the point:
+        # this loop asserts the helper AGREES with the predicate whatever the
+        # predicate says, so it keeps its teeth across that flip rather than
+        # pinning a particular answer for zero.
+        for prob, printable in ((None, False), (0.0, True), (0.06, True)):
             probe = _Outcome(2, stale, prob=prob)
             assert outcome_prints_a_price(probe) is printable, prob
             market = _Market(outcomes=[_Outcome(1, fresh, prob=0.9), probe])

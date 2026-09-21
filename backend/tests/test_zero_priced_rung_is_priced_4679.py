@@ -190,25 +190,28 @@ class TestTheZeroRungIsCounted:
         assert _outcome_names(card)[0] == "Above 10"
 
     @pytest.mark.asyncio
-    async def test_the_printed_number_is_left_to_6195(self):
-        """The scope fence, asserted rather than assumed.
+    async def test_the_printed_number_arrived_with_6195(self):
+        """The scope fence came DOWN when #6195 landed, which is what it was for.
 
-        This issue fixes what the card COUNTS, not what it PRINTS. The printed
-        number is chosen by `outcome_prints_a_price`, whose truthiness is
-        deliberate (#6256) because `displayed_price_stamp` shares the predicate —
-        when the two disagree the card dates its age mark from a row rendering
-        `—`. Making a 0% rung print `0%` is #6195, and that docstring requires
-        the predicate and the print sites to move together, in one change.
+        Its predecessor asserted `probability is None` here and said in writing
+        that it was a fence and not a behaviour anyone wanted: #4679 fixed what
+        the card COUNTS and deliberately left what it PRINTS to #6195, because
+        the print sites share `outcome_prints_a_price` with
+        `displayed_price_stamp` and moving one without the other re-opens #6256
+        (a card dating its age mark from a row rendering `—`). #6195 moved the
+        predicate and all three print sites in one change, so the fence has
+        nothing left to fence and the assertion is simply inverted.
 
-        So a 0% rung still serves `probability: None` here. If this test starts
-        failing, #4679 has reached into #6195's half and the `displayed_price_stamp`
-        contract needs re-checking in the same breath.
+        Kept rather than deleted because the rung is the same rung: this is now
+        the end-to-end statement that a 0% ladder step reaches the reader as a
+        NUMBER on the card whose coherence check #4679 taught to count it. The
+        two halves of one rung, asserted in one place.
         """
         card = await _serve_one_futures_card(
             _market(4679002, "Widget shipments in September", LADDER)
         )
         assert card is not None
-        assert _probability_of(card, "Above 30") is None
+        assert _probability_of(card, "Above 30") == 0.0
 
 
 class TestTheControls:

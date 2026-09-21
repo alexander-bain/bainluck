@@ -323,13 +323,28 @@ def _iso(stamp: datetime) -> str:
 @pytest.mark.parametrize(
     "build,dead_stamp,label",
     [
-        (_zero_priced_tail_market, DEAD_2D, "0.0 legs (PLL, '2d ago')"),
         (_null_priced_tail_market, DEAD_125D, "NULL legs (House, '125d ago')"),
     ],
 )
 async def test_ship_the_mark_dates_from_the_prices_the_card_prints(
     build, dead_stamp, label
 ):
+    """#6256's ship, now carried by the NULL specimen alone — see #6195 below.
+
+    THE PLL ROW LEFT THIS PARAMETRIZE BECAUSE ITS BLANK STOPPED BEING BLANK, NOT
+    BECAUSE THE RULE WEAKENED. #6195 made a leg stored `0.000000` render `0%`, so
+    the PLL card no longer draws a dash at all and cannot be a specimen for "a
+    row rendering no number dated the card" — the `blanks` precondition below
+    fails on it, correctly and loudly. Its new behaviour is asserted in full by
+    `test_ship_6195_a_zero_leg_prints_and_therefore_dates_the_mark`, which is
+    deliberately a SEPARATE test rather than a changed expectation here: the two
+    cards now exercise opposite branches of one predicate.
+
+    What #6256 fixed is unchanged and is exactly what this row still proves — a
+    leg we hold NO price for (`None`, not `0.0`) prints `—` and may not speak for
+    the age of the numbers beside it. That is the distinction #6195 was careful
+    to keep: absent is not zero (ruling 051).
+    """
     card = await _served_card(build())
 
     printed = card["top_outcomes"]
@@ -351,6 +366,57 @@ async def test_ship_the_mark_dates_from_the_prices_the_card_prints(
     # The defect, stated as itself.
     assert served != _iso(dead_stamp), (
         f"{label}: the mark is still dated by a row that renders no number"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ship_6195_a_zero_leg_prints_and_therefore_dates_the_mark():
+    """The PLL card's other half: `0.0` prints `0%`, so it speaks for the age.
+
+    This is the assertion that would have caught #6195 being half-landed, and it
+    is written as ONE test over both halves on purpose — the failure mode worth
+    guarding is not "a zero prints" but "a zero prints and the mark still
+    pretends it isn't there", which is #6256 inverted. A card drawing a two-day-
+    old `0%` beside two fresh prices must say two days: #5809's fold is `MIN`
+    because the OLDEST printed price is the only claim all of the printed ones
+    support, and a fresher mark would vouch for a number that is not that fresh
+    — the one direction a reader cannot catch.
+
+    So this asserts the mark moved BACKWARDS relative to what #6256 produced,
+    and that is the fix rather than a regression of it. Before #6195 this same
+    fixture served `Boston Cannons` as `—` and the mark as `PRICED_AT`: a card
+    that had quietly deleted a real answer and then dated what was left. It now
+    prints the answer and dates it honestly. Nothing about the NULL specimen
+    above changes, which is what keeps "absent is not zero" load-bearing rather
+    than rhetorical.
+    """
+    card = await _served_card(_zero_priced_tail_market())
+    printed = card["top_outcomes"]
+
+    # The eliminated leg reaches the reader at all — the half of #6195 that is
+    # about the number rather than the stamp. Asserted by NAME, because a slice
+    # that happened to drop it would make every assertion below vacuous.
+    by_name = {o["name"]: o["probability"] for o in printed}
+    assert "Boston Cannons" in by_name, (
+        f"the eliminated leg is not on the card at all: {list(by_name)}"
+    )
+    assert by_name["Boston Cannons"] == 0.0, (
+        "the eliminated leg must serve 0.0, not None — a field that has priced a "
+        f"candidate at nothing is an answer, got {by_name['Boston Cannons']!r}"
+    )
+
+    # ...and NOTHING on this card is a dash any more, which is why it is no
+    # longer a specimen for the parametrized test above.
+    assert all(o["probability"] is not None for o in printed), (
+        f"a blank survived on the zero-tail card: {printed}"
+    )
+
+    # The stamp half. The oldest PRINTED price is two days old, so the mark is.
+    served = card["price_observed_at"]
+    assert served == _iso(DEAD_2D), (
+        "the card prints a two-day-old 0% and must date from it; a mark of "
+        f"{_iso(PRICED_AT)} would vouch for that row with the fresh legs' clock "
+        f"— got {served}"
     )
 
 
@@ -419,11 +485,18 @@ async def test_control_a_card_with_no_priced_leg_at_all_serves_none():
 
 
 def test_guard_the_fold_ignores_a_leg_that_prints_no_number():
-    """`displayed_price_stamp` over the legs, without the serializer."""
+    """`displayed_price_stamp` over the legs, without the serializer.
+
+    The blank leg is `None` and NOT `0.0` since #6195 — a zero is a printed
+    price and now correctly dates the mark, so using one here would be asserting
+    the opposite of what this test is named for. `0.0`'s behaviour is pinned
+    directly below and end-to-end in
+    `test_ship_6195_a_zero_leg_prints_and_therefore_dates_the_mark`.
+    """
     legs = [
         _Outcome(1, "priced", 0.535, PRICED_AT),
         _Outcome(2, "priced", 0.440, PRICED_AT),
-        _Outcome(3, "blank", 0.0, DEAD_2D),
+        _Outcome(3, "blank", None, DEAD_2D),
     ]
     assert displayed_price_stamp(legs) == PRICED_AT
 
@@ -435,6 +508,14 @@ def test_guard_the_fold_ignores_a_leg_that_prints_no_number():
     assert displayed_price_stamp([legs[2]]) is None
     assert displayed_price_stamp([]) is None
 
+    # THE #6195 COUNTERPART, in the same guard so the pair cannot drift: a `0.0`
+    # leg is NOT a blank and DOES date the mark. Without this line the fixture
+    # edit above could be undone by swapping `None` back to `0.0` and the test
+    # would go green against the pre-#6195 behaviour.
+    zero_leg = _Outcome(4, "eliminated", 0.0, DEAD_2D)
+    assert displayed_price_stamp([legs[0], zero_leg]) == DEAD_2D
+    assert displayed_price_stamp([zero_leg]) == DEAD_2D
+
 
 def test_guard_the_predicate_answers_for_every_shape_a_leg_can_take():
     """The one predicate both the printed numbers and the mark now use."""
@@ -442,13 +523,19 @@ def test_guard_the_predicate_answers_for_every_shape_a_leg_can_take():
     assert outcome_prints_a_price(_Outcome(2, "b", 1.0, PRICED_AT)) is True
     assert outcome_prints_a_price(_Outcome(3, "c", 0.0001, PRICED_AT)) is True
 
+    # 🔴 `None` IS THE ONLY UNPRINTABLE SHAPE, and that is the whole content of
+    # the predicate. Absent is not zero (ruling 051): we hold no price for this
+    # leg, so the card draws `—` and it may not date the numbers beside it.
     assert outcome_prints_a_price(_Outcome(4, "d", None, PRICED_AT)) is False
-    # 🔴 COUPLED TO #6195 ON PURPOSE. `0.0` is a real price that SHOULD render
-    # `0%`; today it renders `—`, and this predicate's job is to agree with what
-    # the card prints. When #6195 lands, this line flips to `True` and the
-    # serializers flip with it — that is why they share one function. A change
-    # here that is not matched there is the #6256 defect coming back.
-    assert outcome_prints_a_price(_Outcome(5, "e", 0.0, PRICED_AT)) is False
+    # 🔴 #6195 FLIPPED THIS LINE, AND THE SERIALIZERS FLIPPED WITH IT — that is
+    # why they share one function. `0.0` is a real price that renders `0%`: a
+    # field has priced this candidate at nothing, which is an answer and not a
+    # silence. A change here that is not matched in
+    # `_build_search_top_outcomes` and the two feed card serializers is the
+    # #6256 defect coming back from the other side, and
+    # `test_guard_the_printed_probability_and_the_mark_read_one_predicate` below
+    # is what fails when it does.
+    assert outcome_prints_a_price(_Outcome(5, "e", 0.0, PRICED_AT)) is True
 
     class _NoDict:
         __slots__ = ("name",)
