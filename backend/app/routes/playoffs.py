@@ -5122,7 +5122,9 @@ async def get_playoff_grid(
     # log a warning. For championship column specifically, reject teams
     # with > 50% single-source probability as likely misclassified.
 
-    from app.utils.playoff_grid import normalize_column_sums, enforce_monotonicity
+    from app.utils.playoff_grid import (
+        normalize_column_sums, enforce_monotonicity, propagate_elimination,
+    )
     # #7458: the trend chart publishes the championship column too, so it needs
     # the factor this actually applied — not a second computation of it.
     applied_column_scales = normalize_column_sums(teams, config.columns, config.slug)
@@ -5135,6 +5137,18 @@ async def get_playoff_grid(
         logger.info(
             "Playoff grid %s: fixed %d monotonicity violations after normalization",
             league_slug, mono_fixes,
+        )
+
+    # A settled cell carries no probability, so the numeric bound above cannot
+    # see it: a team the register marks OUT at an earlier stage keeps whatever
+    # a champion market still quotes for the later ones. Run the terminal half
+    # of the same ladder. After normalization, not before — this removes a
+    # false claim, it does not redistribute that team's mass onto the field.
+    out_fixes = propagate_elimination(teams, config.columns)
+    if out_fixes:
+        logger.info(
+            "Playoff grid %s: %d cell(s) downstream of an eliminated stage",
+            league_slug, out_fixes,
         )
 
     # -----------------------------------------------------------------------

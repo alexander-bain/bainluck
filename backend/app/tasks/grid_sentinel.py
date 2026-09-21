@@ -85,6 +85,11 @@ SELFCHECK_SAMPLE = 60            # cells sampled for the envelope self-check per
 # Noise floor: Kalshi/Polymarket at ~0.50 are illiquid binary defaults, not prices.
 _NOISE_FLOOR = 0.02
 
+# Cell states that END a team's run at that stage — the register's terminal
+# results (`app.utils.playoff_grid.OUT_STATES`). Everything downstream of one
+# is unreachable, whatever a market still quotes.
+_OUT_STATES = frozenset({"eliminated", "lost"})
+
 # ---------------------------------------------------------------------------
 # Runtime threshold overrides (Redis, no-deploy tuning)
 # ---------------------------------------------------------------------------
@@ -214,26 +219,105 @@ def check_fill_rate(grid: dict, league: str) -> list[dict]:
     return out
 
 
+def _ladder_pairs(grid: dict, league: str) -> list[tuple[str, str]]:
+    """``(bound_key, column_key)`` — the prerequisite relation the GRID ITSELF
+    serves under, read from the same config the page builds from.
+
+    Adjacent columns are not the ladder. In all four leagues that carry a
+    ``division`` column a wild card reaches — and wins — the conference final
+    without winning its division, so "P(pennant) <= P(division)" is false;
+    #7076 fixed the serving side by giving `GridColumn` a ``depends_on``, and
+    this sentinel kept reading adjacency and filing the wild-card path as six
+    critical REDs a day against a correct MLB grid (#7151).
+
+    Only the pairs whose BOTH columns are in the served payload are returned: a
+    bound the payload does not carry is dropped, never re-pointed at whichever
+    column happens to sit before it (that re-pointing is the defect).
+    """
+    present = {c.get("key") for c in (grid.get("columns") or []) if c.get("key")}
+    try:
+        from app.config.league_configs import get_league_config
+        from app.utils.playoff_grid import monotonic_pairs
+
+        config = get_league_config(league)
+    except Exception as exc:  # pragma: no cover - import guard
+        logger.warning("Grid sentinel could not read %s grid config: %s", league, exc)
+        config = None
+
+    if config and config.columns:
+        return [(bound, col) for bound, col in monotonic_pairs(config.columns)
+                if bound in present and col in present]
+
+    # A grid with no league config (a tournament draw, a league added to the
+    # sentinel before the page): adjacency is the only ladder we know of.
+    keys = [c.get("key") for c in (grid.get("columns") or [])]
+    return [(keys[i], keys[i + 1]) for i in range(len(keys) - 1)
+            if keys[i] and keys[i + 1]]
+
+
 def check_monotonicity(grid: dict, league: str) -> list[dict]:
-    """P(earlier round) >= P(later round) for each team. A later-round probability
-    exceeding an earlier one is impossible — ALWAYS REAL, calendar cannot excuse
-    it (never seasonal_ok)."""
-    cols = grid.get("columns") or []
-    keys = [c.get("key") for c in cols]
-    labels = [c.get("label", c.get("key")) for c in cols]
+    """P(prerequisite) >= P(the stage it gates) for each team, over the pairs the
+    league's own grid config declares (`_ladder_pairs`) — NOT over adjacent
+    columns. A stage priced above its own prerequisite is impossible — ALWAYS
+    REAL, calendar cannot excuse it (never seasonal_ok)."""
+    labels = {c.get("key"): c.get("label", c.get("key"))
+              for c in (grid.get("columns") or [])}
+    pairs = _ladder_pairs(grid, league)
     out = []
     for t in grid.get("teams") or []:
         cells = _cells(t)
         name = t.get("name", "?")
-        for i in range(len(keys) - 1):
-            left = _merged(cells.get(keys[i]))
-            right = _merged(cells.get(keys[i + 1]))
+        for bound_key, col_key in pairs:
+            left = _merged(cells.get(bound_key))
+            right = _merged(cells.get(col_key))
             if left is not None and right is not None and right > left + MONOTONICITY_EPS:
                 out.append(_finding(
                     "grid_monotonicity", "critical",
-                    f"{league.upper()} {name}: {labels[i+1]} ({right*100:.1f}%) > "
-                    f"{labels[i]} ({left*100:.1f}%)",
+                    f"{league.upper()} {name}: {labels.get(col_key, col_key)} "
+                    f"({right*100:.1f}%) > {labels.get(bound_key, bound_key)} "
+                    f"({left*100:.1f}%)",
                     seasonal_ok=False, team=name))
+    return out
+
+
+def check_eliminated_ladder(grid: dict, league: str) -> list[dict]:
+    """A team the grid marks OUT at one stage must not be priced at a stage that
+    needs it.
+
+    The blind spot the monotonicity check cannot cover: a settled cell carries
+    no probability, so `check_monotonicity` skips the pair and a row can say
+    both things at once. The MLB grid did, on 2026-09-20 — the Pirates,
+    Cardinals and Marlins ✗ for Make Playoffs and ✗ for Division, and 0.5% for
+    the pennant beside it. A contradiction a reader can see in one row; the
+    calendar cannot excuse it (never seasonal_ok)."""
+    labels = {c.get("key"): c.get("label", c.get("key"))
+              for c in (grid.get("columns") or [])}
+    pairs = _ladder_pairs(grid, league)
+    out = []
+    for t in grid.get("teams") or []:
+        cells = _cells(t)
+        name = t.get("name", "?")
+        # Every stage the team is out of, INCLUDING the ones it is only out of
+        # by implication — the pairs arrive in dependent order, so one forward
+        # pass carries an elimination down the ladder. Without this the World
+        # Series cell hides behind the pennant cell that should not be priced
+        # either, and the row reports one contradiction where it shows two.
+        out_of = {key: cell.get("state") for key, cell in cells.items()
+                  if isinstance(cell, dict) and cell.get("state") in _OUT_STATES}
+        for bound_key, col_key in pairs:
+            bound_state = out_of.get(bound_key)
+            if bound_state is None:
+                continue
+            prob = _merged(cells.get(col_key))
+            if prob is None:
+                continue
+            out_of[col_key] = "unreachable"
+            out.append(_finding(
+                "grid_eliminated_ladder", "critical",
+                f"{league.upper()} {name}: {labels.get(bound_key, bound_key)} is "
+                f"{bound_state}, yet {labels.get(col_key, col_key)} "
+                f"is priced at {prob*100:.1f}%",
+                seasonal_ok=False, team=name))
     return out
 
 
@@ -772,6 +856,7 @@ async def _run_league(client: httpx.AsyncClient, league: str, now=None) -> dict:
         findings += check_missing_columns(grid, league)
         findings += check_fill_rate(grid, league)
         findings += check_monotonicity(grid, league)
+        findings += check_eliminated_ladder(grid, league)
         findings += check_prob_sum(grid, league)
         findings += check_source_disagreement(grid, league)
         findings += check_illiquid_extremes(grid, league)

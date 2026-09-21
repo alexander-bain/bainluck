@@ -138,6 +138,69 @@ def column_scale_factor(col_sum: float, expected: float) -> float:
     return 1.0
 
 
+#: Cell states that record a VENUE SETTLEMENT rather than a price. Mirrors
+#: ``routes/playoffs._GRID_DECIDED_STATES``; duplicated rather than imported so
+#: this module keeps importing nothing of the app.
+DECIDED_STATES = frozenset({"won", "eliminated", "lost"})
+
+#: The decided states that END a team's run. Every stage downstream of one is
+#: unreachable, whatever a market still quotes for it.
+OUT_STATES = frozenset({"eliminated", "lost"})
+
+
+def propagate_elimination(teams: list[dict], columns: list) -> int:
+    """A team that is OUT at one stage is out of every stage that needs it.
+
+    `enforce_monotonicity` bounds a stage by the stage a team must already have
+    come through — but only as a NUMBER, and a settled cell carries no number,
+    so the bound silently does not apply to it. That left the MLB grid saying
+    both things in one row: on 2026-09-20 the Pirates, Cardinals and Marlins
+    were ✗ for Make Playoffs and Division (venue-settled — all three are
+    mathematically out with six games left) and, in the same row, priced at
+    0.5% for the pennant and 0.1% for the World Series, off an illiquid ask on
+    a champion market that had not dropped them.
+
+    Elimination runs down the same ``depends_on`` ladder that bounds the
+    prices: you cannot win the pennant without making the playoffs. A dependent
+    cell is rewritten only when it is not ITSELF settled — a venue grade
+    outranks this inference, the same way "settled outranks trading" governs
+    one step earlier.
+
+    Idempotent. Call after `enforce_monotonicity`: `monotonic_pairs` returns
+    pairs in dependent-column order and a bound is always an earlier column, so
+    one forward pass carries an elimination the whole length of the ladder.
+
+    Returns the number of cells rewritten.
+    """
+    pairs = monotonic_pairs(columns)
+    if not pairs:
+        return 0
+
+    rewritten = 0
+    for team in teams:
+        cells = team.get("cells") or {}
+        for bound_key, col_key in pairs:
+            bound_cell = cells.get(bound_key)
+            cell = cells.get(col_key)
+            if not bound_cell or not cell:
+                continue
+            if bound_cell.get("state") not in OUT_STATES:
+                continue
+            if cell.get("state") in DECIDED_STATES:
+                continue
+            logger.info(
+                "Grid elimination: %s is %s at %s, so %s (%s) is unreachable",
+                team.get("name", "?"), bound_cell.get("state"), bound_key,
+                col_key, cell.get("merged_probability"),
+            )
+            cell["merged_probability"] = None
+            cell["sources"] = []
+            cell["trend_24h"] = None
+            cell["state"] = "eliminated"
+            rewritten += 1
+    return rewritten
+
+
 def normalize_column_sums(
     teams: list[dict],
     columns: list,
