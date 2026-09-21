@@ -283,10 +283,19 @@ export function describeCategoryPopulation(
     poolingClauseCountsOnly = `covers ${pooled.length} ${noun} grouped under one name`;
   }
 
-  const build = (clause: string | null) => {
-    const clauses = [clause, cohortClause].filter(Boolean) as string[];
-    return `This row ${clauses.join(", and is ")}.`;
-  };
+  // THE VERB LIVED IN THE SEPARATOR, SO IT VANISHED WHENEVER THERE WAS NOTHING
+  // TO SEPARATE. `", and is "` reads correctly between two clauses and is never
+  // emitted for one, so a row that pools nothing printed the cohort clause bare:
+  // "This row measured over traded outcomes only." Measured on the live page
+  // 2026-09-21 (payload q271, generated 2026-09-15): 14 of the 21 rendered rows,
+  // every non-pooling one. The 7 pooled rows read correctly, which is why the
+  // shipped tests — all `toContain("traded outcomes only")` — passed over it.
+  // Both branches are now spelled out rather than joined, so neither can borrow
+  // the other's grammar. The pooled string is unchanged, byte for byte.
+  const build = (clause: string | null) =>
+    clause
+      ? `This row ${clause}, and is ${cohortClause}.`
+      : `This row is ${cohortClause}.`;
 
   // Amendment 5 — the anchor. Quoting the API's own figure is what lets a
   // skeptical reader reconcile the two numbers instead of picking one. Omitted
