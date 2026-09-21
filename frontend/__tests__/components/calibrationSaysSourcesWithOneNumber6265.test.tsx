@@ -33,8 +33,8 @@
  * every positive assertion in this file and is WRONG. One site is honest and
  * must keep a KEY count, because it says a different word:
  *
- *     … open "Break out the shapes" inside the Sportsbooks panel to
- *     see all N KEYS separately.
+ *     … open "Break out the curves" inside the Sportsbooks panel to
+ *     see all N CURVES separately.
  *
  * The defect this file ships against was never "7 is wrong", it was "7 is not
  * what 'sources' means on this page". So the last tests below pin the keys line
@@ -44,7 +44,7 @@
  *
  * The control below used to assert the RAW seven on the stated premise that
  * "that panel really does break out seven keys". It does not — it breaks out
- * four, and renders "Break out the shapes (4)" on itself. Both numbers were
+ * four, and renders "Break out the curves (4)" on itself. Both numbers were
  * individually true, which is exactly how the line survived the census above:
  * that audit asked whether "keys" was the right WORD for the number, and never
  * asked the number of keys in WHAT. The control now asserts the agreement
@@ -244,7 +244,7 @@ describe("every reader-visible 'N sources' is the PROVIDER count", () => {
  *
  * on the stated premise "that panel really does break out seven keys". The
  * premise is false: the panel breaks out FOUR — the `odds_api_family` keys —
- * and the control it names renders "Break out the shapes (4)". So the sentence
+ * and the control it names renders "Break out the curves (4)". So the sentence
  * promised seven keys inside a disclosure labelled four. #6265's census asked
  * the VOCABULARY question ("keys" is the right word for a raw count, so the
  * line passed) and never the locality one: the number of keys in *what*.
@@ -261,17 +261,17 @@ describe("every reader-visible 'N sources' is the PROVIDER count", () => {
 describe("the one site that legitimately counts KEYS still counts keys", () => {
   /** The number the sentence promises the reader they will find. */
   function promisedKeys(text: string): number | null {
-    const m = /see all (\d+) keys separately/.exec(text);
+    const m = /see all (\d+) curves separately/.exec(text);
     return m ? Number(m[1]) : null;
   }
 
   /** The number the control it names renders on itself. */
   function controlKeys(text: string): number | null {
-    const m = /Break out the shapes \((\d+)\)/.exec(text);
+    const m = /Break out the curves \((\d+)\)/.exec(text);
     return m ? Number(m[1]) : null;
   }
 
-  test("🔴 'see all N keys separately' is the count the named control renders", () => {
+  test("🔴 'see all N curves separately' is the count the named control renders", () => {
     const text = visibleText(render());
     // Positive control: both sites are on the page at all. Without this the
     // agreement below is satisfied by null === null.
@@ -340,10 +340,10 @@ describe("when the panel count, the provider count and the raw count all differ"
 
   test("🔴 the sentence takes the PANEL's count — not the page's, not the provider count", () => {
     const text = visibleText(renderSplit());
-    expect(text).toContain("see all 5 keys separately");
-    expect(text).not.toContain("see all 8 keys separately");
-    expect(text).not.toContain("see all 4 keys separately");
+    expect(text).toContain("see all 5 curves separately");
+    expect(text).not.toContain("see all 8 curves separately");
+    expect(text).not.toContain("see all 4 curves separately");
     // …and it still agrees with the control, which is the contract.
-    expect(/Break out the shapes \((\d+)\)/.exec(text)![1]).toBe("5");
+    expect(/Break out the curves \((\d+)\)/.exec(text)![1]).toBe("5");
   });
 });

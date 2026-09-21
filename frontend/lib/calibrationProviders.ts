@@ -33,6 +33,70 @@ export function providerOf(source: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// NAMING A SHAPE — #7703
+//
+// The fact the module header states — `odds_api` and `odds_api_bookmaker` are
+// BOTH moneyline — was true here and denied on the page. "Break out the shapes
+// (4)" counted source keys, and its caption told the reader *"each shape is a
+// different question, so these curves are not comparable to each other"* over
+// four curves of which two answer the same question at two granularities
+// (121,470 of the family's 155,127 outcomes). That is the one comparison in
+// that panel a reader would actually want, and the copy forbade it.
+//
+// So the fact gets a function instead of a paragraph, and the copy is derived
+// from it. `shapeOf` is TOTAL in exactly the way `providerOf` is: a key nobody
+// has an opinion about is its own shape, so a new key can only ever add a
+// shape — never silently join one and make the caption claim a pairing that
+// was never measured.
+//
+// WHY THIS IS NOT THE VOCABULARY #7213 SAID TO LEAVE ALONE. `source_labels` is
+// the server's: what to CALL a key. Shape is the same class of thing as
+// `providerOf` — a grouping this page invents to lay out its own panels, which
+// `calibration_source_labels.py` says in its own header it holds no opinion
+// about ("one key space per module"). The backend publishes no shape dimension,
+// so there is nothing here to shadow and no #4067 to repeat.
+// ---------------------------------------------------------------------------
+
+/**
+ * The question SHAPE a source key measures. Total: an unknown key is its own
+ * shape, so two keys are only ever paired by a deliberate entry here.
+ *
+ * Returns an opaque shape id, not a reader-facing string — `shapeName` does
+ * that, for the same reason `providerOf` and `providerLabel` are two functions.
+ */
+export function shapeOf(source: string): string {
+  // Both are the h2h moneyline, and they are kept apart as CURVES on purpose
+  // (see the module header's forbidden blend): `odds_api` is the consensus line
+  // measured once per event, `odds_api_bookmaker` is each sportsbook's own line
+  // measured separately. Same question, two granularities. Named here so the
+  // page can say that instead of denying it.
+  if (source === "odds_api" || source === "odds_api_bookmaker") return "moneyline";
+  if (source === "odds_api_spreads") return "spread";
+  if (source === "odds_api_totals") return "total";
+  return source;
+}
+
+/** Reader-facing names for the shapes `shapeOf` pairs keys on. */
+const SHAPE_DISPLAY_NAMES: Record<string, string> = {
+  moneyline: "moneyline",
+  spread: "spread",
+  total: "total",
+};
+
+/**
+ * A shape's name as it reads mid-sentence, lowercase.
+ *
+ * The fallback is the key's own source label lowercased rather than a throw:
+ * an unmapped key is its own shape, so the sentence still names something a
+ * reader can find on the page — the failure this avoids is a curve counted in
+ * "N shapes" and then unnamed, which is #7456's defect coming back the other
+ * way round.
+ */
+export function shapeName(shape: string): string {
+  return SHAPE_DISPLAY_NAMES[shape] || sourceLabel(shape).toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
 // NAMING A SOURCE — CAL-P1024 (#1865, the SOURCE half of its raw-payload-key item)
 //
 // Measured on production 2026-09-05: `datagolf` reached the reader RAW in two

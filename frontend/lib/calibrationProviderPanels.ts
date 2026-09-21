@@ -98,6 +98,7 @@
 
 import type { PanelBucket } from "./calibrationMath";
 import { censoringVerdict } from "./calibrationSourceRows";
+import { shapeName, shapeOf, sourceLabel } from "./calibrationProviders";
 
 /**
  * Where a panel's ECE came from, or why there is none.
@@ -336,10 +337,15 @@ export function shapeBreakdownNote(panels: readonly ProviderPanel[]): string | n
   const withShapes = shapeBreakdownProviders(panels);
   if (!withShapes.length) return null;
   const names = withShapes.map(p => p.label).join(" and ");
+  // #7703: the control this sentence names is "Break out the curves", and it
+  // lists one curve per source key — which is not the same count as the shapes,
+  // because a shape can be measured more than once. Naming the control exactly
+  // is the whole job of this sentence; the shape/curve distinction is made
+  // where the reader lands, by `shapeBreakoutCaption`.
   return (
     `${names} publishes more than one question shape. Each panel is the ` +
     `provider's outcomes pooled and measured together; open “Break out the ` +
-    `shapes” inside it to see the shapes separately, each with its own curve, ` +
+    `curves” inside it to see them separately, each with its own curve, ` +
     `its own published error and its own per-bucket examples.`
   );
 }
@@ -388,6 +394,123 @@ function formatSpread(ratio: number): string | null {
     return oneDp <= 1 ? null : oneDp.toFixed(1);
   }
   return Math.round(ratio).toLocaleString("en-US");
+}
+
+// ---------------------------------------------------------------------------
+// HOW MANY SHAPES, AND WHICH ONE IS DRAWN TWICE — #7703
+//
+// The breakout's control said "Break out the shapes (4)" over `sources.length`,
+// and its caption said *"each shape is a different question, so these curves are
+// not comparable to each other"*. Both are the same mistake in two registers:
+// a CURVE is one source key, a SHAPE is the question it answers, and the
+// sportsbook family draws four curves over three shapes because the moneyline
+// is measured twice — per sportsbook (106,030) and on the consensus line
+// (18,440). 78% of the family sat inside a sentence saying it was incomparable
+// to itself.
+//
+// This is the whole derivation, so the count in the `<summary>`, the count in
+// Source Comparison's note and the clause that names the repeated shape all
+// read the same object. Two expressions that must agree is #1620's disease, and
+// this page has had that bug four times now (#6265, #7308, #7581, #7456).
+//
+// It returns the census, never a sentence: `shapes === curves` is the ordinary
+// case and callers word it the way their own sentence needs. A family whose
+// keys are all distinct shapes therefore renders exactly what it rendered
+// before this existed.
+// ---------------------------------------------------------------------------
+
+/** One shape drawn by more than one curve, and the curves that draw it. */
+export interface RepeatedShape {
+  /** Mid-sentence shape name, e.g. `"moneyline"`. */
+  name: string;
+  /** The source labels drawing it, in panel order. */
+  labels: string[];
+}
+
+/** Curves vs shapes for one provider's breakout, and any shape drawn twice. */
+export interface ShapeCensus {
+  /** Source keys — what the breakout actually lists, one panel each. */
+  curves: number;
+  /** Distinct question shapes across those keys. Never more than `curves`. */
+  shapes: number;
+  /**
+   * Shapes carried by more than one curve, in first-appearance order. Empty on
+   * every provider whose keys are all distinct shapes, which is the case the
+   * caller must keep rendering unchanged.
+   */
+  repeated: RepeatedShape[];
+}
+
+/**
+ * Census one provider's source keys by the question shape each measures.
+ *
+ * `shapeOf` is total, so an unrecognised key is its own shape and can only
+ * increase `shapes` — a key this page has never heard of can never be reported
+ * as sharing a question with one it has.
+ */
+export function shapeCensus(sources: readonly string[]): ShapeCensus {
+  const byShape = new Map<string, string[]>();
+  for (const src of sources) {
+    const shape = shapeOf(src);
+    const labels = byShape.get(shape);
+    if (labels) labels.push(sourceLabel(src));
+    else byShape.set(shape, [sourceLabel(src)]);
+  }
+  const repeated: RepeatedShape[] = [];
+  for (const [shape, labels] of byShape) {
+    if (labels.length > 1) repeated.push({ name: shapeName(shape), labels });
+  }
+  return { curves: sources.length, shapes: byShape.size, repeated };
+}
+
+/**
+ * The breakout caption: what the panels are, and which of them answer the same
+ * question — #7703.
+ *
+ * The not-comparable warning is kept, because it is true and load-bearing
+ * between shapes; what changes is that it stops being asserted of every pair.
+ * When a shape is drawn twice the sentence names that pair instead of denying
+ * it, so the reader is told the one comparison in the panel that IS valid.
+ */
+export function shapeBreakoutCaption(sources: readonly string[]): string {
+  const { repeated } = shapeCensus(sources);
+  const pooled =
+    "The panel above is all of them pooled and measured together, which is the " +
+    "number the table reports.";
+  if (!repeated.length) {
+    return (
+      "Each curve here is a different question, so they are not comparable to " +
+      `each other — only to the same shape elsewhere. ${pooled}`
+    );
+  }
+  const pairs = repeated
+    .map(
+      r =>
+        `${listLabels(r.labels)} are the same question — the ${r.name} — ` +
+        `measured ${countWord(r.labels.length)} ways`
+    )
+    .join("; ");
+  return (
+    "Curves of different shapes answer different questions and are not " +
+    `comparable to each other. ${capitalise(pairs)}, so those curves are. ` +
+    pooled
+  );
+}
+
+/** Small counts as words, the way the rest of this page's prose states them. */
+function countWord(n: number): string {
+  return ["zero", "one", "two", "three", "four", "five"][n] ?? String(n);
+}
+
+/** `a and b` / `a, b, and c`, matching `listProviderNames`' serial comma. */
+function listLabels(labels: readonly string[]): string {
+  if (labels.length <= 1) return labels[0] ?? "";
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** Where the shape breakout lives, and what its own control counts. */
