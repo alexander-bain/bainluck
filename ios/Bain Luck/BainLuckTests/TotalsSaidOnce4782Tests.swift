@@ -74,16 +74,40 @@ final class TotalsSaidOnce4782Tests: XCTestCase {
 
     // MARK: - Which rungs the map actually prints
 
-    /// Before a result, the lowest `limit` lines.
-    func testAnUnsettledMapDrawsTheLowestSixLines() {
+    /// Before a result and with no prices to read, the lowest `limit` lines.
+    ///
+    /// #7737 narrowed what this test is claiming. It used to be "before a
+    /// result, the lowest six" full stop; that is now only the no-opinion case,
+    /// which this specimen is (it carries no probabilities at all). A PRICED
+    /// pre-game ladder centres on the market's crossing — the case below.
+    func testAnUnpricedUnsettledMapDrawsTheLowestSixLines() {
         let names = (0..<9).map { "Over \(Double($0) + 0.5)" }
         let drawn = MarketMapRail.drawnFullTotalRungs(
             outcomeNames: names,
             thresholds: (0..<9).map { Double($0) + 0.5 },
+            overProbabilities: Array(repeating: nil, count: 9),
             settledTotal: nil,
             limit: MarketMapRail.totalMapLadderLimit
         )
         XCTAssertEqual(drawn.map(\.threshold), [0.5, 1.5, 2.5, 3.5, 4.5, 5.5])
+    }
+
+    /// #7737 — a priced pre-game map draws the lines the market is undecided
+    /// about, not the ones it has already priced out. Nine lines crossing 0.5
+    /// between `5.5` and `6.5`.
+    func testAPricedUnsettledMapDrawsTheLinesAroundTheCrossing() {
+        let names = (0..<9).map { "Over \(Double($0) + 0.5)" }
+        let prices: [Double?] = [0.97, 0.94, 0.90, 0.84, 0.72, 0.61, 0.44, 0.30, 0.12]
+        let drawn = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: names,
+            thresholds: (0..<9).map { Double($0) + 0.5 },
+            overProbabilities: prices,
+            settledTotal: nil,
+            limit: MarketMapRail.totalMapLadderLimit
+        )
+        XCTAssertEqual(drawn.map(\.threshold), [3.5, 4.5, 5.5, 6.5, 7.5, 8.5])
+        XCTAssertNotEqual(drawn.map(\.threshold), [0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+                          "the lowest six is what #7737 moved away from")
     }
 
     /// After one, the lines the result decided — `settledLadderWindow`'s step.
@@ -92,6 +116,7 @@ final class TotalsSaidOnce4782Tests: XCTestCase {
         let drawn = MarketMapRail.drawnFullTotalRungs(
             outcomeNames: names,
             thresholds: (0..<9).map { Double($0) + 0.5 },
+            overProbabilities: Array(repeating: nil, count: 9),
             settledTotal: 7,
             limit: MarketMapRail.totalMapLadderLimit
         )
