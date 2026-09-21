@@ -118,3 +118,68 @@ describe("Sparkline — case-study line variant (reference line + annotation + c
     expect(firstPathD(html)).not.toMatch(/[CcQqSsTt]/);
   });
 });
+
+// #7748 — the /about Alcaraz exhibit shipped its annotation anchored `end` at x=163.5 in a
+// 320-unit viewBox, so "Adductor injury — 14%, the brink" started at x=-16.7 and the page
+// (which IS the app's About screen, #5914) read "ductor injury". The unit rules live in
+// `__tests__/lib/svgLabelFit.test.ts`; this asserts the RENDERED element for the real
+// specimen, with the width Chrome actually measured for that string.
+describe("Sparkline — the annotation label is never clipped by the canvas (#7748)", () => {
+  const LABEL = "Adductor injury — 14%, the brink";
+  /** Chrome `getBBox().width` for LABEL at font-size 11, Inter 600, measured 2026-09-21. */
+  const MEASURED_WIDTH = 180.24;
+  const WIDTH = 320;
+  const PAD_X = 10;
+
+  function annotationText(html: string) {
+    const m = html.match(/<text[^>]*>[^<]*dductor[^<]*<\/text>/);
+    if (!m) throw new Error("no annotation <text> in the rendered markup");
+    const tag = m[0];
+    return {
+      x: Number(tag.match(/\sx="([-\d.]+)"/)?.[1]),
+      anchor: tag.match(/text-anchor="(\w+)"/)?.[1] as "start" | "middle" | "end",
+    };
+  }
+
+  test("the real series + label render a text box inside the plot area", () => {
+    const html = renderToStaticMarkup(
+      <Sparkline
+        // The committed archive's own points and annotation index.
+        data={[84, 82, 78, 90, 96, 98, 77, 14, 42, 53, 36, 23, 40, 100]}
+        domain={[0, 100]}
+        width={WIDTH}
+        height={132}
+        padX={PAD_X}
+        padTop={14}
+        padBottom={18}
+        stroke={2.5}
+        color="var(--accent-brand)"
+        area="flat"
+        referenceValue={50}
+        annotation={{ index: 7, label: LABEL }}
+        caption="Alcaraz win probability through the match (Polymarket)"
+      />,
+    );
+    const { x, anchor } = annotationText(html);
+    const x0 =
+      anchor === "end" ? x - MEASURED_WIDTH : anchor === "middle" ? x - MEASURED_WIDTH / 2 : x;
+    expect(x0).toBeGreaterThanOrEqual(PAD_X);
+    expect(x0 + MEASURED_WIDTH).toBeLessThanOrEqual(WIDTH - PAD_X);
+  });
+
+  test("the full label is still in the markup — placement moved it, nothing truncated it", () => {
+    const html = renderToStaticMarkup(
+      <Sparkline
+        data={[84, 82, 78, 90, 96, 98, 77, 14, 42, 53, 36, 23, 40, 100]}
+        width={WIDTH}
+        height={132}
+        padX={PAD_X}
+        padTop={14}
+        padBottom={18}
+        annotation={{ index: 7, label: LABEL }}
+        caption="Alcaraz win probability through the match (Polymarket)"
+      />,
+    );
+    expect(html).toContain("Adductor injury");
+  });
+});

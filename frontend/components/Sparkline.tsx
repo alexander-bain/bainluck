@@ -19,6 +19,7 @@
  * from server components (the story/about case-study card) and client components alike.
  */
 import { useId } from "react";
+import { placeLabel } from "@/lib/svgLabelFit";
 
 type Domain = [number, number] | "auto";
 
@@ -63,6 +64,11 @@ export interface SparklineProps {
 // Trend-color threshold: net move as a fraction of the domain span. Matches the old
 // event spark sensitivity (~0.05pp on a [0,1] domain) and applies uniformly to any domain.
 const TREND_EPS_FRACTION = 5e-4;
+
+// Annotation label type size and its clearance from the marker dot. Named because the
+// fit calculation (#7748) and the rendered <text> must agree on both.
+const ANNOTATION_FONT_SIZE = 11;
+const ANNOTATION_GAP = 8;
 
 export default function Sparkline({
   data,
@@ -129,13 +135,23 @@ export default function Sparkline({
   const aspect = caption || annotation ? undefined : "none";
 
   // One annotated moment (case-study line): vertical marker, double dot, placed label.
+  // #7748: the label is placed by FIT, not by which half of the chart the point is in —
+  // a long label on a point just past the midpoint used to be anchored `end` and lose its
+  // first glyphs off the canvas, which reads as a spelling mistake, not as a crop.
   const ann =
     annotation && (() => {
       const ai = Math.max(0, Math.min(n - 1, annotation.index));
       const ax = x(ai);
       const ay = y(pts[ai]);
-      const labelRight = ax > width / 2;
-      return { ax, ay, labelRight, label: annotation.label };
+      const placement = placeLabel({
+        anchorX: ax,
+        label: annotation.label,
+        fontSize: ANNOTATION_FONT_SIZE,
+        gap: ANNOTATION_GAP,
+        left: padX,
+        right: width - padX,
+      });
+      return { ax, ay, placement, label: annotation.label };
     })();
 
   const svg = (
@@ -209,12 +225,19 @@ export default function Sparkline({
           <circle cx={ann.ax} cy={ann.ay} r={5.5} fill={strokeColor} />
           <circle cx={ann.ax} cy={ann.ay} r={2.5} fill="#fff" />
           <text
-            x={ann.labelRight ? ann.ax - 8 : ann.ax + 8}
-            y={Math.max(padTop + 4, ann.ay - 8)}
+            x={ann.placement.x}
+            y={Math.max(padTop + 4, ann.ay - ANNOTATION_GAP)}
             fill="var(--text-primary)"
-            fontSize={11}
+            fontSize={ANNOTATION_FONT_SIZE}
             fontWeight={600}
-            textAnchor={ann.labelRight ? "end" : "start"}
+            textAnchor={ann.placement.anchor}
+            // A label long enough to need clamping (#7748) can end up over the line it
+            // annotates. Paint the stroke first and the glyphs on top, so the type keeps
+            // a hairline of card behind it and stays readable wherever it lands.
+            stroke="var(--surface-card)"
+            strokeWidth={3}
+            strokeLinejoin="round"
+            paintOrder="stroke"
           >
             {ann.label}
           </text>
