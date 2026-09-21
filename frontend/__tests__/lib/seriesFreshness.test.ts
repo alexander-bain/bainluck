@@ -20,7 +20,7 @@ import {
   GAP_CADENCE_MULTIPLE,
   MIN_POINTS_FOR_CADENCE,
   STALE_CADENCE_MULTIPLE,
-  formatSpan,
+  formatGapSpan,
   seriesFreshness,
   seriesHasHole,
 } from "@/lib/seriesFreshness";
@@ -108,7 +108,14 @@ describe("production fixture — /api/politics presidential, measured 2026-09-06
 
     expect(f.state).toBe("gapped");
     expect(f.medianGapMs).toBe(8 * HOUR);
-    expect(f.note).toBe("No numbers for 9 days in this stretch");
+    // 219.9h is 9.16 days, so no whole-day caption is exactly true here and the
+    // only question is which way to be wrong. It read "9 days" until #7491 —
+    // understating our own hole by 3.9h, i.e. flattering our coverage. It now
+    // rounds up: "10 days" overstates the hole by 20h, against us, which is the
+    // conservative direction for a sentence CONFESSING missing data. (The
+    // opposite direction is right for `seriesWindowLabel`, which CLAIMS a
+    // window — see the control in aChartGapCaptionStopsUnderstatingTheHole7491.)
+    expect(f.note).toBe("No numbers for 10 days in this stretch");
   });
 });
 
@@ -199,18 +206,22 @@ describe("arithmetic that has bitten this codebase before", () => {
     expect(f.state).toBe("current");
   });
 
-  it("spans round DOWN, so a hole is never flattered into a smaller one", () => {
-    // Same rule as `freshnessAge` next door — "8 days" must never read "7".
-    expect(formatSpan(9.9 * 24 * HOUR)).toBe("9 days");
-    expect(formatSpan(47.9 * HOUR)).toBe("47 hours");
-    expect(formatSpan(1 * HOUR)).toBe("1 hour");
-    expect(formatSpan(59 * 60 * 1000)).toBe("59 min");
-    expect(formatSpan(0)).toBe("0 min");
-    expect(formatSpan(-5)).toBe("0 min");
+  it("a hole rounds UP, so it is never flattered into a smaller one (#7491)", () => {
+    // This block previously asserted the opposite VALUES under almost this
+    // TITLE — it read "spans round DOWN, so a hole is never flattered into a
+    // smaller one" while pinning `9.9 days -> "9 days"`, which is the flattery
+    // the sentence forbids. The title was the intent and the numbers were the
+    // defect; #7491 makes them agree.
+    expect(formatGapSpan(9.9 * 24 * HOUR)).toBe("10 days");
+    expect(formatGapSpan(47.9 * HOUR)).toBe("48 hours");
+    expect(formatGapSpan(1 * HOUR)).toBe("1 hour");
+    expect(formatGapSpan(59 * 60 * 1000)).toBe("59 min");
+    expect(formatGapSpan(0)).toBe("0 min");
+    expect(formatGapSpan(-5)).toBe("0 min");
   });
 
   it("a span is never suffixed 'ago' — a hole did not happen relative to now", () => {
-    expect(formatSpan(345.6 * HOUR)).not.toMatch(/ago/);
+    expect(formatGapSpan(345.6 * HOUR)).not.toMatch(/ago/);
   });
 });
 

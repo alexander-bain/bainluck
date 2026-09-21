@@ -18,7 +18,7 @@ import type {
 import ErrorState from "@/components/ErrorState";
 import PoliticsSkeleton from "@/components/skeletons/PoliticsSkeleton";
 import Sparkline from "@/components/Sparkline";
-import { formatSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
+import { formatGapSpan, seriesFreshness, seriesHasHole, seriesWindowLabel } from "@/lib/seriesFreshness";
 import { eventPath } from "@/lib/eventKey";
 import { twoLegCardPair } from "@/lib/twoLegCardPair";
 import { renderedDuelPercents, renderedOutcomeRowPercents } from "@/lib/renderedPercent";
@@ -319,7 +319,7 @@ function PresBarRace({ sorted, sourceMode, data }: {
     const widest = marked.reduce((a, b) => ((b.largestGapMs ?? 0) > (a.largestGapMs ?? 0) ? b : a));
     const gap = widest.largestGapMs;
     return gap && seriesHasHole(widest)
-      ? `Dimmed trend lines have stretches we have no numbers for — the longest is ${formatSpan(gap)}.`
+      ? `Dimmed trend lines have stretches we have no numbers for — the longest is ${formatGapSpan(gap)}.`
       : `Dimmed trend lines are missing recent numbers.`;
   }, [sorted]);
 
