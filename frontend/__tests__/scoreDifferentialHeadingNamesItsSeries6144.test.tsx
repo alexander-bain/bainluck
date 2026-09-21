@@ -446,13 +446,36 @@ describe("#6144 × #6142 — a settled game with no drawn score", () => {
     expect(seriesAttr(asTennis, "data-implied-spread-series")).toBe("none");
     expect(seriesAttr(asTennis, "data-projected-series")).toBe("true");
 
-    // NON-VACUITY of the withholding half: the same bytes before the whistle
-    // draw the arm. Without this row the three "none"s above would pass on a
-    // payload that simply had nothing to draw.
-    const beforeTheWhistle = renderChart(SETTLED_WITH_KALSHI_ARM, "tennis_wta", {
-      eventStatus: "scheduled",
-    });
-    expect(seriesAttr(beforeTheWhistle, "data-implied-spread-series")).toBe("kalshi");
+    // NON-VACUITY of the withholding half: these bytes CAN draw the arm, so the
+    // three "none"s above are a rule firing and not a payload with nothing in
+    // it. Without this row they would pass on an empty map.
+    //
+    // #7660 made this probe vary two fields instead of one. That arm carries
+    // `confidence: 0.2`, which is now withheld in EVERY state, so flipping only
+    // the status no longer draws it — and an assertion of "none" there would be
+    // the very vacuity this row exists to rule out. Both gates are opened, and
+    // each is closed again on its own below, which says more than the original
+    // single flip did.
+    const believed = JSON.parse(JSON.stringify(SETTLED_WITH_KALSHI_ARM));
+    believed.pm_spread_data.implied_spreads.kalshi.confidence = 0.97;
+
+    expect(
+      seriesAttr(
+        renderChart(believed, "tennis_wta", { eventStatus: "scheduled" }),
+        "data-implied-spread-series"
+      )
+    ).toBe("kalshi");
+    // Close each gate in turn: the state alone withholds it, and the
+    // confidence alone withholds it.
+    expect(
+      seriesAttr(renderChart(believed, "tennis_wta"), "data-implied-spread-series")
+    ).toBe("none");
+    expect(
+      seriesAttr(
+        renderChart(SETTLED_WITH_KALSHI_ARM, "tennis_wta", { eventStatus: "scheduled" }),
+        "data-implied-spread-series"
+      )
+    ).toBe("none");
     // …and the name does not move with it. The two rules are orthogonal: one
     // reads `status`, the other reads the drawn score.
     expect(headingFor(SETTLED_WITH_KALSHI_ARM, "tennis_wta")).toBe("Projected Game Margin");
