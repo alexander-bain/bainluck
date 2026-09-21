@@ -711,6 +711,65 @@ enum MyStuffTeamTextColour {
     static func logoTintHex(_ primaryColor: String?) -> String {
         TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
     }
+
+    /// #7036, sixth arm — the playoff-journey card's probability CAPSULE.
+    ///
+    /// **This is the site the issue opened with, and five arms walked past it.**
+    /// `TeamTextContrast`'s own docstring names *"the Relegated bar was a white
+    /// capsule on a near-white track"* as one of the three things Fulham's card
+    /// lost. Arms 1–5 fixed the other two and every grep aimed at
+    /// `primaryColor` missed this one, because the journey card reads
+    /// `journey.teamColor` — the same stored hex under a different local name.
+    ///
+    /// **Why a fill gets the floor here when `DiscoverView.teamBadge` does not.**
+    /// Arm 3 deferred colour-as-fill as "the shape question": an invisible tile
+    /// loses decoration, not information, and its label sits outside it in the
+    /// default text colour. This capsule is the third case, and neither of the
+    /// first two: **the filled fraction IS the number.** At 45.5% the bar is the
+    /// only graphical read of that probability, and when its fill cannot be told
+    /// from its track the bar reads EMPTY — not "unstyled", *wrong*, and
+    /// contradicting the `45%` printed beside it. That is arms 1–5's
+    /// unreadable-number defect wearing a capsule.
+    ///
+    /// **Reachable from served data today**, unlike arm 4's failure path.
+    /// `/api/shared/team-futures` (2026-09-20) serves the New Orleans Saints at
+    /// **45.5%** for *NFC South Division Winner* in `#d3bc8d` (1.85:1), the
+    /// Nashville Predators' three-stage journey in `#fdba31` (1.72:1) and the
+    /// Golden State Warriors' *NBA Championship Winner* in `#fdb927` (1.73:1).
+    /// A person who follows any of them sees those bars today.
+    ///
+    /// 🪤 **The fill is drawn at 0.5 opacity over the TRACK, not over the card,**
+    /// so the ratio this floor computes is not the ratio the eye gets — and the
+    /// composite is worse than the raw number, not better: `#ffffff` at half
+    /// alpha over the track lands *lighter* than the track itself, which is why
+    /// a full bar reads as an empty one. The floor is still the right instrument
+    /// (a colour clearing 3:1 against white is dark enough to separate from the
+    /// track by construction), and the composite is asserted from the real
+    /// resolved system colours in the tests rather than argued here.
+    ///
+    /// Falls back to `fallbackHex`, so a floored club's bar is drawn exactly as a
+    /// club with no stored colour has always drawn it.
+    static func progressFillHex(_ primaryColor: String?) -> String {
+        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    }
+
+    /// #7036, sixth arm — the journey card's 3pt leading stripe, which is the
+    /// one site here that really is decoration.
+    ///
+    /// **`nil` means no stripe, and that is deliberately NOT the fallback grey.**
+    /// A club with no stored colour draws no stripe at all today
+    /// (`if let c = journey.teamColor`), so absence is what this card already
+    /// says about a colour it cannot use — handing an unreadable club the grey
+    /// default would invent an accent the card has never drawn.
+    ///
+    /// **A reader sees no change, and that is the honest claim.** An invisible
+    /// white stripe and no stripe are the same pixels. This exists so that every
+    /// `Color(hex:` in this file resolves through a named floor, which is what
+    /// lets the tests carry a blanket *no raw team colour here* assertion —
+    /// the assertion that would have caught the capsule above three arms ago.
+    static func edgeAccentHex(_ primaryColor: String?) -> String? {
+        TeamTextContrast.usableForText(primaryColor)
+    }
 }
 
 /// Merged view of the same outcome across sources.
@@ -1005,7 +1064,7 @@ private struct PlayoffJourneyCard: View {
                                 Capsule()
                                     .fill(achieved
                                           ? Color.green
-                                          : Color(hex: journey.teamColor ?? "#6b7280").opacity(0.5))
+                                          : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor)).opacity(0.5))
                                     .frame(width: geo.size.width * min(prob, 1.0))
                             }
                         }
@@ -1037,7 +1096,7 @@ private struct PlayoffJourneyCard: View {
         .background(Color.cardBackgroundDark)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(alignment: .leading) {
-            if let c = journey.teamColor {
+            if let c = MyStuffTeamTextColour.edgeAccentHex(journey.teamColor) {
                 UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 0, topTrailingRadius: 0)
                     .fill(Color(hex: c))
                     .frame(width: 3)
