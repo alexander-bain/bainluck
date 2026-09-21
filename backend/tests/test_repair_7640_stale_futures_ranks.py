@@ -178,9 +178,73 @@ def test_the_plan_is_scoped_to_open_markets(repair):
     assert "futures_markets.status = 'open'" in sql
 
 
-def test_the_write_time_status_reread_exists_and_names_open(repair):
-    """The plan's scope is not enough — a market can settle between plan and write."""
-    assert "status = 'open'" in repair.SQL["still_open"]
+def test_the_write_time_status_check_takes_a_lock_in_a_deterministic_order(repair):
+    """CERT-3201's required repair, in the statement.
+
+    An unlocked re-read is a TOCTOU against `backfill_winners`, which is a
+    `HEAVY_TASKS` member — the same app this repair runs on — and couples
+    `status = 'resolved'` to its winner write in committed chunks.
+    """
+    sql = " ".join(repair.SQL["lock_open_markets"].split())
+    assert "status = 'open'" in sql
+    assert "FOR UPDATE" in sql
+    # Rows lock in the order they are returned; a deterministic order is what
+    # stops two overlapping chunks from deadlocking.
+    assert sql.index("ORDER BY id") < sql.index("FOR UPDATE")
+
+
+def test_the_named_settlement_writer_really_is_a_concurrent_one(repair):
+    """The premise of the lock. If this stops holding, re-read the reasoning.
+
+    Two halves, and the second is the one that makes the lock load-bearing
+    rather than merely prudent: `backfill_winners` writes the status, and it
+    runs on a DIFFERENT dyno from this repair — `_HEAVY_KEEP_ON_BACKGROUND`
+    keeps it on the main app's background queue while the repair is invoked on
+    `bainluck-heavy`. Two processes, one database, nothing in the application
+    serialising them. A row lock is the only thing that can.
+    """
+    import pathlib
+
+    from app.tasks import HEAVY_TASKS, _HEAVY_KEEP_ON_BACKGROUND
+
+    assert "app.tasks.backfill_winners" in _HEAVY_KEEP_ON_BACKGROUND
+    assert "app.tasks.backfill_winners" not in HEAVY_TASKS
+    source = (
+        pathlib.Path(repair.__file__).resolve().parents[1]
+        / "app"
+        / "tasks"
+        / "backfill_winners.py"
+    ).read_text()
+    assert "UPDATE futures_markets SET status = 'resolved'" in source
+
+
+def test_the_lock_and_the_write_are_one_transaction(tree):
+    """A lock is ownership only for the life of its transaction.
+
+    `apply_chunk` takes the lock itself rather than accepting a list from a
+    caller who might have committed in between, and it must not commit before
+    the write. Hoisting the lock out to the loop, or adding a commit here, is
+    exactly how the race CERT-3201 blocked gets reintroduced by someone tidying
+    up.
+    """
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "apply_chunk"
+    )
+    calls = [
+        n.func.attr
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    ]
+    names = [
+        n.func.id for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    ]
+    assert "lock_open_markets" in names, "apply_chunk must take the lock itself"
+    assert "commit" not in calls, (
+        "apply_chunk commits before its write — the status lock is released and "
+        "the settlement race is back"
+    )
 
 
 # ── 3. the write gate ───────────────────────────────────────────────────────

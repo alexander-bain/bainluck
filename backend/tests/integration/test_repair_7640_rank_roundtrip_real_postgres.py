@@ -268,11 +268,11 @@ async def test_the_plan_finds_the_broken_open_board_and_nothing_else(session):
 
 
 @needs_postgres
-async def test_the_write_time_reread_drops_a_market_that_settled(session):
+async def test_the_write_time_lock_drops_a_market_that_is_already_settled(session):
     frag_id, _ = session.info["fragmented"]
     settled_id, _ = session.info["settled"]
 
-    assert await repair.still_open(session, [frag_id, settled_id]) == [frag_id]
+    assert await repair.lock_open_markets(session, [frag_id, settled_id]) == [frag_id]
 
 
 # ── the round trip ──────────────────────────────────────────────────────────
@@ -289,9 +289,7 @@ async def _apply(session):
 
     await session.execute(text(repair.SQL["man_create"]))
     applied_at = datetime(2026, 9, 21, 3, 0, tzinfo=timezone.utc)
-    written = await repair.apply_chunk(
-        session, await repair.still_open(session, mids), applied_at
-    )
+    _, written = await repair.apply_chunk(session, mids, applied_at)
     await session.commit()
     return mids, written
 
@@ -428,3 +426,138 @@ async def test_the_restore_reverts_what_it_wrote_and_spares_what_a_poller_rewrot
     assert after["tie_b"] == _FRAGMENTED["tie_b"][1]
 
     assert reverted == len(_EXPECTED_WRITTEN) - 1
+
+
+# ── the settlement race CERT-3201 blocked ───────────────────────────────────
+#
+# Two sessions, real row locks. The defect is a TOCTOU: the first cut re-read
+# `status = 'open'` in an unlocked SELECT and wrote in a separate statement, and
+# `backfill_winners` — a `HEAVY_TASKS` member, so it runs on the SAME app as
+# this repair — commits `status = 'resolved'` in chunks. A settlement landing in
+# that gap left the read saying `open` and the write renumbering a finished
+# field: #6325's exact prohibition, on the one board where it cannot be reasoned
+# back, because the ranks it overwrites ARE the record of how the board
+# finished.
+#
+# Nothing short of two concurrent sessions against a real server can grade this.
+# A single session cannot observe its own lock wait, and a mock has no
+# EvalPlanQual — the READ COMMITTED behaviour that makes `FOR UPDATE`
+# re-evaluate the predicate against the newly-committed row IS the repair.
+
+
+async def _settle_in_another_session(engine, market_id, holding, release):
+    """A second connection playing `backfill_winners`: settle, hold, commit."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as other:
+        await other.execute(
+            text(
+                "UPDATE futures_markets SET status = 'resolved', "
+                "settled_at = COALESCE(settled_at, NOW()) "
+                "WHERE id = :i AND status = 'open'"
+            ),
+            {"i": market_id},
+        )
+        # The row lock is now held and uncommitted — the repair is about to walk
+        # into exactly the window the old code lost.
+        holding.set()
+        await release.wait()
+        await other.commit()
+
+
+@needs_postgres
+async def test_a_settlement_committing_under_the_repair_cannot_be_renumbered(
+    session, pg_engine
+):
+    """The repair BLOCKS on the settlement's lock, then refuses the board."""
+    import asyncio
+
+    frag_id, frag = session.info["fragmented"]
+    before = await _ranks(session, frag)
+    assert before != _EXPECTED_AFTER, "the board must start broken, or this is vacuous"
+
+    holding, release = asyncio.Event(), asyncio.Event()
+    settler = asyncio.create_task(
+        _settle_in_another_session(pg_engine, frag_id, holding, release)
+    )
+    await holding.wait()
+
+    applied_at = datetime(2026, 9, 21, 3, 0, tzinfo=timezone.utc)
+    await session.execute(text(repair.SQL["man_create"]))
+
+    async def repair_side():
+        # Blocks inside PostgreSQL until the settler commits, then EvalPlanQual
+        # re-reads the row and finds `resolved`.
+        return await repair.apply_chunk(session, [frag_id], applied_at)
+
+    repairer = asyncio.create_task(repair_side())
+    await asyncio.sleep(0.3)
+    assert not repairer.done(), (
+        "the repair did not block on the settlement's row lock — the SELECT is "
+        "not `FOR UPDATE`, and the whole guarantee is gone"
+    )
+
+    release.set()
+    await settler
+    writable, written = await repairer
+    await session.commit()
+
+    assert writable == [], "a settled market was still owned by the repair"
+    assert written == 0
+    assert await _ranks(session, frag) == before, (
+        "#6325: the repair renumbered a field that finished under it"
+    )
+
+
+@needs_postgres
+async def test_an_unlocked_read_would_have_renumbered_it(session, pg_engine):
+    """The strawman, so the test above is not passing for free.
+
+    Same sequence with the pre-repair shape — a plain unlocked `status = 'open'`
+    read, then the write — must produce the defect. If this one ever goes green
+    the race has stopped being reproducible here and the guard above is no
+    longer testing what it says.
+    """
+    import asyncio
+
+    frag_id, frag = session.info["fragmented"]
+    before = await _ranks(session, frag)
+
+    holding, release = asyncio.Event(), asyncio.Event()
+    settler = asyncio.create_task(
+        _settle_in_another_session(pg_engine, frag_id, holding, release)
+    )
+    await holding.wait()
+
+    # The read the first cut did: no lock, so it does not block and it sees the
+    # pre-settlement snapshot.
+    observed = (
+        await session.execute(
+            text(
+                "SELECT id FROM futures_markets "
+                "WHERE id = ANY(CAST(:mids AS int[])) AND status = 'open'"
+            ),
+            {"mids": [frag_id]},
+        )
+    ).scalars().all()
+    assert [int(i) for i in observed] == [frag_id], (
+        "the unlocked read did not even see the market as open — the sequence "
+        "is wrong and the strawman proves nothing"
+    )
+
+    release.set()
+    await settler
+
+    # ...and now the board is settled, but the write goes ahead on what the read
+    # said, which is the defect.
+    from app.models.models import FuturesOutcome
+    from app.utils.futures_rank import rerank_market_fields_stmt
+
+    await session.execute(
+        rerank_market_fields_stmt([frag_id]).returning(FuturesOutcome.id)
+    )
+    await session.commit()
+
+    assert await _ranks(session, frag) == _EXPECTED_AFTER
+    assert before != _EXPECTED_AFTER

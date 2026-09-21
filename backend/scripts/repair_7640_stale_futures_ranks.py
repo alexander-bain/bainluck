@@ -76,14 +76,34 @@ guard test executes the thing a person pastes:
   `onupdate`, so a re-rank provably cannot move it, while any real price write
   does. The manifest banks both, read from the forward write's own RETURNING.
 
-🔴 SETTLED BOARDS ARE EXEMPT AND THE EXEMPTION IS RE-CHECKED AT WRITE TIME.
+🔴 SETTLED BOARDS ARE EXEMPT, AND THE EXEMPTION IS OWNED, NOT OBSERVED.
 #6325 refused to renumber a finished field — its rank is the record of how it
 finished, not a live ordering — and `backfill_winners` / `repair_winner_field`
-are named exempt in `futures_rank`'s docstring for the same reason. The plan
-scopes to `status = 'open'`, and because a market can settle between the plan and
-the write, `still_open()` re-reads the status of every chunk immediately before
-writing it and drops what has closed. A drop is reported, and a drop is the good
-case.
+are named exempt in `futures_rank`'s docstring for the same reason.
+
+The plan scopes to `status = 'open'`, and that is not enough: a market can settle
+between the plan and the write. The first cut of this script re-read the status
+in a separate unlocked SELECT, which CERT-3201 correctly BLOCKed as a TOCTOU
+against a real concurrent writer — `backfill_winners` couples
+`status = 'resolved'` to its winner write in chunked, committed transactions,
+and it runs on the main app's background queue (`_HEAVY_KEEP_ON_BACKGROUND`,
+deliberately not heavy) while this script is invoked on `bainluck-heavy`. Two
+dynos, one database, nothing serialising them. A settlement landing in that gap
+leaves the read saying `open` and the write renumbering a finished field, which
+is the one case that cannot be reasoned back: the ranks it overwrites ARE the
+record.
+
+So `lock_open_markets()` takes the chunk's markets `FOR UPDATE` and the write
+happens in the same transaction, with no commit between — `apply_chunk` performs
+both so a caller cannot split them. Under READ COMMITTED that closes the race
+in both directions: a settlement that gets there first makes this statement
+block and then re-evaluate against the committed row (EvalPlanQual), so the
+market reads `resolved` and is EXCLUDED; a settlement that arrives second waits
+for the chunk and finds a board that was legitimately open when it was
+renumbered. `ORDER BY id` keeps the lock order deterministic so two overlapping
+chunks cannot deadlock. The status predicate rides the UPDATE as well, which is
+redundant while the lock is held and kept anyway. A drop is reported, and a drop
+is the good case.
 
 NOT IN SCOPE, deliberately:
 
@@ -235,11 +255,15 @@ def _sql():
                AND o.last_updated IS NOT DISTINCT FROM m.seen_last_updated
             RETURNING o.id
         """,
-        # The write-time re-read of #6325's exemption. A market that settled
-        # between the plan and this chunk is dropped, not renumbered.
-        "still_open": """
+        # #6325's exemption, taken as OWNERSHIP rather than as an observation —
+        # CERT-3201's required repair, `7640-SETTLEMENT-CANNOT-CROSS-RANK-WRITE-
+        # BOUNDARY`. See `lock_open_markets` for why the two words that matter
+        # are `FOR UPDATE`, and `ORDER BY` for why they cannot deadlock.
+        "lock_open_markets": """
             SELECT id FROM futures_markets
              WHERE id = ANY(CAST(:mids AS int[])) AND status = 'open'
+             ORDER BY id
+               FOR UPDATE
         """,
     }
 
@@ -379,26 +403,93 @@ def backup_is_exact(recon: dict) -> bool:
     return recon.get("missing") == 0 and recon.get("stale") == 0
 
 
-async def still_open(session, market_ids):
-    """#6325's exemption, re-read at write time rather than trusted from the plan."""
+async def lock_open_markets(session, market_ids):
+    """Take #6325's exemption as OWNERSHIP of the chunk, not as an observation.
+
+    🔴 THIS IS CERT-3201'S REQUIRED REPAIR. The first cut asked
+    `WHERE status = 'open'` without a lock and then wrote in a separate
+    statement, which is a TOCTOU with a real concurrent writer.
+    `backfill_winners` settles in chunked, committed transactions and couples
+    the status to the winner write:
+
+        UPDATE futures_markets SET status = 'resolved',
+               settled_at = COALESCE(settled_at, NOW())
+         WHERE id = ANY(:ids) AND status = 'open'
+
+    A settlement committing between the read and the write leaves the read
+    saying `open` and the write renumbering a finished field — #6325's exact
+    prohibition, on the one board where it is unrecoverable, because the ranks
+    it overwrites ARE the record of how the board finished.
+
+    And nothing in the application serialises the two. `backfill_winners` is in
+    `_HEAVY_KEEP_ON_BACKGROUND` — deliberately NOT a `HEAVY_TASKS` member — so
+    it runs on the main app's background queue while this script is invoked on
+    `bainluck-heavy`. Two dynos, one database, no shared worker, no shared
+    queue slot. The row lock is the only thing that can order them.
+
+    `FOR UPDATE` closes it in both directions, and the READ COMMITTED semantics
+    are the whole mechanism:
+
+      * if the settlement gets there first, this statement BLOCKS on its row
+        lock, and when it is released PostgreSQL re-evaluates the predicate
+        against the new version of the row (EvalPlanQual). The market now reads
+        `resolved` and is EXCLUDED. That is the case the old code got wrong.
+      * if this gets there first, the settlement blocks until the chunk commits,
+        and the renumber is correct — at the instant it was written the board
+        was open. Serial order, not a race.
+
+    `ORDER BY id` is not cosmetic: rows are locked in the order they are
+    returned, so a deterministic order is what stops two concurrent lockers of
+    overlapping chunks from deadlocking.
+
+    The lock is only ownership for as long as the transaction lives, so the
+    write has to be in the SAME transaction — which is why `apply_chunk` calls
+    this itself rather than taking a list from a caller who might have committed
+    in between. `test_the_lock_and_the_write_are_one_transaction` asserts that
+    structurally.
+    """
     from sqlalchemy import text
 
     rows = (
-        await session.execute(text(SQL["still_open"]), {"mids": list(market_ids)})
+        await session.execute(
+            text(SQL["lock_open_markets"]), {"mids": list(market_ids)}
+        )
     ).scalars()
     open_ids = set(int(i) for i in rows)
     return [m for m in market_ids if m in open_ids]
 
 
 async def apply_chunk(session, market_ids, applied_at):
-    """Re-derive one chunk with #6598's statement; bank what it actually wrote."""
-    from sqlalchemy import text
+    """Own the chunk's status, re-derive it, bank what was written — one transaction.
 
-    from app.models.models import FuturesOutcome
+    Returns ``(writable, written)``: the markets this actually owned, and the
+    number of legs the statement changed.
+    """
+    from sqlalchemy import exists, select, text
+
+    from app.models.models import FuturesMarket, FuturesOutcome
     from app.utils.futures_rank import rerank_market_fields_stmt
 
-    stmt = rerank_market_fields_stmt(market_ids).returning(
-        FuturesOutcome.id, FuturesOutcome.rank, FuturesOutcome.last_updated
+    writable = await lock_open_markets(session, market_ids)
+    if not writable:
+        return [], 0
+
+    # The status predicate rides the UPDATE as well, so #6325's scope is carried
+    # by the statement that writes rather than only by the caller three lines up.
+    # Redundant while the lock above is held — deliberately, because this is a
+    # data repair and the cost of the redundancy is one EXISTS.
+    still_open = exists(
+        select(FuturesMarket.id).where(
+            FuturesMarket.id == FuturesOutcome.market_id,
+            FuturesMarket.status == "open",
+        )
+    )
+    stmt = (
+        rerank_market_fields_stmt(writable)
+        .where(still_open)
+        .returning(
+            FuturesOutcome.id, FuturesOutcome.rank, FuturesOutcome.last_updated
+        )
     )
     written = (await session.execute(stmt)).all()
 
@@ -414,7 +505,7 @@ async def apply_chunk(session, market_ids, applied_at):
                 "applied_at": applied_at,
             },
         )
-    return len(written)
+    return writable, len(written)
 
 
 async def restore(session) -> int:
@@ -520,10 +611,13 @@ async def run(args):
         settled_mid_flight = 0
         for start in range(0, len(mids), CHUNK_MARKETS):
             chunk = mids[start : start + CHUNK_MARKETS]
-            writable = await still_open(s, chunk)
+            # `apply_chunk` takes the status lock itself. Do NOT hoist that call
+            # out to here and do NOT commit between it and the write: the lock
+            # is ownership only for the life of the transaction, and splitting
+            # them reopens the settlement race CERT-3201 blocked.
+            writable, wrote = await apply_chunk(s, chunk, applied_at)
             settled_mid_flight += len(chunk) - len(writable)
-            if writable:
-                written += await apply_chunk(s, writable, applied_at)
+            written += wrote
             await s.commit()
             print(
                 f"  chunk {start // CHUNK_MARKETS + 1}: "
