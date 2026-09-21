@@ -1535,17 +1535,28 @@ def _alias_prefix_remainder(alias_norm: str, name: str | None) -> int | None:
 
 
 def _alias_contest_winner(alias_norm: str, claimants: list, scope_keys: set[str]):
-    """Which row, if any, may hold an alias key that is NOBODY's own name (#7761).
+    """Which of several ELIGIBLE claimants takes a contested alias key (#7761).
 
-    #7727 settled the contest where the key IS some row's canonical name. This
-    is the OTHER arm, and it is the one the venues actually exercise: college
-    feeds publish BARE SCHOOL NAMES. `oklahoma` is nobody's canonical name —
-    `Oklahoma Sooners` is — so #7727's guard returns True unconditionally and
-    the key falls through to last-one-wins by `id`. Measured on production
-    2026-09-21, that put **Oklahoma State's crest and 24-10 record on the row
-    labelled "Oklahoma"** (2400 > 235, and 2400 > 235 is the whole reason), and
-    put **Utah's row under "West Virginia"** — thirteen unrelated schools claim
-    to be West Virginia, and `South Florida Bulls` had the biggest `id`.
+    #7727 decides who is eligible. This decides who wins, and the caller
+    composes the two — see `eligible_claims` in `_get_team_metadata`. Wherever
+    #7727 admits more than one row for a key, the key used to fall through to
+    last-one-wins by `id`, and that happens in two ways:
+
+    * the key is NOBODY's canonical name, which is how college feeds publish —
+      `oklahoma` is nobody's name, `Oklahoma Sooners` is;
+    * the key IS a row's canonical name but in ANOTHER SCOPE TIER, where
+      #7727's cross-tier branch admits every in-scope claimant. `West Virginia`
+      is the entire name of a `baseball_ncaa` row, which is why the women's
+      basketball grid never consulted a rule at all for that key.
+
+    Measured on production 2026-09-21, the two together put **Oklahoma State's
+    crest and 24-10 record on the row labelled "Oklahoma"** (2400 > 235, and
+    that is the whole reason) and **Utah's row under "West Virginia"** —
+    thirteen unrelated schools claim to be West Virginia. Which impostor won
+    depended on which rows the `ILIKE` happened to load: across four loaded
+    sets the old rule answered 149, 2407, 2705, 2705, while this rule answers
+    149 every time. That is the point — the answer stops being a function of
+    the query and becomes a function of the row.
 
     An arbitrary order is wrong about as often as it is right, so the rule is to
     prefer what is TRUE about the claim and to refuse when nothing is:
@@ -1568,6 +1579,17 @@ def _alias_contest_winner(alias_norm: str, claimants: list, scope_keys: set[str]
     keys, of which 599 keep today's winner byte-for-byte, 56 rebind (every one
     to the correct club — `michigan` off `Akron Zips`, `texas tech` off
     `Auburn Tigers`, `atlanta` off `Inter Miami CF`) and 4 refuse.
+
+    THAT CENSUS GROUPED BY SPORT AND IS BLIND TO THE SECOND ARM ABOVE, which is
+    how the West Virginia specimen shipped unfixed the first time: the real
+    lookup has no sport filter — deliberately, #6230 — so a canonical owner can
+    sit in another sport and the key never looked ownerless at all. The honest
+    measurement replays both versions over the SERVED grid rows: across the 14
+    warm leagues, 530 rows, exactly ONE row changes hand outside the specimens
+    (bundesliga `Hamburg`, 19304 → 14983 — the same club, both `espn_id` 127,
+    both `1-0-3`, picking the row whose name the label actually is) and NO row
+    loses its metadata. Measure a change to this function over the cross-sport
+    loaded set; a per-sport census will agree with you and be wrong.
 
     RESIDUAL, stated because it is a guess this rule does not remove: where two
     differently-anchored rows both lead with the alias and differ only in
@@ -1637,18 +1659,20 @@ def _alias_may_claim(
     Scope is untouched: the refusal applies only within one scope tier, so an
     in-scope row still beats an out-of-scope one exactly as before.
 
-    WHERE THE KEY IS NOBODY'S OWN NAME, `_alias_contest_winner` decides (#7761).
-    That is not a rare corner — it is how every college feed publishes, as bare
-    school names — and it used to fall straight through to last-one-wins.
+    THIS FUNCTION DECIDES ELIGIBILITY ONLY. Which of several ELIGIBLE claimants
+    actually takes the key is `_alias_contest_winner`'s question (#7761), and
+    the two are composed by the caller rather than sequenced — see the comment
+    on `alias_winners` in `_get_team_metadata`.
     """
+    if alias_winners is not None and alias_norm in alias_winners:
+        # Contested by several eligible rows: one wins on the merits, or the
+        # key is refused (winner None, which no `id` equals) rather than
+        # guessed. Eligibility was already applied when the contest was built.
+        return alias_winners[alias_norm] == team.id
+
     owner = canonical_owners.get(alias_norm)
     if owner is None:
-        if alias_winners and alias_norm in alias_winners:
-            # Contested by several rows and owned as a name by none: one row
-            # wins on the merits, or the key is refused (winner None, which no
-            # `id` equals) rather than guessed.
-            return alias_winners[alias_norm] == team.id
-        return True  # nobody's own name, and nobody else claims it
+        return True  # nobody's own name
     _owner_id, owner_espn_id, owner_in_scope = owner
     # A row aliasing its OWN name needs no clause of its own: it is its own
     # anchor, so the equal-anchor return below already admits it.
@@ -1758,19 +1782,28 @@ async def _get_team_metadata(
             _in_scope(team, scope_keys),
         )
 
-    # Who contests each key that is nobody's own name. Computed first for the
-    # same reason `canonical_owners` is: the contest has to be settled before
-    # the first claimant is written, not discovered as rows arrive (#7761).
-    alias_claims: dict[str, list] = {}
+    # THE TWO RULES ARE COMPOSED, NOT SEQUENCED. #7727 says who is ELIGIBLE to
+    # claim a key; #7761 says who WINS among the eligible. Sequencing them —
+    # "settle the contest only where #7727 found no owner" — leaves the case
+    # that produced #7761's second specimen unfixed, because a key can have a
+    # canonical owner in a DIFFERENT SCOPE TIER: `West Virginia` is the whole
+    # name of row 13387 in `baseball_ncaa`, so on the women's basketball grid
+    # #7727's cross-tier branch admitted every in-scope claimant and `max(id)`
+    # picked `Utah Utes` out of thirteen. Eligibility first, then the contest
+    # among whoever survived it, and the write loop re-asks both.
+    #
+    # Computed before the first write for the same reason `canonical_owners` is:
+    # a contest has to be settled before its first claimant is written, not
+    # discovered as rows arrive.
+    eligible_claims: dict[str, list] = {}
     for team in teams:
         for alt in _secondary_claims(team):
             alt_norm = _normalize_team_name(alt)
-            if alt_norm in canonical_owners:
-                continue  # #7727's arm owns this key
-            alias_claims.setdefault(alt_norm, []).append(team)
+            if _alias_may_claim(alt_norm, team, canonical_owners, scope_keys):
+                eligible_claims.setdefault(alt_norm, []).append(team)
     alias_winners: dict[str, object] = {
         alias_norm: _alias_contest_winner(alias_norm, claimants, scope_keys)
-        for alias_norm, claimants in alias_claims.items()
+        for alias_norm, claimants in eligible_claims.items()
         if len(claimants) > 1
     }
 

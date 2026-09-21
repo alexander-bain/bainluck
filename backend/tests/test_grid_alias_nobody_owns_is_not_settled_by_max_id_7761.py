@@ -275,6 +275,125 @@ async def test_two_differently_anchored_clubs_that_tie_are_refused_not_guessed()
     assert meta["new york mets"]["team_id"] == 10737
 
 
+# --- THE SECOND ARM: a canonical owner in ANOTHER SCOPE TIER ----------------
+
+def _wv_baseball_row():
+    """`West Virginia` is the ENTIRE name of a `baseball_ncaa` row (13387).
+
+    So `west virginia` is not an ownerless key at all. It has an owner, in a
+    sport this grid does not scope, and #7727's cross-tier branch admits every
+    in-scope claimant — after which `max(id)` picked Utah out of thirteen.
+    """
+    return _FakeTeam(
+        13387, "West Virginia", "baseball_ncaa", espn_id="136",
+        abbreviation="WVU", record="44-15",
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_owner_in_another_sport_does_not_hand_the_key_to_max_id():
+    """The specimen that shipped unfixed the first time (#7761 after-check).
+
+    The first repair settled the contest only where #7727 found no owner. Here
+    there IS an owner — in `baseball_ncaa` — so the key skipped the contest
+    entirely and the women's grid kept serving Utah's row.
+    """
+    meta = await _lookup(
+        [_wv_baseball_row(), _mountaineers(), _utah(), _georgetown()], _SLUG
+    )
+
+    assert meta["west virginia"]["team_id"] == 149
+    assert meta["west virginia"]["abbreviation"] == "WVU"
+    assert meta["west virginia"]["record"] == "18-11"
+
+
+@pytest.mark.asyncio
+async def test_the_claimants_keep_their_own_rows():
+    """The repair stops the impersonation; it deletes nobody."""
+    meta = await _lookup(
+        [_wv_baseball_row(), _mountaineers(), _utah()], _SLUG
+    )
+
+    assert meta["utah utes"]["team_id"] == 2407
+    assert meta["west virginia"]["team_id"] == 149
+
+
+@pytest.mark.asyncio
+async def test_the_UNANCHORED_sibling_key_still_fails_closed_per_7727():
+    """A CONTROL, and a deliberately ugly one: this key is still wrong.
+
+    `west virginia mountaineers` IS row 149's own name, so it is #7727's arm,
+    same scope tier — and `Utah Utes` has no `espn_id`, so #7727 fails closed
+    ("absent either anchor the rule fails closed and today's order stands")
+    and Utah's alias still takes it on `id`.
+
+    That is not fixed here and must not be: loosening it is exactly the
+    "looser name rule" #7727 refused, and the real repair is the anchor
+    channel (#7676). It costs the READER nothing today, because the grid row
+    is labelled `West Virginia` and looks up `west virginia`, which the test
+    above pins to 149. Pinned so that if #7676 ever lands, this row moves
+    deliberately rather than by accident.
+    """
+    meta = await _lookup(
+        [_wv_baseball_row(), _mountaineers(), _utah()], _SLUG
+    )
+
+    assert meta["west virginia mountaineers"]["team_id"] == 2407
+
+
+@pytest.mark.asyncio
+async def test_the_answer_does_not_depend_on_which_impostors_were_loaded():
+    """The old rule answered 149 / 2407 / 2705 on three loaded sets.
+
+    The `ILIKE` that feeds this function loads a different set of impostors
+    depending on what else is on the grid, so an `id` tie-break makes the
+    served crest a function of the QUERY. It must be a function of the ROW.
+    """
+    usf = _FakeTeam(
+        2705, "South Florida Bulls", _WNCAAB, espn_id="58",
+        alternate_names=["West Virginia", "West Virginia Mountaineers"],
+    )
+    narrow = await _lookup([_mountaineers(), _utah()], _SLUG)
+    with_owner = await _lookup([_wv_baseball_row(), _mountaineers(), _utah()], _SLUG)
+    wide = await _lookup(
+        [_wv_baseball_row(), _princeton(), _mountaineers(), _georgetown(),
+         _utah(), _arizona_state(), usf],
+        _SLUG,
+    )
+
+    assert narrow["west virginia"]["team_id"] == 149
+    assert with_owner["west virginia"]["team_id"] == 149
+    assert wide["west virginia"]["team_id"] == 149
+
+
+@pytest.mark.asyncio
+async def test_one_club_with_three_rows_picks_the_row_the_label_actually_is():
+    """Bundesliga `Hamburg`: rows 1983/14983/19304 all carry `espn_id` 127.
+
+    Same club, same record, so nothing is at risk either way — but the alias
+    leads `Hamburg` exactly and leads `Hamburg SV` with a token to spare, so
+    the row whose name IS the label wins instead of the biggest `id`.
+    """
+    hamburger_sv = _FakeTeam(
+        1983, "Hamburger SV", "soccer_germany_bundesliga", espn_id="127",
+        abbreviation="HSV", alternate_names=["Hamburg SV", "Hamburg"],
+        record="1-0-3",
+    )
+    hamburg = _FakeTeam(
+        14983, "Hamburg", "soccer_germany_bundesliga", espn_id="127",
+        abbreviation="HSV", alternate_names=["Hamburg", "Hamburg SV"],
+        record="1-0-3",
+    )
+    hamburg_sv = _FakeTeam(
+        19304, "Hamburg SV", "soccer_germany_bundesliga", espn_id="127",
+        abbreviation="HSV", alternate_names=["Hamburg"], record="1-0-3",
+    )
+    meta = await _lookup([hamburger_sv, hamburg, hamburg_sv], "bundesliga")
+
+    assert meta["hamburg"]["team_id"] == 14983
+    assert meta["hamburg"]["record"] == "1-0-3"
+
+
 # --- THE HELD CONTROLS: these must NOT move (gotcha #43, both directions) ---
 
 @pytest.mark.asyncio
