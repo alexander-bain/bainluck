@@ -55,14 +55,30 @@ import { STORY_BLEND } from "@/lib/story-content";
 
 const ABOUT_PAGE = join(__dirname, "..", "app", "about", "page.tsx");
 
+/**
+ * The entities this page's copy actually emits, decoded in ONE pass.
+ *
+ * 🔴 The first draft chained `.replace(/&amp;/g, "&")` ahead of the others, and
+ * CodeQL called it (js/double-escaping, high): unescaping `&amp;` first turns
+ * the literal text `&amp;mdash;` into `&mdash;`, which the next replacement in
+ * the chain then reads as an entity and renders as an em-dash. A reader would
+ * see a character the page never wrote. One regex over a closed map cannot do
+ * that — each match is replaced from the input, and no replacement's output is
+ * ever rescanned.
+ */
+const ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&#x27;": "'",
+  "&rsquo;": "'",
+  "&mdash;": "—",
+  "&nbsp;": " ",
+};
+
 /** Tags out, entities in, whitespace collapsed — what a reader actually reads. */
 function visibleText(html: string): string {
   return html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&#x27;|&rsquo;/g, "'")
-    .replace(/&mdash;/g, "—")
-    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;|&#x27;|&rsquo;|&mdash;|&nbsp;/g, (entity) => ENTITIES[entity])
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -132,6 +148,17 @@ describe("#7740 — what the fallback path renders", () => {
   it("does not tell a reader the cohort is a count of markets", () => {
     expect(text).not.toContain("traded markets");
     expect(text).toContain("traded outcomes");
+  });
+});
+
+describe("#7740 — this suite's own reader-text helper", () => {
+  it("decodes each entity once, so an escaped entity stays escaped", () => {
+    // The CodeQL finding above, pinned. `&amp;mdash;` is a page that wrote the
+    // literal text "&mdash;"; a chained unescape renders it as an em-dash, which
+    // is a character the page never wrote. One pass cannot.
+    expect(visibleText("&amp;mdash;")).toBe("&mdash;");
+    expect(visibleText("a &mdash; b")).toBe("a — b");
+    expect(visibleText("<p>Alex&#x27;s number</p>")).toBe("Alex's number");
   });
 });
 
