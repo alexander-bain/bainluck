@@ -93,6 +93,7 @@ import {
 import {
   decideCalibrationStaleness,
   methodologyRefreshClause,
+  stalenessAgeLabel,
   stalenessHeadline,
   stalenessScheduleClause,
 } from "@/lib/calibrationStaleness";
@@ -208,15 +209,12 @@ interface DrillInState {
   note?: string | null;
 }
 
-/** Queue 297: how old a served last-good snapshot is, in plain words. */
-function formatAge(seconds: number): string {
-  if (seconds < 90) return "moments";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 90) return `${minutes} min`;
-  const hours = Math.round(seconds / 3600);
-  if (hours < 48) return `${hours} hr`;
-  return `${Math.round(seconds / 86400)} days`;
-}
+// #7634: Queue 297's `formatAge` moved to `lib/calibrationStaleness.ts` as
+// `stalenessAgeLabel`. It rounded where every sibling ladder in the repo
+// floors, and it tested each rung's threshold against the ROUNDED value — so
+// the banner dated a 5.54-day-old snapshot "6 days ago" beside its own printed
+// "Sep 15". Unreachable from a test while it sat in this `"use client"` file,
+// which is the same hole CAL-P1024 (#1865) closed two paragraphs up.
 
 export default function CalibrationPage() {
   usePageTracking({ pageType: "calibration", pageTitle: "Calibration" });
@@ -1088,7 +1086,7 @@ export default function CalibrationPage() {
                     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
                   })
                 : "earlier"}
-              {staleness.ageS !== null && ` (${formatAge(staleness.ageS)} ago)`}
+              {staleness.ageS !== null && ` (${stalenessAgeLabel(staleness.ageS)} ago)`}
               {" "}and are not being refreshed right now.
               {/* #2649: this used to end "The curve rebuilds hourly." full stop,
                   and on 2026-09-02 it said that over `producer.stalled: true,
@@ -1142,7 +1140,7 @@ export default function CalibrationPage() {
                     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
                   })
                 : "earlier"}
-              {staleness.stagedAgeS !== null && ` (${formatAge(staleness.stagedAgeS)} ago)`}
+              {staleness.stagedAgeS !== null && ` (${stalenessAgeLabel(staleness.stagedAgeS)} ago)`}
               {/* #4118 / standing notice 34. This clause used to read ", and 128
                   of 128 units have drifted since". It is a coverage count in the
                   page body — the shape the notice names first — and it is also

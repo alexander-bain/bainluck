@@ -449,6 +449,80 @@ export function methodologyRefreshClause(
 }
 
 /**
+ * How old a served snapshot is, in plain words: "moments" / "14 min" / "3 hr" /
+ * "5 days". The caller supplies the " ago".
+ *
+ * ## The defect this closes (#7634)
+ *
+ * This ladder lived as a module-private `formatAge` inside
+ * `app/calibration/page.tsx`, a `"use client"` component, so no guard could
+ * call it — the same reason CAL-P1024 (#1865) moved `sourceLabel` out of that
+ * file after `datagolf` had been rendering its raw payload key for weeks. It
+ * was the only age ladder in the repo that ROUNDED, and it got two separate
+ * things wrong.
+ *
+ * Measured on production 2026-09-20 23:40Z: the banner read "These numbers were
+ * built **Sep 15, 4:16 AM (6 days ago)**" while today was Sep 20. The artifact
+ * is 479,048 s = 5.54 d, and `Math.round(5.54)` is 6. A reader who counts from
+ * the date the same sentence prints gets 5. The parenthetical exists to save
+ * them that arithmetic and it contradicted the date it annotates.
+ *
+ * ### Mistake 1 — round, where every sibling floors
+ *
+ * `lib/matchDetail.ts`, `lib/tournamentProps.ts`, `lib/slate.ts`,
+ * `lib/tournament.ts` and `lib/sourceAge.ts` all floor, and four carry the same
+ * comment verbatim: *"Human age, rounded DOWN — '8 days ago' must never flatter
+ * to '7'."* Over every age from 0 to 10 days at one-second steps, this ladder
+ * disagreed with a floored one on 432,870 of 864,000 readings — **50.1%** —
+ * reading older on 432,840 of them, by as much as **24 hours** (at 2.5 d it
+ * said "3 days").
+ *
+ * ### Mistake 2 — the rung threshold was tested against the ROUNDED value
+ *
+ * `const hours = Math.round(seconds / 3600); if (hours < 48)` opens the days
+ * rung at 47.5 h, so a 47 h 59 m artifact read "2 days". The siblings test the
+ * raw quantity and floor only for display. This is why the repair is not a
+ * one-word swap: fixing the arithmetic alone leaves every boundary half a rung
+ * early.
+ *
+ * Two strings were unreachable as a consequence, and the second is the tell:
+ *
+ *   * `"1 min"` could never print at all — the `moments` guard releases at 90 s
+ *     and `Math.round(90 / 60)` is 2.
+ *   * `"1 hr"` printed for 30 seconds of the 1,800 it is the true reading: the
+ *     window `[5370, 5399]` where the minutes rung has already rounded up to 90
+ *     but the hours rung has not yet rounded up to 2. The banner otherwise
+ *     jumped `89 min` -> `2 hr`.
+ *
+ * That 30-second window is also the one place the old ladder FLATTERED — it
+ * printed "1 hr" over an artifact 89½ minutes old, which is the exact failure
+ * the convention's comment names. A ladder wrong in both directions is not a
+ * rounding preference; it is an unstated one.
+ *
+ * ### Why the rungs themselves did not move
+ *
+ * 90 s / 90 min / 48 h and the words "moments", "min", "hr", "days" are
+ * unchanged, because they were never the defect and this banner's copy is
+ * load-bearing (#2649, #4046, #4113, #7612 all landed on sentences around it).
+ * Only the arithmetic and the threshold's subject change.
+ *
+ * `"1 days"` stays unreachable and that is a property of the rungs, not an
+ * accident: the days rung opens at 48 h, so the floor is at least 2. The test
+ * asserts it rather than a singular branch being added for a string nothing can
+ * produce — if a rung ever moves, the assertion fails instead of the grammar.
+ *
+ * Total on every finite input. A negative age (clock skew between the server's
+ * `age_s` and nothing at all — the value is the server's own arithmetic) lands
+ * on "moments" via the first guard rather than printing a negative count.
+ */
+export function stalenessAgeLabel(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 90) return "moments";
+  if (seconds < 90 * 60) return `${Math.floor(seconds / 60)} min`;
+  if (seconds < 48 * 3600) return `${Math.floor(seconds / 3600)} hr`;
+  return `${Math.floor(seconds / 86400)} days`;
+}
+
+/**
  * The drift clause, or `null` when there is nothing honest to say.
  *
  * Three readings and they are not interchangeable:
