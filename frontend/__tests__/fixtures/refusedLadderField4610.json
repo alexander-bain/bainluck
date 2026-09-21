@@ -13,17 +13,17 @@
       {
         "label": "Above 30",
         "movement": null,
-        "probability": 0.4828
+        "probability": 0.7
       },
       {
         "label": "Above 20",
         "movement": null,
-        "probability": 0.3793
+        "probability": 0.55
       },
       {
         "label": "Above 10",
         "movement": null,
-        "probability": 0.1379
+        "probability": 0.2
       }
     ],
     "ladder_treatment_refused": true,
@@ -71,25 +71,25 @@
       "id": 604811622,
       "movement": null,
       "name": "Above 30",
-      "probability": 0.4828,
+      "probability": 0.7,
       "rank": 1,
-      "rendered_percent": 48
+      "rendered_percent": 70
     },
     {
       "id": 604811621,
       "movement": null,
       "name": "Above 20",
-      "probability": 0.3793,
+      "probability": 0.55,
       "rank": 2,
-      "rendered_percent": 38
+      "rendered_percent": 55
     },
     {
       "id": 604811620,
       "movement": null,
       "name": "Above 10",
-      "probability": 0.1379,
+      "probability": 0.2,
       "rank": 3,
-      "rendered_percent": 14
+      "rendered_percent": 20
     }
   ]
 }
