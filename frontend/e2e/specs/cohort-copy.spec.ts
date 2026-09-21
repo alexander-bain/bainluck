@@ -581,7 +581,7 @@ test.describe("calibration cohort copy", () => {
               // a body production no longer produces. `reason` stays the
               // arbitrary probe this spec named it — the claim below reads it
               // as a state NAME, not as a real refusal reason.
-              message: "Calibration data is being rebuilt and is not ready yet.",
+              message: "Accuracy data is being rebuilt and is not ready yet.",
             },
           },
           503

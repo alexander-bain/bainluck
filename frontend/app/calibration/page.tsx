@@ -698,9 +698,14 @@ export default function CalibrationPage() {
     // here (ruling 025 clause 2). It is only reached once `unavailable` has been
     // ruled out, because a typed backend body is more specific than any status
     // code and outranks it.
+    // #7765: the subject is interpolated into six reader templates in
+    // `loadFailure.ts` ("Couldn't load this {subject}", "{Subject} not found",
+    // "We could not load this {subject}…"), so it is copy, not a key. "accuracy
+    // data" for the reason the whole no-content family carries that noun — see
+    // the fence above `LOADING_COPY` below.
     const failure = describeLoadFailure(
       error as ApiError,
-      "calibration data",
+      "accuracy data",
     );
     // A transport/backend failure outranks every payload-level check below: we
     // have no payload to judge. (Poison ordering, rung 1.)
@@ -721,8 +726,15 @@ export default function CalibrationPage() {
               /* The fallback is the CAUTIOUS half of CAL-P1191's pair, for the
                  same reason the backend's default is: this branch runs when the
                  body did not say, and a sentence that promises no timing is
-                 never the wrong one to print when we do not know. */
-              "Calibration data is being rebuilt and is not ready yet."
+                 never the wrong one to print when we do not know.
+
+                 #7765: kept byte-identical to `UNAVAILABLE_ADVICE_DEFAULT` in
+                 `routes/calibration.py`, which is the sentence a reader actually
+                 meets — this literal only renders when the body did not say. The
+                 backend is the one that matters and it is the one a bundle scan
+                 cannot see; the guard pins both sides so they cannot drift to
+                 two different words for one state. */
+              "Accuracy data is being rebuilt and is not ready yet."
             : failure.message
         }
         onRetry={
@@ -737,7 +749,23 @@ export default function CalibrationPage() {
   if (!data || !normalized) {
     return (
       <div className="max-w-6xl mx-auto" data-testid="calibration-loading">
-        <LoadingState message="Loading calibration data..." />
+        {/* #7765 — THE FENCE FOR THE WHOLE NO-CONTENT FAMILY, STATED ONCE HERE
+            because this is the state every single reader passes through.
+
+            #7738 renamed the footer's only link to this page "Accuracy" and
+            moved the tab title with it. So a reader arrives having been shown
+            exactly one word for where they are — and these states render NO
+            page: no Calibration Table, no "what's a calibration curve?", no
+            definition anywhere on screen. Handing them "calibration" here is
+            `JARGON_BANS`' own clause, "our pipeline's nouns are not the
+            reader's".
+
+            THE FENCE IS THE EMPTY STATE, NOT THE VOCABULARY. The rendering page
+            keeps the word in all eight of its in-context uses — the table's
+            name, the FAQ entry that defines the term, the Metaculus citation —
+            because each of those arrives with its meaning attached, which is
+            what D102 permits. What is banned is the word with nothing beside it. */}
+        <LoadingState message="Loading accuracy data..." />
       </div>
     );
   }

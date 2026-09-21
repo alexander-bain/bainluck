@@ -69,7 +69,7 @@ const PAGE_BUDGET_MS = 45_000;
 /** The hard failure copy the page renders when the fetch rejects. */
 const ERROR_COPY = "Failed to load calibration data";
 /** The loader. Still mounted at the end == the fetch never resolved. */
-const LOADING_COPY = "Loading calibration data...";
+const LOADING_COPY = "Loading accuracy data...";
 
 /**
  * The five headline stat cards, by hook. Each renders its number under
