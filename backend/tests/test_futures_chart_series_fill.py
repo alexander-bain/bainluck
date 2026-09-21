@@ -152,6 +152,55 @@ class TestClobTier:
         assert stats["fetch_errors"] == 1
         assert "clob_empty" not in stats
 
+    @pytest.mark.asyncio
+    async def test_a_lookback_call_sends_the_window_and_never_an_interval(self):
+        """🔴 #7547. A named range at fidelity=1 is refused by the CLOB for
+        anything wider than a day (`1w` floors at 5, `1m` at 10) and `max`
+        silently answers at ~600s. So the fine tier's request MUST go out as
+        startTs/endTs — and must NOT also carry an interval, which the venue
+        rejects alongside a window.
+
+        Asserting on the RECORDED PARAMS rather than on "a call happened":
+        a fake that only counts calls cannot tell the two request forms apart,
+        which is the entire thing under test.
+        """
+        seen: dict = {}
+
+        class _Recorder:
+            async def get_prices_history(self, **kw):
+                seen.update(kw)
+                return [{"t": 1_758_000_000, "p": 0.5}]
+
+        now = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
+        await fill.fetch_clob_tier(
+            _Recorder(), "tok", fill.ClobCall("1d", 1, timedelta(hours=144)),
+            stats={}, now=now,
+        )
+        assert "interval" not in seen
+        assert seen["fidelity"] == 1
+        assert seen["end_ts"] == int(now.timestamp())
+        assert seen["start_ts"] == int((now - timedelta(hours=144)).timestamp())
+        assert seen["end_ts"] - seen["start_ts"] == 144 * 3600
+
+    @pytest.mark.asyncio
+    async def test_a_plain_call_still_sends_the_named_range(self):
+        """The coarse tiers are unchanged — `interval=max` is the only measured
+        way past the ~31-day wall, and a window cannot reach it."""
+        seen: dict = {}
+
+        class _Recorder:
+            async def get_prices_history(self, **kw):
+                seen.update(kw)
+                return [{"t": 1_758_000_000, "p": 0.5}]
+
+        await fill.fetch_clob_tier(
+            _Recorder(), "tok", fill.ClobCall("max", 720), stats={}
+        )
+        assert seen["interval"] == "max"
+        assert seen["fidelity"] == 720
+        assert "start_ts" not in seen
+        assert "end_ts" not in seen
+
 
 # ---------------------------------------------------------------------------
 # Cache freshness bookkeeping

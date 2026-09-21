@@ -820,10 +820,19 @@ async def build_generic_history(
                 try:
                     for call in clob_calls(lifetime):
                         tier = await fetch_clob_tier(
-                            polymarket_service, contract["token_id"], call, stats=stats
+                            polymarket_service, contract["token_id"], call,
+                            stats=stats, now=now,
                         )
                         for ts, _p in tier:
-                            labels.setdefault(ts, f"polymarket_clob_{call.interval}_f{call.fidelity}")
+                            # The fine tier is an explicit WINDOW, not a named
+                            # range, so labelling it by `call.interval` would
+                            # tag six days of minutes as "1d".
+                            span = (
+                                f"{int(call.lookback.total_seconds() // 3600)}h"
+                                if call.lookback is not None
+                                else call.interval
+                            )
+                            labels.setdefault(ts, f"polymarket_clob_{span}_f{call.fidelity}")
                         tiers.append(tier)
                         await asyncio.sleep(REQUEST_PAUSE_SECONDS)
                 except Exception as exc:  # noqa: BLE001 — one outcome, not the market

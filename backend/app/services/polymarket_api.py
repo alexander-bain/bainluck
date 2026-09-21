@@ -11,6 +11,7 @@ Two APIs used:
 
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -586,14 +587,34 @@ class PolymarketAPIService:
         token_id: str,
         interval: str = "max",
         fidelity: int = 60,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
     ) -> list[dict]:
         """
         Get historical price time series for a token.
 
+        Two mutually exclusive forms, and which one you get is decided by
+        ``start_ts``: with it, the EXPLICIT-WINDOW form (`startTs`/`endTs`) is
+        sent and ``interval`` is not, because the CLOB rejects both together.
+
+        🔴 The forms have different granularity rules, measured 2026-09-21:
+        a named range enforces a MINIMUM fidelity (5 for `1w`, 10 for `1m`, and
+        `max` silently serves ~600s buckets at any fidelity), while the explicit
+        window honours `fidelity=1` out to its own ~15-day duration cap. Asking
+        for a week of minutes therefore requires this second form.
+
+        🪤 ``end_ts`` in the PAST is ignored by the venue: the response still runs
+        to now, with a single anchor point at ``start_ts`` across a multi-week
+        gap. The series' MEDIAN spacing still reads 60s, so it looks healthy — it
+        is not. Pass ``end_ts`` as now, or not at all.
+
         Args:
             token_id: The clobTokenId for the outcome
-            interval: Time range ('1h', '6h', '1d', '1w', 'max')
+            interval: Time range ('1h', '6h', '1d', '1w', 'max'). Ignored when
+                ``start_ts`` is given.
             fidelity: Granularity in minutes (e.g., 60 = hourly)
+            start_ts: Unix seconds; switches to the explicit-window form
+            end_ts: Unix seconds, defaults to now when ``start_ts`` is given
 
         Returns:
             List of {"t": unix_timestamp, "p": price} dicts. An EMPTY list is a
@@ -605,15 +626,21 @@ class PolymarketAPIService:
                 is deliberately NOT folded into the empty list; see the exception's
                 own docstring and gotcha #53.
         """
+        if start_ts is not None:
+            params = {
+                "market": token_id,
+                "startTs": int(start_ts),
+                "endTs": int(end_ts if end_ts is not None else time.time()),
+                "fidelity": fidelity,
+            }
+        else:
+            params = {
+                "market": token_id,
+                "interval": interval,
+                "fidelity": fidelity,
+            }
         try:
-            response = await self.clob_client.get(
-                "/prices-history",
-                params={
-                    "market": token_id,
-                    "interval": interval,
-                    "fidelity": fidelity,
-                },
-            )
+            response = await self.clob_client.get("/prices-history", params=params)
             response.raise_for_status()
             data = response.json()
             history = data.get("history", [])

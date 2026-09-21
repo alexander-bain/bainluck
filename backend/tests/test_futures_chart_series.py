@@ -19,9 +19,13 @@ import pytest
 from app.utils.futures_chart_series import (
     CLOB_COARSE_FIDELITY,
     CLOB_FINE_FIDELITY,
+    CLOB_WINDOW_MAX_HOURS,
+    FINE_TIER_HOURS,
     HOURLY_TIER_MIN_LIFETIME_HOURS,
     KALSHI_COARSE_INTERVAL,
     KALSHI_FINE_INTERVAL,
+    KALSHI_FINE_TIER_MAX_HOURS,
+    KALSHI_MAX_CANDLES_PER_REQUEST,
     blend_venues,
     candle_calls,
     compact_by_band,
@@ -403,6 +407,66 @@ class TestCallPlan:
         one month."""
         assert CLOB_COARSE_FIDELITY == 720
         assert clob_calls(10_000)[-1].fidelity == 720
+
+    def test_the_clob_fine_tier_is_a_window_not_a_named_range(self):
+        """🔴 #7547. The CLOB enforces a MINIMUM fidelity per named range —
+        measured 2026-09-21, in the venue's own words:
+
+            interval=1w&fidelity=1 → 400 "minimum 'fidelity' for '1w' range is 5"
+            interval=1m&fidelity=1 → 400 "minimum 'fidelity' for '1m' range is 10"
+
+        and `interval=max&fidelity=1` is ACCEPTED while being served at ~600s
+        spacing. So a fine tier reaching past one day is only real through the
+        explicit-window form. An edit that drops the lookback would keep every
+        other test in this file green and silently serve 10-minute data, or a
+        400, as if it were minutes.
+        """
+        fine = clob_calls(lifetime_hours=5000)[0]
+        assert fine.fidelity == 1
+        assert fine.lookback is not None, "the fine tier must use startTs/endTs"
+        assert fine.lookback == timedelta(hours=FINE_TIER_HOURS)
+
+    def test_the_coarse_clob_tiers_stay_named_ranges(self):
+        """Only the fine tier is windowed. `interval=max` is the ONLY measured
+        way past the ~31-day retention wall, and a startTs/endTs window cannot
+        reach it — the window form is capped at ~15 days. Windowing the coarse
+        tier would turn ALL back into a fortnight."""
+        for call in clob_calls(lifetime_hours=5000)[1:]:
+            assert call.lookback is None
+
+    def test_fine_tier_fits_both_venues(self):
+        """🔴 The fine tier is one window on BOTH venues, and each has its own
+        measured ceiling. Widening past either buys a 400, not more data.
+
+        Kalshi: the shared 10,000-candle budget, of which we keep 9,000 →
+        9,000 one-minute periods for a single ticker.
+        Polymarket: a DURATION cap of ~15 days on `startTs`/`endTs`, which a
+        coarser fidelity cannot buy back (16d is refused at fidelity=60 too,
+        where it is only 384 buckets).
+        """
+        assert FINE_TIER_HOURS <= KALSHI_FINE_TIER_MAX_HOURS
+        assert FINE_TIER_HOURS <= CLOB_WINDOW_MAX_HOURS
+        # ...and the Kalshi ceiling is DERIVED from the budget, so lowering the
+        # budget lowers the ceiling rather than stranding a stale literal.
+        assert KALSHI_FINE_TIER_MAX_HOURS == KALSHI_MAX_CANDLES_PER_REQUEST // 60
+        assert FINE_TIER_HOURS * 60 <= KALSHI_MAX_CANDLES_PER_REQUEST
+
+    def test_both_venues_fine_tiers_cover_the_same_window(self):
+        """🔴 THE GUARD THAT PROTECTS THE BLEND. `blend_venues` turns Kalshi and
+        Polymarket into ONE number ("the blend is the product"). If one venue's
+        fine tier reached six days and the other's one day, the blended line
+        would silently change resolution partway along — minute-accurate for a
+        day, then an average of one venue's minutes and the other's hours — and
+        that asymmetry lands IN the product, not beside it.
+
+        This is the invariant that let #7547 widen at all: it is only safe to
+        widen Kalshi because the CLOB was measured to serve the same window.
+        """
+        kalshi_fine = candle_calls(lifetime_hours=5000)[0]
+        clob_fine = clob_calls(lifetime_hours=5000)[0]
+        assert kalshi_fine.period_interval == 1
+        assert clob_fine.fidelity == 1
+        assert kalshi_fine.lookback == clob_fine.lookback
 
     def test_kalshi_never_asks_for_an_unsupported_interval(self):
         """Kalshi does not error on an unsupported `period_interval` — it answers
