@@ -560,15 +560,47 @@ def unclaimed_instants(
     so here a capture always stands and the venue fills only the instants no
     capture claims. That is also what keeps a capture written AFTER the cache
     was built: it is a capture, and captures are never displaced.
+
+    🔴 **A CAPTURE'S CLAIM IS SIZED BY THE TIER IT IS REFUSING, NOT BY ITS OWN
+    SPACING (#7547).** `layer_tiers` defaults each tier's claim to half that
+    tier's OWN median spacing, capped at 30 minutes. That default is right when
+    tiers are comparable and catastrophic here, because our captures are the
+    COARSE tier and the venue is the fine one. Measured on production
+    2026-09-21 — 150 sampled open Kalshi futures legs, median gap taken PER
+    SERIES and then across series — our capture cadence is **62.2 min**
+    (p25 60.1, p75 120.2). Half of that is capped to 30 min, so every capture
+    claims a 60-minute band and consecutive captures TILE WITH NO GAP: a
+    minute-resolution venue tier has nowhere to land and the reader is served
+    `points_served: 0` from a bank that was built, fetched and paid for. Nothing
+    counts that loss — the points were never candidates, so they are not
+    `unsupported_points_withheld` either.
+
+    A capture exists here to veto a venue point that RESTATES IT, and against a
+    1-minute tier that is ±30 s. So the cap handed down is the venue tier's own
+    :func:`claim_radius_seconds` — the venue's resolution, measured off the
+    venue's own instants rather than picked. On a coarse venue tier this changes
+    nothing (a 135-minute venue tier still caps at 30 min); it only ever narrows
+    the claim to the grain actually being refused.
+
+    The bank this reads is already compacted to
+    :data:`futures_chart_series.TARGET_POINTS_PER_OUTCOME` (400) by
+    `compact_by_band` before it is stored — measured on the largest production
+    bank, `generic-history:108599`, whose busiest leg holds 392 points — so
+    admitting minute resolution here cannot flood the serve path: the flood was
+    already spent at bank time, by budget, keeping the biggest moves.
     """
     venue = sorted({ts for ts in venue_times if ts is not None})
     if not venue:
         return set()
-    from app.utils.futures_chart_series import layer_tiers
+    from app.utils.futures_chart_series import claim_radius_seconds, layer_tiers
 
     captures = sorted({ts for ts in capture_times if ts is not None})
     # The values are irrelevant to the claim; the instants are what is layered.
-    merged = layer_tiers([[(ts, 0.0) for ts in captures], [(ts, 0.0) for ts in venue]])
+    venue_tier = [(ts, 0.0) for ts in venue]
+    merged = layer_tiers(
+        [[(ts, 0.0) for ts in captures], venue_tier],
+        cap_s=claim_radius_seconds(venue_tier),
+    )
     capture_set = set(captures)
     return {ts for ts, _ in merged if ts not in capture_set}
 

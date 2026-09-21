@@ -178,6 +178,60 @@ def test_a_capture_always_stands_and_venue_points_fill_only_unclaimed_instants()
     assert gmh.unclaimed_instants([far], []) == {far}
 
 
+def test_hourly_captures_do_not_swallow_a_minute_resolution_venue_tier():
+    """#7547 — the whole ship, as arithmetic.
+
+    Our real futures cadence, measured on production 2026-09-21 over 150 sampled
+    open Kalshi legs (median gap PER SERIES, then across series): 62.2 min. Half
+    of that caps to 30 min, so before this fix every capture claimed a 60-minute
+    band, consecutive captures tiled with NO GAP, and a minute-resolution venue
+    tier had nowhere to land — `points_served: 0` off a bank we had already paid
+    to build, counted by nothing.
+
+    The venue points here sit 20 and 21 minutes from a capture: comfortably
+    inside the old 30-minute claim, and nowhere near restating it.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    fine = [captures[3] + timedelta(minutes=20), captures[3] + timedelta(minutes=21)]
+
+    assert gmh.unclaimed_instants(fine, captures) == set(fine)
+
+
+def test_a_coarse_venue_tier_still_meets_the_thirty_minute_cap():
+    """The claim is NARROWED to the grain refused, never switched off.
+
+    Same captures as above, but a venue tier of its own hourly candles — so the
+    resolution being refused is 60 min, its half is 30, and a venue point 20 min
+    from a capture IS a restatement and is still refused. Without this, "size the
+    claim by the venue tier" reads as "let everything through", which is a
+    different change that happens to pass the test above.
+    """
+    captures = [NOW - timedelta(minutes=62 * i) for i in range(6)]
+    restating = captures[3] + timedelta(minutes=20)
+    hourly = [restating] + [captures[3] + timedelta(minutes=60 * i + 20) for i in (1, 2, 3)]
+
+    assert restating not in gmh.unclaimed_instants(hourly, captures)
+
+
+def test_layer_tiers_cap_s_binds_every_tier_not_just_the_first():
+    """`cap_s` is the override the caller above depends on.
+
+    A coarse first tier claims 30 min by default and swallows the second tier's
+    point 10 min away; handed a 60-second cap it claims 60 s and the point
+    stands. Asserted on `layer_tiers` directly so the knob cannot be quietly
+    dropped from the signature while `unclaimed_instants` keeps compiling.
+    """
+    from app.utils.futures_chart_series import layer_tiers
+
+    # Ascending — `layer_tiers` requires each tier sorted and does not sort for
+    # you (`unclaimed_instants` sorts before calling it).
+    coarse = [(NOW - timedelta(minutes=120 * i), 0.5) for i in reversed(range(4))]
+    near = (coarse[1][0] + timedelta(minutes=10), 0.9)
+
+    assert near[0] not in {ts for ts, _ in layer_tiers([coarse, [near]])}
+    assert near[0] in {ts for ts, _ in layer_tiers([coarse, [near]], cap_s=60)}
+
+
 def test_last_good_points_survive_a_venue_that_answers_with_less():
     old = [gmh.VenuePoint(NOW - timedelta(hours=h), 0.2) for h in (30, 20, 10)]
     fresh = [gmh.VenuePoint(NOW - timedelta(hours=10), 0.25), gmh.VenuePoint(NOW - timedelta(hours=1), 0.3)]

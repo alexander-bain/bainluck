@@ -173,7 +173,7 @@ MAX_CLAIM_RADIUS_SECONDS = 30 * 60
 
 
 def claim_radius_seconds(
-    points: Sequence[Point], *, cap_s: int = MAX_CLAIM_RADIUS_SECONDS
+    points: Sequence[Point], *, cap_s: float = MAX_CLAIM_RADIUS_SECONDS
 ) -> float:
     """How close another tier's point may come before it is a near-duplicate.
 
@@ -195,12 +195,20 @@ def claim_radius_seconds(
     return min(float(cap_s), max(0.0, median / 2.0))
 
 
-def layer_tiers(tiers: Sequence[Sequence[Point]]) -> list[Point]:
+def layer_tiers(
+    tiers: Sequence[Sequence[Point]], *, cap_s: float = MAX_CLAIM_RADIUS_SECONDS
+) -> list[Point]:
     """Stitch tiers into ONE series, finest first, without gaps or duplicates.
 
     `tiers` is ordered by priority — finest/most-trusted first. A lower-priority
     point is dropped only when a higher-priority tier already has a point within
     that tier's own :func:`claim_radius_seconds`; everywhere else it is kept.
+
+    `cap_s` overrides :data:`MAX_CLAIM_RADIUS_SECONDS` for every tier. A caller
+    passes it when it knows the RESOLUTION BEING REFUSED and the default cap is
+    therefore the wrong yardstick — see :func:`generic_market_history.unclaimed_instants`,
+    where a tier of hourly captures would otherwise claim half an hour either
+    side and leave a minute-resolution venue tier nowhere to land.
 
     🔴 **CLAIMING BY PROXIMITY, NOT BY SPAN, AND THE TEST THAT FORCED IT.** The
     first version of this had each tier claim the closed interval between its
@@ -233,7 +241,7 @@ def layer_tiers(tiers: Sequence[Sequence[Point]]) -> list[Point]:
         pts = list(tier)
         if not pts:
             continue
-        radius = claim_radius_seconds(pts)
+        radius = claim_radius_seconds(pts, cap_s=cap_s)
         kept: list[Point] = []
         for ts, value in pts:
             epoch = ts.timestamp()
