@@ -216,3 +216,7 @@ git worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //' \
 
 Run the one-liner above during the Phase-0 sweep. A non-zero answer means a worktree was created
 from a template that still has the remote, and the invariant is open again.
+
+## Mystery Shopper & Issues
+
+The `shopper` lane owns hourly real-product mystery shopping and GitHub issue/sprint-board maintenance. UX continues building. Role and restart contract: [docs/mystery-shopper-lane.md](docs/mystery-shopper-lane.md). The shared conveyor is `PROGRAM-SHOPPER.md`; idle waits use `not-before`, not a sleeping model session.
