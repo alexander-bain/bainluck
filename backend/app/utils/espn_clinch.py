@@ -155,6 +155,13 @@ def parse_standings_clinch(payload: dict) -> dict[str, str]:
                 try:
                     played += int(float(stat.get("value") or 0))
                 except (TypeError, ValueError):
+                    # One unparseable count is skipped, not fatal: this sums
+                    # four optional stats only to answer "has this team played
+                    # yet", and `played <= 0` below is the backstop for an entry
+                    # where none of them parse. Narrow on purpose — `TypeError`
+                    # and `ValueError` are what a non-numeric `value` raises,
+                    # and nothing wider is caught, so this cannot mask a defect
+                    # the way a bare `except Exception` would (#7677).
                     pass
 
         if played <= 0:
@@ -329,6 +336,13 @@ def parse_standings_records(payload: dict) -> dict[str, str]:
                 try:
                     played += int(float(stat.get("value") or 0))
                 except (TypeError, ValueError):
+                    # One unparseable count is skipped, not fatal: this sums
+                    # four optional stats only to answer "has this team played
+                    # yet", and `played <= 0` below is the backstop for an entry
+                    # where none of them parse. Narrow on purpose — `TypeError`
+                    # and `ValueError` are what a non-numeric `value` raises,
+                    # and nothing wider is caught, so this cannot mask a defect
+                    # the way a bare `except Exception` would (#7677).
                     pass
 
         if played <= 0:
