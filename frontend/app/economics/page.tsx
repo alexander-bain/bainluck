@@ -463,7 +463,7 @@ export default function EconomicsPage() {
         {t.energy && t.energy.count > 0 && (
           <section className="mb-12">
             <SectionHeader
-              kicker="Energy & Commodities"
+              kicker="Energy"
               title="Gas, oil, and the price at the pump"
               count={t.energy.count}
             />
@@ -486,6 +486,44 @@ export default function EconomicsPage() {
                   </div>
                   {t.energy.oil.map((o: any, i: number) => (
                     <MarketRow key={i} q={o.sym ? `${o.sym} ${o.range || ""}` : o.q} prob={o.prob} src={o.src} leader={o.sym ? null : o.leader} />
+                  ))}
+                </Card>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Metals (#7809). Their own section, not a row inside Energy: that
+            section's side_markets cap is 8 and crude oil already held 7, so a
+            metal folded in there would have been dropped by a cap rather than
+            shown. The Energy kicker above narrowed to "Energy" at the same
+            time — it promised Commodities and served none. */}
+        {t.metals && t.metals.count > 0 && (
+          <section className="mb-12">
+            <SectionHeader
+              kicker="Metals"
+              title="Gold, silver, and copper"
+              count={t.metals.count}
+            />
+            <div className="grid md:grid-cols-3 gap-3.5">
+              {t.metals.cards?.map((c: any, i: number) => (
+                <Card key={i}>
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
+                    {c.label?.slice(0, 40) || "Metal price"}
+                  </div>
+                  <ProbNum value={c.val || "?"} size={32} color="#10B981" suffix="" />
+                  <div className="text-xs text-text-secondary mt-1 mb-3">Modal bracket · {c.prob}%</div>
+                  <Histogram buckets={c.brackets || []} color="#10B981" height={70} />
+                  <FooterNote left={`${c.brackets?.length || 0} brackets`} right={c.src} />
+                </Card>
+              ))}
+              {t.metals.markets && t.metals.markets.length > 0 && (
+                <Card>
+                  <div className="text-[11px] font-bold tracking-[0.12em] text-text-muted uppercase mb-2">
+                    Metals markets
+                  </div>
+                  {t.metals.markets.map((m: any, i: number) => (
+                    <MarketRow key={i} q={m.q} prob={m.prob} src={m.src} leader={m.leader} />
                   ))}
                 </Card>
               )}

@@ -133,9 +133,14 @@ class TestEconomicsBasicShape:
 class TestEconomicsThemes:
     """Each theme section has the expected sub-keys and correct types."""
 
+    # "metals" joined the contract in #7809. It is a SERVED key, not an
+    # optional one: a `_THEME_BY_TICKER` prefix that routes to a theme with no
+    # response key means every market matching it is selected by the WHERE
+    # clause and then dropped without trace, which is how twelve open Kalshi
+    # gold/silver/copper markets stayed invisible while we held all of them.
     EXPECTED_THEMES = {
         "fed", "inflation", "jobs", "recession",
-        "markets", "energy", "housing", "trade", "government",
+        "markets", "energy", "metals", "housing", "trade", "government",
     }
 
     async def test_all_theme_keys_present(self, client):
