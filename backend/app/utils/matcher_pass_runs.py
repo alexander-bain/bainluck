@@ -124,6 +124,7 @@ class PassRunFact:
     last_run_at: Optional[datetime] = None
     rows_attempted: Optional[int] = None
     eligible_total: Optional[int] = None
+    never_attempted_max_id: Optional[int] = None
     error_class: Optional[str] = None
 
     def age_s(self, now: Optional[datetime] = None) -> Optional[float]:
@@ -144,6 +145,7 @@ class PassRunFact:
             "last_run_age_s": self.age_s(now),
             "rows_attempted": self.rows_attempted,
             "eligible_total": self.eligible_total,
+            "never_attempted_max_id": self.never_attempted_max_id,
             "error_class": self.error_class,
             "note": (
                 "Durable and monotone: read from durable_state_snapshots, one "
@@ -166,8 +168,22 @@ def build_pass_run_envelope(
     ran_at: datetime,
     rows_attempted: int,
     eligible_total: Optional[int] = None,
+    never_attempted_max_id: Optional[int] = None,
 ) -> DurableEnvelope:
-    """The envelope a completed pass publishes. Pure, so the shape is testable."""
+    """The envelope a completed pass publishes. Pure, so the shape is testable.
+
+    ``never_attempted_max_id`` is the HIGHEST never-attempted market id the pass
+    actually reached this run — the id watermark behind ``never_attempted_id_bound``.
+    ``None`` means "no id bound", which is both the pre-#7801 behaviour and the
+    honest reading of a pass whose never-attempted queue was empty.
+
+    THE SCHEMA VERSION IS DELIBERATELY NOT BUMPED. The key is additive and
+    ``_payload_int`` already answers ``None`` for a payload that lacks it, so an
+    older row degrades to "no id bound" — the conservative direction, which
+    counts MORE. Bumping would classify every row written before this deploy as
+    ``wrong_version``, blinding the floor's precise arm for a cycle, to buy
+    nothing.
+    """
     if ran_at.tzinfo is None:
         ran_at = ran_at.replace(tzinfo=timezone.utc)
     return DurableEnvelope.build(
@@ -182,6 +198,10 @@ def build_pass_run_envelope(
             "eligible_total": (
                 None if eligible_total is None else int(eligible_total)
             ),
+            "never_attempted_max_id": (
+                None if never_attempted_max_id is None
+                else int(never_attempted_max_id)
+            ),
         },
     )
 
@@ -192,6 +212,7 @@ async def record_pass_run(
     ran_at: datetime,
     rows_attempted: int,
     eligible_total: Optional[int] = None,
+    never_attempted_max_id: Optional[int] = None,
 ) -> dict:
     """Record that ``phase`` ran. Never raises, never fails the matcher.
 
@@ -213,6 +234,7 @@ async def record_pass_run(
         ran_at=ran_at,
         rows_attempted=rows_attempted,
         eligible_total=eligible_total,
+        never_attempted_max_id=never_attempted_max_id,
     )
     try:
         return await publish_snapshot_standalone(envelope)
@@ -303,6 +325,7 @@ async def read_pass_run(
         last_run_at=read.envelope.generated_at,
         rows_attempted=_payload_int(payload, "rows_attempted"),
         eligible_total=_payload_int(payload, "eligible_total"),
+        never_attempted_max_id=_payload_int(payload, "never_attempted_max_id"),
     )
 
 
@@ -366,3 +389,55 @@ def never_attempted_floor(
     if last_run_at.tzinfo is None:
         last_run_at = last_run_at.replace(tzinfo=timezone.utc)
     return max(last_run_at, grace_floor)
+
+
+def never_attempted_id_bound(
+    last_run_at: Optional[datetime],
+    never_attempted_max_id: Optional[int],
+    *,
+    now: Optional[datetime] = None,
+    max_grace_s: float = NEVER_ATTEMPTED_MAX_GRACE_S,
+) -> Optional[int]:
+    """The highest market id "never attempted" can honestly be claimed about.
+
+    WHY A TIME FLOOR IS NOT ENOUGH (#7801, measured 2026-09-21). Pass 3 drains
+    its never-attempted queue in **id order** under a cap
+    (``ORDER BY id LIMIT _BACKLOG_SCAN_MAX``), but ``record_pass_run`` stamps the
+    pass's START time and the floor then asserts the pass looked at everything
+    born before it. It did not: ids are monotonic, so a freshly ingested wave
+    sits at the TAIL of that ordering and is exactly what the cap cuts.
+
+    Production, the 19:20Z cycle: Pass 3 attempted ids 61832977–**61833237** and
+    the 19:35Z cycle resumed at **61833238** — contiguous. The 187 rows in
+    between were born at 19:15–19:16, before the 19:20:19Z floor, so the floor
+    counted them as skipped when the pass had simply not reached them yet. That
+    is the alarm's exact count, and it auto-closed one cycle later. A *later*
+    time arm (the scan start) cannot fix this and makes it worse: the predicate
+    is ``created_at < floor``, so raising the floor indicts MORE rows.
+
+    So the second bound is an id, not an instant: the pass reached
+    ``never_attempted_max_id``, and nothing above it.
+
+    THE FAILSAFE, AND IT IS THE POINT. The watermark is honoured ONLY while the
+    pass is running — ``last_run_at`` within ``max_grace_s``. If Pass 3 dies the
+    watermark freezes, and an honoured frozen watermark would excuse every id
+    above it FOREVER, which is precisely the permanent-silence trap
+    ``never_attempted_floor``'s two arms exist to prevent. A stale pass therefore
+    returns ``None`` — no id bound — and the grace arm alone holds the floor, so
+    the check reddens on its own exactly as it does today.
+
+    ``None`` (no watermark recorded, an older payload, or a stale pass) means no
+    id bound, which is the pre-#7801 behaviour and counts MORE, not less.
+
+    Pure, so the policy is testable without a database or a clock.
+    """
+    if never_attempted_max_id is None or last_run_at is None:
+        return None
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    if last_run_at.tzinfo is None:
+        last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+    if last_run_at < reference - timedelta(seconds=max_grace_s):
+        return None
+    return int(never_attempted_max_id)

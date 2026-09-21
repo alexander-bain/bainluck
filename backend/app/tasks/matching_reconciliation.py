@@ -60,7 +60,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import BigInteger, bindparam, text
 
 from app.tasks.base import get_task_session
 
@@ -523,13 +523,27 @@ async def check_receipt_coverage(session) -> dict:
     its docstring before widening either arm.
     """
     from app.utils.match_receipts import PHASE_PASS3_BACKLOG
-    from app.utils.matcher_pass_runs import never_attempted_floor, read_pass_run
+    from app.utils.matcher_pass_runs import (
+        never_attempted_floor,
+        never_attempted_id_bound,
+        read_pass_run,
+    )
 
     # No ``receipt_witness``: this is the conservative direction. Without it an
     # absent durable row leaves ``last_run_at`` None, the grace arm alone holds
     # the floor, and the check counts MORE, not less.
     backlog_run = await read_pass_run(session, PHASE_PASS3_BACKLOG)
     floor = never_attempted_floor(backlog_run.last_run_at)
+
+    # AND THE SECOND BOUND IS AN ID (#7801). The time floor alone still counted
+    # rows the pass had not reached, because Pass 3 drains its never-attempted
+    # queue in id order under a cap while the floor advances to the pass's full
+    # start time. ``None`` — no watermark, an older payload, or a pass gone
+    # stale — means no id bound, which counts MORE. See
+    # ``never_attempted_id_bound`` for why a stale pass must not be honoured.
+    id_bound = never_attempted_id_bound(
+        backlog_run.last_run_at, backlog_run.never_attempted_max_id,
+    )
 
     n = await session.scalar(text(
         """
@@ -541,18 +555,36 @@ async def check_receipt_coverage(session) -> dict:
           -- A NULL birth time is not evidence of youth. It cannot be excused by
           -- a floor it cannot be compared against, so it counts (gotcha #53).
           AND (fm.created_at IS NULL OR fm.created_at < :floor)
+          -- The id bound is OPTIONAL, and an UNTYPED bind on the left of a NULL
+          -- test fixes that asyncpg parameter as `unknown` at PREPARE — the
+          -- statement then dies before a single row is read, whatever is bound,
+          -- and the check goes `unmeasurable`, which the module's first line
+          -- says must never read as GREEN. So: CAST on BOTH occurrences (the
+          -- first one fixes the type), the form
+          -- `tests/test_untyped_bind_in_is_null_guard.py` requires and the one
+          -- SQLAlchemy actually binds. The typed `bindparam` below is belt and
+          -- braces, not a substitute: that guard reads the SQL TEXT, comments
+          -- included, and #1852 killed an endpoint for three weeks.
+          AND (CAST(:id_bound AS bigint) IS NULL OR fm.id <= CAST(:id_bound AS bigint))
           AND NOT EXISTS (
               SELECT 1 FROM market_match_receipts r WHERE r.market_id = fm.id
           )
         """
-    ).bindparams(floor=floor))
+    ).bindparams(
+        bindparam("floor", value=floor),
+        bindparam("id_bound", value=id_bound, type_=BigInteger),
+    ))
     n = int(n or 0)
+    reached = (
+        "" if id_bound is None
+        else f", up to the id {id_bound} its never-attempted queue reached"
+    )
     return _finding(
         "receipt_coverage", n > 0, n,
         f"{n} open unlinked market(s) that already existed when the backlog "
-        f"pass last ran ({floor.isoformat()}) have never been attempted — "
-        "while this is above 0, a whole ingest wave can sit unlooked-at "
-        "(ARTIFACT-M-20260902-N)",
+        f"pass last ran ({floor.isoformat()}{reached}) have never been "
+        "attempted — while this is above 0, a whole ingest wave can sit "
+        "unlooked-at (ARTIFACT-M-20260902-N)",
     )
 
 

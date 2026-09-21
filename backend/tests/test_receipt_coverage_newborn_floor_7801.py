@@ -36,9 +36,35 @@ WHAT THESE TESTS HOLD:
    ``last_run_at`` freezes, every later market is forever younger than the
    floor, and the check goes quiet exactly when the backlog has stopped
    draining. The grace arm is why it cannot.
-3. **The base denominator did not move.** One clause was added. A fix that also
-   narrowed the population to game-shaped rows would pass (1) and (2) and be a
-   different bug.
+3. **The base denominator did not move.** Two clauses were added. A fix that
+   also narrowed the population to game-shaped rows would pass (1) and (2) and
+   be a different bug.
+4. **The tail the cap did not reach is not a finding, and a dead pass cannot
+   use that to go quiet.** See below.
+
+THE RESIDUAL, AND WHY THE SECOND BOUND IS AN ID. The floor above removed the
+newborn race and the flap did not stop: #7863 fired at 19:27:41Z with 187 rows,
+past a 19:20:19Z floor. The first diagnosis — that ``generated_at`` is when the
+pass *recorded* its run, so rows ingested *during* the pass are caught — is
+wrong twice over, and is written down here because it was nearly built.
+``record_pass_run(ran_at=now)`` takes ``now`` from the TOP of
+``match_prediction_markets``, so ``generated_at`` is the task's START (the
+production row read at 20:35:00.152294Z is 152 ms after the cycle boundary). And
+the fix it implied — a scan-start arm — is *later* than the task start, so
+against a ``created_at < floor`` predicate it would have indicted MORE rows.
+
+What actually happened is the per-cycle cap. Pass 3 drains its never-attempted
+queue with ``ORDER BY id LIMIT _BACKLOG_SCAN_MAX``; ids are monotonic, so a fresh
+ingest wave sits at the TAIL of that ordering and is exactly what the cap cuts.
+Measured from ``market_match_receipts.first_attempted_at``:
+
+    19:20:19.547837Z  pass3_backlog  261 rows  ids 61832977 - 61833237
+    19:35:00.152792Z  pass3_backlog   40 rows  ids 61833238 - 61833798
+    19:35:00.152792Z  pass2_general  147 rows
+
+Contiguous across the boundary, and 147 + 40 = **187** — the alarm's exact
+count. A time bound cannot express how far an id-ordered queue got, so the
+second bound is an id.
 """
 
 from __future__ import annotations
@@ -54,6 +80,7 @@ from app.utils.matcher_pass_runs import (
     NEVER_ATTEMPTED_MAX_GRACE_S,
     PassRunFact,
     never_attempted_floor,
+    never_attempted_id_bound,
 )
 
 #: The production reading this file is built from, held as OFFSETS from one
@@ -79,6 +106,17 @@ NOW = datetime.now(timezone.utc)
 PASS_RAN_AT = NOW - timedelta(minutes=13, seconds=4, microseconds=937886)
 NEWBORN_AT = NOW - timedelta(minutes=6, seconds=50, microseconds=869227)
 WAVE_828_AT = NOW - timedelta(days=24, hours=8, minutes=33, seconds=5)
+
+#: The 19:15-19:16Z ingest wave of 2026-09-21 — born five minutes BEFORE the
+#: 19:20:19Z pass started, so the time floor counts every one of it, and the cap
+#: is the only reason 187 of them had no receipt at 19:27Z. Inside the pass arm
+#: on purpose: this specimen has to be one the TIME floor cannot excuse.
+CAP_WAVE_AT = PASS_RAN_AT - timedelta(minutes=5)
+
+#: The highest never-attempted id the 19:20Z pass reached. The 19:35Z pass
+#: resumed at 61833238 — contiguous, which is the cap's signature and not a
+#: timing one.
+CAP_WATERMARK = 61833237
 
 
 # =============================================================================
@@ -177,6 +215,22 @@ COVERAGE_ROWS = [
      "closed: a settled market is not waiting to be attached"),
     (10, "odds_api", "open", None, WAVE_828_AT, False, False,
      "not a prediction market source"),
+    # THE SECOND SPECIMEN, and it is why a time floor alone was not enough.
+    # Both were born before the pass's start, so the TIME floor counts both;
+    # only the id watermark can tell them apart. Real production ids.
+    (61833237, "polymarket", "open", None, CAP_WAVE_AT, False, True,
+     "the last never-attempted id the 19:20Z pass reached. On the watermark, "
+     "and the bound is `<=`, so it still counts — asserted, not inherited"),
+    (61833238, "polymarket", "open", None, CAP_WAVE_AT, False, True,
+     "the first id it did NOT reach: the 19:35Z pass resumed here. Born before "
+     "the floor, so the TIME arm counts it — this is the row that filed a p1 "
+     "and auto-closed one cycle later (#7801). Counts with no watermark"),
+    (61999999, "polymarket", "open", None, WAVE_828_AT, False, True,
+     "THE STRANDED TAIL: a high id that has ALSO been waiting 24 days. While "
+     "the pass is healthy the watermark hides it and that is the trade — the "
+     "watermark advances every cycle, so it is reached in cycles. The moment "
+     "the pass goes stale the bound drops and it must reappear, or the id side "
+     "has re-opened the permanent-silence hole the floor's grace arm closed"),
 ]
 
 
@@ -194,8 +248,8 @@ class _Capturing:
         raise AssertionError("check_receipt_coverage should issue one scalar")
 
 
-def _coverage_sql(last_run_at=PASS_RAN_AT):
-    """The statement the check actually built, with its floor bound inlined."""
+def _coverage_sql(last_run_at=PASS_RAN_AT, never_attempted_max_id=None):
+    """The statement the check actually built, with both bounds inlined."""
     session = _Capturing()
 
     async def _fake_read(_db, _phase, **_kw):
@@ -204,6 +258,7 @@ def _coverage_sql(last_run_at=PASS_RAN_AT):
             has_run=None if last_run_at is None else True,
             status="no_record" if last_run_at is None else "ok",
             last_run_at=last_run_at,
+            never_attempted_max_id=never_attempted_max_id,
         )
 
     with pytest.MonkeyPatch.context() as mp:
@@ -212,11 +267,18 @@ def _coverage_sql(last_run_at=PASS_RAN_AT):
 
     assert len(session.statements) == 1, "the check issued more than one query"
     stmt = session.statements[0]
-    floor = stmt.compile().params["floor"]
+    params = stmt.compile().params
+    floor = params["floor"]
+    id_bound = params["id_bound"]
     # Bound here rather than by SQLAlchemy's literal_binds: the parameter is a
     # tz-aware datetime and sqlite compares TEXT, so the test must plant and
     # compare in ONE format or the whole replay is decided by string ordering.
-    return str(stmt).replace(":floor", "'" + _iso(floor) + "'"), floor
+    sql = str(stmt).replace(":floor", "'" + _iso(floor) + "'")
+    # `bigint` is Postgres spelling; sqlite takes it as INTEGER affinity, and
+    # `CAST(NULL AS ...) IS NULL` is true in both, which is the arm that has to
+    # stay true for the no-watermark path.
+    sql = sql.replace(":id_bound", "NULL" if id_bound is None else str(id_bound))
+    return sql, floor, id_bound
 
 
 def _iso(dt: datetime) -> str:
@@ -262,7 +324,7 @@ class TestTheCheckCountsWhatItShould:
         """Run the real SELECT. One expectation per row, each with its reason
         in the fixture — a count alone cannot tell a right answer from two
         offsetting wrong ones."""
-        sql, _ = _coverage_sql()
+        sql, _, _ = _coverage_sql()
         got = _select_ids(sql)
         expected = {r[0] for r in COVERAGE_ROWS if r[6]}
         assert got == expected, "\n".join(
@@ -275,25 +337,25 @@ class TestTheCheckCountsWhatItShould:
     def test_a_newborn_wave_alone_is_green(self):
         """The 12:26Z specimen, on its own: three markets, no receipts, and
         nothing wrong. This is what fired twenty times on 2026-09-21."""
-        sql, _ = _coverage_sql()
+        sql, _, _ = _coverage_sql()
         newborns = {r[0] for r in COVERAGE_ROWS if r[4] == NEWBORN_AT}
         assert newborns, "the fixture lost its specimen"
         assert not (newborns & _select_ids(sql))
 
     def test_the_828_wave_is_still_a_finding(self):
         """The floor must not buy silence for the thing the check is FOR."""
-        sql, _ = _coverage_sql()
+        sql, _, _ = _coverage_sql()
         assert 4 in _select_ids(sql)
 
     def test_a_null_birth_time_counts(self):
-        sql, _ = _coverage_sql()
+        sql, _, _ = _coverage_sql()
         assert 6 in _select_ids(sql)
 
     def test_the_base_denominator_did_not_move(self):
         """Exactly one clause was added. A fix that ALSO narrowed the
         population — to game-shaped names, to one source — would satisfy every
         other test here and be a different bug (#2803's lesson)."""
-        sql, _ = _coverage_sql()
+        sql, _, _ = _coverage_sql()
         got = _select_ids(sql)
         for mid in (7, 8, 9, 10):
             assert mid not in got
@@ -311,7 +373,7 @@ class TestTheCheckCountsWhatItShould:
         with that same real clock and asserts only what cannot drift.
         """
         died_at = datetime.now(timezone.utc) - timedelta(days=3)
-        _sql, bound = _coverage_sql(last_run_at=died_at)
+        _sql, bound, _ = _coverage_sql(last_run_at=died_at)
 
         assert bound != died_at, "the raw last_run_at was bound: fails CLOSED"
         drift = abs((bound - never_attempted_floor(died_at)).total_seconds())
@@ -319,15 +381,126 @@ class TestTheCheckCountsWhatItShould:
 
         # And on the healthy path the two ARE equal — which is why the seam
         # needs its own test rather than being inferred from the rows.
-        _sql2, healthy = _coverage_sql(last_run_at=PASS_RAN_AT)
+        _sql2, healthy, _ = _coverage_sql(last_run_at=PASS_RAN_AT)
         assert healthy == PASS_RAN_AT
 
     def test_an_unknown_pass_run_still_binds_a_floor(self):
         """``last_run_at`` None must not bind NULL — `created_at < NULL` is
         NULL for every row, which silently counts nothing and reads as GREEN."""
-        _sql, bound = _coverage_sql(last_run_at=None)
+        _sql, bound, _ = _coverage_sql(last_run_at=None)
         assert bound is not None
         assert isinstance(bound, datetime)
+
+
+class TestTheSecondBoundIsAnId:
+    """#7801 residual: the cap truncates an id-ordered queue, so the bound on
+    what "never attempted" may be claimed about is an id, not an instant."""
+
+    def test_the_tail_the_cap_did_not_reach_is_not_a_finding(self):
+        """THE SPECIMEN. 61833238 is born before the floor, so the time arm
+        counts it — and the 19:20Z pass never reached it. This is the row that
+        filed a p1 at 19:27:41Z and auto-closed at 19:41Z."""
+        sql, _, id_bound = _coverage_sql(never_attempted_max_id=CAP_WATERMARK)
+        assert id_bound == CAP_WATERMARK
+        assert 61833238 not in _select_ids(sql)
+
+    def test_the_row_on_the_watermark_still_counts(self):
+        """The bound is ``<=``: the pass REACHED 61833237. Off-by-one here
+        silently drops a row from every count, in the quiet direction."""
+        sql, _, _ = _coverage_sql(never_attempted_max_id=CAP_WATERMARK)
+        assert CAP_WATERMARK in _select_ids(sql)
+
+    def test_with_no_watermark_the_whole_wave_counts(self):
+        """The control. Both specimen rows are past the floor and receiptless,
+        so a fixture that could not count them without the watermark would make
+        every test above vacuous."""
+        sql, _, id_bound = _coverage_sql()
+        assert id_bound is None
+        assert {CAP_WATERMARK, 61833238} <= _select_ids(sql)
+
+    def test_the_watermark_does_not_hide_the_828_wave(self):
+        """The finding the check is FOR has a low id and must survive every
+        bound added to keep the flap quiet."""
+        sql, _, _ = _coverage_sql(never_attempted_max_id=CAP_WATERMARK)
+        assert 4 in _select_ids(sql)
+
+    def test_a_dead_pass_cannot_use_a_frozen_watermark_to_go_quiet(self):
+        """THE KILL TEST, and the reason the bound consults the clock at all.
+
+        Pass 3 died three days ago holding watermark 61833237. Every market
+        ingested since has a higher id, so an honoured frozen watermark would
+        excuse the entire backlog FOREVER — the same permanent-silence trap the
+        floor's two arms exist to prevent, re-entered through the id side.
+        """
+        died_at = datetime.now(timezone.utc) - timedelta(days=3)
+        sql, _, id_bound = _coverage_sql(
+            last_run_at=died_at, never_attempted_max_id=CAP_WATERMARK,
+        )
+        assert id_bound is None, "a stale pass's watermark was honoured"
+        # The stranded row is both above the watermark and old enough to clear
+        # the grace floor that now holds — so only the id side can be hiding it.
+        assert 61999999 in _select_ids(sql)
+
+    def test_while_the_pass_is_healthy_the_watermark_does_hide_that_tail(self):
+        """The other half of the trade, asserted so it is a decision and not an
+        accident. If this ever fails the bound has stopped binding and the flap
+        is back."""
+        sql, _, _ = _coverage_sql(never_attempted_max_id=CAP_WATERMARK)
+        assert 61999999 not in _select_ids(sql)
+
+    def test_an_unknown_pass_run_binds_no_id_either(self):
+        """``last_run_at`` None is "no evidence of a run" (CERT-824), which is
+        not evidence that a watermark means anything."""
+        _sql, _, id_bound = _coverage_sql(
+            last_run_at=None, never_attempted_max_id=CAP_WATERMARK,
+        )
+        assert id_bound is None
+
+    def test_the_base_denominator_still_did_not_move(self):
+        """The second clause is an id bound and nothing else — it must not have
+        quietly taken a source or a status with it."""
+        sql, _, _ = _coverage_sql(never_attempted_max_id=CAP_WATERMARK)
+        got = _select_ids(sql)
+        for mid in (7, 8, 9, 10):
+            assert mid not in got
+
+    # ---- the policy, as a pure function -------------------------------------
+
+    def test_the_bound_is_the_watermark_while_the_pass_is_healthy(self):
+        assert never_attempted_id_bound(
+            PASS_RAN_AT, CAP_WATERMARK, now=NOW,
+        ) == CAP_WATERMARK
+
+    def test_no_watermark_means_no_bound(self):
+        """An older payload predates the key, and ``_payload_int`` answers None
+        for it. That must degrade to the pre-#7801 behaviour, which counts
+        MORE — never to a bound of 0, which would count nothing."""
+        assert never_attempted_id_bound(PASS_RAN_AT, None, now=NOW) is None
+
+    def test_a_zero_watermark_is_a_bound_and_not_a_missing_one(self):
+        """0 is falsy. A truthiness test here would read "the pass reached id
+        0" as "no bound" and count the whole table."""
+        assert never_attempted_id_bound(PASS_RAN_AT, 0, now=NOW) == 0
+
+    def test_the_bound_drops_exactly_when_the_grace_arm_takes_the_floor(self):
+        """The two policies must agree on when the pass is stale, or there is a
+        window where the floor has failed open and the id bound has not."""
+        stale = NOW - timedelta(seconds=NEVER_ATTEMPTED_MAX_GRACE_S + 60)
+        assert never_attempted_floor(stale, now=NOW) != stale, "floor precondition"
+        assert never_attempted_id_bound(stale, CAP_WATERMARK, now=NOW) is None
+
+        fresh = NOW - timedelta(seconds=NEVER_ATTEMPTED_MAX_GRACE_S - 60)
+        assert never_attempted_floor(fresh, now=NOW) == fresh, "floor precondition"
+        assert never_attempted_id_bound(
+            fresh, CAP_WATERMARK, now=NOW,
+        ) == CAP_WATERMARK
+
+    def test_a_naive_last_run_at_is_read_as_utc_not_raised_on(self):
+        """Same hazard as the floor's: a TypeError here takes the whole check
+        to `unmeasurable`, which must never read as GREEN."""
+        assert never_attempted_id_bound(
+            PASS_RAN_AT.replace(tzinfo=None), CAP_WATERMARK, now=NOW,
+        ) == CAP_WATERMARK
 
 
 class TestTheFindingSaysWhatItIsScopedTo:
