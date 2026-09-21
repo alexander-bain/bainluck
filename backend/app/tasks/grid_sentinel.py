@@ -50,6 +50,7 @@ from typing import Any
 import httpx
 
 from app.utils import season_windows
+from app.utils.playoff_grid import DECIDED_STATES
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,29 @@ def _merged(cell: dict | None):
     return cell.get("merged_probability")
 
 
+def _cell_filled(cell: dict | None) -> bool:
+    """A grid cell carries data when it is PRICED or GRADED.
+
+    #7728. A cell in one of ``DECIDED_STATES`` records a venue settlement, and
+    by serving contract it carries ``merged_probability=None`` — the reader is
+    shown a ✓ or a ✗ (``frontend/lib/gridCellState.ts``), never a blank. So a
+    priced-only fill test scores a graded cell as missing data: on 2026-09-21
+    the MLB grid served 30/30 cells in all four columns (11 priced + 19 graded
+    on Make Playoffs, 7 + 23 on Division) and this sentinel filed it as
+    "only 11/30 filled (37%)" critical — four REDs against a grid with no
+    blank cell in it.
+
+    ``DECIDED_STATES`` is IMPORTED, not re-listed, so the sentinel cannot drift
+    away from the set the page actually settles on.
+
+    A cell that is absent, or present with a non-terminal state and no price
+    (``missing`` / ``unavailable``), is genuinely unfilled and still flags.
+    """
+    if _merged(cell) is not None:
+        return True
+    return isinstance(cell, dict) and cell.get("state") in DECIDED_STATES
+
+
 def check_degraded_payload(grid: dict, league: str) -> list[dict]:
     """#1484 — the grid told us it is NOT a fresh measurement.
 
@@ -187,7 +211,7 @@ def check_missing_columns(grid: dict, league: str) -> list[dict]:
     teams = grid.get("teams") or []
     out = []
     for col in sorted(expected - present):
-        has_data = any(_merged(_cells(t).get(col)) is not None for t in teams)
+        has_data = any(_cell_filled(_cells(t).get(col)) for t in teams)
         if not has_data:
             out.append(_finding("grid_missing_column", "warning",
                                 f"{league.upper()} missing column '{col}' (no data)",
@@ -204,7 +228,7 @@ def check_fill_rate(grid: dict, league: str) -> list[dict]:
     for col in grid.get("columns") or []:
         key = col.get("key")
         label = col.get("label", key)
-        filled = sum(1 for t in teams if _merged(_cells(t).get(key)) is not None)
+        filled = sum(1 for t in teams if _cell_filled(_cells(t).get(key)))
         pct = filled / len(teams)
         if pct < FILL_CRIT:
             out.append(_finding("grid_fill_rate", "critical",
