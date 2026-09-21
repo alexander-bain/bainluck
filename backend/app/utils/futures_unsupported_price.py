@@ -98,6 +98,7 @@ between 664 and 585 is legs no reader can reach; it is not claimed as a fix.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 from app.utils.feed_market_quality import (
@@ -741,6 +742,66 @@ def price_refuted_by_live_book(
     return book_refutes_price(yes_bid, yes_ask, float(probability))
 
 
+#: How long a price must sit UNMOVED, through continuous polling, before this
+#: arm will call its ask unbacked (#7747, CERT-3242's required repair
+#: ``7747-RECENT-EXECUTED-ASK-IS-EVIDENCE``).
+#:
+#: WHY THE TERM EXISTS AT ALL. The first cut refused every price sitting at its
+#: own ask across a wide spread, and the grader falsified it against the venue in
+#: minutes: Tunisia 0.79 on $87.67 of 24-hour volume, Gambia 0.80 on $54.43,
+#: Cameron Dicker 0.52 on $9.30, Davante Adams 0.85 on $6.10. Those are REAL
+#: EXECUTIONS at the ask and withholding them is a reader-visible regression. The
+#: specimen's own diagnosis had named the difference and the predicate had failed
+#: to encode it — Kalshi reports ``volume_24h 0.00`` and ``liquidity 0.0000`` for
+#: ``KXATP-27USO-MEN``. A trade AT the ask is not evidence *because it is stale*,
+#: not because it is at the ask.
+#:
+#: MEASURED ON THE ROW, NEVER AGAINST THE WALL CLOCK, and that is the whole
+#: design. The gap is ``last_updated - price_changed_at``: a touch-stamp written
+#: unconditionally by every poll, minus the stamp of the last actual price move
+#: (#2024). If ingestion stops, ``last_updated`` stops advancing too, the gap
+#: FREEZES, and nothing new is withheld — the same structural property #7537's
+#: ``stale_observation_keys`` gets from measuring within a board, on the pair of
+#: columns that answers this question instead of that one. An absolute
+#: ``now - price_changed_at`` would have turned a two-day outage into a
+#: fleet-wide blanking.
+#:
+#: THE VALUE IS ARGUED, NOT FITTED, in the style of ``_DISPLAY_ROUNDING``. The
+#: distribution over the 58 legs of this shape carrying the stamp has NO cliff —
+#: 20 under six hours, 10 at 6-24h, 9 at 24-48h, 13 at 2-7 days, 5 beyond — so any
+#: threshold inside it would be tuned, and the honest way to pick one is to say
+#: what it MEANS. A day is the venue's own activity window: ``volume_24h`` is
+#: Kalshi's headline liquidity figure and it is what reads zero for the specimen.
+#: A price that has not moved through a full day of continuous polling, on a book
+#: whose bid sits at least :data:`ASK_ONLY_TRUSTED_MAX` below it, is not a live
+#: execution. Nothing turns on the exact value: the falsifying four sit at 2.0,
+#: 6.0, 6.8 and 7.9 hours and the specimen at **70.0**, an order of magnitude
+#: clear on one side and three-fold on the other.
+UNBACKED_ASK_STATIC_FOR = timedelta(hours=24)
+
+
+def price_has_been_static(
+    price_changed_at: Optional[datetime],
+    last_seen_at: Optional[datetime],
+) -> bool:
+    """Has this row's price sat unmoved through at least :data:`UNBACKED_ASK_STATIC_FOR` of polling?
+
+    🔴 BOTH ABSENCES FAIL OPEN, and ``price_changed_at`` is the one that matters.
+    That column is populated FORWARD by the price-writing polls, so every row not
+    yet repriced since #2024 reads NULL — 409 of the 467 legs of this shape today.
+    Its own schema comment sets the rule: "a consumer switching to it must decide
+    what NULL means for its own question rather than inheriting a fabricated
+    value". For a rule that WITHHOLDS, the only honest reading of "we have never
+    recorded a price move" is that we do not know, so the price is served
+    (gotcha #53). Those legs are not thereby unguarded: the ones that matter carry
+    a zero bid and no trade and are refused by :func:`price_is_unsupported`, which
+    is a different arm reading different columns.
+    """
+    if price_changed_at is None or last_seen_at is None:
+        return False
+    return last_seen_at - price_changed_at >= UNBACKED_ASK_STATIC_FOR
+
+
 def needs_unbacked_ask_evidence(
     source: Optional[str],
     resolution_source: Optional[str],
@@ -749,6 +810,8 @@ def needs_unbacked_ask_evidence(
     yes_ask: Optional[float],
     *,
     in_exclusive_field: bool,
+    price_changed_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
 ) -> bool:
     """The row-only half of :func:`price_is_an_unbacked_ask` (#7747).
 
@@ -760,6 +823,14 @@ def needs_unbacked_ask_evidence(
     delegation rather than a second copy of the rule — see the call site, which
     unions these candidates into the ONE snapshot query the sibling arm already
     runs rather than opening a second round trip.
+
+    THE STALENESS TERM LIVES HERE RATHER THAN IN THE FULL PREDICATE because both
+    of its columns are already on the outcome row, so putting it in the cheap
+    screen costs nothing and removes the legs it acquits from the trade read
+    entirely. The two timestamps default to ``None`` — which
+    :func:`price_has_been_static` reads as "do not withhold" — so a caller that
+    has not been taught to pass them screens NOTHING IN, rather than screening
+    everything in on an absent stamp.
     """
     if (source or "").strip().lower() != KALSHI_BOOKMAKER:
         return False
@@ -771,7 +842,12 @@ def needs_unbacked_ask_evidence(
         return False
     if float(yes_ask) - float(yes_bid) < ASK_ONLY_TRUSTED_MAX:
         return False
-    return float(probability) >= float(yes_ask) - BOOK_REFUTES_PRICE_EPSILON
+    if float(probability) < float(yes_ask) - BOOK_REFUTES_PRICE_EPSILON:
+        return False
+    # CERT-3242's repair. A price that moved recently is a live execution even
+    # when it prints at the ask — the constant's comment carries the four legs
+    # that falsified the rule without this term.
+    return price_has_been_static(price_changed_at, last_seen_at)
 
 
 def price_is_an_unbacked_ask(
@@ -784,6 +860,8 @@ def price_is_an_unbacked_ask(
     *,
     has_trade_evidence: bool,
     in_exclusive_field: bool,
+    price_changed_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
 ) -> bool:
     """True when a field leg's price is its own ask and nothing backs that ask (#7747).
 
@@ -858,6 +936,22 @@ def price_is_an_unbacked_ask(
     the other **79 legs on 60 boards**, of which **55 change the leg the hero
     names**.
 
+    🔴 AND THE TRADE TERM ALONE WAS NOT ENOUGH — CERT-3242 FALSIFIED IT AGAINST
+    THE VENUE. The first cut refused every price printing at its own ask over a
+    wide spread, and that is wrong for a leg somebody is trading RIGHT NOW at that
+    ask: Tunisia 0.79 on $87.67 of 24-hour volume, Gambia 0.80 on $54.43, Cameron
+    Dicker 0.52 on $9.30, Davante Adams 0.85 on $6.10. All four are served today
+    and all four were withheld by the staged code. **A trade at the ask is not
+    evidence because it is STALE, not because it is at the ask** — and the
+    specimen's own diagnosis had said so (``volume_24h 0.00``,
+    ``liquidity 0.0000``) while the predicate quietly failed to encode it. The
+    cross-tab below is still true and was still not sufficient: it separated
+    trades by PRICE and the missing axis was TIME.
+
+    :data:`UNBACKED_ASK_STATIC_FOR` is that axis, measured on the row rather than
+    against the clock so an ingestion outage cannot blank the fleet. The four legs
+    sit at 2.0, 6.0, 6.8 and 7.9 hours static; the specimen at **70.0**.
+
     AND IT IS SYMMETRIC ACROSS THE BOOK SHAPES, WHICH THE OBVIOUS FIX IS NOT.
     Carving this to ``yes_bid > 0`` to stay clear of rule 2 was the first draft
     and it is INVERTED: it refuses a leg bid at one cent while sparing the
@@ -893,6 +987,8 @@ def price_is_an_unbacked_ask(
         yes_bid,
         yes_ask,
         in_exclusive_field=in_exclusive_field,
+        price_changed_at=price_changed_at,
+        last_seen_at=last_seen_at,
     ):
         return False
     if not has_trade_evidence:

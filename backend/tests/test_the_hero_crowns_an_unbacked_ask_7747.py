@@ -45,11 +45,13 @@ more than invented ones:
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from app.utils.futures_unsupported_price import (
+    UNBACKED_ASK_STATIC_FOR,
     needs_unbacked_ask_evidence,
     price_is_an_unbacked_ask,
 )
@@ -121,6 +123,39 @@ ALREADY_WITHHELD_BY_SHIPPED_RULE = {
 
 BY_NAME = {row[1]: row for row in USOPEN_2027}
 
+#: The touch-stamp every leg of this board carries, and the instant the rest of
+#: the fixture is measured against. Production value at capture.
+LAST_SEEN = datetime(2026, 9, 21, 10, 52, 29, tzinfo=timezone.utc)
+
+#: Hours each leg's price has sat UNMOVED — `last_updated - price_changed_at`,
+#: read off production for this board. `None` is a NULL `price_changed_at`.
+#:
+#: 🪤 THESE ARE NOT DECORATION AND THE BOARD IS NOT UNIFORM. Sinner and Alcaraz
+#: moved 14 hours ago and the rest of the field has been frozen for 78, so the
+#: recency term is actually exercised by the fixture rather than being constant
+#: across it. Mensik's 70.0 is the number CERT-3242's repair turns on.
+STATIC_HOURS = {"Jakub Mensik": 70.0, "Jannik Sinner": 14.0, "Carlos Alcaraz": 14.0}
+STATIC_HOURS_DEFAULT = 78.0
+STATIC_HOURS_NULL = {"Valentin Vacherot"}
+
+
+def _stamps(name):
+    """(price_changed_at, last_updated) for a leg, from :data:`STATIC_HOURS`."""
+    if name in STATIC_HOURS_NULL:
+        return None, LAST_SEEN
+    hours = STATIC_HOURS.get(name, STATIC_HOURS_DEFAULT)
+    return LAST_SEEN - timedelta(hours=hours), LAST_SEEN
+
+
+#: A price frozen far longer than `UNBACKED_ASK_STATIC_FOR` (the specimen's own
+#: 70 hours) and one that moved well inside it (Cameron Dicker's 2.0, one of the
+#: four live executions CERT-3242 falsified the first cut with).
+#:
+#: The unit classes below are about the BOOK terms, so they hold the time term
+#: fixed at STALE; the recency term has its own class and its own controls.
+STALE = (LAST_SEEN - timedelta(hours=70), LAST_SEEN)
+FRESH = (LAST_SEEN - timedelta(hours=2), LAST_SEEN)
+
 
 class _FakeResult:
     def __init__(self, rows):
@@ -149,13 +184,27 @@ class _FakeSession:
 
 
 def _outcome(oid, name, prob, bid, ask, *, resolution_source=None):
+    price_changed_at, last_updated = _stamps(name)
     return SimpleNamespace(
         id=oid,
         name=name,
+        external_id=f"KXATP-27USO-{oid}",
         current_probability=prob,
         current_yes_bid=bid,
         current_yes_ask=ask,
+        current_american_odds=None,
+        opening_probability=None,
+        opening_american_odds=None,
+        probability_change_24h=None,
+        rank=None,
+        rank_change_24h=None,
+        is_winner=None,
+        volume=None,
+        team_id=None,
+        team=None,
         resolution_source=resolution_source,
+        price_changed_at=price_changed_at,
+        last_updated=last_updated,
     )
 
 
@@ -232,8 +281,13 @@ class TestTheReaderStopsSeeingAFavouriteNobodyWillBuy:
         set returned here is the whole of this arm's effect on the board — no
         outcome leaves the list and `len(outcomes)` cannot move.
         """
-        _names, _db = await _withheld_names()
-        assert len(_market().outcomes) == 25
+        names, _ = await _withheld_names()
+        market = _market()
+        assert names, "if nothing is withheld this asserts nothing at all"
+        assert names <= {
+            o.name for o in market.outcomes
+        }, "the route names rows that are still ON the board"
+        assert len(market.outcomes) == 25
 
 
 @pytest.mark.asyncio
@@ -334,6 +388,8 @@ class TestRuleTwosExemptionIsIntact:
             last,
             has_trade_evidence=kw.pop("has_trade_evidence", True),
             in_exclusive_field=kw.pop("in_exclusive_field", True),
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
 
     def test_a_trade_inside_the_spread_still_acquits(self):
@@ -373,6 +429,8 @@ class TestTheRuleIsSymmetricAcrossBookShapes:
             0.74,
             has_trade_evidence=True,
             in_exclusive_field=True,
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
 
     @pytest.mark.parametrize("bid", [0.0, 0.01, 0.04, 0.10, 0.23])
@@ -405,6 +463,8 @@ class TestTheBoundsAreTheModulesOwnAndAreNotRestated:
             ask,
             has_trade_evidence=True,
             in_exclusive_field=True,
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
 
     def test_a_spread_exactly_at_the_bound_is_refused(self):
@@ -436,6 +496,8 @@ class TestSettledMeansSettled:
             0.99,
             has_trade_evidence=True,
             in_exclusive_field=True,
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
 
     @pytest.mark.parametrize(
@@ -485,9 +547,18 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
             last,
             has_trade_evidence=True,
             in_exclusive_field=True,
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
         admitted = needs_unbacked_ask_evidence(
-            "kalshi", None, prob, bid, ask, in_exclusive_field=True
+            "kalshi",
+            None,
+            prob,
+            bid,
+            ask,
+            in_exclusive_field=True,
+            price_changed_at=STALE[0],
+            last_seen_at=STALE[1],
         )
         assert not (
             refused and not admitted
@@ -497,7 +568,14 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
         """It must actually reject, or it is not a screen."""
         assert (
             needs_unbacked_ask_evidence(
-                "kalshi", None, 0.03, 0.00, 0.57, in_exclusive_field=True
+                "kalshi",
+                None,
+                0.03,
+                0.00,
+                0.57,
+                in_exclusive_field=True,
+                price_changed_at=STALE[0],
+                last_seen_at=STALE[1],
             )
             is False
         )
@@ -506,7 +584,234 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
         """gotcha #53 again: an unpriced leg has nothing to withhold."""
         assert (
             needs_unbacked_ask_evidence(
-                "kalshi", None, None, 0.04, 0.74, in_exclusive_field=True
+                "kalshi",
+                None,
+                None,
+                0.04,
+                0.74,
+                in_exclusive_field=True,
+                price_changed_at=STALE[0],
+                last_seen_at=STALE[1],
             )
             is False
         )
+
+
+# --------------------------------------------------------------------------
+# CERT-3242's required repair: 7747-RECENT-EXECUTED-ASK-IS-EVIDENCE
+# --------------------------------------------------------------------------
+
+
+def _detail(rows=USOPEN_2027, withheld_names=()):
+    """The board as `_format_market_detail` serves it.
+
+    The grader required this rule proved "through the helper AND the served
+    formatter", and the two can disagree: the helper returns a SET OF IDS and the
+    formatter is what turns those into nulls, so a wiring change that dropped the
+    set on the floor would leave every helper test green.
+    """
+    from app.routes.futures import _format_market_detail
+
+    market = _market(rows)
+    market.description = None
+    market.category = "sports"
+    market.external_id = "KXATP-27USO"
+    market.sport = None
+    market.sport_id = None
+    market.event_id = None
+    market.market_tier = 2
+    market.llm_sport_category = "tennis"
+    market.mutually_exclusive = True
+    market.commence_time = None
+    market.resolution_date = None
+    market.created_at = None
+    market.updated_at = None
+    market.group_id = None
+    market.canonical_market_key = None
+    market.hook_description = None
+    market.image_url = None
+    market.category_tags = []
+    ids = {o.id for o in market.outcomes if o.name in set(withheld_names)}
+    return _format_market_detail(market, None, ids)
+
+
+def _detail_by_name(detail):
+    return {row["name"]: row for row in detail["outcomes"]}
+
+
+class TestRecentExecutedAskIsEvidence:
+    """CERT-3242 BLOCKed the first cut and was RIGHT, so this class is the repair.
+
+    The first cut refused EVERY price printing at its own ask over a wide spread.
+    The grader falsified it against the venue in minutes — four legs that are
+    being traded right now at exactly that ask:
+
+        leg               served   book           Kalshi 24h volume
+        Tunisia            0.79    0.22 / 0.79    $87.67
+        Gambia             0.80    0.13 / 0.80    $54.43
+        Cameron Dicker     0.52    0.00 / 0.52    $9.30
+        Davante Adams      0.85    0.00 / 0.85    $6.10
+
+    All four are served on production and all four were withheld by the staged
+    code. 🔴 A trade at the ask is not evidence because it is STALE, not because
+    it is at the ask — and the specimen's own diagnosis had already said so
+    (`volume_24h 0.00`, `liquidity 0.0000`) while the predicate failed to encode
+    it. The cross-tab that justified the first cut separated trades by PRICE; the
+    axis it was missing is TIME.
+
+    The four sit at 2.0, 6.0, 6.8 and 7.9 hours static against the specimen's
+    70.0, read off `last_updated - price_changed_at` on production.
+    """
+
+    # (name, served, bid, ask, hours static) — production, 2026-09-21.
+    LIVE_EXECUTIONS = [
+        ("Tunisia", 0.79, 0.22, 0.79, 6.8),
+        ("Gambia", 0.80, 0.13, 0.80, 6.0),
+        ("Cameron Dicker", 0.52, 0.00, 0.52, 2.0),
+        ("Davante Adams", 0.85, 0.00, 0.85, 7.9),
+    ]
+
+    @staticmethod
+    def _p(prob, bid, ask, hours):
+        return price_is_an_unbacked_ask(
+            "kalshi",
+            None,
+            prob,
+            bid,
+            ask,
+            ask,  # the trade IS the ask in every one of these
+            has_trade_evidence=True,
+            in_exclusive_field=True,
+            price_changed_at=LAST_SEEN - timedelta(hours=hours),
+            last_seen_at=LAST_SEEN,
+        )
+
+    @pytest.mark.parametrize("name,prob,bid,ask,hours", LIVE_EXECUTIONS)
+    def test_the_four_legs_that_falsified_the_first_cut_keep_their_price(
+        self, name, prob, bid, ask, hours
+    ):
+        assert (
+            self._p(prob, bid, ask, hours) is False
+        ), f"{name} is being traded at its ask right now"
+
+    def test_the_specimen_is_still_withheld(self):
+        assert self._p(0.74, 0.04, 0.74, 70.0) is True
+
+    def test_the_bound_is_the_named_constant_and_not_a_literal(self):
+        hours = UNBACKED_ASK_STATIC_FOR.total_seconds() / 3600.0
+        assert self._p(0.74, 0.04, 0.74, hours) is True
+        assert self._p(0.74, 0.04, 0.74, hours - 0.1) is False
+
+    def test_a_null_price_stamp_fails_open(self):
+        """gotcha #53 — 409 of 467 legs of this shape carry no stamp at all."""
+        assert (
+            price_is_an_unbacked_ask(
+                "kalshi",
+                None,
+                0.74,
+                0.04,
+                0.74,
+                0.74,
+                has_trade_evidence=True,
+                in_exclusive_field=True,
+                price_changed_at=None,
+                last_seen_at=LAST_SEEN,
+            )
+            is False
+        )
+
+    def test_an_ingestion_outage_cannot_blank_the_fleet(self):
+        """The gap is between two columns of ONE row, so it FREEZES in an outage.
+
+        If the poller stops, `last_updated` stops advancing with
+        `price_changed_at`, so a leg that was fresh when ingestion died stays
+        fresh however long the outage runs. An absolute `now - price_changed_at`
+        would have turned a two-day outage into a fleet-wide blanking — this is
+        #7537's structural property on the pair of columns that answers THIS
+        question.
+        """
+        moved = LAST_SEEN - timedelta(hours=2)
+        for outage_days in (0, 1, 7, 30):
+            frozen_touch = LAST_SEEN  # the poller is dead; it stops advancing
+            assert (
+                price_is_an_unbacked_ask(
+                    "kalshi",
+                    None,
+                    0.74,
+                    0.04,
+                    0.74,
+                    0.74,
+                    has_trade_evidence=True,
+                    in_exclusive_field=True,
+                    price_changed_at=moved,
+                    last_seen_at=frozen_touch,
+                )
+                is False
+            ), f"a {outage_days}-day outage must not withhold a fresh price"
+
+
+@pytest.mark.asyncio
+class TestRecentExecutedAskIsEvidenceEndToEnd:
+    """The same rule through the ROUTE and through the SERVED FORMATTER.
+
+    CERT-3242 named this shape explicitly, and the reason it is not redundant
+    with the class above is that a predicate is not a page: the helper hands back
+    ids and the formatter is what nulls the fields.
+    """
+
+    @staticmethod
+    def _board_with_a_live_execution():
+        """The specimen board with ONE leg repriced two hours ago.
+
+        Alexander Zverev is given Mensik's exact book and price so the two rows
+        are identical in every column this rule reads EXCEPT the time one. That
+        is what makes the pair a control rather than two unrelated legs.
+        """
+        rows = []
+        for oid, name, p, b, a, lp in USOPEN_2027:
+            if name == "Alexander Zverev":
+                rows.append((oid, name, 0.74, 0.0400, 0.7400, 0.7400))
+            else:
+                rows.append((oid, name, p, b, a, lp))
+        return rows
+
+    async def test_recent_executed_trade_at_ask_remains_priced_while_stale_zero_volume_mensik_is_withheld(
+        self,
+    ):
+        rows = self._board_with_a_live_execution()
+        # Zverev's price moved 2 hours ago; Mensik's has not moved in 70.
+        STATIC_HOURS["Alexander Zverev"] = 2.0
+        try:
+            names, _ = await _withheld_names(rows)
+            assert "Jakub Mensik" in names, "70 hours static on a 4c bid"
+            assert (
+                "Alexander Zverev" not in names
+            ), "identical book, identical price, traded 2 hours ago"
+
+            # ...and the same, as the reader is served it.
+            detail = _detail(rows, withheld_names=names)
+            served = _detail_by_name(detail)
+            assert served["Jakub Mensik"]["probability"] is None
+            assert served["Alexander Zverev"]["probability"] == pytest.approx(
+                0.74, abs=0.01
+            )
+        finally:
+            STATIC_HOURS.pop("Alexander Zverev", None)
+
+    async def test_the_served_board_nulls_the_leg_and_keeps_the_row(self):
+        names, _ = await _withheld_names()
+        detail = _detail(withheld_names=names)
+        served = _detail_by_name(detail)
+        assert served["Jakub Mensik"]["probability"] is None
+        assert len(detail["outcomes"]) == 25, "withheld, never dropped"
+        assert detail["prices_withheld"] == 10, "the shipped 9 plus Mensik"
+
+    async def test_the_served_hero_is_the_leg_somebody_will_pay_for(self):
+        names, _ = await _withheld_names()
+        detail = _detail(withheld_names=names)
+        priced = [
+            (o["probability"], o["name"])
+            for o in detail["outcomes"]
+            if o.get("probability") is not None
+        ]
+        assert max(priced)[1] == "Jannik Sinner"
