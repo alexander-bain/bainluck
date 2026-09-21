@@ -204,6 +204,26 @@ def _nvidia():
     )
 
 
+def _us_open():
+    """61308736 `2027 US Open Men's Singles Winner`, read off production 2026-09-21.
+
+    The #7808 specimen: a Kalshi winner field where the two legs a reader would
+    expect to lead are the only two whose stored price sits on their book's
+    midpoint. Every book is the production row; the names are the production names.
+    """
+    outs = [
+        _Outcome(5001, "Jakub Mensik", 0.74, bid=0.04, ask=0.74),
+        _Outcome(5002, "Jannik Sinner", 0.31, bid=0.07, ask=0.55),
+        _Outcome(5003, "Carlos Alcaraz", 0.27, bid=0.07, ask=0.47),
+        _Outcome(5004, "Casper Ruud", 0.03, bid=0.00, ask=0.57),
+        _Outcome(5005, "Alexander Zverev", 0.01, bid=0.00, ask=0.74),
+    ]
+    return _Market(
+        61308736, "2027 US Open Men's Singles Winner", "tennis", outs,
+        group_type="kalshi_event",
+    )
+
+
 def _fed():
     # 20570794: the healthy negRisk control — a tight book that sums to ~100%.
     outs = [
@@ -259,13 +279,62 @@ async def test_healthy_cards_survive_alongside_the_suppressed_ones():
 
 
 @pytest.mark.asyncio
-async def test_nvidia_keeps_its_card_and_drops_only_the_phantom_rung():
+async def test_nvidia_keeps_its_card_and_its_48c_bid_rung():
+    """#7808 moved this one: `up 204` is shown now, and that is the ship.
+
+    It used to assert the opposite. The rung quotes 0.48/0.99 — a 48c buyer — and
+    the gate's clause is now "a manufactured midpoint that nobody is bidding for",
+    so it survives. Nothing downstream removes it either: against this ladder
+    `drop_incoherent_ladder_outcomes` (#4610) keeps 200 -> 204 -> 208 intact, so
+    the card prints it monotone between its neighbours instead of gapped over it.
+    The manufactured coin flips this file exists for are still refused — see the
+    SpaceX and Oscars cards above, both unchanged.
+    """
     items = await _run([_nvidia(), _fed()])
     card = _card(items, 57782674)
     assert card is not None
     shown = {o["name"] for o in card["top_outcomes"]}
-    assert "up 204" not in shown, "the 48c/99c phantom rung is still being shown"
     assert "up 200" in shown, "the real 0.845 leader was dropped"
+    assert "up 204" in shown, "a rung with a 48c buyer was erased from the card"
+
+
+@pytest.mark.asyncio
+async def test_the_us_open_card_names_the_right_favourites():
+    """#7808's reader sentence, through the real serializer.
+
+    What production served at 390px on 2026-09-21: "Jakub Mensik 74% · Casper Ruud
+    3% · Alexander Zverev 1%" — the 1st, 4th and 5th of the field, with the 2nd and
+    3rd erased because their prices sit on their own books' midpoints. The card
+    claims to name the most likely; it named the wrong two.
+    """
+    items = await _run([_us_open(), _fed()])
+    card = _card(items, 61308736)
+    assert card is not None
+    printed = [o["name"] for o in card["top_outcomes"]]
+    assert printed == ["Jakub Mensik", "Jannik Sinner", "Carlos Alcaraz"]
+    assert "Casper Ruud" not in printed
+    assert "Alexander Zverev" not in printed
+
+
+@pytest.mark.asyncio
+async def test_the_us_open_card_is_the_one_the_old_rule_broke():
+    """The mutation control for the test above: without #7808's clause the same
+    board, through the same serializer, prints the reader's defective card.
+
+    Asserted by calling the unchanged predicate rather than by reasoning about it,
+    so this cannot quietly become a restatement of the fix.
+    """
+    from app.utils.feed_market_quality import is_fabricated_midpoint
+
+    board = _us_open().outcomes
+    old_survivors = [
+        o.name
+        for o in board
+        if not is_fabricated_midpoint(
+            o.current_probability, o.current_yes_bid, o.current_yes_ask
+        )
+    ]
+    assert old_survivors[:3] == ["Jakub Mensik", "Casper Ruud", "Alexander Zverev"]
 
 
 # --- the anchor invariant (why this file stopped going red half of every day) --

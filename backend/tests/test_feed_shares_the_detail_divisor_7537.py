@@ -47,7 +47,10 @@ from app.routes.feed import (
     _drop_stale_observation_legs,
     _feed_display_scale,
 )
-from app.utils.feed_market_quality import classify_fabricated_book
+from app.utils.feed_market_quality import (
+    classify_fabricated_book,
+    is_fabricated_midpoint,
+)
 from app.utils.futures_market_snapshot import (
     outcome_observed_at,
     outcome_prints_a_price,
@@ -144,6 +147,26 @@ def card_board(legs):
     return [o for o, k in zip(legs, keep) if k]
 
 
+def gate_2026_09_20(legs):
+    """The same gate as `card_board`, as it stood on the day production served
+    `Leeds Rhinos 36.1%`.
+
+    `classify_fabricated_book` gained an "…and nobody is bidding for it" clause on
+    2026-09-21 (#7808), so it no longer removes the two 19c-bid legs and the live
+    divisor moved. The production anchor is older than the clause, so reproducing
+    it needs the predicate of that day — `is_fabricated_midpoint`, which #7808
+    deliberately did NOT touch — rather than a normaliser wrapped around today's
+    gate, which would encode the answer instead of re-deriving it.
+    """
+    return [
+        o
+        for o in legs
+        if not is_fabricated_midpoint(
+            o.current_probability, o.current_yes_bid, o.current_yes_ask
+        )
+    ]
+
+
 def market(status: str = "open"):
     return SimpleNamespace(status=status)
 
@@ -168,9 +191,27 @@ class TestTheSpecimenCardAndPageAgree:
 
     def test_the_card_stops_dividing_by_fossil_mass(self):
         before = card_board(board())
-        assert sum(leg.current_probability for leg in before) == pytest.approx(1.0950)
+        assert sum(leg.current_probability for leg in before) == pytest.approx(1.7200)
         after = _drop_stale_observation_legs(market(), before)
         assert sum(leg.current_probability for leg in after) == pytest.approx(0.6350)
+
+    def test_the_september_20_divisor_is_still_reproducible(self):
+        """The production anchor, kept alive after #7808 narrowed the gate.
+
+        On 2026-09-20 the gate in front of this chain removed Hull KR and Wigan,
+        so the card divided by 1.0950. It does not remove them any more — both
+        quote a 19c bid — so the live divisor above is the full board. The
+        historical number is reproduced through `gate_2026_09_20`, which is the
+        predicate as it stood that day, NOT through a normaliser over today's
+        gate: re-deriving 0.3607 from the row is what proves this fixture is the
+        card's real divisor rather than a model of it, and that proof is worth
+        keeping after the gate moves under it.
+        """
+        as_served = gate_2026_09_20(board())
+        assert sum(leg.current_probability for leg in as_served) == pytest.approx(
+            1.0950
+        )
+        assert printed(as_served, "Leeds Rhinos") == pytest.approx(0.3607, abs=1e-4)
 
     def test_leeds_prints_the_price_kalshi_is_quoting(self):
         """0.6350 is under `_feed_display_scale`'s 1.05 floor, so the card stops
@@ -183,27 +224,44 @@ class TestTheSpecimenCardAndPageAgree:
     def test_the_number_actually_moves_and_lands_on_the_production_figure(self):
         """The assertion above is worthless if the card already printed 0.3950.
 
-        This is the mutation control, and it is pinned to what production
-        actually served rather than to arithmetic invented here: Discover's card
-        for 3971707 printed `Leeds Rhinos 36.1%` (0.3607) on 2026-09-20 while
-        `/api/futures/3971707` printed 30.2% for the same leg and the same
-        stamp. Reproducing 0.3607 from the row is what proves this fixture is
-        the card's real divisor and not a model of it.
+        This is the mutation control: the stale drop has to MOVE the printed
+        number, whatever the gate in front of it is doing that week. The
+        production figure it was pinned to (0.3607, served 2026-09-20) now lives
+        in `test_the_september_20_divisor_is_still_reproducible`, because the
+        gate stopped removing the two 19c-bid legs (#7808) and the live chain
+        therefore divides by the whole board.
         """
         before = card_board(board())
-        assert printed(before, "Leeds Rhinos") == pytest.approx(0.3607, abs=1e-4)
+        assert printed(before, "Leeds Rhinos") == pytest.approx(0.2297, abs=1e-4)
         after = _drop_stale_observation_legs(market(), before)
         assert printed(after, "Leeds Rhinos") == pytest.approx(0.3950)
         assert printed(after, "Leeds Rhinos") != printed(before, "Leeds Rhinos")
 
-    def test_the_gate_in_front_removes_exactly_the_two_measured_legs(self):
+    def test_the_gate_in_front_no_longer_removes_the_two_measured_legs(self):
         """Names what this suite is composing with, so a change to the
         fabricated-book gate shows up here as a failure rather than as a silent
-        re-basing of the 0.3607 above."""
+        re-basing of the numbers above.
+
+        It did exactly that on 2026-09-21: #7808 added "and nobody is bidding" to
+        the gate, and Hull KR (0.19/0.47) and Wigan (0.19/0.40) both quote a 19c
+        buyer, so the gate spares them. #7537's ship is untouched — the stale drop
+        removes both legs one step later, which is `test_the_fossils_are_the_ones_
+        dropped` — and the two paths now agree for a stronger reason than before:
+        the card drops these legs because nobody has repriced them, not because
+        their prices sit on a midpoint.
+        """
         dropped = {leg.name for leg in board()} - {
             leg.name for leg in card_board(board())
         }
-        assert dropped == {"Hull Kingston Rovers", "Wigan Warriors"}
+        assert dropped == set()
+        as_served = {leg.name for leg in board()} - {
+            leg.name for leg in gate_2026_09_20(board())
+        }
+        assert as_served == {"Hull Kingston Rovers", "Wigan Warriors"}
+        survivors = {leg.name for leg in _drop_stale_observation_legs(
+            market(), card_board(board())
+        )}
+        assert not (as_served & survivors)
 
     def test_a_fossil_can_no_longer_be_crowned_leader(self):
         """Placed before the leader pick for the phantom filter's reason: a leg

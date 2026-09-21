@@ -738,6 +738,18 @@ def phantom_book_leaves_nothing_real(
     return False
 
 
+def book_has_a_buyer(yes_bid: "float | None") -> bool:
+    """True if somebody is bidding for this outcome above the empty-book floor.
+
+    ``EMPTY_BOOK_MAX_BID`` is REUSED, not re-measured: a bid at or under 5c is the
+    floor the venue quotes when there is no buyer, which is exactly what #5333
+    measured for the event page's half of this idea. See
+    :func:`classify_fabricated_book` for why this clause exists and why it lives
+    there rather than in :func:`is_fabricated_midpoint`.
+    """
+    return yes_bid is not None and float(yes_bid) > EMPTY_BOOK_MAX_BID
+
+
 def classify_fabricated_book(
     outcomes: "list[tuple[float | None, float | None, float | None]]",
     *,
@@ -751,8 +763,74 @@ def classify_fabricated_book(
 
     Lives here rather than inline in ``routes/feed.py`` so the whole decision — not a
     re-implementation of it — is what the tests exercise.
+
+    🔴 #7808: A LEG WITH A REAL BUYER IS NEVER ERASED FROM A CARD. The reader who
+    forced this: `2027 US Open Men's Singles Winner`, photographed on production at
+    390px on 2026-09-21, read "Jakub Mensik 74% · Casper Ruud 3% · Alexander Zverev
+    1%" — Sinner (31%) and Alcaraz (27%), the field's 2nd and 3rd, were not on the
+    card at all. Both quote a 7c bid; both prices sit on their book's midpoint, so
+    :func:`is_fabricated_midpoint` removed them, while Ruud (bid 0.00, ask 0.57) and
+    Zverev (bid 0.00, ask 0.74) — legs with NO buyer at any price — were kept, because
+    their stored prices are last trades rather than midpoints. The rule was inverted
+    in practice: it erased the two most tradeable legs and printed the two least.
+
+    THE CLAUSE. An outcome is refused here only if the midpoint is fabricated AND
+    nobody is bidding for it (:func:`book_has_a_buyer`). Strictly fewer refusals than
+    before — the mask can only turn False→True, never True→False — so no card loses a
+    leg it holds today.
+
+    ⚠️ "AND THEREFORE NO CARD IS NEWLY DROPPED" DOES NOT FOLLOW, AND SAYING IT WOULD BE
+    THE EASY LIE HERE. A wider mask raises ``survivor_probability_sum``, and on a
+    MUTUALLY EXCLUSIVE field :func:`phantom_book_leaves_nothing_real` refuses a sum
+    above ``FEED_EXCLUSIVE_SUM_MAX``. A spared leg can push a field from 1.20 to 1.51
+    and drop a card that used to be served — ``test_a_spared_leg_can_still_drop_an_
+    exclusive_card`` builds exactly that board, because a reachable path nobody has
+    named is how the next defect gets called impossible. The other two drop arms
+    (``real_book_outcomes == 0``, and a 3+ rung ladder left under two real rungs) can
+    only relax. So the zero below is MEASURED, not structural — and the cohort it was
+    measured over is not vacuous: of 3,075 open negRisk fields in the window, 20 are
+    touched by this gate at all and 10 hold a leg this clause spares.
+
+    MEASURED ON PRODUCTION 2026-09-21, over the 17,603 open markets priced in the last
+    two days (`artifacts/d384-7808/population_diff.json`):
+
+        outcomes hidden by this rule        2,047  ->  578
+        markets where the card's favourite
+          changes because of it               270  ->  0 hidden leaders with a buyer
+        cards dropped whole, now kept         160
+        cards newly dropped                     0
+
+    The specimens behind those counts are not edge cases: "Lowest temperature in Cape
+    Town on September 21?" named `11°C` (1.5%) as its favourite because the real 90%
+    answer, `14°C`, was erased; the Copa Libertadores winner card was dropped whole.
+
+    WHY THE BOUND IS 0.05 AND NOT MEASURED HERE. There is NO empty band in the bid
+    dimension to cut in — the refused rows decay smoothly (48 rows at 0c, 184 at 1c,
+    127, 105, 52, 62, 77, 49 … at 7c), so a bound picked off this population would be
+    a knob. It is pinned instead from both sides by work already done: #1574's own
+    acceptance specimens must stay refused, and their bids run 1c-4c (SpaceX 1c,
+    Netflix 2c, the five Oscars phantoms 2-4c), which puts a floor under it; and
+    ``EMPTY_BOOK_MAX_BID`` is the independently measured 5c bound #5333 argued for the
+    event page's half of the same question. The two agree, so this ship introduces no
+    new tuned number.
+
+    WHY NOT IN :func:`is_fabricated_midpoint`. That predicate is shared with the
+    Polymarket ingest, ``futures_unsupported_price`` and — through
+    :func:`fabricated_midpoint_sql` — calibration's closing-line selection, none of
+    which were measured here and none of which erase a row from a reader's field: they
+    choose a price SOURCE, or withhold a number while keeping the leg. This function
+    has exactly one caller, ``routes/feed.py``, and only its caller deletes the leg,
+    so the clause belongs to the deletion, not to the definition of a midpoint.
+
+    IT ALSO NARROWS A DISAGREEMENT BETWEEN TWO SURFACES (#7274). The detail page
+    applies no such filter — `GET /api/futures/61308736` serves Sinner at 0.31 while
+    the card printed a field he was not in — so a card that keeps him agrees with the
+    page a tap away instead of contradicting it.
     """
-    phantom = [is_fabricated_midpoint(p, b, a) for (p, b, a) in outcomes]
+    phantom = [
+        is_fabricated_midpoint(p, b, a) and not book_has_a_buyer(b)
+        for (p, b, a) in outcomes
+    ]
     keep_mask = [not x for x in phantom]
     if not any(phantom):
         # Untouched: a market with a healthy book is never judged, so a long-standing
