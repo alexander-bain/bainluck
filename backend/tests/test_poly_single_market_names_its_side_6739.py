@@ -214,6 +214,14 @@ def test_nothing_but_the_name_changed_on_a_rescued_row():
     """The claim is "a label moved", not "a price moved". Every other key this
     branch emits is asserted, because a pricing change wearing a naming change's
     clothes is the failure that would not show up on the page until it settled.
+
+    CERT-3202 added one key, ``market`` — a reference to the sub-market the leg
+    was priced FROM, so the parent-field writers can ask whether THIS child has
+    settled rather than only whether its parent has. It is provenance, not a
+    priced value, so it is asserted by identity and excluded from the value
+    comparison. The KEY SET is asserted as well, which makes this guard
+    strictly stronger than the bare equality it replaces: a new priced key
+    cannot enter through either half.
     """
     event = _single_market_event(
         title="Jukurit Mikkeli vs. Vaasan Sport",
@@ -224,7 +232,19 @@ def test_nothing_but_the_name_changed_on_a_rescued_row():
 
     rows = _parent_outcome_data(event)
 
-    assert rows[0] == {
+    assert rows[0]["market"] is event.markets[0], (
+        "the carried provenance is not the market this leg was priced from"
+    )
+    assert set(rows[0]) == {
+        "external_id",
+        "name",
+        "prob",
+        "yes_bid",
+        "yes_ask",
+        "last_price",
+        "market",
+    }, "this branch emits a key that is neither priced above nor provenance"
+    assert {k: v for k, v in rows[0].items() if k != "market"} == {
         "external_id": "0x7e6cf23d5a4d9419368610b2489da98ce641a668f3218c7f006843721bdd91d0",
         "name": "Jukurit Mikkeli",
         "prob": 0.62,

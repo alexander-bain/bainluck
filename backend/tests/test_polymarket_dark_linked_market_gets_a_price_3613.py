@@ -128,7 +128,10 @@ MONEYLINE_BID, MONEYLINE_ASK = 0.21, 0.38
 JUNK_PRICE, JUNK_BID, JUNK_ASK = 0.5, 0.03, 0.97
 
 
-def _market(cid, question, price, bid, ask, *, outcomes=None, last=None, vol24=None):
+def _market(
+    cid, question, price, bid, ask, *, outcomes=None, last=None, vol24=None,
+    closed=False,
+):
     return PolymarketMarket(
         condition_id=cid,
         question=question,
@@ -139,14 +142,24 @@ def _market(cid, question, price, bid, ask, *, outcomes=None, last=None, vol24=N
         last_trade_price=last,
         volume_24h=vol24,
         active=True,
+        # CERT-3202: the per-child settlement flag. Defaults False, so every
+        # fixture above this line is byte-identical in behaviour.
+        closed=closed,
     )
 
 
 TITLE = "UFC 331: Ozzy Diaz vs. Ryan Gandra (Middleweight, Early Prelims)"
 
 
-def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
-    """The specimen event: one tradeable moneyline, three untradeable props."""
+def _gandra_event(
+    *, priced: bool = True, closed: bool = False, moneyline_closed: bool = False
+) -> PolymarketEvent:
+    """The specimen event: one tradeable moneyline, three untradeable props.
+
+    `moneyline_closed` (CERT-3202) settles the MONEYLINE CHILD while leaving
+    the parent event open — the state a Polymarket event passes through as its
+    children settle one at a time, and the one the dark pass used to miss.
+    """
     markets = [
         _market(
             "0xf5200a",
@@ -155,6 +168,7 @@ def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
             MONEYLINE_BID if priced else JUNK_BID,
             MONEYLINE_ASK if priced else JUNK_ASK,
             outcomes=["Ozzy Diaz", "Ryan Gandra"],
+            closed=moneyline_closed,
         ),
         _market("0x158733", "Fight to Go the Distance?", JUNK_PRICE, JUNK_BID, JUNK_ASK),
         _market("0x300ade", "Will Ozzy Diaz win by KO or TKO?", JUNK_PRICE, JUNK_BID, JUNK_ASK),
@@ -165,7 +179,7 @@ def _gandra_event(*, priced: bool = True) -> PolymarketEvent:
         title=TITLE,
         slug="ufc-ozz-rya18-2026-09-19",
         active=True,
-        closed=False,
+        closed=closed,
         neg_risk=False,
         tags=["Sports", "MMA", "UFC"],
         start_date=datetime(2026, 9, 5, 22, 1, 28, tzinfo=UTC),
@@ -191,6 +205,7 @@ class _Row:
         event_id=15305793,
         category="championship",
         market_tier=5,
+        resolution_date=None,
     ):
         self.id = ident
         self.external_id = external_id
@@ -198,6 +213,10 @@ class _Row:
         self.event_id = event_id
         self.category = category
         self.market_tier = market_tier
+        # #2027. Defaults to NULL — the specimen's own value, and the one that
+        # must not by itself refuse an opening: most dark rows have no stored
+        # resolution date and are perfectly ordinary live markets.
+        self.resolution_date = resolution_date
 
 
 class _SelectorResult:
@@ -981,3 +1000,158 @@ class TestItIsActuallyScheduled:
         assert "_refresh_linked_polymarket_books" in inspect.getsource(
             refresh_linked_polymarket_books
         )
+
+
+# ---------------------------------------------------------------------------
+# #2027 — the inherited refusal, which was a docstring sentence and no code.
+#
+# This pass CREATES a market's first legs, which is exactly the population
+# #2027 measured: a market first seen after it settled, stamped with the
+# settled book as its `opening_probability` and keeping it forever, because
+# opening is COALESCEd and nothing earlier exists to read. The docstring
+# claimed the poll's gate was inherited whole; until now the only thing
+# inherited was `has_real_trading`, which a settled book passes.
+# ---------------------------------------------------------------------------
+
+
+class TestTheOpeningIsRefusedInHindsight:
+    @pytest.mark.asyncio
+    async def test_the_live_dark_market_still_gets_its_opening(self, monkeypatch):
+        """The control, and the reason the two arms below are not vacuous.
+
+        Nothing in this file asserted `opening_probability` before #2027, so a
+        refusal that fired on everything would have looked exactly like this
+        file passing.
+        """
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["opening_probability"] == MONEYLINE_PRICE
+        assert leg["opening_captured_at"] is not None
+        assert stats["opening_refused_hindsight"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_settled_venue_event_is_priced_but_never_opened(
+        self, monkeypatch
+    ):
+        """`closed=True` at the venue: the reader still gets a price, the curve
+        does not get a forecast made after the answer (ruling 103)."""
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event(closed=True)},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["current_probability"] == MONEYLINE_PRICE, (
+            "the refusal is narrow — the price a reader sees still lands"
+        )
+        assert leg["opening_probability"] is None
+        assert leg["opening_american_odds"] is None
+        assert leg["opening_captured_at"] is None
+        assert stats["opening_refused_hindsight"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_a_resolution_already_behind_us_refuses_the_opening(
+        self, monkeypatch
+    ):
+        """The flag-lag arm. Gamma leaves `closed=false` on events it has
+        already settled, so the date is the second signal (gotcha #53): our own
+        stored `resolution_date` is in the past, and this capture is therefore
+        the settled book however the venue labels itself.
+        """
+        stats, session, _ = await _execute(
+            [
+                _Row(
+                    60280227,
+                    "972409",
+                    TITLE,
+                    resolution_date=datetime(2026, 5, 4, tzinfo=UTC),
+                )
+            ],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["current_probability"] == MONEYLINE_PRICE
+        assert leg["opening_probability"] is None
+        assert stats["opening_refused_hindsight"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_a_settled_CHILD_under_an_open_parent_is_refused(
+        self, monkeypatch
+    ):
+        """CERT-3202, on the dark pass.
+
+        The parent event is open, our stored `resolution_date` is NULL, and the
+        three prop children are open — so the event arm and the date arm both
+        say nothing and only the per-child arm can fire. The moneyline child
+        alone is settled, and its settled book passes `has_real_trading` on the
+        bid/ask arm.
+
+        This writer used to compute the refusal ONCE per market, outside the
+        leg loop, from the parent alone; a child that settled first therefore
+        banked its settled book as the opening and kept it forever, because
+        opening is COALESCEd and nothing earlier exists to read.
+        """
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event(moneyline_closed=True)},
+            monkeypatch,
+        )
+        leg = _legs(session)["0xf5200a"]
+        assert leg["current_probability"] == MONEYLINE_PRICE, (
+            "the refusal is narrow — the price a reader sees still lands"
+        )
+        assert leg["opening_probability"] is None, (
+            "the settled CHILD's book was stamped as the opening because the "
+            "writer asked only whether the PARENT was closed"
+        )
+        assert leg["opening_captured_at"] is None
+        assert stats["opening_refused_hindsight"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_an_open_child_beside_a_settled_one_still_opens(
+        self, monkeypatch
+    ):
+        """The precision twin: the refusal must not spread to open siblings.
+
+        Same event, same settled moneyline — but the assertion is on a PROP
+        child that is still open. A repair that refused the whole event once it
+        saw any settled child would pass the case above and fail here.
+
+        The prop legs are the untradeable ones, so this asserts the refusal
+        COUNTER rather than their openings: exactly one leg was refused, and
+        every other leg reached the writer on its own merits.
+        """
+        stats, session, _ = await _execute(
+            [_Row(60280227, "972409", TITLE)],
+            {"972409": _gandra_event(moneyline_closed=True)},
+            monkeypatch,
+        )
+        assert stats["opening_refused_hindsight"] == 1, (
+            "the refusal spread beyond the one settled child"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_future_resolution_does_not_refuse_the_opening(
+        self, monkeypatch
+    ):
+        """Precision: a stored date that is still ahead of us says nothing
+        against the capture, and must not blank a live market's opening."""
+        stats, session, _ = await _execute(
+            [
+                _Row(
+                    60280227,
+                    "972409",
+                    TITLE,
+                    resolution_date=datetime(2099, 1, 1, tzinfo=UTC),
+                )
+            ],
+            {"972409": _gandra_event()},
+            monkeypatch,
+        )
+        assert _legs(session)["0xf5200a"]["opening_probability"] == MONEYLINE_PRICE
+        assert stats["opening_refused_hindsight"] == 0
