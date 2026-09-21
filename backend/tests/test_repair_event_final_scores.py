@@ -488,7 +488,12 @@ class _RecordingSession:
         if "unnest(" in sql:
             wanted = set(zip(params["g_sports"], params["g_dates"]))
             return _Result([e for e in _EVENTS if (e.sport_key, e.game_date) in wanted])
-        if "MAX(x.captured_at)" in sql:
+        # #7617: keyed on the query's SHAPE, not its aggregate. The real
+        # expression now reads GREATEST(captured_at, valid_until) — a frozen
+        # value is re-observed onto the row it already wrote, so a reading
+        # built from captured_at alone called a delayed game silent. A fake
+        # that dispatches on the aggregate breaks every time it is corrected.
+        if "GROUP BY x.event_id" in sql:
             # Only event 15182559 has a usable post-commence snapshot.
             return _Result([
                 SimpleNamespace(event_id=i, last_snap=datetime(2026, 5, 3, 3, 0, tzinfo=UTC))
@@ -591,10 +596,12 @@ class TestScanIsBoundedBeforeTheWork:
         # Only the group holding the NULL-completed_at row pays for the snapshot
         # query; a group of healthy rows must not trigger it at all.
         s_nba, _ = await _run(limit=1)
-        assert not [1 for sql, _ in s_nba.calls if "MAX(x.captured_at)" in sql]
+        # #7617: the play-snapshot query is identified by its shape, not by an
+        # aggregate expression that has since been corrected.
+        assert not [1 for sql, _ in s_nba.calls if "GROUP BY x.event_id" in sql]
 
         s_mlb, _ = await _run(limit=1, offset=1)
-        snaps = [p for sql, p in s_mlb.calls if "MAX(x.captured_at)" in sql]
+        snaps = [p for sql, p in s_mlb.calls if "GROUP BY x.event_id" in sql]
         assert snaps == [{"event_ids": [15182559]}]
 
 

@@ -991,10 +991,76 @@ _VENUE_SOURCE_SQL_LIST = ", ".join(f"'{s}'" for s in sorted(VENUE_PRICE_SOURCES)
 # ``odds_snapshots`` is gone from the union entirely rather than filtered: every
 # row in that table is a bookmaker line, which is the "betting" venue by
 # definition. There is no play-reporting arm of it left to keep.
+#
+# ═══ #7617: `captured_at` IS WHEN THE VALUE STARTED, NOT WHEN WE LAST HEARD ═══
+#
+# The freshness read is ``GREATEST(captured_at, valid_until)``, and the two
+# columns are not two guesses at one fact — they are the two ends of one
+# observation. ``tasks/snapshots.py`` writes a NEW row only when the value
+# MOVES; a source that reports the same probability again gets
+# ``reading_count += 1`` and ``valid_until = now`` on the row it already has.
+# So ``captured_at`` answers "when did this reading begin", and only
+# ``valid_until`` answers the question this query is actually asking: when did
+# a source that reports on play last say anything at all.
+#
+# MEASURED, production 2026-09-20 (#7617, the specimen lane1/537 photographed).
+# Event 14782150, CLE @ TB, a weather delay in the FOURTH QUARTER with 2:00 on
+# the clock and Cleveland up four. Its ESPN ``win_prob_snapshots`` row:
+#
+#     captured_at 20:02:39Z · valid_until 22:00:49Z · reading_count 109
+#
+# ESPN reported on that game **109 times** across the delay and the old
+# ``MAX(captured_at)`` read it as one observation, 118 minutes stale. The
+# corroborating channel says the same thing from outside this table: 253
+# ``espn_snapshots`` rows, unbroken at ~9 per ten minutes, ``period='Delayed'``,
+# right up to 22:17:39Z. The authority never went quiet for a single minute.
+#
+# The arithmetic, because it is what makes the reading decisive rather than
+# merely wrong. Kickoff 17:00Z; ``americanfootball`` maximum 4.5h plus the arm's
+# own 0.5h margin ⇒ the net becomes entitled to fire at 22:00Z. The old reading
+# had been stale since 20:32:39Z (``captured_at`` + ``STILL_ACTIVE_MINUTES``),
+# so it fired on the first pass that was allowed to. The new reading at that
+# minute is 22:00:49Z — twelve seconds old — and holds. Both staleness nets,
+# ``espn_sync._transition_event_statuses_impl`` and
+# ``odds_polling.detect_and_close_stale_events``, consult this one query, so
+# both were handed the same false silence. lane1/537 photographed the result at
+# ~22:10Z: a marquee NFL game under the league page's "NO RESULT REPORTED"
+# heading while it was being played, until the authority posted its final at
+# 22:18:51Z and settled the row.
+#
+# A DELAY IS THE WORST PLACE TO READ A FROZEN VALUE AS SILENCE, and not by
+# accident: a stopped game is exactly the state in which the win probability
+# CANNOT move, so the dedup that makes this column efficient is guaranteed to
+# fire for the whole of it. The rarer and more dramatic the pause, the more
+# certain the misreading.
+#
+# WHY THIS DOES NOT RE-OPEN live/042 (a venue tick holding a finished match
+# live forever). It would, if the venue exclusion above were not there — the
+# same specimen's Kalshi row was still having its ``valid_until`` bumped at
+# 01:00Z, two and a half hours after the final whistle, because a market stays
+# open long after play ends. Reading ``valid_until`` makes that exclusion
+# strictly MORE load-bearing than it was, which is why the Postgres contract
+# test asserts the venue case directly rather than trusting the filter to stay.
+#
+# MEASURED BLAST RADIUS, same night, every ESPN-anchored event of the previous
+# 24 hours (44 completed + 6 live): **one** row's reading moves by more than
+# ``STILL_ACTIVE_MINUTES`` — the specimen, by 118.2 minutes. The mean move is
+# 2.9 minutes and the live rows' is 0.5. This is a change that is inert on the
+# ordinary game and decisive on the delayed one.
+#
+# ``COALESCE`` because ``valid_until`` is nullable and is NULL on a reading
+# nothing has yet superseded or re-observed; ``GREATEST`` rather than a bare
+# ``valid_until`` so a row can never read OLDER than its own start.
+# ``captured_at >= e.commence_time`` is deliberately left keyed on the START of
+# the reading: a value first seen before kickoff is a pregame line however long
+# it is re-observed afterwards, which is the same argument the paragraph above
+# makes about venue prices.
 LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
-    SELECT x.event_id, MAX(x.captured_at) AS last_snap
+    SELECT x.event_id, MAX(x.last_seen) AS last_snap
     FROM (
-        SELECT w.event_id, w.captured_at
+        SELECT w.event_id,
+               GREATEST(w.captured_at, COALESCE(w.valid_until, w.captured_at))
+                   AS last_seen
           FROM win_prob_snapshots w
           JOIN events e ON e.id = w.event_id
          WHERE w.event_id = ANY(:event_ids) AND w.captured_at >= e.commence_time
@@ -1020,6 +1086,12 @@ def game_may_still_be_running(last_snapshot, now) -> bool:
     which excludes :data:`VENUE_PRICE_SOURCES`. Passing a venue tick in here
     re-opens live/042: a market that stays open holds a finished match live
     forever, because the hold renews itself every two minutes.
+
+    It is the LAST-SEEN end of the observation, not the first (#7617): a source
+    repeating a frozen probability is deduped onto the row it already wrote, so
+    a reading built from ``captured_at`` alone calls a game in a weather delay
+    silent while its authority is still reporting on it every minute. That
+    query's comment carries the specimen.
     """
     if last_snapshot is None or now is None:
         return False

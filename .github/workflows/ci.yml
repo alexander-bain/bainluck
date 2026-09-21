@@ -3480,6 +3480,72 @@ jobs:
             exit 1
           }
 
+      - name: "#7617 delay contract — provision the disposable database"
+        # A database of its own, for the reason the #4079 step above gives: this
+        # contract creates the six tables the staleness net touches and drops
+        # them again, and `bl_searchtest` has been populated by eighty steps
+        # before it — `futures_markets` there carries nine inbound foreign keys,
+        # so the drop dies with `DependentObjectsStillExist` before a case runs.
+        # Created empty here and thrown away with the runner, so it holds nothing
+        # but this file's tables and the drop is safe by construction. No
+        # sentinel nonce: unlike #4079 this suite never drops a schema it did not
+        # create in the same job, and it reads its own variable rather than
+        # falling back to `$DATABASE_URL`.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_delay_contract_7617"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "DELAY_CONTRACT_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_delay_contract_7617"
+
+      - name: "#7617 a delay is not silence (real Postgres)"
+        # A marquee NFL game in a fourth-quarter weather delay was classified
+        # `suspended` and drawn under the league page's "NO RESULT REPORTED"
+        # heading while it was being played. The cause was a column a SQL
+        # expression did not select: `win_prob_snapshots` dedups a repeated
+        # value onto the row it already wrote, so `MAX(captured_at)` read ESPN's
+        # 109 observations across the pause as one, two hours stale.
+        #
+        # It cannot be a unit test, and that is the specific lesson of the
+        # defect rather than a preference: the existing guards in
+        # `test_staleness_does_not_end_a_match.py` either assert strings in the
+        # query or HAND the net a `last_snap`, and every one of them was green
+        # throughout. Only Postgres can answer what that expression returns.
+        #
+        # Same skip detection as every gate in this job, plus a count: pytest
+        # exits 0 when each test skips, and four of the six cases here are
+        # controls that pass with OR without the fix — a run that lost the two
+        # ship cases would still print a green summary.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_a_delay_is_not_silence_pg_7617.py \
+            -v -rs 2>&1 | tee /tmp/delay7617.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/delay7617.txt; then
+            echo "::error::#7617 delay contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
+          grep -qE "[^0-9]6 passed," /tmp/delay7617.txt || {
+            echo "::error::#7617 delay contract did not run all six cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

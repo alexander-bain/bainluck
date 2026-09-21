@@ -149,7 +149,12 @@ class _EspnSession:
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        if "MAX(x.captured_at)" in sql:
+        # #7617: keyed on the query's SHAPE, not its aggregate. The real
+        # expression now reads GREATEST(captured_at, valid_until) — a frozen
+        # value is re-observed onto the row it already wrote, so a reading
+        # built from captured_at alone called a delayed game silent. A fake
+        # that dispatches on the aggregate breaks every time it is corrected.
+        if "GROUP BY x.event_id" in sql:
             # No play source has ever captured the specimen post-commence.
             return type("R", (), {"all": lambda _s: []})()
         if sql.startswith("UPDATE"):
@@ -197,7 +202,12 @@ class _OddsSession:
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        if "MAX(x.captured_at)" in sql:
+        # #7617: keyed on the query's SHAPE, not its aggregate. The real
+        # expression now reads GREATEST(captured_at, valid_until) — a frozen
+        # value is re-observed onto the row it already wrote, so a reading
+        # built from captured_at alone called a delayed game silent. A fake
+        # that dispatches on the aggregate breaks every time it is corrected.
+        if "GROUP BY x.event_id" in sql:
             return type("R", (), {"first": lambda _s: None})()
         if sql.startswith("UPDATE"):
             compiled = stmt.compile()
