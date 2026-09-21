@@ -49,6 +49,7 @@ import OutcomeRow, {
 import RelatedByTag from "@/components/RelatedByTag";
 import GamesThisWeek from "@/components/futures/GamesThisWeek";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 import {
   asOfLabel,
   gradedWinner,
@@ -600,8 +601,46 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     (market.outcomes ?? []).map((o) => o.name),
   );
   // UX-P233 (board item 11): "as of Aug 28" when the prices are older than a day,
-  // null when they are current. One line for the whole table — see the render.
-  const marketAsOf = asOfLabel(leader?.last_updated);
+  // null when they are current. One line for the whole board — see the render.
+  //
+  // #7785 — THE FLOOR OVER THE ROWS THIS PAGE DRAWS, NOT THE LEADER'S STAMP.
+  //
+  // This read `asOfLabel(leader?.last_updated)`, and `leader` is the
+  // HIGHEST-PROBABILITY outcome. #6018 rejected exactly that rule for the search
+  // card in as many words — "taking the newest would let one refreshed favourite
+  // vouch for four stale rungs" — and shipped `renderedPricesAsOf`, which every
+  // other surface (card, My Stuff, the iOS twin) has read since. The one surface
+  // that puts the most rows under a single label kept the ceiling.
+  //
+  // Because the leader is also the most-polled row, the failure is SILENCE
+  // rather than a visibly wrong date: `asOfLabel` returns null and the header
+  // says nothing. Production, 2026-09-21 at 390px: `/futures/12046267` (the WNBA
+  // title board) drew Minnesota's 46% written that morning above Phoenix,
+  // Toronto and Los Angeles at 0% last written 2026-09-19, under a bare "All
+  // Outcomes". `/futures/275` (Pro Baseball Champion) is the same shape. Across
+  // the served payloads of the 199 busiest open tier-1/2 boards, the leader rule
+  // labels 37 and the floor labels 41.
+  //
+  // WHICH ROWS. The claim is "nothing you can see here is older than this", so
+  // the scope is what the branch below actually renders:
+  //
+  //   - the ranked table draws `displayedOutcomes` — the 25-cap matters. On the
+  //     391 open tier-1–3 boards with more than 25 priced rows the two scopes
+  //     print a different date on 17, and on 7 of those the wider scope would
+  //     date the header from rows BELOW the cap that the reader cannot see,
+  //     which is #6018's own named mirror-image lie.
+  //   - the ladder draws every priced rung: `QuantityGroup` is neither `compact`
+  //     nor given `maxRungs` here, and `buildOutcomeLadderRungs` is a 1:1 map
+  //     over `market.outcomes` that filters nothing, so `pricedRungs` and
+  //     `pricedOutcomes` are the same membership under the same
+  //     `probability == null` predicate.
+  //
+  // `renderedPricesAsOf` (not a second opinion written here) also carries #6803:
+  // a rung showing no number has no age this sentence is about, and 0 IS a price
+  // and keeps its vote. `pricedOutcomes`/`displayedOutcomes` are already that
+  // partition, so the helper's guard is a belt over a brace, not the only one.
+  const asOfRows = hasOwnLadder ? pricedOutcomes : displayedOutcomes;
+  const marketAsOf = asOfLabel(renderedPricesAsOf({ outcomes: asOfRows }));
   // #883 L2-49: on a resolved market the hero features the actual WINNER (which
   // may differ from the highest-probability outcome), labeled as final — not a
   // live probability. Falls back to the leader if no winner is flagged yet.
@@ -1053,9 +1092,21 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {hasOwnLadder && (
         <>
           {pricedRungs.length > 0 && (
+            /* #7785 — and the ladder carries the SAME freshness line as the
+               ranked table. `marketAsOf` used to render only in the
+               `!hasOwnLadder` branch below, so a quantity-shaped board had no
+               as-of anywhere on the page: measured on the served payloads of
+               the 199 busiest open tier-1/2 boards, 8 of the 59 ladder-shaped
+               ones draw prices 2 to 159 days old with nothing saying so. (The
+               oldest of those are ALSO drawing rungs whose dates have passed —
+               a backend-owned defect, #7784, which this does not fix and does
+               not hide.) `hint` is QuantityGroup's existing header slot and
+               defaults to `undefined` on a non-interactive group, which this
+               one is, so no other caller of the component changes. */
             <QuantityGroup
               title="All Outcomes"
               rungs={pricedRungs}
+              hint={marketAsOf ?? undefined}
               wideLabels={ladderNeedsWideLabels(pricedRungs)}
             />
           )}
@@ -1132,8 +1183,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             {/* UX-P233 (board item 11): ONE as-of for the whole table, so every
                 number under it is interpretable without repeating a date on all
                 eight rows. Absent entirely when the prices are genuinely fresh —
-                a label on a current price is noise, not honesty. Read from the
-                leader, whose `last_updated` every row on 109441 shares. */}
+                a label on a current price is noise, not honesty. #7785: read
+                from the OLDEST of the rows drawn below, not from the leader —
+                see `marketAsOf`. */}
             {/* #6989: and absent when NO row prints a number. The date is read
                 from the leader, and on an all-withheld market the leader is a
                 withheld leg — so this was dating prices the reader cannot see. */}
