@@ -11884,6 +11884,22 @@ async def _score_futures(
             # built on ORM rows cannot see that, because ORM rows carry the
             # column. An outcome with neither carrier answers `None`, which is
             # the honest degradation and leaves such a rung where it is today.
+            # CERT-3236: and the GRADE, because a cumulative "Before …" rung
+            # settles YES on the day the thing happens — often weeks before its
+            # own deadline — and that settlement write is the last time the leg is
+            # touched, so the stamp test alone reads the venue's verdict as a
+            # stale forecast.
+            #
+            # 🔴 `getattr` WITH A DEFAULT, AND THE DEFAULT IS LOAD-BEARING: the
+            # cached path rebuilds legs from `OUTCOME_ROW_COLUMNS`
+            # (`futures_market_snapshot.py`), which carries no `is_winner`, so a
+            # rehydrated leg has no such attribute at all — a bare `o.is_winner`
+            # would raise `AttributeError` inside the scorer and take the card out
+            # (gotcha #42), while the default degrades to "grade unknown", which
+            # is exactly today's behaviour. Measured 2026-09-21: none of the 9
+            # production boards carrying a newly-hidden winner is in the served
+            # feed, so that residue is 0 rows today — it is real all the same and
+            # is filed against the snapshot wire rather than patched here.
             expired_rungs = _expired_ladder_rungs(
                 [
                     (
@@ -11892,6 +11908,7 @@ async def _score_futures(
                         if o.current_probability is not None
                         else None,
                         _outcome_observed_at(o),
+                        getattr(o, "is_winner", None),
                     )
                     for o in sorted_outcomes
                 ],

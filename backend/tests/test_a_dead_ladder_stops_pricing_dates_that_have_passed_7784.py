@@ -106,8 +106,14 @@ def _frozen(at=MEASURED_AT):
     return patch.object(futures_routes, "datetime", _Frozen)
 
 
-def _outcome(outcome_id, name, prob, stamp):
-    """One `futures_outcomes` row as the detail serializer meets it."""
+def _outcome(outcome_id, name, prob, stamp, is_winner=None, resolution_source=None):
+    """One `futures_outcomes` row as the detail serializer meets it.
+
+    CERT-3236 made the grade a PARAMETER. It was hard-coded `None` here, and
+    that is precisely why 376 green tests could not see that the ship deleted 25
+    production rows the venue had already graded `is_winner=true`: every fixture
+    described an ungraded board, so the one state that matters was unreachable.
+    """
     return SimpleNamespace(
         id=outcome_id,
         name=name,
@@ -119,8 +125,8 @@ def _outcome(outcome_id, name, prob, stamp):
         probability_change_24h=None,
         opening_probability=None,
         opening_american_odds=None,
-        is_winner=None,
-        resolution_source=None,
+        is_winner=is_winner,
+        resolution_source=resolution_source,
         last_updated=stamp,
         price_changed_at=stamp,
         team_id=None,
@@ -159,7 +165,10 @@ def _board(market_id, name, rows, stamp, status="open"):
         category_tags=[],
         market_metadata=None,
         outcomes=[
-            _outcome(i, n, p, stamp) for i, (n, p) in enumerate(rows, start=1)
+            # A row may carry its grade as a third element (CERT-3236); the two
+            # specimens are ungraded and read exactly as they did before.
+            _outcome(i, row[0], row[1], stamp, *row[2:])
+            for i, row in enumerate(rows, start=1)
         ],
     )
 
@@ -454,8 +463,9 @@ class TestTheSurfacesPassTheStamp:
         (listcomp,) = calls[0].args[:1]
         assert isinstance(listcomp, ast.ListComp)
         assert isinstance(listcomp.elt, ast.Tuple)
-        assert len(listcomp.elt.elts) == 3, "the detail page dropped the stamp"
+        assert len(listcomp.elt.elts) == 4, "the detail page dropped the stamp or the grade"
         assert "last_updated" in ast.unparse(listcomp.elt.elts[2])
+        assert "is_winner" in ast.unparse(listcomp.elt.elts[3])
 
     def test_the_feed_reads_the_dual_carrier_reader_not_the_raw_column(self):
         """The mechanism, not the outcome. The CACHED path — nearly every card —
@@ -473,8 +483,12 @@ class TestTheSurfacesPassTheStamp:
         (listcomp,) = calls[0].args[:1]
         assert isinstance(listcomp, ast.ListComp)
         assert isinstance(listcomp.elt, ast.Tuple)
-        assert len(listcomp.elt.elts) == 3, "the card dropped the stamp"
+        assert len(listcomp.elt.elts) == 4, "the card dropped the stamp or the grade"
         assert "_outcome_observed_at" in ast.unparse(listcomp.elt.elts[2])
+        # CERT-3236: and the grade, read defensively — a rehydrated snapshot leg
+        # carries no `is_winner` attribute at all, so a bare `o.is_winner` would
+        # raise inside the scorer and take the whole card out (gotcha #42).
+        assert ast.unparse(listcomp.elt.elts[3]) == "getattr(o, 'is_winner', None)"
 
     def test_a_rehydrated_leg_still_resolves_to_a_stamp(self):
         """The other half of the same claim, driven rather than parsed."""
@@ -502,7 +516,8 @@ class TestTheSurfacesPassTheStamp:
         (listcomp,) = calls[0].args[:1]
         assert isinstance(listcomp, ast.ListComp)
         assert isinstance(listcomp.elt, ast.Tuple)
-        assert len(listcomp.elt.elts) == 3, "the dashboard dropped the stamp"
+        assert len(listcomp.elt.elts) == 4, "the dashboard dropped the stamp or the grade"
+        assert "is_winner" in ast.unparse(listcomp.elt.elts[3])
 
     def test_a_carrier_without_the_column_does_not_raise(self):
         """Gotcha #42: a leg missing the column degrades to NO EVIDENCE, never to
@@ -519,3 +534,107 @@ class TestTheThresholdIsUnmoved:
 
     def test_the_constant_is_where_the_census_put_it(self):
         assert EXPIRED_RUNG_MAX_PROBABILITY == 0.5
+
+
+# ──────────── CERT-3236: a rung the venue already graded is never hidden ───────
+#
+# The BLOCK that made this section exist: the observation rule alone deleted 25
+# production rungs carrying `is_winner=true, resolution_source='api_settlement'`,
+# because a cumulative "Before Sep 1, 2026" contract settles YES on the day the
+# thing HAPPENS — often weeks before its own deadline — and that settlement write
+# is the last time the leg is ever touched. Its stamp is therefore permanently
+# before its deadline and the stamp test reads the venue's verdict as a forecast.
+#
+# Reproduced independently before repairing (`artifacts/d383-7784r/`): 63 open
+# boards carry a dated graded leg; the shipped rule newly hid 27 rungs on them
+# and 25 were graded winners. After the repair: 0.
+
+#: `/futures/5979169` — *When will Anthropic release Claude 5?*, OPEN. The rung
+#: settled YES on 2026-08-01 and its deadline is 2026-09-01, so its only stamp is
+#: a month EARLY. Values read from production 2026-09-21.
+CLAUDE5_STAMP = datetime(2026, 8, 1, 4, 51, 33, 505511, tzinfo=timezone.utc)
+CLAUDE5_ROWS = [
+    ("Before Sep 1, 2026", 0.9900, True, "api_settlement"),
+    ("Before Dec 1, 2026", 0.9950),
+]
+
+
+class TestAGradedWinnerIsNeverHidden:
+    """The venue's verdict outranks every clock in this module."""
+
+    def test_the_settled_rung_survives_a_stamp_taken_before_its_deadline(self):
+        assert (
+            expired_ladder_rungs(
+                [("Before Sep 1, 2026", 0.99, CLAUDE5_STAMP, True)], MEASURED_AT
+            )
+            == set()
+        )
+
+    def test_the_same_rung_ungraded_is_still_removed(self):
+        """The control that makes the test above mean something.
+
+        Identical name, price and stamp; only the grade differs. Without this
+        pair, a rule that simply stopped expiring `Before Sep 1, 2026` would pass.
+        """
+        assert expired_ladder_rungs(
+            [("Before Sep 1, 2026", 0.99, CLAUDE5_STAMP, None)], MEASURED_AT
+        ) == {"Before Sep 1, 2026"}
+
+    def test_is_winner_false_is_not_a_grade(self):
+        """`futures_outcomes.is_winner` is `default=False`, so FALSE is what a row
+        is BORN with. Reading it as "graded a loser" here would be harmless, but
+        reading it as a grade AT ALL is the class of bug #4788 documents — so the
+        test is that only TRUE spares a rung."""
+        assert expired_ladder_rungs(
+            [("Before Sep 1, 2026", 0.99, CLAUDE5_STAMP, False)], MEASURED_AT
+        ) == {"Before Sep 1, 2026"}
+
+    def test_a_graded_winner_is_spared_by_the_twin_arm_too(self):
+        """#7383's arm expires a rung a LIVE dated twin proves dead. A verdict is
+        not made untrue by a sibling rung, so the grade is read before either arm
+        rather than inside one of them."""
+        rows = [
+            ("September 14", 1.0, CLAUDE5_STAMP, True),
+            ("September 30", 0.42, CLAUDE5_STAMP, None),
+        ]
+        assert "September 14" not in expired_ladder_rungs(rows, MEASURED_AT)
+
+    def test_a_low_priced_graded_winner_is_also_spared(self):
+        """The clause is unconditional, and measured to take nothing from master:
+        0 graded winners are expired by the pre-#7784 rule on today's population,
+        so nothing master hides stops being hidden."""
+        assert (
+            expired_ladder_rungs(
+                [("Before Sep 1, 2026", 0.12, CLAUDE5_STAMP, True)], MEASURED_AT
+            )
+            == set()
+        )
+
+    def test_the_detail_page_keeps_the_settled_rung_and_drops_the_dead_ones(self):
+        """Both halves on one board, through the serializer the reader gets."""
+        board = _board(
+            5979169,
+            "When will Anthropic release Claude 5?",
+            CLAUDE5_ROWS,
+            CLAUDE5_STAMP,
+        )
+        names = _names(_detail(board))
+        assert "Before Sep 1, 2026" in names
+        assert "Before Dec 1, 2026" in names
+
+    def test_the_dhs_specimen_is_unmoved_by_the_repair(self):
+        """The ship still ships: not one of the four stale forecasts is graded, so
+        the repair cannot resurrect them."""
+        names = _names(_detail(dhs()))
+        for dead in DHS_DEAD:
+            assert dead not in names
+        assert DHS_LIVE in names
+
+    def test_a_grade_that_is_absent_changes_nothing(self):
+        """A pair, a triple, and a four-tuple whose grade is `None` agree — which
+        is what lets the politics/feed `getattr` defaults be safe."""
+        rows3 = _triples(DHS_ROWS, DHS_STAMP)
+        rows4 = [(n, p, s, None) for n, p, s in rows3]
+        assert expired_ladder_rungs(rows4, MEASURED_AT) == expired_ladder_rungs(
+            rows3, MEASURED_AT
+        )

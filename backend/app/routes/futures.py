@@ -6719,6 +6719,14 @@ def _format_market_detail(
     # past-dated rung priced at or above it already resolved YES and is the
     # ladder's answer, not a ghost, and is never stripped.
     #
+    # CERT-3236: AND THE GRADE GOES WITH THE STAMP. A cumulative "Before Sep 1,
+    # 2026" rung settles YES on the day the thing happens, which may be weeks
+    # before its own deadline, and that settlement write is the last time the leg
+    # is touched — so the stamp test alone reads 25 production winners (Claude 5,
+    # Makary, baxdrostat, the DNC autopsy, every day of two Kyiv/Trump ladders) as
+    # stale forecasts and deletes them. `is_winner` is a key this serializer
+    # already publishes twenty lines up, beside `resolution_source`.
+    #
     # #7784: AND THE STAMP GOES WITH THE PRICE, because that guard cannot tell a
     # verdict from a forecast without it. This page's own payload is where the
     # defect was photographed — five rungs of board 109403, four of them dated
@@ -6741,7 +6749,12 @@ def _format_market_detail(
     if getattr(market, "status", None) == "open":
         expired_rung_names = expired_ladder_rungs(
             [
-                (o["name"], o.get("probability"), o.get("last_updated"))
+                (
+                    o["name"],
+                    o.get("probability"),
+                    o.get("last_updated"),
+                    o.get("is_winner"),
+                )
                 for o in outcomes
             ],
             datetime.now(timezone.utc),

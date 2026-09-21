@@ -6,6 +6,7 @@ the real-world event has passed (e.g., "Eurovision" after May 31).
 
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1, "january": 1, "feb": 2, "february": 2,
@@ -679,11 +680,55 @@ def _price_is_the_ladders_answer(
     return observed_at >= deadline.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def _rung_is_a_graded_winner(is_winner: Any) -> bool:
+    """Has the venue already declared this rung the answer? (CERT-3236 repair)
+
+    ═══ 🔴 A "BEFORE …" CONTRACT MAY SETTLE YES BEFORE ITS OWN DEADLINE ═══
+
+    :func:`_price_is_the_ladders_answer` asks whether a confident price is a
+    verdict or a forecast, and dates the evidence by the stamp. On a CUMULATIVE
+    ladder that test has a blind spot the DHS specimen could not show: *Before
+    Sep 1, 2026* resolves YES the moment the thing happens, which may be weeks
+    EARLY, and the settlement write is the last time the leg is ever touched. Its
+    stamp is therefore permanently before its own deadline, and the observation
+    test reads the venue's own verdict as a stale forecast.
+
+    MEASURED (CERT-3236's finding, reproduced independently at
+    `artifacts/d383-7784r/replay_winners.py` against production 2026-09-21): over
+    the 63 open boards carrying a dated graded leg, the observation rule alone
+    newly hides **27 rungs, and 25 of them are `is_winner = true` with
+    `resolution_source = 'api_settlement'`** — the Claude 5, Makary, baxdrostat
+    and DNC-autopsy boards, and every day of the two "Will Russia target Kyiv
+    on…?" / "Will Trump publicly insult someone on…?" ladders. Hiding those is a
+    strictly worse truth defect than the one this ship set out to fix.
+
+    ``is_winner IS TRUE`` IS THE WHOLE TEST, and the two obvious alternatives are
+    both wrong here:
+
+    * ``is_winner`` alone in the FALSE direction would be a disaster — the column
+      is ``default=False`` so ``False`` is what a row is BORN with
+      (`futures_liveness.leg_is_graded` documents the measurement) — but TRUE is
+      never written by accident, which is the only direction this function reads.
+    * REQUIRING ``resolution_source = 'api_settlement'`` as well would be tidier
+      and buys nothing: all 25 carry it, and a winner graded by any other rail is
+      still a winner a reader must not lose. The asymmetry decides it — hiding a
+      declared winner deletes an answer from the page, while sparing one leaves a
+      row the price exemption kept anyway.
+
+    THIS CLAUSE TAKES NOTHING AWAY FROM MASTER: measured on the same population,
+    **0** graded winners are expired by the pre-#7784 rule today, so no rung that
+    master hides stops being hidden. The 63 DHS-class stale forecasts the ship
+    removes are unaffected — not one of them is graded.
+    """
+    return is_winner is True
+
+
 def expired_ladder_rungs(
     outcomes: (
         list[str | None]
         | list[tuple[str | None, float | None]]
         | list[tuple[str | None, float | None, datetime | str | None]]
+        | list[tuple[str | None, float | None, datetime | str | None, Any]]
     ),
     now: datetime,
     *,
@@ -703,6 +748,13 @@ def expired_ladder_rungs(
     priced four past dates because it does not reprice any more. A pair, or a
     triple with no stamp, behaves exactly as it did before.
 
+    CERT-3236: pass the FOUR-TUPLE where the leg's ``is_winner`` grade is
+    available. A rung the venue has already declared the winner is never hidden,
+    whenever it was last priced — a cumulative "Before …" contract settles YES on
+    the day the thing happens, which may be weeks before its own deadline, so the
+    stamp test alone deletes 25 authoritative winners (see
+    :func:`_rung_is_a_graded_winner`). An absent grade changes nothing.
+
     #7383: a rung is ALSO expired when a dated twin on the SAME BOARD proves it
     — see `_live_dated_twins`. That arm reads the whole list, which is why it
     lives here and not in `outcome_deadline_expired`, and it is why the three
@@ -719,9 +771,15 @@ def expired_ladder_rungs(
         if isinstance(outcome, tuple):
             name, probability = outcome[0], outcome[1]
             observed_at = _observed_at(outcome[2]) if len(outcome) > 2 else None
+            is_winner = outcome[3] if len(outcome) > 3 else None
         else:
-            name, probability, observed_at = outcome, None, None
+            name, probability, observed_at, is_winner = outcome, None, None, None
         if not name:
+            continue
+        # CERT-3236 — BEFORE EITHER ARM, because a declared winner is not a dead
+        # option under any rule that could name it: neither its own passed date
+        # nor a live dated twin makes the venue's verdict untrue.
+        if _rung_is_a_graded_winner(is_winner):
             continue
         # WHICH ARM CALLED IT DEAD DECIDES WHICH DEADLINE THE STAMP IS MEASURED
         # AGAINST — the rung's own date, or the one its dated twin implies. The

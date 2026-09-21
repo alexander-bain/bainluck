@@ -397,8 +397,17 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
         # the place it has today — which is also why the read is a `getattr`
         # with a default: a carrier without the column degrades to NO EVIDENCE,
         # never to an exception that empties the row (gotcha #42).
+        # CERT-3236: and the GRADE rides with the stamp, for the same reason and
+        # read the same defensive way. A cumulative "Before …" rung settles YES
+        # early and is never touched again, so the stamp test alone demotes a
+        # declared winner below the live rungs on this page's three-row summary.
         [
-            (o.name, float(o.current_probability), getattr(o, "last_updated", None))
+            (
+                o.name,
+                float(o.current_probability),
+                getattr(o, "last_updated", None),
+                getattr(o, "is_winner", None),
+            )
             for o in priced
         ],
         now,
