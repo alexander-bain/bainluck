@@ -20,10 +20,19 @@ because of exactly one line::
 
     AND (:sport IS NULL OR fm.llm_sport_category = :sport)
 
-Every sibling rail already wrote ``:sport::text`` on both sides
-(``repair_polymarket_leg_label.py`` :457-458, :758) and the keyset predicate two
-lines below it already cast both halves. One line did not, and the endpoint was
-dead for three weeks with nothing red.
+The keyset predicate two lines below it already cast both halves. One line did
+not, and the endpoint was dead for three weeks with nothing red.
+
+🔴 CORRECTION (7167, 2026-09-21). This paragraph used to read "every sibling
+rail already wrote ``:sport::text`` on both sides
+(``repair_polymarket_leg_label.py`` lines 457-458, 758)". Both halves of that
+were wrong, and it is the reason the SECOND class below went unguarded for 16
+days. The siblings write ``CAST(:x AS t)``, not the postfix form; the one file
+that wrote the postfix form was the cited "exemplar", and it had errored on
+every invocation since the day it merged — which was the same day this guard
+was written. ``repair_kalshi_fabricated_loss.py`` carries the same citation and
+is wrong in the same way. A spelling that types a parameter for Postgres is not
+automatically a spelling SQLAlchemy will bind.
 
 `tests/integration/test_kalshi_fabricated_loss_bind_contract_pg.py` proves the
 specimen against a real server. This file is the CLASS, and it is deliberately
@@ -270,3 +279,87 @@ def test_the_interval_guard_catches_its_own_specimen():
         "SELECT CAST(col AS interval) FROM t",
     ):
         assert not BIND_CAST_TO_INTERVAL.findall(fixed), fixed
+
+
+#: A bind written `:name` immediately followed by `::type`. SQLAlchemy's
+#: `text()` will not read a bind name that runs into a colon — the lookahead
+#: exists precisely so a postfix cast is not eaten as part of the name — so the
+#: WHOLE token is left in the statement as literal SQL with nothing bound to it.
+#: Postgres is then handed a bare colon and answers `syntax error at or near
+#: ":"` before a row is read.
+POSTFIX_CAST_BIND = re.compile(r"(?<![:\w]):([a-z_][a-z_0-9]*)::", re.IGNORECASE)
+
+
+def test_no_raw_sql_uses_the_postfix_cast_bind_spelling():
+    """The SECOND class, and the one that cost this file its own credibility.
+
+    🔴 THIS GUARD'S DOCSTRING USED TO CITE `repair_polymarket_leg_label.py`
+    :457-458 AND :758 AS THE SIBLING THAT GOT IT RIGHT. They were the only lines
+    in `app/` still using the postfix spelling, and that rail had errored on
+    every single invocation since it merged on 2026-09-05 — the same day this
+    guard was written. `repair_kalshi_fabricated_loss.py` carries the same
+    citation. Two files named the one broken rail as their model of correctness,
+    and the class guard above could not see it because it is not the same class:
+
+      * `:x IS NULL` (above) — the bind IS read, but nothing types it, and
+        asyncpg dies at PREPARE with AmbiguousParameterError.
+      * `:x::type` (here)   — the bind is NOT read at all, so no value is ever
+        sent and Postgres dies on the literal colon.
+
+    Both spellings LOOK like they type the parameter, which is why "typed" was
+    mistaken for "works". Only `CAST(:x AS type)` does both.
+    """
+    offenders: list[str] = []
+    for path in sorted(APP.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            stripped = line.lstrip()
+            # The comments that WARN about this spelling must stay legal — most
+            # of `app/` mentions it only to say "not this".
+            if stripped.startswith(("#", "--", "*")) or _NOT_SQL.search(line):
+                continue
+            for match in POSTFIX_CAST_BIND.finditer(line):
+                offenders.append(
+                    f"{path.relative_to(APP.parent)}:{lineno}  "
+                    f":{match.group(1)}::  ->  {line.strip()[:100]}"
+                )
+
+    assert not offenders, (
+        "a bind written `:name` + `::type` is never parsed as a bind by "
+        "SQLAlchemy's text(); the token reaches Postgres as literal SQL and the "
+        'statement dies on `syntax error at or near ":"` before any row is '
+        "read. Write `CAST(:name AS type)` on EVERY occurrence of that bind:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_postfix_cast_guard_catches_its_own_specimen():
+    """Over-reach control, using the exact lines that were dead for 16 days.
+
+    The negative half matters as much as the positive one here: this guard scans
+    the same tree as the one above, and a pattern that also flagged `CAST(...)`
+    or a `::` cast of a COLUMN would fire on most of the app and be deleted.
+    """
+    # `repair_polymarket_leg_label.py` lines 457-458 and 460, verbatim, as they
+    # stood from 2026-09-05 until 7167.
+    for broken in (
+        "           AND (:after_id::bigint IS NULL OR fo.id > :after_id::bigint)",
+        "           AND (:sport::text IS NULL OR fm.llm_sport_category = :sport::text)",
+        "         LIMIT :cap::int",
+    ):
+        assert POSTFIX_CAST_BIND.findall(broken), broken
+
+    # The proof the guard is about a REAL failure and not a style preference:
+    # SQLAlchemy binds nothing at all for the broken spelling.
+    assert _binds("LIMIT :cap::int") != {"cap"}
+    assert _binds("LIMIT CAST(:cap AS int)") == {"cap"}
+
+    for fixed in (
+        "AND (CAST(:sport AS text) IS NULL OR fm.llm_sport_category = CAST(:sport AS text))",
+        "LIMIT CAST(:cap AS int)",
+        # A `::` cast of a COLUMN or a literal is not a bind and never was.
+        "SELECT fo.id::text FROM futures_outcomes fo",
+        "WHERE fm.status = 'open'::text",
+        "SELECT '{}'::jsonb",
+    ):
+        assert not POSTFIX_CAST_BIND.findall(fixed), fixed

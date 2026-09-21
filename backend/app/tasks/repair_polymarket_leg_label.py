@@ -236,6 +236,22 @@ REMAINING_COUNT_MIN_BUDGET_SECONDS = 0.5
 #: for the full per-category GROUP BY. Same answer, no index, no migration.
 COLLAPSED_LEG_PREDICATE = "fo.name IS NOT DISTINCT FROM fm.name"
 
+#: 🔴 THE SCOPE, WRITTEN ONCE BESIDE THE POPULATION. This rail was built for the
+#: cohort as it stood on 2026-09-01: markets we still held ``open`` that the
+#: venue had already closed. It is NOT the whole defect, and the difference is
+#: not academic — measured on production 2026-09-21, the in-scope population is
+#: **0** and the out-of-scope one is **25,469 legs across 25,402 markets**, every
+#: one of them still serving the whole matchup as its own price label.
+#:
+#: The 1,153 legs this rail was built to drain never drained. They RESOLVED, and
+#: a resolved market leaves this rail's scope without any of its rows being
+#: repaired — while new ones resolve into the gap behind them. So an empty page
+#: here means "the scope is empty", which is a different sentence from "the
+#: defect is gone", and `_out_of_scope_legs` exists so the rail can tell an
+#: operator which one it is (gotcha #53 — an empty answer is not an absence).
+IN_SCOPE_STATUS_SQL = "fm.status = 'open'"
+OUT_OF_SCOPE_STATUS_SQL = "fm.status IS DISTINCT FROM 'open'"
+
 #: Verdicts a single leg can reach. Every one is COUNTED — ruling 054: an
 #: exclusion is counted, not skipped, and each zero state gets its own terminal
 #: rather than one silent success (gotcha #53).
@@ -320,6 +336,48 @@ def _paused_before_examining(
 # ---------------------------------------------------------------------------
 
 
+async def _out_of_scope_legs(
+    session, sport: str = None, budget_s: float = None
+) -> Optional[dict[str, int]]:
+    """Count the collapsed legs this rail's scope EXCLUDES, or say it could not.
+
+    The same population predicate, the same source, the complement of the same
+    status test — so the two numbers add up to the whole defect and cannot drift
+    apart the way two hand-written cohorts would.
+
+    🔴 RETURNS ``None``, NEVER ``{"legs": 0}``, WHEN THE COUNT DOES NOT FINISH.
+    The entire point of this counter is to stop an empty in-scope page reading
+    as "the defect is gone"; a counter that answered ``0`` on a timeout would
+    reintroduce exactly that lie one layer down (gotcha #53, and the
+    ``remaining_legs_measured`` flag beside it for the same reason).
+    """
+    budget = float(budget_s or CENSUS_STATEMENT_TIMEOUT_SECONDS)
+    sql = f"""
+        SELECT count(*) AS legs, count(DISTINCT fm.id) AS markets
+          FROM futures_markets fm
+          JOIN futures_outcomes fo
+            ON fo.market_id = fm.id
+           AND {COLLAPSED_LEG_PREDICATE}
+         WHERE fm.source = 'polymarket'
+           AND {OUT_OF_SCOPE_STATUS_SQL}
+           AND (CAST(:sport AS text) IS NULL
+                OR fm.llm_sport_category = CAST(:sport AS text))
+    """
+    try:
+        result = await _bounded_statement(
+            session,
+            timeout_literal=f"'{int(budget * 1000)}ms'",
+            server_budget_s=budget,
+            sql=sql,
+            params={"sport": sport},
+        )
+        row = result.one()
+    except Exception:  # noqa: BLE001 — degradable: unmeasured, never zero
+        await _safe_rollback(session)
+        return None
+    return {"legs": int(row[0]), "markets": int(row[1])}
+
+
 async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
     """How many open Polymarket legs still print a number that names no side.
 
@@ -350,7 +408,7 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
             ON fo.market_id = fm.id
            AND {COLLAPSED_LEG_PREDICATE}
          WHERE fm.source = 'polymarket'
-           AND fm.status = 'open'
+           AND {IN_SCOPE_STATUS_SQL}
          GROUP BY 1
          ORDER BY 2 DESC
     """
@@ -379,6 +437,18 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
     out["by_category"] = by_category
     out["total_legs"] = sum(v["legs"] for v in by_category.values())
     out["total_markets"] = sum(v["markets"] for v in by_category.values())
+
+    # 🔴 THE FIELDS THAT STOP `total_legs: 0` READING AS "Q499 IS FINISHED".
+    # Additive, so every existing reader of the three fields above is unchanged:
+    # they still describe this rail's scope and only its scope. What they could
+    # never say on their own is that the cohort LEFT that scope rather than being
+    # repaired — on 2026-09-21 the census answered a confident
+    # `measured: true, total_legs: 0` while 25,469 collapsed legs sat one status
+    # away, and the rail had never successfully run a single page select.
+    out_of_scope = await _out_of_scope_legs(session)
+    out["out_of_scope_measured"] = out_of_scope is not None
+    out["out_of_scope_legs"] = out_of_scope["legs"] if out_of_scope else None
+    out["out_of_scope_markets"] = out_of_scope["markets"] if out_of_scope else None
     out["elapsed_s"] = round(time.monotonic() - started, 2)
     return out
 
@@ -441,6 +511,26 @@ async def repair(
     samples: list[dict[str, Any]] = []
 
     # ---- the page --------------------------------------------------------
+    # 🔴 `CAST(x AS t)`, NOT THE POSTFIX `x::t` FORM, AND NOT AS A STYLE CHOICE.
+    # SQLAlchemy's `text()` refuses to read a bind name that runs into a colon —
+    # the lookahead exists so a postfix cast is not eaten as part of the name —
+    # so the whole token is passed to Postgres as literal SQL with NO parameter
+    # bound to it, and the statement dies on `syntax error at or near` a colon.
+    # That is what this rail did on every invocation from 2026-09-05 to
+    # 2026-09-21 (#7167): never one completed work selection, reported as
+    # `paused_target_timeout`. Both halves of every pair are cast because
+    # asyncpg prepares with no parameter types and the first occurrence fixes
+    # the type.
+    #
+    # The sibling `repair_kalshi_fabricated_loss.py` and the class guard
+    # `tests/test_untyped_bind_in_is_null_guard.py` both cited THESE lines as
+    # the exemplar that got it right. They did not.
+    #
+    # This explanation is a PYTHON comment and must stay one. Inside the SQL a
+    # `--` line is a comment to Postgres but not to SQLAlchemy, which still
+    # reads any colon-prefixed word in it as a bind nobody supplies; and if
+    # anything ever collapses the statement to a single line, a `--` comment
+    # silently comments out the rest of the query.
     page_sql = f"""
         SELECT fo.id           AS outcome_id,
                fo.market_id    AS market_id,
@@ -453,11 +543,13 @@ async def repair(
             ON fo.market_id = fm.id
            AND {COLLAPSED_LEG_PREDICATE}
          WHERE fm.source = 'polymarket'
-           AND fm.status = 'open'
-           AND (:after_id::bigint IS NULL OR fo.id > :after_id::bigint)
-           AND (:sport::text IS NULL OR fm.llm_sport_category = :sport::text)
+           AND {IN_SCOPE_STATUS_SQL}
+           AND (CAST(:after_id AS bigint) IS NULL
+                OR fo.id > CAST(:after_id AS bigint))
+           AND (CAST(:sport AS text) IS NULL
+                OR fm.llm_sport_category = CAST(:sport AS text))
          ORDER BY fo.id
-         LIMIT :cap::int
+         LIMIT CAST(:cap AS int)
     """
     try:
         result = await _bounded_statement(
@@ -492,13 +584,41 @@ async def repair(
         )
 
     if not page:
+        # 🔴 AN EMPTY PAGE IS "THE SCOPE IS EMPTY", NOT "THE DEFECT IS GONE", AND
+        # BEFORE 7167 THIS BRANCH COULD NOT TELL THEM APART. Read the complement
+        # before answering: on 2026-09-21 the in-scope population was 0 and the
+        # complement was 25,469 legs, so the unqualified sentence below would
+        # have reported a drain that had never run as a drain that had finished.
+        out_of_scope = await _out_of_scope_legs(session, sport=sport)
+        if out_of_scope is None:
+            reason = (
+                "no collapsed legs remain IN SCOPE (Polymarket markets we still "
+                "hold open); the out-of-scope cohort could not be counted, so "
+                "this is NOT a statement that the defect is drained"
+            )
+        elif out_of_scope["legs"]:
+            reason = (
+                "no collapsed legs remain IN SCOPE (Polymarket markets we still "
+                f"hold open), but {out_of_scope['legs']} collapsed legs across "
+                f"{out_of_scope['markets']} markets sit OUTSIDE this rail's "
+                "scope and are not repaired by it — a resolved market leaves "
+                "the scope without any of its rows being fixed"
+            )
+        else:
+            reason = "no collapsed legs remain, in scope or out of it"
         out = _paused_before_examining(
             incoming_cursor=incoming_cursor,
             started=started,
             terminal="ok",
-            reason="no collapsed legs remain in this population",
+            reason=reason,
         )
+        # `scan_exhausted` keeps its documented meaning — THIS scan covered its
+        # population — so the operator's paging contract is untouched. The two
+        # fields beside it are what say whether finishing the scan finished the
+        # job, which is the question `scan_exhausted` was never asking.
         out["scan_exhausted"] = True
+        out["out_of_scope_measured"] = out_of_scope is not None
+        out["out_of_scope_legs"] = out_of_scope["legs"] if out_of_scope else None
         out["applied"] = bool(apply)
         return out
 
@@ -628,8 +748,15 @@ async def repair(
         # It names ONE column. `last_updated` is a poller touch-stamp that
         # `app/routes/playoffs.py` reads as liveness (#2024); a repair that
         # bumped it would forge a venue observation that never happened.
+        # 🔴 `CAST(x AS t)` here for the SAME reason as the page select above,
+        # and this line is why that comment was not enough. The source-level
+        # guard scans for `:name::type`; an f-string writes the index BETWEEN
+        # the name and the cast (`:id{i}::bigint`), so the offending token only
+        # exists AFTER interpolation and no scan of this file could see it.
+        # Compiling the rendered statement is the only guard that can.
         values = ", ".join(
-            f"(:id{i}::bigint, :old{i}::text, :new{i}::text)" for i in range(len(writable))
+            f"(CAST(:id{i} AS bigint), CAST(:old{i} AS text), CAST(:new{i} AS text))"
+            for i in range(len(writable))
         )
         params: dict[str, Any] = {}
         for i, p in enumerate(writable):
@@ -754,8 +881,9 @@ async def repair(
                 ON fo.market_id = fm.id
                AND {COLLAPSED_LEG_PREDICATE}
              WHERE fm.source = 'polymarket'
-               AND fm.status = 'open'
-               AND (:sport::text IS NULL OR fm.llm_sport_category = :sport::text)
+               AND {IN_SCOPE_STATUS_SQL}
+               AND (CAST(:sport AS text) IS NULL
+                    OR fm.llm_sport_category = CAST(:sport AS text))
         """
         try:
             result = await _bounded_statement(
