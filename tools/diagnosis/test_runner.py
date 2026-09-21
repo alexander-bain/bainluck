@@ -23,6 +23,58 @@ class WorkerTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_failure_preserves_issue_run_and_retry_deadline(self):
+        failure = r.WorkerFailure('runtime acknowledgement timed out', self.root)
+        record = r.failure_record(failure, {'failures': 1}, 1763, at=1000)
+        self.assertEqual(record['failures'], 2)
+        self.assertEqual(record['retry_after'], 1900)
+        status = r.wait_status(record)
+        self.assertEqual(status['state'], 'retry_wait')
+        self.assertEqual(status['issue'], 1763)
+        self.assertEqual(status['run'], str(self.root))
+        self.assertIn('1970-01-01T00:31:40', status['reason'])
+        self.assertIn('acknowledgement timed out', status['reason'])
+        self.assertEqual(r.wait_status({k:v for k,v in record.items() if k != 'retry_at'})['reason'], status['reason'])
+
+    def test_third_failure_requires_attention_not_a_fourth_retry(self):
+        record = r.failure_record(RuntimeError('failed'), {'failures': 2}, 1763, at=1000)
+        self.assertEqual(r.wait_status(record)['state'], 'needs_attention')
+        self.assertNotIn('retry_after', record)
+
+    def test_reviewed_failed_issue_is_not_rediagnosed_and_other_work_continues(self):
+        issues = [dict(number=n, labels=[{'name':'needs-agent'}], assignees=[], state='OPEN') for n in [1763, 1764]]
+        for record in [{'status':'reviewed', 'disposition':'rejected'},
+                       {'status':'retry', 'retry_after':10**12}]:
+            with patch.object(r, 'gh', side_effect=[issues, []]):
+                self.assertEqual(r.choose(self.root, {'issue:1763':record})[1]['issue'], 1764)
+
+    def test_worker_runtime_failure_is_not_terminal_completion(self):
+        log = self.root / 'worker.jsonl'
+        log.write_text(json.dumps({'payload_type':'task.lifecycle.completed'}) + '\n'
+                       'muse: runtime host shutdown timed out after 2s\n'
+                       'runtime command acknowledgement timed out after 30s\n')
+        self.assertFalse(r.completed(log))
+        self.assertIn('runtime host shutdown', r.worker_error(log, 1))
+        self.assertIn('acknowledgement timed out', r.worker_error(log, 1))
+
+    def test_once_failure_publishes_retry_state_and_returns_failure(self):
+        with patch.object(sys, 'argv', ['runner', 'once', '--root', str(self.root)]), \
+             patch.object(r, 'choose', return_value=('issue:1763', {'issue':1763})), \
+             patch.object(r, 'run', side_effect=r.WorkerFailure('shutdown timeout', self.root)):
+            self.assertEqual(r.main(), 1)
+        status = r.read(self.root / 'STATUS.json', {})
+        self.assertEqual((status['state'], status['issue']), ('retry_wait', 1763))
+        self.assertIn('retry eligible at', status['reason'])
+
+    def test_loop_continues_after_failed_issue_without_global_cooldown(self):
+        with patch.object(sys, 'argv', ['runner', 'loop', '--root', str(self.root)]), \
+             patch.object(r, 'choose', return_value=('issue:1763', {'issue':1763})), \
+             patch.object(r, 'run', side_effect=r.WorkerFailure('shutdown timeout', self.root)), \
+             patch.object(r.time, 'sleep', side_effect=KeyboardInterrupt) as sleep:
+            with self.assertRaises(KeyboardInterrupt):
+                r.main()
+            sleep.assert_called_once_with(10)
+
     def test_delivery_requires_artifacts_not_exit_zero(self):
         with self.assertRaises(ValueError):
             r.validate_result(self.root, 6176, 'abc')

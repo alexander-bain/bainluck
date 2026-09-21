@@ -10,6 +10,14 @@ spec.loader.exec_module(m)
 
 
 class MonitorTests(unittest.TestCase):
+    def test_status_displays_cause_and_retry_including_legacy_errors(self):
+        text = m.status_text({'state':'retry_wait', 'issue':1763,
+                              'reason':'runtime timed out; retry eligible at 19:00 UTC'})
+        self.assertIn('issue=1763', text)
+        self.assertIn('runtime timed out', text)
+        self.assertIn('19:00 UTC', text)
+        self.assertIn('old error', m.status_text({'state':'error', 'error':'old error'}))
+
     def test_partial_record_and_run_switch(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "worker.jsonl"

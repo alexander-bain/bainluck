@@ -20,6 +20,49 @@ MODEL = "muse-spark-1.3-internal"
 # treating a slow archive extraction as a failed model diagnosis.
 SNAPSHOT_TIMEOUT = 600
 CHILD = None
+FINISHED = {"delivered", "needs_attention", "reviewed"}
+
+
+class WorkerFailure(RuntimeError):
+    def __init__(self, message, folder):
+        super().__init__(message)
+        self.folder = str(folder)
+
+
+def failure_record(exc, prior, issue=None, at=None):
+    """A failed attempt is a timed per-issue wait, not a dead service."""
+    at = time.time() if at is None else at
+    failures = prior.get("failures", 0) + 1
+    retry_after = at + 900
+    reason = str(exc)
+    record = {"status": "needs_attention" if failures >= 3 else "retry",
+              "issue": issue, "failures": failures, "error": reason,
+              "at": dt.datetime.fromtimestamp(at, dt.timezone.utc).isoformat()}
+    if isinstance(exc, WorkerFailure):
+        record["run"] = exc.folder
+    if failures < 3:
+        record["retry_after"] = retry_after
+        record["retry_at"] = dt.datetime.fromtimestamp(retry_after, dt.timezone.utc).isoformat()
+    return record
+
+
+def wait_status(record):
+    waiting = record["status"] == "retry"
+    reason = record["error"]
+    if waiting:
+        retry_at = record.get("retry_at") or dt.datetime.fromtimestamp(record["retry_after"], dt.timezone.utc).isoformat()
+        reason += f"; retry eligible at {retry_at}; other eligible work can continue"
+    else:
+        reason += "; automatic retries exhausted"
+    return {**record, "state": "retry_wait" if waiting else "needs_attention",
+            "reason": reason, "updated_at": now()}
+
+
+def worker_error(log, rc):
+    # Only recognize runtime diagnostics, not arbitrary model/tool output.
+    details = [line[:400] for line in log.read_text(errors="replace").splitlines()
+               if line.startswith(("muse: runtime", "runtime command acknowledgement"))]
+    return f"Worker incomplete rc={rc}" + (": " + " / ".join(details[-2:]) if details else "")
 
 
 def now():
@@ -68,7 +111,7 @@ def choose(root, state):
         mission = read(path, {})
         key = "mission:" + path.name
         prior = state.get(key, {})
-        if prior.get("status") in {"delivered", "needs_attention"}:
+        if prior.get("status") in FINISHED:
             continue
         if prior.get("retry_after", 0) > time.time():
             continue
@@ -89,7 +132,7 @@ def choose(root, state):
     for issue in sorted(issues, key=priority):
         key = f"issue:{issue['number']}"
         prior = state.get(key, {})
-        if (prior.get("status") in {"delivered", "needs_attention"}
+        if (prior.get("status") in FINISHED
                 or prior.get("retry_after", 0) > time.time()
                 or not eligible(issue) or any(pr_mentions(p, issue['number']) for p in prs)):
             continue
@@ -204,9 +247,9 @@ def run(root, source, mission, lock_fd, timeout):
             rc = CHILD.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             stop_child()
-            raise RuntimeError(f"Worker timeout; evidence preserved at {folder}")
+            raise WorkerFailure(f"Worker timeout; evidence preserved at {folder}", folder)
     if rc or not completed(log):
-        raise RuntimeError(f"Worker incomplete rc={rc}; evidence preserved at {folder}")
+        raise WorkerFailure(f"{worker_error(log, rc)}; evidence preserved at {folder}", folder)
     result = validate_result(folder, issue["number"], sha)
     return {"status": "delivered", "result": result["status"], "run": str(folder), "at": now()}
 
@@ -258,21 +301,26 @@ def main():
                     save(args.root / "STATUS.json", {"state": "awaiting_next", **state[key]})
                     print(f"{now()} delivered {key}: {state[key]}", flush=True)
                 else:
-                    save(args.root / "STATUS.json", {"state": "idle", "reason": "No eligible work or review queue full", "updated_at": now()})
+                    retries = [v for v in state.values() if v.get("status") == "retry"
+                               and v.get("retry_after", 0) > time.time()]
+                    status = (wait_status(min(retries, key=lambda v: v["retry_after"])) if retries else
+                              {"state": "idle", "reason": "No eligible work or review queue full", "updated_at": now()})
+                    save(args.root / "STATUS.json", status)
             except Exception as exc:
                 print(f"{now()} ERROR {exc}", flush=True)
-                save(args.root / "STATUS.json", {"state": "error", "error": str(exc), "updated_at": now()})
                 if chosen:
-                    failures = state.get(chosen[0], {}).get("failures", 0) + 1
-                    state[chosen[0]] = {"status": "needs_attention" if failures >= 3 else "retry",
-                                         "failures": failures, "retry_after": time.time() + 900,
-                                         "error": str(exc), "at": now()}
+                    state[chosen[0]] = failure_record(exc, state.get(chosen[0], {}), chosen[1]["issue"])
                     save(args.root / "state.json", state)
+                    save(args.root / "STATUS.json", wait_status(state[chosen[0]]))
+                else:
+                    save(args.root / "STATUS.json", {"state": "error", "error": str(exc),
+                         "reason": str(exc), "updated_at": now()})
                 if args.mode == "once":
                     return 1
             if args.mode == "once":
                 return 0
-            time.sleep(10 if chosen and state.get(chosen[0], {}).get("status") == "delivered" else args.interval)
+            # Per-issue cooldown must not stall unrelated eligible diagnoses.
+            time.sleep(10 if chosen else args.interval)
 
 
 if __name__ == "__main__":

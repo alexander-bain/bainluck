@@ -29,6 +29,11 @@ def event_text(record):
     return ""
 
 
+def status_text(state):
+    reason = state.get("reason") or state.get("error") or ""
+    return safe_text(f"{state.get('state', 'not started')}  issue={state.get('issue', '—')}  {reason}")
+
+
 class Tail:
     def __init__(self):
         self.path = None
@@ -89,8 +94,7 @@ def main():
         state = read_json(ROOT / "STATUS.json")
         now = time.monotonic()
         if state != previous or now - last_notice >= 60:
-            print(f"\n[{time.strftime('%H:%M:%S')}] {state.get('state', 'not started')}"
-                  f"  issue={state.get('issue', '—')}  {state.get('reason', '')}", flush=True)
+            print(f"\n[{time.strftime('%H:%M:%S')}] {status_text(state)}", flush=True)
             if state.get("run"):
                 print(state["run"], flush=True)
             previous, last_notice = state, now
