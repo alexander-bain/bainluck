@@ -985,8 +985,109 @@ def _cumulative_date_leg_parts(text: str | None) -> tuple[float, str, str] | Non
     return float(year * 10000 + month_day), direction, f"date:{word}"
 
 
+# --- #7674 — the rung whose COMPARATOR IS IN THE QUESTION. ------------------
+#
+# Every grammar above reads the direction off the LEG. Polymarket's daily and
+# weekly strike series do not write it there: the comparator sits in the market
+# question, once, with a blank where the leg goes.
+#
+#     Google (GOOGL) closes above ___ on September 21?
+#         $345   $350   $355   $360   $365                      (61381313)
+#
+# Substituting a leg into the blank gives back an ordinary ``above $345`` rung,
+# so these nest exactly as hard as anything above. ``_NUM`` cannot read ``$345``
+# on its own and must not: a bare magnitude carries no direction, and guessing
+# one is how a bucket field becomes a fake ladder. So the card read five nested
+# rungs as an independent binary set and divided its leader by their 1.939 sum —
+# 0.91 printed as 0.4693, a 44.1-point split, the largest gap in the feed.
+#
+# THE BLANK IS THE EVIDENCE, and it is what makes this a grammar rather than a
+# guess. The same weekly series ships BOTH structures with visually identical
+# legs, and only the question separates them:
+#
+#     Will Google (GOOGL) finish week of September 21 above___?   nested
+#     Apple (AAPL) closes week of Sep 21 at ___?                  exclusive
+#
+# A blank that no comparator immediately precedes is not read at all, so the
+# ``at ___`` bucket field keeps exactly the reading it has today. Its legs are
+# RANGES (``$330-$335``), which the affix rule already refuses outright — the
+# two guards are independent and either one alone would hold.
+#
+# OPT-IN (``question=None``) for the reason the date grammar is: this widens the
+# POPULATION predicate, and four reader-visible sites read it. Left unset every
+# caller's answer is byte-identical, because a bare magnitude matches no grammar
+# above and this branch is tried LAST.
+#
+# AND IT DEGRADES THE RIGHT WAY IF #3513 IS REPAIRED. That issue reports the
+# blank as an INGEST defect — Polymarket's group TEMPLATE stored as the name
+# while the filled per-market question sits in the same upstream payload. If the
+# legs are one day filled in as ``Google closes above $345``, then
+# :data:`_CUMULATIVE_PRE_RE` reads them before this branch is reached and this
+# grammar silently stops matching. Additive on the way in, additive on the way
+# out; neither fix is built on the other's sand.
+
+#: A comparator IMMEDIATELY followed by the blank its leg substitutes into —
+#: ``above ___``, ``above___``, ``below ___``. Immediacy is the discipline
+#: :data:`THRESHOLD_RE` keeps and for the same reason: with slop allowed, a
+#: direction word anywhere in a long question could claim a blank it has nothing
+#: to do with ("Will the above-average rainfall continue, closing at ___?").
+_QUESTION_RUNG_RE = re.compile(
+    rf"(?P<word>{_UP_WORDS}|{_DOWN_WORDS})\s*_{{2,}}", re.I)
+
+
+def question_ladder_direction(question: str | None) -> str | None:
+    """The ladder direction a market QUESTION states, or ``None``.
+
+    ``None`` — never a guess — for a question with no blank, for a blank that no
+    comparator introduces, and for more than one direction, which is a two-sided
+    or range template (``above ___ and below ___``) and not one ladder.
+
+    The word can only ever arrive single-spaced, because the alternation it came
+    from spells its multi-word branches that way, so :data:`_DOWN_ONLY_RE` is
+    applied to the group exactly as the PRE grammar applies it.
+    """
+    if not question:
+        return None
+    directions = {
+        INC if _DOWN_ONLY_RE.match(match.group("word")) else DEC
+        for match in _QUESTION_RUNG_RE.finditer(question)
+    }
+    return directions.pop() if len(directions) == 1 else None
+
+
+#: A leg that is ONLY a magnitude — ``$345``, ``410M``, ``26`` — carrying the
+#: same inert label/affix slots the POST grammar allows and no direction of its
+#: own. :func:`question_ladder_direction` supplies the direction.
+_BARE_MAGNITUDE_RE = re.compile(
+    rf"^\s*(?P<label>{_AFFIX})\s*{_NUM}(?P<affix>{_AFFIX})\s*$", re.I)
+
+
+def _bare_magnitude_leg_parts(
+    text: str, direction: str,
+) -> tuple[float, str, str] | None:
+    """A bare-magnitude leg, read under a direction the QUESTION supplied.
+
+    The affix key is namespaced ``q:`` so a question-read leg can never share a
+    family with a leg that carried its own comparator. Mixing the two would
+    usually be one ladder written two ways, but "usually" is not a proof, and
+    refusing leaves that shape exactly where it is today.
+    """
+    match = _BARE_MAGNITUDE_RE.match(text)
+    if not match:
+        return None
+    if not (_affix_is_inert(match.group("label"))
+            and _affix_is_inert(match.group("affix"))):
+        return None
+    return (
+        _magnitude(match.group("val"), match.group("unit")),
+        direction,
+        f"q:{_affix_key(match.group('label'), match.group('affix'))}",
+    )
+
+
 def parse_cumulative_leg(
     text: str | None, *, dates: bool = False,
+    question_direction: str | None = None,
 ) -> tuple[float, str] | None:
     """An outcome leg that is a cumulative threshold: ``(value, direction)``.
 
@@ -1005,13 +1106,18 @@ def parse_cumulative_leg(
     magnitude answer is byte-identical either way, since no date leg can match a
     magnitude pattern, but the SET-level answer a caller builds on it is not —
     see the section comment above.
+
+    ``question_direction`` (#7674) additionally reads a BARE magnitude leg under
+    a direction its market question stated. Off by default for the same reason.
     """
-    parts = _cumulative_leg_parts(text, dates=dates)
+    parts = _cumulative_leg_parts(
+        text, dates=dates, question_direction=question_direction)
     return None if parts is None else (parts[0], parts[1])
 
 
 def _cumulative_leg_parts(
     text: str | None, *, dates: bool = False,
+    question_direction: str | None = None,
 ) -> tuple[float, str, str] | None:
     """:func:`parse_cumulative_leg` plus the leg's affix key.
 
@@ -1020,7 +1126,10 @@ def _cumulative_leg_parts(
     the name to get them. The public entry point keeps its two-value shape.
 
     The date grammar is tried LAST and only under ``dates``, so a string that
-    could somehow satisfy both keeps the magnitude reading it has today.
+    could somehow satisfy both keeps the magnitude reading it has today. The
+    question grammar (#7674) is tried after THAT, for the same reason and with
+    the same consequence: a leg that carries its own comparator, or its own
+    date, is never re-read under the question's.
     """
     if not text:
         return None
@@ -1039,7 +1148,11 @@ def _cumulative_leg_parts(
         _, value, direction = plus
         return value, direction, ""
     if dates:
-        return _cumulative_date_leg_parts(text)
+        dated = _cumulative_date_leg_parts(text)
+        if dated is not None:
+            return dated
+    if question_direction is not None:
+        return _bare_magnitude_leg_parts(text, question_direction)
     return None
 
 
@@ -1048,6 +1161,7 @@ def cumulative_outcome_ladder(
     *,
     name_key: str = "name",
     dates: bool = False,
+    question: str | None = None,
 ) -> tuple[list[tuple[float, Mapping[str, object]]], str] | None:
     """``([(value, row), ...], direction)`` when the outcome list is ONE ladder.
 
@@ -1065,9 +1179,24 @@ def cumulative_outcome_ladder(
     ``dates=True`` lets the DATE rung (#7650) count as a cumulative threshold.
     Left off, this function's answer is byte-identical to its pre-#7650 one for
     every input, because the date grammar is additive and is tried last.
+
+    ``question`` (#7674) lets a BARE magnitude leg count as a rung when the
+    market question states the comparator and marks the leg's place with a
+    blank. Left unset, the answer is byte-identical for the same reason.
+
+    ONE DISCRIMINATOR WEAKENS UNDER ``question`` AND THE OTHERS DO NOT. Every
+    leg read this way is handed the same direction, so the "all legs point the
+    same way" check below cannot fail for such a family — it is carrying no
+    information there, rather than quietly passing a family it examined. What
+    still has to hold is every other clause, and each is doing real work here:
+    at least two legs, EVERY leg parsed (an unreadable leg still disqualifies
+    the whole market), no duplicate rung value, and one affix across the family.
+    The question is only allowed to say WHICH WAY a ladder runs; it is never
+    allowed to say that a set of legs IS one.
     """
     if len(outcomes) < 2:
         return None
+    question_direction = question_ladder_direction(question)
     out: list[tuple[float, Mapping[str, object]]] = []
     directions = set()
     affixes: set[str] = set()
@@ -1075,7 +1204,8 @@ def cumulative_outcome_ladder(
     for row in outcomes:
         name = row.get(name_key)
         parsed = _cumulative_leg_parts(
-            name if isinstance(name, str) else None, dates=dates)
+            name if isinstance(name, str) else None, dates=dates,
+            question_direction=question_direction)
         if parsed is None:
             return None
         value, direction, affix = parsed

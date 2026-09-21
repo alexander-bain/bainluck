@@ -657,6 +657,7 @@ def incoherent_ladder_verdict(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
+    question: str | None = None,
 ) -> tuple[set[int], int]:
     """``(positions to drop, how many priced rungs the ladder had)``.
 
@@ -682,6 +683,7 @@ def incoherent_ladder_verdict(
     ladder = cumulative_outcome_ladder(
         [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)],
         dates=True,
+        question=question,
     )
     if ladder is None:
         return set(), 0
@@ -746,6 +748,7 @@ def incoherent_ladder_indexes(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
+    question: str | None = None,
 ) -> set[int]:
     """Positions in ``items`` whose price contradicts their own cumulative ladder.
 
@@ -764,7 +767,7 @@ def incoherent_ladder_indexes(
     production cards this was written for it names "Above 67" (Netflix) and
     "Above 94.609" (USDINR): the rungs those cards were headlined by.
     """
-    return incoherent_ladder_verdict(items, name_of, prob_of)[0]
+    return incoherent_ladder_verdict(items, name_of, prob_of, question)[0]
 
 
 # How many rows the reader's card needs to show a FIELD rather than an answer.
@@ -785,6 +788,7 @@ def ladder_treatment_collapsed(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
+    question: str | None = None,
 ) -> bool:
     """True when dropping the incoherent rungs leaves too few to draw a ladder.
 
@@ -800,7 +804,8 @@ def ladder_treatment_collapsed(
     ``Above 10`` .20 / ``Above 20`` .90 / ``Above 30`` .95 — the coherent run is
     ``Above 10`` alone, and this returns True.
     """
-    incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
+    incoherent, priced_rungs = incoherent_ladder_verdict(
+        items, name_of, prob_of, question)
     if not incoherent:
         return False
     return priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS
@@ -810,6 +815,7 @@ def drop_incoherent_ladder_outcomes(
     items: Sequence[_T],
     name_of: Callable[[_T], str | None],
     prob_of: Callable[[_T], float | None],
+    question: str | None = None,
 ) -> list[_T]:
     """Remove the rungs :func:`incoherent_ladder_indexes` names.
 
@@ -838,7 +844,8 @@ def drop_incoherent_ladder_outcomes(
     cumulative ladders, 2 lose a rung and **0** collapse — this is a defensive
     path, not a population.
     """
-    incoherent, priced_rungs = incoherent_ladder_verdict(items, name_of, prob_of)
+    incoherent, priced_rungs = incoherent_ladder_verdict(
+        items, name_of, prob_of, question)
     if not incoherent:
         return list(items)
     if priced_rungs - len(incoherent) < LADDER_MIN_DRAWN_RUNGS:

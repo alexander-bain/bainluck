@@ -609,6 +609,7 @@ def compute_futures_highlight(
         outcomes,
         lambda o: o.get("name"),
         lambda o: o.get("probability"),
+        market_name,
     )
 
     # #4640 — AND WHAT SURVIVES THAT DROP CAN STILL HAVE NO FAVORITE. #4610 above
@@ -637,7 +638,8 @@ def compute_futures_highlight(
     # nothing a reader is being shown stops being shown
     # (`artifacts/d352-7650/sibling-census.py`).
     result.leader_is_ladder_rung = (
-        cumulative_outcome_ladder(outcomes, name_key="name", dates=True) is not None
+        cumulative_outcome_ladder(
+            outcomes, name_key="name", dates=True, question=market_name) is not None
     )
 
     # Horizon, normalised ONCE. Two scoring terms need it and they sit on opposite
