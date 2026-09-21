@@ -1499,11 +1499,113 @@ def _in_scope(team, scope_keys: set[str]) -> int:
     return 1 if (scope_keys and sport_key in scope_keys) else 0
 
 
+def _secondary_claims(team) -> list[str]:
+    """The keys a row claims that are not its own `name`: abbreviation + aliases.
+
+    One list, built once, so the contest below and the write loop can never
+    disagree about which keys were even claimed.
+    """
+    claims = []
+    if getattr(team, "abbreviation", None):
+        claims.append(team.abbreviation)
+    claims.extend(getattr(team, "alternate_names", None) or [])
+    return [c for c in claims if c]
+
+
+def _alias_prefix_remainder(alias_norm: str, name: str | None) -> int | None:
+    """How many tokens of `name` the alias does NOT cover, or None if it is no prefix.
+
+    Token-wise, not substring: `oklahoma` leads `oklahoma st cowgirls`, but
+    `land` does not lead `cleveland cavaliers`.
+    """
+    if not name:
+        return None
+    alias_tokens = alias_norm.split()
+    name_tokens = _normalize_team_name(name).split()
+    if not alias_tokens or len(alias_tokens) > len(name_tokens):
+        return None
+    if name_tokens[: len(alias_tokens)] != alias_tokens:
+        return None
+    return len(name_tokens) - len(alias_tokens)
+
+
+def _alias_contest_winner(alias_norm: str, claimants: list, scope_keys: set[str]):
+    """Which row, if any, may hold an alias key that is NOBODY's own name (#7761).
+
+    #7727 settled the contest where the key IS some row's canonical name. This
+    is the OTHER arm, and it is the one the venues actually exercise: college
+    feeds publish BARE SCHOOL NAMES. `oklahoma` is nobody's canonical name —
+    `Oklahoma Sooners` is — so #7727's guard returns True unconditionally and
+    the key falls through to last-one-wins by `id`. Measured on production
+    2026-09-21, that put **Oklahoma State's crest and 24-10 record on the row
+    labelled "Oklahoma"** (2400 > 235, and 2400 > 235 is the whole reason), and
+    put **Utah's row under "West Virginia"** — thirteen unrelated schools claim
+    to be West Virginia, and `South Florida Bulls` had the biggest `id`.
+
+    An arbitrary order is wrong about as often as it is right, so the rule is to
+    prefer what is TRUE about the claim and to refuse when nothing is:
+
+    1. Scope first, exactly as the write order always has it — an in-scope row
+       beats an out-of-scope one and the tiers never mix (#6230).
+    2. A row whose OWN NAME THE ALIAS LEADS beats one where it does not.
+       `west virginia` leads `West Virginia Mountaineers` and leads none of the
+       other twelve, which settles a 13-way contest on a fact.
+    3. Among those, the alias that accounts for MORE of the name wins:
+       `oklahoma` leaves one token of `Oklahoma Sooners` and two of
+       `Oklahoma St Cowgirls`, and `Oklahoma State` is a different school.
+    4. Still tied and the rows are DIFFERENT anchored clubs ⇒ refuse the key
+       outright. `new york` is genuinely not the Yankees rather than the Mets;
+       serving either crest is a guess, and a guess is what this repair is
+       against. Tied rows sharing one anchor are one club with two rows, where
+       highest-`id` is the behaviour #6230/#7675 are built on — kept.
+
+    Measured over all 9,958 `teams` rows, every sport: 659 ownerless contested
+    keys, of which 599 keep today's winner byte-for-byte, 56 rebind (every one
+    to the correct club — `michigan` off `Akron Zips`, `texas tech` off
+    `Auburn Tigers`, `atlanta` off `Inter Miami CF`) and 4 refuse.
+
+    RESIDUAL, stated because it is a guess this rule does not remove: where two
+    differently-anchored rows both lead with the alias and differ only in
+    mascot length, step 3 picks the shorter — `chicago` takes the Cubs over the
+    White Sox. That key is arbitrary TODAY too (it takes the White Sox, by
+    `id`), no grid consults it (MLB rows carry full club names), and the honest
+    fix is the anchor channel (#7676), not a longer name rule. Four keys reach
+    step 3 at all; two are `chicago`, two are `oklahoma`/`colorado`, where the
+    loser's extra token is `St` and the answer is right.
+    """
+    top_tier = max(_in_scope(t, scope_keys) for t in claimants)
+    pool = [t for t in claimants if _in_scope(t, scope_keys) == top_tier]
+    if len(pool) == 1:
+        return pool[0].id
+
+    ranked = [(_alias_prefix_remainder(alias_norm, t.name), t) for t in pool]
+    leading = [(rem, t) for rem, t in ranked if rem is not None]
+    if not leading:
+        # Nothing to prefer — the alias leads nobody's name. Today's order
+        # stands rather than inventing a different arbitrary answer.
+        return pool[-1].id
+
+    best = min(rem for rem, _ in leading)
+    finalists = [t for rem, t in leading if rem == best]
+    if len(finalists) == 1:
+        return finalists[0].id
+
+    anchors = {
+        str(getattr(t, "espn_id", None))
+        for t in finalists
+        if getattr(t, "espn_id", None)
+    }
+    if len(anchors) > 1:
+        return None  # different clubs, nothing true separates them
+    return finalists[-1].id
+
+
 def _alias_may_claim(
     alias_norm: str,
     team,
     canonical_owners: dict[str, tuple[int, object, int]],
     scope_keys: set[str],
+    alias_winners: dict[str, object] | None = None,
 ) -> bool:
     """May `team` index itself under `alias_norm`, an abbreviation or alias?
 
@@ -1529,10 +1631,19 @@ def _alias_may_claim(
 
     Scope is untouched: the refusal applies only within one scope tier, so an
     in-scope row still beats an out-of-scope one exactly as before.
+
+    WHERE THE KEY IS NOBODY'S OWN NAME, `_alias_contest_winner` decides (#7761).
+    That is not a rare corner — it is how every college feed publishes, as bare
+    school names — and it used to fall straight through to last-one-wins.
     """
     owner = canonical_owners.get(alias_norm)
     if owner is None:
-        return True  # nobody's own name
+        if alias_winners and alias_norm in alias_winners:
+            # Contested by several rows and owned as a name by none: one row
+            # wins on the merits, or the key is refused (winner None, which no
+            # `id` equals) rather than guessed.
+            return alias_winners[alias_norm] == team.id
+        return True  # nobody's own name, and nobody else claims it
     _owner_id, owner_espn_id, owner_in_scope = owner
     # A row aliasing its OWN name needs no clause of its own: it is its own
     # anchor, so the equal-anchor return below already admits it.
@@ -1642,6 +1753,22 @@ async def _get_team_metadata(
             _in_scope(team, scope_keys),
         )
 
+    # Who contests each key that is nobody's own name. Computed first for the
+    # same reason `canonical_owners` is: the contest has to be settled before
+    # the first claimant is written, not discovered as rows arrive (#7761).
+    alias_claims: dict[str, list] = {}
+    for team in teams:
+        for alt in _secondary_claims(team):
+            alt_norm = _normalize_team_name(alt)
+            if alt_norm in canonical_owners:
+                continue  # #7727's arm owns this key
+            alias_claims.setdefault(alt_norm, []).append(team)
+    alias_winners: dict[str, object] = {
+        alias_norm: _alias_contest_winner(alias_norm, claimants, scope_keys)
+        for alias_norm, claimants in alias_claims.items()
+        if len(claimants) > 1
+    }
+
     # Build lookup by normalized name
     team_lookup: dict[str, dict] = {}
     for team in teams:
@@ -1712,13 +1839,11 @@ async def _get_team_metadata(
         # CLAIM about who a row is; the row's own `name` is the row itself. So
         # a claim may not take a key that is another CLUB's own name — see
         # `_alias_may_claim`.
-        secondary = []
-        if team.abbreviation:
-            secondary.append(team.abbreviation)
-        secondary.extend(team.alternate_names or [])
-        for alt in secondary:
+        for alt in _secondary_claims(team):
             alt_norm = _normalize_team_name(alt)
-            if _alias_may_claim(alt_norm, team, canonical_owners, scope_keys):
+            if _alias_may_claim(
+                alt_norm, team, canonical_owners, scope_keys, alias_winners
+            ):
                 team_lookup[alt_norm] = meta
 
     return team_lookup
