@@ -37,6 +37,8 @@
 // Usage: node chart-tooltip-clip-1833.mjs <url> [widthPx]
 //        CORS_SHIM=1 to point at a local dev server (see below).
 //        VERTICAL=1  verdict on bottom overflow (#7848) instead of side shear (#1833).
+//        FRACS=0.9,0.93,0.96  override the x sweep to reach the terminal (settled) point,
+//                    which the default sweep cannot — see the note beside the loop.
 // Exit:  0 no clipping on the selected axis at any sampled position · 1 CLIPPED (defect
 //        served) · 2 bad usage · 3 no win-probability chart on the page · 4 could not read
 import { createRequire } from 'module';
@@ -115,7 +117,26 @@ async function measure(label, root = '', idx = 0) {
 
   const samples = [];
   // Sample across the plot including both edges, where the defect lives.
-  for (const frac of [0.02, 0.15, 0.35, 0.5, 0.65, 0.85, 0.98]) {
+  //
+  // 🔴 THE DEFAULT SWEEP CANNOT REACH THE LAST POINT. These fracs are of the `.recharts-wrapper`
+  // box, which includes the chart's own margins, so 0.98 lands in the right MARGIN and reads
+  // `tooltip: null` — indistinguishable from "no tooltip here". On a completed game the terminal
+  // point is exactly where the settled row lives: `/events/14780544` serves ESPN
+  // `period: "Final"` beside `game_clock: "Final"`, and #7860's second symptom (`Final Final`)
+  // was therefore in the one place this probe never looked. FRACS overrides the sweep
+  // (`FRACS=0.9,0.93,0.96` — comma-separated, 0..1) so a settled row can be named and read.
+  // Report which sweep ran, so a banked JSON cannot be mistaken for a default run.
+  // 🪤 A mistyped FRACS must not read as a clean page. Filtering garbage away silently would
+  // leave an EMPTY sweep, and a surface with zero samples reports `withTooltip: 0` and no
+  // clipping — indistinguishable from a page whose tooltip never overflows. Refuse instead.
+  const FRACS = process.env.FRACS
+    ? process.env.FRACS.split(',').map(Number).filter((n) => Number.isFinite(n) && n >= 0 && n <= 1)
+    : [0.02, 0.15, 0.35, 0.5, 0.65, 0.85, 0.98];
+  if (!FRACS.length) {
+    console.error(`FRACS=${process.env.FRACS} has no usable value (want comma-separated 0..1)`);
+    process.exit(2);
+  }
+  for (const frac of FRACS) {
     const x = box.x + box.width * frac;
     const y = box.y + box.height * 0.5;
     await page.mouse.move(x, y);
@@ -171,6 +192,10 @@ async function measure(label, root = '', idx = 0) {
   return {
     label,
     plotWidth: Math.round(box.width),
+    // Which sweep ran. A banked JSON from a FRACS run answers a different question from a
+    // default run, and nothing else in the file says so.
+    fracs: FRACS.join(','),
+    fracsOverridden: Boolean(process.env.FRACS),
     sampled: samples.length,
     withTooltip: seen.length,
     maxCardWidth: seen.length ? Math.max(...seen.map((s) => s.width)) : null,
