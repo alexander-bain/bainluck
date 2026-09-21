@@ -2207,9 +2207,18 @@ def opening_capture_is_hindsight(event, market, resolution_date, now) -> bool:
     own ``closed`` flags, and the capture time against ``resolution_date``
     (ruling 103's predicate, ``opening_captured_at > resolution_date``).
 
-    ``market`` is the sub-market DTO on the decomposed path, None on the
-    parent-field path. Naive stamps are read as UTC; an unparseable stamp
-    refuses nothing, so a bad clock cannot blank live openings.
+    ``market`` is the sub-market DTO the leg was priced from. CERT-3202: it
+    used to be None on the two parent-field writers, which made the refusal
+    event-wide — and a Polymarket event stays open while its children settle
+    one by one, so a closed child under an open parent (the sole-child case
+    included) banked its settled book as the opening. ``_parent_outcome_data``
+    now carries the sub-market on each leg, so all four writers ask the same
+    question about the same object and a mixed field refuses only its settled
+    legs. Passing None is still accepted and still means "no per-child signal",
+    but no caller in this module does.
+
+    Naive stamps are read as UTC; an unparseable stamp refuses nothing, so a
+    bad clock cannot blank live openings.
 
     Datetime/date handling is exact, never truncated: an aware datetime
     compares at its full timestamp (``datetime`` is checked BEFORE
@@ -3253,8 +3262,17 @@ async def _process_event_batch(
                     # liquidity test — and is still the answer, not a price
                     # (ruling 103). Current price, book and snapshot still
                     # write; only the opening stamp is refused.
+                    #
+                    # CERT-3202: this passed `market=None` and so asked only
+                    # whether the PARENT was closed. A Polymarket event stays
+                    # open while its children settle one by one, so a closed
+                    # child under an open parent — including the sole-child
+                    # case — banked its settled book as the opening. The leg
+                    # carries the sub-market it was priced from, so the refusal
+                    # is per leg and a mixed field refuses only its settled
+                    # legs while its live ones still open normally.
                     if has_real_trading and opening_capture_is_hindsight(
-                        event, None, resolution_date, now
+                        event, od.get("market"), resolution_date, now
                     ):
                         stats["opening_refused_hindsight"] = (
                             stats.get("opening_refused_hindsight", 0) + 1
@@ -3665,15 +3683,20 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                     # every leg lost the `ON CONFLICT DO NOTHING` race.
                     _created_before_this_market = stats["outcomes_created"]
 
-                    # #2027: the poll's hindsight refusal, inherited whole, once
-                    # per market because it is a property of the market and its
-                    # capture time — not of a leg. `market=None`: this pass reads
-                    # the parent field, exactly as the poll's parent-field site
-                    # does, and `resolution_date` is that market's own stored
-                    # date (the parent event.end_date the poll wrote).
-                    _hindsight = opening_capture_is_hindsight(
-                        event, None, row.get("resolution_date"), now
-                    )
+                    # #2027: the poll's hindsight refusal, inherited whole.
+                    #
+                    # CERT-3202 moved it INSIDE the loop and this comment used
+                    # to be the error: it said the refusal was "a property of
+                    # the market and its capture time — not of a leg", and
+                    # passed `market=None`. It is a property of a leg. A
+                    # Polymarket event stays open while its children settle one
+                    # by one, so an event-wide decision either refuses a whole
+                    # live field or — the case that shipped — banks a settled
+                    # child's book as an opening because its parent was open.
+                    # `resolution_date` is still that market's own stored date
+                    # (the parent event.end_date the poll wrote), and the event
+                    # and date arms are unchanged; only the per-child arm is new.
+                    _resolution_date = row.get("resolution_date")
 
                     for rank, od in enumerate(outcome_data, 1):
                         prob = od["prob"]
@@ -3689,7 +3712,9 @@ async def _refresh_linked_polymarket_books(deadline_s: float | None = None) -> d
                         ) or (
                             od.get("last_price") is not None and od["last_price"] > 0
                         )
-                        if has_real_trading and _hindsight:
+                        if has_real_trading and opening_capture_is_hindsight(
+                            event, od.get("market"), _resolution_date, now
+                        ):
                             stats["opening_refused_hindsight"] = (
                                 stats.get("opening_refused_hindsight", 0) + 1
                             )
@@ -4639,6 +4664,13 @@ def _parent_outcome_data(event) -> list[dict]:
                 "yes_bid": market.best_bid,
                 "yes_ask": market.best_ask,
                 "last_price": market.last_trade_price,
+                # #2027 / CERT-3202: the sub-market this leg was priced FROM.
+                # Carried so the parent-field writers can ask the same question
+                # the decomposed path already asks — is THIS child settled —
+                # instead of passing `market=None` and seeing only the parent's
+                # flags. A closed sole child under an open parent was banking
+                # its settled book as the opening line.
+                "market": market,
             })
         return outcome_data
 
@@ -4673,6 +4705,13 @@ def _parent_outcome_data(event) -> list[dict]:
                 "yes_bid": market.best_bid,
                 "yes_ask": market.best_ask,
                 "last_price": market.last_trade_price,
+                # #2027 / CERT-3202: the sub-market this leg was priced FROM.
+                # Carried so the parent-field writers can ask the same question
+                # the decomposed path already asks — is THIS child settled —
+                # instead of passing `market=None` and seeing only the parent's
+                # flags. A closed sole child under an open parent was banking
+                # its settled book as the opening line.
+                "market": market,
             })
         return outcome_data
 
@@ -4704,6 +4743,8 @@ def _parent_outcome_data(event) -> list[dict]:
             "yes_bid": market.best_bid,
             "yes_ask": market.best_ask,
             "last_price": market.last_trade_price,
+            # #2027 / CERT-3202: see the note on the branches above.
+            "market": market,
         })
     return outcome_data
 

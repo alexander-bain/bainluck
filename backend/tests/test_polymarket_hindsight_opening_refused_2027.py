@@ -436,6 +436,68 @@ def _parsed_game(**kwargs):
     return event
 
 
+def _venue_single_child_event(*, price, child_closed):
+    """CERT-3202's shape: ONE sub-market, settled, under an OPEN parent.
+
+    Every other arm of the refusal is deliberately silenced so that only the
+    per-child one can fire:
+
+    * the parent is `closed: False` and `archived: False`, so the event arm
+      says nothing;
+    * `endDate` is months away, so the `resolution_date` arm says nothing;
+    * there is exactly one market, so the writer takes the PARENT-FIELD path
+      and the decomposed sub-market site — which already had this guard — is
+      never reached.
+
+    A two-sided book with a last trade, so `has_real_trading` is True on both
+    of its arms and the leg is one the writer genuinely wants to open. The
+    price is off the book's midpoint (0.985) on purpose, so the fabricated-
+    midpoint filter cannot drop the leg and leave the test inert.
+    """
+    return {
+        "id": "evt-3202-sole",
+        "title": "Flyers vs. Hurricanes",
+        "slug": "flyers-vs-hurricanes-sole",
+        "active": True,
+        "closed": False,
+        "archived": False,
+        "endDate": "2026-12-01T00:00:00Z",
+        "startDate": "2026-05-03T23:00:00Z",
+        "negRisk": False,
+        "markets": [
+            {
+                "id": "m-sole",
+                "conditionId": "0x3202sole",
+                "question": "Flyers vs. Hurricanes",
+                "slug": "flyers-hurricanes-sole",
+                "outcomes": '["Flyers", "Hurricanes"]',
+                "outcomePrices": f'["{price}", "{round(1 - price, 6)}"]',
+                "clobTokenIds": '["s11", "s22"]',
+                "bestBid": 0.97,
+                "bestAsk": 1.0,
+                "lastTradePrice": price,
+                "closed": child_closed,
+            }
+        ],
+    }
+
+
+def _parsed_single_closed_child(*, price, child_closed=True):
+    svc = PolymarketAPIService()
+    event = svc._parse_event(
+        _venue_single_child_event(price=price, child_closed=child_closed)
+    )
+    assert event is not None, "the parser refused a venue-shaped payload"
+    assert len(event.markets) == 1, (
+        "this fixture must reach the PARENT-FIELD path, not the decomposed one"
+    )
+    assert not event.closed and not event.archived, (
+        "the PARENT must be open, or the event arm does the refusing and the "
+        "per-child arm this case exists to prove is never exercised"
+    )
+    return event
+
+
 def _legs_by_external_id(fake):
     return {
         _insert_values(s)["external_id"]: _insert_values(s)
@@ -490,14 +552,22 @@ class TestTheDecomposedLegsRefuseToo:
         assert legs["0x2027game2_yes"]["opening_probability"] == 0.6
         assert stats.get("opening_refused_hindsight", 0) == 0
 
-    async def test_one_closed_sub_market_refuses_only_its_own_two_legs(
+    async def test_one_closed_sub_market_refuses_only_its_own_legs(
         self, monkeypatch
     ):
         """Precision: the taint is per sub-market, not per event.
 
-        The event is open and its resolution is months away — only the second
-        sub-market carries `closed=True`, so only its Over and Under legs may
-        lose their opening.
+        CERT-3202 is why the PARENT-FIELD legs are asserted here and not only
+        the decomposed pair. A Polymarket event stays open while its children
+        settle one by one. This fixture is that state — event open, resolution
+        months away, one child `closed=True` — and the parent-field writer used
+        to pass `market=None`, so it saw only the open parent and banked the
+        settled child's book as that child's opening line. The decomposed legs
+        were refused and the parent leg beside them was not.
+
+        Four assertions, two per child, and the mixed field is the point: the
+        open child opens on BOTH paths and the closed child is refused on both.
+        A repair that simply refused the whole event would red the first pair.
         """
         event = _parsed_game(
             closed=False,
@@ -507,11 +577,79 @@ class TestTheDecomposedLegsRefuseToo:
         )
         fake, stats = await _run_batch(monkeypatch, event)
         legs = _legs_by_external_id(fake)
+
+        # The OPEN child: decomposed pair and parent-field leg all still open.
         assert legs["0x2027game1_yes"]["opening_probability"] == 0.6
         assert legs["0x2027game1_no"]["opening_probability"] == 0.4
+        assert legs["0x2027game1"]["opening_probability"] == 0.6, (
+            "the open child's parent-field leg lost its opening — the refusal "
+            "went event-wide instead of per child"
+        )
+
+        # The CLOSED child: decomposed pair AND the parent-field leg refused.
         assert legs["0x2027game2_yes"]["opening_probability"] is None
         assert legs["0x2027game2_no"]["opening_probability"] is None
-        assert stats.get("opening_refused_hindsight", 0) == 2
+        assert legs["0x2027game2"]["opening_probability"] is None, (
+            "CERT-3202: the closed child's PARENT-FIELD leg banked its settled "
+            "book as an opening because the writer asked only the parent"
+        )
+        assert legs["0x2027game2"]["opening_captured_at"] is None
+
+        # Two decomposed + one parent-field leg, each counting itself.
+        assert stats.get("opening_refused_hindsight", 0) == 3
+
+    async def test_a_closed_SOLE_child_under_an_open_parent_is_refused(
+        self, monkeypatch
+    ):
+        """CERT-3202's named specimen, and the one the mixed case cannot cover.
+
+        With a single child there is no open sibling, so every leg the event
+        produces belongs to a settled market. That is the shape most likely to
+        be read as "the event is live" — the parent's own `closed` flag is
+        False and nothing else on the parent contradicts it — and the real
+        writer stored the settled 0.99 as `opening_probability`.
+
+        The current price is asserted present on purpose: this refuses the
+        opening STAMP only. A repair that dropped the leg would be a different,
+        worse change and would pass an assertion that only checked the opening.
+        """
+        event = _parsed_single_closed_child(price=0.99)
+        fake, stats = await _run_batch(monkeypatch, event)
+        legs = _legs_by_external_id(fake)
+
+        assert legs, "the writer never reached a leg — the fixture is inert"
+        for external_id, leg in legs.items():
+            assert leg["opening_probability"] is None, (
+                f"{external_id}: a closed sole child under an open parent "
+                f"stamped its settled book as the opening line"
+            )
+            assert leg["opening_captured_at"] is None
+            assert leg["current_probability"] == 0.99, (
+                f"{external_id}: the current price must still be written — "
+                f"this refuses the opening stamp, not the leg"
+            )
+        assert stats.get("opening_refused_hindsight", 0) >= 1
+
+    async def test_an_open_SOLE_child_under_an_open_parent_still_opens(
+        self, monkeypatch
+    ):
+        """The non-vacuity twin of the case above.
+
+        Same single-child shape, same open parent, same distant resolution —
+        only `closed` differs. Without this, a repair that refused every
+        sole-child event would pass the CERT-3202 specimen perfectly.
+        """
+        event = _parsed_single_closed_child(price=0.99, child_closed=False)
+        fake, stats = await _run_batch(monkeypatch, event)
+        legs = _legs_by_external_id(fake)
+
+        assert legs, "the writer never reached a leg — the fixture is inert"
+        for external_id, leg in legs.items():
+            assert leg["opening_probability"] == 0.99, (
+                f"{external_id}: an OPEN sole child lost its opening — the "
+                f"refusal is keyed on the shape, not on settlement"
+            )
+        assert stats.get("opening_refused_hindsight", 0) == 0
 
     async def test_a_venue_closed_game_is_refused_on_the_flag_alone(
         self, monkeypatch
