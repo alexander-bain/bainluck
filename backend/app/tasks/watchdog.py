@@ -97,6 +97,142 @@ BOOKMAKER_WRITER_TASK = "app.tasks.precompute_bookmaker_calibration"
 BOOKMAKER_ABSENCE_GRACE_SECONDS = 600
 _BOOKMAKER_ABSENT_SINCE_KEY = "bainluck:watchdog:bookmaker_curve_absent_since"
 
+# --- #2006: a backend that blocks vacuum, alarmed before it costs 40 hours ----
+#
+# #2005: one client backend held `backend_xmin` for ~40 h. Vacuum could not
+# advance anywhere in the database, the default landing page served 500s, and
+# every instrument that was actually watched read survivable: Grid Sentinel
+# green, link rate 91.0%, `/api/health` `{"status":"ok","db":true}`. It was
+# found by accident, by a Phase-0 probe, and fixed in one command once found.
+#
+# The signal nobody read is two numbers, both free, both in `pg_stat_activity`:
+#
+#   * `max(age(backend_xmin))` — 81,643 mid-incident, 372 healthy. Two orders of
+#     magnitude with nothing in between; this is as clean as production gets.
+#   * the age in SECONDS of the oldest non-idle transaction — the same fact on a
+#     wall clock instead of an xid clock.
+#
+# WHICH OF THE TWO ACTUALLY MEETS THE ONE-HOUR BAR — the arithmetic, because the
+# issue's acceptance criterion ("fires within ~1 h") is not deliverable by the
+# xid signal and it is worth saying so once rather than discovering it later.
+# `age(backend_xmin)` counts TRANSACTIONS, not time, so its rate is this
+# database's xid rate: the incident's own 81,643 over ~40 h is **0.57 xid/s**.
+# At that rate XMIN_PAGE (50,000) is reached after roughly 24 HOURS. So:
+#
+#   * the WALL-CLOCK signal is the one that pages inside the hour;
+#   * the XID signal is the unambiguous corroborator, and the only one that
+#     still reads when `xact_start` is unreadable or the holder is a backend
+#     whose transaction start we filtered out.
+#
+# They are therefore classified INDEPENDENTLY (see `classify_vacuum_signals`)
+# and the worst KNOWN verdict wins. A signal that is absent is not a signal that
+# is healthy — that conflation is #2005's own failure mode, and a candidate for
+# this issue reproduced it exactly (2026-09-20 review on #2006: one missing
+# optional input returned `unavailable` for the whole check, so the incident
+# shape published `ready`).
+#
+# IT ALERTS AND DOES NOT ACT. Cancelling a backend is not transactional and
+# cannot be rolled back — #1641 refuses it on the SQL rail for that reason and
+# that refusal is right. The reaper (scope item 3), the autovacuum `ALTER TABLE`
+# plan and any attended vacuum stay out of this module entirely.
+VACUUM_BLOCK_FLAG_KEY = "bainluck:watchdog:vacuum_block"
+
+#: Held-horizon thresholds in XIDS, straight from the issue body (warn 10,000 /
+#: page 50,000) against a measured-healthy 372. At this database's 0.57 xid/s
+#: those are ~4.9 h and ~24 h of held horizon.
+VACUUM_XMIN_WARN = 10_000
+VACUUM_XMIN_PAGE = 50_000
+
+#: Oldest non-idle transaction, in SECONDS.
+#:
+#: PAGE is the issue's 1 h. WARN is 30 min, NOT the issue's 15 min, and the
+#: departure is deliberate: the issue's own "Why" section records that the
+#: calibration producer's beats cancel at **17–22 minutes**, so a 15-minute warn
+#: would fire on healthy, designed behaviour several times a day and train
+#: everyone to ignore this alarm. 30 min sits above the longest legitimate
+#: holder and below the page.
+VACUUM_XACT_WARN_S = 1_800
+VACUUM_XACT_PAGE_S = 3_600
+
+#: Worst-table dead-tuple percentage (scope item 4). Kept as a THIRD, OPTIONAL
+#: signal rather than a check of its own: the issue's later measurement shows it
+#: reads 2.2% "healthy" on the 38 GB table throughout the incident, so it can
+#: corroborate but must never be required. During #2005 `events` read 57.5% and
+#: `futures_markets` 24.6%.
+VACUUM_DEAD_PCT_WARN = 20.0
+VACUUM_DEAD_PCT_PAGE = 50.0
+
+#: Every read below is bounded by this through the connection's startup packet
+#: (#4482 — never a bare `SET`). All three queries are stats-view reads with no
+#: user-table access; 5 s is two orders of magnitude of headroom, and a monitor
+#: that can itself hang is the thing being monitored.
+VACUUM_QUERY_TIMEOUT_MS = 5_000
+
+#: WHAT AN UNPRIVILEGED ROLE ACTUALLY SEES — measured, 2026-09-20, on a real
+#: server by `tests/integration/test_vacuum_block_signals_2006_real_postgres.py`,
+#: because the answer decides whether either query works on Heroku at all (the
+#: application role is not a superuser and is not in `pg_read_all_stats`).
+#:
+#: `pg_stat_activity` returns EVERY backend's row to everyone, and then nulls
+#: most columns of the rows belonging to other roles. The split is not the one
+#: the documentation's "the `query` field" sentence suggests:
+#:
+#:   * **`backend_xmin` IS readable across roles.** A superuser backend holding
+#:     a snapshot reported its real `backend_xmin` to a freshly-created role with
+#:     no privileges at all.
+#:   * **`state`, `xact_start` and `backend_type` are NULL across roles.**
+#:
+#: Two consequences, and the first is a trap that would have shipped:
+#:
+#: 1. `backend_type <> 'autovacuum worker'` evaluates to NULL — and therefore
+#:    EXCLUDES — every other-role row, i.e. exactly the rows whose `backend_xmin`
+#:    is still readable. Written that way the xid signal would have been blinded
+#:    on Heroku by its own autovacuum filter. `IS DISTINCT FROM` keeps them.
+#: 2. The WALL-CLOCK signal is same-role-only by construction, and no SQL fixes
+#:    that. It is not a defect for this ship: the application role owns every
+#:    backend the application opens, and #2005's culprit was one of them — an
+#:    orphaned dyno connection. It is a stated limit, and it is the sharpest
+#:    argument for classifying the two signals independently, because they do not
+#:    even see the same population.
+#:
+#: `application_name NOT LIKE 'pg_dump%'` excludes a backup, which holds one long
+#: transaction on a 38 GB database by construction. The xid read deliberately
+#: keeps pg_dump — a dump genuinely does hold the horizon, and at ~24 h to page
+#: it cannot fire on one. An autovacuum worker is excluded where it is visible
+#: (PostgreSQL ignores a vacuum's own xmin for the horizon, so counting one would
+#: be a false positive); where its `backend_type` is nulled by the role check it
+#: is counted, which is why this query returns the offending PID rather than a
+#: bare `max()` — the pid is what turns an alarm into an action.
+Q_VACUUM_OLDEST_XMIN = (
+    "SELECT pid, coalesce(usename, '') AS usename, age(backend_xmin) AS xmin_age "
+    "FROM pg_stat_activity "
+    "WHERE backend_xmin IS NOT NULL "
+    "AND backend_type IS DISTINCT FROM 'autovacuum worker' "
+    "ORDER BY age(backend_xmin) DESC LIMIT 1"
+)
+#: The worst offender, not just its age — a pid and an application_name are what
+#: make the alarm actionable instead of merely true. `query` is deliberately NOT
+#: selected: it is nulled for other roles anyway, and it is the one column here
+#: that could carry row data.
+Q_VACUUM_OLDEST_XACT = (
+    "SELECT pid, backend_type, coalesce(application_name, '') AS application_name, "
+    "EXTRACT(EPOCH FROM (now() - xact_start)) AS xact_age_s "
+    "FROM pg_stat_activity "
+    "WHERE xact_start IS NOT NULL AND state <> 'idle' "
+    "AND backend_type IS DISTINCT FROM 'autovacuum worker' "
+    "AND coalesce(application_name, '') NOT LIKE 'pg_dump%' "
+    "ORDER BY xact_start ASC LIMIT 1"
+)
+Q_VACUUM_WORST_DEAD_PCT = (
+    "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables "
+    "WHERE schemaname = 'public' AND n_live_tup + n_dead_tup > 1000 "
+    "ORDER BY n_dead_tup::float8 / NULLIF(n_live_tup + n_dead_tup, 0) DESC "
+    "LIMIT 1"
+)
+
+#: Ordered worst-last, so `max(known, key=...)` is the whole severity rule.
+_VACUUM_SEVERITY = {"unknown": 0, "ok": 1, "warn": 2, "page": 3}
+
 
 def _bounded_rc():
     """Socket-timeout-bounded sync Redis client (gotcha: a bare client can hang
@@ -205,6 +341,26 @@ def _alert_on_cooldown(alert_class: str, provider: str) -> bool:
         return not bool(rc.set(key, "1", nx=True, ex=ALERT_COOLDOWN_SECONDS))
     except Exception:
         return False
+
+
+def _clear_alert_cooldown(alert_class: str, provider: str) -> None:
+    """Drop the emission cooldown for one ``[class, provider]`` pair.
+
+    This is RECOVERY behaviour and it has to be a separate action, because the
+    cooldown window (6 h) is far longer than the beat that sets it (10 min). A
+    condition that goes bad, clears, and goes bad again inside one window would
+    otherwise be silent the second time — the alarm would be quietest exactly
+    when a stall is flapping, which is the shape hardest to catch by hand.
+
+    Best-effort by design: a Redis failure here can only leave a cooldown in
+    place, i.e. it can delay the next alarm by less than one window. It can
+    never raise, and it can never emit anything.
+    """
+    key = f"{_ALERT_COOLDOWN_PREFIX}{alert_class}:{_normalize_provider(provider)}"
+    try:
+        _bounded_rc().delete(key)
+    except Exception:
+        pass
 
 
 def _alert(alert_class: str, provider: str, msg: str) -> bool:
@@ -669,6 +825,237 @@ def _run_bookmaker_curve_watchdog(rc=None, now=None):
     }
 
 
+def _classify_one(value, warn_at, page_at) -> str:
+    """One signal's verdict: ``unknown`` / ``ok`` / ``warn`` / ``page``.
+
+    ``None`` is ``unknown``, never ``ok``. Comparisons are "at or above"; the
+    issue writes ``>``, which differs by one xid / one second and is not worth a
+    second comparison operator in a file where the point is that all three
+    signals are judged the same way.
+    """
+    if value is None:
+        return "unknown"
+    if value >= page_at:
+        return "page"
+    if value >= warn_at:
+        return "warn"
+    return "ok"
+
+
+def classify_vacuum_signals(xmin_age, xact_age_s, dead_pct):
+    """Judge each signal on its own and return ``(status, per_signal)``.
+
+    THE CORRECTION THIS FUNCTION EXISTS FOR. The rejected candidate opened with
+    ``if xmin_age is None or xact_age_s is None or dead_pct is None: return
+    "unavailable"`` — so one absent optional input erased two present ones, and
+    the #2005 shape itself (``xmin_age=81_643`` with no table stats) classified
+    as "we could not tell" rather than as the page it is. That is #2005's own
+    failure mode rebuilt inside its fix: the absence of a signal read as the
+    absence of a problem.
+
+    So: each signal is classified independently, and the status is the WORST
+    KNOWN verdict. ``unavailable`` is returned only when NOTHING is known — all
+    three ``None`` — because that, and only that, is genuinely "we could not
+    tell", and it is never ``ok``.
+    """
+    per_signal = {
+        "xmin_age": _classify_one(xmin_age, VACUUM_XMIN_WARN, VACUUM_XMIN_PAGE),
+        "xact_age_s": _classify_one(
+            xact_age_s, VACUUM_XACT_WARN_S, VACUUM_XACT_PAGE_S
+        ),
+        "worst_dead_pct": _classify_one(
+            dead_pct, VACUUM_DEAD_PCT_WARN, VACUUM_DEAD_PCT_PAGE
+        ),
+    }
+    known = [v for v in per_signal.values() if v != "unknown"]
+    if not known:
+        return "unavailable", per_signal
+    return max(known, key=_VACUUM_SEVERITY.__getitem__), per_signal
+
+
+async def _read_vacuum_signals() -> dict:
+    """Read the three vacuum-blocking signals. Never raises.
+
+    Each read is isolated: a failure degrades THAT field to ``None`` and leaves
+    the others intact, which is the only reason `classify_vacuum_signals` has
+    anything to be independent about. The whole session is bounded at
+    ``VACUUM_QUERY_TIMEOUT_MS`` through the connection's startup packet — see
+    ``get_task_session``'s #4482 note for why a bare ``SET`` would not hold.
+    """
+    from app.tasks.base import get_task_session
+
+    signals = {
+        "xmin_age": None,
+        "xmin_pid": None,
+        "xmin_usename": None,
+        "xact_age_s": None,
+        "xact_pid": None,
+        "xact_backend_type": None,
+        "xact_application_name": None,
+        "worst_table": None,
+        "worst_dead_pct": None,
+    }
+
+    try:
+        async with get_task_session(
+            statement_timeout_ms=VACUUM_QUERY_TIMEOUT_MS
+        ) as session:
+            try:
+                row = (await session.execute(sa_text(Q_VACUUM_OLDEST_XMIN))).first()
+                if row is not None and row.xmin_age is not None:
+                    signals["xmin_age"] = int(row.xmin_age)
+                    signals["xmin_pid"] = row.pid
+                    signals["xmin_usename"] = row.usename
+            except Exception:
+                logger.warning("watchdog: xmin-age read failed", exc_info=True)
+
+            try:
+                row = (await session.execute(sa_text(Q_VACUUM_OLDEST_XACT))).first()
+                if row is not None and row.xact_age_s is not None:
+                    signals["xact_age_s"] = int(float(row.xact_age_s))
+                    signals["xact_pid"] = row.pid
+                    signals["xact_backend_type"] = row.backend_type
+                    signals["xact_application_name"] = row.application_name
+            except Exception:
+                logger.warning("watchdog: oldest-xact read failed", exc_info=True)
+
+            try:
+                row = (
+                    await session.execute(sa_text(Q_VACUUM_WORST_DEAD_PCT))
+                ).first()
+                if row is not None:
+                    live, dead = int(row.n_live_tup), int(row.n_dead_tup)
+                    total = live + dead
+                    if total > 0:
+                        signals["worst_dead_pct"] = round(dead / total * 100, 1)
+                        signals["worst_table"] = row.relname
+            except Exception:
+                logger.warning("watchdog: dead-tuple read failed", exc_info=True)
+    except Exception:
+        # The session itself could not be opened. Every field stays None, which
+        # classifies as `unavailable` — not `ok`, and not an alarm either.
+        logger.warning("watchdog: vacuum-signal session failed", exc_info=True)
+
+    return signals
+
+
+def _vacuum_alert_body(signals: dict, status: str, per_signal: dict) -> tuple[str, str]:
+    """The alarm's message and its board-issue body — numbers, then the DO."""
+    xmin = signals.get("xmin_age")
+    xmin_pid = signals.get("xmin_pid")
+    xact = signals.get("xact_age_s")
+    pid = signals.get("xact_pid")
+    app_name = signals.get("xact_application_name") or "?"
+    table = signals.get("worst_table")
+    dead = signals.get("worst_dead_pct")
+
+    msg = (
+        f"Postgres vacuum horizon is held ({status}): "
+        f"age(backend_xmin)={xmin if xmin is not None else 'unknown'} on pid "
+        f"{xmin_pid if xmin_pid is not None else '?'} "
+        f"(warn {VACUUM_XMIN_WARN} / page {VACUUM_XMIN_PAGE}); oldest non-idle "
+        f"transaction={xact if xact is not None else 'unknown'}s "
+        f"(warn {VACUUM_XACT_WARN_S} / page {VACUUM_XACT_PAGE_S}) on pid "
+        f"{pid if pid is not None else '?'} application_name '{app_name}'; "
+        f"worst dead-tuple table "
+        f"{table or 'unknown'}={dead if dead is not None else 'unknown'}%. "
+        f"#2005 was this shape for 40 hours with /api/health reading ok."
+    )
+
+    body = (
+        f"The vacuum-block watchdog classified the Postgres vacuum horizon as "
+        f"**{status}**.\n\n"
+        f"| signal | value | verdict |\n|---|---:|---|\n"
+        f"| `age(backend_xmin)` (pid "
+        f"`{xmin_pid if xmin_pid is not None else '?'}`, role "
+        f"`{signals.get('xmin_usename') or '?'}`) | "
+        f"{xmin if xmin is not None else '—'} | {per_signal['xmin_age']} |\n"
+        f"| oldest non-idle transaction (s) | "
+        f"{xact if xact is not None else '—'} | {per_signal['xact_age_s']} |\n"
+        f"| worst dead-tuple table | "
+        f"{(table or '—')} "
+        f"{('' if dead is None else f'({dead}%)')} | "
+        f"{per_signal['worst_dead_pct']} |\n\n"
+        f"Oldest transaction's backend: pid `{pid if pid is not None else '?'}`, "
+        f"backend_type `{signals.get('xact_backend_type') or '?'}`, "
+        f"application_name `{app_name}`.\n\n"
+        f"**Why this pages.** #2005: one client backend held `backend_xmin` for "
+        f"~40 h, vacuum could not advance anywhere, the landing page served "
+        f"500s, and `/api/health` answered `ok` throughout. It was found by "
+        f"accident and fixed in one command. `max(age(backend_xmin))` read "
+        f"**81,643** during that incident and **372** ten minutes after it was "
+        f"cleared.\n\n"
+        f"**What this does NOT do.** It does not cancel anything. Cancelling a "
+        f"backend is not transactional and cannot be rolled back — #1641 "
+        f"refuses `pg_cancel_backend` on the SQL rail for that reason. The "
+        f"remedy is an attended `heroku pg:kill <pid>`, and the pid is above.\n\n"
+        f"_Auto-filed by the vacuum-block watchdog (#2006); comments accrete "
+        f"while the condition persists._"
+    )
+    return msg, body
+
+
+def _run_vacuum_block_watchdog(signals: dict, rc=None) -> dict:
+    """Alarm, suppress, and recover on the classified vacuum signals.
+
+    Split from :func:`_read_vacuum_signals` so the decision is testable without
+    a database and the read is provable without a decision.
+
+    Three behaviours, and the third is the one a monitor usually lacks:
+
+    * **page** — one alarm through the shared rail (Sentry fingerprinted on
+      ``[vacuum_block, postgres]`` + `logger.critical`) plus ONE deduped board
+      issue, then a Redis flag for the admin surfaces.
+    * **warn** — the same alarm, no board issue. A warn is "look at this today",
+      and an auto-filed issue per warn is how a board stops being read.
+    * **ok / unavailable — RECOVERY** — the flag is cleared AND so is the
+      emission cooldown, so the next episode alarms at once instead of inheriting
+      up to 6 h of silence from the last one. ``unavailable`` clears the flag but
+      never alarms: we could not tell, which is not the same as bad.
+    """
+    rc = rc or _bounded_rc()
+    status, per_signal = classify_vacuum_signals(
+        signals.get("xmin_age"),
+        signals.get("xact_age_s"),
+        signals.get("worst_dead_pct"),
+    )
+    result = {"status": status, "signals": per_signal, "alerted": False, **signals}
+
+    if status in ("ok", "unavailable"):
+        try:
+            rc.delete(VACUUM_BLOCK_FLAG_KEY)
+        except Exception:
+            pass
+        _clear_alert_cooldown("vacuum_block", "postgres")
+        return result
+
+    msg, body = _vacuum_alert_body(signals, status, per_signal)
+    result["alerted"] = _alert("vacuum_block", "postgres", msg)
+
+    if status == "page":
+        title = (
+            "[watchdog] a Postgres backend is holding the vacuum horizon "
+            f"(oldest non-idle transaction {signals.get('xact_age_s')}s, "
+            f"age(backend_xmin) {signals.get('xmin_age')})"
+        )
+        try:
+            result["filed"] = _file_watchdog_issue(
+                "vacuum_block", "postgres", title, body
+            )
+        except Exception as exc:
+            logger.warning("watchdog: vacuum-block filing failed: %s", exc)
+
+    try:
+        rc.setex(
+            VACUUM_BLOCK_FLAG_KEY,
+            7200,
+            json.dumps({"status": status, "signals": per_signal, **signals}),
+        )
+    except Exception:
+        pass
+    return result
+
+
 async def _run_freshness_watchdog():
     """Combined entry: creation-freshness (async DB) + phase-heartbeat (Redis)."""
     creation = await _run_creation_freshness_watchdog()
@@ -681,10 +1068,24 @@ async def _run_freshness_watchdog():
         # it.
         logger.exception("watchdog: bookmaker-curve check raised")
         bookmaker_curve = {"key_present": None, "refired": False, "reason": "raised"}
+    # #2006. Last, and behind the same belt-and-braces guard as the check above
+    # it: three checks that predate this one must not be able to fail because of
+    # it. The verdict rides the existing summary key, which is already read by
+    # the celery dashboard (`routes/admin_celery.py`) and the cockpit
+    # (`routes/admin_cockpit.py`) — both admin-authenticated. Nothing here goes
+    # near the unauthenticated readiness probe, which is where a candidate for
+    # this issue tried to put it and where three sequential stats queries do not
+    # belong.
+    try:
+        vacuum_block = _run_vacuum_block_watchdog(await _read_vacuum_signals())
+    except Exception:
+        logger.exception("watchdog: vacuum-block check raised")
+        vacuum_block = {"status": "unavailable", "alerted": False, "reason": "raised"}
     summary = {
         "creation": creation,
         "phase_heartbeat": phase,
         "bookmaker_curve": bookmaker_curve,
+        "vacuum_block": vacuum_block,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     # Persist the latest result so the admin dashboard / health surface can show

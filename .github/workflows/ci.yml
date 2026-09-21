@@ -2867,6 +2867,50 @@ jobs:
             exit 1
           fi
 
+      - name: "#2006 the vacuum-block signals, on a real server (real Postgres)"
+        # PILLAR: DISCOVER. SHIP: a stuck database transaction alerts the on-call
+        # rail instead of silently starving the Discover feed for hours.
+        #
+        # #2005: one client backend held `backend_xmin` for ~40 h, the landing
+        # page served 500s, and `/api/health` answered `ok` throughout.
+        #
+        # Every interesting property of this rail is one PostgreSQL decides, and
+        # this gate found a shipping defect on its first run. `pg_stat_activity`
+        # returns other roles' rows with most columns NULLed — but NOT
+        # `backend_xmin`, which stays readable. So `backend_type <> 'autovacuum
+        # worker'` evaluates to NULL and EXCLUDES exactly the cross-role rows the
+        # signal can still see: the xid alarm would have been blinded on Heroku
+        # by its own filter, invisibly to any test run as a superuser.
+        # `IS DISTINCT FROM` keeps them, and the arm named below is what holds it
+        # there. Reverting the operator was executed, not remembered — with `<>`
+        # that one arm fails and the other ten pass.
+        #
+        # Also asserted here because no fake session can: the unprivileged role
+        # sees its OWN role's stalled backend (the production shape), the
+        # wall-clock signal's cross-role blindness (a stated limit, recorded so
+        # nobody reads this alarm as covering the whole instance), the pg_dump
+        # exclusion in BOTH directions on one pid, the 5 s budget arriving on the
+        # connection AND being enforced, and the dead-tuple read returning no row
+        # and no error — the reachable absence whose mishandling got the first
+        # candidate for this issue rejected.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_vacuum_block_signals_2006_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/vacuum2006.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/vacuum2006.txt; then
+            echo "::error::#2006 vacuum-signal gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          # A skip check cannot see a DESELECTION, and most arms here are
+          # satisfied by a rail that reports everything: losing the cross-role
+          # xid arm specifically would leave this step green and meaningless.
+          # `[= ]11 passed`, not `^11 passed` (the summary sits inside an `=====`
+          # banner) and not a bare `11 passed` (which `111 passed` satisfies).
+          if ! grep -qE "[= ]11 passed" /tmp/vacuum2006.txt; then
+            echo "::error::#2006 vacuum-signal gate did not run all 11 arms — tests were deselected or removed"
+            exit 1
+          fi
+
       - name: "#6977 diacritic search fold, three rails (real Postgres)"
         # A plain-keyboard reader reached NONE of an accented club's rows.
         # Measured on production 2026-09-18, same minute, two spellings:
