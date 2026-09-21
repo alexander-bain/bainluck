@@ -628,8 +628,16 @@ def compute_futures_highlight(
     # and the cost of a false positive is a card that declines to name a favorite,
     # never one that names a wrong one. Measured 2026-09-12 on the 12 served cards
     # in this class: the top-3 verdict and the full-set verdict agreed 12/12.
+    #
+    # `dates=True` (#7650) matches `routes/feed.py`'s two call sites, which must
+    # agree with this one or the digest and the card describe one field two ways.
+    # A date rung is nested for the same reason and its loosest deadline leads for
+    # the same non-reason. MEASURED on the deployed feed 2026-09-21 02:37Z: the
+    # widening flips 5 fields, and 0 of them carry leader-derived copy today, so
+    # nothing a reader is being shown stops being shown
+    # (`artifacts/d352-7650/sibling-census.py`).
     result.leader_is_ladder_rung = (
-        cumulative_outcome_ladder(outcomes, name_key="name") is not None
+        cumulative_outcome_ladder(outcomes, name_key="name", dates=True) is not None
     )
 
     # Horizon, normalised ONCE. Two scoring terms need it and they sit on opposite

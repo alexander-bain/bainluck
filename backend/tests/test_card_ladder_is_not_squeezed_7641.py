@@ -125,20 +125,24 @@ def test_a_single_leg_is_never_a_ladder():
     assert _scale([("Above 10", 0.5)]) == 1.0
 
 
-def test_date_shaped_rungs_are_documented_as_OUT_OF_SCOPE():
-    """Deliberately unfixed, pinned so a later widening is a decision.
+def test_date_shaped_rungs_are_now_IN_SCOPE_via_7650():
+    """THE FLIP THIS TEST WAS WRITTEN TO MAKE DELIBERATE.
 
-    `Before Jan 1, 2027` is every bit as nested as `Above 175`, and it is live
-    on the feed (`59693686`, 13.5 pts; `109349`, 8.2 pts). The grammar in
-    `ladder_monotonicity` is numeric, and that module is shared with
-    calibration's ladder collapse and `outcome_display`'s incoherent-rung drop —
-    widening it moves those populations too. When #7650 lands this test flips,
-    on purpose, and that issue is the place it is argued.
+    Until #7650 this pinned the opposite assertion — `is False`, divisor 1.42 —
+    so that widening the grammar could not happen silently. #7650 measured the
+    widening at all four sites `cumulative_outcome_ladder` feeds before wiring
+    it (2 card numbers move, 0 bars change, 0 fields collapse, 0 captions are
+    withheld) and the pin is now the other way round. The live prices are
+    `59693686`'s own, so the 1.42 below is the divisor a reader was actually
+    served, not an invented one.
     """
-    dates = [("Before Jan 1, 2027", 0.455), ("Before Dec 1, 2026", 0.38),
-             ("Before Nov 1, 2026", 0.31), ("Before Oct 1, 2026", 0.275)]
-    assert _outcomes_are_cumulative_ladder([_Outcome(n, p) for n, p in dates]) is False
-    assert _scale(dates) == pytest.approx(1.42)
+    dates = [("Before Jan 1, 2027", 0.455), ("Before Dec 1, 2026", 0.405),
+             ("Before Nov 1, 2026", 0.355), ("Before Oct 1, 2026", 0.205)]
+    assert sum(p for _, p in dates) == pytest.approx(1.42), (
+        "the specimen no longer reproduces the 1.42 divisor it was chosen for"
+    )
+    assert _outcomes_are_cumulative_ladder([_Outcome(n, p) for n, p in dates]) is True
+    assert _scale(dates) == 1.0
 
 
 def test_the_mini_list_shares_the_distribution_basis_on_a_ladder():

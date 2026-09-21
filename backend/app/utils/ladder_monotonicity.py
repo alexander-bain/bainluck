@@ -860,7 +860,134 @@ _CUMULATIVE_POST_RE = re.compile(
 _POST_DOWN = {"below", "lower", "less", "under"}
 
 
-def parse_cumulative_leg(text: str | None) -> tuple[float, str] | None:
+# --- #7650 — the DATE-shaped rung, and why it is its own grammar. -----------
+#
+# Everything above reads a MAGNITUDE. A date threshold is every bit as nested —
+# whatever happens before Oct 1 also happens before Jan 1 — and Kalshi writes
+# whole ladders that way, but ``_NUM`` cannot read one and never could:
+#
+#     Before Jan 1, 2027   Before Dec 1, 2026   Before Oct 1, 2026   (59693686)
+#     Before April 2027    Before 2027          Before October       (109349)
+#
+# Every one of those returns ``None`` from :func:`parse_cumulative_leg`, so both
+# markets read as ordinary non-exclusive fields and the Discover card divides
+# each leg by the sum of its own nested rungs — 45.5% printed as 32.0%.
+#
+# THREE THINGS MAKE THIS SAFE TO ADD TO A SHARED GRAMMAR.
+#
+# **The word decides the sign, never the date.** ``before``/``by`` are :data:`INC`
+# (a later deadline CONTAINS an earlier one, so its price can only rise);
+# ``after`` is :data:`DEC`. Read off the leading word exactly as
+# :func:`parse_threshold` reads it off ``above``/``below``.
+#
+# **A FAMILY MAY NOT MIX THE WORDS.** ``before Apr 2027`` and ``by Apr 2027`` are
+# a day apart in meaning and identical in this encoding, and a set holding both
+# is not a ladder anyone measured. The word is therefore folded into the leg's
+# AFFIX KEY (namespaced ``date:``, which no magnitude affix can spell — the affix
+# grammar admits no colon), so :func:`cumulative_outcome_ladder`'s existing
+# one-affix rule refuses a mixed set for free, and refuses a set mixing date and
+# magnitude legs with it. Fail-closed, the direction this module always fails.
+#
+# **A PARTITION STILL CANNOT SNEAK IN.** The bracketed shape a venue writes for
+# disjoint date bins — ``Before Jan 2027`` / ``Jan-Mar 2027`` / ``After Mar 2027``
+# — dies on the middle leg, which parses as nothing and disqualifies the whole
+# market under the all-legs discriminator. A bare two-leg ``Before D`` / ``After
+# D`` pair dies on ``len(directions) != 1``. Neither needs a new rule.
+#
+# The year fence is the fourth guard and it is doing real work: ``\d{4}`` on a
+# bare number would read ``Before 5000`` — a QUANTITY leg — as the year 5000.
+# Outside :data:`_PLAUSIBLE_YEARS` the leg is refused, which disqualifies its
+# market and leaves it exactly where it is today.
+#
+# OPT-IN (``dates=False``) because this grammar is shared. Turning it on changes
+# which sets :func:`cumulative_outcome_ladder` calls a ladder, and that answer is
+# read by ``outcome_display``'s incoherent-rung drop, ``futures_highlights``'
+# leader copy and the Discover card's divisor. Each consumer opts in once its own
+# population has been measured; left off, every caller is byte-unchanged.
+#
+# WHO HAS OPTED IN, and who deliberately has not. The Discover path — the card's
+# divisor, the incoherent-rung drop and the leader copy — passes ``dates=True``,
+# on the census in ``artifacts/d352-7650/sibling-census.py`` (110 of 110
+# feed cards read: 5 fields flip, 2 card numbers move, 0 bars change, 0 fields
+# collapse, 0 leader captions are withheld). ``scripts/calibration_cell_exact.py``
+# does NOT: it folds :func:`outcome_ladder_report` over Kalshi cells whose
+# population nobody has measured for this, and it reports numbers that end up in
+# certs. It keeps the narrow grammar until that cell is measured — a measurement
+# instrument silently changing its own basis is the defect, not the caution.
+
+#: A date rung has to be a plausible calendar year, not a 4-digit quantity.
+_PLAUSIBLE_YEARS = range(2000, 2101)
+
+#: ``before/by/after <date>``, and nothing else on the leg. Anchored at both ends
+#: for the same reason :data:`PLUS_BRACKET_RE` is: trailing prose is text this
+#: grammar cannot account for, and that is exactly the text that would decide
+#: whether the leg is one-sided. ``(?P<day>\d{1,2})(?!\d)`` stops the ``20`` of
+#: ``2027`` being taken as a day of the month.
+_CUMULATIVE_DATE_RE = re.compile(
+    r"^\s*(?P<dword>before|by|after)\s+(?:"
+    r"(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"(?:\s+(?P<day>\d{1,2})(?!\d))?(?:,?\s*(?P<yr>\d{4}))?"
+    r"|(?P<bare>\d{4})"
+    r")\s*\.?\s*$", re.I)
+
+#: ``after`` is the only descending date word: a later floor contains LESS.
+_DATE_DOWN = {"after"}
+
+#: ``before D`` is the FLOOR of the period D names; ``by D`` and ``after D`` are
+#: its CEILING. It matters only where the period is wider than a day — ``before
+#: April 2027`` is before the 1st, ``by April 2027`` is through the 30th — and
+#: because a family may not mix the words, one convention per family is enough.
+_DATE_CEIL_WORDS = {"by", "after"}
+
+
+def parse_cumulative_date_leg(text: str | None) -> tuple[float, str] | None:
+    """A ``before/by/after <date>`` leg as ``(YYYYMMDD-sortable, direction)``.
+
+    The value is an integer-valued float on the same scale
+    :func:`parse_by_date` uses, so every grammar in this module hands the
+    comparison layer one type and the sort never branches on which parser
+    produced a rung. It is a SORT KEY and not a date: a month with no day is
+    pinned to ``MM00`` or ``MM99`` by the word (see :data:`_DATE_CEIL_WORDS`) so
+    it sits either side of every dated rung inside it, and a bare year likewise.
+
+    Returns ``None`` — never raises — for anything else, because a leg this
+    grammar cannot read must disqualify its whole market rather than be skipped.
+    """
+    parts = _cumulative_date_leg_parts(text)
+    return None if parts is None else (parts[0], parts[1])
+
+
+def _cumulative_date_leg_parts(text: str | None) -> tuple[float, str, str] | None:
+    """:func:`parse_cumulative_date_leg` plus the leg's affix key.
+
+    The affix key is the date word itself, namespaced, which is what makes the
+    one-affix rule in :func:`cumulative_outcome_ladder` refuse a family that
+    mixes ``before`` with ``by`` — or a date leg with a magnitude leg.
+    """
+    if not text:
+        return None
+    m = _CUMULATIVE_DATE_RE.match(text)
+    if not m:
+        return None
+    word = m.group("dword").lower()
+    ceiling = word in _DATE_CEIL_WORDS
+    if m.group("bare"):
+        year = int(m.group("bare"))
+        month_day = 1299 if ceiling else 0
+    else:
+        year = int(m.group("yr") or DEFAULT_YEAR)
+        day = m.group("day")
+        month_day = _MONTHS[m.group("mon").lower()[:3]] * 100 + (
+            int(day) if day is not None else (99 if ceiling else 0))
+    if year not in _PLAUSIBLE_YEARS:
+        return None
+    direction = DEC if word in _DATE_DOWN else INC
+    return float(year * 10000 + month_day), direction, f"date:{word}"
+
+
+def parse_cumulative_leg(
+    text: str | None, *, dates: bool = False,
+) -> tuple[float, str] | None:
     """An outcome leg that is a cumulative threshold: ``(value, direction)``.
 
     Accepts the three shapes above plus the bare ``X+`` bracket the module
@@ -873,17 +1000,27 @@ def parse_cumulative_leg(text: str | None) -> tuple[float, str] | None:
     affix that is NOT inert refuses the leg rather than being stripped, because
     the text this grammar cannot account for is exactly the text that decides
     whether the leg is one-sided.
+
+    ``dates=True`` additionally reads the date rung (#7650). Off by default: the
+    magnitude answer is byte-identical either way, since no date leg can match a
+    magnitude pattern, but the SET-level answer a caller builds on it is not —
+    see the section comment above.
     """
-    parts = _cumulative_leg_parts(text)
+    parts = _cumulative_leg_parts(text, dates=dates)
     return None if parts is None else (parts[0], parts[1])
 
 
-def _cumulative_leg_parts(text: str | None) -> tuple[float, str, str] | None:
+def _cumulative_leg_parts(
+    text: str | None, *, dates: bool = False,
+) -> tuple[float, str, str] | None:
     """:func:`parse_cumulative_leg` plus the leg's affix key.
 
     Split out for :func:`cumulative_outcome_ladder`, which needs the affixes to
     compare legs to each other (see :func:`_affix_key`) and must not re-parse
     the name to get them. The public entry point keeps its two-value shape.
+
+    The date grammar is tried LAST and only under ``dates``, so a string that
+    could somehow satisfy both keeps the magnitude reading it has today.
     """
     if not text:
         return None
@@ -901,6 +1038,8 @@ def _cumulative_leg_parts(text: str | None) -> tuple[float, str, str] | None:
     if plus is not None:
         _, value, direction = plus
         return value, direction, ""
+    if dates:
+        return _cumulative_date_leg_parts(text)
     return None
 
 
@@ -908,6 +1047,7 @@ def cumulative_outcome_ladder(
     outcomes: Sequence[Mapping[str, object]],
     *,
     name_key: str = "name",
+    dates: bool = False,
 ) -> tuple[list[tuple[float, Mapping[str, object]]], str] | None:
     """``([(value, row), ...], direction)`` when the outcome list is ONE ladder.
 
@@ -921,6 +1061,10 @@ def cumulative_outcome_ladder(
     A leg with no price is NOT excluded here — pricing is the caller's problem,
     and dropping it at this layer would let a ladder qualify on a subset of its
     own legs, which is how a partition silently changes population (lesson 14).
+
+    ``dates=True`` lets the DATE rung (#7650) count as a cumulative threshold.
+    Left off, this function's answer is byte-identical to its pre-#7650 one for
+    every input, because the date grammar is additive and is tried last.
     """
     if len(outcomes) < 2:
         return None
@@ -930,7 +1074,8 @@ def cumulative_outcome_ladder(
     seen: set[float] = set()
     for row in outcomes:
         name = row.get(name_key)
-        parsed = _cumulative_leg_parts(name if isinstance(name, str) else None)
+        parsed = _cumulative_leg_parts(
+            name if isinstance(name, str) else None, dates=dates)
         if parsed is None:
             return None
         value, direction, affix = parsed
