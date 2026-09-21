@@ -2914,7 +2914,37 @@ export default function CalibrationPage() {
               `price_derived` census is taken over a different shape than the curve's
               exclusions and its own producer says the two have never been equal. */}
           <li data-testid="calibration-who-won-note"><strong className="text-text-primary">How do we know who won?</strong> For sports, we use final scores &mdash; no ambiguity. For prediction markets, we use the venue&rsquo;s own settlement: Kalshi&rsquo;s or Polymarket&rsquo;s published answer to the question, or a public record that settles it. We do not take the winner from the market&rsquo;s own closing price &mdash; a prediction we could only grade that way is left out of the curve instead, because a forecast marked by its own price is marking its own homework. The exception is a market that asks a single yes-or-no question, where there is no other price in play and the venue&rsquo;s answer stands on its own.</li>
-          <li><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we use vig-removed consensus closing odds across 20+ sportsbooks. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
+          {/* #7718. This clause said "vig-removed CONSENSUS closing odds across
+              20+ sportsbooks", and the page called the same curve
+              "Per-sportsbook" three times above it — in the hero SOURCES card,
+              in the Source Comparison row and in the shape breakout — all three
+              off the server's own `source_labels.odds_api_bookmaker.label`.
+
+              The label is the true one. `_BOOKMAKER_CHUNK_SQL`
+              (backfill_winners.py:10004) selects DISTINCT ON the (event,
+              sportsbook) pair — one row per sportsbook per game, that
+              sportsbook's own last price before kickoff — and then COUNT(*)s
+              them. No averaging step exists in the producer. So the 106,030
+              `odds_api_bookmaker` outcomes, 68% of the Sportsbooks row, are the
+              same games counted once per sportsbook, not one blended line: a
+              difference that changes what `n` means and why errors inside a
+              bucket correlate, which is exactly what an accuracy page owes.
+
+              "vig-removed" is TRUE and stays — the same query devigs each
+              sportsbook on its own two-way, `home/(home+away)`. Only the
+              relationship was wrong. The "20+" count went with it: measured on
+              the 25 most recent completed events, a game carries 9-21
+              sportsbooks and typically about ten, so the figure did not support
+              the clause it sat in.
+
+              BOTH HALVES OF THE CONTRADICTION WERE SET BY ONE COMMIT. `b0e54ac3`
+              (CERT-2290, #4067) swapped the notice-33 banned supplier word out
+              of this sentence and, in the same repair, wrote
+              "Per-sportsbook (Odds API)" into both label registries. It was a
+              word sweep; the relationship was never in its scope. #7482 then
+              quoted this very sentence, fixed its opening-vs-closing clause, and
+              left "consensus" one clause later — this is that residual. */}
+          <li data-testid="calibration-price-basis-answer"><strong className="text-text-primary">Which probability do we use?</strong> For events with a known start time (sports games, tournaments), we use <strong>closing line prices</strong> &mdash; the last traded price before the event begins. This is the <a href="https://doi.org/10.1016/j.ijforecast.2008.03.007" target="_blank" rel="noopener noreferrer" className="text-accent-brand hover:underline">academic gold standard</a> for calibration because it captures all available information at the moment of truth. For sports, we measure each sportsbook separately &mdash; its own last price before kickoff, vig removed across the two sides &mdash; so a game that ten sportsbooks priced counts once for each of them. For prediction markets linked to events (Kalshi, Polymarket game markets), we use the last traded price before the event starts. For markets without a fixed event start time (elections, economics, entertainment), we use the <strong>opening price after initial trading settles</strong> &mdash; the most conservative and honest measure. A year-long market&rsquo;s accuracy depends on when you measure, so a single closing line would be misleading.</li>
           {/* Queue 316 item 1. This was a column in Source Comparison, where it
               competed with ECE for the reader's attention while being a
               guardrail rather than a headline: it answers "is the error spread
