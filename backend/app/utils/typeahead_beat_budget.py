@@ -1809,7 +1809,46 @@ def free_background_slots(
 #: `BACKGROUND_BEAT_COUNT = 126` against a base of 125 while this branch writes
 #: 126, and the composed tree is 127. Re-run the census after any rebase; a
 #: clean merge is NOT evidence the number survived it.
-BACKGROUND_BEAT_COUNT = 126
+#:
+#: 🔴 RE-DERIVED at calibration/2678 (2026-09-21, #7665): 126 → **127**, explicit
+#: 83 → **84**, fall-through UNMOVED at **43**.
+#: `repair-openings-from-first-snapshot` (`crontab(minute=48, hour="4,10,16,22")`)
+#: names `background` explicitly, which is the benign direction this guard
+#: reserves. RE-DERIVED by RUNNING the census over the assembled `beat_schedule`,
+#: which printed `explicit 84 implicit 43 total 127`, never by adding one to 126
+#: (#1910).
+#:
+#: Cost shape, declared because this file is where `background` gets argued
+#: about. Four fires a day against a 480 s self-imposed wall inside a 720 s soft
+#: limit, so the WORST case is 4 × 480 s = ~2.2 % of a slot-day. Each batch is
+#: one bounded keyset read of 50,000 outcome ids and one UPDATE restricted to
+#: exactly those ids — the cursor makes the work per run a function of the scan
+#: size and not of the 3.4 M-row `opening_probability IS NULL` population, which
+#: is the whole reason this is a beat and not a hoist (#5128 warns that hoisting
+#: Phase 0c into the un-guarded prologue charges its cost to the phases the gates
+#: protect). It converges: every promoted row leaves the population permanently,
+#: and once the walk wraps, later runs re-examine a population that only the
+#: history backfills can refill.
+#:
+#: WHY `background` AND NOT `heavy`: the ship is "Phase 0c-repair actually runs".
+#: `bainluck-heavy` converges to master on its own cadence (notice 48), so
+#: routing this there would swap a budget gate for a deployment lag and starve
+#: the same clause a second way.
+#:
+#: WHY `:48` rather than a minute a sibling already holds: `backfill_winners`
+#: fires `:45 @ 3,9,15,21` against an 840 s wall and is done by ~:59 of the
+#: previous hour; `recover-datagolf-participation` fires `:30` in THESE hours
+#: against a 660 s hard limit and is done by :41; the `:40-:58` integrity beats
+#: are in hours 5,11,17,23. No exact-minute beat in the schedule fires at `:48`,
+#: and the only every-N beats that reach it are the `*/2` realtime poller. The
+#: background worker has two slots, and a long co-scheduled beat is how three of
+#: this beat's four siblings starved before it (gotcha #12/#39).
+#:
+#: ⚠️ The merge hazard applies to THIS line in turn: another lane adding a
+#: background beat writes the identical `BACKGROUND_BEAT_COUNT = 127` against a
+#: base of 126 while this branch writes 127, and the composed tree is 128 with no
+#: textual conflict. Re-run the census AFTER the rebase, not before it.
+BACKGROUND_BEAT_COUNT = 127
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
