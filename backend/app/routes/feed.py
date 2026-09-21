@@ -6527,11 +6527,14 @@ def _outcomes_are_cumulative_ladder(all_sorted_outcomes: list) -> bool:
     Both delegate to `cumulative_outcome_ladder` and neither re-implements the
     grammar, so the card cannot decide it is looking at a ladder for the purpose
     of one sentence and a distribution for the purpose of the numbers in it.
+
+    `dates=True` (#7650) — see `_leader_is_ladder_rung`, which passes it too.
     """
     return (
         cumulative_outcome_ladder(
             [{"name": getattr(o, "name", None)} for o in all_sorted_outcomes],
             name_key="name",
+            dates=True,
         )
         is not None
     )
@@ -6581,12 +6584,31 @@ def _feed_display_scale(all_sorted_outcomes: list) -> float:
     dividing). Nestedness is the property that makes a sum meaningless, and only
     the outcome list can prove it.
 
-    Deliberately NOT covered: date-shaped rungs ("Before Jan 1, 2027"). The
-    grammar in `ladder_monotonicity` is numeric, that module is shared with
-    calibration's ladder collapse and `outcome_display`'s incoherent-rung drop,
-    and widening it would move those populations too. Measured live and filed as
-    its own ship (#7650); this gate leaves those cards exactly as they are today
-    rather than half-fixing the class here.
+    ── #7650: AND THE DATE-SHAPED RUNGS, MEASURED AT EVERY SITE THE GATE FEEDS ──
+
+    A date rung nests exactly as hard — everything that happens before Oct 1 also
+    happens before Jan 1 — so the same defect ran on date ladders and #7641 left
+    them alone, because `cumulative_outcome_ladder` is shared and a widening lands
+    on the POPULATION predicate rather than on this call site. It is now read with
+    `dates=True`, after pricing the widening at all four sites it feeds. MEASURED
+    2026-09-21 02:37Z on the deployed feed, 110 futures cards, 110 read:
+
+      site                                        | effect of the widening
+      --------------------------------------------|------------------------------
+      this divisor                                | 2 cards repaired, 3 flip with
+                                                  |   no number change
+      `drop_incoherent_ladder_outcomes` (bars)    | 0 of 5
+      `ladder_treatment_collapsed` (field drawn)  | 0
+      `_leader_is_ladder_rung` (copy)             | flips on 5, 0 of which carry
+                                                  |   leader-derived copy today
+
+      `Will Trump declare a national emergency?` `Before Jan 1, 2027`  .3204 -> .455  (13.5 pts)
+      `When will Apple release the iPhone 18?`   `Before April 2027`   .7432 -> .825  ( 8.2 pts)
+
+    The 89 fields the widening does NOT flip were checked at every site and moved
+    nowhere: the date grammar is additive and is tried last, so a magnitude leg's
+    reading is byte-identical. Census + control:
+    `artifacts/d352-7650/sibling-census.py`.
     """
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes):
         return 1.0
@@ -6969,8 +6991,18 @@ def _leader_is_ladder_rung(outcomes_data: list[dict]) -> bool:
     outcome list can tell them apart, which is what `cumulative_outcome_ladder`
     reads — at least two legs, every leg a cumulative threshold, all pointing the
     same way, no duplicate rung.
+
+    `dates=True` (#7650) because a DATE rung nests exactly as hard: "Before Oct 1"
+    is contained in "Before Jan 1", so the loosest deadline is dearest by the same
+    arithmetic and leads for the same non-reason. Passed here and at
+    `_outcomes_are_cumulative_ladder` together — the two must answer one field the
+    same way or the card calls it a ladder for its copy and a distribution for its
+    numbers, which `test_both_ladder_predicates_answer_the_same_field_the_same_way`
+    pins.
     """
-    return cumulative_outcome_ladder(outcomes_data, name_key="name") is not None
+    return cumulative_outcome_ladder(
+        outcomes_data, name_key="name", dates=True
+    ) is not None
 
 
 def _top_outcomes_for_trace(

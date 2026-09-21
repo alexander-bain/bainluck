@@ -672,8 +672,16 @@ def incoherent_ladder_verdict(
     # The rows handed to the law are throwaway dicts carrying the caller's
     # POSITION, not its label: a leg is identified by where it sits in `items`,
     # never by its name, which two rows of one list are free to repeat.
+    # `dates=True` (#7650): a date ladder's rungs nest as hard as a magnitude
+    # ladder's, so a rung priced above a looser one is the same impossible
+    # arithmetic and is not evidence either. MEASURED before wiring, on the 110
+    # futures cards of the deployed feed 2026-09-21 02:37Z: the widening flips 5
+    # fields to ladders and changes the drawn bars on 0 of them, collapsing none
+    # (`artifacts/d352-7650/sibling-census.py`). This is a defensive path
+    # reaching a new shape, not a population being filtered.
     ladder = cumulative_outcome_ladder(
-        [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)]
+        [{"name": name_of(item) or "", "index": index} for index, item in enumerate(items)],
+        dates=True,
     )
     if ladder is None:
         return set(), 0

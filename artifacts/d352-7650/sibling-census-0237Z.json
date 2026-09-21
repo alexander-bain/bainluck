@@ -1,0 +1,165 @@
+{
+ "run": "before",
+ "fetched": "2026-09-21T02:37:36Z",
+ "cards": 110,
+ "unread": [],
+ "flipped": [
+  {
+   "id": 108330,
+   "name": "Will the US take control of any part of Greenland?",
+   "legs": 3,
+   "divisor_before": 1.0,
+   "divisor_after": 1.0,
+   "leader": "Before January 21, 2029",
+   "raw": 0.19,
+   "shown_before": 0.19,
+   "shown_after": 0.19,
+   "pts": 0.0,
+   "rungs_dropped_before": 0,
+   "rungs_dropped_after": 0,
+   "collapses_before": false,
+   "collapses_after": false,
+   "copy": {
+    "headline": null,
+    "caption": null,
+    "context_line": null,
+    "reasons": [
+     "threshold_values"
+    ],
+    "leader_derived": false
+   },
+   "names": [
+    "Before January 21, 2029",
+    "Before 2027",
+    "Before April 2026"
+   ]
+  },
+  {
+   "id": 108366,
+   "name": "Will Trump buy at least part of Greenland?",
+   "legs": 4,
+   "divisor_before": 1.0,
+   "divisor_after": 1.0,
+   "leader": "Before January 20, 2029",
+   "raw": 0.13,
+   "shown_before": 0.13,
+   "shown_after": 0.13,
+   "pts": 0.0,
+   "rungs_dropped_before": 0,
+   "rungs_dropped_after": 0,
+   "collapses_before": false,
+   "collapses_after": false,
+   "copy": {
+    "headline": null,
+    "caption": null,
+    "context_line": null,
+    "reasons": [
+     "threshold_values"
+    ],
+    "leader_derived": false
+   },
+   "names": [
+    "Before January 20, 2029",
+    "Before 2027",
+    "Before May 1, 2026",
+    "Before Jul 1, 2026"
+   ]
+  },
+  {
+   "id": 109349,
+   "name": "When will Apple release the iPhone 18?",
+   "legs": 7,
+   "divisor_before": 1.11,
+   "divisor_after": 1.0,
+   "leader": "Before April 2027",
+   "raw": 0.825,
+   "shown_before": 0.7432,
+   "shown_after": 0.825,
+   "pts": 8.2,
+   "rungs_dropped_before": 0,
+   "rungs_dropped_after": 0,
+   "collapses_before": false,
+   "collapses_after": false,
+   "copy": {
+    "headline": null,
+    "caption": null,
+    "context_line": null,
+    "reasons": [
+     "threshold_values"
+    ],
+    "leader_derived": false
+   },
+   "names": [
+    "Before 2027",
+    "Before October",
+    "Before July",
+    "Before April",
+    "Before April 2027",
+    "Before March 2027",
+    "Before February 2027"
+   ]
+  },
+  {
+   "id": 59693686,
+   "name": "Will Trump declare a national emergency?",
+   "legs": 5,
+   "divisor_before": 1.42,
+   "divisor_after": 1.0,
+   "leader": "Before Jan 1, 2027",
+   "raw": 0.455,
+   "shown_before": 0.3204,
+   "shown_after": 0.455,
+   "pts": 13.5,
+   "rungs_dropped_before": 0,
+   "rungs_dropped_after": 0,
+   "collapses_before": false,
+   "collapses_after": false,
+   "copy": {
+    "headline": null,
+    "caption": null,
+    "context_line": null,
+    "reasons": [
+     "threshold_values"
+    ],
+    "leader_derived": false
+   },
+   "names": [
+    "Before Jan 1, 2027",
+    "Before Dec 1, 2026",
+    "Before Nov 1, 2026",
+    "Before Oct 1, 2026",
+    "Before Dec 29, 2026"
+   ]
+  },
+  {
+   "id": 60473239,
+   "name": "When will Zack Polanski leave as Green Party leader?",
+   "legs": 2,
+   "divisor_before": 1.0,
+   "divisor_after": 1.0,
+   "leader": "Before Nov 1, 2026",
+   "raw": 0.105,
+   "shown_before": 0.105,
+   "shown_after": 0.105,
+   "pts": 0.0,
+   "rungs_dropped_before": 0,
+   "rungs_dropped_after": 0,
+   "collapses_before": false,
+   "collapses_after": false,
+   "copy": {
+    "headline": null,
+    "caption": null,
+    "context_line": null,
+    "reasons": [
+     "threshold_values"
+    ],
+    "leader_derived": false
+   },
+   "names": [
+    "Before Jan 1, 2027",
+    "Before Nov 1, 2026"
+   ]
+  }
+ ],
+ "gate_unchanged": 89
+}
