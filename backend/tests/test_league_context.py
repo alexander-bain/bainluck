@@ -304,6 +304,9 @@ class TestLeagueContextService:
                 teams={
                     "boston celtics": TeamLeagueContext(
                         team_name="Boston Celtics",
+                        team_id=1,
+                        short_name="BOS",
+                        logo_url="https://a.espncdn.com/i/teamlogos/nba/500/2.png",
                         league_slug="nba",
                         conference="Eastern",
                         record="64-18",
@@ -338,6 +341,16 @@ class TestLeagueContextService:
                 "record": "64-18",
                 "conference": "Eastern",
                 "sources_available": ["kalshi"],
+                # #7798 — identity travels with the probabilities. The one
+                # consumer of this dict was minting its own `short_name` from
+                # the last word of the team name and hardcoding these two to
+                # null, so an iPhone card read "United" for Leeds United under
+                # a grey placeholder crest. An exact-equality shape assertion
+                # is the right kind of test for that: it fails when a field
+                # stops arriving, which is the failure mode.
+                "team_id": 1,
+                "short_name": "BOS",
+                "logo_url": "https://a.espncdn.com/i/teamlogos/nba/500/2.png",
             },
         }
 

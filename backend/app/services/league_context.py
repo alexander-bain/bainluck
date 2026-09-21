@@ -42,6 +42,14 @@ class TeamLeagueContext:
 
     team_name: str
     team_id: Optional[int] = None
+    # #7798 — the grid has already decided the club's compact label and crest
+    # (`Leeds United` is "LEE", with a badge). Carried rather than re-derived,
+    # because the consumer that re-derived them served "United" and a null
+    # logo. Both default to None so a cache entry written before this field
+    # existed still decodes; `from_json`'s caller swallows a decode failure and
+    # recomputes, so the reverse direction is safe too.
+    short_name: Optional[str] = None
+    logo_url: Optional[str] = None
     league_slug: str = ""
     conference: Optional[str] = None
     record: Optional[str] = None
@@ -192,6 +200,8 @@ async def _compute_league_context(
         teams[norm_name] = TeamLeagueContext(
             team_name=name,
             team_id=team.get("team_id"),
+            short_name=team.get("short_name"),
+            logo_url=team.get("logo_url"),
             league_slug=league_slug,
             conference=team.get("conference"),
             record=team.get("record"),
@@ -351,6 +361,11 @@ async def enrich_event_with_context(
             "record": home_ctx.record,
             "conference": home_ctx.conference,
             "sources_available": home_ctx.sources_available,
+            # #7798 — identity, not just probabilities. The one consumer of
+            # this dict was minting its own label and serving null for these.
+            "team_id": home_ctx.team_id,
+            "short_name": home_ctx.short_name,
+            "logo_url": home_ctx.logo_url,
         }
     if away_ctx:
         result["away_team"] = {
@@ -359,6 +374,9 @@ async def enrich_event_with_context(
             "record": away_ctx.record,
             "conference": away_ctx.conference,
             "sources_available": away_ctx.sources_available,
+            "team_id": away_ctx.team_id,
+            "short_name": away_ctx.short_name,
+            "logo_url": away_ctx.logo_url,
         }
 
     return result

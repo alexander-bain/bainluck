@@ -47,6 +47,7 @@ from app.utils.odds_math import devig_consensus
 # pass from ever again being two different rules.
 from app.utils.playoff_grid import enforce_monotonicity as _grid_enforce_monotonicity
 from app.utils.regex_to_ilike import regex_to_ilike
+from app.utils.team_short_name import compact_team_label  # #7798
 
 logger = logging.getLogger(__name__)
 
@@ -1963,7 +1964,14 @@ async def _get_team_metadata(
             # drops precisely the row the overlay is there to correct.
             "espn_id": getattr(team, "espn_id", None),
             "name": team.name,
-            "short_name": team.abbreviation or team.name.split()[-1] if team.name else None,
+            # #7798 — the abbreviation, else the name, else its last word only
+            # when that word is distinctive. The line this replaced took the
+            # last word unconditionally, so `Coventry City` and `Hull City`
+            # both served "City" on one EPL grid and `Manchester United` served
+            # "United". It also mis-parsed: `a or b if c else None` binds as
+            # `(a or b) if c else None`, so a row with an abbreviation and no
+            # name served null. 4 of 379 grid rows move; see the docstring.
+            "short_name": compact_team_label(team.name, team.abbreviation),
             "abbreviation": getattr(team, "abbreviation", None),
             "logo_url": team.logo_url_small or team.logo_url_large,
             "primary_color": team.primary_color,

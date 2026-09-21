@@ -21807,12 +21807,25 @@ async def get_team_progression(
                 "trend_24h": trend,
                 "sources": sources,
             })
-        short = team_name.split()[-1] if team_name else ""
+        # #7798 — the grid already decided this club's label and crest, so take
+        # them rather than minting a second answer. The last-word line this
+        # replaced served `Leeds United` as **"United"** on an iPhone
+        # Championship Path card whose header, three hundred points above, read
+        # "LEE" — and hardcoded `team_id`/`logo_url` to null, which is why the
+        # card drew a grey `UNI` placeholder while the chart above it rendered
+        # the real Leeds badge. None of that was a client bug.
+        #
+        # The fallback is the FULL name, matching `playoffs.py`'s own row
+        # builder. Never the last word: the rows that miss this lookup are the
+        # ones with no `teams` row, which on the golf grid is 132 players, and
+        # shortening a person to a surname here is a regression the clients
+        # have a whole sport-keyed rule (#4624) to avoid.
+        short = team_ctx.get("short_name") or team_name or ""
         return {
             "name": team_name,
             "short_name": short,
-            "team_id": None,
-            "logo_url": None,
+            "team_id": team_ctx.get("team_id"),
+            "logo_url": team_ctx.get("logo_url"),
             "record": team_ctx.get("record"),
             "conference": team_ctx.get("conference"),
             "stages": stages,

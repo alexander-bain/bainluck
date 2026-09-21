@@ -44,16 +44,29 @@ const SWIFT_PAIR_FIXTURES = join(
   "../../ios/Bain Luck/BainLuckTests/TeamShortNamePairTests.swift",
 );
 
-/** Every `"token"` inside the named bracketed literal, comments stripped. */
-function tokensInLiteral(source: string, opener: RegExp): string[] {
+/**
+ * Every `"token"` inside the named bracketed literal, comments stripped.
+ *
+ * `open`/`close` are parameters because the third definition is PYTHON, whose
+ * set literal is braced rather than bracketed (#7798). Defaulted so the Swift
+ * and TypeScript call sites above read exactly as they did.
+ */
+function tokensInLiteral(
+  source: string,
+  opener: RegExp,
+  open: string = "[",
+  close: string = "]",
+  comment: RegExp = /(^|[^:])\/\/.*$/gm,
+): string[] {
   const start = source.search(opener);
   if (start === -1) return [];
-  const from = source.indexOf("[", start);
+  const from = source.indexOf(open, start);
+  if (from === -1) return [];
   let depth = 0;
   let end = -1;
   for (let i = from; i < source.length; i += 1) {
-    if (source[i] === "[") depth += 1;
-    if (source[i] === "]") {
+    if (source[i] === open) depth += 1;
+    if (source[i] === close) {
       depth -= 1;
       if (depth === 0) {
         end = i;
@@ -65,7 +78,7 @@ function tokensInLiteral(source: string, opener: RegExp): string[] {
   const body = source
     .slice(from, end)
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    .replace(comment, "$1");
   return Array.from(body.matchAll(/"([^"]+)"/g), (m) => m[1].toLowerCase());
 }
 
@@ -103,6 +116,24 @@ const webIndividualSports = tokensInLiteral(
 const webUnshippable = tokensInLiteral(
   webSource,
   /const UNSHIPPABLE_BADGES\s*:\s*ReadonlySet<string>\s*=/,
+);
+
+/**
+ * #7798 — the THIRD definition, and the one neither client could have saved us
+ * from. `playoffs.py` MINTS `short_name` into the payload; a client can only
+ * shorten a name it is handed, so when the server served `Leeds United` as
+ * "United" both clients rendered exactly what they were given. The server's
+ * copy therefore has to be in this comparison, on the same terms as the Swift:
+ * read out of source, never transcribed.
+ */
+const PY = join(__dirname, "../../backend/app/utils/team_short_name.py");
+const pySource = readFileSync(PY, "utf8");
+const pyDesignators = tokensInLiteral(
+  pySource,
+  /CLUB_TYPE_SUFFIXES\s*:\s*frozenset\[str\]\s*=\s*frozenset\(/,
+  "{",
+  "}",
+  /(^|[^:])#.*$/gm,
 );
 
 describe("#4250 — one team-short-name rule, two clients", () => {
@@ -148,6 +179,42 @@ describe("#4250 — one team-short-name rule, two clients", () => {
       expect(webSuffixes).toContain(token);
       expect(isNonDistinctiveTrailingWord(token)).toBe(true);
     }
+  });
+
+  /**
+   * #7798 — the server joins the comparison. The three sets are asserted EQUAL
+   * rather than one-way subset, which the two-client pairs above deliberately
+   * are not: the Swift carries leading-initial tokens the browser reaches by
+   * length, and that asymmetry is load-bearing. The Python was written FROM the
+   * browser's set on the same day, so equality is true today and an inequality
+   * is drift — which is the only thing this file exists to report.
+   */
+  it("the server's designator set was actually found and read", () => {
+    expect(pyDesignators.length).toBeGreaterThanOrEqual(30);
+    expect(pyDesignators).toContain("afc");
+    expect(pyDesignators).toContain("united");
+    expect(new Set(pyDesignators).size).toBe(pyDesignators.length);
+  });
+
+  it("the server and the browser hold the SAME set, token for token", () => {
+    expect([...pyDesignators].sort()).toEqual([...webSuffixes].sort());
+  });
+
+  it("every designator the server catches, both clients catch too", () => {
+    const swift = new Set(swiftDesignators);
+    expect(pyDesignators.filter((t) => !isNonDistinctiveTrailingWord(t))).toEqual([]);
+    expect(pyDesignators.filter((t) => !swift.has(t))).toEqual([]);
+  });
+
+  /**
+   * The server's rule has a clause the clients do not: it prefers a stored
+   * ABBREVIATION over any name shortening. That is not drift — it is the one
+   * thing the server knows and the clients do not — but it must stay visible
+   * here, because "the sets are equal" would otherwise read as "the three
+   * implementations agree", and they agree only about designators.
+   */
+  it("the server's extra clause is the abbreviation, and it is stated", () => {
+    expect(pySource).toMatch(/if abbreviation:\s*\n\s*return abbreviation/);
   });
 });
 
