@@ -150,6 +150,71 @@ class TestStructuralChecks:
         f = gs.check_fill_rate(_grid(teams, ["championship"]), "nba")
         assert len(f) == 1 and f[0]["seasonal_ok"] is True
 
+    # -- #7728: a GRADED cell is data, not a hole -------------------------
+    #
+    # By serving contract a decided cell carries no probability. Counting only
+    # priced cells made a correct late-season grid read as collapsed.
+
+    def _graded(self, state):
+        return {"merged_probability": None, "sources": [], "state": state}
+
+    def test_decided_cells_count_as_filled_7728(self):
+        # The MLB 'Make Playoffs' column as production actually served it on
+        # 2026-09-21: 11 priced + 6 clinched + 13 eliminated = 30/30 cells,
+        # every one of them rendering a number or a ✓/✗. Filed pre-fix as
+        # "only 11/30 teams filled (37%)" CRITICAL.
+        teams = []
+        for i in range(30):
+            if i < 11:
+                cells = {"make_playoffs": _cell(0.6, [_src("kalshi", 0.6)])}
+            else:
+                cells = {"make_playoffs": self._graded("won" if i < 17 else "eliminated")}
+            teams.append({"name": f"t{i}", "cells": cells})
+        assert gs.check_fill_rate(_grid(teams, ["make_playoffs"]), "mlb") == []
+
+    def test_fully_decided_column_is_not_a_collapsed_grid_7728(self):
+        # The extreme: every team graded scored 0% fill — a maximally TRUTHFUL
+        # column read as the worst possible defect. All decided states count.
+        for state in sorted(gs.DECIDED_STATES):
+            teams = [{"name": f"t{i}", "cells": {"division": self._graded(state)}}
+                     for i in range(30)]
+            assert gs.check_fill_rate(_grid(teams, ["division"]), "mlb") == [], state
+
+    def test_unpriced_non_terminal_cells_still_flag_7728(self):
+        # NEGATIVE CONTROL — the fix must not buy quiet with blindness. A cell
+        # the reader sees as blank ("missing" / "unavailable" both render an
+        # empty state) is still a hole and still files.
+        for state in ("missing", "unavailable"):
+            teams = [{"name": f"t{i}",
+                      "cells": {"division": (_cell(0.6, [_src("kalshi", 0.6)]) if i < 3
+                                             else self._graded(state))}}
+                     for i in range(30)]
+            f = gs.check_fill_rate(_grid(teams, ["division"]), "mlb")
+            assert len(f) == 1 and f[0]["severity"] == "critical", state
+
+    def test_missing_column_carrying_only_results_is_not_dataless_7728(self):
+        # check_missing_columns shares the predicate: a column whose teams are
+        # all graded carries data, so it is not "missing (no data)".
+        teams = [{"name": f"t{i}", "cells": {"division": self._graded("eliminated")}}
+                 for i in range(30)]
+        grid = _grid(teams, ["championship"])
+        grid["teams"] = teams
+        flagged = [f["column"] for f in gs.check_missing_columns(grid, "mlb")]
+        # 'division' is absent from the column list but its cells carry graded
+        # results, so it is not dataless. The genuinely empty ones still flag.
+        assert "division" not in flagged
+        assert set(flagged) == {"make_playoffs", "pennant"}
+
+    def test_decided_states_is_pinned_to_the_serving_contract_7728(self):
+        # DRIFT GUARD. The sentinel must settle on the same set the page does.
+        # Three modules name this set; the sentinel IMPORTS it rather than
+        # re-listing it, and routes/playoffs keeps its own deliberate copy.
+        from app.routes.playoffs import _GRID_DECIDED_STATES
+        from app.utils.playoff_grid import DECIDED_STATES
+
+        assert gs.DECIDED_STATES is DECIDED_STATES
+        assert gs.DECIDED_STATES == _GRID_DECIDED_STATES
+
 
 # ---------------------------------------------------------------------------
 # Plausibility checks → WATCH
