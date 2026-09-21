@@ -177,6 +177,7 @@ from app.utils.feed_reasons import (
     generate_event_reason,
     binary_affirmative_outcome,
     binary_affirmative_probability,
+    field_is_a_race,
     generate_futures_context_summary,
     generate_futures_headline,
     generate_futures_reason,
@@ -6924,6 +6925,36 @@ def _printed_runner_up_percent(top_outcomes_data: list[dict]) -> int | None:
     return max(priced) if priced else None
 
 
+def _card_field_is_a_race(market, top_outcomes_data: list[dict]) -> bool:
+    """May this card's copy speak of its rows as rivals for one slot? (#7844)
+
+    The route half of `feed_reasons.field_is_a_race`: it supplies the venue's own
+    exclusivity flag and the percents THE CARD PRINTS, read off the same
+    `rendered_percent` annotations `_printed_leader_percent` and
+    `_printed_runner_up_percent` read, so all three sentences and the board they
+    describe are decided on one basis. Taken over `top_outcomes_data`, which is
+    the already-sliced, already-scaled printed card (see `_apply_card_percents`),
+    because the claim the copy makes is about the rows a reader can see and add
+    up — the market's full outcome list would answer for a card nobody is shown.
+
+    `market.mutually_exclusive` is the same column #7808 half two put on the
+    snapshot wire for `field_is_mutually_exclusive`, which is why this ship stacks
+    on that one: before schema v7 the attribute is simply absent here. The column
+    is NOT NULL with a default of True, so a False is an affirmative statement by
+    the venue — but an ABSENT or NULL value resolves to True rather than passing
+    through as a falsy unknown, because `field_is_a_race` fails to today's copy
+    and a bare `bool(None)` would smuggle a refusal in under the name of a venue
+    declaration.
+    """
+    flag = getattr(market, "mutually_exclusive", None)
+    return field_is_a_race(
+        field_is_mutually_exclusive=True if flag is None else bool(flag),
+        rendered_percents=[
+            outcome.get("rendered_percent") for outcome in (top_outcomes_data or [])
+        ],
+    )
+
+
 def _printed_affirmative_percent(
     top_outcomes_data: list[dict],
     raw_names: list[str],
@@ -10743,6 +10774,9 @@ async def _score_sports_mode_futures(
         affirmative_probability = binary_affirmative_probability(outcomes_data)
         _printed_leader = _printed_leader_percent(top_outcomes_data)
         _printed_runner_up = _printed_runner_up_percent(top_outcomes_data)
+        # #7844 — off the same printed rows, so the copy's two refusals are taken
+        # on one basis. See `_card_field_is_a_race`.
+        _field_is_a_race = _card_field_is_a_race(market, top_outcomes_data)
         _printed_affirmative = _printed_affirmative_percent(
             top_outcomes_data, _raw_card_names
         )
@@ -10772,6 +10806,7 @@ async def _score_sports_mode_futures(
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
+                card_field_is_a_race=_field_is_a_race,
                 source_count=source_count,
                 market_name=display_name,
                 affirmative_probability=affirmative_probability,
@@ -10793,6 +10828,7 @@ async def _score_sports_mode_futures(
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             rendered_runner_up_percent=_printed_runner_up,
+            card_field_is_a_race=_field_is_a_race,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
             rendered_affirmative_percent=_printed_affirmative,
@@ -10883,6 +10919,7 @@ async def _score_sports_mode_futures(
             leader_probability=display_leader_prob,
             rendered_leader_percent=_printed_leader,
             rendered_runner_up_percent=_printed_runner_up,
+            card_field_is_a_race=_field_is_a_race,
             source_count=source_count,
             affirmative_probability=affirmative_probability,
             rendered_affirmative_percent=_printed_affirmative,
@@ -12253,6 +12290,8 @@ async def _score_futures(
             affirmative_probability = binary_affirmative_probability(outcomes_data)
             _printed_leader = _printed_leader_percent(top_outcomes_data)
             _printed_runner_up = _printed_runner_up_percent(top_outcomes_data)
+            # #7844 — see the matching line in the other card builder above.
+            _field_is_a_race = _card_field_is_a_race(market, top_outcomes_data)
             _printed_affirmative = _printed_affirmative_percent(
                 top_outcomes_data, _raw_card_names
             )
@@ -12288,6 +12327,7 @@ async def _score_futures(
                     leader_probability=display_leader_prob,
                     rendered_leader_percent=_printed_leader,
                     rendered_runner_up_percent=_printed_runner_up,
+                    card_field_is_a_race=_field_is_a_race,
                     source_count=source_count,
                     market_name=display_name,
                     affirmative_probability=affirmative_probability,
@@ -12309,6 +12349,7 @@ async def _score_futures(
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
+                card_field_is_a_race=_field_is_a_race,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
                 rendered_affirmative_percent=_printed_affirmative,
@@ -12689,6 +12730,7 @@ async def _score_futures(
                 leader_probability=display_leader_prob,
                 rendered_leader_percent=_printed_leader,
                 rendered_runner_up_percent=_printed_runner_up,
+                card_field_is_a_race=_field_is_a_race,
                 source_count=source_count,
                 affirmative_probability=affirmative_probability,
                 rendered_affirmative_percent=_printed_affirmative,

@@ -8,7 +8,7 @@ repeating scores, odds, or team names visible on the card.
 
 import re
 from datetime import datetime, timezone
-from typing import Mapping, NamedTuple, Optional
+from typing import Mapping, NamedTuple, Optional, Sequence
 
 from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
 from app.utils.graded_card import rendered_percent
@@ -1930,6 +1930,95 @@ def lead_is_printable(
     return int(rendered_leader_percent) > int(rendered_runner_up_percent)
 
 
+# ── IS THERE A LEAD TO SPEAK OF AT ALL? (#7844) ─────────────────────────────────
+#
+# 🔴 THE READER. Page one, card 3, 390px, 2026-09-21 17:30Z:
+#
+#     POLITICS · Resolves Jan 31, 2028
+#     Which parties will be part of the next government of New Zealand?
+#     New favorite: Green Party (68%)
+#     1 Green Party 68% · 2 Labour Party 54% · 3 National Party 53% ·
+#     4 New Zealand First Party 50% · 5 Field and 2 more outcomes
+#
+# New Zealand governments are coalitions. Green, Labour, National and NZ First are
+# not competing for one slot, and the Greens at 68% are not "beating" Labour at 54%
+# — both can be in the next government, which is the entire point of the question.
+# The card borrowed the grammar it uses for `2026-27 Stanley Cup® Finals Winner`,
+# one card below it in the same edition, where exactly one row can win.
+#
+# `lead_is_printable` above admits it, and correctly by its own terms: 68 > 54, the
+# reader CAN see the lead the sentence asserts. #6187 asked whether the lead is
+# VISIBLE. Nobody asked whether it is a lead. On a mutually exclusive field those
+# two questions have the same answer, which is exactly why the gap never showed.
+#
+# TWO SIGNALS, AND BOTH ARE REQUIRED, because each alone is wrong:
+#
+#   1. `futures_markets.mutually_exclusive` — the venue's own declaration that the
+#      legs can all happen. Market 16624064 reads FALSE. It reaches the card
+#      builders on the wire #7808 half two opened (snapshot schema v7). Alone it
+#      over-fires: 12 of the 20 non-exclusive cards in the measured edition print
+#      copy that is perfectly true.
+#   2. THE PRINTED BOARD SUMS PAST 100 — the proof a reader can carry out on the
+#      card itself, which is #6187's own doctrine ("the printed board is the thing
+#      the reader can actually check, so the printed board is what decides whether
+#      the claim may be made"). Legs printing 68 + 54 + 53 cannot all be losers.
+#      Alone it is worse: over the open tier<=3 markets whose top three raw prices
+#      were readable on 2026-09-21, **1,065 are flagged mutually exclusive and
+#      still sum past 1.00** — the #4895 family, an exclusive ladder serving 104%
+#      because normalization declined. The sum test alone strips the comparative
+#      off all of them, and on an exclusive field the comparative is the truth.
+#
+# ** MEASURED ON THE SERVED EDITION, NOT ON THE FUNCTION. ** `/api/feed?limit=200`
+# at 17:40Z, 97 cards, 71 futures (`artifacts/d387-7844/`): 20 carry the flag false
+# and **8 change copy** — the NZ coalition (175), `Which parties will be in next
+# Swedish Government?` (219), `Which parties will win a seat in the 2026 Knesset`
+# (235), `Top 5 Most Searched Passings on Google in the US 2026` — "Dolly Parton
+# leads at 93%" on a TOP-FIVE list (241) — `2027 PPA Tour Finals: Player to Qualify`
+# (282) and `: To Reach the Final` (207), `Dancing with the Stars S35 · Top 3
+# Finishers` (189), and `What will be said on the next Lemonade Stand Podcast`
+# (270). Thirty-seven exclusive cards print a comparative and none of them moves.
+#
+# AND THE HONEST FOOTNOTE ON GUARD 1: on that served edition the flag is IDLE —
+# 0 of the 37 exclusive cards print a sum over 100, because
+# `_normalize_feed_probabilities` normalizes exclusive boards before they are
+# printed, so the sum test alone would have produced the same eight. Its defence is
+# the 1,065 markets above, which reach a card the moment normalization declines on
+# one of them. Stated rather than buried, because a guard idle on every specimen it
+# is tested against is not a guard (#7808 half two's rule, applied to itself).
+#
+# ** THE REMEDY IS A REFUSAL, NOT A RENORMALIZATION. ** 225% is the HONEST answer
+# here; normalizing a coalition board to 100 would be the defect, not the fix. So
+# this returns a boolean that drops the comparative and nothing else: the templates
+# fall through to the standing form they already build for a tied board
+# (`leader_standing_clause(..., lead_is_visible=False)`), which says what that
+# number means — "Green Party at 68%".
+
+
+def field_is_a_race(
+    field_is_mutually_exclusive: Optional[bool] = None,
+    rendered_percents: Optional[Sequence[Optional[int]]] = None,
+) -> bool:
+    """May this card's copy treat its rows as rivals for one slot? (#7844)
+
+    False only when the venue says the legs are NOT mutually exclusive and the
+    printed board proves it by summing past 100 — i.e. when a reader adding the
+    card up can see that these rows cannot all be losers.
+
+    FAIL TO TODAY'S COPY, the same convention as `lead_is_printable` above and
+    for the same reason: an unknown flag (`None`) or a board with fewer than two
+    printed percents returns True, so a caller that has not been taught to pass
+    either keeps its wording verbatim and the unknown case never becomes a guess.
+    """
+    if field_is_mutually_exclusive is not False:
+        return True
+    printed = [
+        int(percent) for percent in (rendered_percents or []) if percent is not None
+    ]
+    if len(printed) < 2:
+        return True
+    return sum(printed) <= 100
+
+
 def movement_subject_is_printable(
     subject_name: Optional[str],
     subject_is_printed: Optional[bool] = None,
@@ -2031,6 +2120,11 @@ def generate_futures_reason(
     # #6187: the highest percent PRINTED beneath the leader. Defaults None so an
     # uninformed caller keeps the comparative verbatim — see `lead_is_printable`.
     rendered_runner_up_percent: Optional[int] = None,
+    # #7844: may the rows be spoken of as rivals for one slot at all? Resolved by
+    # the route through `field_is_a_race` off the venue's exclusivity flag and the
+    # printed board. Defaults None -> True, so an uninformed caller keeps the
+    # comparative verbatim, the same convention as the line above.
+    card_field_is_a_race: Optional[bool] = None,
     # #6219: does the card DRAW a row for the outcome the movement sentence
     # names? Defaults None so an uninformed caller keeps its wording verbatim —
     # see `movement_subject_is_printable`.
@@ -2078,9 +2172,13 @@ def generate_futures_reason(
         leader_deadline_preposition=leader_deadline_preposition,
     )
     # #6187: and likewise — may any template below use a comparative at all?
+    # #7844 ANDs the second half of that question in, resolved in the same place
+    # so no template can consult one refusal without the other: #6187 asks whether
+    # the lead is VISIBLE, #7844 whether it is a lead. A coalition board is the
+    # case where the first says yes and the second says no.
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
-    )
+    ) and (card_field_is_a_race is not False)
     # #6219: and likewise — may a movement template name its subject at all?
     # Resolved from the names AS RECEIVED, above the `_answering_side_label`
     # rewrite below, because the caller decided printedness against the raw
@@ -2303,6 +2401,8 @@ def generate_futures_headline(
     rendered_leader_percent: Optional[int] = None,
     # #6187: see `generate_futures_reason`. Defaults None -> comparative kept.
     rendered_runner_up_percent: Optional[int] = None,
+    # #7844: see `generate_futures_reason`. Defaults None -> comparative kept.
+    card_field_is_a_race: Optional[bool] = None,
     # #6219: see `generate_futures_reason`. Defaults None -> wording kept.
     top_surprise_is_printed: Optional[bool] = None,
     top_mover_is_printed: Optional[bool] = None,
@@ -2342,10 +2442,10 @@ def generate_futures_headline(
         leader_is_ladder_rung=leader_is_ladder_rung,
         leader_deadline_preposition=leader_deadline_preposition,
     )
-    # #6187: likewise — see `generate_futures_reason`.
+    # #6187 + #7844: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
-    )
+    ) and (card_field_is_a_race is not False)
     # #6219: likewise — see `generate_futures_reason`.
     _surprise_sayable = movement_subject_is_printable(
         top_surprise_name, top_surprise_is_printed
@@ -2570,6 +2670,8 @@ def generate_futures_context_summary(
     rendered_leader_percent: Optional[int] = None,
     # #6187: see `generate_futures_reason`. Defaults None -> comparative kept.
     rendered_runner_up_percent: Optional[int] = None,
+    # #7844: see `generate_futures_reason`. Defaults None -> comparative kept.
+    card_field_is_a_race: Optional[bool] = None,
     # #4700: see `generate_futures_reason`. Defaults False -> singular verbatim.
     leader_is_team: bool = False,
     # #6550: see `generate_futures_reason`. Defaults None -> #4700's rule.
@@ -2599,10 +2701,10 @@ def generate_futures_context_summary(
     reasons = set(highlight_reasons)
     # #4700: resolved once, above every branch (see `generate_futures_reason`).
     _verb = leader_agreement_verb(leader_name, leader_is_team, leader_team_name)
-    # #6187: likewise — see `generate_futures_reason`.
+    # #6187 + #7844: likewise — see `generate_futures_reason`.
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
-    )
+    ) and (card_field_is_a_race is not False)
 
     # This is the string the web card prints under its title, so it is where the
     # binary-as-race defect was actually READ ("China invade Taiwan by end of
