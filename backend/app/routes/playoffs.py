@@ -591,20 +591,131 @@ from app.utils.name_normalization import (
 def _should_prefix_merge(short_name: str, long_name: str) -> bool:
     """Check if short_name should merge into long_name as a prefix.
 
-    For multi-word short names: always merge if it's a prefix.
-    For single-word short names: merge only if the next word in long_name
-    is NOT a location modifier (prevents Iowa→Iowa State, Tennessee→Tennessee Tech).
+    Merge only if the next word in long_name is NOT a location modifier
+    (prevents Iowa→Iowa State, Tennessee→Tennessee Tech).
+
+    #7821: the modifier check used to be skipped for multi-word short names
+    (`if len(short_words) >= 2: return True` returned before reaching it), so
+    the docstring above described a guard that ran on one input shape out of
+    two and `north carolina` prefix-merged into `north carolina st` — a
+    different school. The word count of the SHORT name says nothing about
+    whether the remainder of the LONG one is a mascot or another institution,
+    which is the only question this predicate asks, so it no longer branches
+    on it. Measured over the live NCAAB key set (351 keys) the widened guard
+    moves nothing today — it removes a latent trap that the longest-first
+    ordering happened to mask, not a live merge.
     """
     if not (long_name.startswith(short_name + " ") or long_name.startswith(short_name + "-")):
         return False
-    short_words = short_name.split()
-    if len(short_words) >= 2:
-        return True
-    # Single-word: check what follows
     rest = long_name[len(short_name):].strip().lstrip("-").split()
     if rest and rest[0].lower() in _LOCATION_MODIFIERS:
         return False
     return True
+
+
+def _ticker_suffix(outcome_external_id: str | None, market_external_id: str | None) -> str | None:
+    """The per-team tail of a venue ticker: ``KXMARMADROUND-27R32-FLA`` → ``FLA``.
+
+    Split on the MARKET's own ticker rather than on the last ``-``: Loyola
+    Chicago is ``KXMARMADROUND-27R32-L-IL``, whose tail is ``L-IL``, not ``IL``.
+
+    Returns None for any source that does not key its outcomes off the market
+    ticker. odds_api stores the outcome NAME in ``external_id``
+    (``"Florida Gators"``), so it never satisfies the prefix test and never
+    contributes a false anchor.
+    """
+    if not outcome_external_id or not market_external_id:
+        return None
+    prefix = market_external_id + "-"
+    if not outcome_external_id.startswith(prefix):
+        return None
+    return outcome_external_id[len(prefix):] or None
+
+
+def _canon_ticker(value: str | None) -> str:
+    """Upper-case, alphanumerics only — so ``TA&M`` and ``ta&m`` compare equal."""
+    return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
+
+
+def _resolve_ambiguous_merge(
+    short_name: str,
+    candidates: list[str],
+    ticker_suffixes: dict[str, set[str]],
+    abbreviations: dict[str, str],
+) -> str:
+    """Pick the merge target for a short name that matches several teams (#7821).
+
+    ``candidates`` arrives longest-first, so ``candidates[0]`` is what the grid
+    has always chosen. **Length is not evidence of correctness**: it
+    systematically prefers the more-qualified sibling, which is always a
+    different institution. Kalshi's ``Florida`` went to *Florida Atlantic* and
+    its ``Miami (FL)`` prices published on *Miami (OH)*, while Florida — the #1
+    overall seed — was served blank.
+
+    So an ambiguous key is settled by the venue's own ticker suffix
+    (``KXMARMADROUND-27R32-FLA`` → ``FLA``) matched against the candidates'
+    ``Team.abbreviation``. That is an id, not a name.
+
+    Two deliberate refusals, both because the inputs are known-dirty:
+
+    * The suffix must match EXACTLY ONE candidate. ``Team.abbreviation`` is not
+      unique (171 NCAAB rows, 142 distinct) and is wrong in places — *California
+      Golden Bears* carries ``MIA`` — so it is only ever used to choose among
+      candidates a name rule already produced, never as a lookup on its own. A
+      corrupt abbreviation can only do harm if it lands on a sibling of the same
+      prefix family, and a second hit means we do not know.
+    * No suffix, or no unique hit, falls back to ``candidates[0]``. Today's
+      answer may be wrong, but it is wrong in a way that is already measured;
+      replacing it with a second guess is how the "fewest remaining words" rule
+      traded Florida for California.
+    """
+    suffixes = {c for c in (_canon_ticker(s) for s in ticker_suffixes.get(short_name, ())) if c}
+    if suffixes:
+        hits = [
+            c for c in candidates
+            if (ab := _canon_ticker(abbreviations.get(c))) and ab in suffixes
+        ]
+        if len(hits) == 1:
+            return hits[0]
+    return candidates[0]
+
+
+async def _team_abbreviations(session: AsyncSession, names: set[str]) -> dict[str, str]:
+    """``{normalized Team.name: abbreviation}`` for EXACT normalized names only.
+
+    Deliberately NOT :func:`_get_team_metadata`. That lookup is
+    ``Team.name ILIKE '%name%'`` with a last-one-wins write — its own docstring
+    says "THE NAME IS NOT A KEY" — so asking it for ``florida`` returns whichever
+    of six Florida schools Postgres happened to return last. An anchor that
+    inherits that guess is not an anchor.
+
+    Here the ILIKE only narrows the scan. A row is kept ONLY when its normalized
+    name equals the requested candidate exactly, and a name whose rows disagree
+    about the abbreviation yields nothing at all — fail closed, so the caller
+    falls back to the behaviour that is already measured rather than to a
+    coin flip. (Cross-sport duplicates agree in practice: Florida Gators is
+    ``FLA`` in all four of its sports.)
+    """
+    if not names:
+        return {}
+
+    conditions = []
+    for name in names:
+        escaped = name.replace("%", "\\%").replace("_", "\\_")
+        conditions.append(Team.name.ilike(f"%{escaped}%"))
+
+    stmt = select(Team)
+    stmt = stmt.where(or_(*conditions)) if len(conditions) > 1 else stmt.where(conditions[0])
+    loaded = list((await session.execute(stmt)).scalars().all())
+
+    seen: dict[str, set[str]] = defaultdict(set)
+    for team in loaded:
+        if not team.name or not getattr(team, "abbreviation", None):
+            continue
+        key = _normalize_team_name(team.name)
+        if key in names:
+            seen[key].add(team.abbreviation)
+    return {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
 
 
 def _alias_matches(name_a: str, name_b: str) -> bool:
@@ -5061,6 +5172,11 @@ async def get_playoff_grid(
     all_outcome_ids: list[int] = []
     outcome_id_to_team: dict[int, str] = {}
     outcome_id_to_name: dict[int, str] = {}
+    # #7821. The venue's own per-team ticker suffix, kept per grid key so that an
+    # ambiguous prefix merge below can be settled by an id instead of by string
+    # length. A key collects one suffix per round it appears in (all five rounds
+    # of the bracket spell Florida `FLA`), hence the set.
+    ticker_suffixes: dict[str, set[str]] = defaultdict(set)
 
     for col_key, entries in column_data.items():
         for market, outcome in entries:
@@ -5105,6 +5221,9 @@ async def get_playoff_grid(
             }
 
             grid_raw[norm][col_key].append(source_entry)
+            _suffix = _ticker_suffix(outcome.external_id, market.external_id)
+            if _suffix:
+                ticker_suffixes[norm].add(_suffix)
             if not graded:
                 # A graded leg stops being written the moment it is graded
                 # (`futures_liveness`: the writer refuses it), so its 24h "move"
@@ -5189,34 +5308,54 @@ async def get_playoff_grid(
                 expanded.add(w)
         return expanded
 
+    def _merge_arm_matches(short_name: str, long_name: str) -> bool:
+        """Does any of the four name arms join these two keys?"""
+        # 1. Prefix merge (location-modifier safe)
+        if _should_prefix_merge(short_name, long_name):
+            return True
+        # 2. Single-letter abbreviation suffix
+        # e.g., "los angeles l" → "los angeles lakers"
+        if (
+            len(short_name) >= 3
+            and short_name[-2] == " "
+            and short_name[-1].isalpha()
+            and long_name.startswith(short_name[:-1])
+            and len(long_name) > len(short_name)
+            and long_name[len(short_name) - 1] == short_name[-1]
+        ):
+            return True
+        # 3. Word subset merge (e.g., "michigan state" vs "michigan st spartans")
+        if len(short_name.split()) >= 2:
+            short_expanded = _expand_abbrevs(set(short_name.split()))
+            if short_expanded.issubset(_expand_abbrevs(set(long_name.split()))):
+                return True
+        # 4. Alias-based merge (e.g., "connecticut" ↔ "uconn huskies")
+        return _alias_matches(short_name, long_name)
+
+    # #7821. Collect EVERY target a short name matches before binding one, rather
+    # than binding the first (longest) and `continue`-ing past the rest. The old
+    # loop could not tell "one candidate" from "several" — it just took the
+    # longest — so `florida` silently became Florida Atlantic. `norm_names` is
+    # still longest-first, so `merge_candidates[short][0]` is exactly what the
+    # old loop bound, and a key with a single candidate is unchanged by
+    # construction.
+    merge_candidates: dict[str, list[str]] = {}
     for i, long_name in enumerate(norm_names):
         for short_name in norm_names[i + 1:]:
-            if short_name in merge_map:
-                continue
-            # 1. Prefix merge (single-word safe via location modifier check)
-            if _should_prefix_merge(short_name, long_name):
-                merge_map[short_name] = long_name
-            # 2. Single-letter abbreviation suffix
-            # e.g., "los angeles l" → "los angeles lakers"
-            elif (
-                len(short_name) >= 3
-                and short_name[-2] == " "
-                and short_name[-1].isalpha()
-                and long_name.startswith(short_name[:-1])
-                and len(long_name) > len(short_name)
-                and long_name[len(short_name) - 1] == short_name[-1]
-            ):
-                merge_map[short_name] = long_name
-            # 3. Word subset merge (e.g., "michigan state" vs "michigan st spartans")
-            elif len(short_name.split()) >= 2:
-                short_words = set(short_name.split())
-                long_words = set(long_name.split())
-                short_expanded = _expand_abbrevs(short_words)
-                if short_expanded.issubset(_expand_abbrevs(long_words)):
-                    merge_map[short_name] = long_name
-            # 4. Alias-based merge (e.g., "connecticut" ↔ "uconn huskies")
-            if short_name not in merge_map and _alias_matches(short_name, long_name):
-                merge_map[short_name] = long_name
+            if _merge_arm_matches(short_name, long_name):
+                merge_candidates.setdefault(short_name, []).append(long_name)
+
+    # Abbreviations are fetched only for the handful of names in contested
+    # families — never for the whole grid, and never as a lookup that could
+    # answer "who is `florida`?" on its own.
+    _contested = {c for cs in merge_candidates.values() if len(cs) > 1 for c in cs}
+    abbreviations = await _team_abbreviations(db, _contested) if _contested else {}
+
+    for short_name, cands in merge_candidates.items():
+        merge_map[short_name] = (
+            cands[0] if len(cands) == 1
+            else _resolve_ambiguous_merge(short_name, cands, ticker_suffixes, abbreviations)
+        )
 
     # Apply merges
     for short_name, long_name in merge_map.items():
