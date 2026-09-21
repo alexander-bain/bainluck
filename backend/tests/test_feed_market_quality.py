@@ -23,6 +23,7 @@ from app.utils.feed_market_quality import (
     diversify_discover_first_page,
     diversify_quality_families,
     editorial_archetype,
+    book_has_a_buyer,
     classify_fabricated_book,
     has_no_real_price,
     is_fabricated_midpoint,
@@ -1243,14 +1244,28 @@ class TestClassifyFabricatedBook:
 
     # --- the other direction: healthy cards must survive (gotcha #43) ------------
 
-    def test_nvidia_keeps_its_card_and_loses_only_the_bad_rung(self):
+    def test_nvidia_keeps_its_card_and_loses_only_the_manufactured_coin_flip(self):
         # 57782674 — a genuinely well-priced CUMULATIVE ladder. It must survive, and
         # judging it by the exclusive-sum rule (it totals 3.6) would have killed it.
+        #
+        # 🔴 #7808 MOVED ONE ASSERTION ON THIS SPECIMEN AND IT IS THE POINT OF THE
+        # SHIP, SO IT IS ARGUED HERE RATHER THAN QUIETLY EDITED. `keep[1]` — the
+        # 0.735 rung quoting 48c/99c — used to read False and now reads True: 48c is
+        # a buyer, so the leg is no longer erased from the card. Its old comment
+        # called it "monotonicity-breaking", which the specimen does not support:
+        # against the production names for this bundle the ↑ ladder runs
+        # $200 0.845 -> $204 0.735 -> $208 0.285, which `drop_incoherent_ladder_
+        # outcomes` (#4610) keeps intact — so nothing downstream removes it and the
+        # card now prints it, monotone between its neighbours instead of gapped.
+        # What #1574 was actually built to stop is untouched two lines down.
         keep, drop = classify_fabricated_book(self.NVIDIA, is_exclusive=False)
         assert drop is False
         assert keep[0] is True    # the real 0.845 leader stays
-        assert keep[1] is False   # the 48c/99c monotonicity-breaking rung goes
+        assert keep[1] is True    # 48c/99c — somebody is bidding 48c (#7808)
         assert keep[2] is True
+        # The bundle's SpaceX-shaped rung: 0.5 on a 2c/98c book, nobody bidding.
+        assert self.NVIDIA[4] == (0.5, 0.02, 0.98)
+        assert keep[4] is False
 
     def test_fed_ladder_untouched(self):
         keep, drop = classify_fabricated_book(self.FED, is_exclusive=True)
@@ -1278,6 +1293,116 @@ class TestClassifyFabricatedBook:
 
     def test_empty_outcomes_do_not_explode(self):
         assert classify_fabricated_book([], is_exclusive=True) == ([], False)
+
+
+class TestALegWithABuyerIsNeverErased:
+    """#7808: the card stopped naming the wrong favourite.
+
+    Every book below is copied from `futures_outcomes` as read on production
+    2026-09-21, market 61308736 `2027 US Open Men's Singles Winner`, the card the
+    reader was shown at 390px.
+    """
+
+    # (probability, yes_bid, yes_ask) — the five legs that decide the card.
+    MENSIK = (0.74, 0.04, 0.74)     # last trade, not a midpoint -> never refused
+    SINNER = (0.31, 0.07, 0.55)     # ON its midpoint, 7c bid   -> was erased
+    ALCARAZ = (0.27, 0.07, 0.47)    # ON its midpoint, 7c bid   -> was erased
+    RUUD = (0.03, 0.00, 0.57)       # NO buyer, but not a midpoint -> kept, then and now
+    ZVEREV = (0.01, 0.00, 0.74)     # NO buyer, but not a midpoint -> kept, then and now
+
+    FIELD = [MENSIK, SINNER, ALCARAZ, RUUD, ZVEREV]
+
+    def test_the_two_erased_favourites_are_back_on_the_card(self):
+        keep, drop = classify_fabricated_book(self.FIELD, is_exclusive=False)
+        assert drop is False
+        assert keep == [True, True, True, True, True]
+
+    def test_the_card_no_longer_names_the_wrong_favourite(self):
+        # The reader's sentence: before this ship the three printed legs were
+        # Mensik 74 / Ruud 3 / Zverev 1, with the field's 2nd and 3rd absent.
+        keep, _ = classify_fabricated_book(self.FIELD, is_exclusive=False)
+        survivors = [o for o, k in zip(self.FIELD, keep) if k]
+        printed = sorted(survivors, key=lambda o: o[0], reverse=True)[:3]
+        assert printed == [self.MENSIK, self.SINNER, self.ALCARAZ]
+
+    def test_it_is_the_buyer_and_not_the_probability_that_spares_them(self):
+        # The same two legs at the same prices with the bid at the empty-book floor
+        # are still refused — otherwise this ship is "stop refusing", not "stop
+        # refusing a leg somebody is bidding for".
+        no_buyer = [self.MENSIK, (0.31, 0.02, 0.60), (0.25, 0.00, 0.50), self.RUUD]
+        keep, _ = classify_fabricated_book(no_buyer, is_exclusive=False)
+        assert keep == [True, False, False, True]
+
+    def test_a_spared_leg_can_still_drop_an_exclusive_card(self):
+        # The honest limit of the claim above. The mask only widens, but a wider mask
+        # RAISES the survivor sum, and an exclusive field is refused above
+        # FEED_EXCLUSIVE_SUM_MAX — so "no card is newly dropped" is a MEASUREMENT (0
+        # across 17,603 open markets, over a non-vacuous cohort: 20 of 3,075 negRisk
+        # fields are touched by this gate and 10 hold a leg the clause spares), never
+        # a structural guarantee. This board is the path that measurement could have
+        # found, built so nobody later calls it impossible.
+        field = [
+            (0.60, 0.59, 0.61),   # real, tight book
+            (0.60, 0.58, 0.62),   # real, tight book
+            (0.31, 0.07, 0.55),   # ON its midpoint, 7c bid -> spared by #7808
+            (0.50, 0.02, 0.98),   # ON its midpoint, no buyer -> still refused
+        ]
+        from app.utils.feed_market_quality import (
+            FEED_EXCLUSIVE_SUM_MAX,
+            FEED_EXCLUSIVE_SUM_MIN,
+        )
+
+        old_keep = [not is_fabricated_midpoint(p, b, a) for (p, b, a) in field]
+        old_sum = sum(o[0] for o, k in zip(field, old_keep) if k)
+        assert abs(old_sum - 1.20) < 1e-9
+        assert FEED_EXCLUSIVE_SUM_MIN <= old_sum <= FEED_EXCLUSIVE_SUM_MAX
+
+        keep, drop = classify_fabricated_book(field, is_exclusive=True)
+        assert keep == [True, True, True, False]
+        assert drop is True  # 1.51 is over FEED_EXCLUSIVE_SUM_MAX
+
+    def test_the_mask_can_only_widen(self):
+        # The clause is an AND on top of the old predicate, so on any input the new
+        # mask keeps a superset of what the old one kept — no card loses a leg it
+        # holds today. What that does NOT imply is the test directly above.
+        books = [
+            (0.5, 0.01, 0.99), (0.48, 0.02, 0.94), (0.735, 0.48, 0.99),
+            (0.31, 0.07, 0.55), (0.845, 0.81, 0.88), (0.5, None, None),
+            (0.01, 0.0, 1.0), (0.465, None, 0.93), (0.065, 0.03, 0.10),
+        ]
+        keep, _ = classify_fabricated_book(books, is_exclusive=False)
+        old_keep = [not is_fabricated_midpoint(p, b, a) for (p, b, a) in books]
+        assert all(new or not old for new, old in zip(keep, old_keep))
+        assert keep != old_keep  # and it is not a no-op on this population
+
+    def test_the_bid_bound_keeps_1574s_own_specimens_refused(self):
+        # The floor under `EMPTY_BOOK_MAX_BID` for this ship: the bids on the
+        # phantoms #1574 was built to catch run 1c-4c, so any bound at or above 4c
+        # leaves its acceptance set intact. Asserted on the bids themselves so a
+        # later widening of the constant trips here and not on a reader's card.
+        from app.utils.feed_market_quality import EMPTY_BOOK_MAX_BID
+
+        worst_1574_phantom_bid = 0.04  # the Oscars 4c leg
+        assert EMPTY_BOOK_MAX_BID >= worst_1574_phantom_bid
+        assert not book_has_a_buyer(worst_1574_phantom_bid)
+        assert not book_has_a_buyer(0.05)
+        assert not book_has_a_buyer(None)
+        assert not book_has_a_buyer(0.0)
+        assert book_has_a_buyer(0.07)  # Sinner and Alcaraz
+
+    def test_the_clause_is_confined_to_the_feed(self):
+        # `is_fabricated_midpoint` is shared with the Polymarket ingest,
+        # `futures_unsupported_price` and — through `fabricated_midpoint_sql` —
+        # calibration's closing-line selection. None of those erase a leg from a
+        # reader's field, none was measured by #7808, and all must still see the
+        # Sinner shape as a fabricated midpoint.
+        from app.utils.calibration_closing_line import is_eligible_closing_snapshot
+        from app.utils.feed_market_quality import fabricated_midpoint_sql
+
+        p, b, a = TestALegWithABuyerIsNeverErased.SINNER
+        assert is_fabricated_midpoint(p, b, a) is True
+        assert is_eligible_closing_snapshot(p, b, a) is False
+        assert "0.05" not in fabricated_midpoint_sql("p", "b", "a")
 
 
 class TestFabricatedMidpointWiring:
