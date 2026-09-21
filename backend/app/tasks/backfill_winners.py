@@ -7377,14 +7377,97 @@ async def _mint_missing_champion_leg(
     return MINTED
 
 
+#: Where the Gamma winner rail's last-run receipt is banked (#6564), and for
+#: how long. The TTL matches the cursor's own week so the two expire together:
+#: a receipt that outlives the cursor it describes would explain a value that
+#: is no longer there.
+_POLY_API_RUN_RECEIPT_KEY = "bainluck:pm_winner_backfill_last_run"
+_POLY_API_RUN_RECEIPT_TTL = 86400 * 7
+
+
+def _poly_api_run_receipt(stats: dict, last_max_id) -> dict:
+    """The durable half of the rail's closing line, as a plain dict.
+
+    Split from the Redis write so the published shape can be asserted without
+    standing up Redis — and so the one question this exists to answer (did the
+    cursor MOVE, and if not, what held it) is a property of a value a test can
+    read, not of a log line a human has to be watching for.
+
+    Deliberately omits ``terminal``/``terminal_reason``: both call sites bank
+    BEFORE ``_finish`` stamps them, so publishing them here would publish a
+    field that is unconditionally ``None``.
+    """
+    return {
+        # The pair is the whole point. One number cannot distinguish a cursor
+        # that advanced a page from one that advanced by four rows, and the
+        # second is what a 275k backlog looks like from the inside.
+        "cursor_before": last_max_id,
+        "cursor_after": stats.get("cursor_value"),
+        "cursor_advanced_by": (
+            stats["cursor_value"] - last_max_id
+            if isinstance(stats.get("cursor_value"), int)
+            and isinstance(last_max_id, int)
+            else None
+        ),
+        "cursor_op": stats.get("cursor_op"),
+        "cursor_held": bool(stats.get("cursor_held")),
+        "selected": stats.get("selected", 0),
+        "completed": stats.get("completed", 0),
+        "deferred": stats.get("deferred", 0),
+        "markets_checked": stats.get("markets_checked", 0),
+        "winners_set": stats.get("winners_set", 0),
+        "errors": len(stats.get("errors") or []),
+        # 0 on a scheduled sweep. Present so a reader never mistakes a targeted
+        # repair's deliberately-frozen cursor for a stalled sweep.
+        "targeted": stats.get("targeted", 0),
+        "ran_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _bank_poly_api_run(stats: dict, last_max_id) -> None:
+    """Persist the closing line where an admin surface can read it (#6564).
+
+    The rail's decisive number — where the cursor sits and how far it moved —
+    was emitted only to the dyno log, which ages out in hours. The alert that
+    fires on the resulting coverage slide says "backfill may be stalled", so
+    every reader checked liveness, found both tasks alive, and stopped; the
+    cursor arithmetic underneath was never observable enough to falsify. This
+    receipt is what makes it so.
+
+    Best-effort on purpose, and warned rather than raised: a run that graded
+    its markets has done its job, and must not be recorded as failed because
+    its receipt did not write.
+    """
+    import json as _json
+
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        get_redis_client().setex(
+            _POLY_API_RUN_RECEIPT_KEY,
+            _POLY_API_RUN_RECEIPT_TTL,
+            _json.dumps(_poly_api_run_receipt(stats, last_max_id)),
+        )
+    except Exception as e:
+        logger.warning(
+            "Polymarket API winner backfill: receipt not banked: %s", e
+        )
+
+
 def _log_poly_api_run(stats: dict, last_max_id) -> None:
-    """The Gamma winner rail's two closing lines, written from one place.
+    """The Gamma winner rail's two closing lines, and its durable receipt,
+    written from one place.
 
     #6110 gave the rail a second exit (a targeted run returns before the cursor
     decision), and a second exit with its own copy of the logging is how the two
     drift. Both paths call this, so a targeted repair and a scheduled sweep are
     read the same way in the dyno log.
+
+    The receipt (#6564) rides the same single call site for the same reason —
+    an exit that logged but did not bank would be a run that is invisible to
+    the admin surface precisely when someone is looking for it.
     """
+    _bank_poly_api_run(stats, last_max_id)
     logger.info(
         "Polymarket API winner backfill: cursor %s -> %s (selected %d, "
         "completed %d, deferred %d)",
