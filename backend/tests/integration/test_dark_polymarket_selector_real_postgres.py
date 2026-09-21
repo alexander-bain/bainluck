@@ -365,17 +365,24 @@ class TestThePassWritesToRealPostgres:
             )
             stats = await poly._refresh_linked_polymarket_books()
 
-        assert stats["outcomes_created"] == 1, stats
-        assert stats["snapshots_written"] == 1, stats
+        # 2 since #7505, not 1. The specimen is a sole-moneyline event whose
+        # venue payload names BOTH fighters (`outcomes: ["Ozzy Diaz", "Ryan
+        # Gandra"]`), so the branch now writes the partner leg as well — the
+        # defect being that a card named two fighters and priced one. The
+        # moneyline leg below is asserted exactly as before; the partner is
+        # asserted separately rather than folded into a looser count.
+        assert stats["outcomes_created"] == 2, stats
+        assert stats["snapshots_written"] == 2, stats
 
         row = (
             await pg_session.execute(
                 text(
                     "SELECT external_id, current_probability, current_yes_bid, "
                     "       is_winner, resolution_source "
-                    "  FROM futures_outcomes WHERE market_id = :m"
+                    "  FROM futures_outcomes "
+                    " WHERE market_id = :m AND external_id = :cid"
                 ),
-                {"m": ids["specimen"]},
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
             )
         ).one()
         assert row.external_id == MONEYLINE_CID
@@ -387,14 +394,35 @@ class TestThePassWritesToRealPostgres:
         )
         assert row.resolution_source is None
 
+        # #7505: the partner leg the venue named, on the row a reader meets.
+        partner = (
+            await pg_session.execute(
+                text(
+                    "SELECT external_id, name, current_probability "
+                    "  FROM futures_outcomes "
+                    " WHERE market_id = :m AND external_id <> :cid"
+                ),
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
+            )
+        ).one()
+        assert partner.external_id == f"{MONEYLINE_CID}_side1", (
+            "the partner leg must stay OUT of the _yes/_no namespace — keyed "
+            "there, drop_duplicate_legs filters it at serve time because the "
+            "bare condition id is on the same market"
+        )
+        assert partner.name == "Ryan Gandra"
+        assert float(partner.current_probability) == pytest.approx(
+            1 - MONEYLINE_PRICE
+        ), "the two sides of one fight must sum to 1 on the card"
+
         snap = (
             await pg_session.execute(
                 text(
                     "SELECT s.bookmaker, s.probability FROM futures_odds_snapshots s "
                     "  JOIN futures_outcomes o ON o.id = s.outcome_id "
-                    " WHERE o.market_id = :m"
+                    " WHERE o.market_id = :m AND o.external_id = :cid"
                 ),
-                {"m": ids["specimen"]},
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
             )
         ).one()
         assert snap.bookmaker == "polymarket"
@@ -452,7 +480,10 @@ class TestThePassWritesToRealPostgres:
             first = await poly._refresh_linked_polymarket_books()
             second = await poly._refresh_linked_polymarket_books()
 
-        assert first["outcomes_created"] == 1
+        # 2 since #7505 (both fighters). The IDEMPOTENCE claim is untouched and
+        # is what this test is for: the second pass still writes nothing, and
+        # the leg count after two runs is still the count after one.
+        assert first["outcomes_created"] == 2
         assert second["terminal"] == "no_dark_linked_markets_in_window"
         legs = (
             await pg_session.execute(
@@ -460,7 +491,7 @@ class TestThePassWritesToRealPostgres:
                 {"m": ids["specimen"]},
             )
         ).scalar()
-        assert legs == 1
+        assert legs == 2
 
 
 class TestTheReaderCanActuallySeeIt:
@@ -492,6 +523,30 @@ class TestTheReaderCanActuallySeeIt:
 
     So this is the one-row display regression the BLOCK asked for, pointed at
     the door the row actually comes through. It fails if the ship is invisible.
+
+    ═══ #7505 MOVED THE DOOR, AND POINT 2 ABOVE IS NOW HALF TRUE ═══
+
+    Everything above was measured 2026-09-06 on a market carrying ONE leg. On
+    2026-09-18 `5d42bf697` shipped `_fold_event_match_winner_futures` (#4646):
+    Bigger Picture stops repeating the fixture's own result, because a Kalshi
+    moneyline published as two independent binary legs was printing `Ito 72%`
+    and `Lansere 29%` as unlabelled chips in two columns — 101%, one question
+    answered twice. Its gate is `len(sides) >= 2`.
+
+    A one-legged moneyline covers one side and is not folded, which is why the
+    door above was the right one in September. #7505 writes the partner leg, the
+    market covers two sides, and door two folds it — so the ship's own leg is
+    what closes the door the ship used to arrive through. Both filters that now
+    hide it (this one and the web's `findWinProbMarkets`) exist for the same
+    stated reason: *the hero owns that question.*
+
+    Which leaves the reader claim intact, asked at door one, and leaves ONE hole
+    worth naming: when the hero has no sources, nothing owns the question and
+    both filters withhold against a premise that is false. Measured on
+    production 2026-09-21 over bare-matchup single-leg Polymarket rows —
+    scheduled, upcoming, hero empty, venue single-market — that is a small
+    population (the WNBA row `60737726` / event 15310068 is the live specimen)
+    and it is filed on its own rather than repaired by widening either filter.
     """
 
     async def _related(self, session, event_id):
@@ -506,6 +561,41 @@ class TestTheReaderCanActuallySeeIt:
         return (resp.get("home_team_futures") or []) + (
             resp.get("away_team_futures") or []
         )
+
+    async def _game_markets(self, session, event_id):
+        from app.routes.events import _build_game_markets
+
+        resp, _status, _ids = await _build_game_markets(event_id, session)
+        return resp
+
+    def _game_market_rows(self, resp, market_id):
+        """Every `/game-markets` row for one market, whatever SECTION holds it.
+
+        🔴 SECTION-AGNOSTIC ON PURPOSE, AND THE FIXTURE IS WHY. In this rig the
+        specimen's rows arrive under `player_props` carrying `threshold: 331.0`
+        — the `331` of the card title read as a prop line. Its production twin
+        does not: `61556138`, "UFC 332: Natalia Silva vs. Wang Cong (Women's
+        Flyweight, Main Card)", an already-two-sided Polymarket moneyline read
+        2026-09-21, arrives under `other` with `threshold: None`, as does
+        `61722982` "Senators vs. Canadiens". Same name shape, different section,
+        so the divergence is something the fixture carries and production does
+        not (its twin is `mutually_exclusive: True`; this seed sets no such
+        flag) — NOT a defect this ship introduces, and not one measured on a
+        reader's page, so it is recorded here rather than filed.
+
+        Either way the section is not what this class is about. Keying the
+        assertion to a section name would red this arm the day the fixture or
+        the bucketer moves, for a reason that has nothing to do with whether the
+        venue's price reached the page.
+        """
+        out = []
+        for value in resp.values():
+            if not isinstance(value, list):
+                continue
+            for row in value:
+                if isinstance(row, dict) and row.get("_market_id") == market_id:
+                    out.append(row)
+        return out
 
     async def test_before_the_pass_the_page_has_nothing_to_show(self, pg_session):
         """The state a user actually hit: a linked market, and a blank page.
@@ -530,13 +620,10 @@ class TestTheReaderCanActuallySeeIt:
             "Ozzy Diaz" in (r.get("outcome_name") or "") for r in rows
         ), "no leg exists yet, so no priced row for this fighter can be served"
 
-    async def test_after_the_pass_the_venues_price_is_on_the_page(self, pg_session):
-        """The ship, as a reader meets it: the fight, priced, in the payload
-        that draws Bigger Picture -> GAME PROPS."""
+    async def _run_the_pass(self, pg_session):
         from app.tasks import polymarket as poly
 
         ids = await _seed(pg_session)
-
         with ExitStack() as es:
             es.enter_context(patch("app.tasks.polymarket.get_task_session", _session_cm_for(pg_session)))
             es.enter_context(
@@ -546,19 +633,124 @@ class TestTheReaderCanActuallySeeIt:
                 )
             )
             stats = await poly._refresh_linked_polymarket_books()
-        assert stats["outcomes_created"] == 1, stats
+        # 2 since #7505 — both fighters.
+        assert stats["outcomes_created"] == 2, stats
+        return ids
 
-        resp = await self._related(pg_session, ids["_near_event_id"])
-        rows = self._all_rows(resp)
+    async def test_after_the_pass_the_venues_price_is_on_the_page(self, pg_session):
+        """The ship, as a reader meets it: the fight, BOTH fighters, priced.
 
-        mine = [r for r in rows if r.get("market_id") == ids["specimen"]]
+        🔴 THE DOOR MOVED UNDER THIS ARM AND THE ARM FOLLOWED IT. Until #7505
+        this asserted the row through `/related-futures` (Bigger Picture), and
+        that was the right door for a market carrying ONE leg. It is not the
+        right door for a market carrying two: `_fold_event_match_winner_futures`
+        (#4646, `5d42bf697`, 2026-09-18) folds a game's own result market out of
+        Bigger Picture entirely, and `_market_is_event_match_winner`'s gate is
+        `len(sides) >= 2` — so the very leg this ship writes is what makes the
+        fold fire. The sibling arm below pins that, with a one-sided control.
+
+        #4646 is not a withholding, it is a DE-DUPLICATION — its own docstring
+        says the copy that stays is the labelled one — so the reader claim this
+        class is named for is unchanged and is simply asked at door one.
+        Confirmed on production 2026-09-21, event 15291954 (Senators v
+        Canadiens), whose market 61722982 already carries both sides today:
+        absent from `/related-futures`, present in `/game-markets` `other`.
+
+        So this asserts what it always meant to: the venue's price, for both
+        sides, in a payload the event page draws.
+        """
+        ids = await self._run_the_pass(pg_session)
+
+        gm = await self._game_markets(pg_session, ids["_near_event_id"])
+        mine = self._game_market_rows(gm, ids["specimen"])
         assert mine, (
-            "the specimen must now be surfaced — related-futures groups by "
-            "OUTCOME rows, so writing the leg is exactly what makes it visible"
+            "door one must carry the fight. `/related-futures` folds it (#4646) "
+            "and the web's `findWinProbMarkets` withholds a two-sided pair from "
+            "Additional Markets, so if this door is empty too the price reaches "
+            f"no surface at all. Payload sections: {sorted(gm)}"
         )
 
         blob = json.dumps(mine)
         assert "Ozzy Diaz" in blob, "the fighter the price is about must be named"
+
+        # BOTH sides, each at the number the venue is quoting. Asserted as a
+        # SET of (name, price) pairs rather than "the market is present",
+        # because the whole of #7505 is that the second side exists — an arm
+        # that only checked the market was there would have passed before the
+        # ship and after it.
+        served = {
+            (
+                (r.get("outcome_name") or ""),
+                round(float(r["over_probability"]), 3),
+            )
+            for r in mine
+            if r.get("over_probability") is not None
+        }
+        assert served == {
+            (SERVED_OUTCOME_LABEL, round(MONEYLINE_PRICE, 3)),
+            ("Ryan Gandra", round(1 - MONEYLINE_PRICE, 3)),
+        }, (
+            "the card must name two fighters and price two fighters. Served: "
+            f"{sorted(served)!r}. A single entry here is the exact reader defect "
+            "#7505 is for — two names in the title, one number underneath."
+        )
+
+    async def test_the_fixtures_own_result_is_folded_out_of_bigger_picture(
+        self, pg_session
+    ):
+        """#4646's fold, and the one-sided control that gives it meaning.
+
+        Two halves, and the control is the half that makes this an observation
+        rather than a tautology: `assert not surfaced` passes for a market that
+        was never selected, never linked, or dropped by any of the dozen filters
+        upstream of the fold. Deleting the partner leg puts the SAME market, on
+        the SAME page, back under the pre-#7505 shape — and it comes back. So
+        the absence above is the fold, by the side count, and nothing else.
+
+        The one-sided branch is also where #6739's served label, CERT-2111's
+        `display_category` round trip and the venue-price assertion still live:
+        they were claims about the row Bigger Picture serves, they were true,
+        and they are kept where that row still exists rather than deleted
+        because the ship moved the two-sided copy to another door.
+        """
+        ids = await self._run_the_pass(pg_session)
+
+        rows = self._all_rows(await self._related(pg_session, ids["_near_event_id"]))
+        assert not [r for r in rows if r.get("market_id") == ids["specimen"]], (
+            "a market answering both sides of the fixture is the hero's own "
+            "question and #4646 folds it out of 'Season context'. Surfacing it "
+            "again means the fold stopped recognising it — the 101%-summing "
+            "raw-legs page #4646 was written for. Rows served: "
+            f"{[(r.get('market_id'), r.get('outcome_name')) for r in rows]!r}"
+        )
+
+        # ── the control: same market, one side, and it is back ──────────────
+        # The pass writes a price snapshot per leg, so the snapshot goes first —
+        # `futures_odds_snapshots.outcome_id` is a real FK and a bare DELETE
+        # raises rather than cascading.
+        await pg_session.execute(
+            text(
+                "DELETE FROM futures_odds_snapshots WHERE outcome_id IN "
+                "(SELECT id FROM futures_outcomes WHERE external_id = :cid)"
+            ),
+            {"cid": f"{MONEYLINE_CID}_side1"},
+        )
+        await pg_session.execute(
+            text("DELETE FROM futures_outcomes WHERE external_id = :cid"),
+            {"cid": f"{MONEYLINE_CID}_side1"},
+        )
+        await pg_session.commit()
+
+        rows = self._all_rows(await self._related(pg_session, ids["_near_event_id"]))
+        mine = [r for r in rows if r.get("market_id") == ids["specimen"]]
+        assert mine, (
+            "with one leg the market covers ONE side, `_market_is_event_match_"
+            "winner` needs two, and Bigger Picture serves it. If this is empty "
+            "the row is missing for some reason that is not the fold, and the "
+            "assertion above proves nothing"
+        )
+
+        blob = json.dumps(mine)
 
         # `home_team_futures`/`away_team_futures` are FLAT rows — one per
         # OUTCOME, carrying `outcome_name` and `probability` at the top level.
