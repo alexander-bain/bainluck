@@ -44,6 +44,7 @@ export type GridCellState =
   | "unregistered";
 
 import { isMarked, liquidityReveal, readLiquidity } from "./liquidity";
+import { probabilityCellText } from "./probabilityCellText";
 import type { PlayerImage } from "./slate";
 
 export interface GridCellSource {
@@ -523,7 +524,12 @@ export function readPlayoffGrid(payload: PlayoffGridPayload | null | undefined):
  */
 export function formatGridCell(cell: GridCell): string | null {
   if (cell.probability === null || !Number.isFinite(cell.probability)) return null;
-  return `${Math.round(cell.probability * 100)}%`;
+  // #7670: this was a bare `Math.round`, so it printed `100%` at a served
+  // 0.9972 AND `0%` at the 0.0005 that seventeen clubs' championship cells
+  // carried the same minute — an absolute claimed at both ends from a number
+  // that stated neither. Shared with `TournamentProgressionTable.formatProb`,
+  // which prints the same vocabulary for the same quantity.
+  return probabilityCellText(cell.probability);
 }
 
 /**
