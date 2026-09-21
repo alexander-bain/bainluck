@@ -1678,7 +1678,29 @@ export default function OddsChart({
         : [];
 
       return (
-        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-surface-border max-w-sm">
+        /* #1833 — the width cap has to be read off the VIEWPORT, not the chart.
+           This card is absolutely positioned with auto width and its content (score header +
+           period + the blend row + one row per source) wants more than a phone gives it, so
+           `max-w-sm` never bound: the card simply grew to its containing block, the chart
+           wrapper. Recharts then places it with
+             translateX = Math.max(coord.x - width - offset, viewBox.x)   (util/tooltip/translate)
+           i.e. when the card cannot fit to the left of the cursor it is pinned at `viewBox.x`,
+           the y-axis inset — measured 44px on both surfaces. A card as wide as the wrapper
+           therefore ends 44px PAST the wrapper's right edge, every time, wherever the reader
+           touches. Measured on /events/14780544 at 390px: inline card 306px pinned at left=100
+           → right=406 (16px gone) on 4 of 5 positions; the fullscreen modal 330px at left=88 →
+           right=418 (28px gone) on 5 of 5. The page does not scroll sideways, so what was
+           sheared off is the right-hand column — the period and clock ("Halftime",
+           "End of 3rd Quarter") that `justify-between` puts there.
+           So bound the card by the space that actually exists: worst-case left inset is
+           wrapperLeft(56) + viewBox.x(44) = 100, and 7rem leaves that plus a small margin.
+           `min()` keeps the desktop card exactly as it was — the cap only binds under 496px.
+           The sibling ScoreDifferentialChart is NOT this bug and is deliberately untouched:
+           its tooltip measures 110–187px, well inside the same container (same probe run).
+           The underscores are load-bearing: Tailwind turns `_` into a space, and `calc(100vw-7rem)`
+           without spaces around the minus is INVALID CSS that the browser drops silently — which
+           would look exactly like a shipped fix that changed nothing. Asserted in the guard test. */
+        <div className="bg-surface-card p-3 rounded-lg shadow-lg border border-surface-border max-w-[min(24rem,calc(100vw_-_7rem))]">
           {/* Game state header — score, period, clock */}
           {hasGameState ? (
             <div className="mb-2 pb-2 border-b border-surface-border">
