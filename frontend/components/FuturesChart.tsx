@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
@@ -312,6 +313,11 @@ export function FuturesChart({
   const yScale = (prob: number) =>
     padding.top + (1 - prob / maxProb) * innerHeight;
 
+  // #7839: the y rules and their labels, chosen together so every printed
+  // number sits on the line it names. Both the in-SVG grid and the pinned
+  // gutter iterate THIS — two lists would be two ladders again.
+  const yTicks = chartYTicks(maxProb);
+
   // L2-149: combined probability line — the forward-filled sum of the displayed
   // outcomes across the union of their timestamps, capped at 100%. Only meaningful
   // for more than one outcome. Migrated from EvolutionChart's "Combined" toggle.
@@ -456,9 +462,11 @@ export function FuturesChart({
             onMouseMove={mini ? undefined : handleChartHover}
             onMouseLeave={mini ? undefined : handleChartLeave}
           >
-            {/* Y-axis grid lines */}
+            {/* Y-axis grid lines. #7839: the rules and their labels come from
+                ONE ladder, so a rule can never be drawn where its own number is
+                not — see `chartYTicks`. */}
             {effectiveShowAxes &&
-              [0, 0.25, 0.5, 0.75, 1].map((pct) => (
+              yTicks.map(({ pct, label }) => (
                 <g key={pct}>
                   <line
                     x1={padding.left}
@@ -483,7 +491,7 @@ export function FuturesChart({
                       dominantBaseline="middle"
                       className="text-xs fill-charcoal"
                     >
-                      {Math.round(maxProb * pct * 100)}%
+                      {label}
                     </text>
                   )}
                 </g>
@@ -830,7 +838,7 @@ export function FuturesChart({
             data-testid="futures-chart-y-axis"
             className="pointer-events-none absolute bottom-0 left-0 top-0 z-20"
           >
-            {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+            {yTicks.map(({ pct, label }) => {
               /* #4262: THE LABEL ON THE BASELINE IS ONLY HALF IN THE PLOT.
                  Centring is right for the interior rules and wrong for `0%`,
                  which sits on the plot floor: half its OPAQUE box hung below
@@ -856,7 +864,7 @@ export function FuturesChart({
                   }`}
                   style={{ top: `${(yScale(maxProb * pct) / effectiveHeight) * 100}%` }}
                 >
-                  {Math.round(maxProb * pct * 100)}%
+                  {label}
                 </span>
               );
             })}
