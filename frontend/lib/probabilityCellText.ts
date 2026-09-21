@@ -29,10 +29,37 @@
  * pages a reader moves between, and they had drifted to two different answers
  * about what the edges mean. They now ask one function.
  *
- * `ChampionshipGrid` is deliberately NOT routed through this. Its cells are
- * 10px and it prints a bare number with no `%` (`99+`, `<1`), and it is the one
- * renderer of the three that already guards both ends. Forcing this
- * vocabulary into that width would be a regression dressed as consistency.
+ * ── ABOUT `ChampionshipGrid`, TWICE CORRECTED ──────────────────────────────
+ *
+ * The first draft of this comment said `ChampionshipGrid` was deliberately not
+ * routed here because it "already guards both ends". Two things were wrong
+ * with that, and the second one undoes the first:
+ *
+ *   1. It guards both ends in ONE of its two cells. The 10px summary cell
+ *      guards its top at the CALL SITE (`prob >= 0.995 ? "99+" : fmt(prob)`)
+ *      and prints a bare number with no `%`. The per-source breakdown table
+ *      eleven lines away printed `${fmt(p)}%` with no such guard — a bare
+ *      `Math.round` above its `<1` floor, i.e. `100%` at 0.9972. So the file
+ *      contained the very defect the comment used it as a clean example of.
+ *
+ *   2. NO READER HAS EVER SEEN EITHER CELL. `components/ChampionshipGrid.tsx`
+ *      has a single `export default` and ZERO importers — the whole frontend
+ *      mentions only the similarly-named `ChampionshipGridResponse` TYPES,
+ *      which are a different thing and are consumed by the pages that render
+ *      `TournamentProgressionTable` instead. The playoffs payload confirms it
+ *      from the other side: production serves `teams[].cells`, while this
+ *      component wants `teams[].stages[].sources[]`, a shape the API does not
+ *      return. The component is dead code.
+ *
+ * Its breakdown cell is routed here anyway — consistency inside a file that
+ * may one day be revived costs nothing, and the guard test now pins BOTH cells
+ * so a revival cannot quietly restore the bad one. But it is not a reader-
+ * visible fix and must not be counted as one.
+ *
+ * The lesson survives the retraction, and is the reason the rule lives inside
+ * this function rather than at each call site: one small file managed to guard
+ * this correctly once and incorrectly once, and a comment asserting the file
+ * was fine outlived the truth of it.
  *
  * ── THE RULE ───────────────────────────────────────────────────────────────
  *

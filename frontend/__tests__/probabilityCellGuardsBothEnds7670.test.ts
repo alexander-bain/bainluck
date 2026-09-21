@@ -146,12 +146,47 @@ describe("#7670 — what must not have moved", () => {
     expect(formatProbBody).not.toContain("Math.round(pct)");
   });
 
-  it("CONTROL: ChampionshipGrid keeps its own compact vocabulary", () => {
-    // It is 10px, prints no `%`, and already guards both ends. Routing it
-    // through this helper would be a regression dressed as consistency — so the
-    // decision is asserted, not left to the next reader's judgement.
-    expect(CHAMPIONSHIP_GRID_SOURCE).toContain('prob >= 0.995 ? "99+"');
+  it("CONTROL: ChampionshipGrid's 10px SUMMARY cell keeps its compact vocabulary", () => {
+    // It is 10px, prints no `%`, and guards its own top AT THE CALL SITE.
+    // Routing it through this helper would be a regression dressed as
+    // consistency — so the decision is asserted, not left to the next reader.
+    expect(CHAMPIONSHIP_GRID_SOURCE).toContain('prob >= 0.995 ? "99+" : fmt(prob)');
     expect(CHAMPIONSHIP_GRID_SOURCE).toContain('if (p > 0 && p <= 0.01) return "<1";');
-    expect(CHAMPIONSHIP_GRID_SOURCE).not.toContain("probabilityCellText");
+  });
+
+  it("ChampionshipGrid's per-source BREAKDOWN cell prints `NN%`, so it asks the helper", () => {
+    // NOT A READER-VISIBLE FIX, and the distinction is the point of this
+    // comment: `components/ChampionshipGrid.tsx` has one `export default` and
+    // ZERO importers (the frontend's many `ChampionshipGrid*` matches are the
+    // similarly-named RESPONSE TYPES, a different thing), and production serves
+    // `teams[].cells` where this component wants `teams[].stages[].sources[]`.
+    // It renders nowhere.
+    //
+    // It is pinned anyway because an earlier draft of this file got the reason
+    // wrong twice over: it exempted the FILE on the strength of the summary
+    // cell, while eleven lines away the breakdown table printed `${fmt(p)}%`
+    // with NO caller-side top guard — `100%` at 0.9972, the exact defect of
+    // #7670 sitting inside the file asserted to be clean. A control that names
+    // a file instead of a cell can be true and useless at the same time; a
+    // control that names a cell survives the file being revived.
+    expect(CHAMPIONSHIP_GRID_SOURCE).toContain("probabilityCellText(srcData.probability)");
+    // And the bare-round-plus-percent form that WAS the defect is gone. Written
+    // as a regex so reordering or reformatting the JSX cannot smuggle it back.
+    expect(CHAMPIONSHIP_GRID_SOURCE).not.toMatch(/\$\{fmt\([^)]*\)\}%/);
+  });
+
+  it("the breakdown cell's own absent state is unchanged by the routing", () => {
+    // `probabilityCellText` promises nothing for a non-finite input, so the
+    // call site holds up its end rather than printing `NaN%` — and it does it
+    // with the dash the cell already used, not a new word.
+    expect(CHAMPIONSHIP_GRID_SOURCE).toContain("Number.isFinite(srcData.probability)");
+    expect(CHAMPIONSHIP_GRID_SOURCE).toMatch(/Number\.isFinite\(srcData\.probability\)[\s\S]{0,120}"—"/);
+  });
+
+  it("the routed cell now answers #7670 at both ends", () => {
+    // The behavioural assertion behind the source greps above: the two values
+    // that made this a bug, through the function the cell now calls.
+    expect(probabilityCellText(0.9972)).toBe("99.7%"); // was `100%`
+    expect(probabilityCellText(0.0005)).toBe("<0.1%"); // was `0%`
   });
 });
