@@ -187,6 +187,15 @@ function respondWith(status: number, body: unknown) {
   }) as unknown as typeof fetch;
 }
 
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#x27;": "'",
+  "&#39;": "'",
+};
+
 /**
  * Every string a card DRAWS, as one blob.
  *
@@ -195,13 +204,18 @@ function respondWith(status: number, body: unknown) {
  * absence below as a pass. `teamUnfurlCard.test.tsx` carries the mutation that
  * proves the point; this file inherits the technique and re-proves the rig is
  * not blind in its first two tests before asserting any absence.
+ *
+ * ⚠️ ONE PASS OVER THE ENTITIES, NOT A CHAIN — `teamUnfurlCard.test.tsx`'s map,
+ * for a reason that bites HERE specifically. A chain that turns `&amp;` into `&`
+ * and then `&lt;` into `<` un-escapes twice: a card drawing the literal text
+ * `&amp;lt;1%` would arrive at this file's assertions as `<1%` and pass them,
+ * which is the one outcome a suite about the `<` and `>` markers must not have.
+ * CodeQL calls it `js/double-escaping` and flagged the first cut of this helper.
  */
 function drawn(element: React.ReactElement): string {
   return renderToStaticMarkup(element)
     .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    .replace(/&(?:amp|lt|gt|quot|#x27|#39);/g, (entity) => ENTITIES[entity])
     .replace(/\s+/g, " ")
     .trim();
 }
