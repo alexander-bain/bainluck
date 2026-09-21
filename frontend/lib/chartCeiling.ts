@@ -81,3 +81,99 @@ export function ceilingForMax(max: number): number {
   const wanted = max * CEILING_HEADROOM;
   return CEILING_STEPS.find((step) => step >= wanted) ?? 1;
 }
+
+/**
+ * ═══ #7839: THE GRIDLINES WERE EVENLY SPACED AND THEIR LABELS WERE NOT ═══
+ *
+ * `FuturesChart` drew five rules at fixed fractions of the axis top — `[0, .25,
+ * .5, .75, 1]` — and printed `Math.round(maxProb * pct * 100)%` on each. The
+ * fractions are exact; the labels are integers. Wherever the top is not a
+ * multiple of four, the two disagree and the reader is shown a ladder whose
+ * rungs are equal on screen and unequal in the numbers:
+ *
+ *     top 15%  →  0 / 3.75 / 7.5 / 11.25 / 15   printed  0 / 4 / 8 / 11 / 15
+ *     top 10%  →  0 / 2.5  / 5   / 7.5   / 10   printed  0 / 3 / 5 /  8 / 10
+ *
+ * Both were live on `/futures/59165099` at 390px. On the 10% frame the middle
+ * rule is labelled 5 and sits at 5, but the one below it is labelled 3 and sits
+ * at 2.5 — so the bottom band is 20% wider than its label claims and a reader
+ * interpolating between the bottom two rules is out by a fifth. Two of the five
+ * labels are wrong, and the error alternates direction, so nothing on screen
+ * says which numbers are the approximate ones.
+ *
+ * ### This does NOT reverse `chartYLabels`' recorded decision
+ *
+ * `contenderChart.ts`'s `chartYLabels` rounds on purpose and defends it: on a
+ * THREE-label axis (top, middle, zero) at most one value is a half, the reader
+ * sees `15 / 8 / 0` and reads it as one rounded number, "and the rounding is
+ * visible only on a rule the reader is using to place a line, never on a number
+ * the page states as a fact". That reasoning is sound and is untouched here.
+ * It does not survive being quartered: half the labels round, not one.
+ *
+ * The repair is not to reverse the rounding but to remove the need for it —
+ * choose the STEP and let the count follow, rather than fixing the count and
+ * rounding whatever falls out. Same move `computeWinProbYAxis` already makes
+ * for the event-page win-prob axis, which is why `winProbYAxis3973.test.ts` can
+ * assert `Number.isInteger` on every one of its ticks and this chart could not.
+ *
+ * ### Why descending, and why a floor of three intervals
+ *
+ * Steps are tried LARGEST first so the roundest ladder wins: a 100% axis keeps
+ * `0 / 25 / 50 / 75 / 100` exactly as it draws today — the shape #2451 and
+ * #3032 tuned, and the one every `fixedYAxis` call site (SettledPathChart,
+ * RaceToTitleChart, the futures detail page) renders. The floor of three
+ * intervals stops a large step from thinning a 200–600px plot to a single
+ * middle rule; the ceiling of five is the density the chart has today.
+ *
+ * Over the whole reachable population — `CEILING_STEPS` under `fieldCeiling`,
+ * and `computeZoomBound`'s multiples of 5% under `allowZoom` — this lands:
+ *
+ *     top   10   15   25   50   75  100
+ *     step   2    5    5   10   25   25
+ *     ticks  6    4    6    6    4    5     every one a whole percent
+ *
+ * ### The fallback is reachable, and it is the recorded decision
+ *
+ * `computeZoomBound` can return 35/45/55%, which no step in the ladder divides
+ * into three-to-five whole-percent intervals. Those fall back to halves — the
+ * exact `chartYLabels` shape, one rounded middle label out of three, which is
+ * the arrangement that decision was written for. `TeamSeasonJourney` is the
+ * call site that can reach it (`allowZoom`, no `fieldCeiling`).
+ */
+export const Y_TICK_STEPS_PCT = [25, 20, 10, 5, 2, 1] as const;
+export const Y_TICK_MIN_INTERVALS = 3;
+export const Y_TICK_MAX_INTERVALS = 5;
+
+export interface ChartYTick {
+  /** Fraction of the axis top: 0 is the floor, 1 the ceiling. */
+  pct: number;
+  /** The text to print. Whole percents on every non-fallback ladder. */
+  label: string;
+}
+
+/**
+ * The y-axis rules for an axis running 0 → `maxProb` (a 0–1 fraction), floor
+ * first. `pct` keeps the caller's existing `yScale(maxProb * pct)` geometry, so
+ * only the number of rules and the text on them changes.
+ */
+export function chartYTicks(maxProb: number): ChartYTick[] {
+  // Work in percent, and round off the float dust that reaches us from the
+  // ladder (0.15 * 100 is 15.000000000000002, and `15.000000000000002 / 5` is
+  // not an integer to `Number.isInteger`).
+  const top = Math.round(maxProb * 100 * 1e6) / 1e6;
+  if (!Number.isFinite(top) || top <= 0) return [{ pct: 0, label: "0%" }];
+
+  for (const step of Y_TICK_STEPS_PCT) {
+    const intervals = top / step;
+    const n = Math.round(intervals);
+    if (n < Y_TICK_MIN_INTERVALS || n > Y_TICK_MAX_INTERVALS) continue;
+    if (Math.abs(intervals - n) > 1e-6) continue;
+    return Array.from({ length: n + 1 }, (_, i) => ({
+      pct: i / n,
+      label: `${i * step}%`,
+    }));
+  }
+
+  // No whole-percent ladder fits — halves, the `chartYLabels` arrangement.
+  return [0, 0.5, 1].map((pct) => ({ pct, label: `${Math.round(top * pct)}%` }));
+}
