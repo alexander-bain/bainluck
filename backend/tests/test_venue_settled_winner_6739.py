@@ -440,9 +440,18 @@ class TestTheServedPayload:
         }
 
     @pytest.mark.asyncio
-    async def test_a_page_with_only_derivative_grades_is_settled_with_no_result(self):
-        """Acceptance 4 of #6381, unchanged: *settled* without inventing a
-        result is sufficient, and it is what the 40 non-moneyline events get."""
+    async def test_a_page_with_only_derivative_grades_publishes_no_settlement(self):
+        """REVERSED BY #7702, and the refusal this file is about is unchanged.
+
+        This asserted Acceptance 4 of #6381 — *settled* without inventing a
+        result is sufficient — which held for the event page as it stood. It
+        stopped holding once #6438 removed the hero's "No price" fallback on
+        the grounds that the pill carries the result, and #7070/#7092 put the
+        pill on cards where it is the whole card: on production 2026-09-21
+        ``/events/15310805`` was the word "Settled", two team names and nothing
+        else. The derivative grade is still refused as a RESULT by exactly the
+        table above; it is now also refused as a CLAIM.
+        """
         from unittest.mock import AsyncMock, MagicMock
 
         from app.routes.events import _venue_settlement
@@ -458,7 +467,7 @@ class TestTheServedPayload:
         )
 
         assert await _venue_settlement(db, event) == {
-            "venue_settled": True,
+            "venue_settled": False,
             "venue_settled_result": None,
         }
 
