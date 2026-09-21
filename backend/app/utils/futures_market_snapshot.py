@@ -602,31 +602,41 @@ def outcome_prints_a_price(outcome: Any) -> bool:
     prices from the same 41 minutes. So both sides call THIS, and a future edit
     to what counts as printable moves them together or not at all.
 
-    🔴 THE TRUTHINESS IS DELIBERATE AND IT IS NOT THIS FUNCTION'S BUG TO FIX.
-    `not value` treats `0.0` as unprintable along with `None`, which is #6195 —
-    a probability of exactly zero is a real price and should render `0%`. It is
-    reproduced here ON PURPOSE, because the rule is *"does the card print a
-    number"* and today the card does not print one for a `0.0` leg. PLL's six
-    eliminated legs are `0.000000`, not `NULL`; if this function were stricter
-    than the serializer, the specimen in #6256 would still date its mark from a
-    row showing `—`. When #6195 lands, this predicate and the serializers change
-    in one place together — which is the whole reason it is one function.
+    🔴 `0.0` PRINTS, AND `None` DOES NOT (#6195, landed here). This test read
+    `not value` for as long as the serializers did, so a leg stored `0.000000`
+    rendered `—` and — through this same predicate — forfeited its vote on the
+    age mark. Both halves moved in ONE change, which is the whole reason this is
+    one function: search's `_build_search_top_outcomes` and the two feed card
+    serializers now key on `is not None`, so such a leg prints `0%` AND may date
+    the mark.
 
-    #4679 IS NOT THAT CHANGE, AND THE DISTINCTION IS THE POINT. It swept the ten
+    The distinction that survives is the one that was always meant: ABSENT IS
+    NOT ZERO (ruling 051). A leg we hold no price for renders `—`; a leg the
+    field has priced at nothing renders `0%`, which is an answer rather than a
+    silence. PLL's six eliminated legs are `0.000000`, not `NULL`, and that is
+    the difference the reader is owed.
+
+    Specimen, measured on production 2026-09-21: `/api/events/search?q=Super
+    Bowl` served `probability: null` for four rungs of *Sports Emmy Award for
+    Outstanding Live Sports Special: Championship Event?* (13886744) whose
+    stored value is `0.000000`, while `/api/futures/13886744` served `0.0` for
+    those same four — two surfaces disagreeing about one number, with the
+    near-empty board on the surface a reader meets first.
+
+    #4679 IS THE OTHER HALF OF THIS AND LANDED FIRST. It swept the ten
     `float(o.current_probability) if o.current_probability else None` reads in
-    `routes/feed.py` to `is not None`, so a 0% rung is now COUNTED — by
-    `incoherent_ladder_verdict`'s `priced_rungs` and by the suppression filters.
-    It deliberately did not touch the two PRINT sites, which call this function,
-    so a 0% leg still renders `—` and still cannot date the mark. What the card
-    counts and what the card prints are now answered in two places on purpose;
-    #6195 is what merges them back.
+    `routes/feed.py` to `is not None`, so a 0% rung became COUNTED — by
+    `incoherent_ladder_verdict`'s `priced_rungs` and by the suppression filters
+    — and deliberately left the PRINT sites, which call this function, to this
+    change. What the card counts and what the card prints were answered in two
+    places on purpose for exactly that interval; they are one answer again.
 
     `__dict__.get`, never `getattr`, for this module's usual reason (gotcha
     #42). The `__slots__` carrier with no instance dict answers `False`, the
     same honest degradation it already gets from `_outcome_observed_epoch`.
     """
     value = (_instance_dict(outcome) or _NO_INSTANCE_DICT).get("current_probability")
-    if not value:
+    if value is None:
         return False
     try:
         float(value)  # type: ignore[arg-type]

@@ -27113,11 +27113,39 @@ def _build_search_top_outcomes(
     named = [
         (o, repair_field_outcome_name(o.external_id, o.name) or o.name) for o in top
     ]
+    # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
+    #
+    # Measured on production 2026-09-21: `?q=Super Bowl` served this card for
+    # *Sports Emmy Award for Outstanding Live Sports Special: Championship
+    # Event?* (13886744) drawing FIVE rungs of which FOUR were `probability:
+    # null` — NBA Finals, College Football Playoff, Super Bowl LX, The Masters —
+    # while `futures_outcomes` holds `0.000000` for every one of them and
+    # `/api/futures/13886744` serves them as `0.0`. One tap apart, two answers
+    # about the same four numbers, and the near-empty board is on the surface a
+    # reader meets FIRST. `0.000000` is not a missing price; it is the field
+    # saying this candidate is out, on a market where we know every answer.
+    #
+    # `_outcome_prints_a_price` RATHER THAN A LOCAL `is not None`, and that is
+    # the load-bearing half. `_served_prices_as_of` — the age pip under this
+    # same card — scopes itself to rows that print a price by calling that
+    # predicate, and its docstring states the coupling as a contract: a `0.0`
+    # leg "regains its vote here with no edit to this function". A local test
+    # here would satisfy this issue and re-open #6256 in the same diff, because
+    # the two sides of the card would once again be deciding "is this a price"
+    # in two places. They decide it in one.
+    #
+    # `movement` is deliberately NOT moved with it. Its truthiness answers a
+    # different question — "did this leg move" — and a change of exactly zero is
+    # honestly absent rather than a number worth drawing; UX-P275 is the ruling
+    # that a move which rounds to nothing must not print as a move. Only the
+    # price is a claim about the world that `0` can correctly make.
     if lean:
         out = [
             {
                 "name": name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": (
+                    float(o.current_probability) if _outcome_prints_a_price(o) else None
+                ),
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
             }
             for o, name in named
@@ -27127,7 +27155,9 @@ def _build_search_top_outcomes(
             {
                 "id": o.id,
                 "name": name,
-                "probability": float(o.current_probability) if o.current_probability else None,
+                "probability": (
+                    float(o.current_probability) if _outcome_prints_a_price(o) else None
+                ),
                 "american_odds": o.current_american_odds,
                 "rank": o.rank,
                 "movement": float(o.probability_change_24h) if o.probability_change_24h else None,
