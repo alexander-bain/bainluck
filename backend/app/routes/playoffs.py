@@ -5146,9 +5146,12 @@ async def get_playoff_grid(
     # false claim, it does not redistribute that team's mass onto the field.
     out_fixes = propagate_elimination(teams, config.columns)
     if out_fixes:
+        # `config.slug`, not `league_slug`: the latter is the raw path parameter
+        # and logging it is a `py/log-injection` sink (CodeQL flagged this exact
+        # line). The config's own slug is the same league, from a literal.
         logger.info(
             "Playoff grid %s: %d cell(s) downstream of an eliminated stage",
-            league_slug, out_fixes,
+            config.slug, out_fixes,
         )
 
     # -----------------------------------------------------------------------
