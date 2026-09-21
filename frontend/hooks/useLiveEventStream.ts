@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
+import { rememberLiveChartFrame, type LiveChartPoint } from '@/lib/liveChartHistory';
 import {
   TICK_INTERVAL_MS,
   createLiveStreamController,
@@ -41,6 +42,8 @@ interface UseLiveEventStreamResult {
   frame: LiveFrame | null;
   /** True only while push is DELIVERING. Callers gate polling on this. */
   connected: boolean;
+  /** Actual publications received for this event while the page is open. */
+  chartPoints: LiveChartPoint[];
 }
 
 export function useLiveEventStream(
@@ -49,6 +52,9 @@ export function useLiveEventStream(
 ): UseLiveEventStreamResult {
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
+  const [{ chartEventId, points }, setChart] = useState<{
+    chartEventId: number | undefined; points: LiveChartPoint[];
+  }>({ chartEventId: eventId, points: [] });
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);
 
@@ -74,7 +80,17 @@ export function useLiveEventStream(
         ) as unknown as StreamHandle,
       now: () => Date.now(),
       onFrame: (next) => {
-        if (mounted.current) setFrame(next);
+        if (mounted.current) {
+          setFrame(next);
+          // Collect in the transport callback, not an effect on `frame`: React
+          // may batch several publications into one render.
+          setChart(previous => ({
+            chartEventId: eventId,
+            points: rememberLiveChartFrame(
+              previous.chartEventId === eventId ? previous.points : [], next, eventId,
+            ),
+          }));
+        }
       },
       onDeliveringChange: (delivering) => {
         if (mounted.current) setConnected(delivering);
@@ -94,5 +110,5 @@ export function useLiveEventStream(
     };
   }, [eventId, enabled]);
 
-  return { frame, connected };
+  return { frame, connected, chartPoints: chartEventId === eventId ? points : [] };
 }

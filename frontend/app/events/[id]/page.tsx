@@ -21,6 +21,7 @@ import { canonicalEventHref } from "@/lib/canonicalEventUrl";
 import { withoutEventOwnMoneyline } from "@/lib/eventOwnMoneyline";
 import { teamTextColor } from "@/lib/teamColors";
 import { useLiveEventStream } from "@/hooks/useLiveEventStream";
+import { mergeLiveChartHistory } from "@/lib/liveChartHistory";
 import FreshnessChip from "@/components/event/FreshnessChip";
 import {
   applyLiveFrame,
@@ -304,7 +305,7 @@ export default function EventPage({ params }: EventPageProps) {
   // in the database was already live (worker-ws flushes every 2s, the blend is
   // stamped at most once per event per 5s) — it was the 32s poll that made it
   // look stale on screen.
-  const { frame: liveFrame, connected: streamConnected } = useLiveEventStream(
+  const { frame: liveFrame, connected: streamConnected, chartPoints } = useLiveEventStream(
     eventId,
     isLive,
   );
@@ -646,23 +647,20 @@ export default function EventPage({ params }: EventPageProps) {
   );
 
 
-  // #3911: ONE number on the page, even when two workers answered it.
-  //
-  // The backend pins the blend line's right edge to the point-in-time blend so
-  // the curve ends where the hero sits — but `_event_detail_cache` is
-  // process-local, and the detail and history requests can land on different
-  // web workers. Worker A serves a hero cached up to 300s ago while worker B
-  // computes the edge from live rows: measured at 0.40 against 0.10.
-  //
-  // Applied HERE, at the single point every consumer downstream reads from, so
-  // the chart, the sparkline, `resolveProbability` and `lastChartPoint` cannot
-  // disagree with each other either. `pinChartEdgeToHero` returns the same
-  // object when nothing needs correcting, so this memo is identity-stable and
-  // the common case allocates nothing. Policy stays on the server — see
-  // `lib/chartEdgePin.ts`.
+  // #920: merge the session's actual published blend observations into the
+  // history consumed by both charts. Each publication retains its timestamp;
+  // a subsequent REST response wins exact-time overlaps. The renderer still
+  // groups the main chart by minute; this is delivery, not a resolution change.
+  // Without added publications, preserve #3911's server-authorized edge pin
+  // for detail/history responses served by different workers.
   const historyData = useMemo(
-    () => pinChartEdgeToHero(servedHistory, event),
-    [servedHistory, event],
+    () => {
+      const pushed = mergeLiveChartHistory(servedHistory, isLive ? chartPoints : []);
+      // A push is an observation at its own time, not permission to rewrite
+      // the previous poll's endpoint with today's hero value (#920).
+      return pushed !== servedHistory ? pushed : pinChartEdgeToHero(servedHistory, event);
+    },
+    [servedHistory, event, isLive, chartPoints],
   );
 
   /* ── #3612: A GAME THAT HAS BEGUN DOES NOT PROMISE THAT TRACKING WILL BEGIN ──
@@ -808,22 +806,11 @@ export default function EventPage({ params }: EventPageProps) {
     [servedGameMarkets]
   );
 
-  // The sparkline's series: the served blend line, plus any frames that have
-  // arrived by push since the last fetch. Appending the pushed points matters —
-  // while the stream is delivering, polling is OFF, so `aggregate_line` stops
-  // advancing and a sparkline built from it alone would freeze exactly when the
-  // number is most alive.
-  const sparklinePoints = useMemo(() => {
-    const served = (historyData?.aggregate_line ?? []).map((p) => ({
-      timestamp: p.timestamp,
-      value: p.home_probability,
-    }));
-    if (liveFrame?.p === null || liveFrame?.p === undefined) return served;
-    const last = served[served.length - 1];
-    // Don't double-draw a point the fetch already carried.
-    if (last && last.timestamp === liveFrame.updated_at) return served;
-    return [...served, { timestamp: liveFrame.updated_at, value: liveFrame.p }];
-  }, [historyData?.aggregate_line, liveFrame]);
+  // Both charts read the same served + received publication history (#920).
+  const sparklinePoints = useMemo(() =>
+    (historyData?.aggregate_line ?? []).map(p => ({
+      timestamp: p.timestamp, value: p.home_probability,
+    })), [historyData?.aggregate_line]);
 
   // Team championship progression (playoff path from grid data — always available for both teams)
   const { data: teamProgression } = useSWR<TeamProgressionResponse>(
