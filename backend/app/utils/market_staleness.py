@@ -6,6 +6,7 @@ the real-world event has passed (e.g., "Eurovision" after May 31).
 
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1, "january": 1, "feb": 2, "february": 2,
@@ -340,31 +341,24 @@ def _day_less_deadline(name: str, now: datetime) -> tuple[datetime, bool] | None
     return None
 
 
-def outcome_deadline_expired(
-    outcome_name: str | None,
-    now: datetime,
-    *,
-    grace_days: int = 1,
-) -> bool:
-    """True if a ladder rung's OWN name names a deadline that has already passed.
+def _named_deadline(
+    outcome_name: str | None, now: datetime
+) -> tuple[datetime, bool] | None:
+    """``(deadline, had_explicit_year)`` named by the rung itself, else ``None``.
 
-    Ladder markets ("When will X happen?") carry dated rungs — "Before Jul 25,
-    2026", "July 31". Once a rung's date passes it can no longer happen, but the
-    rung keeps its last traded price and renders as a live 1-3% option. Nothing
-    else in the pipeline looks at outcome names: the market-level title check
-    sees an undated question, and the market keeps being polled so it never goes
-    stale. UX-P004 classes b + e.
+    The PARSING half of `outcome_deadline_expired`, lifted out unchanged so that
+    two callers can share one reading of a rung's name. That function applies the
+    grace period and the year-less look-back to this answer and is the only place
+    those judgements live; #7784 needs the instant itself, to ask whether the
+    price beside the name was observed before it or after it.
 
-    UX-P006 / #1567 widened this past month+DAY rungs to DAY-LESS ones ("Before
-    July", "Before July 2026", "Before 2027"), which the day-requiring regex
-    below skipped entirely.
-
-    #7274 dates a RANGE rung ("September 15 - 30, 2026") by its closing day. It
-    was read by its opening day, so a window still open expired mid-window.
+    `None` means "this name does not date itself" — which is every non-ladder
+    outcome, and, deliberately, the two shapes the rules below refuse to date: a
+    range that closes before it opens, and an impossible calendar day.
     """
     name = outcome_name or ""
     if not name:
-        return False
+        return None
 
     match = None
     for match in _EXPLICIT_MONTH_DAY_RE.finditer(name):
@@ -390,20 +384,50 @@ def outcome_deadline_expired(
                 # not been given ("September 30 - 2"), and guessing which month
                 # the closing day belongs to would be inventing the deadline. We
                 # cannot date the end, so we do not delete the rung.
-                return False
+                return None
             day = end_day
             explicit_year = day_range.group(4)
         year = int(explicit_year) if explicit_year else now.year
         try:
             deadline = datetime(year, month, day, 23, 59, 59, tzinfo=timezone.utc)
         except ValueError:
-            return False
+            return None
         had_explicit_year = explicit_year is not None
     else:
         day_less = _day_less_deadline(name, now)
         if day_less is None:
-            return False
+            return None
         deadline, had_explicit_year = day_less
+
+    return deadline, had_explicit_year
+
+
+def outcome_deadline_expired(
+    outcome_name: str | None,
+    now: datetime,
+    *,
+    grace_days: int = 1,
+) -> bool:
+    """True if a ladder rung's OWN name names a deadline that has already passed.
+
+    Ladder markets ("When will X happen?") carry dated rungs — "Before Jul 25,
+    2026", "July 31". Once a rung's date passes it can no longer happen, but the
+    rung keeps its last traded price and renders as a live 1-3% option. Nothing
+    else in the pipeline looks at outcome names: the market-level title check
+    sees an undated question, and the market keeps being polled so it never goes
+    stale. UX-P004 classes b + e.
+
+    UX-P006 / #1567 widened this past month+DAY rungs to DAY-LESS ones ("Before
+    July", "Before July 2026", "Before 2027"), which the day-requiring regex
+    below skipped entirely.
+
+    #7274 dates a RANGE rung ("September 15 - 30, 2026") by its closing day. It
+    was read by its opening day, so a window still open expired mid-window.
+    """
+    named = _named_deadline(outcome_name, now)
+    if named is None:
+        return False
+    deadline, had_explicit_year = named
 
     if now <= deadline + timedelta(days=grace_days):
         return False
@@ -528,6 +552,34 @@ def _live_dated_twins(
     return twins
 
 
+def _twin_deadline(
+    name: str, twins: dict[tuple[int, int], int]
+) -> datetime | None:
+    """The LATEST instant a year-less rung could name, read off its dated twin.
+
+    The parsing half of `_twin_proves_expired`, split out for the same reason
+    `_named_deadline` was (#7784): the instant, not the verdict. Two rungs of one
+    ladder cannot name one deadline, so this rung is a strictly EARLIER
+    occurrence than its twin — the year before it, at the latest.
+    """
+    parsed = _whole_name_date(name)
+    if parsed is None:
+        return None
+    month, day, year = parsed
+    if year is not None:
+        return None  # it says its own year; the rule above already read it
+    twin_year = twins.get((month, day))
+    if twin_year is None:
+        return None
+    try:
+        return datetime(twin_year - 1, month, day, 23, 59, 59, tzinfo=timezone.utc)
+    except ValueError:
+        # Feb 29 the year before a leap year. The rung is real, our arithmetic
+        # is not, and inventing a neighbouring day to strip a live option is
+        # exactly the trade this module refuses.
+        return None
+
+
 def _twin_proves_expired(
     name: str,
     twins: dict[tuple[int, int], int],
@@ -536,39 +588,172 @@ def _twin_proves_expired(
     grace_days: int,
 ) -> bool:
     """Does a live dated twin on this board prove a year-less rung is past?"""
-    parsed = _whole_name_date(name)
-    if parsed is None:
-        return False
-    month, day, year = parsed
-    if year is not None:
-        return False  # it says its own year; the rule above already read it
-    twin_year = twins.get((month, day))
-    if twin_year is None:
-        return False
-    try:
-        latest_possible = datetime(
-            twin_year - 1, month, day, 23, 59, 59, tzinfo=timezone.utc
-        )
-    except ValueError:
-        # Feb 29 the year before a leap year. The rung is real, our arithmetic
-        # is not, and inventing a neighbouring day to strip a live option is
-        # exactly the trade this module refuses.
+    latest_possible = _twin_deadline(name, twins)
+    if latest_possible is None:
         return False
     return now > latest_possible + timedelta(days=grace_days)
 
 
+def _observed_at(value) -> datetime | None:
+    """A rung's observation stamp, normalised — or ``None`` for "we cannot tell".
+
+    Takes a datetime off an ORM row or the ISO string a serialised payload
+    carries, because the three call sites hold one or the other and neither
+    should have to convert. Anything else, and any string that is not a stamp,
+    is ``None``: an unreadable stamp is NO EVIDENCE, and the rule below is
+    written so that no evidence changes nothing.
+    """
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return _as_utc(value)
+
+
+def _price_is_the_ladders_answer(
+    observed_at: datetime | None, deadline: datetime | None
+) -> bool:
+    """Is a confident price on a past-dated rung a VERDICT, or a forecast? (#7784)
+
+    ═══ 🔴 THE EXEMPTION NEEDS EVIDENCE, AND THE STAMP IS THE EVIDENCE ═══
+
+    `EXPIRED_RUNG_MAX_PROBABILITY` spares a past-dated rung priced at or above
+    it because such a rung "already resolved YES and is the ladder's answer". The
+    census that set the constant is quoted above and is sound — but it was taken
+    on rungs the venue was still repricing, and the reasoning silently assumes
+    the price was seen AFTER the deadline. On a board whose pricing has stopped
+    that assumption inverts, and the exemption reads the market's last FORECAST
+    as its VERDICT.
+
+    WHAT A READER SAW (#7784, production 2026-09-21). `/futures/109403` — *When
+    will DHS be funded again?*, an OPEN board — drew four rungs whose dates were
+    15 to 129 days gone, each as a live green bar:
+
+        Before May 15, 2026   66%      last_updated 2026-04-30
+        Before May 22, 2026   78%      last_updated 2026-04-30
+        Before Jun 1, 2026    86%      last_updated 2026-04-30
+        Before Jul 1, 2026    96%      last_updated 2026-04-30
+
+    Every rung on that board carries the identical stamp `2026-04-30T04:46:55`:
+    the board stopped being repriced 144 days ago, and every one of those prices
+    was taken 15 to 62 days BEFORE its own deadline. `0.66` is not the market
+    saying "this happened"; it is the last thing the market said while the
+    deadline was still in the future. The chart one inch above the table already
+    knew — *"No prices in the last 7 days"*.
+
+    So the test is the one the exemption's own reasoning implies: the price is a
+    verdict only if it was observed once the rung's own deadline had arrived.
+
+    ═══ MEASURED TO THE DAY, NOT TO THE SECOND, AND THAT IS THE WHOLE EDGE ═══
+
+    `_named_deadline` dates every rung to **23:59:59 of its named day**, so a
+    stamp taken at noon on that day is "before the deadline" by the arithmetic
+    while being, to a reader, the day the thing resolved. Measured old-vs-new
+    over the 10,133 rungs of the 816 open boards that could possibly move (see
+    the ship's artifact): the rule catches **68 rungs on 24 boards**, and only
+    **5** of them turn on this hour-vs-day choice:
+
+        September 10          1.00   stamped 2026-09-10 15:08   <- it happened
+        September 10          1.00   stamped 2026-09-10 16:08   <- it happened
+        Before Apr 15, 2026   0.99   stamped 2026-04-15 08:45   <- it happened
+        Before Aug 1, 2026    0.99   stamped 2026-08-01 04:51   <- it happened
+        September 18          0.63   stamped 2026-09-18 03:50   <- a forecast
+
+    To the second, all five are deleted and four of them are real verdicts. To
+    the DAY, four are kept and one forecast survives. The harmful direction here
+    is deleting an answer a reader is entitled to, so the comparison is against
+    the START of the deadline's day: a stamp landing on that day or later is
+    evidence. ux's own filing reads the second specimen the same way — of its
+    three past-dated rungs it calls only "two of them priced before their own
+    deadline", the third being stamped on its deadline's date.
+
+    ⚠️ NO STAMP ⇒ THE EXEMPTION STANDS, and that direction is deliberate. This
+    gate ends in a row being REMOVED from a reader's screen, and the innocent
+    case — a leader we cannot date — leaves no trace on the page it was deleted
+    from. A rung nobody stamped is not evidence of a forecast; it is the absence
+    of evidence, and it keeps the behaviour it has today. Same for a rung whose
+    name we could not date at all, which cannot reach here in the first place.
+    """
+    if observed_at is None or deadline is None:
+        return True
+    return observed_at >= deadline.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _rung_is_a_graded_winner(is_winner: Any) -> bool:
+    """Has the venue already declared this rung the answer? (CERT-3236 repair)
+
+    ═══ 🔴 A "BEFORE …" CONTRACT MAY SETTLE YES BEFORE ITS OWN DEADLINE ═══
+
+    :func:`_price_is_the_ladders_answer` asks whether a confident price is a
+    verdict or a forecast, and dates the evidence by the stamp. On a CUMULATIVE
+    ladder that test has a blind spot the DHS specimen could not show: *Before
+    Sep 1, 2026* resolves YES the moment the thing happens, which may be weeks
+    EARLY, and the settlement write is the last time the leg is ever touched. Its
+    stamp is therefore permanently before its own deadline, and the observation
+    test reads the venue's own verdict as a stale forecast.
+
+    MEASURED (CERT-3236's finding, reproduced independently at
+    `artifacts/d383-7784r/replay_winners.py` against production 2026-09-21): over
+    the 63 open boards carrying a dated graded leg, the observation rule alone
+    newly hides **27 rungs, and 25 of them are `is_winner = true` with
+    `resolution_source = 'api_settlement'`** — the Claude 5, Makary, baxdrostat
+    and DNC-autopsy boards, and every day of the two "Will Russia target Kyiv
+    on…?" / "Will Trump publicly insult someone on…?" ladders. Hiding those is a
+    strictly worse truth defect than the one this ship set out to fix.
+
+    ``is_winner IS TRUE`` IS THE WHOLE TEST, and the two obvious alternatives are
+    both wrong here:
+
+    * ``is_winner`` alone in the FALSE direction would be a disaster — the column
+      is ``default=False`` so ``False`` is what a row is BORN with
+      (`futures_liveness.leg_is_graded` documents the measurement) — but TRUE is
+      never written by accident, which is the only direction this function reads.
+    * REQUIRING ``resolution_source = 'api_settlement'`` as well would be tidier
+      and buys nothing: all 25 carry it, and a winner graded by any other rail is
+      still a winner a reader must not lose. The asymmetry decides it — hiding a
+      declared winner deletes an answer from the page, while sparing one leaves a
+      row the price exemption kept anyway.
+
+    THIS CLAUSE TAKES NOTHING AWAY FROM MASTER: measured on the same population,
+    **0** graded winners are expired by the pre-#7784 rule today, so no rung that
+    master hides stops being hidden. The 63 DHS-class stale forecasts the ship
+    removes are unaffected — not one of them is graded.
+    """
+    return is_winner is True
+
+
 def expired_ladder_rungs(
-    outcomes: list[str | None] | list[tuple[str | None, float | None]],
+    outcomes: (
+        list[str | None]
+        | list[tuple[str | None, float | None]]
+        | list[tuple[str | None, float | None, datetime | str | None]]
+        | list[tuple[str | None, float | None, datetime | str | None, Any]]
+    ),
     now: datetime,
     *,
     grace_days: int = 1,
 ) -> set[str]:
     """Names of rungs whose own deadline has passed. Empty set for undated ladders.
 
-    Accepts bare names, or ``(name, probability)`` pairs. Pass the pairs where
+    Accepts bare names, ``(name, probability)`` pairs, or
+    ``(name, probability, observed_at)`` triples. Pass the pairs where
     probabilities are available: a past-dated rung priced at or above
     ``EXPIRED_RUNG_MAX_PROBABILITY`` is the ladder's answer, not a dead option,
     and is never stripped.
+
+    #7784: pass the TRIPLE where the rung's observation stamp is available too.
+    That exemption holds only for a price observed at or after the rung's own
+    deadline — see `_price_is_the_ladders_answer` for the four-rung board that
+    priced four past dates because it does not reprice any more. A pair, or a
+    triple with no stamp, behaves exactly as it did before.
+
+    CERT-3236: pass the FOUR-TUPLE where the leg's ``is_winner`` grade is
+    available. A rung the venue has already declared the winner is never hidden,
+    whenever it was last priced — a cumulative "Before …" contract settles YES on
+    the day the thing happens, which may be weeks before its own deadline, so the
+    stamp test alone deletes 25 authoritative winners (see
+    :func:`_rung_is_a_graded_winner`). An absent grade changes nothing.
 
     #7383: a rung is ALSO expired when a dated twin on the SAME BOARD proves it
     — see `_live_dated_twins`. That arm reads the whole list, which is why it
@@ -584,16 +769,31 @@ def expired_ladder_rungs(
     expired: set[str] = set()
     for outcome in outcomes:
         if isinstance(outcome, tuple):
-            name, probability = outcome
+            name, probability = outcome[0], outcome[1]
+            observed_at = _observed_at(outcome[2]) if len(outcome) > 2 else None
+            is_winner = outcome[3] if len(outcome) > 3 else None
         else:
-            name, probability = outcome, None
+            name, probability, observed_at, is_winner = outcome, None, None, None
         if not name:
             continue
-        if not outcome_deadline_expired(name, now, grace_days=grace_days):
-            if not _twin_proves_expired(name, twins, now, grace_days=grace_days):
-                continue
-        if probability is not None and probability >= EXPIRED_RUNG_MAX_PROBABILITY:
+        # CERT-3236 — BEFORE EITHER ARM, because a declared winner is not a dead
+        # option under any rule that could name it: neither its own passed date
+        # nor a live dated twin makes the venue's verdict untrue.
+        if _rung_is_a_graded_winner(is_winner):
             continue
+        # WHICH ARM CALLED IT DEAD DECIDES WHICH DEADLINE THE STAMP IS MEASURED
+        # AGAINST — the rung's own date, or the one its dated twin implies. The
+        # order is the order the two rules were written in and is unchanged.
+        if outcome_deadline_expired(name, now, grace_days=grace_days):
+            named = _named_deadline(name, now)
+            deadline = named[0] if named is not None else None
+        elif _twin_proves_expired(name, twins, now, grace_days=grace_days):
+            deadline = _twin_deadline(name, twins)
+        else:
+            continue
+        if probability is not None and probability >= EXPIRED_RUNG_MAX_PROBABILITY:
+            if _price_is_the_ladders_answer(observed_at, deadline):
+                continue
         expired.add(name)
     return expired
 

@@ -6846,6 +6846,22 @@ def _format_market_detail(
     # past-dated rung priced at or above it already resolved YES and is the
     # ladder's answer, not a ghost, and is never stripped.
     #
+    # CERT-3236: AND THE GRADE GOES WITH THE STAMP. A cumulative "Before Sep 1,
+    # 2026" rung settles YES on the day the thing happens, which may be weeks
+    # before its own deadline, and that settlement write is the last time the leg
+    # is touched — so the stamp test alone reads 25 production winners (Claude 5,
+    # Makary, baxdrostat, the DNC autopsy, every day of two Kyiv/Trump ladders) as
+    # stale forecasts and deletes them. `is_winner` is a key this serializer
+    # already publishes twenty lines up, beside `resolution_source`.
+    #
+    # #7784: AND THE STAMP GOES WITH THE PRICE, because that guard cannot tell a
+    # verdict from a forecast without it. This page's own payload is where the
+    # defect was photographed — five rungs of board 109403, four of them dated
+    # 15 to 129 days ago, every price stamped `2026-04-30` and therefore taken
+    # BEFORE the deadline it was sparing. `last_updated` is the ISO string this
+    # serializer already publishes a few keys up; the helper reads a string or a
+    # datetime, and an absent one leaves the rung exactly where it is today.
+    #
     # OPEN MARKETS ONLY. A settled or closed board is a RESULT, and a result
     # shows what ran, including the windows that elapsed without the event
     # happening. Expiry is a statement about what can still happen, which is a
@@ -6859,7 +6875,15 @@ def _format_market_detail(
     expired_rungs_dropped = 0
     if getattr(market, "status", None) == "open":
         expired_rung_names = expired_ladder_rungs(
-            [(o["name"], o.get("probability")) for o in outcomes],
+            [
+                (
+                    o["name"],
+                    o.get("probability"),
+                    o.get("last_updated"),
+                    o.get("is_winner"),
+                )
+                for o in outcomes
+            ],
             datetime.now(timezone.utc),
         )
         if expired_rung_names:
