@@ -446,42 +446,125 @@ def test_the_wall_max_exceeding_the_ttl_is_DERIVED_and_currently_TRUE():
 # ---------------------------------------------------------------------------
 
 
-def test_the_expires_derivation_returns_the_lock_ttl():
+def test_the_expires_derivation_returns_the_structural_cap():
     """`expires` derives from a CONSTANT, not from a sampled maximum.
 
-    The whole point of deriving from `_LOCK_TTL_SECONDS` rather than from the
-    worst observed wall is that the wall keeps moving and the lock TTL does not.
-    This program has read a sampled maximum as a bound twice and been wrong both
-    times — 42.6 s by 11.3 s, then 53.920 s by 7.36 s. A value derived from the
-    sample would have to be revised on each of those reads; this one does not.
+    The value is `MAX_LIVE_MESSAGES * CURRENT_BEAT_INTERVAL_S` — how many of this
+    beat's messages may be alive in the broker at once. The wall keeps moving and
+    the cap does not. This program has read a sampled maximum as a bound twice and
+    been wrong both times — 42.6 s by 11.3 s, then 53.920 s by 7.36 s. A value
+    derived from the sample would have to be revised on each of those reads; this
+    one does not.
     """
-    from app.utils.typeahead_beat_budget import LOCK_TTL_S, derive_message_expiry_s
+    from app.utils.typeahead_beat_budget import (
+        CURRENT_BEAT_INTERVAL_S,
+        MAX_LIVE_MESSAGES,
+        derive_message_expiry_s,
+    )
 
-    assert derive_message_expiry_s() == float(LOCK_TTL_S) == 120.0
+    assert derive_message_expiry_s() == MAX_LIVE_MESSAGES * CURRENT_BEAT_INTERVAL_S == 120.0
 
     # It does not move when the wall measurement moves — which is the property.
     assert derive_message_expiry_s(worst_wall_s=61.282) == 120.0
     assert derive_message_expiry_s(worst_wall_s=42.6) == 120.0
 
 
-def test_the_expires_derivation_refuses_a_lock_ttl_under_the_measured_wall():
+def test_the_mirrored_lock_ttl_equals_the_warmers_own_constant():
+    """The mirror is asserted, because for a month it was wrong and silent.
+
+    `LOCK_TTL_S` is declared in its own comment to be a mirror of
+    `typeahead_warmer._LOCK_TTL_SECONDS`. #7510 took that constant 120 -> 45 and
+    the mirror did not follow, so `derive_message_expiry_s` spent a month deriving
+    from a lock TTL that had not existed since the morning. Nothing went red
+    because nothing compared them; this is that comparison.
+
+    **What this would have to see to go red:** either constant moved without the
+    other — which is exactly the edit that produced the drift.
+    """
+    from app.tasks import typeahead_warmer
+    from app.utils.typeahead_beat_budget import LOCK_TTL_S
+
+    assert LOCK_TTL_S == typeahead_warmer._LOCK_TTL_SECONDS, (
+        f"typeahead_beat_budget.LOCK_TTL_S is {LOCK_TTL_S}s but the warmer's own "
+        f"_LOCK_TTL_SECONDS is {typeahead_warmer._LOCK_TTL_SECONDS}s — the mirror has "
+        f"drifted and every claim this module makes about the lock is about a fiction"
+    )
+
+
+def test_moving_the_lock_ttl_cannot_move_the_message_expiry():
+    """#3655's severance, applied to the beat it was originally written about.
+
+    The expiry used to BE the lock TTL. Two things killed that argument at once:
+    #7510's renewal holder means a live lock is bounded by the pass rather than by
+    its own TTL, and the same change took the TTL 120 -> 45. Coupled, correcting
+    the stale mirror would have cut the delivery bound 120 -> 45 as a side effect
+    of a repair aimed at the residual-lock hole — on the one beat whose
+    delivered-fire ratio #3364 measured to track this exact number (120 -> 0.37,
+    110 -> 0.23, 20 -> 0.03). A ~2.7x cut in warm-up delivery to the search box,
+    arriving as tidying.
+
+    **What this would have to see to go red:** `lock_ttl_s` reinstated as an input
+    to `derive_message_expiry_s`, or the returned value tracking the warmer's lock
+    constant by any other route.
+    """
+    import inspect
+
+    from app.tasks import typeahead_warmer
+    from app.utils.typeahead_beat_budget import LOCK_TTL_S, derive_message_expiry_s
+
+    # Structural: the lock TTL is not an input at all, so no caller can route it in.
+    assert "lock_ttl_s" not in inspect.signature(derive_message_expiry_s).parameters
+
+    before = derive_message_expiry_s()
+    assert before != float(LOCK_TTL_S)
+    assert before > float(LOCK_TTL_S), (
+        "the bound must still outlive every message this warmer can hold off "
+        "behind its own lock"
+    )
+
+    # Behavioural: move the real constant the mirror tracks and the bound stands.
+    original = typeahead_warmer._LOCK_TTL_SECONDS
+    try:
+        typeahead_warmer._LOCK_TTL_SECONDS = 20
+        assert derive_message_expiry_s() == before
+        typeahead_warmer._LOCK_TTL_SECONDS = 300
+        assert derive_message_expiry_s() == before
+    finally:
+        typeahead_warmer._LOCK_TTL_SECONDS = original
+
+
+def test_the_expires_derivation_refuses_a_bound_that_cannot_do_its_job():
     """A REFUSAL, never a smaller number — ruling 075's shape.
 
-    If `_LOCK_TTL_SECONDS` were ever lowered under the measured worst wall plus
-    margin, the lock could expire under a live pass and a second pass could start
-    on top of the first. No message-expiry value derived from that is safe, so
-    the derivation raises rather than quietly returning the smaller figure.
+    Two floors, and the derivation raises rather than quietly returning a figure
+    that clears neither:
 
-    **What this would have to see to go red:** `LOCK_TTL_S` dropped to 60 while
-    the ring's worst wall stands at 61.282 s — i.e. someone "tidying" the lock
-    TTL toward the beat period without reading the wall.
+    * below the measured worst wall plus margin, a message published during a pass
+      cannot survive to the lock release — the discard the bound exists to stop;
+    * below one entry lifetime, a queued fire can only ever arrive after the head
+      it was scheduled to refresh has already expired.
+
+    **What this would have to see to go red:** `MAX_LIVE_MESSAGES` cut to 6 while
+    the ring's worst wall stands at 61.282 s (60 < 66.282), or the beat slowed
+    without the cap following it — i.e. someone "tidying" the broker's message
+    count without reading the wall.
     """
     from app.utils.typeahead_beat_budget import derive_message_expiry_s
 
-    with pytest.raises(ValueError, match="lock TTL"):
-        derive_message_expiry_s(lock_ttl_s=60.0, worst_wall_s=61.282)
+    with pytest.raises(ValueError, match="worst pass wall"):
+        derive_message_expiry_s(max_live=6, worst_wall_s=61.282)
 
-    for bad in ({"beat_s": 0}, {"worst_wall_s": 0}, {"lock_ttl_s": 0}, {"margin_s": -1}):
+    # The entry-life floor is reachable on its own, with the wall floor cleared.
+    with pytest.raises(ValueError, match="entry lifetime"):
+        derive_message_expiry_s(max_live=2, worst_wall_s=5.0, entry_life_s=65.0)
+
+    for bad in (
+        {"beat_s": 0},
+        {"worst_wall_s": 0},
+        {"entry_life_s": 0},
+        {"max_live": 0},
+        {"margin_s": -1},
+    ):
         with pytest.raises(ValueError):
             derive_message_expiry_s(**bad)
 

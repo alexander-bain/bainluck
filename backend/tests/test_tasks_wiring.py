@@ -655,9 +655,17 @@ class TestHeavyQueueRouting:
           regression this cycle repaired. Arm 2 fires on it, and it is the input
           that matters, because reinstating 10 here is a one-character edit that
           would look like tidying.
-        * `_LOCK_TTL_SECONDS` lowered under the measured worst wall, which would
-          make the lock expire under a live pass. `derive_message_expiry_s` raises
-          rather than returning a smaller number, and arm 2 propagates that raise.
+        * `MAX_LIVE_MESSAGES` cut far enough that the bound no longer clears the
+          measured worst wall plus margin, or no longer clears one entry lifetime.
+          `derive_message_expiry_s` raises rather than returning a smaller number,
+          and arm 2 propagates that raise.
+        * the expiry re-coupled to `_LOCK_TTL_SECONDS`. It was derived from that
+          constant until #7510 shortened the lock to 45 s AND gave it a renewal
+          holder — which makes a live lock bounded by the pass rather than by its
+          own TTL, so the premise "a message older than the TTL is provably not
+          waiting on the lock" is no longer true. Re-coupling them would cut this
+          delivery bound 120 -> 45 as a side effect of a repair aimed elsewhere, on
+          the beat #3364 measured the delivered-fire ratio to track.
         """
         from app.tasks import _EXPIRING_WARMER_BEATS, celery_app as app
         from app.utils.typeahead_beat_budget import (
