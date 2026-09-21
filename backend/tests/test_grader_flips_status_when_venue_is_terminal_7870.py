@@ -213,29 +213,64 @@ def _event(*legs: tuple[str, str, str | None]) -> dict:
     }
 
 
-async def _drive(monkeypatch, *, ticker: str, event: dict | None, dry_run=False):
-    """Run the REAL `_backfill_kalshi_winners` over one event, selection stubbed."""
+async def _drive(
+    monkeypatch,
+    *,
+    ticker: str,
+    event: dict | None,
+    dry_run=False,
+    via_band: str = "fresh",
+    redis=None,
+    calls: dict | None = None,
+):
+    """Run the REAL `_backfill_kalshi_winners` over one event, selection stubbed.
+
+    `via_band` decides WHICH selector hands `ticker` in. It defaults to `fresh`
+    so every pre-#7870 arm in this file is unchanged, and `status_sync` is what
+    the band-5 arms use: the same venue answer arriving through the selector
+    that CERT-3263 found missing, so the chain under test is the real one.
+
+    `calls` collects `{band: (limit, cursor)}` so an arm can assert the caller
+    spends the right budget off the right cursor rather than merely that
+    something was invoked.
+    """
+    calls = calls if calls is not None else {}
+    fresh = [ticker] if via_band == "fresh" else []
+    early = [ticker] if via_band == "early" else []
+    longdated = [ticker] if via_band == "longdated" else []
+    status_sync = [ticker] if via_band == "status_sync" else []
 
     async def _fake_select(session, limit_, cursor_, *, include_tail=True):
-        return [ticker], []
+        calls["fresh"] = (limit_, cursor_)
+        return fresh, []
 
     async def _fake_early(session, limit_):
-        return []
+        calls["early"] = (limit_, None)
+        return early
 
     async def _fake_longdated(session, limit_, cursor_):
-        return []
+        calls["longdated"] = (limit_, cursor_)
+        return longdated
+
+    async def _fake_status_sync(session, limit_, cursor_):
+        calls["status_sync"] = (limit_, cursor_)
+        return status_sync
 
     session = _RecordingSession()
     venue = _FakeKalshi({ticker: event})
+    rc = redis if redis is not None else _FakeRedis()
 
     monkeypatch.setattr(bw, "_select_kalshi_settlement_tickers", _fake_select)
     monkeypatch.setattr(bw, "_select_kalshi_early_settled_tickers", _fake_early)
     monkeypatch.setattr(
         bw, "_select_kalshi_early_settled_longdated_tickers", _fake_longdated
     )
+    monkeypatch.setattr(
+        bw, "_select_kalshi_status_sync_tickers", _fake_status_sync
+    )
     monkeypatch.setattr(bw, "get_task_session", _SessionCM(session))
     monkeypatch.setattr(
-        "app.tasks.redis_state.get_redis_client", lambda *a, **k: _FakeRedis()
+        "app.tasks.redis_state.get_redis_client", lambda *a, **k: rc
     )
     monkeypatch.setattr(
         "app.services.kalshi_api.KalshiAPIService", lambda *a, **k: venue
@@ -455,3 +490,219 @@ class TestTheGateIsThePollersOwnHelperAndNotACopy:
         assert kms.all_terminal([]) is False
         assert kms.all_terminal(["finalized"]) is True
         assert kms.all_terminal(["finalized", "active"]) is False
+
+
+# ---------------------------------------------------------------------- #7870
+# BAND 5 — THE SELECTOR THAT MAKES THE WRITE ABOVE REACHABLE
+#
+# CERT-3263 blocked this ship's first presentation, and it was right. Everything
+# above this line tests the WRITE: given a venue answer, does the status flip.
+# None of it tests who gets ASKED, because `_drive` stubbed every selector and
+# force-fed the ticker — so the arms passed identically on a build where no
+# selector could ever produce the ship's own specimen, which is exactly what
+# production was.
+#
+# Market 112815 `FEDHIKE` was graded by #7857's band 4 on 2026-09-21, and being
+# graded is what evicts a market from band 4 (`NOT EXISTS (is_winner IS TRUE)`,
+# correctly — its job is to fetch answers we lack). Bands 1 and 2 want
+# `status='resolved'`, the very column that is wrong. So the morning after, the
+# row sat `open` with 6 legs, 3 authoritative winners, and NOTHING was coming.
+#
+# Band 5 is the exact complement of both pairs on one clause each. These arms
+# are the CALLER half — that the scheduled task runs the band, spends its own
+# budget off its own cursor, and carries its tickers all the way to the venue
+# and into the status write. The SELECTOR half — which rows the SQL actually
+# returns — cannot be honestly tested with a fake session and lives against a
+# real PostgreSQL in
+# `tests/integration/test_kalshi_settlement_recency_band_pg.py`.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestTheScheduledCallerRunsBandFive:
+    """The wiring CERT-3263 found absent, asserted on the real task function."""
+
+    async def test_the_pass_asks_band_five_for_its_own_budget_and_cursor(
+        self, monkeypatch
+    ):
+        """It is CALLED — with `_STATUS_SYNC_MAX_TICKERS`, not the cycle limit.
+
+        The budget matters as much as the call: taking `limit` would spend bands
+        1 and 2's allowance and gotcha #34 is the whole reason each band carries
+        its own.
+        """
+        rc = _FakeRedis()
+        rc.store[bw._STATUS_SYNC_CURSOR_KEY] = "KXM"
+        calls: dict = {}
+
+        await _drive(
+            monkeypatch,
+            ticker="FEDHIKE",
+            event=_event(("A", "finalized", "yes")),
+            via_band="status_sync",
+            redis=rc,
+            calls=calls,
+        )
+
+        assert "status_sync" in calls, "the scheduled pass never ran band 5"
+        limit_, cursor_ = calls["status_sync"]
+        assert limit_ == bw._STATUS_SYNC_MAX_TICKERS
+        assert cursor_ == "KXM", "band 5 must read its OWN cursor key"
+
+    async def test_the_specimen_reaches_the_venue_through_band_five_alone(
+        self, monkeypatch
+    ):
+        """THE SHIP, end to end: selector → venue → status write.
+
+        Every other band returns nothing here, so the `GET /events/FEDHIKE` and
+        the UPDATE can only have come from band 5. This is the arm that would
+        have failed on the blocked build.
+        """
+        stats, session, venue = await _drive(
+            monkeypatch,
+            ticker="FEDHIKE",
+            event=_event(
+                ("FEDHIKE-25DEC31", "finalized", "yes"),
+                ("FEDHIKE-26DEC31", "finalized", "yes"),
+                ("FEDHIKE-27DEC31", "finalized", "yes"),
+            ),
+            via_band="status_sync",
+        )
+
+        assert venue.asked == ["FEDHIKE"]
+        assert stats["status_sync_selected"] == 1
+        assert stats["status_resolved"] == 1
+        assert session.market_status_updates(), (
+            "the venue said every rung was finalized and the row stayed open"
+        )
+
+    async def test_a_pass_with_no_band_five_rows_records_a_zero_not_a_miss(
+        self, monkeypatch
+    ):
+        """`status_sync_selected` is its own counter for a reason.
+
+        `status_resolved` reads 0 both when the band asked about 50 mid-flight
+        ladders (correct — 723 of 736 by the 2026-09-21 census) and when the
+        band selected nothing at all (broken). One counter cannot tell those
+        apart, so a pass that asked nobody is visible in the log.
+        """
+        stats, _, _ = await _drive(
+            monkeypatch,
+            ticker="AAA",
+            event=_event(("A", "active", None)),
+            via_band="fresh",
+        )
+
+        assert stats["status_sync_selected"] == 0
+        assert stats["status_resolved"] == 0
+
+
+@pytest.mark.asyncio
+class TestBandFivesCursorIsItsOwn:
+    """gotcha #34 — three bands now walk the same alphabet over different
+    populations, and one shared key would have each skipping what the others
+    just passed."""
+
+    async def test_it_advances_its_own_key_and_touches_no_other(
+        self, monkeypatch
+    ):
+        rc = _FakeRedis()
+
+        await _drive(
+            monkeypatch,
+            ticker="KXWNBAWINS-26GS",
+            event=_event(("A", "finalized", "yes")),
+            via_band="status_sync",
+            redis=rc,
+        )
+
+        assert rc.store.get(bw._STATUS_SYNC_CURSOR_KEY) == "KXWNBAWINS-26GS"
+        assert bw._LONGDATED_CURSOR_KEY not in rc.store, "band 4's key moved"
+        assert (
+            "bainluck:kalshi_winner_backfill_cursor" not in rc.store
+        ), "band 2's key moved"
+
+    async def test_an_empty_sweep_wraps_the_cursor_so_the_band_restarts(
+        self, monkeypatch
+    ):
+        """Without the wrap the band walks to `Z` and never asks again — and a
+        market the venue settles next month is never revisited.
+
+        Band 5's statement runs on every cycle of both lanes, so an empty result
+        here is MEASURED (the walk reached the end) rather than structural, which
+        is what makes the delete safe where band 2's is not.
+        """
+        rc = _FakeRedis()
+        rc.store[bw._STATUS_SYNC_CURSOR_KEY] = "ZZZZ"
+
+        await _drive(
+            monkeypatch,
+            ticker="AAA",
+            event=_event(("A", "active", None)),
+            via_band="fresh",  # band 5 returns [] on this path
+            redis=rc,
+        )
+
+        assert bw._STATUS_SYNC_CURSOR_KEY not in rc.store, (
+            "an exhausted cursor must be deleted, or the band stops for ever"
+        )
+
+    async def test_an_empty_sweep_on_a_cold_cursor_writes_nothing(
+        self, monkeypatch
+    ):
+        """The other half of the wrap, so the `elif` is not write-only: with no
+        cursor stored there is nothing to delete and nothing to create."""
+        rc = _FakeRedis()
+
+        await _drive(
+            monkeypatch,
+            ticker="AAA",
+            event=_event(("A", "active", None)),
+            via_band="fresh",
+            redis=rc,
+        )
+
+        assert bw._STATUS_SYNC_CURSOR_KEY not in rc.store
+
+
+@pytest.mark.asyncio
+class TestBandFiveGradesNothingItSelects:
+    """The band picks rows we have ALREADY graded, so the venue read must be
+    able to change only the status. If selecting one of these rows could rewrite
+    a settled leg, the band would be a regrader wearing a status fix."""
+
+    async def test_a_held_row_is_asked_about_and_left_alone(self, monkeypatch):
+        """The 298-of-736 shape: a settled rung on a live ladder. The band asks
+        — that is its job — and `all_terminal` refuses, so no status is written.
+        """
+        stats, session, venue = await _drive(
+            monkeypatch,
+            ticker="KXNFLWINSWEEK-26W8",
+            event=_event(
+                ("A", "finalized", "yes"),
+                ("B", "active", None),
+            ),
+            via_band="status_sync",
+        )
+
+        assert venue.asked == ["KXNFLWINSWEEK-26W8"], "the band must still ASK"
+        assert stats["status_sync_selected"] == 1
+        assert stats["status_resolved"] == 0
+        assert not session.market_status_updates(), (
+            "one active rung and the row was flipped anyway"
+        )
+
+    async def test_an_empty_venue_answer_holds_the_row(self, monkeypatch):
+        """The 425-of-736 shape, and gotcha #53: the venue answers 200 with no
+        markets and `all_terminal([])` is False on purpose — an absence is not a
+        settlement."""
+        stats, session, _ = await _drive(
+            monkeypatch,
+            ticker="KXDEADSERIES-26",
+            event={"markets": []},
+            via_band="status_sync",
+        )
+
+        assert stats["status_sync_selected"] == 1
+        assert stats["status_resolved"] == 0
+        assert not session.market_status_updates()

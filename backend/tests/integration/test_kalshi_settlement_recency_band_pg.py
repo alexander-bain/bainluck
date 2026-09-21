@@ -487,6 +487,36 @@ def _corpus() -> list[tuple]:
             None, beyond_reach_short,
             [("leg-a", False, "api_settlement"), ("leg-b", False, None)],
         ),
+        # ------------------------------------------------------------------
+        # #7870 band 5 — the status-sync band. It needs exactly ONE new row.
+        # ------------------------------------------------------------------
+        #
+        # Its two MEMBERS are already here and were seeded as other bands'
+        # refusals, which is the cleanest possible statement of why the band
+        # exists: `PPP-26SEP14` (`early_graded`) and `L4X-28JAN01`
+        # (`longdated_graded`) are both open markets carrying an authoritative
+        # WINNER, i.e. we hold the venue's answer and our status still says
+        # `open`. Bands 3 and 4 refuse them for having a winner; bands 1 and 2
+        # refuse them for not being `resolved`. Until this band they were rows
+        # nobody was coming for — the #7857 residue, and `L4X` is `FEDHIKE`'s
+        # shape on the day after band 4 graded it.
+        #
+        # `FGG-26SEP10` (`fully_graded`) is likewise already the status-clause
+        # control: resolved, with an authoritative winner. Band 5 must refuse it.
+        #
+        # THE ONE ROW THE CORPUS LACKS is an open market whose winner is NOT
+        # authoritative — the tier-1 `all_losers` guess, which is a thing we
+        # decided and not a thing the venue said. Without it, deleting
+        # `AND COALESCE(fo.resolution_source,'') IN (…)` from the band's EXISTS
+        # changes no result in this file and the authority clause is untested.
+        # It is dated `soon` on purpose so that it sits squarely inside band 3's
+        # window: it then fails band 3 ONLY on the winner clause and fails band 5
+        # ONLY on the authority clause, which makes it discriminating for both.
+        (
+            "status_sync_guess_winner", "kalshi", "open", "SSY-26SEP14", None,
+            soon,
+            [("leg-a", True, "all_losers"), ("leg-b", False, None)],
+        ),
     ]
 
 
@@ -1461,3 +1491,323 @@ async def test_the_band_respects_its_own_budget_and_zero_means_zero(pg_engine):
 
     assert await _select_longdated(pg_engine, limit=1) == everything[:1]
     assert await _select_longdated(pg_engine, limit=0) == []
+
+
+# ---------------------------------------------------------------------------
+# #7870 — BAND 5, the status-sync band, against the same real server
+#
+# WHY THIS SECTION EXISTS AT ALL, stated plainly because the first presentation
+# of #7870 was BLOCKED for want of it (CERT-3263, 2026-09-21 23:08Z).
+#
+# That change added the status write — `all_terminal(venue statuses)` ⇒ flip
+# `futures_markets.status` to `resolved` — and twelve unit tests which stubbed
+# every selector and force-fed the ticker in. They proved the write and said
+# NOTHING about who gets asked, and the answer was: not the ship's own specimen.
+# Market 112815 `FEDHIKE` was graded by #7857's band 4, and being graded is
+# precisely what evicts a market from band 4. On production the morning after,
+# the row read `status='open'`, 6 legs, 3 winners, all `api_settlement` — and no
+# selector in the product could name it. A correct write on an unreachable row.
+#
+# So every arm below is asked through the SHIPPED SELECTOR against a real
+# PostgreSQL. A fake session answering "any statement mentioning
+# futures_markets" with a canned list cannot fail any of them.
+#
+# ## what production says, so the corpus is not invented
+#
+# A CENSUS of the band's entire population — not a sample — taken 2026-09-21
+# through `/api/admin/db-query` for membership and
+# `GET /events/{ticker}?with_nested_markets=true` for the venue, all 736 rows
+# probed, zero errors:
+#
+#   * the band's population is **736** tickers, 1:1 with markets, every one of
+#     them `status='open'`;
+#   * **13** are all-terminal at the venue and flip. `FEDHIKE` is one, and it
+#     sorts FIRST — running the shipped statement with a cold cursor returns it
+#     as row 1 of 50, so the specimen is reached on the first cycle after this
+#     ships, not eventually;
+#   * **298** are mixed — a settled rung on a live ladder, e.g.
+#     `KXNFLWINSWEEK-26W8` at 62 finalized + 180 active — and are correctly HELD;
+#   * **425** answer 200 with no markets at all and are correctly HELD, because
+#     `all_terminal([])` is False on purpose: an absence is not a settlement
+#     (gotcha #53).
+#
+# 13 of 736 is the point of the `mixed`/`empty` majority, not a disappointment:
+# the band asks, and the venue — never the band — settles.
+# ---------------------------------------------------------------------------
+
+
+async def _select_status_sync(engine, limit: int = 50, cursor: str = ""):
+    from app.tasks.backfill_winners import _select_kalshi_status_sync_tickers
+
+    async with engine.connect() as conn:
+        return await _select_kalshi_status_sync_tickers(conn, limit, cursor)
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_row_whose_grade_landed_and_whose_status_did_not_is_selected(
+    pg_engine,
+):
+    """THE SHIP, and the exact thing CERT-3263 found unreachable.
+
+    `L4X-28JAN01` is `FEDHIKE` as production held it the morning after band 4
+    graded it: open, long-dated, an authoritative winner on a leg, and a page
+    still rendering a live hero over an answered question. `PPP-26SEP14` is the
+    same defect on a short-dated market, so the band is not secretly keyed on
+    the long-dated ceiling band 4 uses.
+    """
+    selected = await _select_status_sync(pg_engine, limit=2000)
+
+    assert "L4X-28JAN01" in selected, (
+        "the FEDHIKE shape — graded by band 4, evicted from band 4 by that very "
+        "grade, status never flipped — must be reachable by SOME band"
+    )
+    assert "PPP-26SEP14" in selected
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_specimen_is_invisible_to_all_four_older_bands(pg_engine):
+    """The control without which the arm above proves nothing.
+
+    If any pre-existing band could already reach `L4X`, then #7870 needed no new
+    selector and every assertion in this section is vacuous. Each band is asked
+    with a budget far larger than the corpus, so a miss can only be its WHERE
+    clause and never its limit.
+    """
+    fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+    early = await _select_early(pg_engine, limit=2000)
+    longdated = await _select_longdated(pg_engine, limit=2000)
+
+    for band, rows, why in [
+        ("band 1", fresh, "requires status='resolved' — the column that is wrong"),
+        ("band 2", tail, "requires status='resolved' — the column that is wrong"),
+        ("band 3", early, "requires NOT EXISTS(is_winner IS TRUE)"),
+        ("band 4", longdated, "requires NOT EXISTS(is_winner IS TRUE)"),
+    ]:
+        assert "L4X-28JAN01" not in rows, f"{band} {why}"
+        assert "PPP-26SEP14" not in rows, f"{band} {why}"
+
+    # ... and none of them is empty, or "invisible" is true of a band that
+    # selected nothing at all (gotcha: a vacuous control).
+    assert fresh and tail and early and longdated
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_five_is_disjoint_from_every_other_band_both_directions(
+    pg_engine,
+):
+    """gotcha #34 + gotcha #43 — five bands, one cycle, additive budgets.
+
+    Both directions and all four pairings, because none is evidence of another:
+    a band 5 that had quietly widened into band 3's population would still pass
+    "band 3 does not hold L4X". The disjointness is structural — `status <>
+    'resolved'` against bands 1/2, `EXISTS(authoritative winner)` against bands
+    3/4 — and this arm is what stops a later edit making it merely true today.
+    """
+    fresh, tail = await _select(pg_engine, limit=2000, cursor="")
+    early = set(await _select_early(pg_engine, limit=2000))
+    longdated = set(await _select_longdated(pg_engine, limit=2000))
+    status_sync = set(await _select_status_sync(pg_engine, limit=2000))
+
+    for name, other in [
+        ("band 1", set(fresh)),
+        ("band 2", set(tail)),
+        ("band 3", early),
+        ("band 4", longdated),
+    ]:
+        overlap = status_sync & other
+        assert not overlap, (
+            f"band 5 overlaps {name} on {sorted(overlap)} — one cycle would ask "
+            "the venue about the same ticker twice and the budgets stop being "
+            "additive"
+        )
+
+    assert status_sync and early and longdated and fresh and tail
+
+
+@needs_postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ticker,why",
+    [
+        (
+            "FGG-26SEP10",
+            "resolved AND authoritatively graded — the status already agrees "
+            "with the grade, so there is nothing for this band to fix",
+        ),
+        (
+            "SSY-26SEP14",
+            "its winner is a tier-1 `all_losers` GUESS, not the venue's word — "
+            "this band must not re-ask the venue about our own inferences",
+        ),
+        (
+            "L4A-28JAN01",
+            "no winner at all — we hold no answer, so this is band 4's work "
+            "and taking it here would break the budgets",
+        ),
+        (
+            "L4Y-28JAN01",
+            "no winner and no tier-3 leg — nothing says the venue settled any "
+            "part of it",
+        ),
+        (
+            "JJJ-26SEP14",
+            "open with no venue settlement anywhere — the clause that keeps "
+            "this band off ordinary not-yet-played markets",
+        ),
+    ],
+)
+async def test_band_five_refuses_what_it_must(pg_engine, ticker, why):
+    """The limit is far larger than the corpus, so a refusal is the WHERE clause
+    and never the budget."""
+    selected = await _select_status_sync(pg_engine, limit=2000)
+
+    assert ticker not in selected, why
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_polymarket_row_of_the_same_shape_is_not_this_bands_business(
+    pg_engine,
+):
+    """The source clause. The status write this band feeds reads Kalshi's own
+    nested market statuses, so selecting a Polymarket row would send a ticker to
+    a grader that cannot answer for it."""
+    selected = await _select_status_sync(pg_engine, limit=2000)
+
+    assert not [t for t in selected if t.startswith("SSS-")]
+    assert not [t for t in selected if t.startswith("L4Z-")]
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_dropping_the_authority_clause_lets_our_own_guess_into_the_band(
+    pg_engine,
+):
+    """The strawman for the clause that has no other witness (gotcha #43).
+
+    Executes the band's statement with `AND COALESCE(fo.resolution_source,'') IN
+    (…)` DELETED, against the same seeded server, and asserts the row the shipped
+    clause refuses walks straight in. Without this arm the authority clause could
+    be removed and every other test in this section would still pass — which is
+    the failure mode that produced CERT-3263 in the first place, one layer down.
+    """
+    mutated = text("""
+        SELECT fm.external_id
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi'
+          AND fm.status <> 'resolved'
+          AND fm.external_id > ''
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND fo.is_winner IS TRUE
+          )
+        GROUP BY fm.external_id
+        ORDER BY fm.external_id ASC
+        LIMIT 2000
+    """)
+    async with pg_engine.connect() as conn:
+        widened = [r[0] for r in (await conn.execute(mutated)).all()]
+
+    shipped = await _select_status_sync(pg_engine, limit=2000)
+
+    assert "SSY-26SEP14" in widened, (
+        "the harness is not running the statement this test thinks it is"
+    )
+    assert "SSY-26SEP14" not in shipped
+    assert set(widened) - set(shipped) == {"SSY-26SEP14"}, (
+        "the authority clause should differ from the widened shape on exactly "
+        "the guess-graded row and nothing else"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_dropping_the_status_clause_steals_band_ones_rows(pg_engine):
+    """The second strawman: the clause that keeps the band off resolved markets.
+
+    Without it the band re-asks about everything bands 1 and 2 already own, the
+    budgets stop being additive, and the disjointness arm above becomes the only
+    thing standing between us and a doubled venue bill.
+    """
+    mutated = text("""
+        SELECT fm.external_id
+        FROM futures_markets fm
+        WHERE fm.source = 'kalshi'
+          AND fm.external_id > ''
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = fm.id
+                AND fo.is_winner IS TRUE
+                AND COALESCE(fo.resolution_source, '') IN
+                    ('api_settlement', 'clob_authoritative', 'clob_field_repair',
+                     'clob_never_graded', 'clob_ordinal', 'datagolf_settlement',
+                     'settlement_sync')
+          )
+        GROUP BY fm.external_id
+        ORDER BY fm.external_id ASC
+        LIMIT 2000
+    """)
+    async with pg_engine.connect() as conn:
+        widened = [r[0] for r in (await conn.execute(mutated)).all()]
+
+    shipped = await _select_status_sync(pg_engine, limit=2000)
+
+    assert "FGG-26SEP10" in widened
+    assert "FGG-26SEP10" not in shipped
+    assert set(shipped) < set(widened)
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_five_cursor_walks_forward_and_never_repeats(pg_engine):
+    """The load-bearing arm, and the reason this band is a cursor and not a sort.
+
+    A member leaves this population only when its status flips, and the census
+    says 723 of 736 never will — the venue has not finished them. Under any
+    date or score ordering the same permanent head would be re-probed every
+    cycle for ever and the 13 rows that need the work would be reached only if
+    they happened to sort early. Walking the alphabet one page at a time is what
+    makes the band drain.
+    """
+    everything = await _select_status_sync(pg_engine, limit=2000)
+    assert len(everything) >= 2, "corpus too small to prove a walk"
+
+    page_one = await _select_status_sync(pg_engine, limit=1, cursor="")
+    page_two = await _select_status_sync(pg_engine, limit=1, cursor=page_one[-1])
+
+    assert page_one == everything[:1]
+    assert page_two == everything[1:2]
+    assert not set(page_one) & set(page_two), "the cursor re-served a ticker"
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_five_sweep_runs_dry_at_the_end_so_the_caller_can_wrap(pg_engine):
+    """An exhausted cursor returns EMPTY — the caller's wrap signal.
+
+    Without the wrap the band walks to `Z` and stops asking for ever, and a
+    market the venue settles next month is never revisited. The caller's `elif`
+    deletes the Redis key on exactly this result.
+    """
+    everything = await _select_status_sync(pg_engine, limit=2000)
+
+    assert await _select_status_sync(pg_engine, cursor=everything[-1]) == []
+    assert await _select_status_sync(pg_engine, cursor="ZZZZZZZZ") == []
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_band_five_respects_its_own_budget_and_zero_means_zero(pg_engine):
+    """gotcha #34 once more: band 5 is additive, never a borrower.
+
+    `limit=0` returning `[]` WITHOUT the statement running is what lets the
+    budget be turned off in an incident without touching the server.
+    """
+    everything = await _select_status_sync(pg_engine, limit=2000)
+
+    assert await _select_status_sync(pg_engine, limit=1) == everything[:1]
+    assert await _select_status_sync(pg_engine, limit=0) == []
