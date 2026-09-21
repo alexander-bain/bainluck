@@ -1240,6 +1240,27 @@ struct EvolutionLeaderboardRow: View {
     }
 }
 
+/// One group of chips, abutting like a segmented control — on one line, or wrapped
+/// onto as many lines as the width needs.
+///
+/// 🔴 #4445 — A GROUP THAT CANNOT WRAP IS A GROUP THAT CANNOT FIT. At
+/// `.accessibility5` on a 375pt phone the four range chips want 414.5pt against the
+/// bar's 343, and the three `Top N` chips want 383.5 — so no arrangement of WHOLE
+/// groups fits, however they are stacked. `spacing: 0` in both arms is what keeps
+/// the wrapped form reading as the same control rather than as loose buttons.
+private struct ChipStrip<Content: View>: View {
+    let wraps: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if wraps {
+            FlowLayout(spacing: 0) { content }
+        } else {
+            HStack(spacing: 0) { content }
+        }
+    }
+}
+
 struct EvolutionControlBar: View {
     /// Chip padding for the two single-row arms, roomiest first.
     ///
@@ -1269,6 +1290,7 @@ struct EvolutionControlBar: View {
                 row(chipPadding: Self.chipPaddings[0])
                 row(chipPadding: Self.chipPaddings[1])
                 stackedRows(chipPadding: Self.chipPaddings[0])
+                wrappedRows(chipPadding: Self.chipPaddings[0])
             }
         }
         .padding(.horizontal)
@@ -1287,8 +1309,8 @@ struct EvolutionControlBar: View {
     /// Exposed to the suite so a test can measure a chosen arm directly — asking
     /// `ViewThatFits` which one it picked is not something a test can do.
     @ViewBuilder
-    func rangeGroup(chipPadding: CGFloat) -> some View {
-        HStack(spacing: 0) {
+    func rangeGroup(chipPadding: CGFloat, wraps: Bool = false) -> some View {
+        ChipStrip(wraps: wraps) {
             ForEach(availableRanges) { range in
                 Button {
                     selectedRange = range
@@ -1334,8 +1356,8 @@ struct EvolutionControlBar: View {
     }
 
     @ViewBuilder
-    func topGroup(chipPadding: CGFloat) -> some View {
-        HStack(spacing: 0) {
+    func topGroup(chipPadding: CGFloat, wraps: Bool = false) -> some View {
+        ChipStrip(wraps: wraps) {
             ForEach([5, 10, 20], id: \.self) { n in
                 Button {
                     topFilter = n
@@ -1373,10 +1395,15 @@ struct EvolutionControlBar: View {
 
     /// 🔴 THE ARM THAT MAKES THE NARROW PHONE HONEST. Ranges above, `Sum` and the
     /// `Top N` group below. Its width is the wider of the two rows rather than the
-    /// sum of all three groups, so it fits any phone — which is why it is the LAST
-    /// arm and why there is no scroller behind it: a terminal arm that always fits
-    /// leaves no case for one, and a fallback that can never be reached is a branch
-    /// nobody will ever have tested.
+    /// sum of all three groups, so it fits any phone **at the type sizes it was
+    /// measured at**.
+    ///
+    /// ⚠️ IT IS NO LONGER THE TERMINAL ARM, and #4445 is why. "Fits any phone" was
+    /// measured at `.large`, where it is true; the sentence did not carry its own
+    /// scope, so nobody re-read it when Dynamic Type grew. At `.accessibility3` this
+    /// arm's second row (`Sum` + `Top N`) wants 393pt against 343, and at
+    /// `.accessibility5` 505 — so `ViewThatFits` fell through to it as a LAST resort
+    /// and drew it overflowing. See `wrappedRows`.
     ///
     /// A second ROW is not the defect this ship fixes. #4199 is about words broken
     /// mid-syllable — `Se/aso/n` — not about a control that takes two lines. Every
@@ -1395,5 +1422,36 @@ struct EvolutionControlBar: View {
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    /// 🔴 THE ARM THAT CANNOT OVERFLOW, AND #4445 IS THE FRAME THAT NEEDED IT.
+    ///
+    /// Photographed on master at `.accessibility5`, 375pt: the control bar demanded
+    /// **545pt**, and because a card is as wide as its widest child, the bar dragged
+    /// the WHOLE Evolution card to 545 and SwiftUI centred it. Everything else in
+    /// the card fit 375 on its own and was clipped anyway — the leaderboard lost its
+    /// rank, its colour dot and its logo off the left edge and its probability off
+    /// the right, the header read `articipant … P`, and the y-axis read `0` where it
+    /// meant `0%`. **One over-wide control cost the reader every number on the
+    /// board.**
+    ///
+    /// So the last arm gives each group its own row AND lets the chips inside a
+    /// group wrap. That makes fitting depend on the widest single CHIP rather than
+    /// on the widest group, and the chip vocabulary is closed and short —
+    /// `Season`/`6M`, `7d`, `Event`, `24h`, `Today`, `Sum`, `Top 5/10/20` — so there
+    /// is no market and no type size at which this arm can overflow. That is what
+    /// makes it a terminal arm; `stackedRows` was called one without the property.
+    ///
+    /// It is deliberately NOT a horizontal scroller. #4199 measured that one and
+    /// photographed `Top 20` sitting off the right edge: a control you cannot see is
+    /// not improved by being reachable.
+    @ViewBuilder
+    func wrappedRows(chipPadding: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            rangeGroup(chipPadding: chipPadding, wraps: true)
+            sumToggle(chipPadding: chipPadding)
+            topGroup(chipPadding: chipPadding, wraps: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
