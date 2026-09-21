@@ -1105,6 +1105,25 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     truth was 83. Nothing textual defends this line; only re-running the census
     on the composed tree does. So the rule above gains a clause: a beat change
     re-derives these three numbers AFTER its rebase, not before it.
+
+    🔴 **RE-DERIVED at calibration/2678 (2026-09-21, #7665): 126 → 127, explicit
+    83 → 84.** `repair-openings-from-first-snapshot`
+    (`crontab(minute=48, hour="4,10,16,22")`, Phase 0c-repair as its own beat,
+    because the in-pipeline phase sits five `_cannot_afford` gates below an exit
+    `backfill_winners`' own source calls its only path) names `background`
+    explicitly, so the fall-through half is UNMOVED at **43** — the benign
+    direction this docstring reserves. Obtained by RUNNING the census below over
+    the assembled schedule, which printed `explicit 84 implicit 43 total 127`,
+    never by adding one to 126 (#1910). The cost declaration — four fires a day
+    against a 480 s wall, why `background` rather than `heavy`, and the minute
+    census that chose `:48` — is on `BACKGROUND_BEAT_COUNT`.
+
+    **The bolded rule above is the only reason this was caught here and not in
+    CI.** This lane's D40 band was `backfill_winners or phase_0c or tasks_wiring
+    or beat`, and it selected this file only because the last term happens to
+    appear in its NAME — luck, not method, and the fourth lane in a row to find
+    that out. The rule that actually works is the one in bold: a change touching
+    `beat_schedule` runs `grep -rl beat_schedule tests/`.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -1121,9 +1140,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 83, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 84, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 126
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 127
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

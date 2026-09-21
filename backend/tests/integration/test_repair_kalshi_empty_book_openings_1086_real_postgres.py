@@ -828,3 +828,105 @@ async def test_paging_walks_the_population_and_reports_its_own_exhaustion(sessio
 
     # MARNER, TRADED, COPY, INDEPENDENT — SAME_VALUE is refused, not changed.
     assert seen == 4
+
+
+# ---------------------------------------------------------------------------
+# #7665 — the id bound the dedicated beat drives Phase 0c through
+#
+# The unit gate next door proves the bounded and unbounded statements are one
+# text differing by one line. It cannot prove the bind WORKS: whether a Python
+# list of ints reaches `= ANY(:outcome_ids)` as an array rather than as a
+# malformed scalar is a fact about asyncpg and the driver, and the only place
+# it is answerable is a real Postgres. A mis-bound array does not raise at
+# import, at review, or in any unit test — it raises on the first production
+# beat, on a rail whose whole purpose is that it finally runs.
+# ---------------------------------------------------------------------------
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_bounded_phase_0c_promotes_only_the_ids_it_was_given(session):
+    """The bound binds, and it RESTRICTS.
+
+    Two arms, and the second is what stops the first being vacuous. A bound
+    that matched no rows at all — a mis-typed array, a bind name the statement
+    never reads, an empty list — would satisfy "`PRE_RESOLUTION` was not
+    promoted" perfectly while promoting nothing anywhere, and the beat would
+    walk the whole table restoring zero openings and reporting healthy
+    (gotcha #53). So the same row that arm one requires to be UNTOUCHED, arm
+    two requires to be PROMOTED as soon as it is named.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.backfill_winners import PHASE_0C_REPAIR_SQL_BOUNDED
+
+    await _seed(session)
+
+    # Arm 1 — name one promotable row; the other promotable row must not move.
+    result = await session.execute(
+        text(PHASE_0C_REPAIR_SQL_BOUNDED), {"outcome_ids": [PHASE_0C_CONTROL]}
+    )
+    await session.commit()
+
+    assert result.rowcount == 1, (
+        f"the bounded statement changed {result.rowcount} rows, not the one "
+        "outcome it was given — the id bound is not restricting"
+    )
+    assert (await _row(session, PHASE_0C_CONTROL))[1] == HONEST
+    assert (await _row(session, PRE_RESOLUTION))[1] is None, (
+        "a row outside the id bound was promoted: the beat's cursor and the "
+        "rows the UPDATE touches have come apart, and rows would be repaired "
+        "in slices the cursor has already been advanced past"
+    )
+
+    # Arm 2 — name it, and it promotes. Without this the assertion above is
+    # satisfied by a statement that can never promote anything.
+    result = await session.execute(
+        text(PHASE_0C_REPAIR_SQL_BOUNDED), {"outcome_ids": [PRE_RESOLUTION]}
+    )
+    await session.commit()
+
+    assert result.rowcount == 1
+    assert (await _row(session, PRE_RESOLUTION))[1] == HONEST, (
+        "the row was promotable all along — arm 1's refusal was the bound, "
+        "which is exactly what it had to be"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_the_bounded_phase_0c_keeps_every_refusal_the_unbounded_one_makes(
+    session,
+):
+    """Naming a row does not override the rules; it only narrows the scope.
+
+    The bound is the one thing that differs between the two statements, so the
+    risk it carries is that it is read as permission. It is not: `HINDSIGHT`
+    (#7648 — a book recorded after trading stopped) and `MARNER` (#4745 — a
+    lone ask on an empty book) must stay NULL when named EXPLICITLY, which is
+    the strongest form of the claim available.
+    """
+    from sqlalchemy import text
+
+    from app.tasks.backfill_winners import PHASE_0C_REPAIR_SQL_BOUNDED
+    from app.tasks.repair_kalshi_empty_book_openings import repair
+
+    await _seed(session)
+    await repair(session, apply=True)
+
+    await session.execute(
+        text(PHASE_0C_REPAIR_SQL_BOUNDED),
+        {"outcome_ids": [HINDSIGHT, MARNER, PHASE_0C_CONTROL]},
+    )
+    await session.commit()
+
+    assert (await _row(session, PHASE_0C_CONTROL))[1] == HONEST, (
+        "nothing was promoted in this execution, so the two refusals below "
+        "are vacuous"
+    )
+    assert (await _row(session, HINDSIGHT)) == (None, None, None, None), (
+        "#7648's clause stopped applying once the row was named by id"
+    )
+    assert (await _row(session, MARNER)) == (None, None, None, None), (
+        "#4745's withdrawal stopped applying once the row was named by id"
+    )

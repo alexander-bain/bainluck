@@ -524,7 +524,17 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
 #: we first looked" (gotcha #53). The stamp and the price are one fact and are
 #: written together — a stamp describing some earlier, withdrawn opening would
 #: be worse than none.
-PHASE_0C_REPAIR_SQL = f"""
+#:
+#: #7665 — TWO CONSTANTS, ONE TEXT. This promotion now has two callers: the
+#: in-pipeline phase below (which the task's own budget gates have never let
+#: run — that IS #7665) and the dedicated beat that exists because of it. They
+#: are both `.format()`ed from the single template here, so the only thing that
+#: can differ between them is the id bound, and
+#: `test_the_two_phase_0c_constants_differ_only_by_the_id_bound` reconstructs
+#: one from the other to prove it. A second hand-typed statement for the beat
+#: would have re-opened the exact hole CAL-P1086 hoisted this constant to close:
+#: the integration gate would be executing the one nothing runs.
+_PHASE_0C_REPAIR_TEMPLATE = f"""
     WITH first_snaps AS (
         SELECT fo2.id AS outcome_id, snap.probability, snap.captured_at
         FROM futures_outcomes fo2
@@ -541,7 +551,7 @@ PHASE_0C_REPAIR_SQL = f"""
             LIMIT 1
         ) snap
         WHERE fm.status = 'resolved'
-          AND fo2.opening_probability IS NULL
+          AND fo2.opening_probability IS NULL{{id_bound}}
         LIMIT 100000
     )
     UPDATE futures_outcomes fo
@@ -551,6 +561,186 @@ PHASE_0C_REPAIR_SQL = f"""
     FROM first_snaps fs
     WHERE fo.id = fs.outcome_id
 """
+
+#: The unbounded promotion, exactly as it has shipped. It takes NO bind
+#: parameters, so the bare paramless execute stays the call that the pipeline
+#: phase and the CAL-P1086 / #7648 integration gates all make. (The literal call
+#: is deliberately not spelled out in this comment: two guards anchor on it as a
+#: source substring, and a comment that repeats it satisfies them without any
+#: code doing so.)
+PHASE_0C_REPAIR_SQL = _PHASE_0C_REPAIR_TEMPLATE.format(id_bound="")
+
+#: The same promotion restricted to an explicit slice of outcome ids, for the
+#: keyset-cursor beat. The bound is an id ARRAY rather than a `BETWEEN` range
+#: because the beat already holds the ids it selected: re-deriving the window
+#: inside the UPDATE would let the two disagree about which rows the cursor was
+#: advanced over, and the cursor is advanced over what was EXAMINED.
+PHASE_0C_REPAIR_SQL_BOUNDED = _PHASE_0C_REPAIR_TEMPLATE.format(
+    id_bound="\n          AND fo2.id = ANY(:outcome_ids)"
+)
+
+#: Phase 0c-repair's own beat (#7665). Sized so the run is bounded by what it
+#: EXAMINES, not by what it finds: `_PHASE_0C_SCAN` ids per batch, an absolute
+#: wall under the task's soft limit, and a Redis keyset cursor that wraps.
+_PHASE_0C_CURSOR_KEY = "bainluck:phase_0c_repair_cursor"
+_PHASE_0C_CURSOR_TTL_S = 86400 * 14
+_PHASE_0C_SCAN = 50000
+_PHASE_0C_MAX_RUNTIME = 480.0
+
+
+async def _repair_openings_from_first_snapshot(
+    *, scan: int = _PHASE_0C_SCAN, deadline: float | None = None
+):
+    """Phase 0c-repair as a dedicated, bounded, resumable beat (#7665).
+
+    WHY THIS IS NOT A PHASE. `PHASE_0C_REPAIR_SQL` has one in-pipeline call
+    site, `retro_repair_tagging`, and it sits below five `_cannot_afford` gates
+    on a pipeline whose own source says the budget exit "is not the rare path,
+    it is the ONLY path" (#4658). So #7648's clause — merged, released, live in
+    the slug — promotes nothing, and neither does anything else this phase
+    would repair. This is the remedy this repo has already used four times for
+    exactly this cause: `calibration_prices` (#180), `poly_under_signflip`
+    (#145), `impossible_both_sides_null` (#146) and `both_winner_guess_flip`
+    (#997) were all starved phases and are all standalone healthy beats today.
+
+    WHY A CURSOR AND NOT PLAIN MONOTONICITY. `compute_calibration_prices`, the
+    closest of those precedents, needs no cursor: every row it selects gets
+    priced, so the population shrinks and "resume from the remaining NULL rows"
+    reaches the tail. This population does NOT shrink. A resolved outcome with
+    no honest snapshot at or before its `resolution_date` is unrepairable and
+    stays `opening_probability IS NULL` forever — the `CROSS JOIN LATERAL`
+    drops it, which is the true answer (we never saw a price for it). Selecting
+    "the first 100,000 repairable rows" from the head therefore re-grinds the
+    same dead prefix every run and never reaches the far end of the table:
+    gotcha #34's starved tail, arriving through a filter instead of a counter.
+    So the cursor advances over what was EXAMINED, not over what was repaired.
+
+    WHY IT MUST STILL WRAP. Advancing past an unrepairable row would be a
+    permanent skip if the row could never become repairable — but it can.
+    `backfill_polymarket_history` and `kalshi_cliff_drain` both insert snapshots
+    dated BEFORE the row's `resolution_date` long after it resolved, and such a
+    row becomes promotable the moment they do. So exhausting the table deletes
+    the cursor and the next run restarts from the head, as
+    `_recover_datagolf_participation` and the Kalshi ticker walks do.
+
+    WHY THE SLICE IS SELECTED SEPARATELY. The shipped statement's `LIMIT` bounds
+    its OUTPUT: the lateral is an inner join, so unrepairable rows are filtered
+    before the limit counts them and the walk runs as deep as it must to find
+    100,000 promotions. Reading the ids first makes the batch bounded by rows
+    EXAMINED, which is the quantity that has to be bounded for the cost to be
+    predictable, and it is the only way to know the id to advance to — the
+    UPDATE can only report the rows it changed (gotcha #36: selection capacity
+    is not completed work, and here its converse, work is not what was changed).
+
+    AND WHY THE SLICE DOES NOT JOIN MARKET STATUS. Adding `fm.status =
+    'resolved'` to the id walk would make the slice denser, and would silently
+    take the bound away: the planner would walk the primary key probing
+    `futures_markets` until it had collected `scan` RESOLVED rows, so an id
+    range that happens to hold few of them is scanned to whatever depth it
+    takes. Bounded-by-examined is the property this beat is for, so the walk
+    filters on `opening_probability IS NULL` alone and lets the shipped
+    statement apply the status rule. `examined` therefore counts NULL-opening
+    outcomes looked at, resolved or not — it is a cost measure, not a
+    population measure.
+
+    `scan` is a task kwarg so a first production run can be made small without
+    a deploy; the wall, not the batch size, is what keeps a run inside its soft
+    limit.
+
+    Returns a stats dict. `restored` is the number that means the ship is
+    happening; a run reporting healthy with `restored` and `examined` both 0
+    forever has recovered nothing (gotcha #53).
+    """
+    import time as _t
+
+    from app.tasks.redis_state import get_redis_client
+
+    stats = {
+        "examined": 0,
+        "restored": 0,
+        "batches": 0,
+        "cursor_from": None,
+        "cursor_to": None,
+        "wrapped": False,
+        "deadline_hit": False,
+        "errors": [],
+    }
+
+    _t0 = _t.monotonic()
+    stop_at = _effective_stop_at(_t0, _PHASE_0C_MAX_RUNTIME, deadline)
+
+    rc = get_redis_client()
+    raw = rc.get(_PHASE_0C_CURSOR_KEY)
+    raw = raw.decode() if isinstance(raw, bytes) else raw
+    try:
+        cursor = int(raw) if raw else 0
+    except (TypeError, ValueError):
+        # A malformed cursor is not a reason to grind the whole table from the
+        # head silently — say so, then start from the head deliberately.
+        stats["errors"].append(f"unreadable cursor {raw!r}; restarting from head")
+        cursor = 0
+    stats["cursor_from"] = cursor
+
+    try:
+        while True:
+            if _t.monotonic() >= stop_at:
+                stats["deadline_hit"] = True
+                break
+
+            async with get_task_session() as session:
+                ids = [
+                    r[0]
+                    for r in (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT fo.id
+                                FROM futures_outcomes fo
+                                WHERE fo.opening_probability IS NULL
+                                  AND fo.id > :cursor
+                                ORDER BY fo.id
+                                LIMIT :scan
+                                """
+                            ),
+                            {"cursor": cursor, "scan": scan},
+                        )
+                    ).all()
+                ]
+
+                if not ids:
+                    # Walked off the end. Restart from the head next run so the
+                    # rows a history backfill made promotable get another look.
+                    if cursor:
+                        rc.delete(_PHASE_0C_CURSOR_KEY)
+                    stats["wrapped"] = True
+                    break
+
+                result = await session.execute(
+                    text(PHASE_0C_REPAIR_SQL_BOUNDED), {"outcome_ids": ids}
+                )
+                await session.commit()
+                promoted = result.rowcount or 0
+
+            stats["restored"] += promoted
+            stats["examined"] += len(ids)
+            stats["batches"] += 1
+            # Advance over the whole slice, repaired or not, and persist BEFORE
+            # the next batch — a kill between batches must not re-grind this one.
+            cursor = ids[-1]
+            stats["cursor_to"] = cursor
+            rc.setex(_PHASE_0C_CURSOR_KEY, _PHASE_0C_CURSOR_TTL_S, str(cursor))
+    except Exception as exc:
+        stats["errors"].append(str(exc))
+        logger.error("Phase 0c-repair beat error: %s", exc)
+
+    logger.info(
+        "Phase 0c-repair beat: examined %d in %d batches, restored %d "
+        "(cursor %s→%s, wrapped=%s, deadline_hit=%s)",
+        stats["examined"], stats["batches"], stats["restored"],
+        stats["cursor_from"], stats["cursor_to"],
+        stats["wrapped"], stats["deadline_hit"],
+    )
+    return stats
 
 
 async def _backfill_kalshi_winners(

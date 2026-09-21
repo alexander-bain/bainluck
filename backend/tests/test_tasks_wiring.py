@@ -401,6 +401,10 @@ class TestBeatScheduleCompleteness:
         "unresolve-datagolf-premature",
         "null-impossible-both-sides-openings",
         "correct-both-winner-guess-side",
+        # #7665 — the fifth starvation sibling. Phase 0c-repair sits five
+        # `_cannot_afford` gates below an exit the pipeline's own source calls
+        # its only path, so #7648's shipped clause never ran.
+        "repair-openings-from-first-snapshot",
         "compute-calibration-prices",
         "precompute-bookmaker-calibration",
         "sync-polymarket-resolved-status",

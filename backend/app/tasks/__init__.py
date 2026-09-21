@@ -1931,6 +1931,35 @@ def correct_both_winner_guess_side(self):
     return _tracked_run("both_winner_guess_flip", _correct_both_winner_guess_side())
 
 
+@celery_app.task(bind=True, soft_time_limit=720, time_limit=780, name="app.tasks.repair_openings_from_first_snapshot")
+def repair_openings_from_first_snapshot(self, scan: int = 50000):
+    """#7665: the fifth starvation sibling — Phase 0c-repair, as its own beat.
+
+    `PHASE_0C_REPAIR_SQL` has one in-pipeline call site, `retro_repair_tagging`,
+    and it sits five `_cannot_afford` gates below the budget exit that
+    backfill_winners' own source calls "not the rare path, the ONLY path"
+    (#4658). So #7648's clause — merged, released, live in the slug — promotes
+    nothing in production, and neither does any other opening this phase would
+    restore. Same cause and same remedy as `compute_calibration_prices` (#180),
+    `regrade_polymarket_under_signflip` (#145),
+    `null_impossible_both_sides_openings` (#146) and
+    `correct_both_winner_guess_side` (#997).
+
+    Unlike those four this one needs a cursor: its population does not shrink,
+    because a resolved outcome with no honest pre-`resolution_date` snapshot is
+    unrepairable and keeps matching the selector forever. See the drain's
+    docstring for why it advances over what it EXAMINED and why it still wraps.
+
+    `background`, not `heavy`, deliberately: the ship is "the phase actually
+    runs", and the heavy app converges to master on its own cadence while the
+    main app carries every release (notice 48).
+    """
+    from app.tasks.backfill_winners import _repair_openings_from_first_snapshot
+    return _tracked_run(
+        "opening_repair_drain", _repair_openings_from_first_snapshot(scan=scan)
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.kalshi_cliff_drain")
 def kalshi_cliff_drain(self, limit: int = 400):
     """#1586 (queue 355): fetch-now-or-never Kalshi price history.
@@ -7755,6 +7784,24 @@ celery_app.conf.beat_schedule = {
         # minutes after the both-sides null so they never contend for the worker.
         "task": "app.tasks.correct_both_winner_guess_side",
         "schedule": crontab(minute=58, hour="5,11,17,23"),
+        "options": {"queue": "background"},
+    },
+    "repair-openings-from-first-snapshot": {
+        # #7665: Phase 0c-repair as its own beat, because the pipeline phase is
+        # five `_cannot_afford` gates below an exit the task's own source calls
+        # its only path — so #7648's shipped clause never executes.
+        #
+        # :48 @ 4,10,16,22 is chosen, not inherited. backfill_winners fires :45
+        # @ 3,9,15,21 against an 840s wall, so it is done by ~:59 of the
+        # previous hour; `recover_datagolf_participation` fires :30 in THESE
+        # hours against a 660s hard limit, so it is done by :41; the :40-:58
+        # integrity beats are in 5,11,17,23. No exact-minute beat in the file
+        # fires at :48, and the every-N beats that reach it are the */2 realtime
+        # poller alone — the background worker is concurrency 2 and a long
+        # co-scheduled beat is how three of these siblings starved before
+        # (gotcha #12/#39). Our own wall is 480s, so the run ends by :56.
+        "task": "app.tasks.repair_openings_from_first_snapshot",
+        "schedule": crontab(minute=48, hour="4,10,16,22"),
         "options": {"queue": "background"},
     },
     "compute-calibration-prices": {
