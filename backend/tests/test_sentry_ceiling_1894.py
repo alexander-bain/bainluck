@@ -151,18 +151,18 @@ class TestDiscardCeilingIsDeclaredAndObservable:
     the problem and could reach ``heroku logs``. That is not observability.
     """
 
-    def test_the_ceiling_is_a_named_constant_with_a_number(self):
+    def test_the_ceiling_is_a_named_number_a_reader_can_get(self):
         from app.utils import sentry_budget
 
-        assert isinstance(sentry_budget.DISCARD_CEILING_PER_DAY, int)
-        assert sentry_budget.DISCARD_CEILING_PER_DAY > 0
+        assert isinstance(sentry_budget.discard_ceiling_per_day(), int)
+        assert sentry_budget.discard_ceiling_per_day() > 0
 
     def test_the_measured_defect_would_have_breached_it(self):
         """64,039/day (R3) and 19,066/day (the cron instance) must both be over
         the line, or the ceiling is decorative."""
         from app.utils import sentry_budget
 
-        assert 64_039 > sentry_budget.DISCARD_CEILING_PER_DAY
+        assert 64_039 > sentry_budget.discard_ceiling_per_day()
         assert sentry_budget.over_discard_ceiling(64_039, window_s=86_400)
         assert sentry_budget.over_discard_ceiling(19_066, window_s=86_400)
 
@@ -177,7 +177,7 @@ class TestDiscardCeilingIsDeclaredAndObservable:
         events in half the window is the SAME rate and must read the same."""
         from app.utils import sentry_budget
 
-        ceiling = sentry_budget.DISCARD_CEILING_PER_DAY
+        ceiling = sentry_budget.discard_ceiling_per_day()
         assert sentry_budget.over_discard_ceiling(ceiling + 100, window_s=86_400)
         assert sentry_budget.over_discard_ceiling(
             (ceiling + 100) // 2, window_s=43_200
@@ -281,7 +281,7 @@ class TestTheCeilingDerivesFromNeedNotQuota:
         from app.utils import sentry_budget
 
         assert (
-            sentry_budget.DISCARD_CEILING_PER_DAY
+            sentry_budget.discard_ceiling_per_day()
             != sentry_budget.QUOTA_EVENTS_PER_MONTH
         ), (
             "the discard ceiling is the monthly quota again — a plan upgrade "
@@ -394,15 +394,38 @@ class TestTheCeilingDerivesFromNeedNotQuota:
         )
         assert v["derived_from"] == "declared_need_per_day * cycle_days"
 
-    def test_the_exported_constant_agrees_with_the_function(self):
-        """``sentry_filter`` reads the module constant on the exception path.
-        The two must not drift — a constant that disagrees with its own deriver
-        is the typed literal R3 deleted, restored by the back door."""
+    def test_the_ceiling_does_not_also_exist_frozen_at_import(self):
+        """There is ONE definition of the ceiling and it is a function.
+
+        This replaces ``test_the_exported_constant_agrees_with_the_function``
+        (#7633). That test compared ``DISCARD_CEILING_PER_DAY`` against
+        ``discard_ceiling_per_day()`` to catch "the typed literal R3 deleted,
+        restored by the back door" — a real hazard, but it asserted AGREEMENT
+        between two derivations instead of forbidding the second one, so it
+        inherited the drift it was meant to police: the ceiling is a function of
+        the clock (``cycle_length_days`` anchors on ``BILLING_CYCLE_RESET_DAY =
+        21``), so import before ``00:00Z`` on the 21st and assert after it and
+        the two disagree by one day of declared need. Measured on an unmodified
+        sha: imported 23:55Z with ``cycle_len=31 -> 4657``, asserted 00:05Z with
+        ``cycle_len=30 -> 4506``. Red for every lane, monthly.
+
+        Forbidding the frozen name is the same guard without the clock in it: a
+        value that does not exist cannot drift from its deriver, and R3's back
+        door stays shut because that door IS a module-level constant. The
+        complementary half — that no read path picks such a constant up if one is
+        re-added — is ``TestTheDisplayedCeilingIsTheEnforcedCeiling``, which
+        plants one as a decoy.
+
+        The constant was already unread by app code when this landed: R4 moved
+        every read onto the live derivation on 2026-08-17, and the comment
+        claiming ``sentry_filter`` read it per-event outlived the arrangement it
+        described by five weeks.
+        """
         from app.utils import sentry_budget
 
-        assert (
-            sentry_budget.DISCARD_CEILING_PER_DAY
-            == sentry_budget.discard_ceiling_per_day()
+        assert not hasattr(sentry_budget, "DISCARD_CEILING_PER_DAY"), (
+            "a module-level ceiling frozen at import is back; it disagrees with "
+            "its own deriver from 00:00Z on the 21st of each month (#7633)"
         )
 
 
@@ -954,15 +977,23 @@ class TestTheDisplayedCeilingIsTheEnforcedCeiling:
     def test_the_census_ceiling_is_the_one_the_verdict_used(self, monkeypatch):
         """The property, stated so no arithmetic can satisfy it accidentally.
 
-        The frozen constant is moved far away from the live derivation and the
+        A frozen constant is PLANTED far away from the live derivation and the
         census is driven through its real path. If the display ever reads the
         constant again, ``ceiling_per_day`` comes back as the stale number while
         ``over_ceiling`` was decided by the live one — which is R4 exactly.
+
+        ``raising=False`` because #7633 deleted the real
+        ``DISCARD_CEILING_PER_DAY``: the decoy is now planted rather than
+        borrowed, which makes this guard strictly stronger. It used to prove only
+        that the census ignored the constant that happened to exist; it now
+        proves the census ignores such a constant even when one is put back.
         """
         from app.utils import sentry_budget, sentry_filter
 
         live = sentry_budget.discard_ceiling_per_day()
-        monkeypatch.setattr(sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000)
+        monkeypatch.setattr(
+            sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000, raising=False
+        )
 
         # A rate strictly inside the band between the two candidate ceilings.
         rate = live + 1
@@ -1011,11 +1042,15 @@ class TestTheDisplayedCeilingIsTheEnforcedCeiling:
         These paths report ``over_ceiling: None`` — correctly, since there is
         nothing to judge — but they still PRINT a ceiling, and a stale one there
         is the same lie with no verdict attached to contradict it.
+
+        ``raising=False``: the decoy is planted, not borrowed (#7633).
         """
         from app.utils import sentry_budget, sentry_filter
 
         live = sentry_budget.discard_ceiling_per_day()
-        monkeypatch.setattr(sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000)
+        monkeypatch.setattr(
+            sentry_budget, "DISCARD_CEILING_PER_DAY", live + 10_000, raising=False
+        )
 
         empty = sentry_filter.summarize_filter_counts({})
         assert empty["ceiling_per_day"] == live
