@@ -122,3 +122,58 @@ export function probabilityCellText(p: number): string {
 
   return `${Math.round(pct)}%`;
 }
+
+/**
+ * #7692 — THE SAME RULE FOR THE 9px PER-SOURCE CHIPS UNDER A GRID CELL.
+ *
+ * ── WHY A SECOND FUNCTION AND NOT A SECOND CALL SITE ───────────────────────
+ *
+ * The playoff grid's `SourceBreakdown` chips print the same quantity in a
+ * different vocabulary: 9px mono, no `%` (the table's legend supplies the
+ * unit), and a floor written `<.1` with the leading zero elided because the
+ * cell is two characters wide. So they cannot call `probabilityCellText` —
+ * its output carries a `%` — and stripping the suffix would drag `<0.1` into
+ * a spelling that was chosen for a wider cell.
+ *
+ * What they CAN share is the rule: WHERE the bands are, and that an absolute
+ * is never rounded into. That is the part that drifted. `SourceBreakdown`
+ * guarded its low end (`<.1`) and rounded its high one, so at 99.5 it printed
+ * `K100` — directly under a cell that #7670 had just taught to print `99.5%`.
+ * One guarded end out of two, eleven lines from the function #7670 fixed.
+ * Measured on production 2026-09-21 05:26Z: `/api/playoffs/mlb`, Chicago Cubs
+ * `make_playoffs`, merged `0.9948`, sources `polymarket 0.9945 / kalshi 0.995`
+ * — the page read `99.5%` over `P99 K100`.
+ *
+ * Both functions live in this file so the bands are one edit, not two.
+ *
+ * ── WHERE THE TWO SPELLINGS DIFFER, AND WHY ────────────────────────────────
+ *
+ *     value     cell       chip     why the chip differs
+ *     1         "100%"     "100"    same rule: the payload states the absolute
+ *     0.9995    ">99.9%"   ">99.9"  same rule, no unit
+ *     0.9948    "99.5%"    "99.5"   same rule, no unit
+ *     0.65      "65%"      "65"     same rule, no unit
+ *     0.007     "0.7%"     "0.7"    same rule, no unit
+ *     0.0005    "<0.1%"    "<.1"    the chip's own elided floor, pre-existing
+ *     0         "0%"       "<.1"    the chip has never printed a bare `0`
+ *
+ * The last row is deliberately left alone. A chip printing `0` would make the
+ * impossibility claim that #7670 removed from the cell, and `<.1` is the
+ * conservative side of that; changing it is not this fix's business.
+ */
+export function probabilityChipText(p: number): string {
+  const pct = p * 100;
+
+  // The one absolute the chip prints, and only when the payload states it.
+  if (pct >= 100) return "100";
+
+  // Too close to render, at either end. The floor keeps its elided spelling.
+  if (pct < UNRENDERABLY_CLOSE) return "<.1";
+  if (pct > 100 - UNRENDERABLY_CLOSE) return ">99.9";
+
+  // The two bands where the decimal carries the meaning — the same bands.
+  if (pct < DECIMALS_BELOW) return pct.toFixed(1);
+  if (pct > DECIMALS_ABOVE) return pct.toFixed(1);
+
+  return `${Math.round(pct)}`;
+}

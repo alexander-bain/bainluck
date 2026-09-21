@@ -8,7 +8,7 @@ import type { ProgressionCellStatus } from "@/lib/gridCellState";
 import { GRID_CELL_TERMINAL_GLYPH, progressionSortValue } from "@/lib/gridCellState";
 import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDisplay";
 import { legendName } from "@/lib/contenderChart";
-import { probabilityCellText } from "@/lib/probabilityCellText";
+import { probabilityCellText, probabilityChipText } from "@/lib/probabilityCellText";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -352,19 +352,54 @@ const SOURCE_LABELS: Record<string, string> = {
   datagolf: "DG",
 };
 
+/**
+ * `Kalshi: 99.95%` — the hover text behind a chip, and behind the whole cell.
+ *
+ * #7692 found this carrying the defect it was cited as the mitigation for:
+ * `pct.toFixed(1)` above 99 rounds INTO the absolute, so a served `0.9995`
+ * hovered as `Poly: 100.0%`. The tooltip is the place with room for the exact
+ * number, so it keeps a second decimal in the two bands where one is not
+ * enough — the same bands `probabilityChipText` keeps a first decimal in.
+ */
+function sourceTooltipText(label: string, probability: number): string {
+  if (!Number.isFinite(probability)) return `${label}: —`;
+  const pct = probability * 100;
+  // The absolutes, when the payload states them.
+  if (pct >= 100) return `${label}: 100%`;
+  if (pct <= 0) return `${label}: 0%`;
+  const text = pct.toFixed(pct < 1 || pct > 99 ? 2 : 1);
+  // Two decimals are not a guard: `99.995` still renders as `100.00`, and
+  // `0.004` as `0.00`. Where even the extra decimal rounds into the absolute,
+  // the tooltip says so as a bound, exactly as the cell and the chip do.
+  if (Number(text) >= 100) return `${label}: >99.99%`;
+  if (Number(text) <= 0) return `${label}: <0.01%`;
+  return `${label}: ${text}%`;
+}
+
+/**
+ * The 9px per-source chips under a cell.
+ *
+ * #7692: these guarded their floor (`<.1`) and rounded their ceiling, so a
+ * source at 99.5 printed `K100` underneath a cell #7670 had just taught to
+ * print `99.5%` — the fixed number and its own sources contradicting each
+ * other, one line apart, about a club that can still miss. Both ends now come
+ * from `probabilityChipText`, which shares its bands with the cell's
+ * `probabilityCellText` and keeps the chip's unit-less, elided spelling.
+ */
 function SourceBreakdown({ sources }: { sources: { source: string; probability: number }[] }) {
   if (!sources || sources.length <= 1) return null;
   return (
     <div className="flex gap-1.5 justify-center mt-0.5">
       {sources.map((s) => {
-        const pct = s.probability * 100;
         const label = SOURCE_LABELS[s.source] || s.source;
-        const probStr = pct >= 10 ? `${Math.round(pct)}` : pct >= 1 ? pct.toFixed(1) : pct < 0.1 ? "<.1" : pct.toFixed(1);
+        // A non-finite probability is a hole, not a number: the chip shows the
+        // dash the rest of the grid uses rather than printing `NaN`.
+        const probStr = Number.isFinite(s.probability) ? probabilityChipText(s.probability) : "—";
         return (
           <span
             key={s.source}
             className="text-[9px] leading-none text-text-secondary/40 font-mono whitespace-nowrap"
-            title={`${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`}
+            title={sourceTooltipText(label, s.probability)}
           >
             <span className="text-text-secondary/25">{label[0]}</span>{probStr}
           </span>
@@ -866,11 +901,9 @@ export default function TournamentProgressionTable({
                     const sources = participant.sources_data?.[stage.key];
                     // Build tooltip with per-source values
                     const tooltip = sources?.length
-                      ? sources.map((s) => {
-                          const label = SOURCE_LABELS[s.source] || s.source;
-                          const pct = s.probability * 100;
-                          return `${label}: ${pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)}%`;
-                        }).join(" · ")
+                      ? sources
+                          .map((s) => sourceTooltipText(SOURCE_LABELS[s.source] || s.source, s.probability))
+                          .join(" · ")
                       : undefined;
                     const isResolved = !!stage.resolved;
                     // Resolved columns: no live bar, no change indicator — a muted
