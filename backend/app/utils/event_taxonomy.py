@@ -21,6 +21,28 @@ from app.utils.league_classification import LEAGUE_CLASS
 from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
 
+# ── Which `llm_sport_category` values are not sports at all ──────────
+#
+# #7814. An ALLOWLIST of categories we positively know are not sports, so a
+# value we do NOT recognise — `table_tennis`, `pickleball`, a sport added to the
+# classifier before it reaches `ALLOWED_TAGS["sport"]` — falls through and is
+# treated as a sport. That direction is deliberate: the caller
+# (`_reconcile_disagreeing_market_tags`) uses this to decide whether dropping a
+# row's `sport:` tag is a repair or a regression, and an unknown value must land
+# on "leave it alone".
+#
+# `politics` and `entertainment` are here AND in `ALLOWED_TAGS["sport"]`; futures
+# support them as tag values, so the recompute never drops their tag and this set
+# never decides those rows.
+NON_SPORT_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "other", "politics", "economics", "tech", "crypto",
+        "weather", "health", "geopolitics", "legal",
+        "culture", "entertainment",
+    }
+)
+
+
 # ── Controlled vocabulary per namespace ──────────────────────────────
 
 ALLOWED_TAGS: dict[str, set[str]] = {

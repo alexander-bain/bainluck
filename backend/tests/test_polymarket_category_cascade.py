@@ -15,6 +15,9 @@ Arms 1-3 are unchanged by Q446. They are pinned here because an extraction that 
 not pinned is a rewrite nobody checked.
 """
 
+import pathlib
+import re
+
 import pytest
 
 from app.tasks.polymarket import (
@@ -148,11 +151,45 @@ def test_the_non_sport_set_is_named_once():
 
     Two copies of one rule is how the golf module's `_is_placeholder_price` comment
     starts, and this file would rather not earn its own version of that story.
+
+    #7814 moved the definition to `app.utils.event_taxonomy` when the taxonomy
+    reconcile arm became a second reader outside this module, so "named once" is
+    now a fleet-wide claim rather than a one-file one: assert on the OBJECT being
+    shared, and that no module re-declares it. The old form counted the assignment
+    text inside `polymarket.py`, which reads 0 the moment the definition moves —
+    it would have failed on a correct de-duplication and passed on a copy made
+    anywhere else.
     """
     import app.tasks.polymarket as poly
+    from app.utils import event_taxonomy
 
-    src = open(poly.__file__).read()
-    assert src.count("NON_SPORT_CATEGORIES = ") == 1
+    assert poly.NON_SPORT_CATEGORIES is event_taxonomy.NON_SPORT_CATEGORIES, (
+        "the poller has its own copy again; it can now drift from the tag rail"
+    )
+
+    # Anchored at column 0 and allowing the annotated form, so it matches a
+    # module-level rebind and nothing else. NOT a bare substring: the tree also
+    # holds two PRIVATE `_NON_SPORT_CATEGORIES` sets (`tasks/data_quality.py` and
+    # `utils/market_label_normalization.py`) which a substring scan swallows. Those
+    # two already disagree with each other — the label one omits `health`, `legal`
+    # and `other` — but they are their own modules' business and predate #7814,
+    # which moved only the public name. Widening this assertion to cover them is a
+    # separate change with its own behavioural risk, not a rider on this one.
+    # `^\s*` and not `^`: the defect this test was written for was a re-declaration
+    # INSIDE the poller loop's function body, so an anchor that only sees column 0
+    # would miss the original bug while passing. `_NON_SPORT_CATEGORIES` still does
+    # not match, because after the indentation the name must start with `N`.
+    declared = re.compile(r"^\s*NON_SPORT_CATEGORIES\s*(:[^=]+)?=", re.MULTILINE)
+    repo_app = pathlib.Path(event_taxonomy.__file__).parent.parent
+    declarations = sorted(
+        path.relative_to(repo_app).as_posix()
+        for path in repo_app.rglob("*.py")
+        if declared.search(path.read_text())
+    )
+    assert declarations == ["utils/event_taxonomy.py"], (
+        f"NON_SPORT_CATEGORIES is declared in {declarations}; it must be defined "
+        "once and imported"
+    )
     assert "health" in NON_SPORT_CATEGORIES and "weather" in NON_SPORT_CATEGORIES
 
 
