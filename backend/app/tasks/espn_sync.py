@@ -1112,6 +1112,36 @@ UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
 #: enable leaves the games invisible until somebody remembers to turn it on.
 UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS = 25
 
+#: Where the #7594 take-back arm writes the status it swapped FROM.
+#:
+#: THE SAME TABLE THE ONE-SHOT REPAIR BANKS INTO, ON PURPOSE. This arm is that
+#: script's forward half — the same rule, asked continuously instead of once —
+#: so `scripts/restore_7594_revoid_published_reversed_twins.py --apply` is the
+#: undo for both, and there is one bank and one undo line for one repair rather
+#: than two that can disagree. The script imports this name rather than spelling
+#: its own copy, so the two cannot drift.
+#:
+#: 🔴 IT IS A ROLLBACK OF A PASS, NOT A VETO OF THE RULE. Restoring puts a row
+#: back in the status it was taken from; if the rule still holds on it, the next
+#: pass takes it back again — which is correct for an arm that is a rule rather
+#: than an event. Disagreeing with the RULE is a code change, not a restore.
+REVIVED_TWIN_TAKEBACK_BANK_TABLE = "bak_7594_revoid_published_reversed_twins"
+
+#: Per-pass ceiling on the #7594 take-back arm.
+#:
+#: A BLAST-RADIUS BOUND, AND IT IS THE ONLY ONE, WHICH IS A DECISION. This arm
+#: writes a TERMINAL, and the sibling arm that does the same sits behind an
+#: attended Redis door — so the omission is stated rather than inherited. That
+#: door exists because `suspended_row_is_unreachable` retires a large population
+#: off a PREDICATE: 13,588 rows so far, and 2,544 unrelated rows match the rule.
+#: This arm's population is membership of that arm's own ledger minus the rows
+#: it already retired — 61 rows on production 2026-09-21 — every one of which is
+#: individually screened against a counterpart a reader can still reach and then
+#: put through four evidence refusals. The blast radius is named and small, and
+#: the cost of an attended enable is the one the revival arm's own constant
+#: argues against above: the wrong page stays wrong until somebody remembers.
+REVIVED_TWIN_TAKEBACK_MAX_PER_PASS = 25
+
 
 def unreachable_suspended_floor():
     """How long past kick-off before the last door is agreed to be shut? (#6347)
@@ -4587,7 +4617,362 @@ async def _revive_retired_future_starts_impl() -> dict:
                 (event.commence_time - now).total_seconds() / 3600,
             )
 
+    # The pair's other half, in its own transaction (#7594). Run AFTER the
+    # revival rather than before it so a pass reads as one story in the log:
+    # what went back on the schedule, then what came off it. The two cannot
+    # fight over a row — the revival only ever selects `voided` rows and the
+    # take-back never selects one.
+    stats.update(await _take_back_revived_twins_impl())
     return stats
+
+
+async def _take_back_revived_twins_impl() -> dict:
+    """Take back a revived row a reader can now see twice (#7594).
+
+    WHAT A READER SEES WITHOUT THIS. ``/search?q=hurricanes`` on production,
+    2026-09-21 04:1xZ, two adjacent cards for one game:
+
+        15302884  OTHER HOCKEY  Hurricanes / Panthers   "No result reported"
+        15312312  NHL           Panthers / Hurricanes   "Sep 20 FINAL 6-3"
+
+    The same game contradicting itself about whether it has been played. Three
+    NHL fixtures and one WNBA fixture are in that shape tonight
+    (``15302881`` Kraken/Flames, ``15302882`` Utah/Avalanche, ``15302884``
+    Hurricanes/Panthers, ``15306880`` Portland Fire/LA Sparks).
+
+    🔴 THE REVIVAL SCREEN IS ASKED ONCE. THIS IS THE ARM THAT ASKS IT AGAIN.
+    :func:`_revive_retired_future_starts_impl` refuses a revival while a
+    surviving row holds the fixture, and since #7594 it asks in both
+    orientations — but that verdict is a fact about the instant of revival. A
+    row legitimately revived on Monday as the only card for Friday's game
+    becomes a twin the moment a canonical is minted on Thursday, and until now
+    nothing re-examined it. The one-shot repair that cleaned up after the
+    orientation-blind screen could only reach rows still AHEAD of their kickoff,
+    because past kickoff it had no way to say which row was the keeper.
+
+    🔴 AND NOTHING ELSE WOULD EVER CLEAN THESE. Measured 2026-09-21: all four
+    carry markets (4, 5, 6 and 11 rows in ``futures_markets``), so
+    :func:`~app.utils.event_completion.suspended_row_is_unreachable` refuses
+    them on ``market_anchored`` and the #5532 retirement arm will never take
+    them — correctly, by its own rule. They are permanent until this arm exists.
+
+    THE POPULATION IS THE LEDGER MINUS WHAT THE ARM RETIRED, measured the same
+    minute: 13,503 ``voided`` (invisible, not ours), 48 ``scheduled`` still
+    ahead of their own kickoff, 10 ``suspended`` and 3 ``live`` past it. Of the
+    13 reachable-and-past-kickoff rows the shipped screen finds a counterpart
+    for 4, and in all 4 the counterpart carries the result while the subject
+    carries none. The other 9 are orphans and are kept.
+
+    🔴 THE SUBJECT'S STATUS IS NOT ``scheduled``, AND THAT IS WHY THE RECALL
+    CANNOT BE THE ONE-SHOT'S WITH ITS CLOCK FLIPPED. ``15302884`` was revived
+    ``voided → scheduled`` and then drifted to ``suspended`` when its kickoff
+    passed with no data. A recall keyed on ``status = 'scheduled'`` selects none
+    of the four. So the SQL narrows on one thing — not the terminal this arm
+    writes — and :func:`~app.utils.event_completion.is_retired_event_status`
+    catches the ``merged`` half in Python, where the rule already lives
+    (:data:`~app.utils.event_completion.RETIRED_STATUSES` is documented as a
+    membership set that is never spent on an ``IN``).
+
+    ORDERED BY DISTANCE FROM NOW, WHICH IS THE ONLY ORDERING THAT CANNOT STARVE
+    (gotcha #41). This population does not expire and it does not fully drain:
+    a row the screen refuses stays in it forever, so both a plain oldest-first
+    and a plain newest-first eventually fill the head with permanent refusals
+    and starve the end where the harm is. Absolute distance from the present
+    sorts the rows a reader is actually looking at — tonight's results, tonight's
+    fixtures — to the front from BOTH directions, and parks the undecidable tail
+    at the back where it belongs. The cap is then a blast-radius bound rather
+    than a throttle.
+
+    THE RESTORE RAIL IS A GATE, NOT A LOG — the #5532 arm's rule, and this arm
+    earns it for the same reason: it writes a terminal, so it may not write one
+    it could not give back. No bank table, no writes, and the arm says so once
+    per pass in the log.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.event_completion import (
+        UNREACHABLE_SUSPENDED_TERMINAL,
+        is_retired_event_status,
+        revived_twin_may_be_taken_back,
+        row_carries_a_result,
+        row_carries_an_authority_id,
+    )
+
+    stats = {
+        "takeback_candidates": 0,
+        "taken_back": 0,
+        "takeback_kept_orphan": 0,
+        "takeback_kept_subject_evidenced": 0,
+        "takeback_kept_no_evidenced_counterpart": 0,
+        "takeback_unscreenable": 0,
+        "takeback_lost_race": 0,
+        "takeback_bank_present": False,
+    }
+
+    async with get_task_session() as session:
+        for table, why in (
+            (
+                UNREACHABLE_SUSPENDED_BACKUP_TABLE,
+                "this arm revived nothing, so there is nothing to take back",
+            ),
+            (
+                REVIVED_TWIN_TAKEBACK_BANK_TABLE,
+                "a take-back could not be undone, so none is written "
+                "(run scripts/repair_7594_revoid_published_reversed_twins.py "
+                "--backup once to create it)",
+            ),
+        ):
+            if not (await session.execute(
+                _sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+                {"t": f"public.{table}"},
+            )).scalar():
+                logger.warning(
+                    "#7594 take-back skipped: %s does not exist, so %s.",
+                    table, why,
+                )
+                return stats
+        stats["takeback_bank_present"] = True
+
+        # SCREEN IN SQL, VERDICT IN PYTHON. The only thing this excludes is the
+        # terminal the arm itself writes — 13,503 of the 13,566 ledger rows,
+        # which is what makes the recall affordable. Every other test belongs to
+        # `revived_twin_may_be_taken_back`, where a test can put a
+        # counter-example to it.
+        candidate_ids = (await session.execute(
+            _sql_text(
+                "SELECT e.id FROM events e JOIN "
+                f"{UNREACHABLE_SUSPENDED_BACKUP_TABLE} b ON b.event_id = e.id "
+                "WHERE e.status <> :terminal "
+                "ORDER BY abs(extract(epoch FROM (e.commence_time - now()))) "
+                "ASC, e.id ASC LIMIT :cap"
+            ),
+            {
+                "terminal": UNREACHABLE_SUSPENDED_TERMINAL,
+                "cap": REVIVED_TWIN_TAKEBACK_MAX_PER_PASS,
+            },
+        )).scalars().all()
+
+        for event_id in candidate_ids:
+            event = await session.get(Event, event_id)
+            if event is None or is_retired_event_status(event.status):
+                continue
+            stats["takeback_candidates"] += 1
+
+            survivors = await _surviving_counterpart_rows(session, event)
+            if survivors is None:
+                # 🔴 THE SENTINEL READS THE OTHER WAY ROUND HERE, AND CONFLATING
+                # THE TWO WOULD BE THE WHOLE DEFECT. `None` means the screen
+                # could not be run at all, and `_counterpart_screen_refuses`
+                # folds it in with "a survivor exists" because for the REVIVAL
+                # both answers mean "do not publish". For a take-back they are
+                # opposites: a survivor licenses a write, and "we could not tell"
+                # must never be spent as one. So this arm reads the three
+                # answers itself rather than through that boolean.
+                stats["takeback_unscreenable"] += 1
+                continue
+            if not survivors:
+                stats["takeback_kept_orphan"] += 1
+                continue
+
+            # Read once and spent twice — on the verdict and on the counter that
+            # explains it — so the log can say WHICH refusal fired without the
+            # caller re-deriving a rule that lives in the predicate.
+            subject_has_result = row_carries_a_result(
+                event.home_score, event.away_score, event.completed_at
+            )
+            subject_has_anchor = row_carries_an_authority_id(
+                event.espn_id, event.statpal_fixture_id
+            )
+            evidenced = await _counterparts_carrying_evidence(
+                session, [row_id for row_id, _st in survivors]
+            )
+            if not revived_twin_may_be_taken_back(
+                retired_by_the_arm=True,
+                has_surviving_counterpart=True,
+                subject_carries_result=subject_has_result,
+                subject_carries_authority_id=subject_has_anchor,
+                a_survivor_carries_evidence=bool(evidenced),
+            ):
+                if subject_has_result or subject_has_anchor:
+                    stats["takeback_kept_subject_evidenced"] += 1
+                else:
+                    stats["takeback_kept_no_evidenced_counterpart"] += 1
+                continue
+
+            if await _take_back_one_revived_twin(session, event, survivors):
+                stats["taken_back"] += 1
+            else:
+                # A lost compare-and-swap is not retried in-pass. The beat fires
+                # every ten minutes and re-screens from scratch, so the retry is
+                # the next pass reading a database that has settled — rather
+                # than this one fighting a writer that is still mid-move. The
+                # one-shot repair retries because it gets one invocation.
+                stats["takeback_lost_race"] += 1
+
+    return stats
+
+
+async def _counterparts_carrying_evidence(session, ids) -> list[int]:
+    """Which of these rows hold a result or an authority id? (#7594)
+
+    The half of the keeper question the screen cannot answer: it returns
+    ``(id, status)`` because that is what the take-back's compare-and-swap binds
+    to, and widening its contract would change a function two shipped callers
+    already depend on. One indexed read by primary key instead.
+    """
+    from app.utils.event_completion import (
+        row_carries_a_result,
+        row_carries_an_authority_id,
+    )
+
+    if not ids:
+        return []
+    rows = (await session.execute(
+        select(
+            Event.id,
+            Event.home_score,
+            Event.away_score,
+            Event.completed_at,
+            Event.espn_id,
+            Event.statpal_fixture_id,
+        ).where(Event.id.in_(list(ids)))
+    )).all()
+    return [
+        row.id
+        for row in rows
+        if row_carries_a_result(row.home_score, row.away_score, row.completed_at)
+        or row_carries_an_authority_id(row.espn_id, row.statpal_fixture_id)
+    ]
+
+
+async def _take_back_revived_twin_bank(session, event_id, before) -> None:
+    """Record the status this take-back swapped FROM, so it can be given back."""
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.event_completion import UNREACHABLE_SUSPENDED_TERMINAL
+
+    await session.execute(
+        _sql_text(
+            f"INSERT INTO {REVIVED_TWIN_TAKEBACK_BANK_TABLE} "
+            "(event_id, status_before, status_after, taken_at) "
+            "VALUES (:i, :b, :a, now()) "
+            "ON CONFLICT (event_id) DO NOTHING"
+        ),
+        {"i": event_id, "b": before, "a": UNREACHABLE_SUSPENDED_TERMINAL},
+    )
+
+
+async def _own_the_counterparts(session, ids) -> list[tuple[int, str]]:
+    """Take row ownership of the counterparts, then read their statuses. (#7594)
+
+    Returns the ``(id, status)`` pairs that are STILL reachable, read under the
+    lock and therefore true until this transaction ends.
+
+    ``FOR UPDATE`` is the one read that BLOCKS, which is the whole point:
+    whatever the interleaving, the competing writer either committed before
+    this read (it is seen), or is mid-transaction (this read waits for it and
+    then sees it), or arrives afterwards (it waits for the take-back's own
+    transaction and re-evaluates against a database in which the subject is
+    already retired). ``ORDER BY id`` is the deadlock discipline.
+
+    ITS OWN FUNCTION SO THE STRAWMAN CAN REMOVE IT. A two-session test that
+    proves the lock works is only worth its runtime beside one that removes the
+    lock and REQUIRES the fixture to empty — otherwise a rig whose second
+    session silently did nothing reads as a pass.
+    """
+    from app.utils.event_completion import is_retired_event_status
+
+    locked = (await session.execute(
+        select(Event.id, Event.status)
+        .where(Event.id.in_(list(ids)))
+        .order_by(Event.id)
+        .with_for_update()
+    )).all()
+    return [
+        (row_id, status)
+        for row_id, status in locked
+        if not is_retired_event_status(status)
+    ]
+
+
+async def _take_back_one_revived_twin(session, event, survivors) -> bool:
+    """Swap this row to the terminal, or lose the race and write nothing. (#7594)
+
+    🔴 THE SWAP IS ON BOTH ROWS AT ONCE, AND THAT IS CERT-3199's AND CERT-3204's
+    FINDING CARRIED FORWARD INTO THE BEAT. A screen is a fact about the instant
+    it was read and the write is a different instant: if the canonical retires
+    in between, a compare-and-swap on this row's own status still matches, both
+    rows commit retired, and the fixture has ZERO reader-visible cards — the
+    #7260 harm produced by its own repair. So the take-back is conditioned, in
+    one statement, on one of the rows the screen just accepted still being in
+    the status it accepted it in.
+
+    🔴 AND THE COUNTERPARTS ARE OWNED FIRST, BECAUSE THE ``EXISTS`` ALONE CANNOT
+    SEE A WRITER THAT COMMITS AFTER THE SNAPSHOT (CERT-3204). Under READ
+    COMMITTED the subquery is evaluated against the statement's snapshot and
+    MVCC readers never block, so a concurrent retirement of the canonical is
+    invisible to it. ``FOR UPDATE`` is the one read that blocks; ``ORDER BY id``
+    is the deadlock discipline. ``with_for_update()`` rather than raw SQL so the
+    sqlite rail the race tests drive ignores the clause instead of failing to
+    parse it.
+
+    THE RULE DOES NOT MOVE INTO SQL. ``_surviving_counterpart_rows`` still
+    decides in Python which rows are the same fixture and hands back the ids it
+    accepted; the WHERE clause re-checks only their liveness.
+
+    THE BANK IS WRITTEN AFTER THE SWAP AND ONLY ON A WIN, which is the ordering
+    the one-shot repair arrived at the hard way: both are in one transaction, so
+    banking first buys nothing for durability, and it costs correctness — a bank
+    row asserting a ``status_after`` we never wrote would let the undo drag a
+    row back on a claim nobody earned.
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.utils.event_completion import UNREACHABLE_SUSPENDED_TERMINAL
+
+    live_counterparts = await _own_the_counterparts(
+        session, [row_id for row_id, _st in survivors]
+    )
+    if not live_counterparts:
+        # The counterpart went away under us, so this row is now the only card
+        # for the fixture. Voiding it would delete the game from the site.
+        return False
+
+    before = event.status
+    params = {
+        "after": UNREACHABLE_SUSPENDED_TERMINAL,
+        "i": event.id,
+        "before": before,
+    }
+    bound = []
+    for n, (other_id, other_status) in enumerate(live_counterparts):
+        bound.append(f"(c.id = :c{n}_id AND c.status = :c{n}_status)")
+        params[f"c{n}_id"] = other_id
+        params[f"c{n}_status"] = other_status
+
+    moved = (await session.execute(
+        _sql_text(
+            "UPDATE events SET status = :after "
+            "WHERE id = :i AND status = :before "
+            "AND EXISTS (SELECT 1 FROM events c WHERE "
+            + " OR ".join(bound)
+            + ")"
+        ),
+        params,
+    )).rowcount
+    if not moved:
+        return False
+
+    await _take_back_revived_twin_bank(session, event.id, before)
+    logger.info(
+        "#7594 took back event %s (%s vs %s) %s→%s: revived by the #7260 arm, "
+        "no score, no completed_at and no authority id, while %s holds this "
+        "fixture with a result or an anchor.",
+        event.id, event.home_team_name, event.away_team_name, before,
+        UNREACHABLE_SUSPENDED_TERMINAL,
+        ", ".join(str(row_id) for row_id, _st in live_counterparts),
+    )
+    return True
 
 
 def _wp_backfill_snap_time(commence, index: int, total: int, sport_key, now):

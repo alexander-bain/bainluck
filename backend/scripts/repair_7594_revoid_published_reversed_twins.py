@@ -152,6 +152,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.tasks.espn_sync import (  # noqa: E402
+    REVIVED_TWIN_TAKEBACK_BANK_TABLE,
     UNREACHABLE_SUSPENDED_BACKUP_TABLE,
     _row_has_surviving_counterpart,
     _surviving_counterpart_rows,
@@ -163,7 +164,14 @@ from app.utils.event_completion import UNREACHABLE_SUSPENDED_TERMINAL  # noqa: E
 PRODUCER_APP = "bainluck"
 
 #: Where the pre-repair statuses go. One row per event taken back.
-BANK_TABLE = "bak_7594_revoid_published_reversed_twins"
+#:
+#: IMPORTED, NOT SPELLED, since the forward arm landed. This script and
+#: `_take_back_revived_twins_impl` are one repair asked once and asked
+#: continuously; they bank into the same table so that
+#: `restore_…_reversed_twins.py --apply` is the single undo for both, and
+#: importing the name is what stops the two from drifting into two tables with
+#: one undo pointed at whichever was written first.
+BANK_TABLE = REVIVED_TWIN_TAKEBACK_BANK_TABLE
 
 #: How many times a lost compare-and-swap is re-issued against the status the
 #: row actually moved to before the pass declares the row unresolved.

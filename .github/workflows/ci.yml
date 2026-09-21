@@ -3454,7 +3454,7 @@ jobs:
           PY
           echo "provisioned bl_canonical_own_7594"
 
-      - name: "#7594 the take-back cannot empty a fixture (two real Postgres sessions)"
+      - name: "#7594 the take-back cannot empty a fixture, and the beat takes back the twin (real Postgres)"
         # CERT-3204. The repair holds `FOR UPDATE` row ownership of the canonical
         # through the take-back, and NOTHING CHEAPER CAN SEE THE HAZARD: the
         # sqlite rail the other race tests use serialises writers and ignores
@@ -3463,9 +3463,15 @@ jobs:
         # apart — one retires the canonical after the screen and holds it
         # uncommitted, and the take-back is asserted to WAIT.
         #
-        # The second case is the strawman: the same interleaving with ownership
-        # stubbed out MUST empty the fixture, or the rig is not reproducing the
-        # hazard and the first case proves nothing.
+        # Each ownership case has a strawman beside it: the same interleaving
+        # with ownership stubbed out MUST empty the fixture, or the rig is not
+        # reproducing the hazard and its partner proves nothing.
+        #
+        # 10 of the 12 are the FORWARD arm (`_take_back_revived_twins_impl`),
+        # added when the beat gained the take-back. They belong on real Postgres
+        # for three reasons a sqlite version could not reach: the recall orders
+        # on `abs(extract(epoch FROM (…- now())))`, the write takes the same
+        # `FOR UPDATE`, and the bank gate is a `to_regclass`.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_7594_canonical_ownership_pg.py \
@@ -3474,9 +3480,9 @@ jobs:
             echo "::error::#7594 ownership contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `12 passed` cannot satisfy a gate asking for 2.
-          grep -qE "[^0-9]2 passed," /tmp/own7594.txt || {
-            echo "::error::#7594 ownership contract did not run both cases"
+          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
+          grep -qE "[^0-9]12 passed," /tmp/own7594.txt || {
+            echo "::error::#7594 contract did not run all twelve cases"
             exit 1
           }
 
