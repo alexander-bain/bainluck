@@ -701,42 +701,85 @@ def incoherent_ladder_verdict(
     if len(ordered) < _LADDER_MIN_PRICED_RUNGS:
         return set(), len(ordered)
 
-    # Longest coherent run, O(n^2) over a list a market's outcome count bounds.
-    # `bound` is the run's running EXTREME rather than its previous element:
-    # compared pairwise only, a run could drift by the tolerance at every step
-    # and end up contradicting its own first rung.
+    # Longest coherent run. `bound` is the run's running EXTREME rather than its
+    # previous element: compared pairwise only, a run could drift by the
+    # tolerance at every step and end up contradicting its own first rung.
+    #
+    # WHY A FRONTIER AND NOT ONE STATE PER ENDPOINT (#4680, filed by CERT-2451
+    # while grading #4610). The tolerance is NOT transitive, so "longer" and
+    # "still joinable" are two different axes and neither implies the other. A
+    # single `(best_length[i], bound[i])` per endpoint has to choose between
+    # them, and choosing length throws away the bound a later rung needed:
+    # priced `.10 / .115 / .13 / .125 / .12`, the one-state form ends rung 1 on
+    # the run `0->1`, whose running min is .10, so rung 2 at .13 does not fit
+    # (.13 > .12) and the answer is a run of three that names rungs 0 AND 1
+    # impossible — though 1-4 are a coherent run of four and only rung 0
+    # contradicts anything. So keep every state that is not dominated on BOTH
+    # axes, and let each later rung pick the one it can actually join.
+    #
+    # Cost: a frontier holds at most one state per distinct length, so this is
+    # O(n^3) in the worst case rather than O(n^2) — stated honestly rather than
+    # rounded down. A ladder's n is its market's outcome count (single digits to
+    # low tens in the served population), which is what makes that affordable;
+    # it is not affordable for an arbitrary n and nothing here should be reused
+    # as if it were.
     falling = direction == DEC
-    best_length = [1] * len(ordered)
-    bound = [probability for _, probability, _ in ordered]
-    previous: list[int | None] = [None] * len(ordered)
+
+    def more_permissive(left: float, right: float) -> bool:
+        """Is a run bounded at ``left`` joinable by strictly more rungs?"""
+        # Falling runs admit anything at or under `bound + tolerance`, so the
+        # HIGHER running minimum is the looser one; rising runs invert it.
+        return left > right if falling else left < right
+
+    # Per endpoint, the Pareto frontier of `(length, bound, back-reference)`,
+    # sorted longest-first. The back-reference is `(endpoint, slot)` because a
+    # predecessor endpoint now carries several states and the slot says which.
+    states: list[list[tuple[int, float, tuple[int, int] | None]]] = []
     for i in range(len(ordered)):
         probability = ordered[i][1]
+        # The rung standing alone is always available and is bounded by its own
+        # price — the seed the old `best_length = 1` encoded implicitly.
+        candidates: list[tuple[int, float, tuple[int, int] | None]] = [(1, probability, None)]
         for j in range(i):
-            if falling:
-                fits = probability <= bound[j] + _LADDER_MONOTONE_TOLERANCE
-                carried = min(bound[j], probability)
-            else:
-                fits = probability >= bound[j] - _LADDER_MONOTONE_TOLERANCE
-                carried = max(bound[j], probability)
-            if not fits:
-                continue
-            # Longest first; among equals the most permissive bound, so the run
-            # that survives is the one a later rung can still join.
-            better_length = best_length[j] + 1 > best_length[i]
-            same_length_looser_bound = best_length[j] + 1 == best_length[i] and (
-                carried > bound[i] if falling else carried < bound[i]
-            )
-            if better_length or same_length_looser_bound:
-                best_length[i] = best_length[j] + 1
-                bound[i] = carried
-                previous[i] = j
+            for slot, (length, bound, _) in enumerate(states[j]):
+                if falling:
+                    fits = probability <= bound + _LADDER_MONOTONE_TOLERANCE
+                    carried = min(bound, probability)
+                else:
+                    fits = probability >= bound - _LADDER_MONOTONE_TOLERANCE
+                    carried = max(bound, probability)
+                if fits:
+                    candidates.append((length + 1, carried, (j, slot)))
 
-    end = max(range(len(ordered)), key=lambda i: best_length[i])
+        # Longest first, and among equal lengths the most permissive bound
+        # first — the old tie-break, now a SORT rather than a discard, so the
+        # shorter-but-looser states survive beside the longer ones.
+        candidates.sort(key=lambda state: (-state[0], -state[1] if falling else state[1]))
+        frontier: list[tuple[int, float, tuple[int, int] | None]] = []
+        for candidate in candidates:
+            # Everything already kept is at least as long, so a candidate earns
+            # its place only by being strictly looser than all of them. That
+            # single test is what makes the list a frontier and keeps it short.
+            if all(more_permissive(candidate[1], kept[1]) for kept in frontier):
+                frontier.append(candidate)
+        states.append(frontier)
+
+    # Longest overall, EARLIEST endpoint winning ties — the behaviour of the
+    # `max(range(...), key=...)` this replaces, preserved so that ladders the
+    # frontier does not rescue keep naming exactly the rungs they named before.
+    end: tuple[int, int] | None = None
+    longest = 0
+    for i, frontier in enumerate(states):
+        if frontier and frontier[0][0] > longest:
+            longest = frontier[0][0]
+            end = (i, 0)
+
     coherent: set[int] = set()
-    cursor: int | None = end
+    cursor = end
     while cursor is not None:
-        coherent.add(ordered[cursor][2])
-        cursor = previous[cursor]
+        endpoint, slot = cursor
+        coherent.add(ordered[endpoint][2])
+        cursor = states[endpoint][slot][2]
 
     return (
         {index for _, _, index in ordered if index not in coherent},
