@@ -1033,6 +1033,99 @@ def is_probability_extreme(probability: float | None) -> bool:
     return probability < PROBABILITY_EXTREME_LOW or probability > PROBABILITY_EXTREME_HIGH
 
 
+# Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
+# partition into mutually exclusive brackets. Each row of such a ladder is an
+# independent "at or above X" probability (gotcha #17), so the rows are NOT a
+# distribution: they legitimately sum well over 100% and must never be
+# normalized or rescaled against each other.
+#
+# The temporal forms belong here for the same reason: "Before Jan 1, 2028" is
+# a deadline the market either clears or doesn't, and the rungs nest. Every
+# prefix below is attested in the open economics pool — a first-word census on
+# 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
+#
+# Carried by `routes/economics.py` since #2563; moved here for #6704, when the
+# featured gate below had to ask the same question. One copy, because a second
+# transcription of the vocabulary is a second thing to forget to update.
+CUMULATIVE_THRESHOLD_PREFIXES = (
+    "above ",
+    "at least ",
+    "more than ",
+    "over ",
+    "greater than ",
+    "below ",
+    "before ",
+)
+
+
+def outcome_names_are_cumulative_ladder(names) -> bool:
+    """True when every one of ≥2 outcome names is a cumulative threshold."""
+    marked = 0
+    total = 0
+    for name in names:
+        total += 1
+        if (name or "").strip().lower().startswith(CUMULATIVE_THRESHOLD_PREFIXES):
+            marked += 1
+    return total >= 2 and marked == total
+
+
+def featured_leader_probability(outcomes) -> float | None:
+    """The probability the featured gate should judge as "is this decided?".
+
+    ``outcomes`` is any iterable of ``(name, probability)`` pairs.
+
+    ═══ A LADDER'S MAXIMUM IS ITS LOOSEST RUNG, NOT ITS VERDICT (#6704) ═══
+
+    Three category routes and `/weather` computed this as ``max(probability)``
+    and handed it to ``should_exclude_from_featured``, whose
+    ``probability_extreme`` arm then deleted anything over
+    ``PROBABILITY_EXTREME_HIGH``. That arm was written for a BINARY sitting at
+    99% — a question genuinely over. For a **cumulative** ladder the maximum is
+    the probability of the loosest bound, which is a near-certainty *by
+    construction* for any ladder whose floor is set low enough to be worth
+    listing: "gold above $3,000" on a day gold trades near $4,545 is 0.995 and
+    tells a reader nothing. So the gate was reading "the market is decided" off
+    a number that measures how far the ladder's floor sits below spot.
+
+    Measured on production 2026-09-21 over every open market with ≥2 cumulative
+    rungs and a maximum over 0.98 — 323 markets deleted from featured surfaces,
+    of which **256 (79%) carried at least one rung between 2% and 98%**. The
+    inversion is the tell: the WIDER and better-built the ladder, the further
+    its floor reaches below spot, the more certain its exclusion. On the metals
+    section of `/economics` the 50-rung copper ladder was excluded and the
+    13-rung gold one survived; five of the ten open metals markets never
+    reached the page.
+
+    So for a ladder the question becomes **does any rung sit in the live band**,
+    and the value returned is the rung nearest even money — extreme exactly when
+    no rung is in the band, which is the case a ladder really is over (every
+    rung at 99%, or every rung at 0%).
+
+    ⚠️ THE BINARY PATH IS BYTE-IDENTICAL, INCLUDING ITS QUIRK. For anything that
+    is not a ladder this returns the maximum, and a falsy maximum (no outcomes,
+    a null price, or an honest 0.0) still returns ``None`` — which
+    ``is_probability_extreme`` answers False for. That quirk predates this
+    helper and is deliberately preserved rather than repaired here: flipping it
+    would REMOVE markets from featured surfaces, which is a different change
+    with a different population, and folding it into a fix that ADDS them would
+    make the before/after unreadable.
+    """
+    pairs = [(name, prob) for name, prob in outcomes]
+    if not pairs:
+        return None
+
+    values = [float(prob) for _, prob in pairs if prob is not None]
+    if not values:
+        return None
+
+    if outcome_names_are_cumulative_ladder(name for name, _ in pairs):
+        chosen = min(values, key=lambda p: abs(p - 0.5))
+    else:
+        chosen = max(values)
+
+    return float(chosen) if chosen else None
+
+
 def should_exclude_from_featured(
     market_name: str | None,
     sport_category: str | None,

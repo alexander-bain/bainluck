@@ -33,7 +33,11 @@ from app.utils.economics_headline import (
     select_mortgage_ladder,
     select_recession_headline,
 )
-from app.utils.market_staleness import should_exclude_from_featured
+from app.utils.market_staleness import (
+    featured_leader_probability,
+    outcome_names_are_cumulative_ladder,
+    should_exclude_from_featured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +345,7 @@ def _up_leg(market: FuturesMarket):
 # the shape test has to keep them out on its own, before any probability is read.
 _STRIKE_RE = re.compile(r"^\$?\d[\d,]*(?:\.\d+)?$")
 
-# The threshold words this page already recognises (`_CUMULATIVE_PREFIXES`),
+# The threshold words this page already recognises (`CUMULATIVE_THRESHOLD_PREFIXES`),
 # here in the position they take when the venue puts the threshold in the market
 # NAME and leaves the rungs bare: "S&P 500 (SPY) closes above ___".
 _NAME_THRESHOLD_WORDS = ("above", "over", "at least")
@@ -523,38 +527,18 @@ def _stock_row(market: FuturesMarket) -> dict | None:
     }
 
 
-# Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
-# partition into mutually exclusive brackets. Each row of such a ladder is an
-# independent "at or above X" probability (gotcha #17), so the rows are NOT a
-# distribution: they legitimately sum well over 100% and must never be
-# normalized or rescaled against each other.
-#
-# The temporal forms belong here for the same reason: "Before Jan 1, 2028" is
-# a deadline the market either clears or doesn't, and the rungs nest. Every
-# prefix below is attested in the open economics pool — a first-word census on
-# 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
-_CUMULATIVE_PREFIXES = (
-    "above ",
-    "at least ",
-    "more than ",
-    "over ",
-    "greater than ",
-    "below ",
-    "before ",
-)
+# The threshold vocabulary this page reads — `CUMULATIVE_THRESHOLD_PREFIXES`,
+# with its rationale, in `utils/market_staleness.py`. It moved there for #6704,
+# when the featured gate had to ask the same question; this file kept a local
+# alias for one commit, and CodeQL was right that nothing but prose referred to
+# it (`py/unused-global-variable`). Comments below name the canonical constant.
 
 
 def _is_cumulative_ladder(market: FuturesMarket) -> bool:
     """True when a multi-outcome market's rows are cumulative thresholds."""
-    outcomes = list(market.outcomes)
-    if len(outcomes) < 2:
-        return False
-    marked = sum(
-        1
-        for o in outcomes
-        if (o.name or "").strip().lower().startswith(_CUMULATIVE_PREFIXES)
+    return outcome_names_are_cumulative_ladder(
+        (o.name for o in market.outcomes)
     )
-    return marked >= 2 and marked == len(outcomes)
 
 
 def _ladder_rung(market: FuturesMarket):
@@ -618,10 +602,11 @@ def _oil_row(market: FuturesMarket) -> dict | None:
                                            rungs summing to 777.5%, rescaled
                                            into 12.5
 
-    The second is this file's own rule, one call site short: the
-    ``_CUMULATIVE_PREFIXES`` block above says in as many words that a cumulative
-    ladder's rows "legitimately sum well over 100% and must never be normalized
-    or rescaled against each other", and ``_is_cumulative_ladder`` has been here
+    The second is this page's own rule, one call site short: the
+    ``CUMULATIVE_THRESHOLD_PREFIXES`` block says in as many words that a
+    cumulative ladder's rows "legitimately sum well over 100% and must never be
+    normalized or rescaled against each other", and ``_is_cumulative_ladder``
+    has been here
     since #2563 to detect exactly that. The energy branch asks a weaker question
     (`any("above" in name)`), which "At least 370" fails, so the ladder falls
     through to the partition path and is rescaled.
@@ -677,7 +662,7 @@ def _distribution_row(
     ``_market_row`` returns None above five outcomes, which silently drops
     priced markets out of the sections that only render Market rows. This
     keeps them by serving their shape instead: a cumulative threshold ladder
-    stays raw (see ``_CUMULATIVE_PREFIXES``), a partition is normalized into
+    stays raw (see ``CUMULATIVE_THRESHOLD_PREFIXES``), a partition is normalized into
     brackets. Returns None when nothing is priced.
 
     ``min_outcomes`` defaults to 6 because that is where ``_market_row`` gives
@@ -1036,13 +1021,40 @@ async def get_economics(db: AsyncSession):
     # representative market with merged outcomes (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
 
+    # ─── MOST-TRADED FIRST, BECAUSE EVERY SECTION BELOW IS A `[:n]` (#6704) ──
+    #
+    # The query above carries no ORDER BY and every section publishes a slice —
+    # `side_markets[:6]`, `oil[:4]`, `cards[:4]`. Which markets a reader sees was
+    # therefore heap order, and this file already says so in three places (see
+    # the mortgage card's "last match wins, on a query with no ORDER BY").
+    #
+    # It has to be fixed HERE, in the same change that stops the featured gate
+    # deleting wide ladders, because that gate is what kept the pools small
+    # enough for the arbitrariness to be cheap. Measured on production
+    # 2026-09-21: the metals pool goes from 6 markets to 11 for four card slots,
+    # and the five the gate was deleting include `KXCOPPERMON` — at 12,225 in
+    # 24h volume the most-traded metals market we hold — while the pool it would
+    # be sliced against includes `KXSILVERW` at **34**. Widening the gate
+    # without an order is how the 34 takes the slot from the 12,225.
+    #
+    # ⚠️ The key is TOTAL, not just "mostly ordered". Markets with no
+    # `volume_24h` — Polymarket representatives, much of the name-matched pool,
+    # and every fixture in this page's test suites — all score 0, and a sort
+    # that stopped there would leave the biggest remaining question (which of
+    # 40 zero-volume markets fills the last slot) answered by heap order again.
+    # The id breaks it: oldest first, stable across requests and across a
+    # cache rebuild, which is what makes a before/after on this page readable.
+    all_markets.sort(
+        key=lambda m: (-float(getattr(m, "volume_24h", None) or 0), m.id or 0)
+    )
+
     def _leader_prob(m):
-        outcomes = sorted(
-            (m.outcomes or []),
-            key=lambda o: float(o.current_probability or 0),
-            reverse=True,
+        # #6704: a cumulative ladder is judged on the rung nearest even money,
+        # not on its loosest bound, which is a near-certainty by construction.
+        # Anything that is not a ladder keeps the maximum, unchanged.
+        return featured_leader_probability(
+            (o.name, o.current_probability) for o in (m.outcomes or [])
         )
-        return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
     # Classify into themes — exclude resolved, extreme, and title-stale markets.
     # ``spotlight_eligible`` is the set this page is willing to RENDER, kept so
@@ -1514,7 +1526,7 @@ async def get_economics(db: AsyncSession):
     # a CUMULATIVE ladder, and `_brackets_from_outcomes` rescales anything
     # summing past 105% back to 100: a thirteen-rung ladder summing to 1111%
     # printed its 94.5% rung as 8.5%. That is this file's own rule — see
-    # `_CUMULATIVE_PREFIXES`, which says such rows "must never be normalized or
+    # `CUMULATIVE_THRESHOLD_PREFIXES`, which says such rows "must never be normalized or
     # rescaled against each other" — and the branch simply never asked.
     #
     # A non-ladder mortgage market is therefore NOT a candidate: it would take
