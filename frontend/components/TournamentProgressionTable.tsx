@@ -9,6 +9,7 @@ import { GRID_CELL_TERMINAL_GLYPH, progressionSortValue } from "@/lib/gridCellSt
 import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDisplay";
 import { legendName } from "@/lib/contenderChart";
 import { probabilityCellText, probabilityChipText } from "@/lib/probabilityCellText";
+import { risingIsGood } from "@/lib/gridColumnPolarity";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -326,15 +327,31 @@ function formatProb(p: number | null): string {
 
 /**
  * Change indicator (small triangle + delta).
+ *
+ * The TRIANGLE states which way the number moved and is never flipped — the
+ * probability rose or it did not. The COLOUR states whether that is good news
+ * for this row, which is a different question and the one #7745 found being
+ * answered wrongly: the Relegated column painted Arsenal's rising chance of
+ * going down green and Chelsea's falling one red. Polarity comes from the
+ * column's structured key (`lib/gridColumnPolarity`), so a column where up is
+ * bad reads red on the way up without any renderer parsing its label.
  */
-function ChangeIndicator({ change }: { change: number | null | undefined }) {
+function ChangeIndicator({
+  change,
+  columnKey,
+}: {
+  change: number | null | undefined;
+  /** The grid column this cell belongs to — `relegation`, `top_4`, … */
+  columnKey?: string;
+}) {
   if (!change || Math.abs(change) < 0.001) return null;
   const pct = change * 100;
   const isPositive = change > 0;
+  const isGoodNews = isPositive === risingIsGood(columnKey);
   return (
     <span
       className={`text-[10px] leading-none ${
-        isPositive ? "text-emerald-400" : "text-red-400"
+        isGoodNews ? "text-emerald-400" : "text-red-400"
       }`}
       title={`${isPositive ? "+" : ""}${pct.toFixed(1)}% in 24h`}
     >
@@ -938,7 +955,7 @@ export default function TournamentProgressionTable({
                                 {display.text}
                               </span>
                               <SourceBreakdown sources={sources ?? []} />
-                              <ChangeIndicator change={change} />
+                              <ChangeIndicator change={change} columnKey={stage.key} />
                             </>
                           )}
                         </div>
