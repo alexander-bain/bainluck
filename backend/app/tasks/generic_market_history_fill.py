@@ -27,11 +27,20 @@ only what the concept fill cannot give a single question:
   * THE BOOK IS KEPT with each Kalshi point, so the readers can ask the
     canonical support predicates at read time.
 
-WHAT IT NEVER DOES. It writes nothing to Postgres — not `futures_odds_snapshots`,
-not an outcome, not a calibration column (the concept fill's own reasoning, and
-gotcha #21). It sweeps no population: there is no beat entry and no "eligible
-set"; the only caller is a reader that just served a thin chart, through a claim
-that is per-market AND globally budgeted per hour.
+WHAT IT NEVER DOES. It writes no MARKET DATA to Postgres — not
+`futures_odds_snapshots`, not an outcome, not a calibration column (the concept
+fill's own reasoning, and gotcha #21). It sweeps no population: there is no beat
+entry and no "eligible set"; the only caller is a reader that just served a thin
+chart, through a claim that is per-market AND globally budgeted per hour.
+
+THE ONE POSTGRES WRITE (#7736, added after this file's "writes nothing" line was
+written — it was true until then). `_stamp_bank_marker` merges a single key into
+`futures_markets.market_metadata` recording that this market HAS venue history.
+It is bookkeeping about the CACHE, never market data, and it is written at most
+once per market. It exists because the bank is Redis-only under `allkeys-lru`:
+when eviction takes the bank it also takes the only evidence the bank existed,
+and `plan_on_demand_fill` then cannot tell a market whose history was evicted
+from one that never had any — so the recovery is silently abandoned for ever.
 """
 
 from __future__ import annotations
@@ -45,13 +54,16 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.utils.generic_market_history import (
+    BANK_MARKER_KEY,
     VENUE_SOURCES,
     VenuePoint,
     budget_key,
+    build_bank_marker,
     build_payload,
     cache_key,
     claim_key,
     kalshi_contract,
+    market_had_bank,
     merge_last_good,
     payload_age_seconds,
     polymarket_contract,
@@ -327,7 +339,18 @@ def plan_on_demand_fill(
         if not chart_is_thin:
             # A chart our own polls already draw densely does not spend a venue
             # request to get denser. It is the thin chart this ship is for.
-            return {"enqueue": False, "reason": "chart_not_thin"}
+            #
+            # 🔴 UNLESS THIS MARKET IS KNOWN TO HAVE HELD A BANK (#7736). `age is
+            # None` means THE KEY IS NOT THERE, and that is two states, not one:
+            # a market that never had venue history, and one whose bank Redis
+            # evicted. The first is the case the comment above is about. For the
+            # second, refusing means the history #7351 recovered is gone for
+            # good — nothing else re-fetches it, because the serve path never
+            # calls a provider and Postgres holds only our own poll snapshots.
+            # The durable marker is what tells the two apart once the evidence
+            # in Redis has been evicted along with the bank.
+            if not market_had_bank(market):
+                return {"enqueue": False, "reason": "chart_not_thin"}
     else:
         settled = (getattr(market, "status", None) or "").lower() in _SETTLED_STATUSES
         if settled and answers_a_settled_market(payload):
@@ -706,6 +729,31 @@ async def build_generic_history(
     return build_payload(market, entries, now=now, stats=stats, degraded=degraded)
 
 
+async def _stamp_bank_marker(session: Any, market_id: int, marker: dict) -> None:
+    """Record durably that this market HAS venue history (#7736).
+
+    Merged into `market_metadata` with a Core ``||`` JSONB merge (gotcha #4 — no
+    ORM attribute assignment for JSONB, and `_write_seed_marker`'s idiom), so a
+    sibling writing a different key of the same column is not clobbered by a
+    read-modify-write. Does NOT commit: the caller owns the transaction, and
+    `get_task_session` commits it on a clean exit.
+    """
+    from sqlalchemy import cast, func, literal, update
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    from app.models.models import FuturesMarket
+
+    await session.execute(
+        update(FuturesMarket)
+        .where(FuturesMarket.id == int(market_id))
+        .values(
+            market_metadata=func.coalesce(
+                FuturesMarket.market_metadata, cast(literal("{}"), JSONB)
+            ).op("||")(cast(literal(json.dumps({BANK_MARKER_KEY: marker})), JSONB))
+        )
+    )
+
+
 async def fill_generic_market_history(
     session: Any, market_id: int, *, dry_run: bool = False,
     kalshi_service: Any = None, polymarket_service: Any = None,
@@ -750,7 +798,20 @@ async def fill_generic_market_history(
         last_good, payload, settled=settled
     )
     written = False
+    marker_written = False
     if not dry_run:
+        # THE DURABLE HALF OF THE BANK (#7736). The series itself goes to Redis
+        # below, where `allkeys-lru` may evict it at any time; this stamp is what
+        # survives that and lets `plan_on_demand_fill` tell an EVICTED bank from
+        # a market that never had one. Written ONCE — it records that venue
+        # history exists for this row, which does not change — so every later
+        # fill of the same market costs no write at all. It is deliberately NOT
+        # conditional on the Redis write succeeding: the fact it records is about
+        # the market, not about the cache.
+        marker = build_bank_marker(payload, now=now or datetime.now(timezone.utc))
+        if marker is not None and not market_had_bank(market):
+            await _stamp_bank_marker(session, market_id, marker)
+            marker_written = True
         written = write_cached_history(market_id, payload, settled=settled, rc=rc)
         if written:
             # THE CLAIM MEANS "A FILL IS IN FLIGHT", and this one has landed. From
@@ -765,6 +826,7 @@ async def fill_generic_market_history(
         "outcomes_built": payload["stats"]["outcomes_built"],
         "points": {k: len(v["points"]) for k, v in payload["outcomes"].items()},
         "cached": written,
+        "bank_marker_written": marker_written,
         "stats": {k: v for k, v in payload["stats"].items() if k != "candles_unpriced"},
     }
 
