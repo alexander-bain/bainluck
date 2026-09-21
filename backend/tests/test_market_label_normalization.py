@@ -374,6 +374,64 @@ class TestIsWrongSportLeak:
             "NCAA Tournament: Team to make Semifinals", "Duke", "basketball_ncaab"
         ) is False
 
+    # CFL games (#7851) — the reader-reported specimen and its controls.
+    #
+    # Production 2026-09-21, `GET /api/events/15311565/related-futures`: the
+    # SECOND card of Duke Blue Devils' championship path was "2026 CFL Grey Cup
+    # Champion || Winnipeg Blue Bombers 0.125". The bare token "Blue" from
+    # "Duke Blue Devils" occupies whole tokens of "Winnipeg Blue Bombers", so
+    # the #6806 boundary rule cannot refuse it; the refusal has to be on the
+    # league. The two `is False` cases are the acceptance's controls and are
+    # the half that can actually regress.
+
+    def test_grey_cup_for_ncaaf_game(self):
+        """The named specimen: market 33283475 on event 15311565."""
+        assert is_wrong_sport_leak(
+            "2026 CFL Grey Cup Champion", "Winnipeg Blue Bombers",
+            "americanfootball_ncaaf",
+        ) is True
+
+    def test_grey_cup_for_fcs_game(self):
+        """Measured the same day: "British Columbia Lions" reached the
+        Columbia Lions' FCS page (event 15313355) by the same route."""
+        assert is_wrong_sport_leak(
+            "2026 CFL Grey Cup Champion", "British Columbia Lions",
+            "americanfootball_ncaaf_fcs",
+        ) is True
+
+    def test_grey_cup_for_nfl_game(self):
+        assert is_wrong_sport_leak(
+            "2026 CFL Grey Cup Champion", "Toronto Argonauts",
+            "americanfootball_nfl",
+        ) is True
+
+    def test_grey_cup_for_cfl_game_is_kept(self):
+        """A real CFL team keeps its real CFL path — event 15312374 serves the
+        Grey Cup to Hamilton (1%) and Montreal (24%) and must keep doing so."""
+        assert is_wrong_sport_leak(
+            "2026 CFL Grey Cup Champion", "Hamilton Tiger-Cats",
+            "americanfootball_cfl",
+        ) is False
+
+    def test_super_bowl_for_nfl_game_is_kept(self):
+        """The clause must not reach a US-football market on a US-football
+        page: the college-team control from the issue's acceptance."""
+        assert is_wrong_sport_leak(
+            "NFL Super Bowl Winner", "Pittsburgh Steelers", "americanfootball_nfl"
+        ) is False
+
+    def test_ncaaf_championship_for_ncaaf_game_is_kept(self):
+        assert is_wrong_sport_leak(
+            "NCAAF Championship Winner", "Duke Blue Devils", "americanfootball_ncaaf"
+        ) is False
+
+    def test_cfl_clause_does_not_reach_another_sport(self):
+        """`sport_prefix` gates the clause, so a hockey page is untouched even
+        if a market name happens to carry the token."""
+        assert is_wrong_sport_leak(
+            "CFL Crossover Special", "Winnipeg Jets", "icehockey_nhl"
+        ) is False
+
 
 # ── Playoff stage classification ──────────────────────────────────────────
 
