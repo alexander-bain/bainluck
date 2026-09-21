@@ -137,6 +137,28 @@ final class OddsChartViewModel: ObservableObject {
         }
     }
 
+    /// Take a payload the page has re-polled, if it is not older than the one on
+    /// screen (#920).
+    ///
+    /// This exists because `preloadedHistory:` is read exactly once. SwiftUI
+    /// evaluates a `StateObject`'s `wrappedValue` autoclosure on first appearance
+    /// and discards it on every later body pass, so the 120 s poll's fresh
+    /// payload arrived at this object's `init` and was thrown away — while
+    /// `load()` below, guarded on `history == nil`, declined to fetch a
+    /// replacement. Between them the chart could not advance at all, for as long
+    /// as the reader kept the page open.
+    ///
+    /// Returns whether it took the payload, so a test can assert the refusal and
+    /// not merely the absence of a change.
+    @discardableResult
+    @MainActor
+    func adopt(_ fresh: EventHistoryResponse) -> Bool {
+        guard EventHistoryFreshness.shouldAdopt(fresh, over: history) else { return false }
+        history = fresh
+        loading = false
+        return true
+    }
+
     @MainActor
     func load() async {
         guard history == nil else { return }  // Skip if preloaded
@@ -187,6 +209,13 @@ struct OddsChartView: View {
     var refreshStreaming: Bool = false
     /// Shared domain from parent — ensures OddsChart and ScoreDiffChart have identical x-axes
     var forcedDomain: ClosedRange<Date>?
+    /// Blends pushed to the page since it opened (#920), drawn as the live end
+    /// of the backend's own aggregate line. Empty on every non-live surface.
+    var liveFrames: [LiveBlendPoint] = []
+    /// The page's current history, kept as a property and not merely consumed by
+    /// `init`, because `init` runs once and this keeps arriving. `historyEdge`
+    /// watches it; `OddsChartViewModel.adopt` decides.
+    var preloadedHistory: EventHistoryResponse?
     /// Binding to expose the selected game play point (for GamePlayCardView)
     @Binding var selectedPlayPoint: GamePlayPoint?
     @StateObject private var vm: OddsChartViewModel
@@ -254,7 +283,8 @@ struct OddsChartView: View {
          refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
-         preloadedHistory: EventHistoryResponse? = nil) {
+         preloadedHistory: EventHistoryResponse? = nil,
+         liveFrames: [LiveBlendPoint] = []) {
         self.eventId = eventId
         self.teamColors = teamColors
         self.commenceTime = commenceTime
@@ -271,6 +301,8 @@ struct OddsChartView: View {
         self.refreshInterval = refreshInterval
         self.refreshStreaming = refreshStreaming
         self.forcedDomain = forcedDomain
+        self.liveFrames = liveFrames
+        self.preloadedHistory = preloadedHistory
         _selectedPlayPoint = selectedPlayPoint
         _vm = StateObject(wrappedValue: OddsChartViewModel(eventId: eventId, preloaded: preloadedHistory))
     }
@@ -375,6 +407,12 @@ struct OddsChartView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The live edge of the payload the PAGE holds, which is not necessarily the
+    /// one this chart is drawing. `nil` until the page has any reading at all.
+    private var historyEdge: Date? {
+        preloadedHistory.flatMap(EventHistoryFreshness.lastReading(in:))
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if noReadings {
@@ -390,6 +428,16 @@ struct OddsChartView: View {
                 vm.selectedRange = .sinceStart
             }
             await vm.load()
+        }
+        // #920. The page re-polls every 120 s and hands the result down; until
+        // this existed, every one of those payloads was dropped on the floor by
+        // a `StateObject` that only reads its initial value. Keyed on the live
+        // edge rather than the payload because `EventHistoryResponse` is not
+        // `Equatable` — and a date is the right key anyway: it changes exactly
+        // when there is something new to draw.
+        .onChange(of: historyEdge) { _, _ in
+            guard let preloadedHistory else { return }
+            vm.adopt(preloadedHistory)
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $isFullscreen) {
@@ -1258,7 +1306,7 @@ struct OddsChartView: View {
     // MARK: - Data Transformation
 
     private func buildDataPoints(_ history: EventHistoryResponse) -> [ChartDataPoint] {
-        Self.chartPoints(from: history)
+        Self.chartPoints(from: history, liveFrames: liveFrames)
     }
 
     /// Pure transform: decoded event history → observed chart points.
@@ -1273,7 +1321,14 @@ struct OddsChartView: View {
     ///    not delete near-50% observations, which erased legitimate 50/50 crossings.
     /// 3. Rendering connects these observed points with straight segments (see the
     ///    `.linear` interpolation in `chartContent`) — no invented curve.
-    static func chartPoints(from history: EventHistoryResponse) -> [ChartDataPoint] {
+    /// - Parameter liveFrames: blends pushed to this page since it opened. Empty
+    ///   for every caller that is not the live event page, which is why the
+    ///   parameter is defaulted: this transform's other callers ask a question
+    ///   about a payload, not about a socket.
+    static func chartPoints(
+        from history: EventHistoryResponse,
+        liveFrames: [LiveBlendPoint] = []
+    ) -> [ChartDataPoint] {
         var points: [ChartDataPoint] = []
         let multiSource = !(history.winProbHistory?.isEmpty ?? true)
 
@@ -1312,7 +1367,51 @@ struct OddsChartView: View {
             }
         }
 
-        return points
+        return extendingBlendToLiveEdge(points, with: liveFrames, history: history)
+    }
+
+    /// Carry the blend forward to the frames the page has actually been pushed
+    /// (#920), so the chart's right edge reaches the same moment the hero does.
+    ///
+    /// Three refusals, and each one is the whole point of doing this here rather
+    /// than at the call site:
+    ///
+    /// 1. **No blend on the payload ⇒ no live edge.** A pushed frame carries the
+    ///    aggregate, so appending it where the backend published no
+    ///    `aggregate_line` would MINT the blend series on the client — the exact
+    ///    thing `chartPoints`' first guarantee refuses, and worse than it looks:
+    ///    `defaultVisibleSources` returns `["aggregate"]` the moment one such
+    ///    point exists, so a single minted point would hide the consensus line
+    ///    the reader was actually reading and draw nothing in its place.
+    /// 2. **Settled means settled.** A finished payload is never extended. The
+    ///    match is over, the backend's history is the complete journey, and a
+    ///    late frame must not add a twitch past the end of the game.
+    /// 3. **Only past the backend's own edge.** The 120 s poll keeps swallowing
+    ///    this buffer's older half. Re-drawing a moment the payload already
+    ///    covers would put two points on one timestamp, so the buffer only ever
+    ///    contributes the part the server has not caught up to yet — and shrinks
+    ///    to nothing by itself when it does.
+    static func extendingBlendToLiveEdge(
+        _ points: [ChartDataPoint],
+        with liveFrames: [LiveBlendPoint],
+        history: EventHistoryResponse
+    ) -> [ChartDataPoint] {
+        guard !liveFrames.isEmpty else { return points }
+        guard !EventState.isFinished(history.status), history.completedAt == nil else { return points }
+
+        let publishedEdge = points
+            .filter { $0.source == "aggregate" }
+            .map(\.date)
+            .max()
+        guard let publishedEdge else { return points }
+
+        var extended = points
+        for frame in liveFrames where frame.date > publishedEdge {
+            extended.append(
+                ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate")
+            )
+        }
+        return extended
     }
 
     // MARK: - Primary line & 0–100 axis (pure, unit-tested in OddsChartAxisTests)

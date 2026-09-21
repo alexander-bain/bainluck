@@ -49,6 +49,17 @@ final class EventDetailViewModel: ObservableObject {
     /// and never to a frozen number.
     @Published private(set) var streamDelivering = false
 
+    /// Every pushed blend this page has been given, at its stamped time (#920).
+    ///
+    /// The chart's right edge is drawn from this. Without it the stream reaches
+    /// the hero and stops: `apply` writes `currentOdds`, and the match chart
+    /// reads history, so the better the push path worked the further the two
+    /// numbers on one screen drifted apart.
+    ///
+    /// Published rather than handed straight to the chart so it survives the
+    /// view being re-created, which is the half of this bug that bit hardest.
+    @Published private(set) var liveBlend: [LiveBlendPoint] = []
+
     private var stream: LiveStreamController?
     private var streamTickTask: Task<Void, Never>?
     /// Injected so tests can drive the lifecycle without a socket. `nil` means
@@ -306,6 +317,21 @@ final class EventDetailViewModel: ObservableObject {
             odds.homeRenderedPercent = nil
             odds.awayRenderedPercent = nil
             current.currentOdds = odds
+        }
+
+        // The same number, kept for the chart (#920). The hero renders the most
+        // recent frame; the chart needs all of them, because a line is the
+        // history of the number and not its latest value.
+        //
+        // Stamped time only. A frame with no `updated_at` — or one this build
+        // cannot parse — still moves the hero, which needs no x-coordinate, but
+        // it gets no point: placing it at "now" would draw an invented time next
+        // to backend points that all carry real ones.
+        if let p = frame.p, let stamped = frame.updatedAt?.asDate {
+            liveBlend = LiveBlendBuffer.appending(
+                LiveBlendPoint(date: stamped, homeProbability: p),
+                to: liveBlend
+            )
         }
 
         // A frame whose status has left the live set is the server telling us
