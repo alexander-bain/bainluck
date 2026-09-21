@@ -297,7 +297,6 @@ class TestEveryCollisionTheSweepFound:
         ("Liam Walsh", "Austin Williams", "same"),
         ("Buffalo Bulls", "Colorado Buffaloes", "`Buffalo` prefixes `Buffaloes`"),
         ("Cong An Ha Noi FC", "Congo DR", "`Cong` prefixes `Congo`"),
-        ("Cheltenham Town", "Wuhan Three Towns", "`Town` prefixes `Towns`"),
         ("CA Tigre BA", "Tigres", "`Tigre` prefixes `Tigres`"),
         ("St Patricks Athletic", "Athletico Paranaense", "`Athletic` prefixes it"),
         ("Telekom Baskets Bonn", "DeWanna Bonner", "`Bonn` prefixes `Bonner`"),
@@ -328,3 +327,44 @@ class TestEveryCollisionTheSweepFound:
         that claim in miniature — every team above still matches itself."""
         for team, _foreign, _why in self.COLLISIONS:
             assert any_pattern_matches_token(team, _team_name_patterns(team)), team
+
+
+class TestACollisionThisRuleNoLongerOwns:
+    """`("Cheltenham Town", "Wuhan Three Towns", "`Town` prefixes `Towns`")` was
+    row 13 of the sweep above until #7858, and it is moved here rather than
+    deleted because it is a real production collision and the sweep's count of
+    55 still includes it.
+
+    What changed is WHICH rule refuses it. #7858 gated `town` as a club-type
+    designator, so `_team_name_patterns("Cheltenham Town")` no longer emits the
+    bare token at all — the pattern that reached `Towns` is gone before the
+    boundary rule is consulted. That breaks the honesty arm above, which
+    requires the pre-#6806 substring rule to still CLAIM the row: it cannot
+    claim a pattern that is never built. Its instruction for that case is
+    "remove it or fix it"; this is the fix, and it keeps both facts assertable.
+    """
+
+    TEAM = "Cheltenham Town"
+    FOREIGN = "Wuhan Three Towns"
+
+    def test_the_foreign_outcome_is_still_refused(self):
+        assert not any_pattern_matches_token(
+            self.FOREIGN, _team_name_patterns(self.TEAM)
+        )
+
+    def test_and_it_is_refused_upstream_now_not_by_the_boundary_rule(self):
+        """The reason moved: no bare `Town` is emitted, so there is nothing for
+        the boundary rule to adjudicate."""
+        assert _team_name_patterns(self.TEAM) == ["Cheltenham Town", "Cheltenham"]
+        assert not _the_replaced_substring_rule(
+            self.FOREIGN, _team_name_patterns(self.TEAM)
+        )
+
+    def test_the_old_rule_did_claim_it_on_the_patterns_of_the_day(self):
+        """The evidence the sweep banked, replayed against the pattern list that
+        existed when it was banked — so the row still proves a real collision."""
+        patterns_before_7858 = ["Cheltenham Town", "Town", "Cheltenham"]
+        assert _the_replaced_substring_rule(self.FOREIGN, patterns_before_7858)
+
+    def test_cheltenham_still_claims_its_own_name(self):
+        assert any_pattern_matches_token(self.TEAM, _team_name_patterns(self.TEAM))
