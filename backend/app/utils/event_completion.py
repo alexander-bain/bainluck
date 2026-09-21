@@ -1049,6 +1049,105 @@ def play_resumes(status) -> bool:
     return status in RESUMABLE_STATUSES
 
 
+# ── RUNG 2: VENUE SETTLEMENT (#2591 / #7878, live/494) ───────────────────────
+#
+# ``EVENT-GRAPH-DOCTRINE`` §R declared this rung on 2026-09-02 and closed with
+# the sentence that is the whole reason this block exists:
+#
+#     "Rung 2 (venue settlement) is DECLARED here and not yet wired into either
+#      net."
+#
+# Nineteen days later it still was not, and the hole it leaves is the one a
+# reader sees. Rung 1 (the authority's status feed) does not cover ATP/WTA
+# challengers, Serie C, Ettan or CS2 — doctrine rule 8 names those as
+# venue-authority-of-last-resort — so nothing above rung 4 ever speaks about
+# them, and the only thing that can take the row off the live board is a wall
+# clock, which §R puts BELOW the lowest rung. Until that clock runs out — 3.0h
+# past the stored kickoff plus the arm's own 0.5h margin for a never-observed
+# tennis row, 6.0h for one something has reported on — the row keeps its LIVE
+# badge and, via ``_extend_win_prob_history_to_live_edge`` (#920), keeps growing
+# a synthesised flat line from the last real capture to *now*: the longer the
+# match has been over, the more confident the chart looks about it. And the
+# clock is measured from a kickoff these rows do not really have, so on the ones
+# whose stored start lands after the match it never runs out on time at all.
+#
+# MEASURED ON PRODUCTION 2026-09-21 22:0xZ, the slate that named it: **30**
+# ``status='live'`` events carried a ``resolved`` linked market; **25** carried
+# one this predicate accepts. Their venue settlements land 10 minutes to 3h18m
+# before the read — `15316478 Goffin vs Lajal` settled 17:50Z and was still
+# badged LIVE at 22:00Z, `15314994 Reveal vs. Pandaric` settled 17:19Z. Nine are
+# tennis, ten esports, six lower-league soccer. Not one carries an ``espn_id``.
+
+#: Our classifier's word for "this market decides who wins the contest".
+#: Spelled here rather than imported so the two modules cannot drift on the
+#: string; :func:`venue_settlement_ends_the_match` asserts the equality.
+FULL_CONTEST_WINNER_CLASS = "moneyline"
+
+
+def venue_settlement_ends_the_match(
+    market_class, market_status, winner_resolution_source
+) -> bool:
+    """Has the venue PAID OUT on who wins this contest? (rung 2 of §R)
+
+    Three facts, and each one is load-bearing against a different way of being
+    wrong. Pure, so the net that spends it can be tested without a venue.
+
+    1. **The market decides the CONTEST, not a piece of it.** ``market_class``
+       comes from :func:`~app.utils.game_market_class.classify_game_market_class`
+       and must be exactly ``moneyline``.
+
+       🔴 THIS IS THE CONJUNCT THAT EARNS THE FUNCTION, and the production slate
+       proves it rather than the docstring asserting it. A tennis match carries
+       one settleable question, so "any resolved market" and "the winner market"
+       look like the same rule on the rows that motivated this. They are not the
+       same rule on the rows next to them: on 2026-09-21 `15315003` (Huskies
+       eSport vs. BIG Academy) settled ``Map 1`` at 19:14:45Z, ``Map 2`` at
+       20:06Z, ``Total Maps`` at 20:44Z and the match itself at **20:49:37Z**.
+       "Any resolved market" ends that match **1h35m early**, mid-play, with a
+       Final on screen while Map 2 is being played. `15315004` is 1h49m,
+       `15314994` 36m. Same class as #5432/#5311 — a derivative published as the
+       match result — and the same class ``content_understanding``'s
+       ``child_moneyline`` disagreement was written to catch at ingest.
+
+       The classifier's ordering does the work: team props, totals, spreads and
+       ticker-only tells are all taken BEFORE the bare-matchup winner catch, so
+       ``… : Map 1`` lands ``other`` and ``… : Total Maps`` lands ``total``.
+
+    2. **The venue closed the market.** ``resolved`` only. An ``open`` market
+       priced at 0.99 is a price, and §R rung 4 says a price may conclude
+       nothing — it is the same quote a venue will keep showing through a rain
+       delay and long after the players have left.
+
+    3. **Something with tier-3 authority wrote the winner.**
+       ``winner_resolution_source`` is the ``resolution_source`` of a leg
+       carrying ``is_winner IS TRUE``, and it must be
+       :func:`~app.utils.resolution_authority.is_authoritative` — the venue's own
+       settled result (``api_settlement``, the ``clob_*`` family,
+       ``datagolf_settlement``, ``settlement_sync``). All 33 graded legs on the
+       measured slate were ``api_settlement`` from ``kalshi``.
+
+       Tier 3 is the ONLY tier admitted here, and ruling 038 is why rather than
+       tidiness: no tier-3 member reads our own ``events`` columns, so this
+       predicate cannot end a match on a verdict we computed from the very row
+       we are about to overwrite. A tier-2 ``game_score`` grade is derived from
+       ``home_score``/``away_score``; admitting it would let a frozen mid-game
+       score settle the match it was frozen from, which is the CAL-P002 loop
+       live/048 removed from the net below.
+
+    A ``None`` source (ungraded), a guess-family source and an unrecognised one
+    all answer False — :func:`~app.utils.resolution_authority.authority_tier`
+    fails safe to -1 for the unknown, so a source added without being classified
+    cannot end a match by being new.
+    """
+    from app.utils.resolution_authority import is_authoritative
+
+    if market_class != FULL_CONTEST_WINNER_CLASS:
+        return False
+    if market_status != "resolved":
+        return False
+    return is_authoritative(winner_resolution_source)
+
+
 # ── Which board day is the authority answering about? (#4652) ────────────────
 #
 #: ESPN files a fixture under the board day of its **Eastern** local start, and
@@ -1228,6 +1327,93 @@ LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
            AND (w.source IS NULL OR w.source NOT IN ({_VENUE_SOURCE_SQL_LIST}))
     ) x
     GROUP BY x.event_id
+"""
+
+
+# The candidate rows for :func:`venue_settlement_ends_the_match`, one per
+# (market, graded leg). The predicate is applied in Python because the
+# contest/derivative distinction is `classify_game_market_class`'s and that is a
+# recognizer, not a column — encoding a second copy of it in SQL is how the two
+# would come to disagree about `… : Map 1`.
+#
+# ``e.commence_time <= :now`` is NOT cosmetic and NOT the wall-clock gate this
+# rung is defined against. It fences off the ``FUTURE_SETTLED_STATUSES`` repair
+# three arms further down `_transition_event_statuses_impl`, which resets a
+# scoreless row in ANY of ``completed``/``closed``/``suspended`` — ``suspended``
+# was added to that set by #4114, so this arm's own write is in it — when the
+# row's kickoff is more than an hour in the FUTURE (#190). On this population
+# that is a live hazard rather than a hypothetical: these rows carry
+# `close_time`-as-`commence_time` provenance (gotcha #14), so their stored
+# kickoff routinely lands AFTER the venue's own settlement — `15315005` read
+# `commence_time 22:00Z` on 2026-09-21 against a market the venue settled at
+# 18:39Z. Without this line the two arms would trade such a row between
+# ``suspended`` and ``scheduled`` every sixty seconds.
+VENUE_SETTLED_GAME_MARKETS_SQL = """
+    SELECT e.id            AS event_id,
+           e.home_team_name AS home_team_name,
+           e.away_team_name AS away_team_name,
+           s.key           AS sport_key,
+           fm.name         AS market_name,
+           fm.external_id  AS market_external_id,
+           fm.status       AS market_status,
+           fo.resolution_source AS winner_source
+      FROM events e
+      JOIN futures_markets fm ON fm.event_id = e.id
+      JOIN futures_outcomes fo ON fo.market_id = fm.id AND fo.is_winner IS TRUE
+      LEFT JOIN sports s ON s.id = e.sport_id
+     WHERE e.status = 'live'
+       AND e.commence_time <= :now
+       AND fm.status = 'resolved'
+"""
+
+
+# The write, as a compare-and-set rather than an ORM attribute assignment.
+# ``status = 'live'`` is repeated in the WHERE deliberately: the SELECT above
+# and this UPDATE are two statements, the net runs every 60 s, and the row in
+# between is one the authority may settle at any moment. A CAS makes "somebody
+# else got here first" a zero-rowcount no-op instead of a demotion of their
+# verdict. Core, not ORM, for the reason task code always is here (gotcha #4/#5)
+# — and because the subsequent staleness SELECT then cannot see these rows as
+# live, which is the same answer the explicit skip in that loop gives.
+#
+# ── IT WRITES THE SAME WORD THE STALENESS ARM DOES, AND THAT IS ARGUED ───────
+#
+# :data:`EVENT_SUSPENDED`, not ``closed``, even though rung 2 is entitled to
+# conclude more than silence is. The entitlement is not the question; what the
+# reader is served is, and that was MEASURED before choosing (production
+# 2026-09-21 22:4xZ, scoreless rows holding an ``api_settlement`` winner,
+# 7-day window):
+#
+#     suspended  1,757   ·   live  23   ·   scheduled  18   ·   closed  0
+#
+# `suspended` is where this whole population already lands an hour or two later,
+# by the staleness arm below, and the product renders it WELL: `suspended` is in
+# scope for `venue_settlement_is_askable`, so `/events/15316478` reads
+# **"Settled · Lajal wins"** off the venue's own grade. `closed` is explicitly
+# OUT of that scope ("the page calls it over and prints a Final"), and **zero**
+# rows in this population have ever been in it — so writing `closed` would put
+# 23 rows a day into a state nothing in the class has occupied, trading a named
+# winner for a bare Final on a row that carries no score to print.
+#
+# So the row keeps the word that describes OUR record — we hold no result of our
+# own — while the venue's grade beside it says who won. Both true, and the
+# reader meets the second one. Three more properties come free and all of them
+# are the conservative direction: nothing is graded or calibrated off a row with
+# NULL scores; `AUTHORITY_BACKFILL_STATUSES` still reaches it, so ESPN can fill
+# the result in later; and `play_resumes` still admits it, so the door back
+# stays open on a population whose stored kickoff we know to be unreliable.
+#
+# `completed_at` is deliberately absent from the SET for the same reason
+# `suspended` carries none anywhere else. See the arm in
+# `espn_sync._transition_event_statuses_impl`.
+#
+# No leading newline, unlike its neighbours: every fake session in the suite
+# dispatches a write with `sql.startswith("UPDATE")`, and an indented first line
+# reads to them as a SELECT they then answer positionally.
+SUSPEND_ON_VENUE_SETTLEMENT_SQL = f"""UPDATE events
+       SET status = '{EVENT_SUSPENDED}'
+     WHERE id = ANY(:event_ids)
+       AND status = 'live'
 """
 
 
