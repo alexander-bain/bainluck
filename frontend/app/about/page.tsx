@@ -211,7 +211,19 @@ export default function AboutPage() {
                   </span>{" "}
                   {proof.points && proof.outcomes ? (
                     <>
-                      across {proof.outcomes} traded markets, our numbers land an average of{" "}
+                      {/* #7740 — this said "traded markets". `proof.outcomes` is
+                          `proofCohortFigures(...).outcomes`, which the lib's own
+                          field comment calls "outcomes in the cohort — the number
+                          the sentence must name": 449,027 of them today. The
+                          cohort's `winners` (187,068) and `sum_prob` (188,240.8)
+                          agree to 0.6%, two independent estimators of one winner
+                          per market, so it covers about 187K markets and the card
+                          named 449K. 2.4x. The figure is right and #7564 settled
+                          it; only the noun was wrong. "traded outcomes" is
+                          /calibration's own phrase for this cohort ("Every traded
+                          outcome", "measured over traded outcomes only"), so the
+                          two surfaces now name one number one way. */}
+                      across {proof.outcomes} traded outcomes, our numbers land an average of{" "}
                       <span className="text-text-primary font-semibold">
                         {proof.points} points
                       </span>{" "}

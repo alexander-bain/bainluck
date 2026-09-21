@@ -48,13 +48,20 @@ export const STORY_BLEND = {
   // Proof line is written to survive without live stats; the page fills in the
   // exact figure when the calibration API responds.
   proofLead: "And we grade ourselves in public:",
-  // #7564: the measured sentence this stands in for reads the traded-market
-  // cohort (449,027 outcomes, 0.9pp), so the fallback names the same population
-  // and the same verb — "within" is a bound and the figure is an average. The
-  // magnitudes stay deliberately vague: this copy renders exactly when the
-  // payload could not be read, so it must not imply a measurement.
+  // #7564: the measured sentence this stands in for reads the traded cohort
+  // (449,027 outcomes, 0.9pp), so the fallback names the same population and the
+  // same verb — "within" is a bound and the figure is an average. The magnitudes
+  // stay deliberately vague: this copy renders exactly when the payload could not
+  // be read, so it must not imply a measurement.
+  //
+  // #7740: the noun was "traded markets" in both halves. The cohort counts
+  // OUTCOMES — about 187K markets' worth — so "markets" overstated the question
+  // count 2.4x, and it rendered here too: this is the string a reader gets
+  // whenever `/api/calibration` cannot be read, which is the one moment nothing
+  // else on the page can correct it. Both halves say "traded outcomes" now, which
+  // is /calibration's own phrase for the same cohort.
   proofBody:
-    "across hundreds of thousands of traded markets, our numbers land an average of about a point from what actually happened.",
+    "across hundreds of thousands of traded outcomes, our numbers land an average of about a point from what actually happened.",
   proofCta: "Check our calibration",
 };
 
