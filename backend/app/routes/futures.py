@@ -11,7 +11,7 @@ from statistics import mean, median
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -1169,6 +1169,79 @@ async def _rebuild_futures_categories() -> None:
         _publish_futures_categories(await _build_futures_categories(session))
 
 
+#: A market that holds at least one `futures_outcomes` row (#6354).
+#:
+#: `/faceted` is the iPhone Browse tab's list — `FuturesListViewModel.load()` opens on
+#: `?page=1&per_page=20&sort=soonest` — and it had no outcome gate, so a row we ingested
+#: but never filled arrived as a name, a category chip and no number. Measured on
+#: production 2026-09-15, the app's own query, three sorts x five screens:
+#:
+#:     soonest (THE DEFAULT)   44 / 100 answer-less   (page 1 alone: 12 of 20)
+#:     newest                  10 / 100
+#:     trending                 0 / 100
+#:
+#: 🔴 THE DEFAULT SORT IS THE ONLY ONE THAT SURFACES THEM, and `trending` is clean by
+#: accident rather than by design: it orders on `max(abs(probability_change_24h))
+#: … nulls_last()`, and a market with no outcome rows has no movement, so that sort
+#: fences them out on its way past. `soonest` orders on `resolution_date asc`, which
+#: carries no such property, and the soonest-resolving rows are exactly the churn that
+#: never got outcomes. So the LIST is worse than the CORPUS — 25% of the scope is
+#: answer-less, 44% of the first five screens is — and anyone re-measuring this on
+#: `trending` will read a clean 0% and conclude there is nothing here.
+#:
+#: 🔴 IT ASKS FOR A *DRAWABLE* ROW, NOT MERELY A ROW. The formatter below counts outcomes
+#: AFTER `_GARBAGE_OUTCOME_RE`, so a gate on bare row existence would let a market whose
+#: every row is named `player AB` through and it would still serve `outcome_count: 0` —
+#: the same blank card by a different road. Measured on this population, same filter, same
+#: day, that residue is currently EMPTY:
+#:
+#:     in scope                                     24,888
+#:     no outcome rows at all                        6,259  (841 of them tier 1-2)
+#:     rows present but every one garbage-named          0
+#:
+#: An empty set is a reason to keep a gate honest, not a reason to leave a hole in it: the
+#: predicate mirrors the formatter so the two agree BY CONSTRUCTION, and the contract a
+#: guard asserts is the true one — every row this route serves has `outcome_count > 0`.
+#:
+#: The mirror is behavioural, not textual, and a real-Postgres test grades it by running
+#: both engines over the same names. Two places they would otherwise diverge:
+#:
+#:   * `re.match` anchors only at the start, so `_GARBAGE_OUTCOME_RE`'s own trailing `$`
+#:     is what makes it a full match; POSIX `~*` is unanchored and needs both anchors
+#:     written out.
+#:   * **A NULL name is a REAL outcome to the formatter** (`o.name or ""` makes it `""`,
+#:     which the regex does not match) and would be a NULL — hence not-true, hence
+#:     EXCLUDED — to a bare `!~*`. The `IS NULL` arm is what keeps a nameless-but-priced
+#:     rung on the page, and it is the arm a careless simplification deletes first.
+#:
+#:   * **`$` IS NOT `$`.** Python's `$` matches at the end of the string OR immediately
+#:     before a single trailing newline; POSIX `$` matches only at the end. So
+#:     `"player AB\n"` is GARBAGE to the formatter (`outcome_count: 0`) and NOT garbage
+#:     to a bare `…{1,3}$` gate — the market passes the gate and still serves a blank
+#:     row, which is precisely the defect this predicate exists to remove, reintroduced
+#:     by the gate meant to close it. Measured both engines over 18 names on real
+#:     PostgreSQL: this is the ONLY divergence (Unicode whitespace agrees — `\s` and
+#:     `[[:space:]]` both take NBSP, en space, U+3000, VT, FF and CR here). The trailing
+#:     `\n?` is what mirrors Python's `$`; it must not become `[[:space:]]?`, which would
+#:     swallow a trailing space that Python's `$` rejects and start hiding real rows.
+#:
+#: It goes in `conditions` — the list shared by the count query, the data query and the
+#: facet counts — deliberately, and NOT as a filter over `formatted`. Filtering after the
+#: `LIMIT` would hand the app short pages, a `total` that disagrees with what it can
+#: actually scroll to, and facet chips that promise more than the list holds.
+_GARBAGE_OUTCOME_SQL = r"^player[[:space:]]+[A-Za-z]{1,3}\n?$"
+
+_HAS_ANY_OUTCOME_ROW = exists().where(
+    and_(
+        FuturesOutcome.market_id == FuturesMarket.id,
+        or_(
+            FuturesOutcome.name.is_(None),
+            ~FuturesOutcome.name.op("~*")(_GARBAGE_OUTCOME_SQL),
+        ),
+    )
+)
+
+
 @router.get("/faceted")
 async def faceted_futures_search(
     tags: Optional[str] = Query(None, description="JSON array of tags"),
@@ -1203,7 +1276,7 @@ async def faceted_futures_search(
         if val:
             tag_filter.append(f"{ns}:{val}")
 
-    # Base conditions — open, non-game-level, unresolved
+    # Base conditions — open, non-game-level, unresolved, ANSWERABLE
     now = datetime.now(timezone.utc)
     conditions = [
         FuturesMarket.status == "open",
@@ -1212,6 +1285,7 @@ async def faceted_futures_search(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= now,
         ),
+        _HAS_ANY_OUTCOME_ROW,
     ]
 
     if category:
@@ -1355,13 +1429,24 @@ async def faceted_futures_search(
         })
 
     # Facet counts
+    # #6354: the same answerability gate as `conditions` above, in SQL because this half
+    # is raw. A facet chip is a PROMISE ABOUT THE LIST — tapping "Tennis (812)" must not
+    # land on 400 rows — so the counter and the thing it counts share one definition. The
+    # two are written separately (ORM there, text here) and drift silently if only one
+    # moves, which is why a guard test asserts a tag's facet count equals the `total` of
+    # the request filtered to that tag.
     facet_sql = """
         SELECT split_part(tag, ':', 1) AS ns, tag, COUNT(*) AS cnt
         FROM futures_markets, jsonb_array_elements_text(market_tags) AS tag
         WHERE status = 'open' AND event_id IS NULL
           AND (resolution_date IS NULL OR resolution_date >= :now)
+          AND EXISTS (
+              SELECT 1 FROM futures_outcomes fo
+              WHERE fo.market_id = futures_markets.id
+                AND (fo.name IS NULL OR fo.name !~* :garbage_outcome)
+          )
     """
-    facet_params: dict = {"now": now}
+    facet_params: dict = {"now": now, "garbage_outcome": _GARBAGE_OUTCOME_SQL}
     if category:
         facet_sql += " AND llm_sport_category = :category"
         facet_params["category"] = category
