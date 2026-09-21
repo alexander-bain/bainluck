@@ -371,10 +371,24 @@ class TestTheServedKeys:
         }
 
     @pytest.mark.asyncio
-    async def test_props_alone_settle_the_event_without_inventing_a_score(self):
-        """The issue's OTHER headline specimen. `/events/15304840` (Sabalenka v
-        Townsend) holds 16 positive `api_settlement` grades and not one
-        full-scope score market — measured. Acceptance 4 is this row."""
+    async def test_props_alone_publish_no_settlement(self):
+        """The issue's OTHER headline specimen, REVERSED BY #7702.
+
+        `/events/15304840` (Sabalenka v Townsend) holds 16 positive
+        `api_settlement` grades and not one full-scope score market — measured.
+        Acceptance 4 was this row, and it accepted *settled* with no result.
+
+        What it did not foresee is the surfaces the pair was later handed to:
+        #6438 removed the hero's "No price" line because "the settled pill in
+        this same card already carries the result", and #7070/#7092 put the
+        pill onto league-rail and events-list cards where it is the only thing
+        on the card. Measured on production 2026-09-21, 19 of 45 sampled aged
+        events served this shape, and `/events/15310805` rendered as the bare
+        word "Settled" over two team names.
+
+        Not one refusal moved: props and a set winner are still no result. The
+        change is that we no longer caption that refusal as a settlement.
+        """
         from app.routes.events import _venue_settlement
 
         session = _session(
@@ -385,7 +399,7 @@ class TestTheServedKeys:
             ]
         )
         assert await _venue_settlement(session, _event()) == {
-            "venue_settled": True,
+            "venue_settled": False,
             "venue_settled_result": None,
         }
 

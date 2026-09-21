@@ -69,8 +69,10 @@ VENUE_SETTLEMENT_SOURCE = "api_settlement"
 #: population): ``correct score`` on 11 events (soccer, ``Draw 0-0`` /
 #: ``Sevilla FC wins 1-0``) and ``exact match score`` on 45 (tennis,
 #: ``Aryna Sabalenka wins 2-0``). 56 events of 426; the other 370 are graded on
-#: props alone and get :data:`None` here, which acceptance 4 of #6381 accepts
-#: ("showing *settled* without inventing a score is sufficient").
+#: props alone and get :data:`None` here. #6381's acceptance 4 then accepted
+#: that as "settled without inventing a score"; since #7702 it is not — a
+#: :data:`None` from BOTH namers publishes no settlement at all. Most of the
+#: 370 are unaffected because :func:`choose_settled_winner` answers them.
 FULL_SCOPE_SCORE_MARKETS = frozenset({"correct score", "exact match score"})
 
 
@@ -115,8 +117,10 @@ def choose_settled_score(graded_outcome_names: Iterable[Optional[str]]) -> Optio
 
     ``None`` on disagreement, deliberately and in both directions:
 
-    * **Nothing graded** — 370 of the 426 measured events. The caller still
-      reports the event settled; it just has no score to show.
+    * **Nothing graded** — 370 of the 426 measured events. The caller falls
+      through to :func:`choose_settled_winner`, which answers most of them;
+      where it too declines, #7702 means the caller reports no settlement
+      rather than a settlement with nothing in it.
     * **Two different names** — zero specimens today (measured: 56 events, 56
       graded rows, 0 disagreements), which is exactly why the refusal is
       written now rather than after one appears. A duplicate event pair or a
@@ -408,11 +412,17 @@ def venue_settlement_is_askable(
     return status == "live" and live_claim_is_unbacked
 
 
-#: What a row with no positive venue grade is told: a PRESENT pair of keys
-#: saying "the venue graded nothing". Different from the keys being ABSENT,
+#: What a row this module has nothing to say about is told: a PRESENT pair of
+#: keys saying "no venue result to show". Different from the keys being ABSENT,
 #: which is what a failed read must produce — there the surface keeps whatever
 #: it said before this module existed rather than being handed a confident
 #: ``False`` nobody established.
+#:
+#: #7702 WIDENED WHAT REACHES IT, and the widening is why the line above no
+#: longer says "no positive venue grade". It is now also the answer for a row
+#: that HAS a positive grade which :func:`settlement_from_graded_rows` declines
+#: to state — see that function. The key's meaning to every consumer is "is
+#: there a venue result to print", and for both of those rows the answer is no.
 NO_VENUE_GRADE: dict = {"venue_settled": False, "venue_settled_result": None}
 
 
@@ -441,15 +451,48 @@ def settlement_from_graded_rows(
     differ: a batch has to carry the grouping key and a single read does not.
     Their ANSWER may not, and an order copied into two files is the #1951 drift
     this repo keeps paying for. One order, one place, two callers.
+
+    🔴 THE PAIR IS CO-TRUE (#7702). ``venue_settled`` is ``True`` exactly when
+    ``venue_settled_result`` names something. It USED to be keyed on ``graded``
+    being non-empty while the result was keyed on the far stricter question
+    "did a namer admit any of these legs" — two standards over one set of rows,
+    and where they disagreed only the claim survived.
+
+    What that published, measured on production 2026-09-21 by running THIS
+    function over the graded legs of events with a positive grade and no score:
+    **19 of 45 sampled events with kickoff 3–30 days ago** (population 1,705)
+    got ``venue_settled: True`` with a null result. ``/events/15310805`` was the
+    whole hero — the word "Settled", two team names, and nothing else; and not
+    even the "No price" line, because #6438 suppresses that on the stated
+    grounds that "the settled pill in this same card already carries the
+    result". The two rules compose into a page that asserts a settlement and
+    then names none.
+
+    This REVERSES #6381's Acceptance 4 ("settled without inventing a result is
+    sufficient"), deliberately and on evidence. That acceptance was true for the
+    event page as it stood and has since been inherited by surfaces it was not
+    written for: #6438 took away the hero's fallback on the strength of the
+    pill, and #7070/#7092 put the pill onto league-rail and events-list cards
+    where it is the ENTIRE card. Against that, Alex's standing ruling — settled
+    means settled, heroes show winners and cards show results — outranks an
+    implementation acceptance inside one issue.
+
+    🔴 NOT A LOOSENING AND NOT A REGRESSION OF #7070. Every refusal in
+    :func:`choose_settled_winner` and :func:`choose_settled_score` is untouched
+    and is still what produces the ``None``; this only stops us captioning that
+    refusal as a result. No row that names a winner or a score today loses one —
+    #6739's moneyline-graded and score-graded events are byte-identical, which
+    ``TestANamedResultIsUnchanged`` pins, and the mixed row (a derivative grade
+    BESIDE an admitted moneyline) still publishes its winner because the new arm
+    reads the ANSWER and not the legs.
     """
     if not graded:
         return dict(NO_VENUE_GRADE)
-    return {
-        "venue_settled": True,
-        "venue_settled_result": choose_settled_score(
-            outcome_name
-            for market_name, _market_external_id, outcome_name in graded
-            if is_full_scope_score_market(market_name)
-        )
-        or choose_settled_winner(graded, home_team_name, away_team_name),
-    }
+    result = choose_settled_score(
+        outcome_name
+        for market_name, _market_external_id, outcome_name in graded
+        if is_full_scope_score_market(market_name)
+    ) or choose_settled_winner(graded, home_team_name, away_team_name)
+    if not result:
+        return dict(NO_VENUE_GRADE)
+    return {"venue_settled": True, "venue_settled_result": result}

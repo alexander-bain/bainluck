@@ -269,13 +269,20 @@ class TestTheSentenceAppearsOnlyWhereTheVenueGraded:
     def test_a_set_winner_is_not_a_match_winner_on_a_rail_either(self):
         """The refusal inherited from `choose_settled_winner`, re-asked HERE.
 
-        150 `Set 1 Winner` grades sit in the measured population. The card is
-        settled and names nobody — never "the player who won set 1 won".
+        150 `Set 1 Winner` grades sit in the measured population, and the card
+        must never say "the player who won set 1 won".
+
+        #7702 moved the OTHER key: the card used to be settled-and-naming-
+        nobody, which on a rail card is the whole card — the word "Settled"
+        over two names. Since the pair is co-true it now publishes no
+        settlement, and this rail inherits that from the shared policy without
+        `venue_settlement_reader` changing a line, which is the property
+        `settlement_from_graded_rows` exists to have.
         """
         market, outcome = _graded(1, SCHOOLKATE, SET_ONE, VENUE_AWAY)
         card = _rail_cards(_event(SCHOOLKATE), market, outcome)[SCHOOLKATE]
 
-        assert card["venue_settled"] is True
+        assert card["venue_settled"] is False
         assert card["venue_settled_result"] is None
 
 
