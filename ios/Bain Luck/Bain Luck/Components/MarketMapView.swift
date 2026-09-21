@@ -43,6 +43,15 @@ struct MarketMapView: View {
     var awayWinProb: Double?
     var homeSpread: Double?
     var overUnder: Double?
+    /// #6290 — `opening_odds.over_under`, the combined total the market closed
+    /// pre-game on. The ONLY number on this payload a `PRE-GAME` tile may name
+    /// once the game is on; ``overUnder`` above is the line right now and moves
+    /// with the score. See ``MarketMapRail/pregameLine(isLive:opening:current:)``.
+    ///
+    /// Quoted for the WHOLE game, so only the full-game totals card may read it:
+    /// the halves have no opening of their own and draw no tile while live
+    /// rather than borrow this one from the wrong scope.
+    var openingOverUnder: Double? = nil
     var homeScore: Int?
     var awayScore: Int?
     /// #4982 — has the card ABOVE this one already told the reader we do not
@@ -534,6 +543,18 @@ struct MarketMapView: View {
         (gameMarkets.totals ?? []).filter { !$0.outcomeName.contains(":") }
     }
 
+    /// The served pre-game total, where this card is drawn in the unit it is
+    /// quoted in.
+    ///
+    /// #6290 — the same gate ``overUnder`` has carried since #3509 and for the
+    /// same reason: `opening_odds.over_under` is quoted in the SPORT's unit, so
+    /// on a bases or sets map it is a number from another scale. Both readers
+    /// (the tile and the empty-chrome predicate) take it from here so the gate
+    /// cannot be applied to one and forgotten on the other.
+    private func fullGameOpeningTotal(_ mapUnit: String) -> Double? {
+        sportUnitLineApplies(mapUnit) ? openingOverUnder : nil
+    }
+
     /// #3503 — the totals map's counterpart to `marginMapIsEmptyChrome`, which
     /// it never had. The rule itself lives in `MarketMapRail` so it can be
     /// asserted without rasterising this view.
@@ -546,7 +567,15 @@ struct MarketMapView: View {
         let scoreboardIsComparable = scoreboardCounts(mapUnit)
         return MarketMapRail.totalMapDrawsNothing(
             hasThresholds: !extractTotalThresholds(fullGameTotals).isEmpty,
-            overUnder: sportUnitLineApplies(mapUnit) ? overUnder : nil,
+            // #6290 — the line the tile will actually draw, through the same
+            // helper `totalMapCard` uses. A live card with no served opening
+            // draws none, and this predicate has to know that or it keeps a card
+            // alive on a marker that no longer renders.
+            lineMarker: MarketMapRail.pregameLine(
+                isLive: isLive,
+                opening: fullGameOpeningTotal(mapUnit),
+                current: sportUnitLineApplies(mapUnit) ? overUnder : nil
+            ),
             isLive: isLive,
             isDone: isDone,
             hasScoreboardTotal: scoreboardIsComparable
@@ -661,16 +690,27 @@ struct MarketMapView: View {
         // rule and, as there, collapsed from a copy per branch into one
         // statement. `ouLine` is `currentOdds.overUnder` or the threshold
         // nearest a coin flip; once the game is over both are settlement
-        // prices. Unlike the margin card this one's LIVE branch really did say
-        // `PRE-GAME`, so the label stays lifecycle-dependent here — that live
-        // wording is #3850's filed-not-fixed cousin, left alone deliberately.
+        // prices.
+        //
+        // #6290 — AND WHILE THE GAME IS ON, BOTH ARE THE LINE RIGHT NOW, which
+        // is what this card's LIVE branch has been captioning `PRE-GAME`. That
+        // was #3850's filed-not-fixed cousin, left alone here as recently as
+        // #3885 because there was nothing honest to put in its place; there is
+        // now (`opening_odds.over_under`, served since #5414). The label stays
+        // lifecycle-dependent; the VALUE under it is no longer allowed to be a
+        // live one. `pregameLine` carries the specimen and the measurement.
         //
         // 🟠 Dropping the settled marker can also narrow the rail, because
         // `totalBounds` reads `markerValues` — correctly, since the rail no
         // longer has to span a line the card will not draw. It only bites when
         // `ouLine` came from the event-level number; a ladder-derived one is
         // already in `allThresh` and moves nothing.
-        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let ou = ouLine {
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
+           let ou = MarketMapRail.pregameLine(
+               isLive: isLive,
+               opening: fullGameOpeningTotal(mapUnit),
+               current: ouLine
+           ) {
             markers.append(MapMarker(
                 id: isLive ? "pre" : "proj",
                 value: ou,
@@ -840,7 +880,14 @@ struct MarketMapView: View {
         // because before the off "PRE-GAME" is at least true, and changing it to
         // the full card's "PROJECTION" is a wording change nobody has
         // photographed and is not what #3885 asks for.
-        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded), let pv = projValue {
+        //
+        // #6290 — "before the off" was doing all the work in that sentence. Mid
+        // game `closestToEvenMargin` is a live ladder's coin-flip rung, and the
+        // half cards have no served opening to substitute (the payload's one
+        // opening spread is the whole game's), so `opening: nil` withholds the
+        // tile while the game is on. The rail and its distribution stay.
+        if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
+           let pv = MarketMapRail.pregameLine(isLive: isLive, opening: nil, current: projValue) {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
         }
 
@@ -873,8 +920,18 @@ struct MarketMapView: View {
         var markers: [MapMarker] = []
         // #3885 — as on `halfMarginCard` above: no lifecycle branch existed, so
         // a settled half total captioned a settlement price `PRE-GAME` too.
+        //
+        // #6290 — and a LIVE one captioned a live price `PRE-GAME`, photographed
+        // on event 14780544 at 18:27 PT: `PRE-GAME 31.5` on the 1st-half card and
+        // `PRE-GAME 20.5` on the 2nd, both read off rungs priced with 37 minutes
+        // of the game already played. Withheld live for the same reason as the
+        // margin half above — there is no served opening at half scope.
         if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
-           let ou = thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold {
+           let ou = MarketMapRail.pregameLine(
+               isLive: isLive,
+               opening: nil,
+               current: thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
+           ) {
             markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
         }
 

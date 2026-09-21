@@ -412,6 +412,10 @@ struct EventDetailView: View {
                             awayWinProb: event.currentOdds?.awayProbability,
                             homeSpread: event.currentOdds?.homeSpread,
                             overUnder: event.currentOdds?.overUnder,
+                            // #6290 — the pre-game total, from `opening_odds` and
+                            // never from `current_odds`. The two are the same
+                            // number before the off and diverge with every score.
+                            openingOverUnder: event.openingOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore,
                             absenceStatedAbove: absenceStatedAbove
@@ -429,6 +433,8 @@ struct EventDetailView: View {
                             awayColor: teamColors(event).away,
                             sportKey: event.sport,
                             overUnder: event.currentOdds?.overUnder,
+                            // #6290 — as on the maps above.
+                            openingOverUnder: event.openingOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore
                         )
