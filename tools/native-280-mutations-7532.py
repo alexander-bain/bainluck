@@ -167,8 +167,11 @@ if __name__ == "__main__":
     # any mutation (gotcha #124: read the exit code's VALUE).
     SPM_STORE = subprocess.run(
         ["bash", "-c",
+         # Explicit `+`, not adjacent-literal concatenation: inside a list this
+         # reads as a missing comma to a human and to CodeQL
+         # (py/implicit-string-concatenation-in-list).
          'echo "${BAINLUCK_SPM_STORE:-$HOME/Library/Developer/Xcode/DerivedData/'
-         'Bain_Luck-cwkxplfeuucvrvbplvqqlcgmpcgx/SourcePackages}"'],
+         + 'Bain_Luck-cwkxplfeuucvrvbplvqqlcgmpcgx/SourcePackages}"'],
         capture_output=True, text=True).stdout.strip()
     if not UDID:
         print("no iPhone 17 Pro simulator — the battery never ran")
