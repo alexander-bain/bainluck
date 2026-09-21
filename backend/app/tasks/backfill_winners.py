@@ -970,6 +970,11 @@ async def _backfill_kalshi_winners(
         "tail_selected": 0,
         "early_selected": 0,
         "longdated_selected": 0,
+        # #7870 — markets this pass flipped to 'resolved' because the venue
+        # reported every market in the event terminal. Its OWN counter, never
+        # folded into winners/losers: the grade and the status are two different
+        # claims and #7857 is the case where one landed without the other.
+        "status_resolved": 0,
         "errors": [],
     }
 
@@ -1262,6 +1267,100 @@ async def _backfill_kalshi_winners(
                                         }
                                     )
 
+                    # --- #7870: THE GRADE IS NOT THE STATUS ---
+                    #
+                    # The legs above are now graded, and for a reader that is
+                    # still not a settled market. The whole frontend gates every
+                    # settled affordance on `market.status` — `gradedWinner()`
+                    # returns null unless `status === "resolved"` — and that gate
+                    # is correct and is deliberately NOT loosened here: a stray
+                    # `is_winner` must never let a live market claim a result.
+                    # So the status has to follow the grade, from the same read.
+                    #
+                    # WHY THIS ROW NEEDS US. `futures_markets.status` is written
+                    # to 'resolved' by two rails and #7857's specimen escapes
+                    # both. `_poll_kalshi_markets` derives it from exactly this
+                    # rule (`all_terminal(m.status for m in event.markets)`) on
+                    # every poll — but polling is keyed on the SERIES, and when
+                    # Kalshi RETIRES a series into a successor
+                    # (`FEDHIKE` → `KXFEDHIKE`) `/markets?series_ticker=FEDHIKE`
+                    # returns 0 markets in every status, so the poller goes dark
+                    # on rows the venue has already answered (gotcha #33, one
+                    # step on). The resolution-window sweep (CAL-P1019 / #2722)
+                    # fires on `resolution_date`, which for that specimen is
+                    # 2028-01-01. The grader's door, meanwhile, was never shut:
+                    # `GET /events/FEDHIKE` answers 200 with three `finalized`
+                    # markets, and we are holding that answer right now.
+                    #
+                    # SO THIS IS NOT A NEW POLICY — IT IS THE POLLER'S OWN RULE,
+                    # REACHING THE ROWS THE POLLER CANNOT SEE. `all_terminal` is
+                    # imported, not retyped, so the two can never drift; if
+                    # `closed`'s known false positive (#1818 — terminal, but no
+                    # result yet) is ever removed from `TERMINAL_STATUSES`, both
+                    # call sites move together.
+                    #
+                    # MEASURED BEFORE BUILDING, at the venue (notice 26/27), on
+                    # 2026-09-21 — because "flip status in bulk" is a serve-time
+                    # change and `status` filters feed, search and the category
+                    # pages. 173 Kalshi events read live:
+                    #   * two random strata of our open-with-a-graded-leg
+                    #     population — 52 and 69 readable events — produced
+                    #     **0** flips. The gate does not blanket-flip: those
+                    #     markets are genuinely mid-flight (a settled rung on a
+                    #     live ladder is the common shape, e.g.
+                    #     `KXYTVIEWSW-ARI26SEP20`, 4 finalized + 11 active).
+                    #   * the 13 open markets already past their own
+                    #     `resolution_date` — a census, not a sample — produced
+                    #     **12**, every one of them fully `finalized` at the
+                    #     venue and reading LIVE on the site: finished ITF
+                    #     tennis matches, Rainbow Six games, and the day's
+                    #     gold/silver/copper/brent/natgas settlement ladders.
+                    #     The 13th (`KXT20MATCH-…`, 2 × `active`) was correctly
+                    #     held.
+                    # A gate that fires on 12 of 13 overdue rows and 0 of 121
+                    # mid-flight ones is discriminating, which is the property
+                    # worth having — the count is the smaller half of that.
+                    #
+                    # KNOWN RESIDUAL, NAMED RATHER THAN PAPERED OVER: an event
+                    # the venue has otherwise finished but whose last leg is
+                    # `inactive` (listed, never traded) is NOT all-terminal and
+                    # does not flip — measured on `KXPGATOP20-BICA26` and
+                    # `KXPGATOP5-BICA26`, 133 `finalized` + 1 `inactive` each.
+                    # Widening `TERMINAL_STATUSES` to admit `inactive` is the
+                    # wrong repair (it is the normal state of an unstarted
+                    # market, 622 of 2,000 in the #1818 probe) and would need
+                    # its own census. Filed, not fixed here.
+                    #
+                    # An event with NO markets cannot reach this branch:
+                    # `all_terminal([])` is False on purpose — an absence is not
+                    # a settlement (gotcha #53) — and 31 of the tickers probed
+                    # above answered 200 with an empty market list, which is
+                    # exactly the shape that rule exists for.
+                    if not dry_run and kms.all_terminal(
+                        m.get("status") for m in nested
+                    ):
+                        resolved = await session.execute(
+                            update(FuturesMarket)
+                            .where(
+                                FuturesMarket.source == "kalshi",
+                                FuturesMarket.external_id == event_ticker,
+                                FuturesMarket.status != "resolved",
+                            )
+                            .values(
+                                status="resolved",
+                                # COALESCE, not NOW(): a market that was resolved
+                                # once, reopened by a poll and is being resolved
+                                # again keeps the first stamp. LINKLOSS-02 couples
+                                # the stamp to the status in one statement for the
+                                # same reason.
+                                settled_at=func.coalesce(
+                                    FuturesMarket.settled_at, func.now()
+                                ),
+                            )
+                        )
+                        if resolved.rowcount > 0:
+                            stats["status_resolved"] += resolved.rowcount
+
                 if not dry_run:
                     await session.commit()
 
@@ -1283,7 +1382,8 @@ async def _backfill_kalshi_winners(
     logger.info(
         "Kalshi winner backfill: %d queried, %d found, %d api_miss, "
         "%d winners, %d losers, %d not_found, %d errors "
-        "(just-settled band: %d selected, %d outcomes graded)",
+        "(just-settled band: %d selected, %d outcomes graded; "
+        "%d market(s) flipped to resolved)",
         stats["tickers_queried"],
         stats["events_found"],
         stats["api_miss"],
@@ -1293,6 +1393,10 @@ async def _backfill_kalshi_winners(
         len(stats["errors"]),
         stats["fresh_selected"],
         stats["fresh_graded"],
+        # #7870: on its own, because a pass that graded legs and flipped nothing
+        # is exactly the #7857 failure — the grade landing while the page stays
+        # live — and the winners/losers counters cannot tell it apart.
+        stats["status_resolved"],
     )
     return stats
 
