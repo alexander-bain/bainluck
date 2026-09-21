@@ -139,7 +139,12 @@ describe("describeCategoryPopulation", () => {
     expect(d.sentence).toContain("35,416");
     // For a POOLED row the whole-population twin differs on both axes, and
     // saying only "not just this slice" would understate it.
-    expect(d.sentence).toContain("for “hockey” on its own");
+    //
+    // #7885: this assertion read `“hockey”` — the payload key — and passed for
+    // as long as the tooltip quoted keys. The fixture key happens to be an
+    // English word, so the expectation looked like prose and was in fact the
+    // defect written down. It is the reader's label now.
+    expect(d.sentence).toContain("for “Hockey” on its own");
   });
 
   it("names the cohort alone when a row pools nothing", () => {
@@ -314,6 +319,91 @@ describe("no payload vocabulary in anything a reader sees", () => {
         /\d+ of \d+ rows/.test(line);
       expect(hit).toBe(true);
     }
+  });
+});
+
+describe("the quoted category name is the reader's label, never the payload key", () => {
+  // #7885. The ban above is a ban on WORDS, and it was green while all 21
+  // rendered tooltips quoted a payload key, because every key in this file's
+  // fixtures is already an English word — "hockey", "politics", "soccer". A
+  // fixture that cannot express the defect cannot catch it. These four are the
+  // keys measured on the live page (390px, 2026-09-21, payload q271) whose key
+  // is NOT a word, so the raw spelling is visible in the assertion itself.
+  //
+  // THE EXPECTED LABELS ARE SPELLED OUT, NOT COMPUTED. `categoryLabel` is the
+  // helper under test here (the builder now calls it); deriving the expectation
+  // from it would pass just as happily if it regressed to returning its input.
+  const UGLY: ReadonlyArray<readonly [string, string]> = [
+    ["table_tennis", "Table Tennis"],
+    ["aussierules_afl", "AFL"],
+    ["rugbyleague_nrl", "NRL"],
+    ["mma", "MMA"],
+  ];
+
+  it.each(UGLY)("%s is quoted as “%s”", (key, label) => {
+    const d = describeCategoryPopulation(
+      key,
+      [key],
+      [{ category: key, ece: 1.84, n: 27367 }],
+      "excluding_never_moved"
+    );
+
+    // `title` first and on its own line: it is the string the page hangs on the
+    // cell (`page.tsx` <td title={pop.title}>), so it is the one a reader sees.
+    expect(d.title).toContain(`graded “${label}” outcomes`);
+    expect(d.sentence).toContain(`graded “${label}” outcomes`);
+    expect(d.title).not.toContain(key);
+    expect(d.sentence).not.toContain(key);
+  });
+
+  it("the pooled branch names the label in BOTH of its quotes", () => {
+    // The anchor's tail — ` — for “X” on its own.` — is a second interpolation
+    // of the same string and is only reached when the row pools, so the
+    // single-category specimens above never touch it.
+    const d = describeCategoryPopulation(
+      "aussierules_afl",
+      ["aussierules_afl", "aussierules_vfl"],
+      [{ category: "aussierules_afl", ece: 1.84, n: 27367 }],
+      "all"
+    );
+
+    expect(d.pools).toBe(true);
+    expect(d.title).toContain(`graded “AFL” outcomes`);
+    expect(d.title).toContain(`— for “AFL” on its own.`);
+    expect(d.title).not.toContain("aussierules_afl");
+  });
+
+  it("no tooltip quotes a name carrying an underscore, on any specimen", () => {
+    // The structural half, independent of any expected-label table: whatever
+    // the label map says, a payload key's shape must not reach the tooltip.
+    const POOLS: ReadonlyArray<string[]> = [
+      ["table_tennis"],
+      ["aussierules_afl", "aussierules_vfl"],
+      HOCKEY_POOL,
+      ["americanfootball_nfl", "americanfootball_cfl"],
+    ];
+    for (const pool of POOLS) {
+      for (const cohort of ["all", "excluding_never_moved"] as const) {
+        const published = [{ category: pool[0], ece: 1.84, n: 27367 }];
+        const d = describeCategoryPopulation(pool[0], pool, published, cohort);
+        for (const quoted of d.title.match(/“([^”]*)”/g) ?? []) {
+          expect(quoted).not.toContain("_");
+        }
+      }
+    }
+  });
+
+  it("the check is a real check — the shipped tooltip would have failed it", () => {
+    // NEGATIVE CONTROL, in the idiom of the ban's own control above. This is
+    // the string that was live on production at 22:07Z on 2026-09-21.
+    const WAS_LIVE =
+      "This row is measured over traded outcomes only. Across all 27,367 " +
+      "graded “table_tennis” outcomes, not just this slice, the figure is 1.84pp.";
+
+    const quoted = WAS_LIVE.match(/“([^”]*)”/g) ?? [];
+    expect(quoted.length).toBeGreaterThan(0);
+    expect(quoted.some(q => q.includes("_"))).toBe(true);
+    expect(WAS_LIVE).not.toContain("graded “Table Tennis” outcomes");
   });
 });
 

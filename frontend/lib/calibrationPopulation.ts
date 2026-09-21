@@ -70,6 +70,7 @@
  */
 
 import type { CohortKey } from "./calibrationCohort";
+import { categoryLabel } from "./calibrationCategories";
 
 /**
  * The cohort as a noun phrase that reads inside a sentence.
@@ -306,11 +307,29 @@ export function describeCategoryPopulation(
   // everything we have graded, not just the slice you are looking at". The
   // figures themselves are unchanged and still travel as `publishedEce` /
   // `publishedN`.
+  //
+  // ONE STRING WAS DOING TWO JOBS. `displayed` is the JOIN KEY — the twin lookup
+  // above matches it against `by_category[].category`, so it has to be the
+  // payload's spelling — and it was also being quoted straight into the
+  // reader's sentence. So a reader hovering the row labelled AFL was shown
+  // “aussierules_afl”. All 21 rendered rows quoted a key (measured on the live
+  // page, 390px, 2026-09-21, payload q271); 17 differed from their own label
+  // only in case, and 4 — `table_tennis`, `aussierules_afl`, `rugbyleague_nrl`,
+  // `mma` — were unreadable. D102 / notice 34: the payload's vocabulary does not
+  // reach a reader's screen.
+  //
+  // The label is resolved HERE rather than passed in, even though the call site
+  // already renders `categoryLabel(cm.category)` in the same row's first cell.
+  // An argument can be forgotten by the next call site and the drift is
+  // invisible — `categoryLabel` is guarded by the web/iOS parity test, which
+  // this builder was silently bypassing. Resolving it internally makes the two
+  // spellings the same spelling by construction.
+  const label = categoryLabel(displayed);
   const anchorSentence =
     twin && twin.ece !== null
-      ? `Across all ${twin.n.toLocaleString()} graded “${displayed}” outcomes, ` +
+      ? `Across all ${twin.n.toLocaleString()} graded “${label}” outcomes, ` +
         `not just this slice, the figure is ${twin.ece.toFixed(2)}pp` +
-        (pools ? ` — for “${displayed}” on its own.` : ".")
+        (pools ? ` — for “${label}” on its own.` : ".")
       : null;
 
   return {
