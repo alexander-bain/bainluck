@@ -113,6 +113,21 @@ def budget_key(hour_stamp: str) -> str:
     return f"futures:generic-history-budget:{CACHE_VERSION}:{hour_stamp}"
 
 
+def coarse_budget_key(hour_stamp: str) -> str:
+    """The COARSE share of the hour, counted on its OWN key (#7547).
+
+    🔴 A SECOND KEY, NOT A SECOND READING OF THE FIRST. Two caps over one counter
+    reads like an accounting detail and is not: a coarse request that is REFUSED
+    for exceeding the coarse share still had to touch the counter to find that
+    out, and on a shared key that touch is indistinguishable from work done. The
+    thin reserve then drains at the rate coarse charts are turned AWAY — fastest
+    exactly when coarse traffic is heaviest — and the reader who pays is the one
+    with no line at all. Separate keys make a refusal unable to reach the other
+    population's budget at all, rather than merely unlikely to.
+    """
+    return f"futures:generic-history-budget-coarse:{CACHE_VERSION}:{hour_stamp}"
+
+
 # ---------------------------------------------------------------------------
 # Points
 # ---------------------------------------------------------------------------

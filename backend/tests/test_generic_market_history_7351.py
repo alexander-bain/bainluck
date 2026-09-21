@@ -209,6 +209,10 @@ class _Redis:
         self.kv[key] = int(self.kv.get(key, 0)) + 1
         return self.kv[key]
 
+    def decr(self, key):
+        self.kv[key] = int(self.kv.get(key, 0)) - 1
+        return self.kv[key]
+
     def expire(self, key, seconds):
         self.ttl[key] = seconds
 

@@ -65,6 +65,7 @@ from app.utils.generic_market_history import (
     build_payload,
     cache_key,
     claim_key,
+    coarse_budget_key,
     durable_identity,
     kalshi_contract,
     market_had_bank,
@@ -115,6 +116,13 @@ HOURLY_FILL_CAP = 60
 #: all would wait behind readers who already have one. That is the starvation a
 #: cap which is also the recall's limit always produces, so the fix is two caps,
 #: not a bigger one. A third of every hour is unspendable by coarseness.
+#:
+#: IT IS A SHARE OF `HOURLY_FILL_CAP`, NOT AN ADDITION TO IT. Coarse fills are
+#: counted twice — once here and once against the hour — so the total a reader
+#: can send at the venues is still `HOURLY_FILL_CAP`, and what this buys is only
+#: WHO may spend the last twenty. Two independent ceilings would have been the
+#: easier code and would have raised outbound traffic to 100/hour, which is the
+#: thing the hourly cap exists to refuse.
 COARSE_FILL_CAP = HOURLY_FILL_CAP * 2 // 3
 
 #: How old the last ATTEMPT may be before a reader asks again. Under this the
@@ -494,6 +502,34 @@ def next_settled_empty_attempts(last_good: dict | None, payload: dict, *,
     return settled_empty_attempts(last_good) + 1
 
 
+def _take_one(client: Any, key: str, cap: int) -> int | None:
+    """Spend one unit of an hourly budget, or give it straight back.
+
+    Returns the units spent INCLUDING this one, or None when the cap refused it.
+
+    🔴 A REFUSAL COSTS NOTHING, and that is the whole contract. The obvious
+    shape — INCR, compare, and leave the increment where it is — charges every
+    request that ASKS, so a population large enough to be turned away often
+    empties the budget purely by being turned away. #7547 measured it: twenty
+    refused coarse reads walked a shared counter from 40 to 60 and the next thin
+    market was refused at 61, having started no fill at all.
+
+    INCR-then-undo rather than GET-then-INCR because INCR is atomic: two racing
+    callers cannot both be handed the hour's last unit. The undo is the same
+    atomic operation in reverse, so the counter never drifts — a process killed
+    between the two leaves the unit spent until the key expires, which is the
+    safe direction (one fill fewer, never one more).
+    """
+    spent = int(client.incr(key))
+    # Set every time: an INCR whose EXPIRE was lost to a crash would otherwise
+    # cap that hour's key forever.
+    client.expire(key, 7200)
+    if spent > cap:
+        client.decr(key)
+        return None
+    return spent
+
+
 def plan_on_demand_fill(
     market: Any,
     outcomes: Sequence[Any],
@@ -562,21 +598,21 @@ def plan_on_demand_fill(
         key = claim_key(market.id)
         if not client.set(key, stamp.isoformat(), nx=True, ex=CLAIM_TTL_SECONDS):
             return {"enqueue": False, "reason": "already_claimed"}
-        bkey = budget_key(stamp.strftime("%Y%m%d%H"))
-        spent = client.incr(bkey)
-        # Set every time: an INCR whose EXPIRE was lost to a crash would
-        # otherwise cap that hour's key forever.
-        client.expire(bkey, 7200)
+        hour = stamp.strftime("%Y%m%d%H")
+        bkey, ckey = budget_key(hour), coarse_budget_key(hour)
         # A chart that is thin spends against the full hour; one that is only
-        # coarse stops two thirds in, so an empty chart is never queued behind a
-        # merely-improvable one.
-        if chart_is_thin:
-            if spent > HOURLY_FILL_CAP:
+        # coarse must ALSO fit inside coarseness's own share, so an empty chart
+        # is never queued behind a merely-improvable one.
+        if not chart_is_thin:
+            if _take_one(client, ckey, COARSE_FILL_CAP) is None:
                 client.delete(key)
-                return {"enqueue": False, "reason": "hourly_cap"}
-        elif spent > COARSE_FILL_CAP:
+                return {"enqueue": False, "reason": "coarse_hourly_cap"}
+        if _take_one(client, bkey, HOURLY_FILL_CAP) is None:
+            if not chart_is_thin:
+                # Hand back the coarse unit this request will now never use.
+                client.decr(ckey)
             client.delete(key)
-            return {"enqueue": False, "reason": "coarse_hourly_cap"}
+            return {"enqueue": False, "reason": "hourly_cap"}
         return {"enqueue": True, "reason": "claimed"}
     except Exception:
         logger.warning("generic market history: claim refused for market %s — Redis "
