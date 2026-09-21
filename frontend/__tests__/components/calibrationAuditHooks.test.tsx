@@ -466,7 +466,7 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     // way: the prose folds, and the fact it carried travels as data.
     //
     // What the reader keeps is the AFFORDANCE, which was never the sentence:
-    // `<summary>Break out the shapes (n)</summary>` is always visible inside
+    // `<summary>Break out the curves (n)</summary>` is always visible inside
     // the provider panel, so nothing announced by the folded note is itself
     // hidden. A note announcing a control the reader can already see is the
     // definition of prose that earns nothing.
@@ -478,7 +478,7 @@ describe("the hooks carry the machine-readable state the rail grades on", () => 
     expect(note).toBeGreaterThan(key);
     expect(note).toBeLessThan(keyEnd);
     // The affordance itself is NOT folded away with the sentence.
-    expect(SOURCE).toContain("Break out the shapes (");
+    expect(SOURCE).toContain("Break out the curves (");
   });
 
   test("By Source publishes as data every fact its head stopped spelling out", () => {

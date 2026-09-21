@@ -292,7 +292,7 @@ describe("shapeBreakdownNote — derived from the panels, not from a condition",
   it("names the provider whose disclosure actually exists", () => {
     const note = shapeBreakdownNote(buildProviderPanels(liveInputs()));
     expect(note).toContain("Sportsbooks (Odds API)");
-    expect(note).toContain("Break out the shapes");
+    expect(note).toContain("Break out the curves");
   });
 
   it("says NOTHING when no panel has a breakdown to announce", () => {
@@ -333,7 +333,7 @@ describe("shapeBreakoutPointer — the count is the PANEL's, never the page's (#
 
   it("returns the very expression the control renders, for any grouping", () => {
     // Stated as an identity rather than a number so it survives a regrouping:
-    // `<summary>Break out the shapes ({p.sources.length})</summary>` is the
+    // `<summary>Break out the curves ({p.sources.length})</summary>` is the
     // control, and this is that same read.
     const panels = buildProviderPanels(liveInputs());
     const breakout = panels.filter(p => p.hasShapeBreakdown);

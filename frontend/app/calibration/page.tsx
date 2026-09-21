@@ -63,6 +63,7 @@ import {
   providerKpiDetail,
   shapeBreakdownNote,
   shapeBreakdownProviders,
+  shapeBreakoutCaption,
   shapeBreakoutPointer,
 } from "@/lib/calibrationProviderPanels";
 // UX-P128: which Source Comparison rows are measurements, in what order, and
@@ -1493,16 +1494,24 @@ export default function CalibrationPage() {
             &mdash; which is why it can read below ECE.
             {shapeInline || !shapeBreakout ? null : (
               <>
-                {" "}Sportsbook odds arrive in three shapes (moneylines, spreads, totals); the
+                {/* #7703. What stood here was "Sportsbook odds arrive in three shapes
+                    (moneylines, spreads, totals)" — a hand-written enumeration naming three of
+                    the family's FOUR keys and omitting the largest of them
+                    (`odds_api_bookmaker`, 106,030 of 155,127). #7456 deleted the identical
+                    sentence from the hero for exactly that reason and recorded the rule —
+                    "one place owns the shapes" — but could not reach this copy, which is
+                    inside a fold. Both numbers now come off the built panels, so the sentence
+                    cannot name a count the control below it does not render. */}
+                {" "}Sportsbook odds arrive in more than one question shape; the
                 prediction markets publish a single shape each, so a per-shape column here would
                 exist for one provider and be blank for the others. The shape-by-shape breakdown is
                 in <a href="#by-source" className="text-accent-brand hover:underline">By Source</a>{" "}
-                below &mdash; open &ldquo;Break out the shapes&rdquo; inside the{" "}
+                below &mdash; open &ldquo;Break out the curves&rdquo; inside the{" "}
                 {shapeBreakout.label}{" "}
                 {shapeBreakout.providerCount === 1 ? "panel" : "panels"} to see{" "}
                 {shapeBreakout.keyCount === null
-                  ? "their keys"
-                  : `all ${shapeBreakout.keyCount} keys`}{" "}
+                  ? "their curves"
+                  : `all ${shapeBreakout.keyCount} curves`}{" "}
                 separately.
               </>
             )}
@@ -2258,13 +2267,24 @@ export default function CalibrationPage() {
                     their own n and their own drill-in. */}
                 {p.hasShapeBreakdown && (
                   <details className="mt-3" data-testid="calibration-shape-breakdown">
+                    {/* #7703. The control counted SOURCE KEYS and called them shapes, and
+                        its caption then asserted of every pair that they answer different
+                        questions. Four curves here, three shapes: `odds_api_bookmaker`
+                        (Per-sportsbook, 106,030) and `odds_api` (Moneylines, 18,440) are both
+                        the h2h moneyline — the producer's docstring and
+                        `calibrationProviders.ts`'s own header both say so — so 78% of the
+                        family sat inside a sentence forbidding the one comparison in this
+                        panel a reader would actually make. The summary now says what it
+                        lists, and the caption is derived by `shapeBreakoutCaption`, which
+                        keeps the warning between shapes and names the repeated one. */}
                     <summary className="text-xs text-accent-brand cursor-pointer select-none">
-                      Break out the shapes ({p.sources.length})
+                      Break out the curves ({p.sources.length})
                     </summary>
-                    <p className="text-xs text-text-muted mt-2">
-                      Each shape is a different question, so these curves are not comparable to each
-                      other &mdash; only to the same shape elsewhere. The panel above is all of them
-                      pooled and measured together, which is the number the table reports.
+                    <p
+                      className="text-xs text-text-muted mt-2"
+                      data-testid="calibration-shape-breakdown-caption"
+                    >
+                      {shapeBreakoutCaption(p.sources)}
                     </p>
                     <div className="grid grid-cols-1 gap-3 mt-3">
                       {p.shapes.map(sp => (

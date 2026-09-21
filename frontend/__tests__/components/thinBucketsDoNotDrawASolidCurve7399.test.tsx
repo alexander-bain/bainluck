@@ -3,7 +3,7 @@
 // ── WHAT A READER SAW, MEASURED ON PRODUCTION ───────────────────────────────
 //
 // `https://bainluck.com/calibration` at 1280px and 390px, 2026-09-20, By Source →
-// "Break out the shapes (3)" inside the Odds API panel. Three panels, one component:
+// "Break out the curves (3)" inside the Odds API panel. Three panels, one component:
 //
 //   Totals (Odds API)      2.5pp ECE · 15,537 outcomes   curve crashes vertically to 0%
 //   Spreads (Odds API)     0.4pp ECE · 15,120 outcomes   curve zigzags 68% → 40% → 46%
