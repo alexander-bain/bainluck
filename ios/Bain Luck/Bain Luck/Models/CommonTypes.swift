@@ -143,6 +143,27 @@ nonisolated struct OpeningOdds: Decodable, Sendable {
     let homeProbability: Double?
     let awayProbability: Double?
     let favorite: String?
+    /// The combined total the market closed pre-game on, decoded from
+    /// `opening_odds.over_under` by the decoder's `.convertFromSnakeCase`.
+    ///
+    /// #6290 — the field a `PRE-GAME` tile needs, and the reason it could not be
+    /// honest before. `GET /api/events/{id}` has served it since #5414 (closed
+    /// 2026-09-12), which added it to the DETAIL formatter for exactly this tile;
+    /// iOS never decoded it, so every totals card that wanted a pre-game number
+    /// reached for `current_odds.over_under` instead — the line RIGHT NOW, which
+    /// mid-game is not a pre-game number at all.
+    ///
+    /// It is a genuine pre-game value and not a re-labelled current one:
+    /// `_update_opening_odds` (`backend/app/tasks/odds_polling.py`) returns
+    /// without writing once `commence_time` has passed or the status leaves
+    /// `scheduled`, so the column freezes at the off. Measured on the live
+    /// specimen 2026-09-20 18:35 PT, event 14780544 (Colts at Chiefs, `live`):
+    /// opening `45.5` against a current line of `53.6`.
+    ///
+    /// Optional, and every reader must be able to draw nothing: 93.6% of settled
+    /// events carried an opening total when #5414 measured it, and a build can
+    /// run against a deploy older than the field.
+    let overUnder: Double?
 }
 
 // MARK: - Excitement Index

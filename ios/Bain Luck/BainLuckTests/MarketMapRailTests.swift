@@ -201,7 +201,7 @@ final class MarketMapRailTests: XCTestCase {
         XCTAssertNotEqual(bounds.max, 62, "nor its declared ceiling")
 
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: true, overUnder: 44.5, isLive: false, isDone: false,
+            hasThresholds: true, lineMarker: 44.5, isLive: false, isDone: false,
             hasScoreboardTotal: false, hasProjectedTotal: false
         ), "a card with 19 real lines is never empty chrome")
     }
@@ -213,7 +213,7 @@ final class MarketMapRailTests: XCTestCase {
     /// `scoredHomeScore` has already nulled because the scoreboard counts sets.
     func testThePhotographedTennisCardDrawsNothingAndIsSuppressed() {
         XCTAssertTrue(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil,
+            hasThresholds: false, lineMarker: nil,
             isLive: true, isDone: false,
             hasScoreboardTotal: false, hasProjectedTotal: false
         ))
@@ -226,19 +226,19 @@ final class MarketMapRailTests: XCTestCase {
     func testAnyOneThingWorthDrawingKeepsTheCard() {
         // A parsed ladder + density.
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: true, overUnder: nil, isLive: false, isDone: false,
+            hasThresholds: true, lineMarker: nil, isLive: false, isDone: false,
             hasScoreboardTotal: false, hasProjectedTotal: false))
         // A pre-game line handed down from the event, with nothing parsed.
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: 44.5, isLive: false, isDone: false,
+            hasThresholds: false, lineMarker: 44.5, isLive: false, isDone: false,
             hasScoreboardTotal: false, hasProjectedTotal: false))
         // A FINAL total on a finished match.
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil, isLive: false, isDone: true,
+            hasThresholds: false, lineMarker: nil, isLive: false, isDone: true,
             hasScoreboardTotal: true, hasProjectedTotal: false))
         // ACTUAL + PROJECTED on a live one.
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil, isLive: true, isDone: false,
+            hasThresholds: false, lineMarker: nil, isLive: true, isDone: false,
             hasScoreboardTotal: true, hasProjectedTotal: true))
     }
 
@@ -247,7 +247,7 @@ final class MarketMapRailTests: XCTestCase {
     /// but no pace projection still draws nothing.
     func testALiveCardWithAScoreButNoPaceProjectionStillDrawsNothing() {
         XCTAssertTrue(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil, isLive: true, isDone: false,
+            hasThresholds: false, lineMarker: nil, isLive: true, isDone: false,
             hasScoreboardTotal: true, hasProjectedTotal: false))
     }
 
@@ -255,7 +255,7 @@ final class MarketMapRailTests: XCTestCase {
     /// a pre-match card holding a stale score must not be kept alive by it.
     func testAScoreboardTotalBeforeTheMatchIsNotSomethingToDraw() {
         XCTAssertTrue(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil, isLive: false, isDone: false,
+            hasThresholds: false, lineMarker: nil, isLive: false, isDone: false,
             hasScoreboardTotal: true, hasProjectedTotal: true))
     }
 
@@ -276,7 +276,7 @@ final class MarketMapRailTests: XCTestCase {
         XCTAssertEqual(drawn, Array(repeating: 8.0, count: 14))
 
         XCTAssertFalse(MarketMapRail.totalMapDrawsNothing(
-            hasThresholds: false, overUnder: nil, isLive: false, isDone: true,
+            hasThresholds: false, lineMarker: nil, isLive: false, isDone: true,
             hasScoreboardTotal: true, hasProjectedTotal: false
         ), "#2086 — the FINAL tile is a real fact, so the card is declared, not deleted")
 

@@ -183,23 +183,31 @@ enum MarketMapRail {
     /// True when a totals map would draw no ladder, no density and no marker —
     /// a purple bar with an axis under it and nothing on it.
     ///
-    /// This mirrors, condition for condition, the marker block it guards; the
-    /// mapping is: with no thresholds parsed, the card's over/under line is
-    /// exactly ``overUnder``, because the only other source for it is
-    /// `thresholds.first(where:)`. The margin map has had this guard since
-    /// ux/1034 B5 (`marginMapIsEmptyChrome`); the totals map never got one,
-    /// which is why #3410's class — chrome drawn over no data — survived on
-    /// this widget.
+    /// This mirrors, condition for condition, the marker block it guards. The
+    /// margin map has had this guard since ux/1034 B5 (`marginMapIsEmptyChrome`);
+    /// the totals map never got one, which is why #3410's class — chrome drawn
+    /// over no data — survived on this widget.
+    ///
+    /// 🔴 **`lineMarker` IS THE VALUE THE TILE WILL DRAW, NOT `current_odds`'
+    /// LINE, AND #6290 IS WHY THE DISTINCTION IS NOW LOAD-BEARING.** The
+    /// parameter was called `overUnder` and the mirror held by a coincidence the
+    /// doc stated outright — *"with no thresholds parsed, the card's over/under
+    /// line is exactly `overUnder`"*. Since ``pregameLine(isLive:opening:current:)``
+    /// a live card with no served opening draws no line tile at all, so a
+    /// predicate reading the raw `overUnder` would judge such a card non-empty on
+    /// a marker it then declines to draw — #3503's empty chrome by exactly the
+    /// route this function's own comment warns about one caller up. The call site
+    /// passes the resolved value through the same helper the marker block uses.
     static func totalMapDrawsNothing(
         hasThresholds: Bool,
-        overUnder: Double?,
+        lineMarker: Double?,
         isLive: Bool,
         isDone: Bool,
         hasScoreboardTotal: Bool,
         hasProjectedTotal: Bool
     ) -> Bool {
         if hasThresholds { return false }                      // ladder + density
-        if overUnder != nil { return false }                   // PRE-GAME / PROJECTION
+        if lineMarker != nil { return false }                  // PRE-GAME / PROJECTION
         if isDone, hasScoreboardTotal { return false }         // FINAL
         if isLive, hasScoreboardTotal, hasProjectedTotal { return false }  // ACTUAL + PROJECTED
         return true
@@ -1482,6 +1490,61 @@ enum MarketMapRail {
     /// pinned by `SpreadRungTests` still cannot move.
     static func drawsPregameMarker(canStillBeGraded: Bool) -> Bool {
         canStillBeGraded
+    }
+
+    /// The number a tile captioned `PRE-GAME` is allowed to hold.
+    ///
+    /// #6290, and it is ``drawsPregameMarker``'s own residual: *"The live-tense
+    /// cousin — a LIVE card also captioning `currentOdds` PRE-GAME — is the one
+    /// #3850 deliberately left out, and is left out here too rather than fixed in
+    /// passing on a state nobody has photographed."* It has been photographed
+    /// twice now, so it is fixed here.
+    ///
+    /// 🔴 **ON A LIVE GAME THE CARD'S OWN `ouLine` IS THE LINE RIGHT NOW.** The
+    /// photographed specimen is event 15312201 (Yankees v Twins, `live`), where
+    /// the Runs map's `PRE-GAME` tile read **4.5** at 6:42 PM and **11.4** at
+    /// 7:37 PM — it moved 6.9 runs in 55 minutes, in step with the score, because
+    /// it is `current_odds.over_under`. A pre-game number cannot move during the
+    /// game. Re-measured on a second sport and a live NFL game
+    /// 2026-09-20 18:35 PT, event 14780544 (Colts 13 at Chiefs 10, 37:45 left):
+    /// the tile's line is `53.6` and the true pre-game total is `45.5`.
+    ///
+    /// 🟢 **AND NOW THERE IS SOMETHING HONEST TO SUBSTITUTE — which is the whole
+    /// reason this changes today.** `drawsPregameMarker`'s doc records the
+    /// opposite, measured 2026-09-08: *"`GET /api/events/{id}` does not serve
+    /// them … only `GET /api/events/{id}/debug` emits them"*. That was true then.
+    /// #5414 (closed 2026-09-12) put `opening_odds.spread` and
+    /// `opening_odds.over_under` on the detail payload for exactly this tile, and
+    /// ``OpeningOdds/overUnder`` decodes the second of them. So the `nil` arm
+    /// below is no longer the only reachable one, and #3823's rule — a number
+    /// whose tense you cannot vouch for is worse than no number — is finally
+    /// satisfiable by drawing the right number rather than by drawing nothing.
+    ///
+    /// 🟠 **THE `nil` ARM IS STILL LOAD-BEARING, AND ON MORE CARDS THAN THE FULL
+    /// ONE.** A HALF map's tile has no served opening to reach for — the payload
+    /// carries one opening total and one opening spread, both for the whole game
+    /// — so the half cards pass `opening: nil` and their tile is withheld while
+    /// the game is on. That is deliberate: a half card captioning the live
+    /// closest-to-even rung `PRE-GAME 20.5` is the same false claim as the full
+    /// card's, and there is nothing to put in its place. The rail, its
+    /// distribution and its axis are untouched; only the tile goes.
+    ///
+    /// 🟢 **BEFORE THE OFF NOTHING MOVES.** Pre-game, the current line IS the
+    /// pre-game line, which is why `isLive == false` returns it unchanged — every
+    /// scheduled card draws exactly what it drew before. A settled card never
+    /// reaches here at all: ``drawsPregameMarker`` gates that, and the callers ask
+    /// it first.
+    ///
+    /// - Parameters:
+    ///   - isLive: whether the game is being played right now. NOT
+    ///     `canStillBeGraded` — a scheduled game is gradeable and keeps its line.
+    ///   - opening: the served pre-game value for THIS card's unit, or nil where
+    ///     the payload has none (every half card, and any event whose opening
+    ///     columns were never populated).
+    ///   - current: the line the card would draw today — `current_odds`' own, or
+    ///     the quoted rung nearest a coin flip.
+    static func pregameLine(isLive: Bool, opening: Double?, current: Double?) -> Double? {
+        isLive ? opening : current
     }
 
     // MARK: - Where the mid axis label goes

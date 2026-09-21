@@ -13,6 +13,11 @@ struct TotalPointsSpectrumView: View {
     let awayColor: Color
     var sportKey: String?
     var overUnder: Double?
+    /// #6290 — `opening_odds.over_under`. See ``MarketMapView/openingOverUnder``
+    /// and ``MarketMapRail/pregameLine(isLive:opening:current:)``: this card's
+    /// live strip draws a bar labelled "Pre-game", and until now that bar held
+    /// ``centerLine``, which mid-game is the live ladder's coin-flip rung.
+    var openingOverUnder: Double? = nil
     var homeScore: Int?
     var awayScore: Int?
 
@@ -108,6 +113,28 @@ struct TotalPointsSpectrumView: View {
         // it is only a legitimate fallback for a widget drawn in that unit.
         // On a bases or sets widget it is a number from another scale.
         return center?.threshold ?? (unit == vocab.unit ? overUnder : nil)
+    }
+
+    /// The number this card's strip may label "Pre-game".
+    ///
+    /// #6290 — ``centerLine`` is the right answer to "what is the line?" and the
+    /// wrong answer to "what was the line before the off": mid-game every rung it
+    /// picks from is priced on a game in progress. Photographed on event 14780544
+    /// (Colts at Chiefs, `live`, 37:45 left, 2026-09-20 18:27 PT): the bar read
+    /// **`PRE-GAME 55.5`** beside a pace of 53 and told the reader *"Pace projects
+    /// −2.5 vs pre-game expectation"*, when the served pre-game total is `45.5`
+    /// and the true sentence is +7.5. A minute earlier the same bar read `55.5`
+    /// against a pace of 57 and said `+1.5`; the number a comparison is made
+    /// against was itself moving.
+    ///
+    /// The unit gate is ``centerLine``'s own (#3509): the served opening is
+    /// quoted in the SPORT's unit, so a sets or bases widget may not read it.
+    private var pregameTotal: Double? {
+        MarketMapRail.pregameLine(
+            isLive: isLive,
+            opening: unit == vocab.unit ? openingOverUnder : nil,
+            current: centerLine
+        )
     }
 
     private var sourceCount: Int {
@@ -361,16 +388,20 @@ struct TotalPointsSpectrumView: View {
 
     @ViewBuilder
     private var projectionStrip: some View {
-        let ouLine = centerLine ?? 0
+        // #6290 — `pregameTotal`, not `centerLine`: before the off the two are the
+        // same number and the pre-game strip is unchanged; live, only a served
+        // opening may be labelled "Pre-game", and there may be none. The local is
+        // no longer called `ouLine`, because it is no longer the O/U line.
+        let pregame = pregameTotal
 
         switch strip {
         case .pregame:
-            preGameStrip(ouLine: ouLine)
+            preGameStrip(ouLine: pregame ?? 0)
         case .live:
             if let pace = gameMarkets.pace,
                let paceTotal = pace.projectedTotal,
                let scored = pace.totalScored {
-                liveStrip(ouLine: ouLine, paceTotal: paceTotal, scored: scored)
+                liveStrip(pregameTotal: pregame, paceTotal: paceTotal, scored: scored)
             }
         case .final:
             if let actual = actualTotal { finalStrip(actual: actual) }
@@ -395,8 +426,16 @@ struct TotalPointsSpectrumView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    private func liveStrip(ouLine: Double, paceTotal: Double, scored: Int) -> some View {
-        let scaleMax = max(ouLine, paceTotal) * 1.12
+    /// The strip while the game is on.
+    ///
+    /// #6290 — `pregameTotal` is OPTIONAL and both of its readers are gated on it,
+    /// because a live card that has no served opening has no pre-game number at
+    /// all: it must not label the live line "Pre-game", and it must not compare
+    /// the pace against it. What is left — the pace bar, the score, the projected
+    /// remainder — is every number on this strip that was ever measured rather
+    /// than inferred, so the strip stays rather than being dropped whole.
+    private func liveStrip(pregameTotal: Double?, paceTotal: Double, scored: Int) -> some View {
+        let scaleMax = max(pregameTotal ?? 0, paceTotal) * 1.12
         let projRemaining = paceTotal - Double(scored)
         let paceColor = Color(hex: "#8B5CF6")
 
@@ -404,8 +443,10 @@ struct TotalPointsSpectrumView: View {
             Text("Projected total \(unit)")
                 .font(.caption)
                 .fontWeight(.semibold)
-            projectionBar(label: "Pre-game", value: ouLine, scaleMax: scaleMax,
-                          barColor: Color.secondary.opacity(0.55), labelColor: .secondary, bold: false)
+            if let pregame = pregameTotal {
+                projectionBar(label: "Pre-game", value: pregame, scaleMax: scaleMax,
+                              barColor: Color.secondary.opacity(0.55), labelColor: .secondary, bold: false)
+            }
             // Pace bar with scored portion solid
             paceBar(scored: scored, paceTotal: paceTotal, scaleMax: scaleMax, color: paceColor)
             HStack(spacing: 0) {
@@ -423,8 +464,8 @@ struct TotalPointsSpectrumView: View {
             }
             .padding(.leading, 68)
 
-            if abs(paceTotal - ouLine) > 0.5 {
-                let diff = paceTotal - ouLine
+            if let pregame = pregameTotal, abs(paceTotal - pregame) > 0.5 {
+                let diff = paceTotal - pregame
                 HStack(spacing: 4) {
                     Text("Pace projects")
                         .font(.caption2)
