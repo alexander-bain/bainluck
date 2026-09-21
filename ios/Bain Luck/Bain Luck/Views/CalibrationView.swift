@@ -42,6 +42,17 @@ struct CalibrationSurfaceView: View {
     /// all, instead of on a test-only copy of it.
     var scrolls: Bool = true
 
+    /// Whether the corrections log starts open, for the camera only.
+    ///
+    /// #7759 — the log is a `DisclosureGroup` with no binding, and the rig cannot
+    /// tap (`-launch_scroll` moves a scroll view, it does not press a chevron), so
+    /// the card's contents had never been photographed. The shorthand titles this
+    /// issue is about therefore sat on a production surface nobody could take a
+    /// picture of. Same hole `-launch_expand_sections` was built to close for the
+    /// event page's Sources list (#4406), wired the same way: off unless asked
+    /// for, so the chevron a reader sees is unchanged and still starts closed.
+    @State private var showCorrections = LaunchRig.expandsCollapsedSections()
+
     private var contentMaxWidth: CGFloat {
         #if os(macOS)
         return 900
@@ -750,21 +761,44 @@ struct CalibrationSurfaceView: View {
 
     @ViewBuilder
     private var correctionsSection: some View {
-        let rows = viewModel.corrections
+        // #7763 — oldest-first, stably, the way web has sorted this list since
+        // #7599. The payload is 12/13 oldest-first and the odd row out is the
+        // SECOND one, which is the position a reader checks.
+        let rows = CalibrationCorrections.ordered(viewModel.corrections)
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                DisclosureGroup {
+                DisclosureGroup(isExpanded: $showCorrections) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(rows) { c in
-                            VStack(alignment: .leading, spacing: 2) {
+                            // #7759 — THE DATE, THE ROW COUNT AND THE PAGE'S OWN
+                            // WORDS. NOT THE PAYLOAD'S TITLE, AND NOT THE
+                            // BACKEND'S PARAGRAPH.
+                            //
+                            // This rendered `c.title` and `c.description` raw, so
+                            // the app printed "Polymarket hockey sign-flip" and,
+                            // under it, the auditor prose behind it — "(gotcha
+                            // #17) … poly MCE 4.68 → 4.01", "Queue #186 … corrects
+                            // the Queue #167 filter". Web dropped the paragraph in
+                            // #4067 / CERT-2295 and took the title off the payload
+                            // in #7729/#7734; this is the same card catching up,
+                            // not a new judgement about the words —
+                            // `CalibrationCorrections` is web's map verbatim.
+                            //
+                            // The date and the count move onto one tertiary line
+                            // because the copy is now a sentence rather than three
+                            // words: web stacks them the same way at phone width
+                            // (`flex-col sm:flex-row`), and inline they squeezed
+                            // the sentence into a column a few characters wide.
+                            VStack(alignment: .leading, spacing: 3) {
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text(c.date).font(.caption2.monospaced()).foregroundStyle(.tertiary)
-                                    Text(c.title).font(.caption.weight(.medium))
                                     if let r = c.rows {
                                         Text("\(fmtN(r)) rows").font(.caption2).foregroundStyle(.tertiary)
                                     }
                                 }
-                                Text(c.description).font(.caption2).foregroundStyle(.secondary)
+                                Text(CalibrationCorrections.title(c.title))
+                                    .font(.caption.weight(.medium))
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 8)
