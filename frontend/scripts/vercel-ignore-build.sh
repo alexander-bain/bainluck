@@ -84,7 +84,19 @@ NON_WEB_PATHS=(
   ':(top,exclude)docs/'      # markdown reference docs
   ':(top,exclude).claude/'   # lane handoff files
   ':(top,exclude).github/'   # GitHub Actions workflows; Vercel does not read them
+  # Added by #7846 part b. These are the same CLASS as the five above and were
+  # simply missed: Vercel's root directory is `frontend/`, so a repo-TOP-level
+  # directory is outside the build root and cannot be read by `npm install &&
+  # npm run build` — the identical argument that justifies excluding `backend/`.
+  # They were the three biggest remaining build-forcers on master (30 h to
+  # 2026-09-21: artifacts/ 67 file-changes, tools/ 21, scripts/ 2).
+  ':(top,exclude)artifacts/' # lane measurement output (probes, PNGs, JSONL)
+  ':(top,exclude)tools/'     # repo-root lane tooling (look.sh, merge-gate.sh)
+  ':(top,exclude)scripts/'   # repo-root Python lane tooling (claim_lane_lock.py)
 )
+# 🪤 `:(top,...)` anchors at the repo root, so `scripts/` above excludes ONLY the
+# top-level directory — `frontend/scripts/` (which holds THIS hook) is still a
+# web input and still forces a build. The contract suite pins that both ways.
 
 # The live-marker endpoint. Overridable so the contract suite can point the real
 # script at a fixture; the apex host 307s to www, so www is the default.

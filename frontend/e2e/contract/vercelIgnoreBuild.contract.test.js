@@ -292,6 +292,19 @@ describe("#7846 — a production build is skipped only when the live website is 
       "backend + CI workflow, the shape of the real 21730d011a build",
       { "backend/app/main.py": "app = 1\n", ".github/workflows/ci.yml": "name: CI v2\n" },
     ],
+    // #7846 part b — repo-TOP-level directories, outside the `frontend/` root
+    // Vercel builds in. Same class as the five above; they were just missed.
+    ["lane measurement artifacts only", { "artifacts/d385/probe.py": "x = 1\n" }],
+    ["repo-root lane tooling only", { "tools/look.sh": "#!/bin/sh\necho hi\n" }],
+    ["repo-root scripts only", { "scripts/claim_lane_lock.py": "x = 1\n" }],
+    [
+      "backend + artifacts + tools, the shape of a real measurement push",
+      {
+        "backend/app/main.py": "app = 1\n",
+        "artifacts/d385/probe.py": "x = 1\n",
+        "tools/look.sh": "#!/bin/sh\necho hi\n",
+      },
+    ],
   ];
 
   for (const [label, changes] of SKIPPABLE) {
@@ -337,8 +350,18 @@ describe("#7846 — a production build is skipped only when the live website is 
     // Not a build input in any obvious sense — and that is the point. The
     // exclusion list names what is PROVABLY irrelevant; everything else,
     // including paths nobody has thought about, lands on the expensive side.
-    ["an unlisted top-level path", { "tools/look.sh": "#!/bin/sh\necho hi\n" }],
+    // (`tools/` used to be this row's example; #7846 part b excluded it by name,
+    // so the doctrine is pinned here by a path that is genuinely unlisted.)
+    ["an unlisted top-level path", { "unlisted-top-level/x.txt": "hi\n" }],
     ["a brand-new top-level directory", { "webcomponents/x.ts": "export const x = 1;\n" }],
+    // 🪤 The `:(top,exclude)scripts/` pathspec added by part b anchors at the
+    // repo root. If it were ever written without `top` it would also swallow
+    // `frontend/scripts/` — i.e. a change to THIS HOOK would stop forcing a
+    // build and the filter could never be corrected by deploying a fix to it.
+    [
+      "frontend/scripts/, which top-level scripts/ must not swallow",
+      { "frontend/scripts/vercel-ignore-build.sh": "#!/usr/bin/env bash\nexit 1\n" },
+    ],
   ];
 
   for (const [label, changes] of MUST_BUILD_INPUTS) {
