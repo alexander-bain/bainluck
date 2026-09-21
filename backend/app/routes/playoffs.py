@@ -5282,7 +5282,22 @@ async def get_playoff_grid(
 
     from app.utils.playoff_grid import (
         normalize_column_sums, enforce_monotonicity, propagate_elimination,
+        propagate_division_complement,
     )
+
+    # #7695: the complement of a clinch. The overlay above writes what ESPN says
+    # and ESPN speaks only about the club that clinched, so a rival whose
+    # division leg the venue has not graded keeps a live price for a division
+    # that is already won. Not gated on `clinch_claims`: the winning cell is just
+    # as often a venue grade, and this reads the grid rather than the authority.
+    # Before normalization, for the reason given above.
+    complement_fixes = propagate_division_complement(teams, config.columns)
+    if complement_fixes:
+        logger.info(
+            "Playoff grid %s: %d cell(s) eliminated by a division already won",
+            config.slug, complement_fixes,
+        )
+
     # #7458: the trend chart publishes the championship column too, so it needs
     # the factor this actually applied — not a second computation of it.
     applied_column_scales = normalize_column_sums(teams, config.columns, config.slug)
