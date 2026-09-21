@@ -1,0 +1,294 @@
+FAIL __tests__/components/refusedLadderRendersTheField4610.test.tsx
+  ● #4610 — a refused three-rung ladder renders its field › prints the rungs as ranked rows, not as one hero number
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 5
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    -   3,
+    - ]
+    + Array []
+
+      116 |     // the leader as a hero and the other two as incidental text somewhere.
+      117 |     const ranks = [...markup.matchAll(/aria-label="Rank (\d+)"/g)].map((m) => Number(m[1]));
+    > 118 |     expect(ranks).toEqual([1, 2, 3]);
+          |                   ^
+      119 |
+      120 |     // Leader first (#1526): the rows are sorted before slicing.
+      121 |     const order = RUNGS.map((label) => ({ label, at: markup.indexOf(label) }))
+
+      at Object.<anonymous> (__tests__/components/refusedLadderRendersTheField4610.test.tsx:118:19)
+
+FAIL __tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx
+  ● #7844 half two — the coalition board drops the podium › an absent flag draws today's board › is byte-for-byte the exclusive twin
+
+    expect(received).toEqual(expected) // deep equality
+
+    Expected: "<div class=\"relative touch-pan-y select-none cursor-pointer\"><div class=\"relative z-10\" style=\"transform:translateX(0px) rotate(0deg);transition:transform 0.3s ease\"><article class=\"relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow\" aria-label=\"Which parties will be part of the next government of New Zealand?\" data-card-format=\"leaderboard\"><button title=\"Less like this\" aria-label=\"Less like this\" class=\"absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M2 2l8 8M10 2l-8 8\"></path></svg></button><div class=\"p-3 pb-2\"><div class=\"mb-1.5 flex flex-wrap items-center gap-1.5 pr-9\"><span class=\"text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted\">🏛 politics</span><span class=\"ml-auto flex items-center gap-1.5 text-[11px] text-text-muted\"><span>Resolves Feb 1, 2028</span><span>·</span><span role=\"img\" aria-label=\"Low confidence — Signal strength: sources + liquidity + freshness\" title=\"Low confidence — Signal strength: sources + liquidity + freshness\" class=\"inline-flex items-end gap-0.5\"><span class=\"w-1 rounded-sm h-1.5 bg-text-muted\"></span><span class=\"w-1 rounded-sm h-2.5 bg-surface-border\"></span><span class=\"w-1 rounded-sm h-3.5 bg-surface-border\"></span></span></span></div><a href=\"/futures/16624064\"><h3 class=\"text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors\">Which parties will be part of the next government of New Zealand?</h3></a></div><div class=\"px-3 pb-3\"><div class=\"space-y-1.5 border-t border-surface-border py-2\"><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 1 by probability\" aria-label=\"Rank 1\">1</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-bold\" title=\"Green Party\">Green Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:68%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">68%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 2 by probability\" aria-label=\"Rank 2\">2</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Labour Party\">Labour Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:54%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">54%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 3 by probability\" aria-label=\"Rank 3\">3</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"National Party\">National Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:53%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">53%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 4 by probability\" aria-label=\"Rank 4\">4</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"New Zealand First Party\">New Zealand First Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:50%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">50%</span></div><div class=\"grid min-h-7 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted\" data-row=\"field-remainder\"><span class=\"font-mono text-xs font-semibold tabular-nums\">5</span><span class=\"truncate text-xs font-medium\">Field and 2 more outcomes</span></div></div><div class=\"flex items-center gap-1 mt-3 pt-3 border-t border-surface-border\"><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm text-text-muted hover:text-text-secondary hover:bg-surface-elevated\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"></path></svg>Like</button><div class=\"flex-1\"></div><div class=\"flex-1\"></div><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm\" title=\"Share\" aria-label=\"Share this card\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-share2 lucide-share-2\" aria-hidden=\"true\"><circle cx=\"18\" cy=\"5\" r=\"3\"></circle><circle cx=\"6\" cy=\"12\" r=\"3\"></circle><circle cx=\"18\" cy=\"19\" r=\"3\"></circle><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\"></line><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\"></line></svg>Share</button></div></div></article></div></div>"
+    Received: "<div class=\"relative touch-pan-y select-none cursor-pointer\"><div class=\"relative z-10\" style=\"transform:translateX(0px) rotate(0deg);transition:transform 0.3s ease\"><article class=\"relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow\" aria-label=\"Which parties will be part of the next government of New Zealand?\" data-card-format=\"leaderboard\"><button title=\"Less like this\" aria-label=\"Less like this\" class=\"absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M2 2l8 8M10 2l-8 8\"></path></svg></button><div class=\"p-3 pb-2\"><div class=\"mb-1.5 flex flex-wrap items-center gap-1.5 pr-9\"><span class=\"text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted\">🏛 politics</span><span class=\"ml-auto flex items-center gap-1.5 text-[11px] text-text-muted\"><span>Resolves Feb 1, 2028</span><span>·</span><span role=\"img\" aria-label=\"Low confidence — Signal strength: sources + liquidity + freshness\" title=\"Low confidence — Signal strength: sources + liquidity + freshness\" class=\"inline-flex items-end gap-0.5\"><span class=\"w-1 rounded-sm h-1.5 bg-text-muted\"></span><span class=\"w-1 rounded-sm h-2.5 bg-surface-border\"></span><span class=\"w-1 rounded-sm h-3.5 bg-surface-border\"></span></span></span></div><a href=\"/futures/16624064\"><h3 class=\"text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors\">Which parties will be part of the next government of New Zealand?</h3></a></div><div class=\"px-3 pb-3\"><div class=\"space-y-1.5 border-t border-surface-border py-2\"><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-bold\" title=\"Green Party\">Green Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:68%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">68%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Labour Party\">Labour Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:54%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">54%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"National Party\">National Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:53%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">53%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"New Zealand First Party\">New Zealand First Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:50%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">50%</span></div><div class=\"grid min-h-7 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted\" data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">2 more outcomes</span></div></div><div class=\"flex items-center gap-1 mt-3 pt-3 border-t border-surface-border\"><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm text-text-muted hover:text-text-secondary hover:bg-surface-elevated\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"></path></svg>Like</button><div class=\"flex-1\"></div><div class=\"flex-1\"></div><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm\" title=\"Share\" aria-label=\"Share this card\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-share2 lucide-share-2\" aria-hidden=\"true\"><circle cx=\"18\" cy=\"5\" r=\"3\"></circle><circle cx=\"6\" cy=\"12\" r=\"3\"></circle><circle cx=\"18\" cy=\"19\" r=\"3\"></circle><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\"></line><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\"></line></svg>Share</button></div></div></article></div></div>"
+
+      274 |
+      275 |     it("is byte-for-byte the exclusive twin", () => {
+    > 276 |       expect(markup).toEqual(twin);
+          |                      ^
+      277 |     });
+      278 |
+      279 |     it("and that board is the podium, not the refusal", () => {
+
+      at Object.<anonymous> (__tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx:276:22)
+
+  ● #7844 half two — the coalition board drops the podium › an absent flag draws today's board › and that board is the podium, not the refusal
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 6
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    -   3,
+    -   4,
+    - ]
+    + Array []
+
+      280 |       // Paired positive: `toEqual` above would also pass if BOTH renders had
+      281 |       // silently become the refusal.
+    > 282 |       expect(namedRowRanks(markup)).toEqual([1, 2, 3, 4]);
+          |                                     ^
+      283 |       expect(markup).toContain("Field and 2 more outcomes");
+      284 |     });
+      285 |   });
+
+      at Object.<anonymous> (__tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx:282:37)
+
+FAIL __tests__/components/leaderboardRenderedContract4355.test.tsx
+  ● #4355 — the leaderboard card renders 4 bars and one remainder row › draws exactly FOUR named rows from a six-outcome field — not six
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 6
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    -   3,
+    -   4,
+    - ]
+    + Array []
+
+      222 |     // The literal claim #4226 got wrong. Asserted as an exact count, and as the
+      223 |     // exact rank sequence, so neither a dropped row nor a fifth one passes.
+    > 224 |     expect(namedRowRanks(markup)).toEqual([1, 2, 3, 4]);
+          |                                   ^
+      225 |   });
+      226 |
+      227 |   it("folds the two undrawn outcomes into a remainder row reading 2", () => {
+
+      at Object.<anonymous> (__tests__/components/leaderboardRenderedContract4355.test.tsx:224:35)
+
+  ● #4355 — the leaderboard card renders 4 bars and one remainder row › folds the two undrawn outcomes into a remainder row reading 2
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and 2 more outcomes"
+    Received string:    "<div class=\"relative touch-pan-y select-none cursor-pointer\"><div class=\"relative z-10\" style=\"transform:translateX(0px) rotate(0deg);transition:transform 0.3s ease\"><article class=\"relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow\" aria-label=\"Top AI model in September?\" data-card-format=\"leaderboard\"><button title=\"Less like this\" aria-label=\"Less like this\" class=\"absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M2 2l8 8M10 2l-8 8\"></path></svg></button><div class=\"p-3 pb-2\"><div class=\"mb-1.5 flex flex-wrap items-center gap-1.5 pr-9\"><span class=\"text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted\">💻 Tech &amp; Science</span><span class=\"ml-auto flex items-center gap-1.5 text-[11px] text-text-muted\"><span>Resolves Sep 30, 2026</span><span>·</span><span role=\"img\" aria-label=\"Moderate confidence — Signal strength: sources + liquidity + freshness\" title=\"Moderate confidence — Signal strength: sources + liquidity + freshness\" class=\"inline-flex items-end gap-0.5\"><span class=\"w-1 rounded-sm h-1.5 bg-accent-brand/70\"></span><span class=\"w-1 rounded-sm h-2.5 bg-accent-brand/70\"></span><span class=\"w-1 rounded-sm h-3.5 bg-surface-border\"></span></span></span></div><a href=\"/futures/60481294\"><h3 class=\"text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors\">Top AI model in September?</h3></a></div><div class=\"px-3 pb-3\"><div class=\"space-y-1.5 border-t border-surface-border py-2\"><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-bold\" title=\"Claude Fable 5.1 Max\">Claude Fable 5.1 Max</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:72%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">72%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Claude Opus 5 Max\">Claude Opus 5 Max</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:8%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">8%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Claude Opus 4-6 Thinking\">Claude Opus 4-6 Thinking</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:4%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">4%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Claude Opus 5 High\">Claude Opus 5 High</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:3%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">3%</span></div><div class=\"grid min-h-7 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted\" data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">2 more outcomes</span></div></div><div class=\"flex items-center gap-1 mt-3 pt-3 border-t border-surface-border\"><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm text-text-muted hover:text-text-secondary hover:bg-surface-elevated\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"></path></svg>Like</button><div class=\"flex-1\"></div><div class=\"flex-1\"></div><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm\" title=\"Share\" aria-label=\"Share this card\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-share2 lucide-share-2\" aria-hidden=\"true\"><circle cx=\"18\" cy=\"5\" r=\"3\"></circle><circle cx=\"6\" cy=\"12\" r=\"3\"></circle><circle cx=\"18\" cy=\"19\" r=\"3\"></circle><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\"></line><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\"></line></svg>Share</button></div></div></article></div></div>"
+
+      231 |     // the PERCENTAGE column to a single labelled count. The count itself is the
+      232 |     // contract #4355 pins; where it is printed is #6586's.
+    > 233 |     expect(markup).toContain("Field and 2 more outcomes");
+          |                    ^
+      234 |     // remaining_outcome_count is 0 here, so the 2 can ONLY have come from the
+      235 |     // `distributionRows.length - shownRows.length` term — the term a
+      236 |     // payload-only reading of this card misses.
+
+      at Object.<anonymous> (__tests__/components/leaderboardRenderedContract4355.test.tsx:233:20)
+
+  ● #4355 — the leaderboard card renders 4 bars and one remainder row › adds the undrawn payload rows to remaining_outcome_count (MLB: 22 -> +26)
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 6
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    -   3,
+    -   4,
+    - ]
+    + Array []
+
+      267 |     );
+      268 |     expect(markup).toContain('data-card-format="leaderboard"');
+    > 269 |     expect(namedRowRanks(markup)).toEqual([1, 2, 3, 4]);
+          |                                   ^
+      270 |     // The photographed number. 22 from the backend + 4 sent-but-undrawn rows.
+      271 |     // #6586 moved it out of the percentage column and into the row's own label;
+      272 |     // the arithmetic this test pins is unchanged.
+
+      at Object.<anonymous> (__tests__/components/leaderboardRenderedContract4355.test.tsx:269:35)
+
+FAIL __tests__/components/leaderboardCountInPercentColumn6586.test.tsx
+  ● #6586 — the remainder row says its own units › test_nascar_board_says_36_more_and_prints_no_36_in_the_value_column
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and 36 more outcomes"
+    Received string:    "data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">36 more outcomes</span>"
+
+      118 |     // The count is still told to the reader — this ship moves it, never drops it.
+      119 |     const row = remainderRow(markup);
+    > 120 |     expect(row).toContain("Field and 36 more outcomes");
+          |                 ^
+      121 |
+      122 |     // …and it is no longer a bare number sitting in the percentage column.
+      123 |     expect(row).not.toContain(">+36<");
+
+      at Object.<anonymous> (__tests__/components/leaderboardCountInPercentColumn6586.test.tsx:120:17)
+
+  ● #6586 — the remainder row says its own units › test_press_secretary_count_40_is_not_printed_where_its_real_share_41_belongs
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and 40 more outcomes"
+    Received string:    "data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">40 more outcomes</span>"
+
+      134 |     expect(markup).toContain('data-card-format="leaderboard"');
+      135 |     const row = remainderRow(markup);
+    > 136 |     expect(row).toContain("Field and 40 more outcomes");
+          |                 ^
+      137 |     expect(row).not.toContain(">+40<");
+      138 |     expect(valueCells(markup)).not.toContain("+40");
+      139 |   });
+
+      at Object.<anonymous> (__tests__/components/leaderboardCountInPercentColumn6586.test.tsx:136:17)
+
+  ● #6586 — the remainder row says its own units › test_a_field_of_one_says_outcome_not_outcomes
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and 1 more outcome"
+    Received string:    "data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">1 more outcome</span>"
+
+      153 |
+      154 |     const row = remainderRow(render(one));
+    > 155 |     expect(row).toContain("Field and 1 more outcome");
+          |                 ^
+      156 |     expect(row).not.toContain("Field and 1 more outcomes");
+      157 |   });
+      158 |
+
+      at Object.<anonymous> (__tests__/components/leaderboardCountInPercentColumn6586.test.tsx:155:17)
+
+  ● #6586 — the remainder row says its own units › test_the_remainder_row_occupies_only_two_of_its_three_columns
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 2
+    Received length: 1
+    Received array:  [["<span"]]
+
+      173 |     const row = remainderRow(markup);
+      174 |     expect(row).not.toBe("");
+    > 175 |     expect([...row.matchAll(/<span\b/g)]).toHaveLength(2); // rank + label, no value
+          |                                           ^
+      176 |
+      177 |     // Paired positive: the four rows ABOVE it do still fill the column, so this
+      178 |     // is a statement about the remainder row and not about an empty board.
+
+      at Object.<anonymous> (__tests__/components/leaderboardCountInPercentColumn6586.test.tsx:175:43)
+
+  ● #6586 — the remainder row says its own units › RED-FIRST: the old shape is what these assertions would have caught
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and"
+    Received string:    "data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">36 more outcomes</span>"
+
+      203 |     // satisfies every `not.toContain` above for free.
+      204 |     expect(row.length).toBeGreaterThan(40);
+    > 205 |     expect(row).toContain("Field and");
+          |                 ^
+      206 |
+      207 |     const broken = row.replace(
+      208 |       "Field and 36 more outcomes",
+
+      at Object.<anonymous> (__tests__/components/leaderboardCountInPercentColumn6586.test.tsx:205:17)
+
+FAIL __tests__/components/unpricedRowsNotDrawn6505.test.tsx
+  ● #6505 — the leaderboard draws only the rows it can price › test_lacrosse_board_drops_its_zero_priced_rows
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 4
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    - ]
+    + Array []
+
+      144 |     expect(markup).toContain("Denver Outlaws");
+      145 |     const ranks = [...markup.matchAll(/aria-label="Rank (\d+)"/g)].map((m) => Number(m[1]));
+    > 146 |     expect(ranks).toEqual([1, 2]);
+          |                   ^
+      147 |
+      148 |     // The six rows sitting at 0.00 bid / 1.00 ask are not drawn…
+      149 |     expect(markup).not.toContain("Boston Cannons");
+
+      at Object.<anonymous> (__tests__/components/unpricedRowsNotDrawn6505.test.tsx:146:19)
+
+  ● #6505 — the leaderboard draws only the rows it can price › CONTROL: a board with four priced rows is untouched
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 6
+    + Received  + 1
+
+    - Array [
+    -   1,
+    -   2,
+    -   3,
+    -   4,
+    - ]
+    + Array []
+
+      185 |     }
+      186 |     const ranks = [...markup.matchAll(/aria-label="Rank (\d+)"/g)].map((m) => Number(m[1]));
+    > 187 |     expect(ranks).toEqual([1, 2, 3, 4]);
+          |                   ^
+      188 |   });
+      189 |
+      190 |   it("CONTROL: a three-row board that dropped NOTHING still falls through", () => {
+
+      at Object.<anonymous> (__tests__/components/unpricedRowsNotDrawn6505.test.tsx:187:19)
+
+  ● #6505 — the leaderboard draws only the rows it can price › test_remaining_count_still_counts_every_undrawn_outcome
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "Field and 21 more outcomes"
+    Received string:    "<div class=\"relative touch-pan-y select-none cursor-pointer\"><div class=\"relative z-10\" style=\"transform:translateX(0px) rotate(0deg);transition:transform 0.3s ease\"><article class=\"relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow\" aria-label=\"2027 US Open Women&#x27;s Singles Winner\" data-card-format=\"leaderboard\"><button title=\"Less like this\" aria-label=\"Less like this\" class=\"absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M2 2l8 8M10 2l-8 8\"></path></svg></button><div class=\"p-3 pb-2\"><div class=\"mb-1.5 flex flex-wrap items-center gap-1.5 pr-9\"><span class=\"text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted\">🎾 tennis</span><span class=\"ml-auto flex items-center gap-1.5 text-[11px] text-text-muted\"><span>Resolves Sep 21, 2027</span><span>·</span><span role=\"img\" aria-label=\"Low confidence — Signal strength: sources + liquidity + freshness\" title=\"Low confidence — Signal strength: sources + liquidity + freshness\" class=\"inline-flex items-end gap-0.5\"><span class=\"w-1 rounded-sm h-1.5 bg-text-muted\"></span><span class=\"w-1 rounded-sm h-2.5 bg-surface-border\"></span><span class=\"w-1 rounded-sm h-3.5 bg-surface-border\"></span></span></span></div><a href=\"/event/tennis/2027-us-open-women-s-singles-winner\"><h3 class=\"text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors\">2027 US Open Women&#x27;s Singles Winner</h3></a><p class=\"mt-2 text-xs leading-relaxed text-text-secondary\">Aryna Sabalenka leads at 30%</p></div><div class=\"px-3 pb-3\"><div class=\"space-y-1.5 border-t border-surface-border py-2\"><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-bold\" title=\"Aryna Sabalenka\">Aryna Sabalenka</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:30%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">30%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Elena Rybakina\">Elena Rybakina</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:27%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">27%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Coco Gauff\">Coco Gauff</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:25%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">25%</span></div><div class=\"grid min-h-8 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Alexandra Eala\">Alexandra Eala</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:9%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">9%</span></div><div class=\"grid min-h-7 grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted\" data-row=\"field-remainder\"><span class=\"truncate text-xs font-medium\">21 more outcomes</span></div></div><div class=\"flex items-center gap-1 mt-3 pt-3 border-t border-surface-border\"><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm text-text-muted hover:text-text-secondary hover:bg-surface-elevated\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"></path></svg>Like</button><div class=\"flex-1\"></div><span class=\"inline-flex items-center gap-1 text-text-muted\" data-testid=\"price-age-mark\" data-scope=\"card\" data-cadence=\"futures\" data-observed-at=\"2026-09-16T06:53:22+00:00\" title=\"Last number: 16 Sep, 6:53 AM\"><span aria-hidden=\"true\" class=\"h-[5px] w-[5px] shrink-0 rounded-full bg-text-muted/60\"></span><span class=\"text-[10px] leading-none whitespace-nowrap\">5d ago</span><span class=\"sr-only\">Last number: 16 Sep, 6:53 AM</span></span><div class=\"flex-1\"></div><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm\" title=\"Share\" aria-label=\"Share this card\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-share2 lucide-share-2\" aria-hidden=\"true\"><circle cx=\"18\" cy=\"5\" r=\"3\"></circle><circle cx=\"6\" cy=\"12\" r=\"3\"></circle><circle cx=\"18\" cy=\"19\" r=\"3\"></circle><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\"></line><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\"></line></svg>Share</button></div></div></article></div></div>"
+
+      213 |     // dropped by this ship, 17 never sent — 21.
+      214 |     const markup = render(specimen("us_open_women_distribution"));
+    > 215 |     expect(markup).toContain("Field and 21 more outcomes"); // #6586 reworded the row; 21 is #6505's contract
+          |                    ^
+      216 |   });
+      217 | });
+      218 |
+
+      at Object.<anonymous> (__tests__/components/unpricedRowsNotDrawn6505.test.tsx:215:20)
+
+Test Suites: 5 failed, 5 passed, 10 total
+Tests:       14 failed, 53 passed, 67 total
+Snapshots:   0 total
+Time:        1.162 s, estimated 8 s
+Ran all test suites matching coalitionBoardIsNotALeaderboard7844|leaderboard|unpricedRowsNotDrawn6505|refusedLadderRendersTheField4610.

@@ -26,6 +26,7 @@
         "probability": 0.2
       }
     ],
+    "field_is_a_race": true,
     "ladder_treatment_refused": true,
     "public_source_disagreement": false,
     "qa_signals": [],

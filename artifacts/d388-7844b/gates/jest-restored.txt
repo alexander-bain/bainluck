@@ -1,0 +1,6 @@
+
+Test Suites: 29 passed, 29 total
+Tests:       231 passed, 231 total
+Snapshots:   0 total
+Time:        2.072 s, estimated 7 s
+Ran all test suites matching coalitionBoardIsNotALeaderboard7844|leaderboard|unpricedRowsNotDrawn6505|refusedLadderRendersTheField4610|futuresCard|comparison|numericLadder.

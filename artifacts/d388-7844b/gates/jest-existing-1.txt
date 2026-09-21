@@ -1,0 +1,6 @@
+
+Test Suites: 23 passed, 23 total
+Tests:       177 passed, 177 total
+Snapshots:   0 total
+Time:        9.046 s
+Ran all test suites matching leaderboard|unpricedRowsNotDrawn6505|refusedLadderRendersTheField4610|futuresCard|numericLadderKeepsItsRank4416.

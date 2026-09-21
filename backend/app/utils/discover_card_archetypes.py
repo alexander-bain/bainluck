@@ -797,6 +797,7 @@ def classify_discover_card_archetype(
     resolved: bool = False,
     status: str | None = None,
     ladder_treatment_refused: bool = False,
+    field_is_a_race: bool = True,
 ) -> dict[str, Any]:
     """Return frontend/admin rendering metadata for a Discover futures market.
 
@@ -907,6 +908,30 @@ def classify_discover_card_archetype(
         # `outcome_distribution` card keeps the change to the population the
         # BLOCK is about.
         "ladder_treatment_refused": ladder_treatment_refused,
+        # #7844 half two — MAY THE RENDERER DRAW THESE ROWS AS A PODIUM?
+        #
+        # Travels for the same reason `ladder_treatment_refused` above travels:
+        # the renderer is where the claim is finally made. Half one stopped the
+        # CAPTION calling a coalition member the favourite; the board beneath it
+        # says the same false thing in chrome — `1 2 3 4` is the grammar this
+        # component uses for `2026-27 Stanley Cup® Finals Winner`, where exactly
+        # one row can win, and "Field and N more outcomes" is an exhaustiveness
+        # claim about a residual that does not exist on a board summing to 225%.
+        #
+        # Resolved by the route (`_card_field_is_a_race`) and not here, because
+        # the two signals it reads are the venue's `mutually_exclusive` column
+        # and the percents THE CARD PRINTS — and the printed percents are the
+        # route's `top_outcomes_data`, already sliced and already scaled. Taking
+        # it here off `distribution_outcomes` would answer for a different set of
+        # rows than the one the copy was decided on, and the card would then
+        # refuse a comparative while numbering its rows, or the reverse.
+        #
+        # FAIL TO TODAY'S RENDERING, the same convention as the helper: the
+        # default is True and the client treats anything but an explicit `false`
+        # as a race, so a caller that has not been taught to pass it keeps the
+        # board it draws today. Because that default is silent, route adoption is
+        # asserted structurally in the #7844 guard rather than left latent.
+        "field_is_a_race": bool(field_is_a_race),
         "distribution_outcomes": distribution_outcomes,
         "remaining_outcome_count": max(0, count - len(distribution_outcomes)),
         "qa_signals": qa_signals,
