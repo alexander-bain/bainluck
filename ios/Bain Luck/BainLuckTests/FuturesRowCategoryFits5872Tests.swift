@@ -241,9 +241,12 @@ final class FuturesRowCategoryFits5872Tests: XCTestCase {
         let text = code(try source("Utilities", "SportDisplayNames.swift"))
         var out: Set<String> = []
         for declaration in [
-            "private let leagueAcronyms: [String: String] = [",
+            "let leagueAcronyms: [String: String] = [",
             "let categoryMap: [String: String] = [",
-            "let familyMap: [String: String] = [",
+            // #7532 lifted this map to file scope under its own name so
+            // `nicheCategoryLabel` could share the membership test; the keys it
+            // holds — and this guard's population — are unchanged.
+            "let sportFamilyDisplayNames: [String: String] = [",
         ] {
             guard let start = text.range(of: declaration) else {
                 XCTFail("map `\(declaration)` not found — the extraction is stale, not the table")

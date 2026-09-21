@@ -2,7 +2,11 @@ import Foundation
 
 /// The league acronyms this app spells for itself, keyed by sport key. ONE
 /// copy: both public formatters below read it, and neither keeps its own.
-private let leagueAcronyms: [String: String] = [
+///
+/// #7532 made it `internal` rather than `private` so `nicheCategoryLabel` can
+/// read the same opinions instead of starting a second league vocabulary — the
+/// defect that ship fixes is two formatters disagreeing about one payload key.
+let leagueAcronyms: [String: String] = [
     "americanfootball_nfl": "NFL",
     "americanfootball_ncaaf": "NCAAF",
     "basketball_nba": "NBA",
@@ -19,6 +23,20 @@ private let leagueAcronyms: [String: String] = [
     "soccer_usa_mls": "MLS",
     "soccer_uefa_champs_league": "UCL",
     "mma_mixed_martial_arts": "MMA",
+]
+
+/// The sport FAMILY a key's first segment names. Lifted out of
+/// `sportCategoryDisplayName` by #7532 (ruling 005, extract-on-touch) because
+/// `nicheCategoryLabel` needs the same membership test — "is segment 0 a sport
+/// of ours?" — and a second hand-written copy of this list is how two surfaces
+/// come to disagree about whether `horse_racing` starts with a sport.
+let sportFamilyDisplayNames: [String: String] = [
+    "americanfootball": "Football", "football": "Football",
+    "basketball": "Basketball", "baseball": "Baseball",
+    "icehockey": "Hockey", "hockey": "Hockey", "soccer": "Soccer",
+    "golf": "Golf", "tennis": "Tennis", "mma": "MMA", "boxing": "Boxing",
+    "cricket": "Cricket", "motorsports": "Motorsports",
+    "rugbyleague": "Rugby", "rugbyunion": "Rugby", "esports": "Esports",
 ]
 
 /// A sport key as a league label: "baseball_mlb" → "MLB".
@@ -69,15 +87,7 @@ func sportCategoryDisplayName(_ raw: String?) -> String {
 
     // 3. Sport family (handles "_other" and bare sport families).
     let family = key.contains("_") ? String(key.split(separator: "_").first ?? "") : key
-    let familyMap: [String: String] = [
-        "americanfootball": "Football", "football": "Football",
-        "basketball": "Basketball", "baseball": "Baseball",
-        "icehockey": "Hockey", "hockey": "Hockey", "soccer": "Soccer",
-        "golf": "Golf", "tennis": "Tennis", "mma": "MMA", "boxing": "Boxing",
-        "cricket": "Cricket", "motorsports": "Motorsports",
-        "rugbyleague": "Rugby", "rugbyunion": "Rugby", "esports": "Esports",
-    ]
-    if let f = familyMap[family] { return f }
+    if let f = sportFamilyDisplayNames[family] { return f }
 
     // 4. Fallback: acronym-aware title casing of a raw key — never surface an
     //    underscore, and never hand back a lowercase label.
