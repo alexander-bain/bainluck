@@ -457,3 +457,127 @@ def test_every_route_site_says_whether_the_field_is_a_race(scorer):
         if "card_field_is_a_race" not in kwargs
     ]
     assert not unadopted, f"{scorer} composes copy without the refusal: {unadopted}"
+
+
+# ══════════════════════ HALF TWO — THE BOARD, ON THE WIRE ═════════════════════
+#
+# Half one stopped the CAPTION calling a coalition member the favourite. The
+# board beneath it said the same false thing in chrome:
+#
+#      1  Green Party 68%  ·  2  Labour 54%  ·  3  National 53%
+#      4  New Zealand First 50%  ·  5  Field and 2 more outcomes
+#
+# `1 2 3 4` is the grammar the component uses for `2026-27 Stanley Cup® Finals
+# Winner`, where exactly one row can win; "Field and N more outcomes" says the
+# rest of the probability lives in a residual field, which a 225% board does not
+# have. Both claims are the RENDERER's, so the refusal has to reach it — and the
+# only thing the backend owes is the one boolean it already resolved.
+#
+# The rendered half is proven in `frontend/__tests__/components/
+# coalitionBoardIsNotALeaderboard7844.test.tsx`, through `DiscoverCard` with the
+# production payload for market 16624064: rank digits gone, "Field and" gone,
+# every number kept, and the exclusive twin byte-for-byte unmoved. THESE tests
+# are the other half of that pair — that the flag the component reads is a flag
+# the route actually sends, on both serving paths.
+
+
+class TestTheFlagReachesTheCard:
+    """`discover_card.field_is_a_race`, off the served card."""
+
+    @pytest.mark.asyncio
+    async def test_the_coalition_card_tells_the_renderer_it_is_not_a_race(self):
+        card = await _served_card(mutually_exclusive=False)
+        assert card["data"]["discover_card"]["field_is_a_race"] is False
+
+    @pytest.mark.asyncio
+    async def test_the_exclusive_twin_tells_it_the_opposite(self):
+        """The control and the non-vacuity proof, same as the copy arm above.
+
+        A `field_is_a_race` that read False for everything would pass the test
+        above and silently strip the podium off all 44 leaderboard cards in an
+        edition. This is the assertion that stops it.
+        """
+        card = await _served_card(mutually_exclusive=True)
+        assert card["data"]["discover_card"]["field_is_a_race"] is True
+
+    @pytest.mark.asyncio
+    async def test_it_agrees_with_the_copy_on_the_same_card(self):
+        """One card cannot refuse the comparative and still number its rows.
+
+        The two refusals are taken from the same `_card_field_is_a_race` call for
+        exactly this reason; asserting it on the served card is what keeps a
+        future edit from re-deriving one of them from a different basis (the
+        market's full outcome list, `distribution_outcomes`, the raw prices).
+        """
+        for exclusive in (False, True):
+            card = await _served_card(mutually_exclusive=exclusive)
+            says_race = card["data"]["discover_card"]["field_is_a_race"]
+            spoken = " | ".join(_slots(card).values())
+            assert says_race is exclusive
+            assert bool(_comparatives_in(spoken)) is exclusive, (
+                f"card says field_is_a_race={says_race} while its copy reads "
+                f"{spoken!r}"
+            )
+
+
+class TestTheClassifierDefault:
+    """The silent default, asserted rather than assumed."""
+
+    def test_an_uninformed_caller_still_gets_a_board(self):
+        """Every caller that has not been taught the keyword draws today's card.
+
+        This is what makes the frontend's `!== false` read safe: an older cached
+        payload, an admin caller, a future serving path — none of them can
+        accidentally strip the rank digits off an exclusive field.
+        """
+        from app.utils.discover_card_archetypes import (
+            classify_discover_card_archetype,
+        )
+
+        card = classify_discover_card_archetype(name=NZ_QUESTION)
+        assert card["field_is_a_race"] is True
+
+    def test_it_is_a_bool_and_not_whatever_it_was_handed(self):
+        """The wire carries JSON `false`, not `None`, `0` or a numpy scalar.
+
+        The renderer keys on `!== false`, so a falsy-but-not-false value would
+        serialize as something the component reads as a race — the refusal
+        would be on in the payload and off on the screen.
+        """
+        from app.utils.discover_card_archetypes import (
+            classify_discover_card_archetype,
+        )
+
+        card = classify_discover_card_archetype(
+            name=NZ_QUESTION, field_is_a_race=0
+        )
+        assert card["field_is_a_race"] is False
+
+
+# ─────────────────── the two route sites, structurally ────────────────────────
+
+#: Same reason as the composer sweep above: the classifier's default is silent,
+#: so an unadopted call site is a live defect here rather than a loud one. A
+#: third serving path that builds a card without the keyword reds this.
+def _classify_calls(function_name: str):
+    for node in ast.walk(ast.parse(_FEED_SOURCE)):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function_name
+        ):
+            return [
+                (call.lineno, {k.arg for k in call.keywords})
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "classify_discover_card_archetype"
+            ]
+    raise AssertionError(f"{function_name} is gone from routes/feed.py")
+
+
+@pytest.mark.parametrize("scorer", _ROUTE_SCORERS)
+def test_every_card_builder_puts_the_flag_on_the_wire(scorer):
+    calls = _classify_calls(scorer)
+    assert len(calls) == 1, f"{scorer} builds {len(calls)} cards, expected 1"
+    unadopted = [lineno for lineno, kwargs in calls if "field_is_a_race" not in kwargs]
+    assert not unadopted, f"{scorer} builds a card without the flag: {unadopted}"

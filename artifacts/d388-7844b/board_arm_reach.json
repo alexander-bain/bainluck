@@ -1,0 +1,346 @@
+{
+  "edition": "feed-200-1740Z",
+  "futures": 71,
+  "non_exclusive": 20,
+  "boards": 42,
+  "loses_the_podium": [
+    {
+      "id": 16624064,
+      "name": "Which parties will be part of the next government of New Zealand?",
+      "printed_sum": 175,
+      "rows_drawn": 4,
+      "remainder_row": 2,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 61076604,
+      "name": "2027 PPA Tour Finals: To Reach the Final (Men's)",
+      "printed_sum": 207,
+      "rows_drawn": 4,
+      "remainder_row": 23,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 59242965,
+      "name": "Which parties will be in next Swedish Government?",
+      "printed_sum": 220,
+      "rows_drawn": 4,
+      "remainder_row": 5,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 60627547,
+      "name": "Which parties will win a seat in the 2026 Knesset elections?",
+      "printed_sum": 235,
+      "rows_drawn": 4,
+      "remainder_row": 1,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 34535450,
+      "name": "What will USD/BRL hit in 2026?",
+      "printed_sum": 148,
+      "rows_drawn": 4,
+      "remainder_row": 8,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 60481084,
+      "name": "Dancing with the Stars Season 35 \u00b7 Top 3 Finishers",
+      "printed_sum": 191,
+      "rows_drawn": 4,
+      "remainder_row": 12,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 60634623,
+      "name": "Top 5 Most Searched Passings on Google in the US 2026",
+      "printed_sum": 242,
+      "rows_drawn": 4,
+      "remainder_row": 8,
+      "mutually_exclusive": false
+    },
+    {
+      "id": 61076610,
+      "name": "2027 PPA Tour Finals: Player to Qualify (Men's)",
+      "printed_sum": 282,
+      "rows_drawn": 4,
+      "remainder_row": 23,
+      "mutually_exclusive": false
+    }
+  ],
+  "keeps_the_podium": [
+    {
+      "id": 1,
+      "name": "MLB World Series Winner",
+      "printed_sum": 50,
+      "rows_drawn": 4,
+      "remainder_row": 26,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 52755659,
+      "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+      "printed_sum": 29,
+      "rows_drawn": 4,
+      "remainder_row": 28,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 56947465,
+      "name": "NASCAR Cup Series: 2026 Champion",
+      "printed_sum": 60,
+      "rows_drawn": 4,
+      "remainder_row": 32,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 13475994,
+      "name": "Minas Gerais Governor Election Winner",
+      "printed_sum": 100,
+      "rows_drawn": 4,
+      "remainder_row": 26,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61148180,
+      "name": "Titled Tuesday Winner: September 22",
+      "printed_sum": 21,
+      "rows_drawn": 2,
+      "remainder_row": 2,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 113129,
+      "name": "Nobel Peace Prize Winner 2026",
+      "printed_sum": 31,
+      "rows_drawn": 4,
+      "remainder_row": 28,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 112996,
+      "name": "Brazil Presidential Election",
+      "printed_sum": 101,
+      "rows_drawn": 4,
+      "remainder_row": 16,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 113364,
+      "name": "Next French Presidential Election",
+      "printed_sum": 74,
+      "rows_drawn": 4,
+      "remainder_row": 38,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 86832,
+      "name": "NFL Super Bowl Winner",
+      "printed_sum": 28,
+      "rows_drawn": 4,
+      "remainder_row": 28,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60481087,
+      "name": "Dancing with the Stars Season 35 \u00b7 Winner",
+      "printed_sum": 58,
+      "rows_drawn": 4,
+      "remainder_row": 12,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 114199,
+      "name": "Venezuela leader end of 2026?",
+      "printed_sum": 101,
+      "rows_drawn": 4,
+      "remainder_row": 53,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 108619,
+      "name": "2026 Midterms: Congress Balance of Power?",
+      "printed_sum": 99,
+      "rows_drawn": 4,
+      "remainder_row": 0,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 56697799,
+      "name": "Which of these Republicans will be the first to announce a run for President?",
+      "printed_sum": 67,
+      "rows_drawn": 4,
+      "remainder_row": 6,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60607618,
+      "name": "Golden Boy 2026 Winner",
+      "printed_sum": 91,
+      "rows_drawn": 4,
+      "remainder_row": 10,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60517216,
+      "name": "Next Prime Minister of Morocco? (Invested)",
+      "printed_sum": 85,
+      "rows_drawn": 4,
+      "remainder_row": 7,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 52756010,
+      "name": "Big Brother Season 28 \u00b7 Winner",
+      "printed_sum": 75,
+      "rows_drawn": 4,
+      "remainder_row": 13,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61264062,
+      "name": "WTA Sao Paulo Winner",
+      "printed_sum": 97,
+      "rows_drawn": 2,
+      "remainder_row": 14,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 108328,
+      "name": "Who will be Trump's next Press Secretary?",
+      "printed_sum": 40,
+      "rows_drawn": 4,
+      "remainder_row": 42,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61309024,
+      "name": "What will be the top US Netflix movie this week?",
+      "printed_sum": 98,
+      "rows_drawn": 4,
+      "remainder_row": 2,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60607786,
+      "name": "UEFA Champions League: League Phase Winner",
+      "printed_sum": 25,
+      "rows_drawn": 4,
+      "remainder_row": 26,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61461681,
+      "name": "FedEx Open de France Winner",
+      "printed_sum": 28,
+      "rows_drawn": 4,
+      "remainder_row": 132,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 9413479,
+      "name": "WNBA: 2026 Champion",
+      "printed_sum": 72,
+      "rows_drawn": 4,
+      "remainder_row": 12,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60607658,
+      "name": "UEFA Champions League 2027: Home country of champion",
+      "printed_sum": 78,
+      "rows_drawn": 4,
+      "remainder_row": 4,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 12046267,
+      "name": "Women's Pro Basketball Champion",
+      "printed_sum": 71,
+      "rows_drawn": 4,
+      "remainder_row": 11,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 275,
+      "name": "Pro Baseball Champion",
+      "printed_sum": 56,
+      "rows_drawn": 4,
+      "remainder_row": 26,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 59698965,
+      "name": "KBO Korean Series Champion (2026)",
+      "printed_sum": 55,
+      "rows_drawn": 4,
+      "remainder_row": 6,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 59703246,
+      "name": "NPB Japan Series Champion (2026)",
+      "printed_sum": 39,
+      "rows_drawn": 4,
+      "remainder_row": 6,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61734333,
+      "name": "Walmart NW Arkansas Championship presented by P&G Winner",
+      "printed_sum": 107,
+      "rows_drawn": 4,
+      "remainder_row": 138,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61437318,
+      "name": "WTA Singapore Singles Winner",
+      "printed_sum": 128,
+      "rows_drawn": 4,
+      "remainder_row": 15,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60552216,
+      "name": "Worlds 2026: Winner",
+      "printed_sum": 72,
+      "rows_drawn": 4,
+      "remainder_row": 6,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 59698974,
+      "name": "MotoGP World Champion (2026)",
+      "printed_sum": 95,
+      "rows_drawn": 4,
+      "remainder_row": 21,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60552215,
+      "name": "Demacia Cup Global Invitational 2026: Winner",
+      "printed_sum": 85,
+      "rows_drawn": 4,
+      "remainder_row": 1,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 61495797,
+      "name": "Azerbaijan Grand Prix Winner",
+      "printed_sum": 62,
+      "rows_drawn": 4,
+      "remainder_row": 18,
+      "mutually_exclusive": true
+    },
+    {
+      "id": 60552218,
+      "name": "ESL Pro League Season 24: Winner",
+      "printed_sum": 61,
+      "rows_drawn": 4,
+      "remainder_row": 12,
+      "mutually_exclusive": true
+    }
+  ]
+}

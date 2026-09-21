@@ -416,12 +416,48 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // with is untouched and still falls through exactly as it does today.
   const droppedBelowTheBar = allDistributionRows.length >= 4 && distributionRows.length < 4;
   const distributionMinRows = ladderTreatmentRefused || droppedBelowTheBar ? 2 : 4;
+  // #7844 half two — MAY THIS BOARD BE DRAWN AS A PODIUM?
+  //
+  // `Which parties will be part of the next government of New Zealand?`, page
+  // one, 390px: `1 Green 68 · 2 Labour 54 · 3 National 53 · 4 NZ First 50 ·
+  // 5 Field and 2 more outcomes`. New Zealand governments are coalitions; those
+  // four legs sum to 225% and Green is not "beating" Labour, because both can be
+  // in the next government — which is the entire point of the question. Half one
+  // (#7844) took the caption off. The rank digits and the remainder row are the
+  // same false claim in chrome: `1 2 3 4` is the grammar this component uses for
+  // `2026-27 Stanley Cup® Finals Winner`, where exactly one row can win, and
+  // "Field and N more outcomes" tells a reader the rest of the probability lives
+  // in a residual field. On an independent set there is no residual field — the
+  // two hidden rows are two more yes/no questions.
+  //
+  // The refusal is a refusal, not a renormalization: 225% is the honest answer,
+  // and scaling a coalition board to 100 would be the defect.
+  //
+  // FAIL TO TODAY'S RENDERING. Only an explicit `false` — the route's own
+  // `_card_field_is_a_race`, taken off the venue's `mutually_exclusive` flag AND
+  // the printed board summing past 100 — changes the board. An absent field (an
+  // older payload, a pre-#7844 cache entry, any of the four other card formats)
+  // draws exactly what it draws today. Read through a narrow local cast for the
+  // reason stated on `ladderTreatmentRefused` above.
+  const fieldIsARace =
+    (data as { discover_card?: { field_is_a_race?: boolean } }).discover_card
+      ?.field_is_a_race !== false;
+  // The rank cell is a column, not a decoration: dropping its content would slide
+  // every label one track left and misalign the remainder row against the rows
+  // above it. So the template loses the track rather than the cell losing its
+  // text, and the label gets the 1.25rem + gap back at phone width.
+  const distributionRowGrid = fieldIsARace
+    ? "grid-cols-[1.25rem_minmax(0,1fr)_2.75rem]"
+    : "grid-cols-[minmax(0,1fr)_2.75rem]";
   if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= distributionMinRows) {
     // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
     // leader-first drops the leader — the Fed September card showed four
     // also-rans totalling 47% while the 56% "No change" row never rendered.
     // The rank column below is `index + 1` and titled "Rank N by probability",
     // so an unsorted slice mislabels the rows as well as losing the answer.
+    // #7844 half two drops that column on a non-exclusive board and the sort is
+    // no less load-bearing there: leader-first is what decides WHICH four of the
+    // eight rows a reader is shown, which is the "losing the answer" half.
     const shownRows = leaderFirstSlice(distributionRows, 4);
     // #6505 — counted off the UNFILTERED list, so a row we declined to draw is
     // still a row the reader is told exists. Filtering the total too would make
@@ -518,9 +554,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 return (
                   <div
                     key={`${row.label}-${index}`}
-                    className="grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1"
+                    className={`grid min-h-8 ${distributionRowGrid} items-center gap-2 rounded-md px-1.5 py-1`}
                   >
-                    <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${index + 1} by probability`} aria-label={`Rank ${index + 1}`}>{index + 1}</span>
+                    {/* #7844 half two — the digit AND its two labels go together.
+                        `title="Rank N by probability"` and `aria-label="Rank N"`
+                        are the same podium claim spoken to a screen reader, and
+                        leaving either behind would keep the false sentence for
+                        exactly the reader least able to check it against the
+                        board. The rows stay sorted by probability, which is an
+                        ordering and not a ranking claim: on a coalition board
+                        "most likely to be in the next government" is true. */}
+                    {fieldIsARace && (
+                      <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${index + 1} by probability`} aria-label={`Rank ${index + 1}`}>{index + 1}</span>
+                    )}
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         {/* UX-P263 (#2561): `truncate` is what lets
@@ -553,15 +599,27 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               })}
               {remainingCount > 0 && (
                 <div
-                  className="grid min-h-7 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted"
+                  className={`grid min-h-7 ${distributionRowGrid} items-center gap-2 rounded-md px-1.5 py-1 text-text-muted`}
                   // #6586 — a structural marker, for the same reason CERT-678 added
                   // `data-card-format`: three test files keyed this row's presence
                   // AND its absence on the literal copy "Field and remaining
                   // outcomes", so rewording it would have turned two `not.toContain`
                   // controls vacuous without reddening anything.
+                  //
+                  // #7844 half two reworded it AGAIN, for the non-exclusive arm
+                  // only, and under notice 50 read those files first: all four
+                  // now key on THIS marker and on the post-#6586 copy, and every
+                  // one of their fixtures is a race (no `field_is_a_race` on the
+                  // payload ⇒ the fail-to-today default), so they are byte-for-byte
+                  // unmoved and remain the widening control for this change.
                   data-row="field-remainder"
                 >
-                  <span className="font-mono text-xs font-semibold tabular-nums">{shownRows.length + 1}</span>
+                  {/* #7844 half two — the remainder row's digit is the podium's
+                      last rung, `shownRows.length + 1`, so it goes with the rest
+                      of them. */}
+                  {fieldIsARace && (
+                    <span className="font-mono text-xs font-semibold tabular-nums">{shownRows.length + 1}</span>
+                  )}
                   {/* #6586 — the count says its own units, and the third column
                       stays empty. It used to render `+{remainingCount}` in the
                       percentage column, so a headcount sat directly under 29% /
@@ -581,8 +639,15 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                       `renderToStaticMarkup` does not — so a JSX-interpolated
                       label reads as one string in a jest render and as three in
                       the HTML Next.js actually serves. */}
+                  {/* #7844 half two — "Field and" is the exhaustiveness claim,
+                      and it is the only part that comes off. On an exclusive
+                      board it is true and load-bearing (the undrawn rows ARE the
+                      residual share of one slot); on an independent set there is
+                      no residual, so the row can only say how many more separate
+                      questions this market holds. The count and its units are
+                      #6586's contract and are unchanged in both arms. */}
                   <span className="truncate text-xs font-medium">
-                    {`Field and ${remainingCount} more outcome${remainingCount === 1 ? "" : "s"}`}
+                    {`${fieldIsARace ? "Field and " : ""}${remainingCount} more outcome${remainingCount === 1 ? "" : "s"}`}
                   </span>
                 </div>
               )}

@@ -1,0 +1,65 @@
+FAIL __tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx
+  ● #7844 half two — the coalition board drops the podium › the refusal arm: field_is_a_race === false › prints no rank digits — the four legs are not racing for one slot
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 6
+
+    - Array []
+    + Array [
+    +   1,
+    +   2,
+    +   3,
+    +   4,
+    + ]
+
+      204 |
+      205 |     it("prints no rank digits — the four legs are not racing for one slot", () => {
+    > 206 |       expect(namedRowRanks(markup)).toEqual([]);
+          |                                     ^
+      207 |       // The screen-reader half of the same claim. `aria-label` is checked above;
+      208 |       // `title="Rank N by probability"` is the sighted hover, and leaving either
+      209 |       // behind keeps the false sentence for one of the two readers.
+
+      at Object.<anonymous> (__tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx:206:37)
+
+  ● #7844 half two — the coalition board drops the podium › the refusal arm: field_is_a_race === false › makes no exhaustiveness claim about the two rows it does not draw
+
+    expect(received).not.toContain(expected) // indexOf
+
+    Expected substring: not "Field and"
+    Received string:        "data-row=\"field-remainder\"><span class=\"font-mono text-xs font-semibold tabular-nums\">5</span><span class=\"truncate text-xs font-medium\">Field and 2 more outcomes</span>"
+
+      220 |       expect(row).toContain("2 more outcomes");
+      221 |       // "Field and" is the residual claim, and it is the only part removed.
+    > 222 |       expect(row).not.toContain("Field and");
+          |                       ^
+      223 |       // The remainder row's own rank cell — the podium's fifth rung.
+      224 |       expect(row).not.toContain(">5<");
+      225 |     });
+
+      at Object.<anonymous> (__tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx:222:23)
+
+  ● #7844 half two — the coalition board drops the podium › the refusal arm: field_is_a_race === false › gives the label column the track the rank digits used to hold
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "grid-cols-[minmax(0,1fr)_2.75rem]"
+    Received string:    "<div class=\"relative touch-pan-y select-none cursor-pointer\"><div class=\"relative z-10\" style=\"transform:translateX(0px) rotate(0deg);transition:transform 0.3s ease\"><article class=\"relative overflow-hidden rounded-[10px] border border-surface-border bg-surface-card shadow-md hover:shadow-lg transition-shadow\" aria-label=\"Which parties will be part of the next government of New Zealand?\" data-card-format=\"leaderboard\"><button title=\"Less like this\" aria-label=\"Less like this\" class=\"absolute top-3 right-3 z-10 w-7 h-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center text-white/80 hover:text-white hover:bg-black/50 transition-colors\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M2 2l8 8M10 2l-8 8\"></path></svg></button><div class=\"p-3 pb-2\"><div class=\"mb-1.5 flex flex-wrap items-center gap-1.5 pr-9\"><span class=\"text-[10px] font-semibold uppercase tracking-[0.04em] text-text-muted\">🏛 politics</span><span class=\"ml-auto flex items-center gap-1.5 text-[11px] text-text-muted\"><span>Resolves Feb 1, 2028</span><span>·</span><span role=\"img\" aria-label=\"Low confidence — Signal strength: sources + liquidity + freshness\" title=\"Low confidence — Signal strength: sources + liquidity + freshness\" class=\"inline-flex items-end gap-0.5\"><span class=\"w-1 rounded-sm h-1.5 bg-text-muted\"></span><span class=\"w-1 rounded-sm h-2.5 bg-surface-border\"></span><span class=\"w-1 rounded-sm h-3.5 bg-surface-border\"></span></span></span></div><a href=\"/futures/16624064\"><h3 class=\"text-base font-bold leading-tight text-text-primary line-clamp-2 group-hover:text-accent-brand transition-colors\">Which parties will be part of the next government of New Zealand?</h3></a></div><div class=\"px-3 pb-3\"><div class=\"space-y-1.5 border-t border-surface-border py-2\"><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 1 by probability\" aria-label=\"Rank 1\">1</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-bold\" title=\"Green Party\">Green Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:68%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">68%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 2 by probability\" aria-label=\"Rank 2\">2</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"Labour Party\">Labour Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:54%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">54%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 3 by probability\" aria-label=\"Rank 3\">3</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"National Party\">National Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:53%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">53%</span></div><div class=\"grid min-h-8 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1\"><span class=\"font-mono text-xs font-semibold tabular-nums text-text-muted\" title=\"Rank 4 by probability\" aria-label=\"Rank 4\">4</span><div class=\"min-w-0\"><div class=\"flex items-center gap-1.5\"><span class=\"min-w-0 truncate text-xs leading-tight text-text-primary font-semibold\" title=\"New Zealand First Party\">New Zealand First Party</span></div><div class=\"mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/35\" style=\"width:50%\"></div></div></div><span class=\"text-right font-mono text-xs font-bold tabular-nums text-text-primary\">50%</span></div><div class=\"grid min-h-7 grid-cols-[1.25rem_minmax(0,1fr)_2.75rem] items-center gap-2 rounded-md px-1.5 py-1 text-text-muted\" data-row=\"field-remainder\"><span class=\"font-mono text-xs font-semibold tabular-nums\">5</span><span class=\"truncate text-xs font-medium\">Field and 2 more outcomes</span></div></div><div class=\"flex items-center gap-1 mt-3 pt-3 border-t border-surface-border\"><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors text-sm text-text-muted hover:text-text-secondary hover:bg-surface-elevated\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5\"></path></svg>Like</button><div class=\"flex-1\"></div><div class=\"flex-1\"></div><button class=\"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted hover:text-text-secondary hover:bg-surface-elevated transition-colors text-sm\" title=\"Share\" aria-label=\"Share this card\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"lucide lucide-share2 lucide-share-2\" aria-hidden=\"true\"><circle cx=\"18\" cy=\"5\" r=\"3\"></circle><circle cx=\"6\" cy=\"12\" r=\"3\"></circle><circle cx=\"18\" cy=\"19\" r=\"3\"></circle><line x1=\"8.59\" x2=\"15.42\" y1=\"13.51\" y2=\"17.49\"></line><line x1=\"15.41\" x2=\"8.59\" y1=\"6.51\" y2=\"10.49\"></line></svg>Share</button></div></div></article></div></div>"
+
+      236 |       // dropping the track would leave a dead 1.25rem gutter, and dropping the
+      237 |       // content without the track would slide every label one column left.
+    > 238 |       expect(markup).toContain("grid-cols-[minmax(0,1fr)_2.75rem]");
+          |                      ^
+      239 |       expect(markup).not.toContain("grid-cols-[1.25rem_minmax(0,1fr)_2.75rem]");
+      240 |     });
+      241 |   });
+
+      at Object.<anonymous> (__tests__/components/coalitionBoardIsNotALeaderboard7844.test.tsx:238:22)
+
+Test Suites: 1 failed, 1 total
+Tests:       3 failed, 7 passed, 10 total
+Snapshots:   0 total
+Time:        0.432 s, estimated 1 s
+Ran all test suites matching coalitionBoardIsNotALeaderboard7844.

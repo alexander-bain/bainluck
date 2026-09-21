@@ -1,0 +1,35 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/discover/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 25 items
+
+tests/test_a_coalition_card_stops_running_as_a_race_7844.py ............ [ 48%]
+......F.F.F..                                                            [100%]
+
+=================================== FAILURES ===================================
+_ TestTheFlagReachesTheCard.test_the_coalition_card_tells_the_renderer_it_is_not_a_race _
+tests/test_a_coalition_card_stops_running_as_a_race_7844.py:490: in test_the_coalition_card_tells_the_renderer_it_is_not_a_race
+    assert card["data"]["discover_card"]["field_is_a_race"] is False
+E   assert True is False
+___ TestTheFlagReachesTheCard.test_it_agrees_with_the_copy_on_the_same_card ____
+tests/test_a_coalition_card_stops_running_as_a_race_7844.py:516: in test_it_agrees_with_the_copy_on_the_same_card
+    assert says_race is exclusive
+E   assert True is False
+__ TestTheClassifierDefault.test_it_is_a_bool_and_not_whatever_it_was_handed ___
+tests/test_a_coalition_card_stops_running_as_a_race_7844.py:554: in test_it_is_a_bool_and_not_whatever_it_was_handed
+    assert card["field_is_a_race"] is False
+E   assert True is False
+=============================== warnings summary ===============================
+app/routes/auth.py:118
+  /Users/bain/bainluck-dev/discover/backend/app/routes/auth.py:118: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_a_coalition_card_stops_running_as_a_race_7844.py::TestTheFlagReachesTheCard::test_the_coalition_card_tells_the_renderer_it_is_not_a_race
+FAILED tests/test_a_coalition_card_stops_running_as_a_race_7844.py::TestTheFlagReachesTheCard::test_it_agrees_with_the_copy_on_the_same_card
+FAILED tests/test_a_coalition_card_stops_running_as_a_race_7844.py::TestTheClassifierDefault::test_it_is_a_bool_and_not_whatever_it_was_handed
+=================== 3 failed, 22 passed, 1 warning in 2.15s ====================
