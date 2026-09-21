@@ -1576,6 +1576,12 @@ async def _get_team_metadata(
     for team in teams:
         meta = {
             "team_id": team.id,
+            # The join key for ESPN's standings authority (#7663). Not published
+            # in the grid payload — it exists so the clinch overlay can match on
+            # an id instead of a name: ours is `St.Louis Cardinals` and ESPN's is
+            # `St. Louis Cardinals`, and that club is eliminated, so a name join
+            # drops precisely the row the overlay is there to correct.
+            "espn_id": getattr(team, "espn_id", None),
             "name": team.name,
             "short_name": team.abbreviation or team.name.split()[-1] if team.name else None,
             "abbreviation": getattr(team, "abbreviation", None),
@@ -3566,6 +3572,73 @@ def _grid_leg_is_terminal(graded: bool, probability: float) -> bool:
     return graded and (probability <= 0 or probability >= 1.0)
 
 
+#: How long one league's ESPN clinch reading is reused. The grid itself caches
+#: for 3900s, so this only collapses the cold rebuilds of sibling leagues and
+#: dynos; 900s keeps a clinch visible within a quarter hour of ESPN posting it,
+#: which matters in the last week of a season when several land per day.
+_CLINCH_CACHE_TTL = 900
+
+
+async def _espn_clinch_claims(config) -> dict[str, str]:
+    """ESPN's clinch/elimination claims for one league's teams (#7663).
+
+    ``{}`` for every failure mode there is — no sport key, no ESPN mapping, ESPN
+    dark, Redis down, a parse that raises. **This may never be able to blank or
+    badge a grid on its own absence.** The grid rendered without it is exactly
+    the grid we serve today, so failing open costs a correction and failing
+    closed would cost the page.
+
+    Read on the request path deliberately rather than from a task: it runs only
+    on a cold rebuild (hourly per league, ~12s of work already), one bounded
+    call whose client carries its own timeout, and a task would put the ship
+    behind a `bainluck-heavy` release (notice 48) for no latency the reader
+    would ever notice.
+    """
+    sport_key = next((k for k in (getattr(config, "sport_keys", None) or []) if k), None)
+    if not sport_key:
+        return {}
+
+    import json
+
+    cache_key = f"grid:clinch:{sport_key}"
+    rc = None
+    try:
+        from app.tasks.redis_state import get_async_redis_client
+
+        rc = await get_async_redis_client()
+        cached = await rc.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        rc = None
+
+    claims: dict[str, str] = {}
+    try:
+        from app.services.espn_api import ESPNAPIService
+
+        espn = ESPNAPIService()
+        try:
+            fetched = await espn.get_standings_clinch(sport_key)
+        finally:
+            await espn.close()
+        # `None` is ESPN dark and `{}` is ESPN answering "nobody has clinched".
+        # Both leave the grid alone, but only the second may be cached — caching
+        # a dark read would hold the outage for a quarter hour past its end.
+        if fetched is None:
+            return {}
+        claims = fetched
+    except Exception as exc:
+        logger.warning("ESPN clinch read failed for %s: %s", sport_key, exc)
+        return {}
+
+    if rc is not None:
+        try:
+            await rc.set(cache_key, json.dumps(claims), ex=_CLINCH_CACHE_TTL)
+        except Exception:
+            pass
+    return claims
+
+
 def _grid_dedup_rank(entry: dict) -> tuple:
     """Which of one source's several legs for a team+column survives (#7387).
 
@@ -5121,6 +5194,35 @@ async def get_playoff_grid(
     # make_playoffs ~N_spots × 100%. If any column sums to > 2× expected,
     # log a warning. For championship column specifically, reject teams
     # with > 50% single-source probability as likely misclassified.
+
+    # -----------------------------------------------------------------------
+    # 4s. ESPN standings — the clinch/elimination authority
+    # -----------------------------------------------------------------------
+    # D27: authority outranks inference. Until #7663 the only terminal state the
+    # grid could know was a venue grade, so an ungraded market left Boston
+    # priced at 99.7% the day after it clinched and the Twins priced a 0.8%
+    # playoff path after ESPN had eliminated them. A price cannot express the
+    # difference — Boston 99.7% (in) and the Cubs 99.5% (not in) sat in the same
+    # column on the same morning.
+    #
+    # Before normalization so the columns are summed over what is actually
+    # live, and before `propagate_elimination` so a club ESPN eliminates reaches
+    # the pennant and championship cells down the existing ladder rather than a
+    # second copy of it.
+    clinch_claims = await _espn_clinch_claims(config)
+    if clinch_claims:
+        from app.utils.espn_clinch import apply_clinch_overlay
+
+        clinch_rows = [
+            ((team_meta.get(norm_name) or {}).get("espn_id"), row)
+            for norm_name, row in row_by_entity.items()
+        ]
+        clinch_fixes = apply_clinch_overlay(clinch_rows, clinch_claims, config.columns)
+        if clinch_fixes:
+            logger.info(
+                "Playoff grid %s: %d cell(s) set from ESPN standings",
+                config.slug, clinch_fixes,
+            )
 
     from app.utils.playoff_grid import (
         normalize_column_sums, enforce_monotonicity, propagate_elimination,
