@@ -1693,10 +1693,26 @@ def test_C8_one_point_stays_one_point_and_an_empty_book_midpoint_is_withheld(ven
     assert [u["reason"] for u in unpriced] == ["no_supported_price_in_candle"]
 
 
-def test_C9_a_dense_market_spends_nothing_and_every_cell_it_served_is_unchanged(venue, broker):
+def test_C9_a_finely_captured_market_spends_nothing_and_every_cell_it_served_is_unchanged(venue, broker):
+    """The fence: a chart our own polls already draw FINELY asks the venue nothing.
+
+    ⚠️ THIS TEST'S FIXTURE MOVED, AND THE REASON IS THE POINT (#7547 / CERT-3252).
+    It used to seed 100 captures NINETY MINUTES apart and call that dense. Dense
+    it is — five times the thin gate's threshold — but ninety minutes is sixty
+    times the venue's fine interval, so those hundred points cannot carry a
+    market that moves by the minute. Counting rows could not tell the two states
+    apart, and the fill this test asserts we do not spend is exactly the fill
+    such a chart SHOULD spend. That original fixture is not deleted: it is now
+    the specimen of `test_C9b`, where it is the positive case.
+
+    What this fence is really about is the cadence our live poll actually writes
+    — two minutes — so that is what it seeds now. The claim is unchanged and is
+    now true for the right reason: a market we already observe at the venue's own
+    resolution never converts a page view into an outbound venue request.
+    """
     dense_id, oid = 59165500, 219755001
-    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
-                for i in range(100)]
+    captures = [(FROZEN_NOW - timedelta(minutes=2 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(500)]
     _arun(_seed([{"id": dense_id, "source": "kalshi", "external_id": "KXDENSE-26", "name": "Dense market",
                   "outcomes": [{"id": oid, "external_id": "KXDENSE-26-Y", "name": "Yes", "p": 0.40,
                                 "captures": captures}]}]))
@@ -1718,6 +1734,62 @@ def test_C9_a_dense_market_spends_nothing_and_every_cell_it_served_is_unchanged(
     warm_cells = dict(_timeline_points(warm_t))
     assert all(warm_cells[ts] == v for ts, v in _timeline_points(cold_t)), "a captured cell moved"
     assert set(_history_points(cold_h)) <= set(_history_points(warm_h)), "a captured point was displaced"
+
+
+def test_C9b_a_dense_but_coarse_chart_asks_for_fine_history_and_serves_what_comes_back(venue, broker):
+    """#7547 — the state the density fence cannot see, through both real routes.
+
+    C9's original fixture, unchanged: 100 captures ninety minutes apart. That is
+    five times the thin gate's threshold, so `chart_is_thin` is False and the old
+    planner answered `chart_not_thin` — which is why widening the fine retrieval
+    tier from 24h to 144h changed nothing a reader could see. CERT-3252 measured
+    the same shape on production: `/api/futures/40533/history?hours=168` served
+    960 points at `state=cold`, `points_served=0`, `fill=chart_not_thin`, on ten
+    lines whose median capture gap was 3,607 s.
+
+    The assertion is not that a fill was PLANNED. It is that the minute candles
+    the venue answers with reach the served payload — the composition CERT-3252
+    found broken, end to end, through the route a reader actually calls.
+    """
+    coarse_id, oid = 59165501, 219755002
+    ticker = "KXCOARSE-26-Y"
+    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(100)]
+    _arun(_seed([{"id": coarse_id, "source": "kalshi", "external_id": "KXCOARSE-26",
+                  "name": "Coarsely captured market",
+                  "outcomes": [{"id": oid, "external_id": ticker, "name": "Yes", "p": 0.40,
+                                "captures": captures}]}]))
+
+    # Minute candles INSIDE the widened fine tier and outside the old 24h one —
+    # the six-day band this ship exists to reach. Truncated to the minute, which
+    # is the grain the venue's fine tier answers on.
+    def _minutes_ago(minutes: float) -> int:
+        return int((FROZEN_NOW - timedelta(minutes=minutes)).timestamp()) // 60 * 60
+
+    fine_ts = [_minutes_ago(m) for m in (4000, 4001, 4002)]
+    venue.kalshi_mode = "custom"
+    venue.kalshi_custom = {1: {"markets": [{"market_ticker": ticker, "candlesticks": [
+        _candle(ts, "0.30", "0.32") for ts in fine_ts]}]}}
+
+    cold_t, cold_h = _timeline(coarse_id), _history(coarse_id)
+    assert cold_t["venue_history"]["fill"] == "requested", cold_t["venue_history"]
+    assert broker.calls, "a coarse chart planned no fill"
+
+    broker.run_enqueued()
+    warm_h = _history(coarse_id)
+    gained = sorted(set(_history_points(warm_h, oid)) - set(_history_points(cold_h, oid)))
+    assert gained == sorted((_iso(ts), 0.31) for ts in fine_ts), gained
+
+    # The venue was asked at the FINE interval, over a window wider than the 24h
+    # the tier used to stop at — the retrieval half of this ship, stated on the
+    # recorded request rather than inferred from the points that came back.
+    fine_calls = [r for r in venue.requests if r["venue"] == "kalshi" and r["period_interval"] == 1]
+    assert fine_calls, "the fine tier was never requested"
+    assert max(c["end_ts"] - c["start_ts"] for c in fine_calls) > 24 * 3600
+
+    # And the fence still holds for the market next door: captures are never
+    # displaced by the venue points that arrive.
+    assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
 
 
 def test_C10_the_concept_envelope_and_its_cache_are_untouched(venue, broker):

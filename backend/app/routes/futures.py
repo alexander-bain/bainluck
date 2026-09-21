@@ -21,6 +21,7 @@ from app.utils import movement_pool, probability_to_american
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.futures_market_snapshot import dated_movement_points
+from app.utils.generic_market_history import captures_are_coarse
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     MIDPOINT_TRADE_SOURCES,
@@ -4884,8 +4885,24 @@ async def _load_generic_venue_history(
     return venue
 
 
+def _capture_lines(capture_rows: list) -> list[list[datetime]]:
+    """Capture instants grouped PER OUTCOME — one list per line on the chart.
+
+    `captures_are_coarse` must be handed lines and never a pooled stream: ten
+    outcomes captured once an hour merge into a six-minute median gap, which
+    reads as minute data and is ten hourly lines.
+    """
+    by_line: dict[int, list[datetime]] = defaultdict(list)
+    for row in capture_rows:
+        stamp = getattr(row, "captured_at", None)
+        if stamp is not None:
+            by_line[row.outcome_id].append(stamp)
+    return list(by_line.values())
+
+
 def _plan_and_dispatch_generic_history_fill(
-    market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool
+    market, charted_outcomes: list, payload: Optional[dict], chart_is_thin: bool,
+    chart_is_coarse: bool = False,
 ) -> str:
     """Win the claim, spend it, hand it back if the broker refuses. Sync; run off-loop.
 
@@ -4897,7 +4914,8 @@ def _plan_and_dispatch_generic_history_fill(
 
     plan = plan_on_demand_fill(
         market, charted_outcomes, payload,
-        chart_is_thin=chart_is_thin, rc=_request_path_redis(),
+        chart_is_thin=chart_is_thin, chart_is_coarse=chart_is_coarse,
+        rc=_request_path_redis(),
     )
     if not plan.get("enqueue"):
         return str(plan.get("reason"))
@@ -4917,7 +4935,7 @@ def _plan_and_dispatch_generic_history_fill(
 
 async def _consider_generic_history_fill(
     venue: _GenericVenueHistory, market: FuturesMarket, charted_outcomes: list,
-    *, chart_is_thin: bool,
+    *, chart_is_thin: bool, chart_is_coarse: bool = False,
 ) -> None:
     """Ask the background lane for this market's venue history, at most once."""
     if not venue.applicable or venue.state == "unavailable":
@@ -4943,6 +4961,7 @@ async def _consider_generic_history_fill(
         venue.fill = await asyncio.to_thread(
             _plan_and_dispatch_generic_history_fill,
             market_ref, outcome_refs, venue.payload, chart_is_thin,
+            chart_is_coarse,
         )
     # (Load bearing for `scan_mutation_residue.py` Pass B — without a line here
     # the closing paren above plus the bare `noqa` below reproduce
@@ -5147,10 +5166,21 @@ async def get_probability_timeline(
     # often a public GET may turn into an outbound venue request. Read
     # `venue_history.fill_trigger` in the response rather than inferring the rule
     # from the number.
-    venue.thin_basis = f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
+    #
+    # #7547 — OR the captures are DENSE BUT COARSE. Counting rows cannot see a
+    # window full of hourly captures of a market the venue publishes by the
+    # minute; `captures_are_coarse` asks that second question, per line.
+    _thin = len(snapshots) < _VENUE_FILL_THIN_CAPTURES
+    _coarse = captures_are_coarse(
+        _capture_lines(snapshots), window_hours=actual_hours
+    )
+    venue.thin_basis = (
+        f"captures_in_requested_window<{_VENUE_FILL_THIN_CAPTURES}"
+        + (" or captures_coarser_than_fine_tier" if _coarse else "")
+    )
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
-        chart_is_thin=len(snapshots) < _VENUE_FILL_THIN_CAPTURES,
+        chart_is_thin=_thin, chart_is_coarse=_coarse,
     )
 
     # Auto-extend for sparse markets (same logic as /history endpoint). Skipped
@@ -5979,9 +6009,14 @@ async def get_futures_history(
         market, charted_outcomes, _history_field_ids, db
     )
     venue_rows = venue.in_window(cutoff, snapshots, outcome_ids)
+    # #7547 — the same two questions as the timeline route above: too FEW points,
+    # or enough points spaced too COARSELY to carry the movement the venue holds.
     await _consider_generic_history_fill(
         venue, market, charted_outcomes,
         chart_is_thin=len(snapshots) < _EXTEND_TIERS[0][0],
+        chart_is_coarse=captures_are_coarse(
+            _capture_lines(snapshots), window_hours=actual_hours
+        ),
     )
 
     # Auto-extend if sparse

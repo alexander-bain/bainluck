@@ -60,7 +60,7 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 SCHEMA = "generic-market-history"
 
@@ -556,6 +556,107 @@ def unclaimed_instants(
     merged = layer_tiers([[(ts, 0.0) for ts in captures], [(ts, 0.0) for ts in venue]])
     capture_set = set(captures)
     return {ts for ts, _ in merged if ts not in capture_set}
+
+
+#: How much coarser than the venue's fine tier our own captures must be spaced
+#: before a chart that already clears the thin gate is worth one venue request.
+#:
+#: DERIVED, NOT PICKED. The tier a fill would fetch is ONE MINUTE
+#: (`futures_chart_series.KALSHI_FINE_INTERVAL`), so an order of magnitude
+#: coarser than that is a series the fetch can visibly improve. Ten minutes
+#: therefore. What that admits and refuses, on the two cadences this codebase
+#: actually writes: our hourly captures sit at 60× the fine interval and are
+#: firmly IN; a live-polled market's 2-minute captures sit at 2× and are firmly
+#: OUT, so the markets whose lines our own polls already draw honestly never
+#: spend a venue request on getting denser.
+COARSE_CAPTURE_MULTIPLE = 10
+
+#: How much of the reader's window the fine tier must be able to cover before
+#: coarseness is worth acting on.
+#:
+#: The fine tier reaches `FINE_TIER_HOURS` back and no further, so on a long
+#: window a fill improves only the newest sliver of a line the reader sees
+#: compacted to ~80 points — real cost, invisible benefit. At half the window or
+#: better, most of what is on screen improves. This is what keeps the trigger off
+#: the long bands: 1D (24h) and 1W (168h) qualify against a 144h fine tier, 1M
+#: (720h) and ALL do not.
+COARSE_TRIGGER_MIN_WINDOW_COVERAGE = 0.5
+
+
+def captures_are_coarse(
+    capture_times_by_line: Iterable[Sequence[datetime]],
+    *,
+    window_hours: float | None,
+    fine_tier_hours: float | None = None,
+) -> bool:
+    """Is this chart DENSE BUT COARSE — the state the thin gate cannot see?
+
+    `plan_on_demand_fill`'s `chart_is_thin` asks how MANY points a window holds,
+    and refuses a fill when there are plenty. #7547 is the measurement showing
+    that count and resolution are different questions: `futures_markets` 40533
+    served ten of ten outcomes at 97 points each across a week — comfortably past
+    the thin gate — with 0–2 one-cent moves and four lines dead flat, because
+    every one of those points was an HOURLY capture of a market the venue had
+    published 643 one-cent moves on. A chart can be full and still be wrong about
+    the week, and a gate that counts rows can never tell.
+
+    So this asks the other question: are our own captures spaced coarsely enough
+    that the fine tier would say something they cannot? Two bounds, both of which
+    have to hold, because widening what a fill can SEE is widening outbound venue
+    traffic on a public GET:
+
+      * the DENSEST line's median gap is at least `COARSE_CAPTURE_MULTIPLE` ×
+        the fine interval. Densest — the smallest median gap — and not the
+        average, because one abandoned outcome must not make a well-captured
+        market look coarse. Median and not the mean, because a single overnight
+        hole would otherwise speak for a line sampled every minute around it;
+      * the fine tier can cover at least `COARSE_TRIGGER_MIN_WINDOW_COVERAGE` of
+        the window that was asked for.
+
+    🪤 PER LINE, NEVER POOLED. Ten outcomes captured once an hour produce a
+    MERGED stream with a six-minute median gap, which reads as fine data and is
+    not: it is ten coarse lines. That is the same row-versus-line confusion the
+    thin gate's own comment warns about at the call site, and pooling here would
+    reproduce it exactly — with the failure pointing the safe way for the venue
+    and the wrong way for the reader, so nothing would ever look broken.
+
+    :param capture_times_by_line: one sequence of capture instants PER OUTCOME.
+    :param window_hours: the window the reader asked for.
+    :param fine_tier_hours: reach of the fine tier; defaults to the shipped one.
+    """
+    if not window_hours or window_hours <= 0:
+        return False
+
+    from app.utils.futures_chart_series import (
+        FINE_TIER_HOURS,
+        KALSHI_FINE_INTERVAL,
+    )
+
+    reach = FINE_TIER_HOURS if fine_tier_hours is None else fine_tier_hours
+    if not reach or reach <= 0:
+        return False
+    if (reach / window_hours) < COARSE_TRIGGER_MIN_WINDOW_COVERAGE:
+        return False
+
+    coarse_at = KALSHI_FINE_INTERVAL * 60 * COARSE_CAPTURE_MULTIPLE
+    densest: Optional[float] = None
+    for times in capture_times_by_line:
+        stamps = sorted({ts for ts in (times or ()) if ts is not None})
+        if len(stamps) < 2:
+            # One point is not a spacing. A line this sparse is the THIN gate's
+            # case, and answering "coarse" for it here would let this predicate
+            # quietly become a second, looser thin gate.
+            continue
+        gaps = sorted(
+            (stamps[i + 1] - stamps[i]).total_seconds() for i in range(len(stamps) - 1)
+        )
+        median = gaps[len(gaps) // 2]
+        if densest is None or median < densest:
+            densest = median
+
+    if densest is None:
+        return False
+    return densest >= coarse_at
 
 
 def as_snapshot_rows(

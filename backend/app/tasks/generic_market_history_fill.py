@@ -102,6 +102,21 @@ CLAIM_TTL_SECONDS = 15 * 60
 #: lesson). 60 markets × ≤37 requests is far inside either venue's limits.
 HOURLY_FILL_CAP = 60
 
+#: Ceiling on fills started in one clock hour by a chart that is merely COARSE —
+#: dense enough to clear the thin gate, spaced too far apart to carry the venue's
+#: movement (#7547).
+#:
+#: A SEPARATE CEILING BECAUSE THE TWO POPULATIONS ARE NOT THE SAME SIZE. A thin
+#: chart is rare: it takes a market our polls have barely touched. A coarse one
+#: is the NORM — our futures captures are hourly, so on the 1D and 1W bands most
+#: markets on the site now qualify. Sharing one budget would therefore let coarse
+#: fills spend the whole hour most hours, and the charts that would lose the race
+#: are exactly the empty ones #7351 shipped to repair: the reader with NO line at
+#: all would wait behind readers who already have one. That is the starvation a
+#: cap which is also the recall's limit always produces, so the fix is two caps,
+#: not a bigger one. A third of every hour is unspendable by coarseness.
+COARSE_FILL_CAP = HOURLY_FILL_CAP * 2 // 3
+
 #: How old the last ATTEMPT may be before a reader asks again. Under this the
 #: captures cover the difference. Applies to an EMPTY or DEGRADED answer too —
 #: that is the negative cache that stops a venue with nothing to say being asked
@@ -485,6 +500,7 @@ def plan_on_demand_fill(
     payload: dict | None,
     *,
     chart_is_thin: bool,
+    chart_is_coarse: bool = False,
     now: datetime | None = None,
     rc: Any = None,
 ) -> dict:
@@ -498,13 +514,19 @@ def plan_on_demand_fill(
     🔴 A REDIS FAILURE REFUSES THE CLAIM (fail closed), exactly as
     `event_chart_backfill.claim_on_demand_fill` does and for its reason: with no
     Redis there is no dedupe, and the caller is a public GET.
+
+    `chart_is_coarse` is the SECOND way past the density fence, and it exists
+    because counting points cannot see the state #7547 measured: a chart full of
+    HOURLY captures of a market the venue publishes by the minute. It defaults
+    False, so a caller that does not measure resolution behaves exactly as before.
+    See `generic_market_history.captures_are_coarse` for what it may mean.
     """
     stamp = now or datetime.now(timezone.utc)
     if not market_is_fillable(market, outcomes):
         return {"enqueue": False, "reason": "source_has_no_venue_history"}
     age = payload_age_seconds(payload, now=stamp)
     if age is None:
-        if not chart_is_thin:
+        if not chart_is_thin and not chart_is_coarse:
             # A chart our own polls already draw densely does not spend a venue
             # request to get denser. It is the thin chart this ship is for.
             #
@@ -528,7 +550,11 @@ def plan_on_demand_fill(
             return {"enqueue": False, "reason": "settled_and_already_answered"}
         if age <= REFRESH_AFTER_SECONDS:
             return {"enqueue": False, "reason": "answered_recently"}
-        if not chart_is_thin and not (payload or {}).get("outcomes"):
+        if (
+            not chart_is_thin
+            and not chart_is_coarse
+            and not (payload or {}).get("outcomes")
+        ):
             return {"enqueue": False, "reason": "chart_not_thin"}
 
     try:
@@ -541,9 +567,16 @@ def plan_on_demand_fill(
         # Set every time: an INCR whose EXPIRE was lost to a crash would
         # otherwise cap that hour's key forever.
         client.expire(bkey, 7200)
-        if spent > HOURLY_FILL_CAP:
+        # A chart that is thin spends against the full hour; one that is only
+        # coarse stops two thirds in, so an empty chart is never queued behind a
+        # merely-improvable one.
+        if chart_is_thin:
+            if spent > HOURLY_FILL_CAP:
+                client.delete(key)
+                return {"enqueue": False, "reason": "hourly_cap"}
+        elif spent > COARSE_FILL_CAP:
             client.delete(key)
-            return {"enqueue": False, "reason": "hourly_cap"}
+            return {"enqueue": False, "reason": "coarse_hourly_cap"}
         return {"enqueue": True, "reason": "claimed"}
     except Exception:
         logger.warning("generic market history: claim refused for market %s — Redis "
