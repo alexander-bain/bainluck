@@ -222,6 +222,20 @@ def build_props_list(markets: list, cap: int = 14) -> list[dict]:
     return out[:cap]
 
 
+# #7782: the edition years a market name claims, as ints. Empty when it names none.
+#
+# A bare "FIFA World Cup Winner" names no edition and must keep resolving to the
+# configured one — #205 requires that shape to stay live, and it is what two of the
+# three correctly-derived production rows look like. So an EMPTY result means
+# "no claim", never "claims nothing matches", and the caller reads it that way.
+_EDITION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _named_editions(name: str | None) -> set[int]:
+    """The 4-digit edition years named in a market name (`{2030}`), or an empty set."""
+    return {int(y) for y in _EDITION_YEAR_RE.findall(name or "")}
+
+
 def derive_soccer_concept(
     external_id: str | None,
     name: str | None,
@@ -239,14 +253,23 @@ def derive_soccer_concept(
             return None
     if not is_wc_winner_field_market(name):
         return None
-    # Only one tournament today; when more are added, disambiguate on winner_name_re.
+    named = _named_editions(name)
     for cfg in SOCCER_TOURNAMENTS.values():
-        if cfg.winner_name_re.search(name or ""):
-            return {
-                "key": f"event:soccer:{cfg.slug}",
-                "name": cfg.display,
-                "domain": "soccer",
-            }
+        if not cfg.winner_name_re.search(name or ""):
+            continue
+        # #7782: `winner_name_re` is edition-blind (`/world\s*cup/i`), so before this
+        # guard EVERY World Cup winner field mapped to the one configured edition —
+        # "2030 FIFA World Cup Champion" (KXWC-30, open) stamped
+        # `event:soccer:world-cup-2026` and drew "Part of: 2030 FIFA World Cup ->"
+        # pointing at the SETTLED 2026 page Spain won. The label reads from the market
+        # name and the href from the key, so the mismatch only shows on arrival.
+        if named and cfg.edition not in named:
+            continue
+        return {
+            "key": f"event:soccer:{cfg.slug}",
+            "name": cfg.display,
+            "domain": "soccer",
+        }
     return None
 
 
