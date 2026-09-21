@@ -2974,7 +2974,18 @@ def shape_golf_schedule(raw: dict, now_str: str) -> dict:
             if t.get("status") and t.get("status") != "completed":
                 current_event_id = t.get("event_id")
                 break
-            if t.get("end_date") and t["end_date"] >= now_str:
+            # #7690: this rung used to ask only "has it not finished yet", and
+            # the list is chronological — so the first UNFINISHED tournament is
+            # the NEXT one, and between tournaments the next event was always
+            # badged "THIS WEEK". On 2026-09-20 that put the badge on a
+            # Presidents Cup starting 2026-09-24. A tournament is current only
+            # while the day sits INSIDE its window; no break when it does not,
+            # because a future event must not stop the scan.
+            if (
+                t.get("start_date")
+                and t.get("end_date")
+                and t["start_date"] <= now_str <= t["end_date"]
+            ):
                 current_event_id = t.get("event_id")
                 break
 
