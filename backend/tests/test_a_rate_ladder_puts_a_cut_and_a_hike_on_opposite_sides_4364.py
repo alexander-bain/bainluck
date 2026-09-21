@@ -224,6 +224,37 @@ def test_the_venues_own_word_for_hold_is_the_zero_rung():
     assert max(points, key=lambda p: p["probability"])["label"] == "Fed maintains rate"
 
 
+def test_a_two_dimensional_rate_market_groups_by_the_rate_move():
+    # The worst card in the live population, and the two defects compounding.
+    # "October 2026 Fed Combo · Rate and Dissents" crosses a rate move with a
+    # dissent count. `25bp` defeated the value parser, so the only number each
+    # label yielded was the DISSENT COUNT — and ">0" scored 0 — which drew a
+    # CUT, a HOLD and a HIKE as three bars at the same coordinate zero, with the
+    # three "Dissents: 0" outcomes absent entirely:
+    #
+    #     BEFORE   0.0  Rate: 25bp hike, Dissents: >0
+    #              0.0  Rate: No change, Dissents: >0
+    #              0.0  Rate: 25bp cut,  Dissents: >0
+    #
+    # Two rungs may share a value (#4226), and here they SHOULD: the pair at each
+    # value is the two dissent variants of one rate move.
+    labels = [
+        "Rate: 25bp hike, Dissents: 0",
+        "Rate: 25bp hike, Dissents: >0",
+        "Rate: No change, Dissents: >0",
+        "Rate: No change, Dissents: 0",
+        "Rate: 25bp cut, Dissents: >0",
+        "Rate: 25bp cut, Dissents: 0",
+    ]
+    points = _ladder("October 2026 Fed Combo · Rate and Dissents", [(x, 1 / 6) for x in labels])
+
+    assert len(points) == 6, "every outcome earns a rung"
+    assert [p["value"] for p in points] == [-25.0, -25.0, 0.0, 0.0, 25.0, 25.0]
+    # Grouped by the rate move, not by the dissent count.
+    for lo, hi, expected in ((0, 2, "cut"), (2, 4, "No change"), (4, 6, "hike")):
+        assert all(expected in p["label"] for p in points[lo:hi]), points[lo:hi]
+
+
 def test_an_album_title_is_not_a_monetary_policy_decision():
     # The signing vocabulary is POLICY VERBS and excludes the ordinary-English
     # direction words. "Top U.S. Selling Vinyl Album: 2026" is live, and it
