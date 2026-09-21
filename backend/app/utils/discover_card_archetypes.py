@@ -62,6 +62,32 @@ _COMPACT_VALUE_RE = re.compile(
 #: admits, and the only label shape allowed to borrow a comparator below.
 _GLUED_BPS_RE = re.compile(r"\d(?:bps|bp)\b", re.I)
 
+# #7778 — A MINUS IN FRONT OF A NUMBER IS A SIGN; A MINUS BETWEEN TWO NUMBERS IS
+# A RANGE. `_COMPACT_VALUE_RE`'s value group starts at `\d`, so the sign was
+# invisible to it and the negative half of a mixed-sign axis folded onto the
+# positive half: the live "South Africa GDP growth rate QoQ" ladder drew
+# "Above -0.2%" and "Above 0.2%" at the SAME coordinate, so its cumulative
+# prices read 72.5 -> 81.5 -> 62.5 -> 90.5 -> 40.5 and the card said the chance
+# of growth above 0.4% exceeded the chance of growth above 0.0%. Same defect as
+# #7081, whose `re.findall(r'[\d.]+', label)` put 42 points of probability on
+# deflation — a second module, never a regression of the first.
+#
+# This is matched against the text ENDING at the number's first digit, and it is
+# deliberately the narrow form, because the same character separates the two
+# halves of a range and #4364's lesson is that widening this regex re-reads a
+# whole population. Two conditions, both required:
+#
+#   * the sign ABUTS its digits (an optional currency mark aside) — so
+#     "September 15 - 30, 2026" and "$100 - $200" keep their separator; and
+#   * what precedes the sign is the start of the label, a space, or an opening
+#     bracket/comparator — so a number ENDING the previous token keeps its
+#     separator ("7-8m", "160-170m", "Hike 1-25bps", "$1.00-$1.10T") and a
+#     letter ending it does too ("COVID-19", "F-150", "Claude Opus 4-6").
+#
+# The unsigned population is therefore untouched by construction: a label with
+# no minus in front of a digit cannot reach this branch at all.
+_LEADING_SIGN_RE = re.compile(r"(?:^|[\s(\[<>=:,])[-−]\$?$")
+
 
 def _compact_value_thresholds(label: str) -> list[tuple[float, str, str]]:
     """Parse compact finance/range labels such as "$1.5T-$2.0T"."""
@@ -75,10 +101,13 @@ def _compact_value_thresholds(label: str) -> list[tuple[float, str, str]]:
             "b": 1_000_000_000,
             "t": 1_000_000_000_000,
         }.get((suffix or "").lower(), 1)
-        if not dollar and not suffix and 2020 <= value <= 2099:
+        negative = bool(_LEADING_SIGN_RE.search(label[: match.start(2)]))
+        if not negative and not dollar and not suffix and 2020 <= value <= 2099:
+            # The bare-year guard reads an UNSIGNED number: "2026-27 Stanley Cup"
+            # is a season, "-2026" is a quantity. A signed number is never a year.
             continue
         unit = f"{dollar}{(suffix or '').upper()}".strip()
-        values.append((value * multiplier, unit, "exact"))
+        values.append((-value * multiplier if negative else value * multiplier, unit, "exact"))
     return values
 
 
@@ -191,7 +220,7 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
     compact = _compact_value_thresholds(label)
     if compact:
         value, unit, direction = compact[0]
-        if value < _MAX_LADDER_SCALE_SPREAD:
+        if abs(value) < _MAX_LADDER_SCALE_SPREAD:
             # A bare leading number in a range label inherits the label's suffix.
             value *= _suffix_multiplier(label)
         if direction == "exact" and _GLUED_BPS_RE.search(label):
@@ -550,7 +579,11 @@ def _threshold_points(
             resolved = (0.0, "", "exact")
             is_zero_rung = True
         value, unit, direction = resolved
-        if signed_axis and _LADDER_FALL_RE.search(outcome_name):
+        # #7778 — a label that carries its own minus is ALREADY in signed
+        # coordinates ("Cut to -0.25%" is not +0.25 waiting to be flipped), so
+        # only a MAGNITUDE is negated by a policy verb. Without the `>= 0` the
+        # two mechanisms cancel and the rung lands back on the wrong half.
+        if signed_axis and value >= 0 and _LADDER_FALL_RE.search(outcome_name):
             # `-0.0` is a real float and it reaches the payload: the live "NYC
             # population change" ladder opens on "Decrease 0-0.99%", whose
             # magnitude is 0. Normalise it so no served rung is negative zero.
