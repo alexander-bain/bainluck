@@ -170,10 +170,16 @@ describe("a duel names both sides", () => {
 });
 
 describe("a label that names only the role is not put in a sentence", () => {
+  // 57, not the 56 this asserted until #7716: `formatShareProbability` used to
+  // round `p * 100` and now defers to `renderedPercent`, which recovers the
+  // quoted decimal first — and 0.565 is one of the four wire values #3867
+  // measured as moving. The page's own hero has printed 57 since #6844, so this
+  // is the sentence catching up to the page it describes. The LABEL, which is
+  // what this test is about, is untouched.
   it("the US Open field says 'leads at', never 'leads the Winner at'", () => {
     expect(buildEventConceptShareCopy(US_OPEN)).toEqual({
-      title: "US Open Men's Singles Winner: Alexander Zverev 56%, Ben Shelton 43%",
-      description: "Alexander Zverev 56%, Ben Shelton 43%.",
+      title: "US Open Men's Singles Winner: Alexander Zverev 57%, Ben Shelton 43%",
+      description: "Alexander Zverev 57%, Ben Shelton 43%.",
     });
   });
 

@@ -75,6 +75,7 @@ import {
   type TournamentShareBoard,
   type TournamentShareSource,
 } from "@/lib/tournamentShareMeta";
+import { ABOVE_NINETY_NINE_PERCENT } from "@/lib/probabilityDisplay";
 import { formatShareProbability } from "@/lib/share";
 
 /** The element `ImageResponse` was constructed with. `mock`-prefixed for jest hoisting. */
@@ -292,17 +293,29 @@ describe("#6149 the over-reach control — a lopsided draw is untouched", () => 
 describe("#6149 the threshold is the formatter's own boundary", () => {
   /**
    * The one assertion that keeps `PRINTS_AS_CERTAIN` honest. The constant is
-   * 0.995 because that is where `formatShareProbability`'s `Math.round` turns
-   * over — not because 0.995 is a nice number. Asserting the formatter directly
-   * means this suite fails if the rounding ever changes, rather than the module
-   * silently withholding the wrong band.
+   * 0.995 because that is where `formatShareProbability` turns over — not
+   * because 0.995 is a nice number. Asserting the formatter directly means this
+   * suite fails if the rounding ever changes, rather than the module silently
+   * withholding the wrong band.
+   *
+   * #7716 IS THE DAY THAT HAPPENED. The formatter used to print "100%" from
+   * 0.995 up and now prints the boundary marker `probabilityDisplay` owns. The
+   * CONSTANT does not move: 0.995 is still the exact price at which a plain
+   * rounded integer stops being available, so the withheld set below is
+   * byte-identical and this ship's band is untouched. Pinned against the
+   * exported constant rather than a typed-out string, because that spelling has
+   * one home and a literal here would be a second copy of it.
+   *
+   * ⚠️ Whether the band should still withhold now that ">99% over a live final"
+   * is a TRUE sentence is #6149's question to re-open, not #7716's to answer in
+   * passing. Named residue; the behaviour is deliberately unchanged.
    */
-  it("0.995 prints 100% and 0.994 prints 99%", () => {
-    expect(formatShareProbability(0.995)).toBe("100%");
+  it("0.995 is where the formatter stops printing a plain integer", () => {
+    expect(formatShareProbability(0.995)).toBe(ABOVE_NINETY_NINE_PERCENT);
     expect(formatShareProbability(0.994)).toBe("99%");
   });
 
-  it("the withheld set is exactly the set that would print 100% or more", () => {
+  it("the withheld set is exactly the set at or above the boundary", () => {
     const withheld = (fraction: number) =>
       tournamentShareFacts({
         title: "T",

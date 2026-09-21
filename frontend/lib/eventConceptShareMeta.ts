@@ -67,6 +67,7 @@
  * specimen.
  */
 
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { formatShareProbability, truncateShareText } from "@/lib/share";
 
@@ -269,22 +270,48 @@ function pairedDuel(priced: PricedCompetitor[]): PricedCompetitor[] {
   if (first === null || second === null) return priced;
   if (first >= 100) return [];
 
+  // #7716 — THE UNDERDOG'S SIDE GETS THE BOUNDARY RULE TOO.
+  //
+  // This branch prints a percent WITHOUT going back through
+  // `formatShareProbability`, on purpose: the pair's integers are decided
+  // together or they sum to 101. But a hand-built `${second}%` re-acquired the
+  // half of the defect that has nothing to do with the sum — an underdog served
+  // at 0.004 rounds to 0 and printed "0%" beside a favourite at "100%", which is
+  // the "impossible" render UX-P046 refuses, arriving by the one route that
+  // formatter no longer covers.
+  //
+  // `rendered` is the option that exists for exactly this: it overrides the
+  // INTEGER and leaves the rule on the PROBABILITY, so the pairing's arithmetic
+  // survives whole and the marker is decided by the served price. The favourite
+  // cannot reach the upper marker from here — `first >= 100` withheld the board
+  // two lines up — so this only ever adds the `<` end.
   return [
-    { ...priced[0], probability: `${first}%` },
-    { ...priced[1], probability: `${second}%` },
+    { ...priced[0], probability: formatProbabilityPercent(priced[0].fraction, { rendered: first }) },
+    { ...priced[1], probability: formatProbabilityPercent(priced[1].fraction, { rendered: second }) },
   ];
 }
 
 /**
  * The lowest price that PRINTS as "100%" (#6029).
  *
- * `formatShareProbability` rounds, so the reader-visible claim turns over one
- * rounding step below 1.0: 0.995 prints "100%" and 0.994 prints "99%". The
- * constant is therefore the formatter's own boundary rather than a taste
- * judgement about what counts as "nearly certain", and
+ * The reader-visible claim turns over one rounding step below 1.0: 0.995 is the
+ * first price at which the formatter stops printing a plain integer, and 0.994
+ * still prints "99%". The constant is therefore the formatter's own boundary
+ * rather than a taste judgement about what counts as "nearly certain", and
  * `eventConceptCertaintyUnfurl6029.test.tsx` asserts both sides of it against
- * `formatShareProbability` itself — if the formatter ever stops rounding, that
- * test fails rather than this silently drifting.
+ * `formatShareProbability` itself — if the formatter ever moves, that test fails
+ * rather than this silently drifting.
+ *
+ * #7716 IS THAT TEST PAYING OUT. `formatShareProbability` printed "100%" from
+ * 0.995 up when this was written and now prints `probabilityDisplay`'s upper
+ * boundary marker instead. THE CONSTANT AND THE WITHHELD SET ARE UNCHANGED —
+ * 0.995 is still exactly where a plain rounded integer stops being available, so
+ * this ship's band did not move a single price. Only the sentence above did, and
+ * it moved because the assertion caught it.
+ *
+ * ⚠️ Named residue: the marker makes "leads at >99% over a live market" a TRUE
+ * sentence, so whether this band should withhold AT ALL is now a live question —
+ * and it is #6029's to re-open, not #7716's to answer in passing.
  */
 const PRINTS_AS_CERTAIN = 0.995;
 

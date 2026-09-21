@@ -2,6 +2,7 @@
 // here) moved to `lib/siteUrl.ts` so the site names ONE host. A share link is
 // the single most load-bearing caller — it is the URL a stranger actually
 // receives — so it must not be the one that still says the apex.
+import { formatProbabilityPercent } from "./probabilityDisplay";
 import { getSiteUrl } from "./siteUrl";
 
 export type ShareContentType = "event" | "futures" | "grid";
@@ -36,11 +37,83 @@ export function buildDiscoverShareUrl(
   });
 }
 
+/**
+ * The percentage a SHARE surface prints — the sentence under a pasted link, and
+ * the number the PICTURE of that link draws.
+ *
+ * ═══ #7716 — THE PAGE AND THE PICTURE OF THE PAGE DISAGREED ═══
+ *
+ * This was a bare `Math.round(p * 100)`: the rule the rest of the site has
+ * stopped using twice. Measured on production 2026-09-21, both ends live in the
+ * same minute:
+ *
+ *   /sport/baseball/mlb/team/baltimore-orioles-mlb   (championship_path 0.004)
+ *     og:description  "Baltimore Orioles: 0% to win the championship."
+ *     the page        "CHAMPIONSHIP  <1%"                                (#7710)
+ *
+ *   /futures/400   (La Liga Winner, status `open`, Barcelona at 0.995)
+ *     og:title        "Barcelona 100% - La Liga Winner"
+ *     the card        a 96px "100%" above a bar clamped to 97 — the picture
+ *                     contradicting its own number inside one frame
+ *
+ * Three decisions were being retaken here rather than deferred to, and all three
+ * are already owned one import away:
+ *
+ *  1. UX-P046's boundary rule — "rounding may never move a probability across a
+ *     boundary it is not on". 6,799 outcomes on open markets sit in (0, 0.005)
+ *     and 1,904 in [0.995, 1); 120 and 891 of those are the rank-1 leader a
+ *     share sentence actually NAMES (db-query, 2026-09-21).
+ *  2. #3867's rounding contract — `renderedPercent` recovers the quoted decimal
+ *     before rounding and this did not, so the four wire values that ruling
+ *     measured printed a point away from the page they depict. All four are
+ *     live: 0.145 / 0.285 / 0.565 / 0.575 hold 1,715 outcomes and 388 leaders
+ *     on open markets today.
+ *  3. Nothing new. `probabilityParts` already composes 1 and 2, and #6849 took
+ *     exactly this trade for the two-competitor case in `eventConceptShareMeta`
+ *     — "leaving the formatter's here would trade a sum defect for an unfurl
+ *     that disagrees with the page it depicts". This is that sentence, whole.
+ *
+ * ═══ WHAT DOES NOT MOVE ═══
+ *
+ * **An exact 0 still returns `null`, and it is load-bearing.** It is not "0%"
+ * and never was: it is the signal every caller reads to drop the number from the
+ * sentence rather than print a zero into it. `pricedCompetitors` sheds the 199
+ * golfers behind a settled winner with it, `boardLeader` and `futuresBoardPrice`
+ * withhold a whole unpriced board on it, and `/futures/[id]`'s picture stopped
+ * drawing a 96px dash because of it (#6127). Routing an exact 0 through
+ * `formatProbabilityPercent` would print "0%" — right for that function, whose
+ * callers keep their own em-dash rule, and wrong for every caller of this one.
+ *
+ * An exact 1 still prints "100%". That IS a boundary; the rule above only
+ * refuses to claim one a value is not on.
+ *
+ * ═══ THE WIDEST STRING IS UNCHANGED, WHICH IS WHY THE FIXED BOXES ARE SAFE ═══
+ *
+ * A share percent is drawn into a slot Satori will not reflow — 92px in
+ * `UnfurlCard`'s hero row, 96px on `/futures/[id]`'s card. `<1%` is three glyphs
+ * against `0%`'s two, and `>99%` is four against `100%`'s four, so the longest
+ * string this can now produce is the one those slots have always drawn.
+ * `shareBoundaryPercent7716.test.tsx` renders both cards at the two boundaries
+ * and pins that, rather than leaving it as an argument about glyph widths.
+ *
+ * A non-finite value now returns `null` instead of "Infinity%". `NaN` already
+ * did; `Infinity` reached `Math.round` and printed. No caller wanted either.
+ *
+ * ⚠️ The two boundary strings are deliberately NOT spelled in this file.
+ * `probabilityDisplay.ts` is their one home and its suite walks `lib/` and
+ * `components/` to keep it that way — a second spelling is exactly how the copy
+ * this deletes came to exist.
+ */
 export function formatShareProbability(probability: number | null | undefined): string | null {
-  if (probability === null || probability === undefined || Number.isNaN(probability) || probability === 0) {
+  if (
+    probability === null ||
+    probability === undefined ||
+    !Number.isFinite(probability) ||
+    probability === 0
+  ) {
     return null;
   }
-  return `${Math.round(probability * 100)}%`;
+  return formatProbabilityPercent(probability);
 }
 
 /**
