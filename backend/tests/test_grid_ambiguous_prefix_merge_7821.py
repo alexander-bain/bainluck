@@ -111,15 +111,19 @@ def test_no_ticker_keeps_todays_answer():
 
 
 def test_ticker_matching_no_candidate_keeps_todays_answer():
-    """`TXAM` is the venue's Texas A&M; ours is abbreviated `TA&M`.
+    """A suffix that matches no candidate may only return `candidates[0]`.
 
-    They do not compare equal, so the anchor declines and the known-wrong
-    length answer stands. Recorded deliberately: this is the one live NCAAB
-    family #7821 does NOT repair, and a later fix for it must change this
-    assertion on purpose rather than discover it.
+    #7821 left `TXAM` (the venue's Texas A&M, against our `TA&M`) declining
+    here, and recorded that "a later fix must change this assertion on purpose
+    rather than discover it". #7829 is that fix: `TXAM` is now a declared alias
+    and Texas A&M resolves — see `test_grid_ticker_suffix_alias_7829.py`.
+
+    So the refusal is re-pinned on a suffix that is genuinely unknown, which is
+    the property #7821 was asserting. `TAMU` is deliberately a near-miss of the
+    real `TAM`: it is the shape a fuzzy comparison would wrongly admit.
     """
     txam = ["texas a&m-cc islanders", "texas a&m aggies"]
-    assert _resolve("texas a&m", txam, "TXAM") == "texas a&m-cc islanders"
+    assert _resolve("texas a&m", txam, "TAMU") == "texas a&m-cc islanders"
 
 
 def test_ticker_matching_two_candidates_keeps_todays_answer():
@@ -185,8 +189,10 @@ def test_odds_api_external_ids_contribute_no_anchor():
 
 def test_canon_ticker_folds_case_and_punctuation():
     assert _canon_ticker("TA&M") == _canon_ticker("ta&m") == "TAM"
-    # ...and the venue's own spelling of the same school does not fold onto it,
-    # which is exactly why `texas a&m` is still unrepaired above.
+    # ...and the venue's own spelling of the same school does not fold onto it.
+    # Canonicalisation is punctuation-and-case only, on purpose: `TXAM` and
+    # `TA&M` are one id spelled two ways, and closing that gap is the job of the
+    # declared alias map (#7829), never of a looser _canon_ticker.
     assert _canon_ticker("TXAM") != _canon_ticker("TA&M")
     assert _canon_ticker("M-OH") == "MOH"
     assert _canon_ticker(None) == ""
