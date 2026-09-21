@@ -186,6 +186,15 @@ struct TotalPointsSpectrumView: View {
         MarketMapRail.drawnFullTotalRungs(
             outcomeNames: fullGameTotals.map(\.outcomeName),
             thresholds: fullGameTotals.map(\.threshold),
+            // #7737 — the map's own rule, called rather than restated, so this
+            // card asks about the same six rungs the map drew. A different
+            // fallback here would make the "already said once" suppression
+            // disagree with what is on screen.
+            overProbabilities: fullGameTotals.map {
+                MarketMapRail.ladderWindowPrice(
+                    overProbability: $0.overProbability, probability: $0.probability
+                )
+            },
             settledTotal: MarketMapRail.fullTotalSettledScore(
                 isDone: isDone,
                 scoreboardCountsTheSportUnit: countsTheUnit,

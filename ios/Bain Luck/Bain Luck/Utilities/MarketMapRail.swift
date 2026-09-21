@@ -940,6 +940,91 @@ enum MarketMapRail {
         return start ..< (start + limit)
     }
 
+    /// The window a totals ladder draws BEFORE there is a result: centred on the
+    /// first line the market does not expect to be cleared.
+    ///
+    /// #7737 — THE SAME FAULT ``settledLadderWindow`` WAS BUILT FOR, ON THE ARM
+    /// ABOVE IT. That function's doc states the argument in terms that never
+    /// mentioned the final score:
+    ///
+    /// > The card takes the LOWEST six lines, and … the lowest lines are the
+    /// > least informative ones
+    ///
+    /// which is as true at kickoff as it is at the whistle. #3823 fixed the
+    /// window it was looking at and left its twin inside the `guard let` of
+    /// ``totalLadderWindow(sortedThresholds:sortedOverProbabilities:settledTotal:limit:)``.
+    /// Photographed on `origin/master` `e10feec93` (`artifacts-native-283/n283-event-mid.png`):
+    /// a card headed `Projected total points` / `PROJECTION 46.5` drawing
+    /// `Over 27.5 · 29.5 · 30.5 · 31.5 · 33.5 · 35.5` — six lines the market had
+    /// all but priced out, none of them reaching the number printed above them.
+    ///
+    /// Where a settled ladder's step is the first line the FINAL did not clear,
+    /// a pre-game ladder's is the first line the MARKET does not expect to be
+    /// cleared. Measured on `/api/events/14780545/game-markets` 2026-09-21, 19
+    /// rungs `27.5 … 69.5` crossing 0.5 at `47.5`, this returns `6 ..< 12` —
+    /// `45.5 · 46.5 · 47.5 · 48.5 · 49.5 · 50.5`, straddling both the crossing
+    /// and the 46.5 the card prints.
+    ///
+    /// 🔴 NOT A HIDING RULE, for the same reason the settled one is not: six of
+    /// nineteen before and after. Only WHICH six moves.
+    ///
+    /// The centring and the clamp are ``settledLadderWindow``'s, deliberately
+    /// character for character, so the two ends need no special case: a ladder
+    /// the market expects to clear entirely shows the top `limit` rows, and one
+    /// it expects to clear none of shows the bottom `limit` — the old behaviour,
+    /// reached as a limit case rather than chosen as the default.
+    ///
+    /// - Parameters:
+    ///   - sortedOverProbabilities: p(over) per rung, ASCENDING BY LINE and
+    ///     aligned to the rungs one-for-one. `nil` where a rung carries no
+    ///     price. Alignment is the whole contract — a probability array that
+    ///     drifted out of step with the lines would centre the window on a rung
+    ///     the reader never sees, which is #7533's fault class in a new place.
+    ///     ``drawnFullTotalRungs`` builds it from the sort rather than beside it
+    ///     so it cannot drift.
+    ///   - limit: how many rows the card draws.
+    static func pregameLadderWindow(
+        sortedOverProbabilities: [Double?], limit: Int
+    ) -> Range<Int> {
+        let count = sortedOverProbabilities.count
+        guard limit > 0 else { return 0 ..< 0 }
+        guard count > limit else { return 0 ..< count }
+        // No priced rung anywhere means no opinion to centre on, so the card
+        // renders exactly as it did before this function existed. Stated as its
+        // own arm because the `?? 1` below would otherwise read every unpriced
+        // ladder as "the market expects all of it" and silently show the top six.
+        guard sortedOverProbabilities.contains(where: { $0 != nil }) else {
+            return 0 ..< limit
+        }
+        let firstUnlikely = sortedOverProbabilities.firstIndex {
+            guard let p = $0 else { return false }
+            return p < 0.5
+        } ?? count
+        let ideal = firstUnlikely - limit / 2
+        let start = Swift.max(0, Swift.min(count - limit, ideal))
+        return start ..< (start + limit)
+    }
+
+    /// The price a totals rung hands the WINDOW, which is not the price it
+    /// draws.
+    ///
+    /// #7737 — a ladder ROW falls back to `0.5` when a rung carries no price,
+    /// because a bar has to be some length. The window must not inherit that
+    /// fallback: a fabricated `0.5` is not `< 0.5`, so it reads as "the market
+    /// expects this line to clear", and — worse — it is non-nil, so an entirely
+    /// unpriced ladder would slip past
+    /// ``pregameLadderWindow(sortedOverProbabilities:limit:)``'s no-opinion arm
+    /// and jump to the TOP six instead of rendering as it always has. Absent
+    /// stays absent all the way to the window.
+    ///
+    /// Both cards call this rather than writing the coalesce out twice. They
+    /// have to agree about which six rungs were drawn (#4782), and one
+    /// expression copied into two files is the thing that drifts — it is the
+    /// same argument `totalRungThreshold` exists for one section up.
+    static func ladderWindowPrice(overProbability: Double?, probability: Double?) -> Double? {
+        overProbability ?? probability
+    }
+
     // MARK: - What the full-game totals map has ALREADY shown the reader (#4782)
 
     /// One rung of a full-game totals ladder: where it sits in the array it was
@@ -987,17 +1072,27 @@ enum MarketMapRail {
         .sorted { $0.threshold < $1.threshold }
     }
 
-    /// The slice of an ascending ladder a card draws: the lowest `limit` lines
-    /// before a result, and the lines the result actually decided after one.
+    /// The slice of an ascending ladder a card draws: the lines the market
+    /// thinks the game is poised on before a result, and the lines the result
+    /// actually decided after one.
     ///
     /// The `nil` arm is the expression that used to sit inline in
     /// `MarketMapView.totalMapCard`; naming it is what lets the Projected
     /// scoring card ask the same question without copying it.
+    ///
+    /// #7737 — that arm used to be `0 ..< limit`, the LOWEST `limit` lines, and
+    /// ``pregameLadderWindow(sortedOverProbabilities:limit:)`` carries the
+    /// argument for why it is not.
     static func totalLadderWindow(
-        sortedThresholds: [Double], settledTotal: Int?, limit: Int
+        sortedThresholds: [Double],
+        sortedOverProbabilities: [Double?],
+        settledTotal: Int?,
+        limit: Int
     ) -> Range<Int> {
         guard let settledTotal else {
-            return 0 ..< Swift.min(limit, sortedThresholds.count)
+            return pregameLadderWindow(
+                sortedOverProbabilities: sortedOverProbabilities, limit: limit
+            )
         }
         return settledLadderWindow(
             sortedThresholds: sortedThresholds, finalTotal: settledTotal, limit: limit
@@ -1010,15 +1105,28 @@ enum MarketMapRail {
     /// ``TotalPointsSpectrumView`` asks it what the reader has already been
     /// shown. One composition, called twice, so the two cards cannot come to
     /// different conclusions about the same page.
+    /// - Parameter overProbabilities: p(over) in the OUTCOME array's own order,
+    ///   the same indexing as `outcomeNames` and `thresholds`. It is re-ordered
+    ///   THROUGH the sort below, via each rung's own `index`, rather than sorted
+    ///   separately — #7737's window is meaningless if the prices it reads
+    ///   belong to different lines than the ones it returns (#7533's fault
+    ///   class: two slices of one payload sorted on two different orderings).
+    ///   A short array yields `nil` for the rungs past its end.
     static func drawnFullTotalRungs(
         outcomeNames: [String],
         thresholds: [Double?],
+        overProbabilities: [Double?],
         settledTotal: Int?,
         limit: Int
     ) -> [TotalRung] {
         let all = fullTotalRungs(outcomeNames: outcomeNames, thresholds: thresholds)
         let window = totalLadderWindow(
-            sortedThresholds: all.map(\.threshold), settledTotal: settledTotal, limit: limit
+            sortedThresholds: all.map(\.threshold),
+            sortedOverProbabilities: all.map {
+                $0.index < overProbabilities.count ? overProbabilities[$0.index] : nil
+            },
+            settledTotal: settledTotal,
+            limit: limit
         )
         return Array(all[window])
     }

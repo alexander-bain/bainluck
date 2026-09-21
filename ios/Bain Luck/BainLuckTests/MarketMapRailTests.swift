@@ -768,15 +768,30 @@ final class MarketMapRailTests: XCTestCase {
                        + "the window had to move and not just the wording")
     }
 
-    /// 🔴 BOTH DIRECTIONS, and the reason this is not a hiding rule: an UNSETTLED
-    /// card is untouched. It keeps `prefix(limit)` and it keeps its percentages,
-    /// because before the game the lowest lines are the ones a reader wants.
-    func testAnUnsettledCardIsUntouched() {
-        // The call site passes `0 ..< min(limit, count)` when there is no final;
-        // this pins the count that window yields against the same specimen.
-        XCTAssertEqual(min(6, specimen15305475.count), 6)
+    /// 🔴 BOTH DIRECTIONS. An UNSETTLED card keeps its percentages — no rung
+    /// grows a verdict before there is a result to grade it against.
+    ///
+    /// #7737 CORRECTED THE SECOND HALF OF THIS TEST'S ORIGINAL CLAIM. It read
+    /// "an unsettled card is untouched … it keeps `prefix(limit)`, because
+    /// before the game the lowest lines are the ones a reader wants". The last
+    /// clause was never measured and is false: before the game the lowest lines
+    /// are the ones the market has already priced out. The pre-game window now
+    /// centres the same way the settled one does
+    /// (``testThePregameWindowCentresOnTheMarketsOwnCrossing``). What survives
+    /// unchanged, and is what this test is now for, is the GRADING: still no
+    /// verdicts, still prices.
+    func testAnUnsettledCardKeepsItsPricesAndGradesNothing() {
         XCTAssertNil(MarketMapView.LadderRow(label: "Over 2.5", prob: 0.99, color: .purple).result,
                      "a row with no verdict prints its price, which is every pre-game row")
+        // The settled arm is the only one that can produce a verdict, and it is
+        // reached only when a final exists.
+        let pregame = MarketMapRail.totalLadderWindow(
+            sortedThresholds: specimen15305475,
+            sortedOverProbabilities: Array(repeating: 0.99, count: specimen15305475.count),
+            settledTotal: nil,
+            limit: 6
+        )
+        XCTAssertEqual(pregame.count, 6, "six rungs before a result, as after one")
     }
 
     /// The two ends, which the centred window has to handle without a special
@@ -993,6 +1008,212 @@ final class MarketMapRailTests: XCTestCase {
             let away = MarketMapRail.sideFinalMargin(gameMargin: margin, isHome: false)
             XCTAssertEqual(MarketMapRail.sideFinalMargin(gameMargin: away, isHome: false), margin)
             XCTAssertEqual(MarketMapRail.sideFinalMargin(gameMargin: margin, isHome: true), margin)
+        }
+    }
+
+    // MARK: - The PRE-GAME totals window (#7737)
+
+    /// The specimen, read off production 2026-09-21:
+    /// `GET /api/events/14780545/game-markets` (New York Giants @ Los Angeles
+    /// Rams), the 19 full-game `Over N points scored` rungs, ascending.
+    ///
+    /// Photographed drawing its lowest six on `origin/master` `e10feec93`:
+    /// `artifacts-native-283/n283-event-mid.png`, a card headed
+    /// `Projected total points` / `PROJECTION 46.5`.
+    private let specimen14780545: [Double] = [
+        27.5, 30.5, 33.5, 36.5, 39.5, 42.5, 45.5, 46.5, 47.5, 48.5,
+        49.5, 50.5, 51.5, 54.5, 57.5, 60.5, 63.5, 66.5, 69.5,
+    ]
+
+    /// p(over) for `specimen14780545`, same order, same read.
+    private let specimen14780545Prices: [Double?] = [
+        0.955, 0.915, 0.875, 0.815, 0.750, 0.665, 0.565, 0.540, 0.505, 0.475,
+        0.435, 0.405, 0.375, 0.305, 0.230, 0.160, 0.135, 0.085, 0.055,
+    ]
+
+    /// 🟢 THE SHIP. The card drew `27.5 … 42.5` — six lines the market had all
+    /// but priced out — under a heading announcing a projection of 46.5. The
+    /// centred window lands on the crossing instead, and the crossing is where
+    /// the reader's question lives.
+    func testThePregameWindowCentresOnTheMarketsOwnCrossing() {
+        let window = MarketMapRail.pregameLadderWindow(
+            sortedOverProbabilities: specimen14780545Prices, limit: 6
+        )
+        XCTAssertEqual(Array(window), [6, 7, 8, 9, 10, 11])
+
+        let shown = window.map { specimen14780545[$0] }
+        XCTAssertEqual(shown, [45.5, 46.5, 47.5, 48.5, 49.5, 50.5])
+
+        XCTAssertTrue(shown.contains(46.5),
+                      "the projection the card prints above the ladder must be ON the ladder")
+        let prices = window.compactMap { specimen14780545Prices[$0] }
+        XCTAssertTrue(prices.contains(where: { $0 >= 0.5 }) && prices.contains(where: { $0 < 0.5 }),
+                      "the crossing must be INSIDE the window or the six rows are no better "
+                      + "than the six they replaced")
+    }
+
+    /// 🔴 THE THING THAT WAS WRONG, pinned so a later "simplification" back to a
+    /// `prefix` fails here rather than on a reader's screen. Every one of the
+    /// old six was priced above 0.5, so the ladder never reached a line the
+    /// market thought was live.
+    func testTheOldLowestSixWindowNeverReachedTheCrossing() {
+        let old = Array(specimen14780545Prices.prefix(6)).compactMap { $0 }
+        XCTAssertEqual(old.count, 6)
+        XCTAssertTrue(old.allSatisfy { $0 >= 0.5 },
+                      "the lowest six were all odds-on, which is why the window had to move")
+        let oldLines = Array(specimen14780545.prefix(6))
+        XCTAssertTrue(oldLines.allSatisfy { $0 < 46.5 },
+                      "and every one of them sat below the projection printed above them")
+    }
+
+    /// 🔴 NOT A HIDING RULE — the same count of rungs before and after, out of
+    /// the same ladder. Only which six moves.
+    func testThePregameWindowHidesNothingItDidNotHideBefore() {
+        let before = 0 ..< min(6, specimen14780545.count)
+        let after = MarketMapRail.pregameLadderWindow(
+            sortedOverProbabilities: specimen14780545Prices, limit: 6
+        )
+        XCTAssertEqual(before.count, after.count)
+        XCTAssertEqual(after.count, 6)
+        XCTAssertEqual(specimen14780545.count, 19, "six of nineteen, either way")
+    }
+
+    /// The two ends, which the centred window handles without a special case —
+    /// and the lower end is the OLD behaviour, reached as a limit case rather
+    /// than chosen as the default.
+    func testThePregameWindowSlidesBackInsideTheArrayAtBothEnds() {
+        // The market expects every line to clear: show the six it rates closest
+        // to failing, which are the top six.
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(
+                sortedOverProbabilities: Array(repeating: 0.99, count: 19), limit: 6)),
+            [13, 14, 15, 16, 17, 18]
+        )
+        // The market expects none of them to clear: the bottom six.
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(
+                sortedOverProbabilities: Array(repeating: 0.01, count: 19), limit: 6)),
+            [0, 1, 2, 3, 4, 5]
+        )
+        // Fewer lines than the card draws: all of them, no window arithmetic.
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(
+                sortedOverProbabilities: [0.9, 0.2], limit: 6)),
+            [0, 1]
+        )
+        // Degenerate inputs a layout pass can produce.
+        XCTAssertTrue(MarketMapRail.pregameLadderWindow(
+            sortedOverProbabilities: [], limit: 6).isEmpty)
+        XCTAssertTrue(MarketMapRail.pregameLadderWindow(
+            sortedOverProbabilities: specimen14780545Prices, limit: 0).isEmpty)
+    }
+
+    /// 🔴 A LADDER WITH NO PRICES RENDERS EXACTLY AS IT DID BEFORE THIS EXISTED.
+    /// Without its own arm the `?? 1` in the crossing test reads every unpriced
+    /// rung as "the market expects this to clear" and the window jumps to the
+    /// TOP six — a silent change on the one input that carries no opinion at all.
+    func testAnUnpricedLadderKeepsTheOldLowestSix() {
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(
+                sortedOverProbabilities: Array(repeating: nil, count: 19), limit: 6)),
+            [0, 1, 2, 3, 4, 5]
+        )
+        // One priced rung IS an opinion, so the centring applies from there on.
+        var onePriced: [Double?] = Array(repeating: nil, count: 19)
+        onePriced[12] = 0.2
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(
+                sortedOverProbabilities: onePriced, limit: 6)),
+            [9, 10, 11, 12, 13, 14]
+        )
+    }
+
+    /// 🔴 THE ALIGNMENT CONTRACT, which is the part that can rot silently.
+    /// `drawnFullTotalRungs` sorts the rungs by line and must read each rung's
+    /// price THROUGH that sort. Fed an outcome array in payload order — which is
+    /// NOT ascending, as the production specimen above is not — a build that
+    /// sorted the prices separately, or not at all, centres the window on a
+    /// price belonging to a different line.
+    ///
+    /// This is #7533's fault class (two slices of one payload ordered two
+    /// different ways) in a new place, so it gets a test with a specimen that
+    /// can actually tell the two implementations apart.
+    func testTheWindowReadsThePriceOfTheLineItActuallyReturns() {
+        // Payload order: descending. Ascending by line, the crossing is at 47.5.
+        let names = specimen14780545.reversed().map { "Over \($0) points scored" }
+        let lines: [Double?] = specimen14780545.reversed().map { $0 }
+        let prices: [Double?] = specimen14780545Prices.reversed().map { $0 }
+
+        let drawn = MarketMapRail.drawnFullTotalRungs(
+            outcomeNames: names,
+            thresholds: lines,
+            overProbabilities: prices,
+            settledTotal: nil,
+            limit: 6
+        )
+        XCTAssertEqual(drawn.map(\.threshold), [45.5, 46.5, 47.5, 48.5, 49.5, 50.5],
+                       "the same six lines the ascending specimen yields — the window must not "
+                       + "depend on the order the payload happened to arrive in")
+        // And each returned rung still points at its OWN row.
+        for rung in drawn {
+            XCTAssertEqual(lines[rung.index], rung.threshold)
+        }
+    }
+
+    /// 🔴 AN UNPRICED RUNG REACHES THE WINDOW AS `nil`, NOT AS A FABRICATED
+    /// COIN FLIP — the row's `?? 0.5` must not follow it there.
+    ///
+    /// Written because the mutant that appends `?? 0.5` to the call sites
+    /// survived the whole 3,184-test suite. It is not a cosmetic difference:
+    /// `0.5` is not `< 0.5`, so every unpriced rung would read as "the market
+    /// expects this to clear", AND being non-nil it slips past the no-opinion
+    /// arm — an entirely unpriced ladder would draw the TOP six instead of the
+    /// bottom six it has always drawn. Both halves are asserted, the second
+    /// through the window itself, because the first alone would pass against a
+    /// helper nobody called.
+    func testAnUnpricedRungReachesTheWindowAsNilNotAsACoinFlip() {
+        XCTAssertNil(MarketMapRail.ladderWindowPrice(overProbability: nil, probability: nil))
+        XCTAssertEqual(MarketMapRail.ladderWindowPrice(overProbability: 0.7, probability: 0.2), 0.7,
+                       "the over price wins where both exist")
+        XCTAssertEqual(MarketMapRail.ladderWindowPrice(overProbability: nil, probability: 0.2), 0.2,
+                       "and the plain price is the fallback, as the row's own expression has it")
+
+        let unpriced = (0..<19).map { _ in
+            MarketMapRail.ladderWindowPrice(overProbability: nil, probability: nil)
+        }
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(sortedOverProbabilities: unpriced, limit: 6)),
+            [0, 1, 2, 3, 4, 5],
+            "an unpriced ladder renders as it always has"
+        )
+        let coinFlips: [Double?] = Array(repeating: 0.5, count: 19)
+        XCTAssertEqual(
+            Array(MarketMapRail.pregameLadderWindow(sortedOverProbabilities: coinFlips, limit: 6)),
+            [13, 14, 15, 16, 17, 18],
+            "and this is what the fallback would have done instead — the top six, on a ladder "
+            + "that carries no opinion at all"
+        )
+    }
+
+    /// The settled arm is untouched by #7737: once there is a final, the prices
+    /// are not what decides the window and passing different ones changes
+    /// nothing.
+    func testPricesDoNotMoveTheWindowOnceThereIsAFinal() {
+        let optimistic = Array(repeating: Double?.some(0.99), count: specimen15305475.count)
+        let pessimistic = Array(repeating: Double?.some(0.01), count: specimen15305475.count)
+        let expected = MarketMapRail.settledLadderWindow(
+            sortedThresholds: specimen15305475, finalTotal: 11, limit: 6
+        )
+        for prices in [optimistic, pessimistic] {
+            XCTAssertEqual(
+                MarketMapRail.totalLadderWindow(
+                    sortedThresholds: specimen15305475,
+                    sortedOverProbabilities: prices,
+                    settledTotal: 11,
+                    limit: 6
+                ),
+                expected
+            )
         }
     }
 }

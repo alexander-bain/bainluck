@@ -631,15 +631,26 @@ struct MarketMapView: View {
             awayScore: scoredAwayScore
         )
 
-        // #3823 — before the result, the lowest lines; after it, the lines the
-        // result actually decided. `settledLadderWindow` carries the argument.
+        // #3823 / #7737 — the lines the result decided once there is one, and
+        // before that the lines the market thinks the game is poised on.
+        // `settledLadderWindow` and `pregameLadderWindow` carry the argument.
         //
         // #4782 — one composition, `MarketMapRail.drawnFullTotalRungs`, shared
         // with the Projected scoring card. `thresholds` still feeds the rail's
         // density and bounds, which read every rung rather than the drawn six.
+        //
+        // `ladderWindowPrice` is `LadderRow.prob`'s expression below MINUS its
+        // `?? 0.5`, and it is a named function rather than a second copy of the
+        // coalesce because the Projected scoring card has to reach the same
+        // answer — see its doc for what the fallback would do to the window.
         let drawnRungs = MarketMapRail.drawnFullTotalRungs(
             outcomeNames: fullGameTotals.map(\.outcomeName),
             thresholds: fullGameTotals.map(\.threshold),
+            overProbabilities: fullGameTotals.map {
+                MarketMapRail.ladderWindowPrice(
+                    overProbability: $0.overProbability, probability: $0.probability
+                )
+            },
             settledTotal: settledTotal,
             limit: MarketMapRail.totalMapLadderLimit
         )
