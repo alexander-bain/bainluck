@@ -275,6 +275,35 @@ final class LiveChartEdgeTests920: XCTestCase {
         XCTAssertEqual(buffer.first?.homeProbability ?? 0, 0.52, accuracy: 0.0001)
     }
 
+    /// A value that is not a probability costs its own point and nothing else.
+    /// A `NaN` reaching a plot does not print a wrong number — it takes the axis
+    /// with it and blanks the frame.
+    func testTheBufferDropsAValueThatIsNotAProbability() {
+        let good = LiveBlendPoint(date: at("2026-09-21T12:12:00Z"), homeProbability: 0.52)
+        let buffer = LiveBlendBuffer.appending(good, to: [])
+
+        for bad in [Double.nan, .infinity, -0.2, 1.4] {
+            let after = LiveBlendBuffer.appending(
+                LiveBlendPoint(date: at("2026-09-21T12:13:00Z"), homeProbability: bad),
+                to: buffer
+            )
+            XCTAssertEqual(after.count, 1, "\(bad) is not a probability")
+            XCTAssertEqual(after.last?.homeProbability ?? 0, 0.52, accuracy: 0.0001,
+                           "\(bad): the good point before it must survive")
+        }
+
+        // …and the boundaries ARE probabilities. A settled-looking 0 or 1 is a
+        // real reading on a blowout, and refusing it would silently stop the
+        // chart at exactly the moment the game became certain.
+        for edge in [0.0, 1.0] {
+            let after = LiveBlendBuffer.appending(
+                LiveBlendPoint(date: at("2026-09-21T12:13:00Z"), homeProbability: edge),
+                to: buffer
+            )
+            XCTAssertEqual(after.count, 2, "\(edge) is a probability")
+        }
+    }
+
     /// Bounded, and bounded at the OLD end: a page left open all afternoon keeps
     /// the frames nearest the live edge, which are the ones on screen.
     func testTheBufferIsBoundedAndKeepsTheNewestFrames() {

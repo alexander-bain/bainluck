@@ -66,7 +66,17 @@ nonisolated enum LiveBlendBuffer {
     /// admitted here would draw a second point on top of the first — visible as
     /// a kink in a line that should be straight, and counted twice by anything
     /// that measures the buffer.
+    ///
+    /// A value that is not a probability is dropped too, which the hero path has
+    /// never needed to care about and a chart must. `web`'s twin
+    /// (`frontend/lib/liveChartHistory.ts`) makes the same check for the same
+    /// reason: a `NaN` reaching a plot does not print a wrong number, it takes
+    /// the axis with it and blanks the frame — a bad frame must cost its own
+    /// point and nothing else.
     static func appending(_ point: LiveBlendPoint, to buffer: [LiveBlendPoint]) -> [LiveBlendPoint] {
+        guard point.homeProbability.isFinite, (0...1).contains(point.homeProbability) else {
+            return buffer
+        }
         if let last = buffer.last, point.date <= last.date { return buffer }
         var next = buffer
         next.append(point)
