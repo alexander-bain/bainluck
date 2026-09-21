@@ -1000,6 +1000,55 @@ async def test_every_statement_this_rail_emits_actually_binds_its_parameters():
     )
 
 
+@pytest.mark.asyncio
+async def test_the_update_binds_every_parameter_the_caller_supplies(monkeypatch, fast):
+    """🔴 THE ARM CERT-3218 BLOCKED THIS RAIL FOR MISSING, AND WHY IT WAS MISSED.
+
+    The guard above compiles real statements, but it drives `apply=False` over
+    an EMPTY page, so `if apply and writable:` never runs and the UPDATE is
+    never emitted — it cannot be in the compiled set. The source scan below
+    cannot see the UPDATE either: it looks for `:name::type`, and the f-string
+    writes the index BETWEEN the name and the cast (`:id{i}::bigint`), so the
+    offending token exists only AFTER interpolation. A defect can hide between
+    two guards that each look like they cover it.
+
+    What the live spelling actually did, measured: SQLAlchemy bound
+    ``{id, new, old}`` — three phantom names matching NONE of the six the
+    caller supplies (``id0/old0/new0/id1/old1/new1``) — and the compiled text
+    still carried a literal ``:id0::bigint``, so every real apply against a
+    writable row failed and relabelled nothing.
+
+    So this arm drives a REAL apply over a NON-EMPTY page and compiles the
+    statement the rail issued, never a re-rendering of it.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.dialects.postgresql import asyncpg as asyncpg_dialect
+
+    market = _Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea Player"])
+    _venue(monkeypatch, _FakeService([market]))
+    session = _Session(page=[_row(1, 10, "0xaa", "Manacor: A vs B")])
+
+    await rail.repair(session, apply=True)
+
+    # `write_sql` raises if the rail issued no UPDATE, so this cannot go vacuous
+    # the way the empty-page guard above silently did.
+    sql, params = session.writes[0]
+    assert params, "the rail issued an UPDATE with no parameters at all"
+
+    compiled = text(sql).compile(dialect=asyncpg_dialect.dialect())
+    bound = set(compiled.params)
+    assert bound == set(params), (
+        f"the UPDATE bound {sorted(bound)} but the rail supplies "
+        f"{sorted(params)}. A bind written `name` + `::type` is not read by "
+        "text(): it reaches Postgres as literal SQL, and the parameters the "
+        "caller passes have nowhere to land, so every apply fails."
+    )
+    assert ":" not in str(compiled), (
+        "a literal colon survives compilation of the UPDATE — Postgres will "
+        f'answer `syntax error at or near ":"`. Compiled: {compiled!s}'
+    )
+
+
 def test_no_statement_in_this_rail_uses_the_postfix_cast_bind_spelling():
     """The cheap half of the guard above, stated over the real source.
 
@@ -1009,16 +1058,26 @@ def test_no_statement_in_this_rail_uses_the_postfix_cast_bind_spelling():
     longer resolve it (the sibling rail `repair_kalshi_fabricated_loss` carries
     the same note — and its comment cited THIS file as the exemplar that got it
     right, which it did not).
+
+    🔴 The `{...}` alternative below is not decoration. This guard passed for
+    the whole life of #7167 while the rail's UPDATE rendered
+    `(:id{i}::bigint, ...)`: an f-string replacement field sits BETWEEN the
+    bind name and the cast, so `:name::` never appears in the source and the
+    scan read the file as clean. The offending token is built at runtime. The
+    compiled-UPDATE arm above is the real guard for that; this one now refuses
+    the spelling that produces it, so the two meet instead of leaving a gap.
     """
     import re
 
     src = inspect.getsource(rail)
     offenders = []
+    # `:name::type` directly, or `:name{...}::type` assembled by an f-string.
+    pattern = re.compile(r"(?<![:\w]):([a-z_][a-z_0-9]*)(\{[^{}]*\})?::")
     for i, line in enumerate(src.splitlines(), 1):
         stripped = line.strip()
         if stripped.startswith("#") or stripped.startswith("--"):
             continue  # the comments that WARN about it must stay legal
-        if re.search(r"(?<![:\w]):([a-z_][a-z_0-9]*)::", line):
+        if pattern.search(line):
             offenders.append(f"{i}: {stripped}")
     assert not offenders, (
         "a bind written `name` + `::type` is dropped by text() and reaches "

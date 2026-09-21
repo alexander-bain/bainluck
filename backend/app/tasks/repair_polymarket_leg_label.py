@@ -748,8 +748,15 @@ async def repair(
         # It names ONE column. `last_updated` is a poller touch-stamp that
         # `app/routes/playoffs.py` reads as liveness (#2024); a repair that
         # bumped it would forge a venue observation that never happened.
+        # 🔴 `CAST(x AS t)` here for the SAME reason as the page select above,
+        # and this line is why that comment was not enough. The source-level
+        # guard scans for `:name::type`; an f-string writes the index BETWEEN
+        # the name and the cast (`:id{i}::bigint`), so the offending token only
+        # exists AFTER interpolation and no scan of this file could see it.
+        # Compiling the rendered statement is the only guard that can.
         values = ", ".join(
-            f"(:id{i}::bigint, :old{i}::text, :new{i}::text)" for i in range(len(writable))
+            f"(CAST(:id{i} AS bigint), CAST(:old{i} AS text), CAST(:new{i} AS text))"
+            for i in range(len(writable))
         )
         params: dict[str, Any] = {}
         for i, p in enumerate(writable):
