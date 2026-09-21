@@ -107,7 +107,12 @@ def test_the_single_moneyline_leg_is_labelled_with_the_winning_side():
 
     rows = _parent_outcome_data(event)
 
-    assert len(rows) == 1
+    # #7505 deliberately changed the COUNT here, not the label. This file's ship
+    # is that leg 0 wears the side's name; `len(rows) == 1` was incidental to it,
+    # and was the defect #7505 photographed — "Draxl 50%" on a card naming two
+    # players. The venue publishes both sides (Gamma `/events/1045485`:
+    # `outcomes: ["Liam Draxl", "Quentin Halys"]`), so the branch now writes the
+    # partner leg too. The label claim below is untouched and still the subject.
     assert rows[0]["name"] == "Jukurit Mikkeli"
 
 

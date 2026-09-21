@@ -250,8 +250,14 @@ def test_every_price_writer_names_its_leg_through_a_shared_labeller():
     """
     names = _parent_leg_names()
 
-    assert len(names) == 3, (
-        f"expected 3 parent leg-name expressions, found {len(names)} — a new "
+    # 4 since #7505: the single-market branch writes the PARTNER side as well
+    # as leg 0 when the venue names both (a sole-moneyline game, which never
+    # reaches the decomposition branch). It is a fourth price writer and is
+    # held to this guard exactly like the other three — named through
+    # `_sub_market_side_label`, from the venue's own `outcomes[1]`, with no
+    # literal. The count is the census; every assertion below is unchanged.
+    assert len(names) == 4, (
+        f"expected 4 parent leg-name expressions, found {len(names)} — a new "
         "Polymarket price writer must also name its leg through a shared "
         "labeller"
     )

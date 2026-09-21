@@ -624,10 +624,16 @@ class TestTheDecomposedLegsRefuseToo:
                 f"stamped its settled book as the opening line"
             )
             assert leg["opening_captured_at"] is None
-            assert leg["current_probability"] == 0.99, (
+            assert leg["current_probability"] is not None, (
                 f"{external_id}: the current price must still be written — "
                 f"this refuses the opening stamp, not the leg"
             )
+        # #7505: a sole child naming both sides now writes the partner leg too,
+        # which holds the OTHER side's price (0.01) by construction. The refusal
+        # above is asserted across every leg, unchanged — it is the subject here;
+        # the 0.99 is pinned on the leg it actually describes rather than being
+        # required of a leg that would be wrong to hold it.
+        assert legs["0x3202sole"]["current_probability"] == 0.99
         assert stats.get("opening_refused_hindsight", 0) >= 1
 
     async def test_an_open_SOLE_child_under_an_open_parent_still_opens(
@@ -645,10 +651,14 @@ class TestTheDecomposedLegsRefuseToo:
 
         assert legs, "the writer never reached a leg — the fixture is inert"
         for external_id, leg in legs.items():
-            assert leg["opening_probability"] == 0.99, (
+            assert leg["opening_probability"] is not None, (
                 f"{external_id}: an OPEN sole child lost its opening — the "
                 f"refusal is keyed on the shape, not on settlement"
             )
+        # #7505: as above. Every leg must still OPEN — that is the non-vacuity
+        # claim this test exists for — and the partner leg opens at its own
+        # price, exactly as the decomposed Under/No leg has always done.
+        assert legs["0x3202sole"]["opening_probability"] == 0.99
         assert stats.get("opening_refused_hindsight", 0) == 0
 
     async def test_a_venue_closed_game_is_refused_on_the_flag_alone(

@@ -4703,8 +4703,11 @@ def _parent_outcome_data(event) -> list[dict]:
       gates. #1578 recorded that as the least-guarded of the five write paths and
       deliberately added only the phantom-midpoint test to it; that judgement is
       preserved here rather than quietly tightened.
-    * **single-market** — one leg, priced through the gated resolver, and named
-      "Yes" unless the venue named a side (#6739; see the branch's own note).
+    * **single-market** — priced through the gated resolver and named "Yes"
+      unless the venue named a side (#6739). TWO legs when the venue named
+      BOTH sides — a sole-moneyline game, which never reaches the
+      decomposition branch — and one otherwise, which keeps every genuine
+      Yes/No question byte-identical (#7505; see the branch's own note).
 
     Returns the rows unsorted and unranked; the caller sorts, ranks and writes.
     """
@@ -4791,11 +4794,16 @@ def _parent_outcome_data(event) -> list[dict]:
         # is definitionally the side this number belongs to and there is no
         # orientation guess here. The remaining 17 are genuine Yes/No questions:
         # the helper returns the fallback for them and they stay byte-identical.
+        sub_name = market.question or event.title
+        side_name = _sub_market_side_label(market, 0, sub_name, "Yes")
         outcome_data.append({
             "external_id": market.condition_id,
-            "name": _sub_market_side_label(
-                market, 0, market.question or event.title, "Yes"
-            ),
+            # Called inline, not passed as `side_name`: Q492's wiring guard
+            # reads this expression out of the AST and requires it to BE a
+            # shared-labeller call, so binding it to a local would read as a
+            # writer that names its leg some other way. The local above is the
+            # same pure call, kept for the partner condition below.
+            "name": _sub_market_side_label(market, 0, sub_name, "Yes"),
             "prob": prob,
             "yes_bid": market.best_bid,
             "yes_ask": market.best_ask,
@@ -4803,6 +4811,79 @@ def _parent_outcome_data(event) -> list[dict]:
             # #2027 / CERT-3202: see the note on the branches above.
             "market": market,
         })
+
+        # #7505: and the OTHER side, which #6739 named and never wrote.
+        #
+        # #6739 established that a single-market event is often a game whose
+        # venue listing holds just the moneyline, and taught leg 0 to wear the
+        # side's name instead of "Yes". It stopped there, so the row kept ONE
+        # leg: production served "Davis Cup: Liam Draxl vs. Quentin Halys —
+        # Liam Draxl 50%", a half-filled comparative bar with one name on it,
+        # and a reader cannot tell whether Halys is the other half or simply
+        # unpriced. Measured at the venue 2026-09-21 (notice 26/27, Gamma
+        # `/events/1045485`, slug `daviscup-draxl-halys-2026-09-19`): ONE
+        # market, `outcomes: ["Liam Draxl", "Quentin Halys"]`, `outcomePrices:
+        # ["0.5", "0.5"]`. Both sides are published. The second leg was one
+        # index away, exactly as leg 0's label was before #6739.
+        #
+        # The two-sided shape is not new: an event with >1 market gets a
+        # decomposed `{condition}_yes`/`_no` row carrying both sides, which is
+        # why an NHL game reads correctly and a Davis Cup rubber does not —
+        # the decomposition branch is gated on `len(event.markets) > 1` and a
+        # sole-moneyline event never reaches it. This writes the same pair the
+        # decomposed row would have, onto the only row these events have.
+        #
+        # 🔴 THE KEY IS DELIBERATELY NOT `{condition}_no`, AND THAT IS THE
+        # WHOLE TRAP. `duplicate_condition_outcomes.drop_duplicate_legs` drops
+        # a leg whose id ends `_yes`/`_no` when the BARE condition id is also
+        # on the same market — which is precisely this pair — and it runs at
+        # SERVE time in `routes/feed.py`, `routes/events.py` and six places in
+        # `routes/futures.py`. Keyed `_no`, this leg would be written on every
+        # poll and filtered out of every reader surface: inert on exactly its
+        # own population, the failure #6739's own sibling rail was written to
+        # avoid. `_side1` is outside `BINARY_LEG_SUFFIXES`, so the dedup rule
+        # correctly reads it as a rung rather than a duplicate of one.
+        #
+        # It also lands the leg on the RIGHT history series rather than merely
+        # dodging the filter: `generic_market_history.wanted_gamma_outcome_name`
+        # resolves a non-suffixed id BY NAME ("BY NAME, NEVER BY POSITION",
+        # Q489), and the name here is the venue's own `outcomes[1]` token, so
+        # the complement's chart asks Gamma for the Halys token by the label
+        # Gamma itself published.
+        #
+        # The price is `1 - prob`, NOT the raw `outcome_prices[1]`. Leg 0 is
+        # priced through the gated resolver (0.495 where the venue posts 0.49),
+        # so taking the raw complement would serve a pair summing to 1.005 —
+        # a visibly incoherent two-way card. The complement of the number we
+        # actually store is what the decomposed sibling holds for the same
+        # game (Hurricanes 0.495 / Flames 0.505, market 61814743), so the two
+        # rows agree instead of disagreeing by half a point.
+        #
+        # A genuine Yes/No question stays BYTE-IDENTICAL: `_sub_market_side_label`
+        # returns the caller's fallback for every degenerate shape (outcomes
+        # absent, token blank, token a bare Yes/No, token echoing the question),
+        # so requiring BOTH sides to be named is what keeps the 17 measured
+        # real binaries — and every o/u single-market, whose fallback short-
+        # circuits the helper — writing exactly one leg as before.
+        if side_name != "Yes" and len(getattr(market, "outcomes", None) or []) > 1:
+            comp_fallback = "Under" if "o/u" in sub_name.lower() else "No"
+            comp_name = _sub_market_side_label(market, 1, sub_name, comp_fallback)
+            if comp_name != comp_fallback:
+                comp_bid, comp_ask, comp_last = complementary_book(
+                    market.best_bid,
+                    market.best_ask,
+                    market.last_trade_price,
+                )
+                outcome_data.append({
+                    "external_id": f"{market.condition_id}_side1",
+                    # Inline for the same reason as leg 0 above.
+                    "name": _sub_market_side_label(market, 1, sub_name, comp_fallback),
+                    "prob": 1 - prob,
+                    "yes_bid": comp_bid,
+                    "yes_ask": comp_ask,
+                    "last_price": comp_last,
+                    "market": market,
+                })
     return outcome_data
 
 
