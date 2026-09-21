@@ -52,8 +52,15 @@ class TestKeyCollisionIsReal:
         assert from_query["key"] == from_market["key"] == "event:awards:grammys"
 
     def test_world_cup_query_and_market_derive_the_same_key(self):
+        # #7782: this used "2030 FIFA World Cup Champion", which only collided because
+        # the deriver was edition-blind — the fixture WAS the defect. The premise under
+        # test is "two paths, one key", not "which market", so it moves to the shape
+        # that legitimately collides: market 10 "FIFA World Cup Winner" (open), the
+        # bare Odds API name that claims no edition and so takes the configured one.
         from_query = _detect_query_world_cup_concept("world cup")
-        from_market = derive_soccer_concept(None, "2030 FIFA World Cup Champion", "soccer")
+        from_market = derive_soccer_concept(
+            "soccer_fifa_world_cup_winner", "FIFA World Cup Winner", "soccer",
+        )
         assert from_query is not None and from_market is not None
         assert from_query["key"] == from_market["key"]
 
