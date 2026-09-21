@@ -206,12 +206,27 @@ describe("UX-P171 · the section stops rendering a claim with nothing under it",
       "Jobs & Employment",
       "GDP & Recession",
       "Markets & Indices",
-      "Energy & Commodities",
+      // #7809 narrowed this kicker from "Energy & Commodities" to "Energy".
+      // It promised Commodities and served none: no gold, silver, copper,
+      // platinum or palladium market could reach the page at all. Metals now
+      // have their own section, so this one only claims what it draws.
+      "Energy",
       "Housing & Mortgages",
       "Trade & Tariffs",
     ]) {
       expect(text).toContain(kicker);
     }
+  });
+
+  test("a payload with no metals key renders no metals section (#7809)", () => {
+    // /api/economics is precomputed hourly, so for up to an hour after the
+    // release the cached payload is one built before `themes.metals` existed.
+    // The section is gated on the key AND a non-zero count for exactly that
+    // window — the same reason `mortgage_dist` is optional. SERVED_BEFORE
+    // predates the field, which is what makes it the right fixture here.
+    const text = visibleText(render(SERVED_BEFORE));
+    expect(text).not.toContain("Metals");
+    expect(text).not.toContain("Gold, silver, and copper");
   });
 
   test("an explicitly empty government theme is also hidden", () => {
