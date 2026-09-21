@@ -419,7 +419,12 @@ class _Session:
             return _Result(list(_GROUPS))
         if "unnest(" in sql:
             return _Result(list(_EVENTS))
-        if "MAX(x.captured_at)" in sql:
+        # #7617: keyed on the query's SHAPE, not its aggregate. The real
+        # expression now reads GREATEST(captured_at, valid_until) — a frozen
+        # value is re-observed onto the row it already wrote, so a reading
+        # built from captured_at alone called a delayed game silent. A fake
+        # that dispatches on the aggregate breaks every time it is corrected.
+        if "GROUP BY x.event_id" in sql:
             return _Result([])
         if "COUNT(*) AS n" in sql:
             return _Result([SimpleNamespace(n=len(_EVENTS))])
