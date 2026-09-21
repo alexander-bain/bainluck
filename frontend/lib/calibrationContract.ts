@@ -312,8 +312,14 @@ export function decideCalibrationContract(
  *     recovery is a republish or a redeploy, and SWR's own 5-minute poll picks
  *     either up without the reader doing anything.
  */
+/*
+ * #7765: "accuracy numbers", not "calibration numbers". This renders with no
+ * page behind it, so the word arrives with nothing on screen to define it, and
+ * the reader was brought here by a link that says "Accuracy" (#7738). Same
+ * fence as the rest of the no-content family — see `page.tsx`'s loading state.
+ */
 export const CONTRACT_REFUSAL_MESSAGE =
-  "We're not showing calibration numbers right now — we can't confirm this " +
+  "We're not showing accuracy numbers right now — we can't confirm this " +
   "page's descriptions match the data the server sent, and labelling them " +
   "wrong would be worse than not showing them. The page updates " +
   "automatically; please check back shortly.";

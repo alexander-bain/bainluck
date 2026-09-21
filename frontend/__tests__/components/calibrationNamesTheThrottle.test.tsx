@@ -45,7 +45,7 @@ const throttle = { status: 429, message: "Rate limit exceeded: 60/minute" };
 
 describe("the failure the calibration page names", () => {
   it("renders WHICH failure it was, above the server's own sentence", () => {
-    const failure = describeLoadFailure(throttle, "calibration data");
+    const failure = describeLoadFailure(throttle, "accuracy data");
     const html = renderToStaticMarkup(
       <ErrorState title={failure.title} message={failure.message} onRetry={() => {}} />,
     );
@@ -61,7 +61,7 @@ describe("the failure the calibration page names", () => {
   });
 
   it("still offers a retry, because a throttle clears on its own", () => {
-    expect(describeLoadFailure(throttle, "calibration data").retryable).toBe(true);
+    expect(describeLoadFailure(throttle, "accuracy data").retryable).toBe(true);
   });
 
   it("renders exactly as before when no title is given — every other caller", () => {

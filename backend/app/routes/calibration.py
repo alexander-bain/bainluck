@@ -116,15 +116,30 @@ COVERAGE_CENSUS_TTL_S = 120.0
 #: reaches the same reader's screen where no bundle scan can see it. So the
 #: guard suite re-states those phrases on this side, and the button below the
 #: sentence is what tells a reader they may come back.
+#:
+#: THE NOUN IS "ACCURACY DATA", NOT "CALIBRATION DATA" (#7765). #7738 moved the
+#: footer's only link to this page from "Calibration" to "Accuracy" and moved
+#: the tab title with it, so a reader arrives here having been shown one word
+#: and nothing else. These two sentences render when the page has NO content —
+#: there is no Calibration Table, no "what's a calibration curve?", nothing on
+#: screen that defines the term. The word the reader was given is the word they
+#: get back. (The rendering page keeps "calibration" in all eight of its
+#: in-context technical uses; the fence is the empty state, not the vocabulary.)
+#:
+#: And these two are the LIVE sentences, not `page.tsx`'s literal — that one is
+#: only the fallback for a body that did not say. The paragraph above is the
+#: reason this matters twice: a frontend-only sweep of this wording would scan
+#: clean against the production bundle and change nothing a reader actually
+#: meets, because these strings are composed here at runtime.
 UNAVAILABLE_ADVICE: dict = {
     "route_budget_exhausted": (
         30,
-        "Calibration data is temporarily unavailable. Please retry shortly.",
+        "Accuracy data is temporarily unavailable. Please retry shortly.",
     ),
 }
 UNAVAILABLE_ADVICE_DEFAULT = (
     900,
-    "Calibration data is being rebuilt and is not ready yet.",
+    "Accuracy data is being rebuilt and is not ready yet.",
 )
 
 
