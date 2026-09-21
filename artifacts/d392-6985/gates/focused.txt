@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/discover/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 187 items
+
+tests/test_cross_source_matching.py .................................... [ 19%]
+..................................                                       [ 37%]
+tests/test_feed_house_duplicate_year_qualifier_6537.py ................. [ 46%]
+.....                                                                    [ 49%]
+tests/test_feed_same_question_duplicate_cards_6400.py ................   [ 57%]
+tests/test_discover_bundle_tennis_duplicate_4479.py ................     [ 66%]
+tests/test_golf_related_dedup.py ....                                    [ 68%]
+tests/test_search_suggestions_right_now_row_3675.py .................... [ 79%]
+....................                                                     [ 89%]
+tests/test_cross_source_place_mismatch_6985.py ...............           [ 97%]
+tests/test_startup.py ....                                               [100%]
+
+=============================== warnings summary ===============================
+app/routes/auth.py:118
+  /Users/bain/bainluck-dev/discover/backend/app/routes/auth.py:118: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 187 passed, 1 warning in 2.58s ========================

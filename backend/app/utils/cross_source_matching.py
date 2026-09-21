@@ -63,8 +63,81 @@ _TOKEN_ALIASES = {
     "wins": "win",
     "winner": "win",
     "winning": "win",
+    # Place spellings that are the SAME place. These exist so the refusal in
+    # `_conservative_near_match_score` fires on two places and never on two
+    # names for one: "Next French Presidential Election" beside "France
+    # Presidential Election Winner" must still pair.
+    "usa": "us",
+    "britain": "uk",
+    "british": "uk",
+    "czechia": "czech",
+    "dutch": "netherlands",
+    "french": "france",
+    "german": "germany",
+    "iranian": "iran",
+    "italian": "italy",
+    "japanese": "japan",
+    "korean": "korea",
+    "polish": "poland",
+    "russian": "russia",
+    "spanish": "spain",
+    "swedish": "sweden",
+    "swiss": "switzerland",
+    "ukrainian": "ukraine",
 }
 _DIRECTION_TOKENS = {"over", "under"}
+
+#: Tokens that name a PLACE — a state, a country, or the directional qualifier
+#: that distinguishes one from its twin (North/South Carolina, North/South
+#: Korea, West Virginia). Used by :func:`_conservative_near_match_score` for one
+#: categorical refusal and nothing else: see that function for the rule and
+#: `#6985` for the specimen.
+#:
+#: Curated, not generated, and deliberately WITHOUT cities. A city token folds
+#: against its own country in titles that are arguably one question ("Will Trump
+#: visit Beijing?" / "...visit China?"), and every case measured on the two
+#: specimens is a state or a nation. Multi-word states enter by their
+#: distinguishing word (``york``, ``jersey``, ``hampshire``, ``rhode``), because
+#: ``new`` is not evidence of anything.
+#:
+#: 🔴 Membership here can only ever REFUSE a pair, and only when the OTHER side
+#: also carries a place this side lacks. A word that is sometimes a place and
+#: sometimes not (``georgia`` the country, ``jordan`` the surname, ``chad``) is
+#: therefore safe to include: it costs nothing until it is compared against a
+#: DIFFERENT place, and two titles naming two different places are not one
+#: question whichever sense you read them in.
+_PLACE_TOKENS = frozenset(
+    {
+        # Jurisdictions and supranational bodies. Only CANONICAL spellings live
+        # here — `british`, `french`, `korean` and the rest are aliased to these
+        # by `_TOKEN_ALIASES` before a token ever reaches this set.
+        "us", "uk", "eu", "england", "scotland", "wales",
+        # US states (multi-word states by their distinguishing word)
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+        "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+        "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+        "maine", "maryland", "massachusetts", "michigan", "minnesota",
+        "mississippi", "missouri", "montana", "nebraska", "nevada",
+        "hampshire", "jersey", "ohio", "oklahoma", "oregon", "pennsylvania",
+        "rhode", "tennessee", "texas", "utah", "vermont", "virginia",
+        "washington", "wisconsin", "wyoming", "york", "carolina", "dakota",
+        # Countries that carry prediction markets
+        "afghanistan", "argentina", "australia", "austria", "bangladesh",
+        "belarus", "belgium", "bolivia", "brazil", "canada", "chile", "china",
+        "colombia", "cuba", "czech", "denmark", "ecuador", "egypt", "estonia",
+        "ethiopia", "finland", "france", "germany", "greece", "hungary",
+        "india", "indonesia", "iran", "iraq", "ireland", "israel", "italy",
+        "japan", "kenya", "korea", "latvia", "lebanon", "libya", "lithuania",
+        "malaysia", "mexico", "moldova", "morocco", "myanmar", "netherlands",
+        "nigeria", "norway", "pakistan", "palestine", "peru", "philippines",
+        "poland", "portugal", "romania", "russia", "saudi", "serbia",
+        "singapore", "slovakia", "slovenia", "somalia", "spain", "sudan",
+        "sweden", "switzerland", "syria", "taiwan", "thailand", "turkey",
+        "ukraine", "uruguay", "venezuela", "vietnam", "yemen", "zimbabwe",
+        # The qualifier that is the WHOLE difference between two places
+        "north", "south", "east", "west",
+    }
+)
 
 #: A dotted acronym — ``u.s.``, ``u.k.``, ``a.m.`` — matched on the lowercased
 #: title so :func:`_near_match_tokens` can rejoin it into one token instead of
@@ -147,20 +220,34 @@ def _direction_tokens(tokens: set[str]) -> set[str]:
     return tokens & _DIRECTION_TOKENS
 
 
-def _near_match_signature(q: str) -> tuple[set[str], frozenset[str], frozenset[str]]:
+def _place_tokens(tokens: set[str]) -> set[str]:
+    return tokens & _PLACE_TOKENS
+
+
+#: ``(tokens, numeric_tokens, direction_tokens, place_tokens)`` — see
+#: :func:`_near_match_signature`.
+_Signature = tuple[set[str], frozenset[str], frozenset[str], frozenset[str]]
+
+
+def _near_match_signature(q: str) -> _Signature:
     """Precompute the token sets used for conservative near-matching.
 
-    Returns ``(tokens, numeric_tokens, direction_tokens)`` so the O(n^2)
-    pairing loop in :func:`find_cross_source_markets` can tokenize each row
-    once instead of re-tokenizing both sides on every candidate pair.
+    Returns ``(tokens, numeric_tokens, direction_tokens, place_tokens)`` so the
+    O(n^2) pairing loop in :func:`find_cross_source_markets` can tokenize each
+    row once instead of re-tokenizing both sides on every candidate pair.
     """
     tokens = _near_match_tokens(q)
-    return tokens, frozenset(_numeric_tokens(tokens)), frozenset(_direction_tokens(tokens))
+    return (
+        tokens,
+        frozenset(_numeric_tokens(tokens)),
+        frozenset(_direction_tokens(tokens)),
+        frozenset(_place_tokens(tokens)),
+    )
 
 
 def _conservative_near_match_score(
-    left_sig: tuple[set[str], frozenset[str], frozenset[str]],
-    right_sig: tuple[set[str], frozenset[str], frozenset[str]],
+    left_sig: _Signature,
+    right_sig: _Signature,
 ) -> float | None:
     """Jaccard score for obvious paraphrases, or None if not a conservative match.
 
@@ -168,13 +255,40 @@ def _conservative_near_match_score(
     on precomputed signatures and returns the Jaccard similarity so callers can
     reuse it for ranking instead of recomputing the token sets.
     """
-    left_tokens, left_num, left_dir = left_sig
-    right_tokens, right_num, right_dir = right_sig
+    left_tokens, left_num, left_dir, left_place = left_sig
+    right_tokens, right_num, right_dir, right_place = right_sig
     if len(left_tokens) < 3 or len(right_tokens) < 3:
         return None
     if left_num != right_num:
         return None
     if (left_dir or right_dir) and left_dir != right_dir:
+        return None
+    # TWO DIFFERENT PLACES ARE NOT ONE QUESTION, at any score (#6985).
+    #
+    # Kalshi's "How many House seats will Democrats win in GEORGIA?" paired with
+    # Polymarket's "How many House seats will the Democrats win in OHIO?" and led
+    # the /politics spotlight with `Merged: 55.5%` — one blended probability
+    # across two different elections, captioned as source disagreement. Alex's
+    # standing ruling is that the blend is the product and divergence is a data
+    # bug; that 63-point gap was manufactured by this pairing.
+    #
+    # NO THRESHOLD CAN SEE IT, and that is why this guard is categorical rather
+    # than a number: the Georgia/Ohio pair and the one real duplicate this
+    # function exists to catch — "2027 FIFA Women's World Cup Champion" beside
+    # "FIFA Women's World Cup 2027 Winner" — score IDENTICALLY, jaccard 0.750 and
+    # containment 0.857. Moving 0.72 or 0.85 to refuse one refuses the other, and
+    # would re-break #6537 and #6400 besides. The difference is not how much the
+    # titles differ but WHAT differs: `champion`/`win` are one word twice,
+    # `georgia`/`ohio` are two elections.
+    #
+    # TWO-SIDED, deliberately. A place on one side and none on the other is the
+    # SEPARATE, arguable case (#6985's own Spotify specimen: "#2 Artist on
+    # Spotify U.S." against the global "#2 Spotify Artist 2026"), and refusing it
+    # here would also refuse #6537's "the U.S. House" beside "the House in 2026",
+    # which is one question. That residual stays open on #6985. Here each side
+    # names a place the other does not, so no paraphrase reading survives:
+    # dropping either word changes which election is being priced.
+    if (left_place - right_place) and (right_place - left_place):
         return None
 
     overlap = len(left_tokens & right_tokens)
@@ -206,8 +320,9 @@ def is_same_question(left: str | None, right: str | None) -> bool:
     market dicts rather than ``FuturesMarket`` rows: an exact normalized-question
     match first (the strongest evidence), then the conservative near-match, whose
     guards — three tokens minimum, identical numeric tokens, identical direction
-    tokens, Jaccard >= 0.72 AND containment >= 0.85 — are what make it usable
-    outside a spotlight that a reader can eyeball.
+    tokens, no two-sided place difference (#6985), Jaccard >= 0.72 AND
+    containment >= 0.85 — are what make it usable outside a spotlight that a
+    reader can eyeball.
 
     The exact arm is not redundant with the near-match arm: a two-token title
     ("Oscar Winner") is refused by the near-match token-count guard, and two
