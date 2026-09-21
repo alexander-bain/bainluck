@@ -289,6 +289,68 @@ def payload_age_seconds(payload: dict | None, *, now: datetime) -> float | None:
     return max(0.0, (now - stamp).total_seconds())
 
 
+#: Key under `FuturesMarket.market_metadata` recording that this market has
+#: produced a real venue history bank at least once.
+#:
+#: 🔴 WHY THIS ONE FACT LIVES IN POSTGRES AND THE BANK DOES NOT (#7736). The bank
+#: is Redis-only, on an instance running `allkeys-lru` at a 100 MB cap, so it can
+#: vanish with no notice — and it takes with it the only evidence it was ever
+#: there. `payload_age_seconds` then answers None for two states the planner has
+#: to treat OPPOSITELY: "this market never had venue history" (refuse — that is
+#: #7351's own scope boundary) and "it had some and the cache evicted it"
+#: (re-fetch — the recovery is otherwise lost for good). A marker kept beside the
+#: thing it describes would only ever be evicted with it, which is the whole
+#: reason this one is durable.
+BANK_MARKER_KEY = "venue_history_bank"
+
+
+def bank_marker(market: Any) -> dict | None:
+    """This market's durable "it held a real bank once" stamp, or None.
+
+    Defensive about the shape all the way down: the planner runs on a plain
+    `SimpleNamespace` built in the route, so `market_metadata` may be absent,
+    None, or (on a row written before this key existed) a dict without it.
+    """
+    metadata = getattr(market, "market_metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    marker = metadata.get(BANK_MARKER_KEY)
+    return marker if isinstance(marker, dict) else None
+
+
+def market_had_bank(market: Any) -> bool:
+    """True when this market is KNOWN to have produced venue history before."""
+    return bank_marker(market) is not None
+
+
+def build_bank_marker(payload: dict | None, *, now: datetime) -> dict | None:
+    """The stamp to persist for `payload`, or None when it has not earned one.
+
+    Only a payload that actually carries POINTS earns a marker. An `empty` or
+    `degraded` answer is precisely the case the marker must not claim: stamping
+    it would convert "the venue has nothing for this market" into a standing
+    instruction to re-ask on every cold key, which is the negative cache
+    (`REFRESH_AFTER_SECONDS`) spent backwards.
+    """
+    if not isinstance(payload, dict):
+        return None
+    outcomes = payload.get("outcomes")
+    if not isinstance(outcomes, dict):
+        return None
+    points = sum(
+        len(entry.get("points") or [])
+        for entry in outcomes.values()
+        if isinstance(entry, dict)
+    )
+    if points <= 0:
+        return None
+    return {
+        "first_built_at": payload.get("built_at") or now.isoformat(),
+        "points": int(points),
+        "outcomes": len(outcomes),
+    }
+
+
 def _contract_matches(contract: Any, market: Any, outcome: Any) -> str | None:
     """None when the cached contract IS this outcome row's instrument; else why not."""
     if not isinstance(contract, dict):

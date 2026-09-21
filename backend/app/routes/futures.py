@@ -4755,6 +4755,11 @@ async def _consider_generic_history_fill(
         market_ref = SimpleNamespace(
             id=market.id, source=market.source,
             external_id=market.external_id, status=market.status,
+            # #7736 — the planner needs the durable "this market held a bank
+            # once" stamp to tell an EVICTED venue history from one that never
+            # existed. Already-loaded column, so this is a dict reference and
+            # not a lazy load; `bank_marker` is defensive about every shape.
+            market_metadata=market.market_metadata,
         )
         outcome_refs = [
             SimpleNamespace(id=o.id, external_id=o.external_id) for o in charted_outcomes
