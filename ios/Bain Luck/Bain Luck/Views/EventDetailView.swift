@@ -321,7 +321,11 @@ struct EventDetailView: View {
                                      refreshStreaming: vm.streamDelivering,
                                      forcedDomain: sharedChartDomain,
                                      selectedPlayPoint: $selectedPlayPoint,
-                                     preloadedHistory: vm.history)
+                                     preloadedHistory: vm.history,
+                                     // #920 — the pushed blends the hero is
+                                     // already showing, so the chart's right
+                                     // edge reaches the same moment it does.
+                                     liveFrames: vm.liveBlend)
                         if (isLive || isFinished) && vm.history?.scoringPlays?.isEmpty == false {
                             GamePlayCardView(
                                 selectedPoint: selectedPlayPoint,
