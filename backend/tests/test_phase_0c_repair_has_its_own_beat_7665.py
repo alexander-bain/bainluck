@@ -377,3 +377,175 @@ def test_the_stats_carry_the_numbers_that_mean_the_ship_is_happening(name):
     the numbers are in the summary."""
     stats, _session, _redis = _drive([([1], 1)], scan=1)
     assert name in stats
+
+
+# ---------------------------------------------------------------------------
+# #7781 — the terminal, and what it must refuse to grade on
+# ---------------------------------------------------------------------------
+#
+# The file above tests that the drain RUNS and that its cursor is honest. This
+# section tests that a run which did NOT work can say so. Before #7781 it could
+# not: the loop catches every exception into `errors` and returns, so a raise on
+# the first batch banked `successes_24h: 1`, `consecutive_failures: 0`,
+# `health: healthy`, and `verdict_for` read `not_enforced(unknown:
+# no_terminal_fields)`.
+#
+# Every case here drives the REAL drain through `_drive` and feeds its REAL
+# return value to the REAL `verdict_for`. A hand-built summary dict would prove
+# only that the classifier classifies, and would keep passing if the drain
+# stopped emitting a terminal at all.
+
+
+class _RaisingSession(_FakeSession):
+    """Fails the SELECT after `after` successful batches."""
+
+    def __init__(self, script, after=0):
+        super().__init__(script)
+        self._after = after
+        self._batches = 0
+
+    async def execute(self, statement, params=None):
+        if ":outcome_ids" not in str(statement):
+            if self._batches >= self._after:
+                raise RuntimeError("canceling statement due to statement timeout")
+            self._batches += 1
+        return await super().execute(statement, params)
+
+
+def _drive_raising(script, after=0, **kwargs):
+    import asyncio
+    import contextlib
+
+    session = _RaisingSession(script, after=after)
+    redis = _FakeRedis(None)
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield session
+
+    with patch.object(bw, "get_task_session", _session), patch(
+        "app.tasks.redis_state.get_redis_client", return_value=redis
+    ):
+        return asyncio.run(bw._repair_openings_from_first_snapshot(**kwargs))
+
+
+def _verdict(stats):
+    from app.utils.task_verdict import verdict_for
+
+    return verdict_for("opening_repair_drain", stats)
+
+
+def test_the_label_the_task_passes_is_the_label_that_is_enrolled():
+    """Enrolment on a name nothing uses grades nothing.
+
+    This is the same trap the #7665 read-back hit from the reading end: the
+    metrics endpoint is keyed by the short label, so asking for the task name
+    returns `no_data` forever however well the beat runs. Enrolling
+    `repair_openings_from_first_snapshot` here would fail equally silently —
+    every run would keep reading `not_enforced`. Read the label out of the
+    registered task's own source rather than retyping it.
+    """
+    import inspect
+
+    from app.tasks import repair_openings_from_first_snapshot
+    from app.utils.task_verdict import ENFORCED_TASKS
+
+    source = inspect.getsource(repair_openings_from_first_snapshot)
+    enrolled = [name for name in ENFORCED_TASKS if f'"{name}"' in source]
+
+    assert enrolled == ["opening_repair_drain"], (
+        "the label the task hands `_tracked_run` is not the one enrolled in "
+        f"ENFORCED_TASKS; found {enrolled}"
+    )
+
+
+def test_a_healthy_run_grades_complete_and_authoritative():
+    """The shape of the real first fire (2026-09-21 10:48Z): 380,808 restored
+    out of 1,000,000 examined, stopped by its own wall."""
+    stats, _s, _r = _drive([([1, 2], 2), ([3, 4], 1)], scan=2)
+    verdict = _verdict(stats)
+
+    assert stats["terminal"] == "complete"
+    assert verdict.verdict == "complete"
+    assert verdict.authoritative is True, (
+        "the drain's summary is still not contract-bearing — this is the "
+        "`not_enforced(unknown:no_terminal_fields)` state #7781 fixed"
+    )
+
+
+def test_a_run_that_errored_before_examining_anything_grades_failed():
+    """THE assertion of this section. This is the run that used to read green.
+
+    A statement timeout or a dead cursor on the first batch is caught, appended
+    to `errors`, and returned as a normal value — so without a terminal the
+    beat banks a success and `consecutive_failures` stays 0 forever.
+    """
+    stats = _drive_raising([([1, 2], 2)], after=0, scan=2)
+    verdict = _verdict(stats)
+
+    assert stats["examined"] == 0 and stats["errors"]
+    assert stats["terminal"] == "failed"
+    assert verdict.verdict == "failed" and verdict.authoritative is True
+
+
+def test_a_run_that_errored_after_doing_work_grades_partial_not_failed():
+    """Half a walk is not a dead beat: the cursor was persisted per batch, so
+    the next run resumes. `_has_damage` reads `errors` off a `complete`
+    terminal, so this needs no code of its own — and this asserts that, because
+    a future `terminal = "complete"` that stripped `errors` would silently make
+    a damaged run look clean."""
+    stats = _drive_raising([([1, 2], 2)], after=1, scan=2)
+    verdict = _verdict(stats)
+
+    assert stats["examined"] == 2 and stats["errors"]
+    assert stats["terminal"] == "complete"
+    assert verdict.verdict == "partial" and verdict.authoritative is True
+    assert "errors" in verdict.reason
+
+
+def test_the_wall_firing_does_not_downgrade_the_run():
+    """`deadline_hit` is the design, not damage — the real first fire hit its
+    wall at 484.5s having restored 380,808. Grading it partial would make the
+    beat permanently degraded on its normal path."""
+    stats, _s, _r = _drive([([1, 2], 2)], scan=2, deadline=None)
+    assert stats["terminal"] == "complete"
+
+    stats["deadline_hit"] = True
+    assert _verdict(stats).verdict == "complete"
+
+
+def test_a_run_with_nothing_left_to_walk_grades_no_work_not_complete():
+    """The wrap. An invocation that banked nothing cannot vouch for the task's
+    health, which is what `_TERMINAL_NO_WORK` means — and it must not be
+    `failed` either, because reaching the end of the table is success."""
+    stats, _s, redis = _drive([], initial_cursor="99", scan=2)
+    verdict = _verdict(stats)
+
+    assert stats["wrapped"] is True and stats["examined"] == 0
+    assert stats["terminal"] == "no_work"
+    assert verdict.verdict == "unknown" and verdict.authoritative is True
+    assert redis.deleted is True
+
+
+def test_examining_a_full_slice_and_restoring_nothing_is_NOT_a_failure():
+    """The anti-regression for #7665's own falsifier, which INVERTS.
+
+    #7665 pre-registered "`examined > 400,000` with `restored == 0` means the
+    promotion is broken". That was true on 2026-09-21, when ~70% of the rows
+    above id 150M were promotable. It stops being true: the cursor advances
+    over what was EXAMINED, not what was repaired, and the walk wraps, so once
+    the promotable population is drained the healthy steady state is exactly
+    "examined a full slice, restored zero", forever.
+
+    Encoding that falsifier as a terminal would redden this beat permanently at
+    the moment it finished its job. This test is here so nobody adds it later
+    believing they are strengthening the guard.
+    """
+    stats, _s, _r = _drive([([1, 2], 0), ([3, 4], 0)], scan=2)
+    verdict = _verdict(stats)
+
+    assert stats["examined"] == 4 and stats["restored"] == 0
+    assert stats["terminal"] == "complete", (
+        "a fully-drained table is being graded as a broken promotion"
+    )
+    assert verdict.verdict == "complete"
