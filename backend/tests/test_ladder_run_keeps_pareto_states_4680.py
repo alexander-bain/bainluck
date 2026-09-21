@@ -55,6 +55,7 @@ import random
 
 import pytest
 
+from app.utils.ladder_monotonicity import INC, cumulative_outcome_ladder
 from app.utils.outcome_display import (
     LADDER_MIN_DRAWN_RUNGS,
     drop_incoherent_ladder_outcomes,
@@ -73,6 +74,20 @@ _SPECIMEN = [
     ("Above 30", 0.13),
     ("Above 40", 0.125),
     ("Above 50", 0.12),
+]
+
+# The same shape on a RISING ladder, reflected through `1 - p`. A `Below N`
+# question gets `direction == INC` from `cumulative_outcome_ladder`, and for a
+# rising run the running extreme is a MAXIMUM, so "more permissive" inverts:
+# the LOWER bound is the looser one. That inversion is a branch of its own and
+# the falling specimens above cannot reach it — see
+# `test_the_rising_ladder_mirror_is_rescued_too`.
+_RISING_SPECIMEN = [
+    ("Below 10", 0.90),
+    ("Below 20", 0.885),
+    ("Below 30", 0.87),
+    ("Below 40", 0.875),
+    ("Below 50", 0.88),
 ]
 
 
@@ -125,6 +140,39 @@ def test_the_rescued_run_is_coherent_on_its_own():
     )
 
 
+def test_the_rising_ladder_mirror_is_rescued_too():
+    """The other direction, which no other assertion in this file can reach.
+
+    `more_permissive` branches on `falling`: a falling run's bound is a running
+    MINIMUM and the higher one is looser; a rising run's is a running MAXIMUM
+    and the lower one is looser. MEASURED as a surviving mutant before this test
+    was written — severing the rising arm (`return left > right` unconditionally)
+    left the whole 1,381-test ladder band green, so the new branch was asserted
+    by nothing. With the arm severed this specimen drops {0, 1}; with it intact,
+    {0}. That is the mutant this test kills.
+    """
+    ladder = cumulative_outcome_ladder(
+        [{"name": _name(row), "index": index} for index, row in enumerate(_RISING_SPECIMEN)],
+        dates=True,
+    )
+    assert ladder is not None and ladder[1] == INC, (
+        "the premise of this test is that the specimen is a RISING ladder; if the "
+        "parser ever reads `Below N` as DEC this becomes a duplicate of the falling "
+        "specimen and stops covering the branch it exists for"
+    )
+
+    dropped, priced = _verdict(_RISING_SPECIMEN)
+
+    assert priced == 5
+    assert dropped == {0}, (
+        f"the rising arm named a rung the ladder agrees with: {sorted(dropped)}"
+    )
+
+    survivors = drop_incoherent_ladder_outcomes(_RISING_SPECIMEN, _name, _prob)
+    assert [_name(row) for row in survivors] == ["Below 20", "Below 30", "Below 40", "Below 50"]
+    assert _verdict(survivors)[0] == set(), "the rescued rising run is not coherent on its own"
+
+
 def test_a_rung_that_contradicts_every_run_is_still_named():
     """The control in the other direction: the filter still filters.
 
@@ -153,7 +201,8 @@ def test_a_clean_ladder_is_untouched():
 
 
 @pytest.mark.parametrize("seed", [4680, 46801, 46802])
-def test_the_named_run_is_always_genuinely_coherent(seed):
+@pytest.mark.parametrize("word", ["Above", "Below"])
+def test_the_named_run_is_always_genuinely_coherent(seed, word):
     """The property, over random ladders: the verdict never names a rung that
     the survivors' own running extreme admits.
 
@@ -161,15 +210,23 @@ def test_the_named_run_is_always_genuinely_coherent(seed):
     deliberately a PROPERTY and not a second specimen: the failure this suite
     exists for was invisible to every specimen anyone had, and was found by
     reasoning about the tolerance rather than by looking at a card.
+
+    Both directions, because the two are separate code paths and only one of
+    them was covered when this file was first written (see
+    `test_the_rising_ladder_mirror_is_rescued_too`). `Above` descends, `Below`
+    ascends, and the coherence check below follows the direction rather than
+    assuming the falling one — an assumed direction here would pass vacuously
+    on half the parameter grid.
     """
     rng = random.Random(seed)
+    falling = word == "Above"
 
     exercised = 0
     for _ in range(400):
         count = rng.randint(3, 8)
-        base = sorted((rng.uniform(0.02, 0.98) for _ in range(count)), reverse=True)
+        base = sorted((rng.uniform(0.02, 0.98) for _ in range(count)), reverse=falling)
         rows = [
-            (f"Above {10 * (index + 1)}", round(min(1.0, max(0.0, value + rng.uniform(-0.03, 0.03))), 3))
+            (f"{word} {10 * (index + 1)}", round(min(1.0, max(0.0, value + rng.uniform(-0.03, 0.03))), 3))
             for index, value in enumerate(base)
         ]
 
@@ -187,9 +244,17 @@ def test_the_named_run_is_always_genuinely_coherent(seed):
             if bound is None:
                 bound = probability
                 continue
-            assert probability <= bound + _TOLERANCE, (
-                f"the surviving rungs are not a coherent run: {survivors}"
-            )
-            bound = min(bound, probability)
+            if falling:
+                assert probability <= bound + _TOLERANCE, (
+                    f"the surviving rungs are not a coherent run: {survivors}"
+                )
+                bound = min(bound, probability)
+            else:
+                assert probability >= bound - _TOLERANCE, (
+                    f"the surviving rungs are not a coherent run: {survivors}"
+                )
+                bound = max(bound, probability)
 
-    assert exercised, "no ladder in this sample had a reversal — the property never ran"
+    assert exercised, (
+        f"no {word!r} ladder in this sample had a reversal — the property never ran"
+    )
