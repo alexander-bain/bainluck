@@ -184,6 +184,19 @@ COVERED = (
     # marker in `sports.key`.
     "test_live_blend_concurrent_stamp_pg.py",
     "test_rekey_statpal_anchors_real_postgres.py",
+    # #7640. Seeds three `futures_markets` and twelve `futures_outcomes` by raw
+    # INSERT to grade the stale-rank repair's apply/restore round trip. Two
+    # seeding hazards worth naming rather than leaving to be rediscovered:
+    #
+    #   * `futures_markets.mutually_exclusive` / `.category` / `.status` are the
+    #     exact Python-side defaults this file exists to catch, and the seed
+    #     names all three.
+    #   * `futures_outcomes.last_updated` is NOT NULL with a `server_default` of
+    #     `now()`, so omitting it is legal DDL and silently wrong here: it is the
+    #     undo's witness, and a seed that let every leg take the INSERT's clock
+    #     would leave the "a poller touched this row" assertion comparing two
+    #     timestamps milliseconds apart. The NOT-NULL arm cannot see that.
+    "test_repair_7640_rank_roundtrip_real_postgres.py",
     "test_repair_3672_bind_contract.py",
     # #5789. Seeds `sports`, `events` and `futures_markets` by raw INSERT with
     # production's own 20 events and 16 markets. Two of its NOT NULL columns
