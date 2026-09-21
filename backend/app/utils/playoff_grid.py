@@ -367,6 +367,19 @@ def normalize_column_sums(
     return applied
 
 
+# Below half a percentage point a 24h change is not a move a reader can act on,
+# and every client already discards it: the web ribbon and the /playoffs section
+# both floor at 0.005, iOS at 0.001. Publishing it anyway padded the list out to
+# `limit` with teams that had not moved, which is what `limit` is for the top of
+# — not a quota to fill. Two consequences, both reader-visible (#7742):
+# a change of exactly 0.0 was stamped `direction: "down"`, and the league page
+# sizes its chrome on the UNFILTERED length, so `earnsMoversStrip` saw ten and
+# printed a "BIGGEST MOVERS (24H)" header over the one or two chips that
+# survived the client floor — precisely what CHROME_MOVERS_MIN = 3 exists to
+# prevent. The floor belongs with the producer so all three clients agree.
+MOVER_FLOOR_24H = 0.005  # 0.5 percentage points
+
+
 def compute_movers(
     teams: list[dict],
     championship_col: str,
@@ -374,22 +387,31 @@ def compute_movers(
 ) -> list[dict]:
     """Compute biggest 24h movers in the championship column.
 
+    Only teams whose championship probability actually moved — by at least
+    ``MOVER_FLOOR_24H`` in either direction — are returned. A team that did not
+    move is not a mover, so the list is as long as the truth allows and never
+    padded to ``limit``; callers may therefore size chrome on ``len()``.
+
     Returns list of mover dicts sorted by absolute change, descending.
     """
     movers = []
     for team_row in teams:
         champ_cell = team_row["cells"].get(championship_col)
-        if champ_cell and champ_cell.get("trend_24h") is not None:
-            movers.append({
-                "name": team_row["name"],
-                "short_name": team_row["short_name"],
-                "team_id": team_row["team_id"],
-                "column": championship_col,
-                "change_24h": champ_cell["trend_24h"],
-                "direction": "up" if champ_cell["trend_24h"] > 0 else "down",
-                "logo_url": team_row.get("logo_url"),
-                "primary_color": team_row.get("primary_color"),
-            })
+        if not champ_cell:
+            continue
+        change = champ_cell.get("trend_24h")
+        if change is None or abs(change) < MOVER_FLOOR_24H:
+            continue
+        movers.append({
+            "name": team_row["name"],
+            "short_name": team_row["short_name"],
+            "team_id": team_row["team_id"],
+            "column": championship_col,
+            "change_24h": change,
+            "direction": "up" if change > 0 else "down",
+            "logo_url": team_row.get("logo_url"),
+            "primary_color": team_row.get("primary_color"),
+        })
 
     movers.sort(key=lambda m: abs(m["change_24h"]), reverse=True)
     return movers[:limit]
