@@ -690,17 +690,24 @@ struct TotalPointsSpectrumView: View {
                     .frame(width: 50, alignment: .leading)
 
                 // Whether this row is captioned at all, and with which word, is
-                // ``MarketMapRail/spectrumRowCaption(finalTotal:isSettled:canStillBeGraded:rungResult:)``
-                // — all three clauses, with the reasoning for each. #4018 put the
+                // ``MarketMapRail/spectrumRowCaption(finalTotal:isSettled:canStillBeGraded:hasStarted:rungResult:)``
+                // — all four clauses, with the reasoning for each. #4018 put the
                 // `canStillBeGraded` gate here as an inline `if`; #4907 needed a
                 // third clause (a row that already says `HIT` wears no tense) and
                 // moved the whole decision to where it can be asserted without
-                // rasterising this view. The `.settled` copy question that #4018
-                // routed to Alex is recorded there too.
+                // rasterising this view. #7655 added the fourth: `PRE-GAME` over a
+                // live price. The `.settled` copy question that #4018 routed to
+                // Alex is recorded there too.
+                //
+                // `hasStarted` is the CLOCK, not the status — `isPre` would have
+                // done for a well-behaved `live` row, but a `scheduled` status that
+                // has not caught up with kickoff is precisely the row whose prices
+                // are live while its status says otherwise.
                 if let caption = MarketMapRail.spectrumRowCaption(
                     finalTotal: actualTotal,
                     isSettled: isDone,
                     canStillBeGraded: canStillBeGraded,
+                    hasStarted: isLive || EventState.hasStarted(commenceTime: commenceTime),
                     rungResult: result
                 ) {
                     Text(caption)

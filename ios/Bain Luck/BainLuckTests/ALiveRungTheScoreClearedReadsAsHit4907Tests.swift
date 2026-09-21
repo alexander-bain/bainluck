@@ -204,31 +204,69 @@ final class ALiveRungTheScoreClearedReadsAsHit4907Tests: XCTestCase {
     func testAGradedRowWearsNoTense() {
         XCTAssertNil(
             MarketMapRail.spectrumRowCaption(
-                finalTotal: nil, isSettled: false, canStillBeGraded: true, rungResult: .over
+                finalTotal: nil, isSettled: false, canStillBeGraded: true,
+                hasStarted: true, rungResult: .over
             ),
             "the verdict badge owns the row"
         )
     }
 
-    /// …and the rows beside it keep theirs. This is the asymmetry the per-card
-    /// caption function could not express, which is why the row-level one exists.
-    func testTheUnclearedRowsOnTheSameLiveCardKeepTheirTense() {
-        XCTAssertEqual(
+    /// 🔴 **THE CLAUSE THIS FILE IS ABOUT IS LOAD-BEARING ONLY HERE NOW.** On a
+    /// LIVE card #7655's gate reaches nil first, so `guard rungResult == nil`
+    /// changes no answer on the path #4907 was written for. It still decides this
+    /// one: a settled card that cannot grade in its own unit prints `LAST QUOTE`
+    /// from the `.settled` arm, which #7655 deliberately does not touch, so a
+    /// verdict arriving on such a row would otherwise print a tense and a badge
+    /// together — #3850's contradiction, the third time. Deleting the guard reds
+    /// THIS test and no other; that is why it exists.
+    func testAVerdictSuppressesTheSettledTenseToo() {
+        XCTAssertNotNil(
             MarketMapRail.spectrumRowCaption(
-                finalTotal: nil, isSettled: false, canStillBeGraded: true, rungResult: nil
+                finalTotal: nil, isSettled: true, canStillBeGraded: false,
+                hasStarted: true, rungResult: nil
             ),
-            "PRE-GAME"
+            "control: without a verdict this row DOES print the settled tense"
+        )
+        XCTAssertNil(
+            MarketMapRail.spectrumRowCaption(
+                finalTotal: nil, isSettled: true, canStillBeGraded: false,
+                hasStarted: true, rungResult: .over
+            ),
+            "a row carrying a verdict badge wears no tense, settled or live"
         )
     }
 
-    /// The three clauses are independent — a gated row stays gated whatever its
+    /// …and the rows beside it wear no tense either — but for #7655's reason, not
+    /// this file's.
+    ///
+    /// 🟠 **THIS TEST ASSERTED THE OPPOSITE UNTIL #7655.** It read
+    /// `XCTAssertEqual(…, "PRE-GAME")` and was named
+    /// `testTheUnclearedRowsOnTheSameLiveCardKeepTheirTense`, because #4907's
+    /// subject was the ASYMMETRY between a cleared rung and an uncleared one, and
+    /// nobody had yet asked whether the word on the uncleared side was true. It is
+    /// not: the game is underway, so "pre-game" is false of every rung on the card,
+    /// cleared or not. #4907's rule is unchanged and still tested above — what
+    /// changed is that both sides of its asymmetry now answer nil on a live card,
+    /// by two independent clauses. Expected values are edited when the ruling
+    /// moves; the test is not deleted, so the crossing stays visible here.
+    func testTheUnclearedRowsOnTheSameLiveCardWearNoTenseEither() {
+        XCTAssertNil(
+            MarketMapRail.spectrumRowCaption(
+                finalTotal: nil, isSettled: false, canStillBeGraded: true,
+                hasStarted: true, rungResult: nil
+            ),
+            "#7655: a live price may not be captioned PRE-GAME"
+        )
+    }
+
+    /// The clauses are independent — a gated row stays gated whatever its
     /// verdict, so #4907 cannot have re-opened #4018's abandoned-game chip.
     func testAnAbandonedGameStillWearsNoChipEitherWay() {
         for verdict: MarketMapRail.TotalLadderResult? in [nil, .over] {
             XCTAssertNil(
                 MarketMapRail.spectrumRowCaption(
                     finalTotal: nil, isSettled: false,
-                    canStillBeGraded: false, rungResult: verdict
+                    canStillBeGraded: false, hasStarted: true, rungResult: verdict
                 ),
                 "#4018: a game that can never be graded wears no chip"
             )
@@ -241,21 +279,26 @@ final class ALiveRungTheScoreClearedReadsAsHit4907Tests: XCTestCase {
         // Finished, gradeable: the badge owns every row, as since #3850.
         XCTAssertNil(
             MarketMapRail.spectrumRowCaption(
-                finalTotal: 11, isSettled: true, canStillBeGraded: false, rungResult: .over
+                finalTotal: 11, isSettled: true, canStillBeGraded: false,
+                hasStarted: true, rungResult: .over
             )
         )
         // Finished, NOT gradeable (tennis: the scoreboard counts sets) — #3925's
-        // `LAST QUOTE` still prints.
+        // `LAST QUOTE` still prints. #7655's gate is scoped to `.projected`, so a
+        // finished match having obviously started does not silence it.
         XCTAssertEqual(
             MarketMapRail.spectrumRowCaption(
-                finalTotal: nil, isSettled: true, canStillBeGraded: false, rungResult: nil
+                finalTotal: nil, isSettled: true, canStillBeGraded: false,
+                hasStarted: true, rungResult: nil
             ),
             MarketMapRail.spectrumRungCaption(finalTotal: nil, isSettled: true)
         )
-        // Pre-game.
+        // Pre-game — and now genuinely pre-game: the clock says so, not just the
+        // status. This is the one row on the card that still wears `PRE-GAME`.
         XCTAssertEqual(
             MarketMapRail.spectrumRowCaption(
-                finalTotal: nil, isSettled: false, canStillBeGraded: true, rungResult: nil
+                finalTotal: nil, isSettled: false, canStillBeGraded: true,
+                hasStarted: false, rungResult: nil
             ),
             MarketMapRail.spectrumRungCaption(finalTotal: nil, isSettled: false)
         )
