@@ -18,10 +18,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import LiveSparkline, {
   MIN_SPAN,
   polylinePoints,
+  sparklineDirection,
   sparklineDomain,
   windowPoints,
   type SparkPoint,
 } from "@/components/event/LiveSparkline";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 const NOW = Date.parse("2026-09-01T18:00:00Z");
 
@@ -272,5 +274,104 @@ describe("LiveSparkline — what actually renders", () => {
       />,
     );
     expect(html).toContain('data-point-count="3"');
+  });
+});
+
+/**
+ * #5734 — the colour and the label are one answer, not two.
+ *
+ * The glyph decided `rising` on the RAW probabilities with no dead band while
+ * its own `aria-label` printed `renderedPercent`, so a fall of one ten-thousandth
+ * painted the line red above a label reading "99% to 99%". These assert the two
+ * channels against each other, because that is the only relation that cannot
+ * quietly come apart again — a test of the hex alone would pass on any threshold
+ * somebody picked next.
+ */
+describe("sparklineDirection — the colour says what the label says", () => {
+  test("a ten-thousandth of a fall on a 99% favourite is flat, not a fall", () => {
+    // The filed specimen: Real Madrid 3-0 at HT, hero at 99% and rising since
+    // open, glyph painted red.
+    expect(sparklineDirection(0.9901, 0.99)).toBe("flat");
+  });
+
+  test("a rise that renders as a tie is flat too, not a rise", () => {
+    // The other 401 of the 467 tied windows measured on production. A fix that
+    // only silenced the red half would still be claiming a direction the label
+    // denies — it would just read benignly.
+    expect(sparklineDirection(0.986, 0.994)).toBe("flat");
+  });
+
+  test("identical endpoints are flat", () => {
+    expect(sparklineDirection(0.5, 0.5)).toBe("flat");
+  });
+
+  test("a move the label reports keeps its direction — the colour is not deleted", () => {
+    expect(sparklineDirection(0.6, 0.55)).toBe("down");
+    expect(sparklineDirection(0.4, 0.62)).toBe("up");
+    // One whole point either way is the narrowest move the label can report, so
+    // it is the narrowest the colour may claim.
+    expect(sparklineDirection(0.5, 0.49)).toBe("down");
+    expect(sparklineDirection(0.5, 0.51)).toBe("up");
+  });
+
+  test("a value that cannot be rendered claims nothing", () => {
+    expect(sparklineDirection(Number.NaN, 0.5)).toBe("flat");
+    expect(sparklineDirection(0.5, Number.POSITIVE_INFINITY)).toBe("flat");
+  });
+
+  test("flat is EXACTLY the case the label prints as no change, across a grid", () => {
+    // The relation, not a sample: whatever `renderedPercent` does next, the
+    // colour is neutral on precisely the pairs whose label repeats itself.
+    const grid = [0, 0.004, 0.005, 0.0149, 0.285, 0.4949, 0.5, 0.5051, 0.986, 0.99, 0.9901, 0.9949, 1];
+    let ties = 0;
+    let moves = 0;
+    for (const a of grid) {
+      for (const b of grid) {
+        const labelRepeats = renderedPercent(a) === renderedPercent(b);
+        expect(sparklineDirection(a, b) === "flat").toBe(labelRepeats);
+        if (labelRepeats) ties += 1;
+        else moves += 1;
+      }
+    }
+    // Not vacuous in either direction: the grid exercises both branches.
+    expect(ties).toBeGreaterThan(10);
+    expect(moves).toBeGreaterThan(10);
+  });
+});
+
+describe("LiveSparkline — what the reader is actually shown (#5734)", () => {
+  const live = (minutesAgo: number, value: number): SparkPoint => ({
+    timestamp: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    value,
+  });
+
+  const MUTED = "#9CA3AF";
+  const RED = "#EF4444";
+  const GREEN = "#10B981";
+
+  test("the 99%-favourite specimen draws muted, and its label agrees with it", () => {
+    const html = renderToStaticMarkup(
+      <LiveSparkline points={[live(9, 0.9901), live(6, 0.9902), live(3, 0.99)]} />,
+    );
+    // Both halves of the contradiction asserted in ONE render: before this fix
+    // the same markup carried the red hex and this label side by side.
+    expect(html).toContain('aria-label="Last 10 minutes: 99% to 99%"');
+    expect(html).toContain(`stroke="${MUTED}"`);
+    expect(html).not.toContain(RED);
+    expect(html).toContain('data-direction="flat"');
+  });
+
+  test("a real fall is still red and a real rise still green", () => {
+    const fell = renderToStaticMarkup(
+      <LiveSparkline points={[live(9, 0.62), live(6, 0.58), live(3, 0.5)]} />,
+    );
+    expect(fell).toContain(`stroke="${RED}"`);
+    expect(fell).toContain('data-direction="down"');
+
+    const rose = renderToStaticMarkup(
+      <LiveSparkline points={[live(9, 0.4), live(6, 0.5), live(3, 0.6)]} />,
+    );
+    expect(rose).toContain(`stroke="${GREEN}"`);
+    expect(rose).toContain('data-direction="up"');
   });
 });

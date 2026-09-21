@@ -181,6 +181,70 @@ export function polylinePoints(
     .join(' ');
 }
 
+/**
+ * The stroke colour for each direction this glyph can report.
+ *
+ * `#9CA3AF` is `--text-muted` from `globals.css` — the same grey the page uses
+ * for type that is present but is not making a claim, which is exactly what a
+ * flat ten minutes is. Hex rather than a token class because the other two
+ * already are: an SVG `stroke` cannot take a Tailwind colour without routing
+ * the whole glyph through `stroke-current`, and changing that is a different
+ * job from fixing the threshold.
+ */
+const STROKE_UP = '#10B981';
+const STROKE_DOWN = '#EF4444';
+const STROKE_FLAT = '#9CA3AF';
+
+/**
+ * Which direction, if any, this glyph is entitled to claim — decided on the
+ * RENDERED percents, not the raw probabilities.
+ *
+ * #5734. The rule was `lastValue >= firstValue` on the raw numbers, with no dead
+ * band, so a fall of one ten-thousandth painted the whole glyph red. On a 99%
+ * favourite at halftime that is the only kind of move there is, and the page it
+ * sits on said the opposite in every other number: Real Madrid 3-0 at HT drew a
+ * RED sparkline above a hero reading `↑ +5% Madrid since open` at 99%.
+ *
+ * The proof was always three lines below the bug, in this component's own
+ * `aria-label`, which prints `renderedPercent` on the same two values — so a
+ * screen reader could be told "Last 10 minutes: 99% to 99%" while the line
+ * beside it was painted the colour for *fell*. One component, two answers, from
+ * one pair of numbers.
+ *
+ * THE RULE: **ask the string, not the number** — the UX-P275 construction
+ * (`isRenderedMove`, #5652), applied to the one pair this glyph publishes. The
+ * colour is now a function of exactly what the label says, so the two cannot
+ * disagree whatever `renderedPercent`'s contract does next.
+ *
+ * WHAT IT COSTS, stated rather than discovered later: a tie at whole percent can
+ * hide just under a point of travel, and that now draws grey. It is the honest
+ * reading twice over — the endpoints did not move as published, and under
+ * `MIN_SPAN` a one-point move is 22px × 0.01/0.2 ≈ **1.1px** of vertical travel
+ * in a 24px box, less than the 1.5px stroke drawing it. The colour was claiming
+ * a direction the line itself cannot show.
+ *
+ * Measured on production 2026-09-21, 34 live events, every 10-minute window
+ * carrying `MIN_POINTS`: of **781** windows, **467 (60%) render first and last
+ * as the same whole percent** — 66 of them painted RED, the filed shape, and 401
+ * painted green, a false direction that merely read benignly. The **314** windows
+ * whose rendered percents differ keep the colour they had.
+ *
+ * Pure and exported so the threshold is tested as arithmetic, not inferred from
+ * a hex literal in a rendered attribute.
+ */
+export function sparklineDirection(
+  firstValue: number,
+  lastValue: number,
+): 'up' | 'down' | 'flat' {
+  const first = renderedPercent(firstValue);
+  const last = renderedPercent(lastValue);
+  // A value we cannot render is a value we cannot compare; claim nothing.
+  if (first === null || last === null) return 'flat';
+  if (last > first) return 'up';
+  if (last < first) return 'down';
+  return 'flat';
+}
+
 export default function LiveSparkline({
   points,
   windowMinutes = 10,
@@ -196,8 +260,12 @@ export default function LiveSparkline({
 
   const firstValue = windowed[0].value;
   const lastValue = windowed[windowed.length - 1].value;
-  const rising = lastValue >= firstValue;
-  const stroke = rising ? '#10B981' : '#EF4444';
+  const direction = sparklineDirection(firstValue, lastValue);
+  const stroke =
+    direction === 'up' ? STROKE_UP : direction === 'down' ? STROKE_DOWN : STROKE_FLAT;
+  // `data-direction` below is the only channel a probe on the live page has for
+  // this decision — the alternative is matching a hex inside a stroke attribute
+  // (notice 34's data-attribute clause).
 
   return (
     <svg
@@ -209,6 +277,7 @@ export default function LiveSparkline({
       aria-label={`Last ${windowMinutes} minutes: ${renderedPercent(firstValue)}% to ${renderedPercent(lastValue)}%`}
       data-testid="live-sparkline"
       data-point-count={windowed.length}
+      data-direction={direction}
     >
       <polyline
         points={line}
