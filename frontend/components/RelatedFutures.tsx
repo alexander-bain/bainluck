@@ -2674,7 +2674,41 @@ export default function RelatedFutures({
   // Build per-team championship path data for the new layout
   const buildPathEntries = (sources: PathSource[]) => {
     return sources.map(({ future: f, columnKey }) => {
-      const resolved = f.probability != null && f.probability >= 0.995;
+      // #7687 — A PRICE IS NOT A CLINCH, AND THIS THRESHOLD COULD ONLY EVER
+      // FIRE ON A RUNG THAT IS NOT ONE.
+      //
+      // This read `f.probability != null && f.probability >= 0.995`, and
+      // `AdvancementPath` prints that flag as **✓ clinched** in accent-live
+      // with the bar forced to full width. `TournamentExtensions`, the other
+      // caller of the same component, already refuses to derive it this way and
+      // states the assumption underneath the league path's version:
+      //
+      //     "The league path calls a stage clinched at >= 0.995 because a
+      //      season's playoff market really does settle to 1.0 once the maths
+      //      is done."
+      //
+      // Production falsifies exactly that sentence. A resolved rung does not
+      // settle to 1.0 — it is DROPPED. Measured 2026-09-21, `/api/events/{id}/
+      // related-futures` against `/api/playoffs/mlb` in the same minutes:
+      //
+      //   The Dodgers HAVE clinched; the grid serves make_playoffs and division
+      //   as `state: "won"`. Their `league_context.cells` omits both keys
+      //   entirely — `{pennant, championship}` is the whole object — so their
+      //   page prints no ✓ clinched anywhere.
+      //
+      //   Boston have NOT clinched; the grid serves their make_playoffs cell as
+      //   `state: "live"`. It is present, at 0.9972, so the threshold fired and
+      //   their page printed **Make Playoffs ✓ clinched** — the site asserting a
+      //   berth one click away from its own grid saying the race was live.
+      //
+      // So the payload's convention is that a settled rung is ABSENT, which
+      // makes a present rung unresolved by construction: the only rows this
+      // test can ever reach are the ones it must never fire on. It is not a
+      // threshold that needs raising, it is a claim this payload cannot carry,
+      // and the cells hold no state to source it from. False, for the same
+      // reason and in the same words as the sibling caller, until something
+      // authoritative — the grid's own `state` — is served here.
+      const resolved = false;
       return {
         label: f.clean_label || f.market_name,
         prob: f.probability || 0,

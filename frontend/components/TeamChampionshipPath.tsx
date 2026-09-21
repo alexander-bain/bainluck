@@ -4,7 +4,11 @@ import Link from "next/link";
 import type { ChampionshipPathEntry } from "@/lib/api";
 import { pathSeason } from "@/lib/teamSeason";
 import { teamTextColor } from "@/lib/teamColors";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import {
+  formatMovementPoints,
+  formatProbabilityPercent,
+  isRenderedMove,
+} from "@/lib/probabilityDisplay";
 
 // ---------------------------------------------------------------------------
 // Championship-path progression (L2-162). The team's path to a title shown as a
@@ -42,7 +46,18 @@ function Step({
   entry: ChampionshipPathEntry;
   color: string | null;
 }) {
+  // #7687: the step's NUMBER goes through UX-P046's boundary rule, the bar's
+  // WIDTH does not. Rounding a width is harmless; rounding the number printed
+  // over it turned a club that can still win its division into one that cannot.
+  // Measured on production 2026-09-21: of the 30 MLB team pages, 23 carried a
+  // step whose served probability was strictly inside (0, 1) and printed `0%` —
+  // Baltimore, Kansas City, the Angels, Miami, the Mets and Washington each at
+  // `0.001` for their division, Boston and Toronto at `0.003`. To a reader `0%`
+  // does not read as "unlikely", it reads as "cannot happen", and we printed it
+  // on a link to the very market pricing it as possible.
   const pct = entry.probability !== null ? Math.round(entry.probability * 100) : null;
+  const printed =
+    entry.probability !== null ? formatProbabilityPercent(entry.probability) : null;
   return (
     <Link
       href={`/futures/${entry.market_id}`}
@@ -56,7 +71,7 @@ function Step({
           className="font-mono font-bold text-2xl leading-none tabular-nums"
           style={{ color: teamTextColor(color) || undefined }}
         >
-          {pct !== null ? `${pct}%` : "—"}
+          {printed ?? "—"}
         </span>
         {/* UX-P275: `!== 0` admitted a move that rounds to nothing, so a rounding
             residue produced a coloured "+0.0". `isRenderedMove` gates on the

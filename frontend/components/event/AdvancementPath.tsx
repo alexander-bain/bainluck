@@ -30,11 +30,21 @@
  * component family if one exists, so the pattern stays consistent app-wide"*.
  * One component with two callers is the strongest available form of that: the
  * two surfaces cannot drift, because there is nothing to drift.
+ *
+ * ═══ WHAT A RUNG PRINTS (#7687) ═══
+ *
+ * The probability went through a bare `renderedPercent`, so a rung strictly
+ * inside (0, 1) could print `0%` or `100%` — UX-P046's boundary rule, which
+ * every other percentage on the site already obeys, had never been applied
+ * here. It is live at both ends on this block: one Red Sox event page served
+ * `make_playoffs` at 0.9972 in the same list as rungs at 0.001. It now prints
+ * through `formatProbabilityPercent`, so a rung that is merely close to an
+ * absolute says `>99%` or `<1%` and only a genuine 0 or 1 prints as one.
  */
 
 import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
-import { renderedPercent } from "@/lib/renderedPercent";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 
 /** One stage on the path. */
 export interface AdvancementStage {
@@ -44,7 +54,18 @@ export interface AdvancementStage {
   prob: number;
   /** Move over the last 24h, 0–1, or `null` when nothing was measured twice. */
   change: number | null;
-  /** Already secured — printed as `✓ clinched` rather than as 100%. */
+  /**
+   * Already secured — printed as `✓ clinched` rather than as 100%.
+   *
+   * #7687: this must come from something that REPORTS a settlement. Both
+   * callers now pass a constant `false` for want of one, because neither
+   * payload carries the state: `TournamentExtensions` refused a price
+   * threshold from the start, and `RelatedFutures` derived one at `>= 0.995`
+   * until production showed it could only fire on rungs that were not settled
+   * (its call site carries the measurement). The prop stays because the block
+   * genuinely has a clinched state to draw once a payload reports one; what it
+   * may not be is inferred from how big the number is.
+   */
   resolved: boolean;
   /**
    * The grid column this rung came from — `relegation`, `top_4`, `championship`
@@ -181,7 +202,7 @@ export default function AdvancementPath({
                   p.resolved ? "text-accent-live" : ""
                 }`}
               >
-                {p.resolved ? "✓ clinched" : `${renderedPercent(p.prob)}%`}
+                {p.resolved ? "✓ clinched" : formatProbabilityPercent(p.prob)}
               </span>
             </div>
           </div>
