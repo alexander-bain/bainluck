@@ -284,9 +284,22 @@ describe("one component, two callers", () => {
       ],
     });
     expect(stages[0].resolved).toBe(false);
-    const text = visibleText(renderToStaticMarkup(<AdvancementPath stages={stages} />));
+    const html = renderToStaticMarkup(<AdvancementPath stages={stages} />);
+    const text = visibleText(html);
     expect(text).not.toContain("clinched");
-    expect(text).toContain("100%");
+    // #7687: this asserted `100%`, which was the second way of saying the thing
+    // the line above refuses — the paragraph over this test calls 99.6% "a
+    // market's opinion, not a round that has been played", and then pinned a
+    // render claiming the round was certain. The component now prints through
+    // UX-P046's boundary rule, so BOTH spellings of the false claim are refused
+    // here: the word, and the number that means it.
+    expect(text).not.toContain("100%");
+    // ...and the marker is asserted on the RAW MARKUP, because `visibleText`
+    // rewrites `&[a-z]+;` to a space and so cannot tell `>99%` from `99%` — the
+    // one character that carries the whole meaning is the one it deletes. On
+    // the stripped text this pair would pass against a component that had
+    // simply gone back to rounding down.
+    expect(html).toContain("&gt;99%");
   });
 
   it("renders nothing at all for a player with no stages", () => {
