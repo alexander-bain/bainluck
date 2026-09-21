@@ -903,7 +903,24 @@ _REPAIRS = {
     # Paging is a keyset on `futures_outcomes.id`: `?after_id=` from
     # `next_cursor`. Read `scan_exhausted`, not `remaining_legs`.
     # Capped at APPLY_LEG_CAP=120 legs per call, by module constant — the whole
-    # 1,153-leg cohort is ten calls. Accepts ?limit=&sport=&after_id=.
+    # 1,153-leg cohort is ten calls. Accepts ?limit=&sport=&after_id=
+    # &status_scope=&band=.
+    # 🔴 #7701 rung 1: `status_scope` (`open` default | `not_open`) points the
+    # PAGER at the exact complement `_out_of_scope_legs` counts — measured
+    # 2026-09-21 at 25,469 legs / 25,402 markets while the writable `open`
+    # cohort measured 0. It is READ-ONLY and an apply against it is refused BY
+    # NAME (`STATUS_SCOPE_APPLY_REFUSED`), for two independent reasons: Gamma's
+    # retention edge for RESOLVED markets is unmeasured, so a drain across it
+    # would count the purged tail `not_at_venue` and stop — indistinguishable
+    # from a finished drain — and this rail stages no undo receipt, which is not
+    # a thing to debut on 25,469 rows. `band=MIN-MAX` (two ages in days over
+    # `fm.resolution_date`, youngest edge first) is how that bound gets read: one
+    # call samples one age slice and its `not_at_venue` IS that slice's retention
+    # reading. A banded page NEVER reports `scan_exhausted` — `band_exhausted` is
+    # its own field (#3257's ruling), because a slice running out is not a cohort
+    # being drained — a banded apply and a banded resume are both refused by
+    # name, and `by_age_bucket` is folded from the examined rows as the control
+    # that the band clause bound at all.
     # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
     # state, not a standing job.
     "polymarket-leg-label": (

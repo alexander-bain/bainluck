@@ -78,11 +78,53 @@ not forge it.
 
 ATTENDED ONLY: never wire either to a beat. This is a drain with an end state,
 not a standing job. Read ``scan_exhausted``, not ``remaining_legs``.
+
+THE SCOPE THIS RAIL CAN LOOK AT, AND WHY IT STILL ONLY WRITES INSIDE ONE OF THEM
+--------------------------------------------------------------------------------
+#7701, rung 1. ``status_scope`` selects which side of the status line the pager
+reads: ``open`` (the default, this rail's original and only writable cohort) or
+``not_open``, the EXACT complement — the same predicate ``_out_of_scope_legs``
+counts, so the widened page and that counter can never describe two different
+populations. On 2026-09-21 the open side measured **0** and the complement
+**25,469 legs across 25,402 markets**, every one still printing the whole matchup
+as its own price label.
+
+🔴 ``not_open`` IS READ-ONLY AND THE REFUSAL IS NAMED, NOT IMPLIED. Two separate
+reasons, either one sufficient. First, the venue is the only place the correct
+label exists (above) and **how far back Gamma answers for a resolved market is
+unmeasured** — Kalshi's analogue is a measured constant in
+``app/utils/kalshi_retention.py`` and Polymarket has no equivalent. A drain that
+applied across an unmeasured retention edge would count the purged tail
+``not_at_venue`` and stop, which reads exactly like a finished drain. Measuring
+that edge is what this rung is FOR. Second, this rail has no undo receipt: the
+sibling settled drain (#6739) stages one before it writes, and 25,469 rows is not
+the population to debut an unreversible write on. So the widened scope is a
+LOOKING instrument at this rung; the write half is rung 2, behind the bound this
+one measures.
+
+``band`` — ``MIN-MAX``, two ages in days, youngest-first — is how the bound gets
+read. It bounds ``fm.resolution_date``, so one call samples one age slice and its
+``not_at_venue`` count IS that slice's retention reading. Six calls are the curve.
+
+🔴 A BANDED PAGE CAN NEVER REPORT ``scan_exhausted``. Band exhaustion and
+population exhaustion are different answers and this rail returns them as two
+fields (#3257's ruling, learned on the Kalshi rail): a banded page that ran out
+of rows means "this slice is empty", and reporting that as a drained scope is the
+same lie ``out_of_scope_legs`` was added to stop one layer up.
+
+🔴 A BAND CANNOT SEE A ROW WHOSE ``resolution_date`` IS NULL. Every comparison
+against NULL is unknown, so an age band silently excludes the age-unknown tail —
+which is why the UNBANDED page reports those rows in an ``unknown`` age bucket
+rather than letting them vanish between slices. ``by_age_bucket`` is computed
+from the rows the page actually examined, not from a second query, so it costs
+nothing and it is the control that proves the band bound at all.
 """
 
 import asyncio
 import logging
+import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 # The bounds this rail runs its database work under are NOT re-implemented here.
@@ -252,6 +294,43 @@ COLLAPSED_LEG_PREDICATE = "fo.name IS NOT DISTINCT FROM fm.name"
 IN_SCOPE_STATUS_SQL = "fm.status = 'open'"
 OUT_OF_SCOPE_STATUS_SQL = "fm.status IS DISTINCT FROM 'open'"
 
+#: The two cohorts ``status_scope`` can address, keyed by the name an operator
+#: types. Built FROM the two constants above rather than restating them, so the
+#: widened page and ``_out_of_scope_legs`` cannot drift into describing
+#: different populations — the whole argument for the counter is that the two
+#: numbers add up to the defect.
+#:
+#: ``not_open`` and not ``resolved``: the complement is `status IS DISTINCT FROM
+#: 'open'`, which also admits `suspended`. Naming it ``resolved`` would be a
+#: claim about what those rows are, and the page reports `by_status` from the
+#: rows it examined so the operator reads that rather than trusting a label.
+STATUS_SCOPE_SQL = {
+    "open": IN_SCOPE_STATUS_SQL,
+    "not_open": OUT_OF_SCOPE_STATUS_SQL,
+}
+
+#: The only scope this rail may WRITE in. See the module docstring: Gamma's
+#: retention edge for resolved markets is unmeasured and this rail stages no undo
+#: receipt, so the widened scope is a looking instrument until both change.
+WRITABLE_STATUS_SCOPE = "open"
+
+DEFAULT_STATUS_SCOPE = "open"
+
+#: Upper edges, in days, of the age buckets the examined rows are folded into.
+#: Wide and few on purpose: this is a retention CURVE read from a 120-row sample
+#: per call, and a bucket narrower than the sample's own noise would invite a
+#: reader to see a cliff that is three rows.
+AGE_BUCKET_EDGES = (30, 60, 90, 180, 365)
+
+#: The bucket for a row whose ``resolution_date`` is NULL. NOT folded into the
+#: oldest bucket: "we do not know when this resolved" and "this resolved over a
+#: year ago" are different facts, and collapsing the first into the second would
+#: manufacture the very retention reading this rung exists to measure.
+AGE_BUCKET_UNKNOWN = "unknown"
+
+#: ``?band=30-60``. Two whole ages in days, youngest edge first.
+_BAND_FORM = re.compile(r"^\s*(\d+)\s*-\s*(\d+)\s*$")
+
 #: Verdicts a single leg can reach. Every one is COUNTED — ruling 054: an
 #: exclusion is counted, not skipped, and each zero state gets its own terminal
 #: rather than one silent success (gotcha #53).
@@ -273,6 +352,109 @@ class VenueUnavailable(Exception):
     empty answer would relabel nothing and report the cohort drained
     (gotcha #36, and gotcha #53's "an empty 200 is not an absence").
     """
+
+
+class SelectorRefused(Exception):
+    """A ``status_scope`` or ``band`` this rail will not run, refused BY NAME.
+
+    Never a silent fallback to the default. Every one of these mistakes produces
+    a page that looks exactly like a correct one — an unrecognised scope dropped
+    to ``open`` returns a truthful empty page for a cohort of 0 and reads as "the
+    resolved cohort is clean", which is the strongest possible wrong answer this
+    rail can give (gotcha #53, one layer further out).
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def parse_status_scope(status_scope: Optional[str]) -> str:
+    """``None`` -> the default cohort; a name -> that cohort; anything else raises."""
+    if status_scope is None:
+        return DEFAULT_STATUS_SCOPE
+    key = str(status_scope).strip().lower()
+    if key not in STATUS_SCOPE_SQL:
+        raise SelectorRefused(
+            "STATUS_SCOPE_UNKNOWN",
+            f"?status_scope={status_scope!r} is not a cohort this rail knows. "
+            f"Choose one of {sorted(STATUS_SCOPE_SQL)}. It is refused rather "
+            "than defaulted: a misspelling quietly served from the `open` "
+            "cohort — measured empty on 2026-09-21 — would answer 'nothing to "
+            "repair' for a population of 25,469.",
+        )
+    return key
+
+
+def parse_band(band: Optional[str]) -> Optional[tuple[int, int]]:
+    """``"30-60"`` -> ``(30, 60)``, two ages in DAYS, youngest edge first.
+
+    🔴 DELIBERATELY NOT :func:`app.tasks.repair_kalshi_fabricated_loss.parse_band`,
+    WHICH IS THE SAME GRAMMAR AND THE WRONG RULE HERE. That one refuses any band
+    reaching past ``PROVABLY_PURGED_AGE_DAYS`` — correct there, because Kalshi's
+    retention floor is a MEASURED constant and a band over it would return an
+    empty page that reads as "nothing to repair". This cohort has no such
+    constant: the whole purpose of banding here is to find where Polymarket's
+    edge is, so a floor refusal would refuse exactly the slices worth reading.
+    Importing it would have made this rail unable to ask its own question, and
+    the failure would have looked like an empty tail.
+
+    (Same reasoning as ``CLEANUP_RESERVE_SECONDS`` above: a number that silently
+    changes meaning when a sibling rail re-measures its own venue is worse than
+    one stated and guarded here.)
+
+    Raises :class:`SelectorRefused`, and never returns ``None`` for a value that
+    was supplied — a band silently dropped walks the whole population while the
+    response echoes the band the operator asked for.
+    """
+    if band is None:
+        return None
+    m = _BAND_FORM.match(str(band))
+    if not m:
+        raise SelectorRefused(
+            "BAND_UNPARSEABLE",
+            f"?band={band!r} is not two whole ages in days. Write it "
+            "youngest-first as MIN-MAX, e.g. ?band=30-60 for the second month "
+            "after resolution.",
+        )
+    low, high = int(m.group(1)), int(m.group(2))
+    if low >= high:
+        raise SelectorRefused(
+            "BAND_INVERTED",
+            f"?band={band!r} has MIN >= MAX ({low} >= {high}). Both numbers are "
+            "AGES IN DAYS, so the second one is the OLDER edge.",
+        )
+    return low, high
+
+
+def age_bucket(resolution_date: Optional[datetime], now: datetime) -> str:
+    """Fold one row's age into a named bucket. ``now`` is passed, never read.
+
+    The clock is an argument because a bucket boundary computed from a live
+    ``now()`` inside a test is a guard that changes its own answer as it runs
+    (Hot List #44). Production passes one instant for the whole page, so every
+    row of a page is bucketed against the same clock.
+    """
+    if resolution_date is None:
+        return AGE_BUCKET_UNKNOWN
+    when = resolution_date
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    age_days = (now - when).total_seconds() / 86400.0
+    if age_days < 0:
+        # A resolution date in the FUTURE on a market we no longer hold open.
+        # Its own bucket, because folding it into `0-30` would report a row that
+        # has not reached its own close as a fresh resolution.
+        return "future_date"
+    # A running lower bound rather than `EDGES.index(edge) - 1`, which wraps to
+    # the LAST edge on the first bucket and would label 0-30 as "365-30".
+    low = 0
+    for edge in AGE_BUCKET_EDGES:
+        if age_days < edge:
+            return f"{low}-{edge}"
+        low = edge
+    return f"{AGE_BUCKET_EDGES[-1]}+"
 
 
 def budget_headroom_seconds() -> float:
@@ -329,6 +511,32 @@ def _paused_before_examining(
         "cap": APPLY_LEG_CAP,
         "elapsed_s": round(time.monotonic() - started, 2),
     }
+
+
+def _refused(
+    *,
+    incoming_cursor: Optional[dict[str, Any]],
+    started: float,
+    code: str,
+    reason: str,
+) -> dict[str, Any]:
+    """The response for a call this rail declined to run at all.
+
+    Shares ``_paused_before_examining``'s zeroed shape — nothing was examined and
+    the operator's cursor comes back untouched — but its terminal is ``refused``
+    and not ``paused_*``. The distinction is the operator's next move: a pause
+    says "run me again", a refusal says "your selector is wrong and re-running it
+    will do this again". ``scan_exhausted`` is False for the same reason every
+    other unexamined page sets it False.
+    """
+    out = _paused_before_examining(
+        incoming_cursor=incoming_cursor,
+        started=started,
+        terminal="refused",
+        reason=reason,
+    )
+    out["refused_code"] = code
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -496,16 +704,94 @@ async def repair(
     limit: int = None,
     sport: str = None,
     after_id: int = None,
+    status_scope: str = None,
+    band: str = None,
 ) -> dict[str, Any]:
     """Re-ask the venue for each side-less leg and store the shipped label.
 
     ``sport`` filters ``llm_sport_category`` — an operator draining the tennis
     cohort before the Setka backlog is choosing an order, not a different
     population. ``after_id`` is a keyset cursor on ``futures_outcomes.id``.
+
+    ``status_scope`` (``open`` default, or ``not_open``) and ``band``
+    (``MIN-MAX`` ages in days over ``fm.resolution_date``) are #7701 rung 1: they
+    let the rail LOOK at the resolved complement and read Gamma's retention edge
+    one age slice at a time. The widened scope never writes — see the module
+    docstring for the two independent reasons, and
+    ``STATUS_SCOPE_APPLY_REFUSED`` below for the refusal itself.
     """
     started = time.monotonic()
     cap = min(int(limit), APPLY_LEG_CAP) if limit else APPLY_LEG_CAP
     incoming_cursor = {"after_id": int(after_id)} if after_id else None
+
+    # ---- the selectors, validated BEFORE anything is read ----------------
+    # Ordered so the most dangerous misreading is refused first: a scope the
+    # rail does not know would otherwise be served from the cohort measured
+    # EMPTY, and an empty page is the one answer that reads as success.
+    try:
+        scope = parse_status_scope(status_scope)
+        band_ages = parse_band(band)
+    except SelectorRefused as exc:
+        return _refused(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            code=exc.code,
+            reason=exc.message,
+        )
+
+    if apply and scope != WRITABLE_STATUS_SCOPE:
+        return _refused(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            code="STATUS_SCOPE_APPLY_REFUSED",
+            reason=(
+                f"?status_scope={scope!r} is READ-ONLY at this rung (#7701). The "
+                "correct label exists only at the venue and Polymarket's "
+                "retention edge for resolved markets is unmeasured, so an apply "
+                "across it would count the purged tail `not_at_venue` and stop, "
+                "which is indistinguishable from a finished drain; and this rail "
+                "stages no undo receipt, which 25,469 rows is not the population "
+                "to debut. Re-run with apply=false to read the bound, which is "
+                "what this scope is for."
+            ),
+        )
+
+    if apply and band_ages is not None:
+        return _refused(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            code="BAND_ON_APPLY_REFUSED",
+            reason=(
+                f"?band={band!r} is a sampling selector for reading the retention "
+                "curve, not a paging order for a write. A banded apply drains one "
+                "age slice and then reports that slice running out, which an "
+                "operator reads as the population being drained."
+            ),
+        )
+
+    if band_ages is not None and after_id:
+        # CERT-1935 on the sibling rail: a band's two ages are measured from an
+        # instant, and re-measuring them from today on every call moves the old
+        # edge forward while the keyset stays put — the rows sharing the cursor's
+        # own timestamp then sit after the cursor AND outside the new window, so
+        # no page of that walk ever selects them again, and it reports as the
+        # band being exhausted. That rail closed it with a `band_as_of` anchor
+        # minted on page one. This rung does not need a banded WALK — one page
+        # per slice is the sample — so the case is REFUSED rather than
+        # implemented subtly wrong.
+        return _refused(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            code="BAND_RESUME_UNSUPPORTED",
+            reason=(
+                f"?band={band!r} with ?after_id={after_id} is a banded RESUME, "
+                "which needs the `band_as_of` anchor this rung does not mint "
+                "(CERT-1935): re-measuring the band from today while the cursor "
+                "stays put strands every row sharing the cursor's timestamp and "
+                "reports it as the band being exhausted. One unpaged page per "
+                "band is the sample this rung is for."
+            ),
+        )
 
     counts: dict[str, int] = {"legs_examined": 0, **{v: 0 for v in LEG_VERDICTS}}
     samples: list[dict[str, Any]] = []
@@ -531,23 +817,37 @@ async def repair(
     # reads any colon-prefixed word in it as a bind nobody supplies; and if
     # anything ever collapses the statement to a single line, a `--` comment
     # silently comments out the rest of the query.
+    #
+    # 🔴 THE BAND'S MAX IS THE OLDER EDGE, SO IT IS A LOWER BOUND ON THE DATE.
+    # Reading the pair as "max age => max date" inverts the window and returns
+    # the slice next to the one asked for — a page that looks entirely
+    # plausible. Both bounds are on the SAME column the buckets are folded from,
+    # so `by_age_bucket` is a direct control on this clause having bound at all.
     page_sql = f"""
         SELECT fo.id           AS outcome_id,
                fo.market_id    AS market_id,
                fo.external_id  AS condition_id,
                fo.name         AS outcome_name,
                fm.name         AS market_name,
-               fm.llm_sport_category AS category
+               fm.llm_sport_category AS category,
+               fm.resolution_date    AS resolution_date,
+               fm.status             AS market_status
           FROM futures_markets fm
           JOIN futures_outcomes fo
             ON fo.market_id = fm.id
            AND {COLLAPSED_LEG_PREDICATE}
          WHERE fm.source = 'polymarket'
-           AND {IN_SCOPE_STATUS_SQL}
+           AND {STATUS_SCOPE_SQL[scope]}
            AND (CAST(:after_id AS bigint) IS NULL
                 OR fo.id > CAST(:after_id AS bigint))
            AND (CAST(:sport AS text) IS NULL
                 OR fm.llm_sport_category = CAST(:sport AS text))
+           AND (CAST(:band_max_age AS double precision) IS NULL
+                OR fm.resolution_date >= NOW()
+                   - (CAST(:band_max_age AS double precision) * INTERVAL '1 day'))
+           AND (CAST(:band_min_age AS double precision) IS NULL
+                OR fm.resolution_date <= NOW()
+                   - (CAST(:band_min_age AS double precision) * INTERVAL '1 day'))
          ORDER BY fo.id
          LIMIT CAST(:cap AS int)
     """
@@ -557,7 +857,13 @@ async def repair(
             timeout_literal=f"'{TARGET_SELECT_BUDGET_SECONDS}s'",
             server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
             sql=page_sql,
-            params={"after_id": after_id, "sport": sport, "cap": cap},
+            params={
+                "after_id": after_id,
+                "sport": sport,
+                "cap": cap,
+                "band_min_age": band_ages[0] if band_ages else None,
+                "band_max_age": band_ages[1] if band_ages else None,
+            },
         )
         page = result.fetchall()
     except ClientDeadlineExceeded as exc:
@@ -582,6 +888,47 @@ async def repair(
             terminal="paused_target_timeout",
             reason=f"page select did not finish: {type(exc).__name__}: {exc}",
         )
+
+    if not page and (band_ages is not None or scope != DEFAULT_STATUS_SCOPE):
+        # 🔴 AN EMPTY BANDED PAGE IS "THIS SLICE IS EMPTY" AND NOTHING ELSE, AND
+        # THE SENTENCE BELOW WOULD HAVE SAID SOMETHING MUCH LARGER. The default
+        # branch's whole vocabulary — `scan_exhausted`, "no collapsed legs
+        # remain", the complement count — is written about this rail's ORIGINAL
+        # cohort, and every one of those words is false for a 30-day slice of the
+        # resolved tail. So the widened selectors get their own terminal rather
+        # than borrowing prose that was true for a different question (#7701).
+        if band_ages is not None:
+            reason = (
+                f"no collapsed legs in scope {scope!r} resolved between "
+                f"{band_ages[0]} and {band_ages[1]} days ago. This is THIS "
+                "BAND being empty — not the scope, and not the defect. A band "
+                "also cannot see a row whose resolution_date is NULL, so an "
+                "unbanded page is what counts the age-unknown tail."
+            )
+        else:
+            reason = (
+                f"no collapsed legs remain in scope {scope!r}. This rail writes "
+                f"only in the {WRITABLE_STATUS_SCOPE!r} scope, so this is a "
+                "statement about what a LOOK found, not about anything drained."
+            )
+        out = _paused_before_examining(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            terminal="ok",
+            reason=reason,
+        )
+        # Band exhaustion and population exhaustion are different answers and
+        # this rail returns them as two fields (#3257's ruling). `scan_exhausted`
+        # keeps its documented meaning — THIS scan covered its population — and
+        # a banded scan covered one slice of it, so it stays False.
+        out["scan_exhausted"] = band_ages is None
+        out["band_exhausted"] = band_ages is not None
+        out["status_scope"] = scope
+        out["band"] = list(band_ages) if band_ages else None
+        out["by_age_bucket"] = {}
+        out["by_status"] = {}
+        out["applied"] = False
+        return out
 
     if not page:
         # 🔴 AN EMPTY PAGE IS "THE SCOPE IS EMPTY", NOT "THE DEFECT IS GONE", AND
@@ -622,6 +969,11 @@ async def repair(
         out["applied"] = bool(apply)
         return out
 
+    # ONE clock for the whole page, captured before the venue loop: a bucket
+    # boundary re-read per row would sort two rows of one resolution into two
+    # different slices while the loop is still running (Hot List #44).
+    bucket_now = datetime.now(timezone.utc)
+
     rows = [
         {
             "outcome_id": int(r[0]),
@@ -630,6 +982,11 @@ async def repair(
             "outcome_name": r[3],
             "market_name": r[4],
             "category": r[5],
+            "age_bucket": age_bucket(r[6], bucket_now),
+            "market_status": r[7],
+            # Overwritten by the loop below. Not defaulted to a verdict: a row
+            # the loop never reaches must not be counted as one it examined.
+            "verdict": None,
         }
         for r in page
     ]
@@ -671,11 +1028,18 @@ async def repair(
 
                 if not row["condition_id"]:
                     counts["no_condition_id"] += 1
+                    row["verdict"] = "no_condition_id"
                     continue
 
                 market = found.get(row["condition_id"])
                 if market is None:
                     counts["not_at_venue"] += 1
+                    # 🔴 THE READING THIS WHOLE RUNG EXISTS FOR. Folded by age
+                    # below: `not_at_venue` against a 0-30 day slice is a market
+                    # the venue really has dropped, and against a 365+ slice it
+                    # is the retention edge. One number cannot tell those apart,
+                    # which is why the bound was unmeasurable before #7167.
+                    row["verdict"] = "not_at_venue"
                     continue
 
                 # The SHIPPED rule, given the market's own event title. For this
@@ -691,8 +1055,10 @@ async def repair(
                     # Counted, not silent: a drain that "found nothing to do"
                     # must say how many times.
                     counts["unchanged"] += 1
+                    row["verdict"] = "unchanged"
                     continue
 
+                row["verdict"] = "relabellable"
                 planned.append({**row, "new_name": new_name})
 
             await asyncio.sleep(VENUE_PAUSE)
@@ -874,6 +1240,11 @@ async def repair(
         - client_db_budget_seconds(0.0)
     )
     if write_terminal is None and count_budget >= REMAINING_COUNT_MIN_BUDGET_SECONDS:
+        # Scoped and banded IDENTICALLY to the page above. A terminal count that
+        # kept the original predicate while the page walked a slice would report
+        # the whole cohort as this band's remainder — the same number meaning two
+        # different things on one response, which is how a banded drain comes to
+        # read as an unfinished one.
         count_sql = f"""
             SELECT count(*)
               FROM futures_markets fm
@@ -881,9 +1252,15 @@ async def repair(
                 ON fo.market_id = fm.id
                AND {COLLAPSED_LEG_PREDICATE}
              WHERE fm.source = 'polymarket'
-               AND {IN_SCOPE_STATUS_SQL}
+               AND {STATUS_SCOPE_SQL[scope]}
                AND (CAST(:sport AS text) IS NULL
                     OR fm.llm_sport_category = CAST(:sport AS text))
+               AND (CAST(:band_max_age AS double precision) IS NULL
+                    OR fm.resolution_date >= NOW()
+                       - (CAST(:band_max_age AS double precision) * INTERVAL '1 day'))
+               AND (CAST(:band_min_age AS double precision) IS NULL
+                    OR fm.resolution_date <= NOW()
+                       - (CAST(:band_min_age AS double precision) * INTERVAL '1 day'))
         """
         try:
             result = await _bounded_statement(
@@ -891,7 +1268,11 @@ async def repair(
                 timeout_literal=f"'{int(count_budget * 1000)}ms'",
                 server_budget_s=count_budget,
                 sql=count_sql,
-                params={"sport": sport},
+                params={
+                    "sport": sport,
+                    "band_min_age": band_ages[0] if band_ages else None,
+                    "band_max_age": band_ages[1] if band_ages else None,
+                },
             )
             remaining = int(result.scalar_one())
             remaining_measured = True
@@ -899,6 +1280,26 @@ async def repair(
             await _safe_rollback(session)
             remaining = None
             remaining_measured = False
+
+    # ---- the retention reading -------------------------------------------
+    # Folded from the rows the page ACTUALLY EXAMINED, not from a second query:
+    # it costs nothing, it cannot disagree with `counts`, and it is the control
+    # that proves the band clause bound — a band that silently failed to apply
+    # shows up here as buckets outside the slice that was asked for.
+    #
+    # Only examined rows are folded. A row the loop never reached (the deadline
+    # fired, or the venue refused its batch) carries `verdict: None` and is
+    # counted NOWHERE rather than in a bucket it was never read for: the whole
+    # value of this table is that a `not_at_venue` in it is a venue answer.
+    by_age_bucket: dict[str, dict[str, int]] = {}
+    by_status: dict[str, int] = {}
+    for row in examined_rows:
+        if row["verdict"] is None:
+            continue
+        cell = by_age_bucket.setdefault(row["age_bucket"], {})
+        cell[row["verdict"]] = cell.get(row["verdict"], 0) + 1
+        status_key = str(row["market_status"])
+        by_status[status_key] = by_status.get(status_key, 0) + 1
 
     return {
         "repair": "polymarket-leg-label",
@@ -908,7 +1309,15 @@ async def repair(
         "samples": samples,
         "remaining_legs": remaining,
         "remaining_legs_measured": remaining_measured,
-        "scan_exhausted": scan_exhausted,
+        "scan_exhausted": scan_exhausted and band_ages is None,
+        # Two answers, never one (#3257). A banded page that ran out of rows
+        # exhausted its SLICE; saying so through `scan_exhausted` would report a
+        # 30-day sample as a drained cohort.
+        "band_exhausted": (scan_exhausted if band_ages is not None else None),
+        "status_scope": scope,
+        "band": list(band_ages) if band_ages else None,
+        "by_age_bucket": by_age_bucket,
+        "by_status": by_status,
         "next_cursor": next_cursor,
         "stopped_before": stopped_before,
         "terminal": terminal,
