@@ -1098,11 +1098,23 @@ UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
 #: SIZED ON THE CADENCE, NOT ON THE BACKLOG. `revive_retired_future_starts` fires
 #: every 10 minutes, so 25 drains the 135 rows measured on 2026-09-20 inside an
 #: hour while keeping each pass's twin screen — one bounded read per candidate —
-#: cheap. It is a blast-radius bound rather than a throttle: the steady state
-#: after the first drain is a recall that returns nothing, because a revived row
-#: leaves the population for good (`scheduled` is not `voided`, and the
-#: retirement arm selects only `suspended` rows whose start is already past, so
-#: neither can re-select it and the two cannot oscillate).
+#: cheap. It is a blast-radius bound rather than a throttle: a REVIVED row leaves
+#: the population for good (`scheduled` is not `voided`, and the retirement arm
+#: selects only `suspended` rows whose start is already past, so neither can
+#: re-select it and the two cannot oscillate).
+#:
+#: 🔴 A REFUSED ROW DOES NOT LEAVE, AND THE SENTENCE ABOVE ONCE SAID "a recall
+#: that returns nothing" AS IF IT DID. That was the whole of #7260's second
+#: defect. A row refused for having a surviving counterpart stays `voided`, so
+#: the recall re-selects it on every single pass, in the same kickoff order, for
+#: ever. Once the refused set is larger than this cap it occupies the whole of
+#: every pass and no row behind it is ever screened again — measured on
+#: production 2026-09-21 07:1xZ: 84 ledger rows with a future start, 69 of them
+#: refusals, 38 of those sorting ahead of the first revivable row against a cap
+#: of 25, and the population byte-stable across seven consecutive passes while
+#: four WNBA playoff games sat invisible behind it. Gotcha #34 in a second
+#: costume: one counter shared between work and not-work starves the tail.
+#: :data:`UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS` is the separation.
 #:
 #: Deliberately NOT behind the Redis door the retirement arm uses. That door
 #: exists because that arm writes a TERMINAL; this one writes a row back onto the
@@ -1111,6 +1123,30 @@ UNREACHABLE_SUSPENDED_INFLIGHT_TTL = 360
 #: all. A door here would also defeat the ship: an arm that needs an attended
 #: enable leaves the games invisible until somebody remembers to turn it on.
 UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS = 25
+
+#: How many candidates one pass may SCREEN, as distinct from how many it WRITES.
+#:
+#: THE WRITE CAP ABOVE IS A BLAST RADIUS; THIS IS A COST BOUND. They were one
+#: number, and because a refusal costs a screen but writes nothing, the single
+#: number silently became "how far down the queue this arm can ever see". Two
+#: names, because they answer two questions and only one of them is about risk.
+#:
+#: SIZED ON THE POPULATION, NOT ON THE CADENCE — the opposite of its sibling, and
+#: deliberately. What it has to clear is the REFUSED prefix, so it is sized above
+#: the largest future-start ledger population ever measured: 163 rows (production
+#: 2026-09-20 14:29Z), against 84 on 2026-09-21. 400 carries that peak with room
+#: for the refusal set to keep growing as the catch-all twins accrue, and the
+#: screen is one narrowed read per candidate — the whole 84-row population
+#: screens in 97ms measured through `db-query`, so the ceiling costs a fraction
+#: of a ten-minute beat even when it is reached.
+#:
+#: 🔴 EXHAUSTING IT IS REPORTED, NEVER SILENT. A budget that can be exceeded
+#: re-admits the exact defect it was added for, so a pass that screens to the
+#: ceiling and still writes nothing sets `screen_budget_exhausted` and logs a
+#: warning naming this constant. The starvation was invisible for a day because
+#: nothing in the arm could tell "there is no work" from "I never got to it";
+#: that distinction is now in the stats dict.
+UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS = 400
 
 #: Where the #7594 take-back arm writes the status it swapped FROM.
 #:
@@ -4530,8 +4566,10 @@ async def _revive_retired_future_starts_impl() -> dict:
 
     stats = {
         "candidates": 0,
+        "screened": 0,
         "revived": 0,
         "refused_surviving_twin": 0,
+        "screen_budget_exhausted": False,
         "backup_table_present": False,
     }
 
@@ -4560,8 +4598,16 @@ async def _revive_retired_future_starts_impl() -> dict:
         # Oldest first: the soonest kickoff is the one a reader is most likely to
         # be looking for tonight, and draining in arrival order starves the tail
         # (gotcha #41). The population is not expiring — a future-dated row only
-        # becomes more urgent as its start approaches — so oldest-first under a
-        # cap is the whole ordering question here.
+        # becomes more urgent as its start approaches — so oldest-first is the
+        # whole ordering question here.
+        #
+        # 🔴 THE LIMIT IS THE SCREEN BUDGET, NOT THE WRITE CAP, AND THE SWAP IS
+        # THE FIX. Under the write cap this recall returned the same 25 rows on
+        # every pass for ever, because a row refused by the twin screen stays
+        # `voided` and so stays in the recall — oldest-first then guarantees the
+        # refused prefix is re-read instead of the tail, rather than protecting
+        # the tail as the comment above intends. The write cap now bounds the
+        # loop below; this bounds what the loop may look at.
         candidate_ids = (await session.execute(
             _sql_text(
                 "SELECT e.id FROM events e JOIN "
@@ -4572,12 +4618,20 @@ async def _revive_retired_future_starts_impl() -> dict:
             {
                 "terminal": UNREACHABLE_SUSPENDED_TERMINAL,
                 "cutoff": now + RETIRED_REVIVAL_TOLERANCE,
-                "cap": UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS,
+                "cap": UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS,
             },
         )).scalars().all()
         stats["candidates"] = len(candidate_ids)
 
         for event_id in candidate_ids:
+            # The write cap, spent only on rows this pass actually gives back.
+            # Checked at the TOP so a pass that reaches it stops screening too:
+            # the remaining candidates are the next pass's head, and screening
+            # them here would pay their cost twice and report a `screened` count
+            # that overstates what the budget bought.
+            if stats["revived"] >= UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS:
+                break
+            stats["screened"] += 1
             event = await session.get(Event, event_id)
             if event is None:
                 continue
@@ -4615,6 +4669,26 @@ async def _revive_retired_future_starts_impl() -> dict:
                 UNREACHABLE_SUSPENDED_TERMINAL,
                 event.commence_time,
                 (event.commence_time - now).total_seconds() / 3600,
+            )
+
+        # "I found no work" and "I never got to the work" are different answers
+        # and the arm used to give the same one for both — which is why this
+        # starved in silence for a day while `revived: 0` read as a drained
+        # population. A pass that fills its screen budget and still writes
+        # nothing is reporting that the refused prefix has outgrown the budget.
+        if (
+            stats["candidates"] >= UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS
+            and stats["revived"] == 0
+        ):
+            stats["screen_budget_exhausted"] = True
+            logger.warning(
+                "#7260 revival screened its whole budget of %s candidates and "
+                "revived none (%s refused for a surviving twin). The refused "
+                "prefix has outgrown "
+                "UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS, so rows "
+                "behind it are no longer being reached — raise it.",
+                UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS,
+                stats["refused_surviving_twin"],
             )
 
     # The pair's other half, in its own transaction (#7594). Run AFTER the

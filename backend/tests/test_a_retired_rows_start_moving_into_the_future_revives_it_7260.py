@@ -492,10 +492,19 @@ class _ImplSession:
     beat with every unit test green.
     """
 
-    def __init__(self, *, table_present=True, candidates=(), rows=None):
+    def __init__(
+        self, *, table_present=True, candidates=(), rows=None, twins=None
+    ):
         self._table_present = table_present
         self._candidates = list(candidates)
         self._rows = rows or {}
+        # Per-candidate twin-screen answers, keyed by event id. Absent ⇒ orphan.
+        # Needed because the starvation this arm shipped is only expressible
+        # over a MIX of refused and revivable rows: a session that answers the
+        # screen the same way for every candidate cannot pose the question.
+        self._twins = twins or {}
+        self._current = None
+        self.recalled_limits = []
         self.committed = False
 
     async def execute(self, stmt, params=None):
@@ -503,19 +512,29 @@ class _ImplSession:
         if "to_regclass" in sql:
             return SimpleNamespace(scalar=lambda: self._table_present)
         if "FROM events e JOIN" in sql:
-            ids = list(self._candidates)
+            cap = (params or {}).get("cap")
+            self.recalled_limits.append(cap)
+            # 🔴 THE `LIMIT` IS APPLIED, AND IT HAS TO BE. This fake ignored it
+            # and every starvation test below passed against the DEFECTIVE
+            # code: handing back all 31 candidates when the recall asked for 25
+            # makes the page boundary — the entire bug — unobservable. A fake
+            # that drops the one clause under test is a test that cannot fail.
+            ids = list(self._candidates)[:cap] if cap else list(self._candidates)
             return SimpleNamespace(
                 scalars=lambda: SimpleNamespace(all=lambda: ids)
             )
         if "JOIN sports" in sql:
-            # The twin screen's recall.
-            return _FakeResult([])
+            # The twin screen's recall, answered for whichever candidate the
+            # loop last read. The impl asks `session.get` before the screen, so
+            # `_current` is that row — see `get` below.
+            return _FakeResult(self._twins.get(self._current, []))
         # The screen's read of the candidate's own sport key. A real key, not
         # `None`: `None` fails the screen closed and every revival below would
         # be refused for a reason that has nothing to do with what it asserts.
         return SimpleNamespace(scalar=lambda: "icehockey_other")
 
     async def get(self, _model, pk):
+        self._current = pk
         return self._rows.get(pk)
 
     async def commit(self):
@@ -574,8 +593,10 @@ class TestTheImplRuns:
         stats = await _run_impl(_ImplSession(table_present=False))
         assert stats == {
             "candidates": 0,
+            "screened": 0,
             "revived": 0,
             "refused_surviving_twin": 0,
+            "screen_budget_exhausted": False,
             "backup_table_present": False,
         }
 
@@ -597,7 +618,152 @@ class TestTheImplRuns:
         assert row.status == UNREACHABLE_SUSPENDED_TERMINAL
 
 
+@pytest.mark.asyncio
+class TestARefusedPrefixDoesNotStarveTheTail:
+    """#7260's second defect: the write cap was also the recall's LIMIT.
+
+    A row refused for having a surviving counterpart stays `voided`, so it is
+    re-selected on every pass in the same kickoff order, for ever. When the
+    refused set outgrew the cap it filled every pass by itself and nothing
+    behind it was ever screened again.
+
+    MEASURED ON PRODUCTION 2026-09-21 07:1xZ, after the #7594 repair was live
+    and the arm had been running for over an hour (`db-query`, the arm's own
+    recall plus an orientation-blind counterpart census with the sport-family
+    test REMOVED, so it is strictly wider than the shipped screen):
+
+        ledger rows, `voided`, future start                84
+          ... a surviving row holds the fixture (refused)  69
+          ... ORPHANS, revivable, still invisible          15
+        of the 69, sorting ahead of the first orphan       38    cap is 25
+
+        population across seven consecutive passes    byte-stable
+        (voided 13503 / scheduled 48 both at 05:58Z and 07:05Z)
+
+    The 15 included four WNBA playoff games — Tempo v Sky and Sparks v Aces on
+    Sep 23, Dream v Liberty and Wings v Storm on Sep 24 — which the issue's own
+    title names as the population this ship exists for.
+
+    The control that makes the census non-vacuous: the same query run against
+    the four rows #7594's take-back caught returns 7 counterpart rows, every
+    one of them a crossed pair. It finds twins when twins are there.
+    """
+
+    @staticmethod
+    def _refused_run(refusals: int, orphans: int = 1):
+        """`refusals` rows carrying a twin, then `orphans` revivable rows."""
+        candidates, rows, twins = [], {}, {}
+        for i in range(refusals):
+            row = _retired_row(event_id=90000 + i)
+            candidates.append(row.id)
+            rows[row.id] = row
+            twins[row.id] = [_other("Predators", "Maple Leafs")]
+        orphan_ids = []
+        for i in range(orphans):
+            row = _retired_row(event_id=91000 + i)
+            candidates.append(row.id)
+            rows[row.id] = row
+            orphan_ids.append(row.id)
+        return (
+            _ImplSession(candidates=candidates, rows=rows, twins=twins),
+            rows,
+            orphan_ids,
+        )
+
+    async def test_an_orphan_behind_more_refusals_than_the_cap_is_reached(self):
+        """The whole bug, in one assertion.
+
+        30 > the write cap of 25, so under the shipped recall this orphan was
+        the 31st candidate of a 25-row page and could never be selected.
+        """
+        from app.tasks.espn_sync import UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS
+
+        refusals = UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS + 5
+        session, rows, (orphan_id,) = self._refused_run(refusals)
+
+        stats = await _run_impl(session)
+
+        assert stats["refused_surviving_twin"] == refusals
+        assert stats["revived"] == 1, "the orphan behind the refused prefix"
+        assert rows[orphan_id].status == "scheduled"
+        assert stats["screened"] == refusals + 1
+
+    async def test_the_recall_asks_for_the_screen_budget_not_the_write_cap(self):
+        """The one-line swap, pinned at the parameter the recall is given.
+
+        Asserted on the bind rather than on the outcome because the outcome
+        above is also reachable by widening the write cap, which would be the
+        wrong fix: the write cap is a blast radius and must not move.
+        """
+        from app.tasks.espn_sync import (
+            UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS,
+            UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS,
+        )
+
+        session, _, _ = self._refused_run(1)
+        await _run_impl(session)
+
+        # Index 0, not the whole list: #7594's take-back arm runs inside this
+        # impl and issues its own recall of the same shape with its own
+        # ceiling. Asserting the list would couple this test to that arm's cap
+        # and would go red the day it moves for a reason of its own.
+        assert (
+            session.recalled_limits[0]
+            == UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS
+        )
+        assert (
+            UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS
+            > UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS
+        ), "a screen budget at or below the write cap is the defect again"
+
+    async def test_the_write_cap_still_bounds_the_blast_radius(self):
+        """Widening what the pass LOOKS at must not widen what it WRITES."""
+        from app.tasks.espn_sync import UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS
+
+        cap = UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS
+        session, rows, orphan_ids = self._refused_run(0, orphans=cap + 10)
+
+        stats = await _run_impl(session)
+
+        assert stats["revived"] == cap
+        assert stats["screened"] == cap, "a pass at its cap stops screening"
+        revived = [i for i in orphan_ids if rows[i].status == "scheduled"]
+        assert len(revived) == cap
+        assert len(orphan_ids) - len(revived) == 10, "the rest wait one pass"
+
+    async def test_a_budget_that_buys_nothing_is_reported_not_silent(self):
+        """The distinction the arm could not make: no work vs never got to it."""
+        from app.tasks.espn_sync import (
+            UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS as SCREEN,
+        )
+
+        session, _, _ = self._refused_run(SCREEN, orphans=0)
+        stats = await _run_impl(session)
+        assert stats["revived"] == 0 and stats["candidates"] == SCREEN
+        assert stats["screen_budget_exhausted"] is True
+
+    async def test_a_pass_that_does_not_fill_its_budget_is_not_flagged(self):
+        """The negative control: `revived: 0` on a short page is just quiet."""
+        session, _, _ = self._refused_run(3, orphans=0)
+        stats = await _run_impl(session)
+        assert stats["revived"] == 0
+        assert stats["screen_budget_exhausted"] is False
+
+
 class TestTheBlastRadiusIsBounded:
+    def test_the_screen_budget_clears_the_largest_measured_population(self):
+        """It is sized on the population, not on the cadence — see the docstring.
+
+        163 is the largest future-start ledger population ever measured
+        (production 2026-09-20 14:29Z). A screen budget below it can leave a
+        refused prefix it cannot see past, which is the starvation above.
+        """
+        from app.tasks.espn_sync import (
+            UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS,
+        )
+
+        assert UNREACHABLE_SUSPENDED_REVIVE_SCREEN_MAX_PER_PASS >= 163
+
     def test_the_cap_drains_the_measured_backlog_within_minutes(self):
         """Sized on the 60s cadence, not on the backlog."""
         from app.tasks.espn_sync import UNREACHABLE_SUSPENDED_REVIVE_MAX_PER_PASS
