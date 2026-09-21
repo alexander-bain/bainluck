@@ -266,6 +266,74 @@ export function renderedOutcomeRowPercents(
   return renderedDuelPercents(values[0], values[1]);
 }
 
+// ── A SETTLED ZERO IS NOT ONE OF THE TWO (#7796) ─────────────────────────────
+//
+// #5961 moved the pair rule onto the rows a reader is actually shown, which is
+// right and is why `renderedOutcomeRowPercents` exists. Its caller reaches that
+// arity by dropping outcomes with no price — and the test it uses is
+// `typeof probability === "number"`, which **`0.0` passes**.
+//
+// So a knockout market narrowed to two live finalists, which also carries a
+// graded-out player at zero, is printed at arity THREE, the pair rule refuses
+// it, and the card rounds the two live legs independently again. Measured on
+// production 2026-09-21 over 80 futures cards in `GET /api/feed`:
+//
+//     61264062  WTA Sao Paulo Winner   printed [55, 46, 0]  sum 101
+//                                      the two live legs total 1.005
+//
+// A sixteen-name draw in which two players own 101% — #5961's exact picture,
+// one row wider.
+//
+// THE RULE: a zero is not a member of the complement. `0.545 + 0.46` is the pair
+// whether or not an eliminated player is printed beneath it, so the pair rule is
+// taken over the LIVE legs and the zero rows keep the zero they were served.
+//
+// This does not breach "whole or not at all" (#2279), which forbids a card
+// printing a derived number beside a served one. `renderedPercent(0)` is `0` and
+// the server's `rendered_percent` for such a row is `0`, so the two paths agree
+// by construction rather than by luck — and the test beside this asserts that,
+// rather than taking it on trust.
+//
+// The zero row itself STAYS on the card. #6195's doctrine is that a `0.0` which
+// is a verdict is a fact and belongs on the page, while a `0.0` which is an
+// absent price is noise; here the four zero rows carry `is_winner=false`, so
+// they are verdicts. Dropping them would also fix the total, and would be the
+// wrong fix for the same reason #6195 was filed.
+//
+// Any shape but "exactly two live legs" yields all-nulls — the same "no override"
+// answer, and never a claim that the list was checked and found fine.
+//
+// NOT A SWAP FOR THE OTHER CALLERS, and deliberately so. `FuturesCard` keys the
+// pair over the WHOLE shipped outcome set rather than its printed five, because
+// "two rows out of a longer field are not a duel and `slice` must not be able to
+// manufacture one" (#2831). That set carries the market's unpriced outcomes as
+// `null`, which this function refuses on sight, so pointing it there would change
+// nothing — and it is the caller whose list has ALREADY been filtered to the
+// printed rows that needs this, which is `RelatedByTag` and only `RelatedByTag`.
+
+export function renderedFieldRowPercents(
+  probabilities: Array<number | null | undefined> | null | undefined,
+): Array<number | null> {
+  const values = probabilities ?? [];
+  const refuse = values.map(() => null);
+  if (values.length === 2) return renderedDuelPercents(values[0], values[1]);
+
+  const live: number[] = [];
+  for (const v of values) {
+    // A row this function cannot place is a card it must not answer for.
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return refuse;
+    if (v > 0) live.push(v);
+  }
+  if (live.length !== 2) return refuse;
+
+  const [firstPercent, secondPercent] = renderedDuelPercents(live[0], live[1]);
+  if (firstPercent === null || secondPercent === null) return refuse;
+
+  const pair = [firstPercent, secondPercent];
+  let taken = 0;
+  return values.map((v) => ((v as number) > 0 ? pair[taken++] : 0));
+}
+
 // ── The HEADLINE percent, so two surfaces cannot headline one market twice ───
 //
 // UX-P162. `renderedCardPercents` answers for a LIST; a card's hero prints ONE

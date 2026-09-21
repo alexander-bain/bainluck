@@ -5,7 +5,7 @@ import { fetchFeed } from "@/lib/api";
 import type { FeedConceptData, FeedEventData, FeedFuturesData } from "@/lib/types";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
-import { renderedOutcomeRowPercents } from "@/lib/renderedPercent";
+import { renderedFieldRowPercents } from "@/lib/renderedPercent";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
@@ -299,14 +299,26 @@ export default function RelatedByTag({
              then showed two of them as a pair. That gap is the whole defect,
              and it opened the day this component started filtering.
 
-             `renderedOutcomeRowPercents` yields all-nulls for any arity but
-             two, so on every other card this reads through to the server's own
+             #7796 — AND THE FILTER ABOVE LETS A ZERO THROUGH. `0.0` is a
+             number, so a graded-out player survives it and the same two live
+             finalists arrive at arity THREE, where the pair rule refuses them
+             and the card prints 101 again: `WTA Sao Paulo Winner`, sixteen
+             names, `55 / 46 / 0`, photographed on production 2026-09-21.
+             `renderedFieldRowPercents` takes the pair over the LIVE legs and
+             leaves the verdict rows their zero — which is a fact and belongs on
+             the page (#6195), not a total to be tidied away by dropping it.
+
+             Either function yields all-nulls for any shape it cannot answer
+             for, so on every other card this reads through to the server's own
              answer and nothing moves.
 
              WHOLE OR NOT AT ALL, for #2279's reason one arm wider: the choice
              is made ONCE for the card rather than per row, so no card can ever
-             print a derived number beside a served one. */
-          const derivedField = renderedOutcomeRowPercents(
+             print a derived number beside a served one. A zero row is not an
+             exception to that — `renderedPercent(0)` and the served
+             `rendered_percent` are both `0`, so the two paths agree by
+             construction. */
+          const derivedField = renderedFieldRowPercents(
             field.map((outcome) => outcome.probability),
           );
           const fieldPercents = derivedField.every((percent) => percent !== null)
