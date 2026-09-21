@@ -75,8 +75,9 @@ import type { CohortKey } from "./calibrationCohort";
  * The cohort as a noun phrase that reads inside a sentence.
  *
  * Keyed on `CohortKey` — the existing machine-readable discriminant — and NOT
- * on `shortLabel`, which is a heading ("Traded", "All markets") and produces
- * "measured over traded" when dropped into prose. A `Record<CohortKey, …>` is
+ * on `shortLabel`, which is an adjective a consumer supplies the noun for
+ * ("Traded", "All") and produces "measured over traded" when dropped into
+ * prose. A `Record<CohortKey, …>` is
  * exhaustive, so adding a third cohort is a type error here rather than a
  * silently unlabelled number on the page.
  *

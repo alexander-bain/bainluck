@@ -223,6 +223,25 @@ describe("every cohort label names the predicate it actually selects", () => {
   const dflt = describeCohort(partition, PROD.fullN, false);
   const all = describeCohort(partition, PROD.fullN, true);
 
+  /** The page's own number formatting, so a rendered string is a rendered string. */
+  const fmt = (n: number) => n.toLocaleString();
+
+  /**
+   * #7750 — every cohort the module can emit, including the edge partitions,
+   * so a class assertion is a claim about the FUNCTION rather than about the
+   * two states this block happens to name above.
+   */
+  const everyCohortState = [
+    ["traded (the default view)", dflt],
+    ["all", all],
+    ["traded, no sportsbook rows",
+      describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, false)],
+    ["all, no sportsbook rows",
+      describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, true)],
+    ["traded, nothing excluded",
+      describeCohort({ movedN: 200, unchangedN: 0, notApplicableN: 0 }, 200, false)],
+  ] as const;
+
   test("the shipped false clause is gone, verbatim and by prefix", () => {
     expect(dflt.detail).not.toContain("where real trading moved the price");
     expect(dflt.headline).not.toContain("well-traded");
@@ -316,7 +335,7 @@ describe("every cohort label names the predicate it actually selects", () => {
   // rendered sentence. The requirement — the sportsbook rows named as a SUBSET
   // of the traded cohort — is unchanged and is now carried by "Of those".
   test("the default cohort is ONE traded number, with the sportsbook subset named", () => {
-    expect(dflt.headline).toBe("Showing traded markets (389,385)");
+    expect(dflt.headline).toBe("Showing traded outcomes (389,385)");
     expect(dflt.detail).toContain("Of those, 40,075 are sportsbook lines.");
     expect(dflt.shortLabel).toBe("Traded");
   });
@@ -363,7 +382,7 @@ describe("every cohort label names the predicate it actually selects", () => {
     // three numbers the default banner is responsible for are still on screen.
     const line = renderedLine(dflt);
     expect(line).toBe(
-      "Showing traded markets (389,385) Of those, 40,075 are sportsbook lines. " +
+      "Showing traded outcomes (389,385) Of those, 40,075 are sportsbook lines. " +
         "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."
     );
     for (const n of ["389,385", "40,075", "263,022"]) {
@@ -384,6 +403,70 @@ describe("every cohort label names the predicate it actually selects", () => {
       expect(label).not.toContain("not applicable");
       expect(label).not.toContain("neither cohort");
     }
+  });
+
+  // =========================================================================
+  // #7750 — THE UNIT IS THE OUTCOME, AND `shortLabel` IS THE ADJECTIVE SLOT.
+  //
+  // What shipped: "Showing traded markets (449,027)", where 449,027 is a count
+  // of OUTCOMES. Four things on one screen counted that same population and the
+  // headline was the only one out of step — its own excluded clause one space
+  // later ("Excluded: 298,001 untraded OUTCOMES"), the source table's OUTCOMES
+  // column, and the RESOLVED OUTCOMES hero card. A market resolves into many
+  // outcomes, so this is not a loose synonym: it is a different, much smaller
+  // quantity printed on the page whose only job is credibility.
+  //
+  // Pinning the three corrected literals would prove nothing the day a fourth
+  // cohort is added, so both halves are written over the EMITTED strings — the
+  // shape this file's own D101 note argues for.
+  // =========================================================================
+
+  /** Mirrors the noun the consumers supply, byte-for-byte with page.tsx. */
+  const asConsumersRenderIt = (c: ReturnType<typeof describeCohort>): string[] => [
+    // page.tsx:2048, the chart caption
+    `${c.shortLabel} (${fmt(c.cohortN)} outcomes).`,
+    // page.tsx:2056, the chart series label
+    `${c.shortLabel} (${fmt(c.cohortN)})`,
+    // page.tsx:159, the cohort chip (uppercased by CSS)
+    c.shortLabel,
+  ];
+
+  test("no cohort string pairs a count with the market noun", () => {
+    // Scoped to strings that CARRY A NUMBER. `plainHeadlineScope` ("Across
+    // every market we track") describes which markets we source from and
+    // counts nothing, so it is properly exempt — a blanket ban on the word
+    // would over-fire on the one place it is true.
+    for (const [name, c] of everyCohortState) {
+      for (const label of copyOf(c)) {
+        if (!/\d/.test(label)) continue;
+        expect(`${name}: ${label}`).not.toMatch(/\bmarkets?\b/i);
+      }
+    }
+  });
+
+  test("shortLabel is an adjective, so no consumer can print a doubled noun", () => {
+    // "All markets" was a complete noun phrase in a slot whose consumers append
+    // their own noun, which is why it rendered "All markets (747,028
+    // outcomes)". Spelling it "All outcomes" would have produced "All outcomes
+    // (747,028 outcomes)"; the slot has to stay adjectival for BOTH consumers
+    // to read, and then the next cohort added here is correct for free.
+    for (const [name, c] of everyCohortState) {
+      expect(`${name}: ${c.shortLabel}`).not.toMatch(/\b(markets?|outcomes?)\b/i);
+      for (const rendered of asConsumersRenderIt(c)) {
+        // No rendered consumer string names two units over one number.
+        expect(`${name}: ${rendered}`).not.toMatch(/\bmarkets?\b/i);
+        expect((rendered.match(/\boutcomes\b/gi) ?? []).length).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  test("the headline counts the same unit its own excluded clause does", () => {
+    // The two halves are rendered as ONE sentence (#7330's `renderedLine`), so
+    // this is the noun disagreement exactly as a reader meets it.
+    const line = renderedLine(dflt);
+    expect(line).toContain("untraded outcomes");
+    expect(line).toMatch(/Showing traded outcomes \(/);
+    expect(line).not.toMatch(/\bmarkets?\b/i);
   });
 
   // D101 — WHERE UX-P080 ITEM 3's REQUIREMENT WENT.
@@ -424,7 +507,7 @@ describe("every cohort label names the predicate it actually selects", () => {
   });
 
   test("the all-markets view publishes the whole partition", () => {
-    expect(all.headline).toBe("Showing all markets (652,407)");
+    expect(all.headline).toBe("Showing all outcomes (652,407)");
     expect(all.detail).toBe(
       "389,385 traded (including 40,075 sportsbook lines) · 263,022 untraded."
     );
@@ -447,7 +530,7 @@ describe("every cohort label names the predicate it actually selects", () => {
     // A caveat that appears on payloads it does not describe is noise. Here the
     // cohort IS exactly `price_moved === true`, so saying so is accurate.
     const c = describeCohort({ movedN: 200, unchangedN: 100, notApplicableN: 0 }, 300, false);
-    expect(c.headline).toBe("Showing traded markets (200)");
+    expect(c.headline).toBe("Showing traded outcomes (200)");
     expect(c.detail).toBe(
       "Every traded outcome. " +
         "Excluded: 100 untraded outcomes, whose price never moved off its opening line."
