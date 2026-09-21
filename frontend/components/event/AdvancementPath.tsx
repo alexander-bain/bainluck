@@ -45,6 +45,7 @@
 import { motion } from "@/components/motion";
 import { fadeIn } from "@/lib/animations";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { ADVERSE_COLUMN_KEYS, risingIsGood } from "@/lib/gridColumnPolarity";
 
 /** One stage on the path. */
 export interface AdvancementStage {
@@ -82,13 +83,13 @@ export interface AdvancementStage {
 /**
  * Grid columns that are NOT a rung on the way to a title (#7206).
  *
- * `relegation` is the only one in the whole vocabulary — 26 distinct key/label
- * pairs across every config in `league_configs.py`, and every other key
- * (`top_4`, `make_playoffs`, `conference`, `final_four`, `make_cut`, …) is a
- * step toward something good. It appears in exactly three configs: `epl`,
- * `la-liga`, `bundesliga`.
+ * This is the same set, held once, that says which way is up for a column's
+ * 24h move (#7745) — see `lib/gridColumnPolarity`, which carries the vocabulary
+ * survey behind it and the note on when the two questions would have to split.
+ * Two sets of one string each, in two files, both meaning "relegation is the
+ * odd one out", is how they stop agreeing.
  */
-export const NON_ADVANCEMENT_STAGE_KEYS: ReadonlySet<string> = new Set(["relegation"]);
+export const NON_ADVANCEMENT_STAGE_KEYS: ReadonlySet<string> = ADVERSE_COLUMN_KEYS;
 
 /** The heading a ladder of rungs toward a title gets. */
 export const CHAMPIONSHIP_PATH_HEADING = "CHAMPIONSHIP PATH";
@@ -190,7 +191,12 @@ export default function AdvancementPath({
               {p.change != null && Math.abs(p.change) >= MOVE_DEAD_BAND && (
                 <span
                   className={`text-xs font-mono tabular-nums ${
-                    p.change > 0 ? "text-accent-brand" : "text-accent-danger"
+                    // The ARROW says which way the number moved; the COLOUR says
+                    // whether that is good news for this rung, and on a
+                    // `Relegated` rung those are opposite answers (#7745).
+                    (p.change > 0) === risingIsGood(p.columnKey)
+                      ? "text-accent-brand"
+                      : "text-accent-danger"
                   }`}
                 >
                   {p.change > 0 ? "↑" : "↓"}{" "}
