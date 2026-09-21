@@ -110,29 +110,42 @@ def test_a_row_nobody_refused_is_untouched():
 # ── what the survivors are divided by ───────────────────────────────────────
 
 
-def test_the_withheld_price_is_not_in_the_divisor():
-    """THE ORDERING GUARD, and the one case that can only be got right one way.
+def test_the_withholding_decides_whether_there_is_a_divisor_at_all():
+    """THE ORDERING GUARD. Re-specimened by #7103, which REVERSED this test's
+    original expectation, so the reversal is recorded here rather than hidden in
+    a diff.
 
-    Three legs: 0.9 (refused) + 0.6 + 0.5. The raw field sums to **2.0**, which is
-    past ``_FIELD_SUM_MAX`` (1.60) — so a NORMALIZE-THEN-WITHHOLD implementation
-    reads an independent-binary overround, keeps every price raw, and hands the
-    reader 0.6 and 0.5 beside a blank row. Withholding FIRST takes the refused
-    0.9 out of the sum, the remaining 1.1 lands inside the normalizable band, and
-    the two survivors are squeezed to a distribution that sums to one.
+    As shipped, this guard used three legs — 0.9 (refused) + 0.6 + 0.5 — and
+    asserted the two survivors were squeezed to sum 1.0, because withholding
+    first dropped the raw 2.0 field into the normalizable band. #7103 measured
+    that exact mechanism as the defect: the squeeze's premise is that the legs it
+    can see ARE the field, and once a leg is withheld because its price is
+    UNKNOWN that premise is false. On `/api/futures/2951423` it restated Agit
+    Kabayel's honest 0.870 as 0.767. So a withheld-bearing field is no longer
+    squeezed at all, and the old specimen's survivors correctly stay raw.
 
-    The two orders therefore disagree on the printed number, not merely on
-    internals, which is what makes this assertion worth writing.
+    THE ORDER IS STILL LOAD-BEARING, and this specimen proves it with a live
+    observable rather than a vacuous one. Three legs — 0.5 (refused) + 0.4 + 0.3
+    — sum to **1.2**, INSIDE the band. A NORMALIZE-THEN-WITHHOLD implementation
+    has withheld nothing yet when it asks, so it squeezes the whole field by 1.2
+    and hands the reader 0.333 and 0.25. Withholding FIRST makes the count the
+    gate reads non-zero, the squeeze is refused, and the survivors print the raw
+    0.4 and 0.3 their books actually bound.
+
+    The two orders therefore still disagree on the printed number, which is what
+    makes this assertion worth writing — only now they disagree the other way up.
     """
     rows = lf._serialize_outcomes(
-        [_Outcome(1, "A", 0.9), _Outcome(2, "B", 0.6), _Outcome(3, "C", 0.5)],
+        [_Outcome(1, "A", 0.5), _Outcome(2, "B", 0.4), _Outcome(3, "C", 0.3)],
         _Market(),
         {1},
     )
     survivors = [r["probability"] for r in rows if r["id"] != 1]
 
-    assert sum(survivors) == pytest.approx(1.0, abs=1e-3)
-    # The wrong order leaves these at their raw 0.6 / 0.5.
-    assert survivors != [0.6, 0.5]
+    assert survivors == [0.4, 0.3]
+    # The wrong order squeezes the whole field by 1.2 and lands exactly here.
+    assert survivors != [0.333, 0.25]
+    assert sum(survivors) == pytest.approx(0.7, abs=1e-3)
 
 
 def test_the_squeeze_divides_by_the_whole_field_not_the_served_ten():

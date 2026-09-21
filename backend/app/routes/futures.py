@@ -6843,8 +6843,24 @@ def _format_market_detail(
     # ASKED OF THE FUNCTION THAT DID THE SCALING, never re-derived: it reports
     # whether the printed values actually moved. A copy of the `> 105` test here
     # would be a second answer to one question, free to drift from the first.
+    #
+    # #7103 — AND NOT AT ALL WHEN THIS PAGE HAS WITHHELD A LEG. The block at the
+    # nulling above says the order is load-bearing because it takes a refused row
+    # out of the divisor "without touching a surviving row". That is true of the
+    # WRITE — no stored price moves — and false of the printed value: removing
+    # legs changes whether the squeeze FIRES, and on `/api/futures/2951423` it
+    # flipped it on and restated an honest 0.870 as 0.767. `prices_withheld` is
+    # the count this serializer actually nulled a line above, not a re-derivation,
+    # so the gate can never disagree with the withholding it describes.
+    #
+    # THE HUB MOVES WITH IT, in `routes/league_futures.py`, which carries its own
+    # copy of these two steps. Gating one surface and not the other would divide
+    # the same board by two different numbers and manufacture exactly the
+    # detail-vs-hub disagreement #7016 closed.
     if normalize_display_probs(
-        outcomes, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+        outcomes,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=prices_withheld == 0,
     ):
         _withhold_openings()
         openings_withheld = True

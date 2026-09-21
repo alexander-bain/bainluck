@@ -2404,9 +2404,15 @@ def _serialize_outcomes(
     # `!== null` and `undefined !== null` is true. Withheld, never rewritten
     # (gotcha #21) — the row keeps its name and its rank and prints the
     # no-price mark these cards already draw for a null.
+    # #7103: counted while nulling, never re-derived from `withheld_ids`. That
+    # set is computed over the whole market, so testing its truthiness would
+    # gate the squeeze on ids that need not appear in `rows` at all. What the
+    # gate has to describe is what THIS payload refused to print.
+    prices_withheld = 0
     for row in rows:
         if row["id"] in (withheld_ids or ()):
             row["probability"] = None
+            prices_withheld += 1
             # The 24h-change twin of the same refused number. This payload's
             # spelling of `probability_change_24h`, which is in the detail
             # route's `WITHHELD_PRICE_FIELDS` for the reason that applies
@@ -2428,8 +2434,17 @@ def _serialize_outcomes(
     # manufacture a BRAND-NEW disagreement with the detail route on the exact
     # rows this issue exists to reconcile. `field_has_winner` above is derived
     # from the whole field for the same reason (#3617).
+    #
+    # #7103 — AND NOT AT ALL WHEN A LEG WAS WITHHELD, the detail route's gate
+    # applied to this route's copy of the same two steps. `/hub/boxing` is where
+    # that issue's reader stood: eleven withheld legs dropped the WBC Heavyweight
+    # field into the squeeze band and Agit Kabayel's 87% printed as 77%. The two
+    # surfaces have to gate together or the board they now agree on divides by
+    # two different numbers again (#7016).
     if normalize_display_probs(
-        rows, mutually_exclusive=getattr(market, "mutually_exclusive", True)
+        rows,
+        mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=prices_withheld == 0,
     ):
         # #5539, inherited with the squeeze rather than invented: once the
         # printed column has moved, a raw opening beside it is a movement the
