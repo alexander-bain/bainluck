@@ -8,7 +8,7 @@ import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { leaderFirstSlice, printsAPercent } from "@/lib/discover/leaderOrder";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
-import { answerIsBareQuantity, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
+import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
@@ -984,6 +984,13 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
   // only other thing on the line. `answerIsBareQuantity` is the same digit-and-
   // no-letter predicate the backend door spends on the row above this one.
   const percentIsAmbiguous = answerIsBareQuantity(answerLabel);
+  // #7855 — and the label #4396 added is unreadable when the caption beside it
+  // is about a DIFFERENT leg: `December 31 · October 31 up 20 points today`
+  // against one `94%` named two outcomes on one line and tied the number to
+  // neither. The row draws one number, so the half that cannot be read is the
+  // sentence about the leg it does not draw; the answer stays, because saying
+  // which outcome the percentage is for is what this line is for.
+  const rowCaption = captionIsAboutAnotherLeg(context, answerLabel, data.top_outcomes) ? "" : context;
   const rowCue = forYouCue(item);
   const conceptKey = marketEventKey(data);
   const detailHref = conceptKey ? eventPath(conceptKey) : `/futures/${data.id}`;
@@ -1005,11 +1012,11 @@ export function FuturesCompactRow({ item, data }: { item: FeedItem; data: FeedFu
             line on each is the "grey prose" notice 34 rules out. The answer is
             first because it outranks the why-now — if a long outcome name
             clamps the caption away, the row still says what its number is. */}
-        {(answerLabel || context) && (
+        {(answerLabel || rowCaption) && (
           <div className="text-xs mt-0.5 line-clamp-2" data-testid="compact-row-caption">
             {answerLabel && <span className="font-semibold text-text-secondary" data-testid="compact-row-answer">{answerLabel}</span>}
-            {answerLabel && context && <span className="text-text-muted"> · </span>}
-            {context && <span className="text-text-muted">{context}</span>}
+            {answerLabel && rowCaption && <span className="text-text-muted"> · </span>}
+            {rowCaption && <span className="text-text-muted">{rowCaption}</span>}
           </div>
         )}
         {rowCue && <div className="mt-1"><ForYouChip cue={rowCue} /></div>}

@@ -1,0 +1,3413 @@
+{
+ "_": "#7855 \u2014 the AI bundle exactly as GET /api/feed?limit=200 served it at 2026-09-21, plus three control bundles and the census of every compact row the same response carried.",
+ "edition": "9c0cbec4350ab587",
+ "bundles": {
+  "ai": {
+   "type": "bundle",
+   "score": 98.0,
+   "reason": "Which AI model comes out on top?",
+   "headline": "AI",
+   "data": {
+    "id": "theme:story:ai:109596-60204030",
+    "title": "AI",
+    "kind": "theme",
+    "story_key": "story:ai",
+    "shared_question": "Which AI model comes out on top?",
+    "item_count": 2,
+    "member_ids": [
+     109596,
+     60204030
+    ],
+    "items": [
+     {
+      "type": "futures",
+      "score": 98,
+      "reason": "Claude (72%) leads Best AI at the end of 2026?",
+      "headline": "Claude leads at 72%",
+      "context_summary": "Claude leads at 72%",
+      "data": {
+       "id": 109596,
+       "name": "Best AI at the end of 2026?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "tech",
+       "source": "kalshi",
+       "source_count": 1,
+       "sources": [
+        "kalshi"
+       ],
+       "market_tier": 2,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2026-12-31T15:00:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:36+00:00",
+       "top_outcomes": [
+        {
+         "id": 1599086,
+         "name": "Claude",
+         "probability": 0.7155,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 72
+        },
+        {
+         "id": 1599087,
+         "name": "ChatGPT",
+         "probability": 0.145,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 15
+        },
+        {
+         "id": 1599085,
+         "name": "Gemini",
+         "probability": 0.0805,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 8
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 8,
+       "canonical_market_key": "tech::championship:2026",
+       "group_id": "kalshi:KXLLM1-26DEC31",
+       "group_type": "kalshi_event",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Claude",
+          "probability": 0.7155,
+          "movement": null
+         },
+         {
+          "label": "ChatGPT",
+          "probability": 0.145,
+          "movement": null
+         },
+         {
+          "label": "Gemini",
+          "probability": 0.0805,
+          "movement": null
+         },
+         {
+          "label": "Grok",
+          "probability": 0.0375,
+          "movement": null
+         },
+         {
+          "label": "Muse Spark",
+          "probability": 0.0175,
+          "movement": null
+         },
+         {
+          "label": "Kimi",
+          "probability": 0.01,
+          "movement": null
+         },
+         {
+          "label": "Qwen",
+          "probability": 0.0065,
+          "movement": null
+         },
+         {
+          "label": "Ernie",
+          "probability": 0.0015,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/32417524/pexels-photo-32417524.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "discover_llm": {
+        "topic": "tech",
+        "subtopic": "ai",
+        "archetype": "other",
+        "audience_scope": "mainstream",
+        "salience_score": 4,
+        "junk_flags": [],
+        "comparison_axes": []
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:kalshi",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 86,
+      "reason": "October 31 moved up 20 points today in GPT Astra 6.1+ released?",
+      "headline": "October 31 up 20 points today",
+      "context_summary": "October 31 up 20 points today",
+      "data": {
+       "id": 60204030,
+       "name": "GPT Astra 6.1+ released?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "tech",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "duel",
+       "status": "open",
+       "resolution_date": "2026-12-31T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T18:53:43+00:00",
+       "top_outcomes": [
+        {
+         "id": 224536795,
+         "name": "December 31",
+         "probability": 0.935,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 94
+        },
+        {
+         "id": 231082569,
+         "name": "October 31",
+         "probability": 0.63,
+         "rank": 2,
+         "movement": 0.2,
+         "rendered_percent": 63
+        }
+       ],
+       "card_sum_reason": "independent_prices",
+       "outcome_count": 2,
+       "canonical_market_key": null,
+       "group_id": "polymarket:965173",
+       "group_type": "polymarket_event",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [
+         {
+          "source": "date_bucket",
+          "label": "October 31",
+          "value": 20001031,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.63,
+          "movement": 0.2
+         },
+         {
+          "source": "date_bucket",
+          "label": "December 31",
+          "value": 20001231,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.935,
+          "movement": null
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "December 31",
+          "probability": 0.935,
+          "movement": null
+         },
+         {
+          "label": "October 31",
+          "probability": 0.63,
+          "movement": 0.2
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values"
+        ]
+       },
+       "image_url": null,
+       "image_width": null,
+       "image_height": null,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     }
+    ],
+    "debug_bundles": {
+     "grouped_by": "story_key",
+     "story_key": "story:ai",
+     "title_source": "authored",
+     "question_source": "authored",
+     "member_ids": [
+      109596,
+      60204030
+     ],
+     "member_names": [
+      "Best AI at the end of 2026?",
+      "GPT Astra 6.1+ released?"
+     ]
+    }
+   }
+  },
+  "awards_season": {
+   "type": "bundle",
+   "score": 93.0,
+   "reason": "Who wins awards season?",
+   "headline": "Awards Season",
+   "data": {
+    "id": "theme:story:major_entertainment_events:6173044-58492239-58495125-57313556-57368169-58492236",
+    "title": "Awards Season",
+    "kind": "theme",
+    "story_key": "story:major_entertainment_events",
+    "shared_question": "Who wins awards season?",
+    "item_count": 6,
+    "member_ids": [
+     6173044,
+     58492239,
+     58495125,
+     57313556,
+     57368169,
+     58492236
+    ],
+    "items": [
+     {
+      "type": "futures",
+      "score": 93,
+      "reason": "The Odyssey (36%) leads Oscar Winner: Best Picture",
+      "headline": "The Odyssey leads at 36%",
+      "context_summary": "The Odyssey leads at 36%",
+      "data": {
+       "id": 6173044,
+       "name": "Oscar Winner: Best Picture",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "kalshi",
+       "source_count": 2,
+       "sources": [
+        "kalshi",
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-12-31T15:00:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:37+00:00",
+       "top_outcomes": [
+        {
+         "id": 31537937,
+         "name": "The Odyssey",
+         "probability": 0.3626,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 36
+        },
+        {
+         "id": 133031025,
+         "name": "The Black Ball",
+         "probability": 0.2214,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 22
+        },
+        {
+         "id": 31537950,
+         "name": "Dune: Part Three",
+         "probability": 0.0649,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 6
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 41,
+       "canonical_market_key": "entertainment:AWARDS:championship:2027",
+       "group_id": "kalshi:KXOSCARPIC-27",
+       "group_type": "kalshi_event",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "The Odyssey",
+          "probability": 0.3626,
+          "movement": null
+         },
+         {
+          "label": "The Black Ball",
+          "probability": 0.2214,
+          "movement": null
+         },
+         {
+          "label": "Dune: Part Three",
+          "probability": 0.0649,
+          "movement": null
+         },
+         {
+          "label": "Wild Horse Nine",
+          "probability": 0.0344,
+          "movement": null
+         },
+         {
+          "label": "Digger",
+          "probability": 0.0191,
+          "movement": null
+         },
+         {
+          "label": "Fjord",
+          "probability": 0.0191,
+          "movement": null
+         },
+         {
+          "label": "Josephine",
+          "probability": 0.0153,
+          "movement": null
+         },
+         {
+          "label": "The Debut",
+          "probability": 0.0115,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 33,
+        "qa_signals": [
+         "multi_source_consistency_check"
+        ],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.5294,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "discover_llm": {
+        "topic": "entertainment",
+        "subtopic": "awards",
+        "archetype": "other",
+        "audience_scope": "broad",
+        "salience_score": 4,
+        "junk_flags": [],
+        "comparison_axes": []
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:kalshi",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 88,
+      "reason": "Wildwood (49%) leads Oscars 2027: Best Animated Feature Film Winner",
+      "headline": "Wildwood leads at 49%",
+      "context_summary": "Wildwood leads at 49%",
+      "data": {
+       "id": 58492239,
+       "name": "Oscars 2027: Best Animated Feature Film Winner",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-03-14T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:18+00:00",
+       "top_outcomes": [
+        {
+         "id": 217003153,
+         "name": "Wildwood",
+         "probability": 0.49,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 49
+        },
+        {
+         "id": 217003152,
+         "name": "Toy Story 5",
+         "probability": 0.275,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 28
+        },
+        {
+         "id": 217003158,
+         "name": "Tangles",
+         "probability": 0.103,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 10
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 8,
+       "canonical_market_key": null,
+       "group_id": "polymarket:805199",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Wildwood",
+          "probability": 0.49,
+          "movement": null
+         },
+         {
+          "label": "Toy Story 5",
+          "probability": 0.275,
+          "movement": null
+         },
+         {
+          "label": "Tangles",
+          "probability": 0.103,
+          "movement": null
+         },
+         {
+          "label": "Ray Gunn",
+          "probability": 0.0685,
+          "movement": null
+         },
+         {
+          "label": "Forgotten Island",
+          "probability": 0.066,
+          "movement": null
+         },
+         {
+          "label": "Hoppers",
+          "probability": 0.036,
+          "movement": null
+         },
+         {
+          "label": "Shaun the Sheep: The Beast of Mossy Bottom",
+          "probability": 0.0015,
+          "movement": null
+         },
+         {
+          "label": "Minions & Monsters",
+          "probability": 0.0005,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": null,
+       "image_width": null,
+       "image_height": null,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:polymarket",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 88,
+      "reason": "Paul Giamatti (35%) leads Oscars 2027: Best Supporting Actor Winner",
+      "headline": "Paul Giamatti leads at 35%",
+      "context_summary": "Paul Giamatti leads at 35%",
+      "data": {
+       "id": 58495125,
+       "name": "Oscars 2027: Best Supporting Actor Winner",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-03-14T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:18+00:00",
+       "top_outcomes": [
+        {
+         "id": 217013305,
+         "name": "Paul Giamatti",
+         "probability": 0.3461,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 35
+        },
+        {
+         "id": 217013292,
+         "name": "Robert Pattinson",
+         "probability": 0.1075,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 11
+        },
+        {
+         "id": 217013297,
+         "name": "Edward Norton",
+         "probability": 0.0659,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 7
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 22,
+       "canonical_market_key": null,
+       "group_id": "polymarket:805219",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Paul Giamatti",
+          "probability": 0.3461,
+          "movement": null
+         },
+         {
+          "label": "Robert Pattinson",
+          "probability": 0.1075,
+          "movement": null
+         },
+         {
+          "label": "Edward Norton",
+          "probability": 0.0659,
+          "movement": null
+         },
+         {
+          "label": "Sam Rockwell",
+          "probability": 0.0503,
+          "movement": null
+         },
+         {
+          "label": "John Goodman",
+          "probability": 0.0495,
+          "movement": null
+         },
+         {
+          "label": "Guy Pearce",
+          "probability": 0.0448,
+          "movement": null
+         },
+         {
+          "label": "Robert De Niro",
+          "probability": 0.0299,
+          "movement": null
+         },
+         {
+          "label": "Steve Buscemi",
+          "probability": 0.0295,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 14,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/28577170/pexels-photo-28577170.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 626,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:polymarket",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 88,
+      "reason": "Odds shifting in Oscars 2027: Best Picture Winner",
+      "headline": "The Odyssey leads at 44%",
+      "context_summary": "The Odyssey leads at 44%",
+      "data": {
+       "id": 57313556,
+       "name": "Oscars 2027: Best Picture Winner",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-03-14T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:18+00:00",
+       "top_outcomes": [
+        {
+         "id": 212658584,
+         "name": "The Odyssey",
+         "probability": 0.436,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 44
+        },
+        {
+         "id": 230910766,
+         "name": "La Bola Negra",
+         "probability": 0.3,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 30
+        },
+        {
+         "id": 212658598,
+         "name": "Dune: Part Three",
+         "probability": 0.1078,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 11
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 22,
+       "canonical_market_key": null,
+       "group_id": "polymarket:759150",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "The Odyssey",
+          "probability": 0.436,
+          "movement": null
+         },
+         {
+          "label": "La Bola Negra",
+          "probability": 0.3,
+          "movement": null
+         },
+         {
+          "label": "Dune: Part Three",
+          "probability": 0.1078,
+          "movement": null
+         },
+         {
+          "label": "Digger",
+          "probability": 0.0455,
+          "movement": null
+         },
+         {
+          "label": "Wild Horse Nine",
+          "probability": 0.0422,
+          "movement": null
+         },
+         {
+          "label": "The Debut",
+          "probability": 0.0188,
+          "movement": null
+         },
+         {
+          "label": "Fjord",
+          "probability": 0.0141,
+          "movement": null
+         },
+         {
+          "label": "Project Hail Mary",
+          "probability": 0.0103,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 14,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/37069063/pexels-photo-37069063.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 627,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:polymarket",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 88,
+      "reason": "John Malkovich (37%) leads Oscars 2027: Best Actor Winner",
+      "headline": "John Malkovich leads at 37%",
+      "context_summary": "John Malkovich leads at 37%",
+      "data": {
+       "id": 57368169,
+       "name": "Oscars 2027: Best Actor Winner",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-03-14T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:18+00:00",
+       "top_outcomes": [
+        {
+         "id": 212874727,
+         "name": "John Malkovich",
+         "probability": 0.3671,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 37
+        },
+        {
+         "id": 212874723,
+         "name": "Matt Damon",
+         "probability": 0.2249,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 22
+        },
+        {
+         "id": 212874729,
+         "name": "Andrew Scott",
+         "probability": 0.1698,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 17
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 18,
+       "canonical_market_key": null,
+       "group_id": "polymarket:761666",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "John Malkovich",
+          "probability": 0.3671,
+          "movement": null
+         },
+         {
+          "label": "Matt Damon",
+          "probability": 0.2249,
+          "movement": null
+         },
+         {
+          "label": "Andrew Scott",
+          "probability": 0.1698,
+          "movement": null
+         },
+         {
+          "label": "Tom Cruise",
+          "probability": 0.1285,
+          "movement": null
+         },
+         {
+          "label": "Robert Pattinson",
+          "probability": 0.0275,
+          "movement": null
+         },
+         {
+          "label": "Sebastian Stan",
+          "probability": 0.0156,
+          "movement": null
+         },
+         {
+          "label": "Jeremy Strong",
+          "probability": 0.0142,
+          "movement": null
+         },
+         {
+          "label": "Ryan Gosling",
+          "probability": 0.0138,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 10,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/38964264/pexels-photo-38964264.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 626,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:polymarket",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 88,
+      "reason": "The Debut is up 25.8 points since Aug 6 in Oscars 2027: Best Original Screenplay Winner",
+      "headline": "Wild Horse Nine leads at 34%, The Debut up 25.8 points since Aug 6",
+      "context_summary": "Wild Horse Nine leads at 34%, The Debut up 25.8 points since Aug 6",
+      "data": {
+       "id": 58492236,
+       "name": "Oscars 2027: Best Original Screenplay Winner",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "entertainment",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 1,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-03-14T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T16:54:34+00:00",
+       "top_outcomes": [
+        {
+         "id": 217013333,
+         "name": "Wild Horse Nine",
+         "probability": 0.3437,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 34
+        },
+        {
+         "id": 217013337,
+         "name": "The Debut",
+         "probability": 0.3118,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 31
+        },
+        {
+         "id": 217003130,
+         "name": "Obsession",
+         "probability": 0.0679,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 7
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 17,
+       "canonical_market_key": null,
+       "group_id": "polymarket:805201",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Wild Horse Nine",
+          "probability": 0.3437,
+          "movement": null
+         },
+         {
+          "label": "The Debut",
+          "probability": 0.3118,
+          "movement": null
+         },
+         {
+          "label": "Obsession",
+          "probability": 0.0679,
+          "movement": null
+         },
+         {
+          "label": "Digger",
+          "probability": 0.0522,
+          "movement": null
+         },
+         {
+          "label": "Elsinore",
+          "probability": 0.0492,
+          "movement": null
+         },
+         {
+          "label": "The Drama",
+          "probability": 0.0297,
+          "movement": null
+         },
+         {
+          "label": "The Invite",
+          "probability": 0.0272,
+          "movement": null
+         },
+         {
+          "label": "Josephine",
+          "probability": 0.0255,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 9,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/7005636/pexels-photo-7005636.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 627,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:championship",
+        "market_status:open",
+        "source:polymarket",
+        "sport:entertainment",
+        "tier:1"
+       ]
+      }
+     }
+    ],
+    "debug_bundles": {
+     "grouped_by": "story_key",
+     "story_key": "story:major_entertainment_events",
+     "title_source": "authored",
+     "question_source": "authored",
+     "member_ids": [
+      6173044,
+      58492239,
+      58495125,
+      57313556,
+      57368169,
+      58492236
+     ],
+     "member_names": [
+      "Oscar Winner: Best Picture",
+      "Oscars 2027: Best Animated Feature Film Winner",
+      "Oscars 2027: Best Supporting Actor Winner",
+      "Oscars 2027: Best Picture Winner",
+      "Oscars 2027: Best Actor Winner",
+      "Oscars 2027: Best Original Screenplay Winner"
+     ]
+    }
+   }
+  },
+  "fed_and_rates": {
+   "type": "bundle",
+   "score": 93.0,
+   "reason": "What does the Fed do next?",
+   "headline": "Fed & Rates",
+   "data": {
+    "id": "theme:story:macro_rates:109946-60760463-60760502-60760504",
+    "title": "Fed & Rates",
+    "kind": "theme",
+    "story_key": "story:macro_rates",
+    "shared_question": "What does the Fed do next?",
+    "item_count": 4,
+    "member_ids": [
+     109946,
+     60760463,
+     60760502,
+     60760504
+    ],
+    "items": [
+     {
+      "type": "futures",
+      "score": 93,
+      "reason": "Hike 25bps is up 47 points since Feb 19 in Fed decision in Oct 2026?",
+      "headline": "Fed maintains rate at 50%, Hike 25bps up 47 points since Feb 19",
+      "context_summary": "Fed maintains rate at 50%, Hike 25bps up 47 points since Feb 19",
+      "data": {
+       "id": 109946,
+       "name": "Fed decision in Oct 2026?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "economics",
+       "source": "kalshi",
+       "source_count": 1,
+       "sources": [
+        "kalshi"
+       ],
+       "market_tier": 2,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2026-10-28T17:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:37+00:00",
+       "top_outcomes": [
+        {
+         "id": 1601941,
+         "name": "Fed maintains rate",
+         "probability": 0.495,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 50
+        },
+        {
+         "id": 1601944,
+         "name": "Hike 25bps",
+         "probability": 0.495,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 50
+        },
+        {
+         "id": 1601943,
+         "name": "Cut >25bps",
+         "probability": 0.01,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 1
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 5,
+       "canonical_market_key": "economics::championship:2026",
+       "group_id": "kalshi:KXFEDDECISION-26OCT",
+       "group_type": "kalshi_event",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": true,
+        "comparison_theme": "macro_ranges",
+        "threshold_points": [
+         {
+          "source": "outcome",
+          "label": "Cut >25bps",
+          "value": -25.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.01
+         },
+         {
+          "source": "outcome",
+          "label": "Cut 25bps",
+          "value": -25.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.01
+         },
+         {
+          "source": "outcome",
+          "label": "Fed maintains rate",
+          "value": 0.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.495
+         },
+         {
+          "source": "outcome",
+          "label": "Hike 25bps",
+          "value": 25.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.495
+         },
+         {
+          "source": "outcome",
+          "label": "Hike >25bps",
+          "value": 25.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.01
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Fed maintains rate",
+          "probability": 0.495,
+          "movement": null
+         },
+         {
+          "label": "Hike 25bps",
+          "probability": 0.495,
+          "movement": null
+         },
+         {
+          "label": "Cut >25bps",
+          "probability": 0.01,
+          "movement": null
+         },
+         {
+          "label": "Cut 25bps",
+          "probability": 0.01,
+          "movement": null
+         },
+         {
+          "label": "Hike >25bps",
+          "probability": 0.01,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values",
+         "bundle_candidate"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/31999629/pexels-photo-31999629.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "discover_llm": {
+        "topic": "economics",
+        "subtopic": "fed",
+        "archetype": "other",
+        "audience_scope": "mainstream",
+        "salience_score": 4,
+        "junk_flags": [],
+        "comparison_axes": []
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:kalshi",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 70,
+      "reason": "Core CPI YoY - September 2026 resolves within a month",
+      "headline": "Core CPI YoY - September 2026 resolves within a month",
+      "context_summary": "Resolves within a month",
+      "data": {
+       "id": 60760463,
+       "name": "Core CPI YoY - September 2026",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "economics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "quantity",
+       "status": "open",
+       "resolution_date": "2026-10-15T03:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:19+00:00",
+       "top_outcomes": [
+        {
+         "id": 227610146,
+         "name": "2.4%",
+         "probability": 0.45,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 45
+        },
+        {
+         "id": 231093753,
+         "name": "2.5%",
+         "probability": 0.33,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 33
+        },
+        {
+         "id": 227742168,
+         "name": "2.3%",
+         "probability": 0.17,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 17
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 10,
+       "canonical_market_key": null,
+       "group_id": "polymarket:1005022",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": true,
+        "comparison_theme": "macro_ranges",
+        "threshold_points": [
+         {
+          "source": "outcome",
+          "label": "\u22642.0%",
+          "value": 2.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0005
+         },
+         {
+          "source": "outcome",
+          "label": "2.1%",
+          "value": 2.1,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0005
+         },
+         {
+          "source": "outcome",
+          "label": "2.2%",
+          "value": 2.2,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0055
+         },
+         {
+          "source": "outcome",
+          "label": "2.3%",
+          "value": 2.3,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.17
+         },
+         {
+          "source": "outcome",
+          "label": "2.4%",
+          "value": 2.4,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.45
+         },
+         {
+          "source": "outcome",
+          "label": "2.5%",
+          "value": 2.5,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.33
+         },
+         {
+          "source": "outcome",
+          "label": "2.6%",
+          "value": 2.6,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.07
+         },
+         {
+          "source": "outcome",
+          "label": "2.7%",
+          "value": 2.7,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0055
+         },
+         {
+          "source": "outcome",
+          "label": "2.8%",
+          "value": 2.8,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0045
+         },
+         {
+          "source": "outcome",
+          "label": "\u22652.9%",
+          "value": 2.9,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.005
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "2.4%",
+          "probability": 0.45,
+          "movement": null
+         },
+         {
+          "label": "2.5%",
+          "probability": 0.33,
+          "movement": null
+         },
+         {
+          "label": "2.3%",
+          "probability": 0.17,
+          "movement": null
+         },
+         {
+          "label": "2.6%",
+          "probability": 0.07,
+          "movement": null
+         },
+         {
+          "label": "2.7%",
+          "probability": 0.0055,
+          "movement": null
+         },
+         {
+          "label": "2.2%",
+          "probability": 0.0055,
+          "movement": null
+         },
+         {
+          "label": "\u22652.9%",
+          "probability": 0.005,
+          "movement": null
+         },
+         {
+          "label": "2.8%",
+          "probability": 0.0045,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 2,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values",
+         "bundle_candidate"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/37383832/pexels-photo-37383832.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 626,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 70,
+      "reason": "September Inflation US - Monthly resolves within a month",
+      "headline": "September Inflation US - Monthly resolves within a month",
+      "context_summary": "Resolves within a month",
+      "data": {
+       "id": 60760502,
+       "name": "September Inflation US - Monthly",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "economics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "quantity",
+       "status": "open",
+       "resolution_date": "2026-10-15T03:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:19+00:00",
+       "top_outcomes": [
+        {
+         "id": 227681656,
+         "name": "0.6%",
+         "probability": 0.3728,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 37
+        },
+        {
+         "id": 227681655,
+         "name": "0.5%",
+         "probability": 0.2973,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 30
+        },
+        {
+         "id": 227636202,
+         "name": "0.7%",
+         "probability": 0.1605,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 16
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 9,
+       "canonical_market_key": null,
+       "group_id": "polymarket:1005014",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": true,
+        "comparison_theme": "macro_ranges",
+        "threshold_points": [
+         {
+          "source": "outcome",
+          "label": "\u22640.0%",
+          "value": 0.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0052
+         },
+         {
+          "source": "outcome",
+          "label": "0.1%",
+          "value": 0.1,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0033
+         },
+         {
+          "source": "outcome",
+          "label": "0.2%",
+          "value": 0.2,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0047
+         },
+         {
+          "source": "outcome",
+          "label": "0.3%",
+          "value": 0.3,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0335
+         },
+         {
+          "source": "outcome",
+          "label": "0.4%",
+          "value": 0.4,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0897
+         },
+         {
+          "source": "outcome",
+          "label": "0.5%",
+          "value": 0.5,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.2973
+         },
+         {
+          "source": "outcome",
+          "label": "0.6%",
+          "value": 0.6,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.3728
+         },
+         {
+          "source": "outcome",
+          "label": "0.7%",
+          "value": 0.7,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.1605
+         },
+         {
+          "source": "outcome",
+          "label": "\u22650.8%",
+          "value": 0.8,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.033
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "0.6%",
+          "probability": 0.3728,
+          "movement": null
+         },
+         {
+          "label": "0.5%",
+          "probability": 0.2973,
+          "movement": null
+         },
+         {
+          "label": "0.7%",
+          "probability": 0.1605,
+          "movement": null
+         },
+         {
+          "label": "0.4%",
+          "probability": 0.0897,
+          "movement": null
+         },
+         {
+          "label": "0.3%",
+          "probability": 0.0335,
+          "movement": null
+         },
+         {
+          "label": "\u22650.8%",
+          "probability": 0.033,
+          "movement": null
+         },
+         {
+          "label": "\u22640.0%",
+          "probability": 0.0052,
+          "movement": null
+         },
+         {
+          "label": "0.2%",
+          "probability": 0.0047,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 1,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values",
+         "bundle_candidate"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/7580854/pexels-photo-7580854.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 626,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 70,
+      "reason": "September Inflation US - Annual resolves within a month",
+      "headline": "September Inflation US - Annual resolves within a month",
+      "context_summary": "Resolves within a month",
+      "data": {
+       "id": 60760504,
+       "name": "September Inflation US - Annual",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "economics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "quantity",
+       "status": "open",
+       "resolution_date": "2026-10-15T03:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:19+00:00",
+       "top_outcomes": [
+        {
+         "id": 227681664,
+         "name": "3.6%",
+         "probability": 0.4178,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 42
+        },
+        {
+         "id": 227681665,
+         "name": "3.7%",
+         "probability": 0.2507,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 25
+        },
+        {
+         "id": 227681663,
+         "name": "3.5%",
+         "probability": 0.1903,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 19
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 12,
+       "canonical_market_key": null,
+       "group_id": "polymarket:1005013",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": true,
+        "comparison_theme": "macro_ranges",
+        "threshold_points": [
+         {
+          "source": "outcome",
+          "label": "\u22642.9%",
+          "value": 2.9,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0028
+         },
+         {
+          "source": "outcome",
+          "label": "3.0%",
+          "value": 3.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0023
+         },
+         {
+          "source": "outcome",
+          "label": "3.1%",
+          "value": 3.1,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0028
+         },
+         {
+          "source": "outcome",
+          "label": "3.2%",
+          "value": 3.2,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0028
+         },
+         {
+          "source": "outcome",
+          "label": "3.3%",
+          "value": 3.3,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0028
+         },
+         {
+          "source": "outcome",
+          "label": "3.4%",
+          "value": 3.4,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.032
+         },
+         {
+          "source": "outcome",
+          "label": "3.5%",
+          "value": 3.5,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.1903
+         },
+         {
+          "source": "outcome",
+          "label": "3.6%",
+          "value": 3.6,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.4178
+         },
+         {
+          "source": "outcome",
+          "label": "3.7%",
+          "value": 3.7,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.2507
+         },
+         {
+          "source": "outcome",
+          "label": "3.8%",
+          "value": 3.8,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0738
+         },
+         {
+          "source": "outcome",
+          "label": "3.9%",
+          "value": 3.9,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0176
+         },
+         {
+          "source": "outcome",
+          "label": "\u22654.0%",
+          "value": 4.0,
+          "unit": "",
+          "direction": "exact",
+          "probability": 0.0042
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "3.6%",
+          "probability": 0.4178,
+          "movement": null
+         },
+         {
+          "label": "3.7%",
+          "probability": 0.2507,
+          "movement": null
+         },
+         {
+          "label": "3.5%",
+          "probability": 0.1903,
+          "movement": null
+         },
+         {
+          "label": "3.8%",
+          "probability": 0.0738,
+          "movement": null
+         },
+         {
+          "label": "3.4%",
+          "probability": 0.032,
+          "movement": null
+         },
+         {
+          "label": "3.9%",
+          "probability": 0.0176,
+          "movement": null
+         },
+         {
+          "label": "\u22654.0%",
+          "probability": 0.0042,
+          "movement": null
+         },
+         {
+          "label": "3.1%",
+          "probability": 0.0028,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 4,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values",
+         "bundle_candidate"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/37517645/pexels-photo-37517645.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 627,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     }
+    ],
+    "debug_bundles": {
+     "grouped_by": "story_key",
+     "story_key": "story:macro_rates",
+     "title_source": "authored",
+     "question_source": "authored",
+     "member_ids": [
+      109946,
+      60760463,
+      60760502,
+      60760504
+     ],
+     "member_names": [
+      "Fed decision in Oct 2026?",
+      "Core CPI YoY - September 2026",
+      "September Inflation US - Monthly",
+      "September Inflation US - Annual"
+     ]
+    }
+   }
+  },
+  "middle_east": {
+   "type": "bundle",
+   "score": 98.0,
+   "reason": "Where is the Middle East conflict heading?",
+   "headline": "Middle East",
+   "data": {
+    "id": "theme:story:middle_east_conflict:61311441-113232-58918693-3484764-113397-60627569",
+    "title": "Middle East",
+    "kind": "theme",
+    "story_key": "story:middle_east_conflict",
+    "shared_question": "Where is the Middle East conflict heading?",
+    "item_count": 6,
+    "member_ids": [
+     61311441,
+     113232,
+     58918693,
+     3484764,
+     113397,
+     60627569
+    ],
+    "items": [
+     {
+      "type": "futures",
+      "score": 98,
+      "reason": "US x Iran ceasefire continues through September 25: Up 26.5 points since Sep 17 \u2014 now 95% chance",
+      "headline": "Up 26.5 points since Sep 17",
+      "context_summary": "Up 26.5 points since Sep 17 \u2014 now 95% chance",
+      "data": {
+       "id": 61311441,
+       "name": "US x Iran ceasefire continues through September 25?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "geopolitics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "container_member",
+       "status": "open",
+       "resolution_date": "2026-10-31T23:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:20+00:00",
+       "top_outcomes": [
+        {
+         "id": 230794996,
+         "name": "Yes",
+         "probability": 0.95,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 95
+        },
+        {
+         "id": 230794997,
+         "name": "No",
+         "probability": 0.05,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 5
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 2,
+       "canonical_market_key": null,
+       "group_id": "polymarket:1038648",
+       "group_type": "polymarket_sub_market",
+       "discover_card": {
+        "suggested_format": "binary_probability",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Yes",
+          "probability": 0.95,
+          "movement": null
+         },
+         {
+          "label": "No",
+          "probability": 0.05,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": []
+       },
+       "image_url": "https://images.pexels.com/photos/11816424/pexels-photo-11816424.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 600,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "discover_llm": {
+        "topic": "geopolitics",
+        "subtopic": "ceasefire",
+        "archetype": "other",
+        "audience_scope": "mainstream",
+        "salience_score": 4,
+        "junk_flags": [],
+        "comparison_axes": []
+       },
+       "market_tags": [
+        "category:game_prop",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 95,
+      "reason": "Will the U.S. invade Iran before 2027: 17% chance, up 2 points since Feb 19",
+      "headline": "Up 2 points since Feb 19",
+      "context_summary": "17% chance, up 2 points since Feb 19",
+      "data": {
+       "id": 113232,
+       "name": "Will the U.S. invade Iran before 2027?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "politics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "unshaped",
+       "status": "open",
+       "resolution_date": "2027-01-01T04:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:26:56+00:00",
+       "top_outcomes": [
+        {
+         "id": 1628892,
+         "name": "Yes",
+         "probability": 0.165,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 17
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 1,
+       "canonical_market_key": null,
+       "group_id": "polymarket:73130",
+       "group_type": "polymarket_single",
+       "discover_card": {
+        "suggested_format": "binary_probability",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Yes",
+          "probability": 0.165,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": []
+       },
+       "image_url": "https://images.pexels.com/photos/8828624/pexels-photo-8828624.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "sport:politics",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 95,
+      "reason": "Jared Kushner (38%) in Who will attend a round of US-Iran peace talks by December 31?",
+      "headline": "Jared Kushner at 38%",
+      "context_summary": "Jared Kushner at 38%",
+      "data": {
+       "id": 58918693,
+       "name": "Who will attend a round of US-Iran peace talks by December 31?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "geopolitics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-01-01T04:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:19+00:00",
+       "top_outcomes": [
+        {
+         "id": 218633928,
+         "name": "Jared Kushner",
+         "probability": 0.375,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 38
+        },
+        {
+         "id": 218633929,
+         "name": "Steve Witkoff",
+         "probability": 0.365,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 37
+        },
+        {
+         "id": 218633930,
+         "name": "Abbas Araghchi",
+         "probability": 0.33,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 33
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 22,
+       "canonical_market_key": null,
+       "group_id": "polymarket:841086",
+       "group_type": "polymarket_event",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Jared Kushner",
+          "probability": 0.375,
+          "movement": null
+         },
+         {
+          "label": "Steve Witkoff",
+          "probability": 0.365,
+          "movement": null
+         },
+         {
+          "label": "Abbas Araghchi",
+          "probability": 0.33,
+          "movement": null
+         },
+         {
+          "label": "Badr bin Hamad Al Busaidi",
+          "probability": 0.215,
+          "movement": null
+         },
+         {
+          "label": "Mohammad Bagher Ghalibaf",
+          "probability": 0.205,
+          "movement": null
+         },
+         {
+          "label": "Masoud Pezeshkian",
+          "probability": 0.19,
+          "movement": null
+         },
+         {
+          "label": "J.D. Vance",
+          "probability": 0.185,
+          "movement": null
+         },
+         {
+          "label": "Nick Stewart",
+          "probability": 0.175,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 12,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/15362127/pexels-photo-15362127.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 627,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 93,
+      "reason": "",
+      "headline": null,
+      "context_summary": "",
+      "data": {
+       "id": 3484764,
+       "name": "Iran leadership change?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "politics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2027-07-01T03:59:00+00:00",
+       "price_observed_at": "2026-09-21T19:50:18+00:00",
+       "top_outcomes": [
+        {
+         "id": 185792231,
+         "name": "June 30, 2027",
+         "probability": 0.26,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 26
+        },
+        {
+         "id": 20532981,
+         "name": "December 31",
+         "probability": 0.155,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 16
+        },
+        {
+         "id": 230878690,
+         "name": "November 30",
+         "probability": 0.08,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 8
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 14,
+       "canonical_market_key": null,
+       "group_id": "polymarket:255195",
+       "group_type": "polymarket_event",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [
+         {
+          "source": "date_bucket",
+          "label": "September 30",
+          "value": 20260930,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.0075,
+          "movement": null
+         },
+         {
+          "source": "date_bucket",
+          "label": "October 31",
+          "value": 20261031,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.045,
+          "movement": null
+         },
+         {
+          "source": "date_bucket",
+          "label": "November 30",
+          "value": 20261130,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.08,
+          "movement": null
+         },
+         {
+          "source": "date_bucket",
+          "label": "December 31",
+          "value": 20261231,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.155,
+          "movement": null
+         },
+         {
+          "source": "date_bucket",
+          "label": "June 30, 2027",
+          "value": 20270630,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.26,
+          "movement": null
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "June 30, 2027",
+          "probability": 0.26,
+          "movement": null
+         },
+         {
+          "label": "December 31",
+          "probability": 0.155,
+          "movement": null
+         },
+         {
+          "label": "November 30",
+          "probability": 0.08,
+          "movement": null
+         },
+         {
+          "label": "October 31",
+          "probability": 0.045,
+          "movement": null
+         },
+         {
+          "label": "September 30",
+          "probability": 0.0075,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/36167546/pexels-photo-36167546.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "low",
+       "confidence_score": 0.3529,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "sport:politics",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 85,
+      "reason": "Gadi Eizenkot (53%) leads Prime Minister of Israel after the next election?",
+      "headline": "Gadi Eizenkot leads at 53%",
+      "context_summary": "Gadi Eizenkot leads at 53%",
+      "data": {
+       "id": 113397,
+       "name": "Prime Minister of Israel after the next election?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "politics",
+       "source": "polymarket",
+       "source_count": 2,
+       "sources": [
+        "kalshi",
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "field",
+       "status": "open",
+       "resolution_date": "2026-12-31T00:00:00+00:00",
+       "price_observed_at": "2026-09-21T19:27:05+00:00",
+       "top_outcomes": [
+        {
+         "id": 1629438,
+         "name": "Gadi Eizenkot",
+         "probability": 0.526,
+         "rank": 1,
+         "movement": null,
+         "rendered_percent": 53
+        },
+        {
+         "id": 1629436,
+         "name": "Benjamin Netanyahu",
+         "probability": 0.285,
+         "rank": 2,
+         "movement": null,
+         "rendered_percent": 29
+        },
+        {
+         "id": 1629437,
+         "name": "Naftali Bennett",
+         "probability": 0.075,
+         "rank": 3,
+         "movement": null,
+         "rendered_percent": 8
+        }
+       ],
+       "card_sum_reason": null,
+       "outcome_count": 28,
+       "canonical_market_key": "politics:US:championship:2026",
+       "group_id": "polymarket:81557",
+       "group_type": "negrisk",
+       "discover_card": {
+        "suggested_format": "outcome_distribution",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "Gadi Eizenkot",
+          "probability": 0.526,
+          "movement": null
+         },
+         {
+          "label": "Benjamin Netanyahu",
+          "probability": 0.285,
+          "movement": null
+         },
+         {
+          "label": "Naftali Bennett",
+          "probability": 0.075,
+          "movement": null
+         },
+         {
+          "label": "Avigdor Lieberman",
+          "probability": 0.0325,
+          "movement": null
+         },
+         {
+          "label": "Ofer Winter",
+          "probability": 0.015,
+          "movement": null
+         },
+         {
+          "label": "Itamar Ben Gvir",
+          "probability": 0.0055,
+          "movement": null
+         },
+         {
+          "label": "Yossi Cohen",
+          "probability": 0.0025,
+          "movement": null
+         },
+         {
+          "label": "Yair Golan",
+          "probability": 0.0025,
+          "movement": null
+         }
+        ],
+        "remaining_outcome_count": 12,
+        "qa_signals": [
+         "multi_source_consistency_check"
+        ],
+        "public_source_disagreement": false,
+        "reasons": [
+         "multi_outcome_distribution"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/34530717/pexels-photo-34530717.jpeg?auto=compress&cs=tinysrgb&h=350",
+       "image_width": 525,
+       "image_height": 350,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.5294,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "sport:politics",
+        "tier:2"
+       ]
+      }
+     },
+     {
+      "type": "futures",
+      "score": 81,
+      "reason": "Big odds movement in Will Iran target Jordan?",
+      "headline": "Will Iran target Jordan odds down 6.5 points",
+      "context_summary": "Will Iran target Jordan odds down 6.5 points",
+      "data": {
+       "id": 60627569,
+       "name": "Will Iran target Jordan?",
+       "sport": null,
+       "sport_name": null,
+       "llm_sport_category": "geopolitics",
+       "source": "polymarket",
+       "source_count": 1,
+       "sources": [
+        "polymarket"
+       ],
+       "market_tier": 2,
+       "market_type": "duel",
+       "status": "open",
+       "resolution_date": "2026-10-31T20:59:00+00:00",
+       "price_observed_at": "2026-09-21T17:28:28+00:00",
+       "top_outcomes": [
+        {
+         "id": 226932356,
+         "name": "October 31",
+         "probability": 0.67,
+         "rank": 1,
+         "movement": -0.06499999999999995,
+         "rendered_percent": 67
+        },
+        {
+         "id": 231093427,
+         "name": "September 30",
+         "probability": 0.27,
+         "rank": 2,
+         "movement": -0.05499999999999999,
+         "rendered_percent": 27
+        }
+       ],
+       "card_sum_reason": "independent_prices",
+       "outcome_count": 2,
+       "canonical_market_key": null,
+       "group_id": "polymarket:995997",
+       "group_type": "polymarket_event",
+       "discover_card": {
+        "suggested_format": "threshold_heatmap",
+        "bundle_candidate": false,
+        "comparison_theme": null,
+        "threshold_points": [
+         {
+          "source": "date_bucket",
+          "label": "September 30",
+          "value": 20000930,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.27,
+          "movement": -0.05499999999999999
+         },
+         {
+          "source": "date_bucket",
+          "label": "October 31",
+          "value": 20001031,
+          "unit": "date",
+          "direction": "before",
+          "probability": 0.67,
+          "movement": -0.06499999999999995
+         }
+        ],
+        "ladder_treatment_refused": false,
+        "distribution_outcomes": [
+         {
+          "label": "October 31",
+          "probability": 0.67,
+          "movement": -0.06499999999999995
+         },
+         {
+          "label": "September 30",
+          "probability": 0.27,
+          "movement": -0.05499999999999999
+         }
+        ],
+        "remaining_outcome_count": 0,
+        "qa_signals": [],
+        "public_source_disagreement": false,
+        "reasons": [
+         "threshold_values"
+        ]
+       },
+       "image_url": "https://images.pexels.com/photos/32579223/pexels-photo-32579223.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+       "image_width": 940,
+       "image_height": 626,
+       "hook_description": null,
+       "temporal_badge": null,
+       "confidence_tier": "moderate",
+       "confidence_score": 0.6471,
+       "confidence_signals": {
+        "has_closing_line": false
+       },
+       "market_tags": [
+        "category:conference",
+        "market_status:open",
+        "source:polymarket",
+        "tier:2"
+       ]
+      }
+     }
+    ],
+    "debug_bundles": {
+     "grouped_by": "story_key",
+     "story_key": "story:middle_east_conflict",
+     "title_source": "authored",
+     "question_source": "authored",
+     "member_ids": [
+      61311441,
+      113232,
+      58918693,
+      3484764,
+      113397,
+      60627569
+     ],
+     "member_names": [
+      "US x Iran ceasefire continues through September 25?",
+      "Will the U.S. invade Iran before 2027?",
+      "Who will attend a round of US-Iran peace talks by December 31?",
+      "Iran leadership change?",
+      "Prime Minister of Israel after the next election?",
+      "Will Iran target Jordan?"
+     ]
+    }
+   }
+  }
+ },
+ "compact_row_census": [
+  {
+   "bundle": "AI",
+   "question": "Best AI at the end of 2026?",
+   "hero_outcome": "Claude",
+   "context_summary": "Claude leads at 72%",
+   "headline": "Claude leads at 72%",
+   "reason": "Claude (72%) leads Best AI at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Claude",
+     "probability": 0.7155
+    },
+    {
+     "name": "ChatGPT",
+     "probability": 0.145
+    },
+    {
+     "name": "Gemini",
+     "probability": 0.0805
+    }
+   ]
+  },
+  {
+   "bundle": "AI",
+   "question": "GPT Astra 6.1+ released?",
+   "hero_outcome": "December 31",
+   "context_summary": "October 31 up 20 points today",
+   "headline": "October 31 up 20 points today",
+   "reason": "October 31 moved up 20 points today in GPT Astra 6.1+ released?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "December 31",
+     "probability": 0.935
+    },
+    {
+     "name": "October 31",
+     "probability": 0.63
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscar Winner: Best Picture",
+   "hero_outcome": "The Odyssey",
+   "context_summary": "The Odyssey leads at 36%",
+   "headline": "The Odyssey leads at 36%",
+   "reason": "The Odyssey (36%) leads Oscar Winner: Best Picture",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "The Odyssey",
+     "probability": 0.3626
+    },
+    {
+     "name": "The Black Ball",
+     "probability": 0.2214
+    },
+    {
+     "name": "Dune: Part Three",
+     "probability": 0.0649
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscars 2027: Best Animated Feature Film Winner",
+   "hero_outcome": "Wildwood",
+   "context_summary": "Wildwood leads at 49%",
+   "headline": "Wildwood leads at 49%",
+   "reason": "Wildwood (49%) leads Oscars 2027: Best Animated Feature Film Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Wildwood",
+     "probability": 0.49
+    },
+    {
+     "name": "Toy Story 5",
+     "probability": 0.275
+    },
+    {
+     "name": "Tangles",
+     "probability": 0.103
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscars 2027: Best Supporting Actor Winner",
+   "hero_outcome": "Paul Giamatti",
+   "context_summary": "Paul Giamatti leads at 35%",
+   "headline": "Paul Giamatti leads at 35%",
+   "reason": "Paul Giamatti (35%) leads Oscars 2027: Best Supporting Actor Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Paul Giamatti",
+     "probability": 0.3461
+    },
+    {
+     "name": "Robert Pattinson",
+     "probability": 0.1075
+    },
+    {
+     "name": "Edward Norton",
+     "probability": 0.0659
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscars 2027: Best Picture Winner",
+   "hero_outcome": "The Odyssey",
+   "context_summary": "The Odyssey leads at 44%",
+   "headline": "The Odyssey leads at 44%",
+   "reason": "Odds shifting in Oscars 2027: Best Picture Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "The Odyssey",
+     "probability": 0.436
+    },
+    {
+     "name": "La Bola Negra",
+     "probability": 0.3
+    },
+    {
+     "name": "Dune: Part Three",
+     "probability": 0.1078
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscars 2027: Best Actor Winner",
+   "hero_outcome": "John Malkovich",
+   "context_summary": "John Malkovich leads at 37%",
+   "headline": "John Malkovich leads at 37%",
+   "reason": "John Malkovich (37%) leads Oscars 2027: Best Actor Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "John Malkovich",
+     "probability": 0.3671
+    },
+    {
+     "name": "Matt Damon",
+     "probability": 0.2249
+    },
+    {
+     "name": "Andrew Scott",
+     "probability": 0.1698
+    }
+   ]
+  },
+  {
+   "bundle": "Awards Season",
+   "question": "Oscars 2027: Best Original Screenplay Winner",
+   "hero_outcome": "Wild Horse Nine",
+   "context_summary": "Wild Horse Nine leads at 34%, The Debut up 25.8 points since Aug 6",
+   "headline": "Wild Horse Nine leads at 34%, The Debut up 25.8 points since Aug 6",
+   "reason": "The Debut is up 25.8 points since Aug 6 in Oscars 2027: Best Original Screenplay Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Wild Horse Nine",
+     "probability": 0.3437
+    },
+    {
+     "name": "The Debut",
+     "probability": 0.3118
+    },
+    {
+     "name": "Obsession",
+     "probability": 0.0679
+    }
+   ]
+  },
+  {
+   "bundle": "Fed & Rates",
+   "question": "Fed decision in Oct 2026?",
+   "hero_outcome": "Fed maintains rate",
+   "context_summary": "Fed maintains rate at 50%, Hike 25bps up 47 points since Feb 19",
+   "headline": "Fed maintains rate at 50%, Hike 25bps up 47 points since Feb 19",
+   "reason": "Hike 25bps is up 47 points since Feb 19 in Fed decision in Oct 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Fed maintains rate",
+     "probability": 0.495
+    },
+    {
+     "name": "Hike 25bps",
+     "probability": 0.495
+    },
+    {
+     "name": "Cut >25bps",
+     "probability": 0.01
+    }
+   ]
+  },
+  {
+   "bundle": "Fed & Rates",
+   "question": "Core CPI YoY - September 2026",
+   "hero_outcome": "2.4%",
+   "context_summary": "Resolves within a month",
+   "headline": "Core CPI YoY - September 2026 resolves within a month",
+   "reason": "Core CPI YoY - September 2026 resolves within a month",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "2.4%",
+     "probability": 0.45
+    },
+    {
+     "name": "2.5%",
+     "probability": 0.33
+    },
+    {
+     "name": "2.3%",
+     "probability": 0.17
+    }
+   ]
+  },
+  {
+   "bundle": "Fed & Rates",
+   "question": "September Inflation US - Monthly",
+   "hero_outcome": "0.6%",
+   "context_summary": "Resolves within a month",
+   "headline": "September Inflation US - Monthly resolves within a month",
+   "reason": "September Inflation US - Monthly resolves within a month",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "0.6%",
+     "probability": 0.3728
+    },
+    {
+     "name": "0.5%",
+     "probability": 0.2973
+    },
+    {
+     "name": "0.7%",
+     "probability": 0.1605
+    }
+   ]
+  },
+  {
+   "bundle": "Fed & Rates",
+   "question": "September Inflation US - Annual",
+   "hero_outcome": "3.6%",
+   "context_summary": "Resolves within a month",
+   "headline": "September Inflation US - Annual resolves within a month",
+   "reason": "September Inflation US - Annual resolves within a month",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "3.6%",
+     "probability": 0.4178
+    },
+    {
+     "name": "3.7%",
+     "probability": 0.2507
+    },
+    {
+     "name": "3.5%",
+     "probability": 0.1903
+    }
+   ]
+  },
+  {
+   "bundle": "IPOs",
+   "question": "Anthropic IPO?",
+   "hero_outcome": "December 31, 2026",
+   "context_summary": "",
+   "headline": null,
+   "reason": "",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "December 31, 2026",
+     "probability": 0.785
+    },
+    {
+     "name": "December 15, 2026",
+     "probability": 0.735
+    },
+    {
+     "name": "November 30, 2026",
+     "probability": 0.535
+    }
+   ]
+  },
+  {
+   "bundle": "IPOs",
+   "question": "When will Anthropic officially announce an IPO?",
+   "hero_outcome": "Before Apr 1, 2027",
+   "context_summary": "",
+   "headline": null,
+   "reason": "",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Before Apr 1, 2027",
+     "probability": 0.895
+    },
+    {
+     "name": "Before Mar 1, 2027",
+     "probability": 0.88
+    },
+    {
+     "name": "Before Feb 1, 2027",
+     "probability": 0.84
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Middleweight champion at the end of 2026?",
+   "hero_outcome": "Sean Strickland",
+   "context_summary": "Sean Strickland leads at 58%",
+   "headline": "Sean Strickland leads at 58%",
+   "reason": "Sean Strickland (58%) leads Who will be UFC Middleweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Sean Strickland",
+     "probability": 0.583
+    },
+    {
+     "name": "Nassourdine Imavov",
+     "probability": 0.3165
+    },
+    {
+     "name": "Khamzat Chimaev",
+     "probability": 0.023
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Bantamweight champion at the end of 2026?",
+   "hero_outcome": "Petr Yan",
+   "context_summary": "Petr Yan leads at 63%",
+   "headline": "Petr Yan leads at 63%",
+   "reason": "Petr Yan (63%) leads Who will be UFC Bantamweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Petr Yan",
+     "probability": 0.625
+    },
+    {
+     "name": "Merab Dvalishvili",
+     "probability": 0.305
+    },
+    {
+     "name": "Song Yadong",
+     "probability": 0.024
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Featherweight champion at the end of 2026?",
+   "hero_outcome": "Alexander Volkanovski",
+   "context_summary": "Alexander Volkanovski leads at 52%",
+   "headline": "Alexander Volkanovski leads at 52%",
+   "reason": "Alexander Volkanovski (52%) leads Who will be UFC Featherweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Alexander Volkanovski",
+     "probability": 0.52
+    },
+    {
+     "name": "Movsar Evloev",
+     "probability": 0.425
+    },
+    {
+     "name": "Jean Silva",
+     "probability": 0.081
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Lightweight champion at the end of 2026?",
+   "hero_outcome": "Justin Gaethje",
+   "context_summary": "Justin Gaethje leads at 90%",
+   "headline": "Justin Gaethje leads at 90%",
+   "reason": "Justin Gaethje (90%) leads Who will be UFC Lightweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Justin Gaethje",
+     "probability": 0.9015
+    },
+    {
+     "name": "Arman Tsarukyan",
+     "probability": 0.0915
+    },
+    {
+     "name": "Ilia Topuria",
+     "probability": 0.0065
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Light Heavyweight champion at the end of 2026?",
+   "hero_outcome": "Carlos Ulberg",
+   "context_summary": "Carlos Ulberg leads at 88%",
+   "headline": "Carlos Ulberg leads at 88%",
+   "reason": "Carlos Ulberg (88%) leads Who will be UFC Light Heavyweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Carlos Ulberg",
+     "probability": 0.88
+    },
+    {
+     "name": "Magomed Ankalaev",
+     "probability": 0.049
+    },
+    {
+     "name": "Alex Pereira",
+     "probability": 0.0265
+    }
+   ]
+  },
+  {
+   "bundle": "UFC",
+   "question": "Who will be UFC Heavyweight champion at the end of 2026?",
+   "hero_outcome": "Ciryl Gane",
+   "context_summary": "Ciryl Gane leads at 71%",
+   "headline": "Ciryl Gane leads at 71%",
+   "reason": "Ciryl Gane (71%) leads Who will be UFC Heavyweight champion at the end of 2026?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Ciryl Gane",
+     "probability": 0.705
+    },
+    {
+     "name": "Josh Hokit",
+     "probability": 0.2865
+    },
+    {
+     "name": "Tom Aspinall",
+     "probability": 0.0165
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "US x Iran ceasefire continues through September 25?",
+   "hero_outcome": "Yes",
+   "context_summary": "Up 26.5 points since Sep 17 \u2014 now 95% chance",
+   "headline": "Up 26.5 points since Sep 17",
+   "reason": "US x Iran ceasefire continues through September 25: Up 26.5 points since Sep 17 \u2014 now 95% chance",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Yes",
+     "probability": 0.95
+    },
+    {
+     "name": "No",
+     "probability": 0.05
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "Will the U.S. invade Iran before 2027?",
+   "hero_outcome": "Yes",
+   "context_summary": "17% chance, up 2 points since Feb 19",
+   "headline": "Up 2 points since Feb 19",
+   "reason": "Will the U.S. invade Iran before 2027: 17% chance, up 2 points since Feb 19",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Yes",
+     "probability": 0.165
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "Who will attend a round of US-Iran peace talks by December 31?",
+   "hero_outcome": "Jared Kushner",
+   "context_summary": "Jared Kushner at 38%",
+   "headline": "Jared Kushner at 38%",
+   "reason": "Jared Kushner (38%) in Who will attend a round of US-Iran peace talks by December 31?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Jared Kushner",
+     "probability": 0.375
+    },
+    {
+     "name": "Steve Witkoff",
+     "probability": 0.365
+    },
+    {
+     "name": "Abbas Araghchi",
+     "probability": 0.33
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "Iran leadership change?",
+   "hero_outcome": "June 30, 2027",
+   "context_summary": "",
+   "headline": null,
+   "reason": "",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "June 30, 2027",
+     "probability": 0.26
+    },
+    {
+     "name": "December 31",
+     "probability": 0.155
+    },
+    {
+     "name": "November 30",
+     "probability": 0.08
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "Prime Minister of Israel after the next election?",
+   "hero_outcome": "Gadi Eizenkot",
+   "context_summary": "Gadi Eizenkot leads at 53%",
+   "headline": "Gadi Eizenkot leads at 53%",
+   "reason": "Gadi Eizenkot (53%) leads Prime Minister of Israel after the next election?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Gadi Eizenkot",
+     "probability": 0.526
+    },
+    {
+     "name": "Benjamin Netanyahu",
+     "probability": 0.285
+    },
+    {
+     "name": "Naftali Bennett",
+     "probability": 0.075
+    }
+   ]
+  },
+  {
+   "bundle": "Middle East",
+   "question": "Will Iran target Jordan?",
+   "hero_outcome": "October 31",
+   "context_summary": "Will Iran target Jordan odds down 6.5 points",
+   "headline": "Will Iran target Jordan odds down 6.5 points",
+   "reason": "Big odds movement in Will Iran target Jordan?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "October 31",
+     "probability": 0.67
+    },
+    {
+     "name": "September 30",
+     "probability": 0.27
+    }
+   ]
+  },
+  {
+   "bundle": "2028 Election",
+   "question": "2028 U.S. Presidential Election winner?",
+   "hero_outcome": "J.D. Vance",
+   "context_summary": "J.D. Vance leads at 22%",
+   "headline": "J.D. Vance leads at 22%",
+   "reason": "J.D. Vance (22%) leads 2028 U.S. Presidential Election winner?",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "J.D. Vance",
+     "probability": 0.215
+    },
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.115
+    },
+    {
+     "name": "Marco Rubio",
+     "probability": 0.0965
+    }
+   ]
+  },
+  {
+   "bundle": "2028 Election",
+   "question": "2028 Democratic presidential nominee",
+   "hero_outcome": "Jon Ossoff",
+   "context_summary": "Jon Ossoff leads at 17%",
+   "headline": "Jon Ossoff leads at 17%",
+   "reason": "Jon Ossoff (17%) leads 2028 Democratic presidential nominee",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Jon Ossoff",
+     "probability": 0.165
+    },
+    {
+     "name": "Alexandria Ocasio-Cortez",
+     "probability": 0.155
+    },
+    {
+     "name": "Gavin Newsom",
+     "probability": 0.135
+    }
+   ]
+  },
+  {
+   "bundle": "2028 Election",
+   "question": "Republican Presidential Nominee 2028",
+   "hero_outcome": "J.D. Vance",
+   "context_summary": "J.D. Vance leads at 51%",
+   "headline": "J.D. Vance leads at 51%",
+   "reason": "J.D. Vance (51%) leads Republican Presidential Nominee 2028",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "J.D. Vance",
+     "probability": 0.5125
+    },
+    {
+     "name": "Marco Rubio",
+     "probability": 0.1565
+    },
+    {
+     "name": "Tucker Carlson",
+     "probability": 0.034
+    }
+   ]
+  },
+  {
+   "bundle": "Russia\u2013Ukraine",
+   "question": "Russia x Ukraine ceasefire agreement?",
+   "hero_outcome": "December 31, 2027",
+   "context_summary": "",
+   "headline": null,
+   "reason": "",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "December 31, 2027",
+     "probability": 0.71
+    },
+    {
+     "name": "November 30, 2027",
+     "probability": 0.64
+    },
+    {
+     "name": "October 31, 2027",
+     "probability": 0.625
+    }
+   ]
+  },
+  {
+   "bundle": "Russia\u2013Ukraine",
+   "question": "Putin out as President of Russia?",
+   "hero_outcome": "June 30, 2027",
+   "context_summary": "",
+   "headline": null,
+   "reason": "",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "June 30, 2027",
+     "probability": 0.125
+    },
+    {
+     "name": "December 31, 2026",
+     "probability": 0.0385
+    },
+    {
+     "name": "September 30, 2026",
+     "probability": 0.0015
+    }
+   ]
+  },
+  {
+   "bundle": "Grand Slam Tennis",
+   "question": "2027 US Open Men's Singles Winner",
+   "hero_outcome": "Jannik Sinner",
+   "context_summary": "Jannik Sinner leads at 32%",
+   "headline": "Jannik Sinner leads at 32%",
+   "reason": "Jannik Sinner (32%) leads 2027 US Open Men's Singles Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Jannik Sinner",
+     "probability": 0.315
+    },
+    {
+     "name": "Carlos Alcaraz",
+     "probability": 0.27
+    },
+    {
+     "name": "Casper Ruud",
+     "probability": 0.03
+    }
+   ]
+  },
+  {
+   "bundle": "Grand Slam Tennis",
+   "question": "2027 US Open Women's Singles Winner",
+   "hero_outcome": "Coco Gauff",
+   "context_summary": "Coco Gauff leads at 25%",
+   "headline": "Coco Gauff leads at 25%",
+   "reason": "Coco Gauff (25%) leads 2027 US Open Women's Singles Winner",
+   "hook_description": null,
+   "top_outcomes": [
+    {
+     "name": "Coco Gauff",
+     "probability": 0.25
+    },
+    {
+     "name": "Alexandra Eala",
+     "probability": 0.085
+    },
+    {
+     "name": "Anastasia Potapova",
+     "probability": null
+    }
+   ]
+  }
+ ]
+}

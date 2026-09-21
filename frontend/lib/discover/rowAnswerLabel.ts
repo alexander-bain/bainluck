@@ -152,3 +152,75 @@ export function answerIsBareQuantity(label: string | null | undefined): boolean 
   if (!text) return false;
   return /\p{Nd}/u.test(text) && !/\p{L}/u.test(text);
 }
+
+/**
+ * Outcome names too ordinary to claim a caption. `No` is a word every third
+ * sentence contains ("No clear favorite yet"), and matching it would read an
+ * incidental English word as a second leg. The affirmative side never reaches
+ * here — `rowAnswerLabel` has already returned null for a bare `Yes` — but it
+ * is listed because the rule is about the WORD, not about which side it is on.
+ */
+const TOO_COMMON_TO_CLAIM = /^(yes|no|none|other|tbd|n\/a)$/i;
+
+/**
+ * #7855 — the row prints ONE number, so its caption may not be about a
+ * different outcome than the label beside it.
+ *
+ * 🔴 WHAT A READER SAW. Production 2026-09-21 18:55Z, 390px, page one, card 6,
+ * edition `9c0cbec4350ab587`, the AI bundle, verbatim from the rendered row:
+ *
+ *     GPT Astra 6.1+ released?
+ *     December 31 · October 31 up 20 points today               94%
+ *
+ * Two dates, one separator, one movement and one percentage, and nothing on the
+ * line says which date the 94% is for. It reads as one sentence — "December 31,
+ * October 31, up 20 points today" — and is in fact two statements about two
+ * different legs of a cumulative ladder: `December 31` is the outcome the 94%
+ * belongs to, `October 31` is a different outcome at 63%, and the only number
+ * the sentence carries ("20 points") belongs to neither of the two printed.
+ *
+ * WHY EVERY SHIPPED GATE ADMITS IT. `captionNames("October 31 up 20 points
+ * today", "December 31")` is false, so #4396's label correctly prints;
+ * `answerIsBareQuantity("December 31")` is false, so #7331's word is correctly
+ * withheld. Both gates answer their own question right. Neither was ever asked
+ * whether the caption is about the SAME outcome as the label. The backend's
+ * `movement_subject_is_printable` (#6219) asks the nearest thing — is the
+ * mover drawn on the card — and is satisfied, because October 31 IS a row on
+ * the full card. This is the compact row, which draws one number and one
+ * caption, so "the subject is on the card" is true of a card the reader is not
+ * looking at.
+ *
+ * WHY THE CAPTION IS THE HALF THAT GOES. The row's contract is #4396's: say
+ * which answer the percentage is for. A why-now about a leg the row does not
+ * draw cannot be tied to anything the reader can see, so it is the half that
+ * cannot be read — and dropping it lands the row on a shape page one already
+ * serves and reads fine (`Anthropic IPO? · December 31, 2026 · 91%`, four such
+ * rows in the same response). Nothing new is minted; the full card the row
+ * expands into still draws both legs with the movement.
+ *
+ * MEASURED, not assumed: of the 33 compact rows that response served, 10 print
+ * a label and exactly 1 is this. The two rows whose caption names another leg
+ * AND its own hero — "Wild Horse Nine leads at 34%, The Debut up 25.8 points",
+ * "Fed maintains rate at 50%, Hike 25bps up 47 points" — print NO label (the
+ * caption already ties the number), so they are outside the gate and come
+ * through byte-identical. That pair is why the label, not the hero, is the
+ * argument: a caption that names its own number may say whatever else it likes.
+ *
+ * @param caption     the sentence already rendered under the question
+ * @param answerLabel what `rowAnswerLabel` decided to print, or null
+ * @param outcomes    the market's served outcomes
+ */
+export function captionIsAboutAnotherLeg(
+  caption: string | null | undefined,
+  answerLabel: string | null | undefined,
+  outcomes: readonly HeroCandidate[] | null | undefined,
+): boolean {
+  const label = normalize(answerLabel);
+  if (!label || !normalize(caption)) return false;
+  return (outcomes ?? []).some((outcome) => {
+    const name = (outcome?.name ?? "").trim();
+    if (!name || TOO_COMMON_TO_CLAIM.test(name)) return false;
+    if (normalize(name) === label) return false;
+    return captionNames(caption, name);
+  });
+}
