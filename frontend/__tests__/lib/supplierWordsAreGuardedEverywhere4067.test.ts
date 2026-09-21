@@ -72,7 +72,23 @@ describe("CERT-2290's four findings, each fixed at its own source", () => {
       join(process.cwd(), "app/calibration/page.tsx"),
       "utf8"
     );
-    expect(page).toContain("consensus closing odds across 20+ sportsbooks");
+    // #7718 — WHAT THIS PIN IS FOR, AND WHY IT IS NO LONGER THE WHOLE PHRASE.
+    //
+    // This pinned `"consensus closing odds across 20+ sportsbooks"` by value.
+    // The comment above says the intent: catch a REWORDING that re-introduces
+    // the banned word. But the phrase it froze was false — the curve is
+    // `DISTINCT ON (ee.id, os.bookmaker)`, one row per (event, sportsbook) with
+    // no averaging step, which is why the same CERT-2290 repair labelled it
+    // "Per-sportsbook (Odds API)" two tests below. So this guard was holding a
+    // claim the page's own labels contradicted, and any fix to the sentence had
+    // to come through here first.
+    //
+    // The banned-word assertion below is the real guard and is unchanged. What
+    // replaces the value pin is the part of the intent a ban list cannot carry:
+    // the sentence still EXISTS and still names its supplier in the approved
+    // word, so "delete the paragraph" is not how this test goes green.
+    expect(page).toContain("we measure each sportsbook separately");
+    expect(page).not.toContain("consensus closing odds");
     expect(findBannedCopy(page, ALL_COPY_BANS).map((h) => h.ban.id)).not.toContain(
       "supplier-bookmaker"
     );
