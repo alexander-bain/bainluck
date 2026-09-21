@@ -91,7 +91,29 @@ The marker makes *"leads at >99% over a live final"* a TRUE sentence, so whether
 still withhold that band at all is now a live question. It is theirs to re-open; this ship does not
 answer it in passing, and their withheld sets are unchanged.
 
+## The guard's own reader was wrong, and CodeQL caught it
+
+The first pushed sha (`bae79b7b4`) took a CodeQL `js/double-escaping` **high** on this file's own
+`drawn()` helper. It was not a nit — it was a hole in the assertion the file exists to make. The
+helper un-escaped `&amp;` → `&` and then `&lt;` → `<`, so a card drawing the literal text
+`&amp;lt;1%` reached these assertions as `<1%` and passed them:
+
+```
+input      &amp;lt;1%
+chained -> <1%        the marker, from a card that drew no marker
+one pass-> &lt;1%     honest
+```
+
+A suite whose whole subject is whether the `<` and `>` markers reach a reader cannot have a reader
+that can invent them. Repaired in `151896bc5` with one regex over an entity map —
+`teamUnfurlCard.test.tsx`'s existing idiom, which this file should have taken whole the first time.
+The raw-markup assertion that proves the marker is not escaped away never went through the helper
+and is unaffected.
+
+Notice 32 worked exactly as written: CI and the runs API both read green on that sha while the
+CHECK-RUN carried the alert. The sha was never offered.
+
 ## Gates
 
-`npm run build` exit 0 · `npm run typecheck` exit 0 (70, baseline 70) · `npx jest` exit 0
-(958 suites, 14,865 tests).
+On `151896bc5`: `npm run build` exit 0 · `npm run typecheck` exit 0 (70, baseline 70) · `npx jest`
+exit 0 (958 suites, 14,865 tests).
