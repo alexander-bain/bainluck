@@ -9,6 +9,7 @@ from app.utils.playoff_grid import (
     sort_teams_by_championship,
     is_valid_grid_outcome,
     EXPECTED_COLUMN_SUMS,
+    MOVER_FLOOR_24H,
 )
 
 
@@ -133,6 +134,89 @@ class TestComputeMovers:
 
     def test_empty_teams(self):
         assert compute_movers([], "championship") == []
+
+
+class TestAMoversRailContainsOnlyTeamsThatMoved:
+    """#7742 — `limit` is a ceiling on the rail, never a quota to fill.
+
+    Every specimen here carries an admitted control beside the refused rows, so
+    a filter that simply returned nothing would fail each one.
+    """
+
+    def test_a_team_that_did_not_move_is_not_published_as_a_mover(self):
+        teams = [
+            _make_team("Real Mover", 0.30, trend=0.02),
+            _make_team("Flat A", 0.20, trend=0.0),
+            _make_team("Flat B", 0.10, trend=0.0),
+            _make_team("Flat C", 0.10, trend=0.0),
+        ]
+
+        movers = compute_movers(teams, "championship")
+
+        assert [m["name"] for m in movers] == ["Real Mover"]
+
+    def test_negative_zero_is_not_published_as_a_decline(self):
+        # Production stamped `direction: "down"` on a -0.0 change: the ternary
+        # sent every non-positive value down, and -0.0 is not > 0.
+        teams = [
+            _make_team("Genuine Decline", 0.30, trend=-0.02),
+            _make_team("Unmoved", 0.20, trend=-0.0),
+        ]
+
+        movers = compute_movers(teams, "championship")
+
+        assert [m["name"] for m in movers] == ["Genuine Decline"]
+        assert movers[0]["direction"] == "down"
+        assert all(m["change_24h"] != 0 for m in movers)
+
+    def test_the_floor_itself_is_published_and_just_below_it_is_not(self):
+        teams = [
+            _make_team("Big", 0.40, trend=0.05),
+            _make_team("At Floor", 0.30, trend=MOVER_FLOOR_24H),
+            _make_team("Below Floor", 0.20, trend=MOVER_FLOOR_24H - 0.0001),
+            _make_team("Below Floor Negative", 0.10, trend=-(MOVER_FLOOR_24H - 0.0001)),
+        ]
+
+        movers = compute_movers(teams, "championship")
+
+        assert sorted(m["name"] for m in movers) == ["At Floor", "Big"]
+
+    def test_a_rail_of_genuine_movers_is_not_thinned(self):
+        # The control for over-filtering: when everything really moved, the
+        # rail keeps all of it.
+        teams = [_make_team(f"T{i}", 0.1, trend=0.01 * (i + 1)) for i in range(5)]
+
+        movers = compute_movers(teams, "championship")
+
+        assert len(movers) == 5
+
+    def test_the_production_ncaab_rail_shrinks_to_its_two_real_movers(self):
+        # The served /api/playoffs/ncaab payload of 2026-09-21 07:10Z: ten
+        # published "movers", seven of them exactly zero and one at 0.06pp. The
+        # league page sized its chrome on that ten and printed a header over the
+        # two chips that survived the client floor.
+        teams = [
+            _make_team("Eastern Michigan Eagles", 0.02, trend=0.0126),
+            _make_team("Texas Tech Red Raiders", 0.02, trend=-0.0091),
+            _make_team("Mississippi St Bulldogs", 0.02, trend=0.0006),
+            _make_team("Florida Gators", 0.05, trend=0.0),
+            _make_team("Duke Blue Devils", 0.05, trend=0.0),
+            _make_team("UConn Huskies", 0.05, trend=0.0),
+            _make_team("Illinois Fighting Illini", 0.04, trend=0.0),
+            _make_team("Texas Longhorns", 0.03, trend=-0.0),
+            _make_team("Arizona Wildcats", 0.03, trend=-0.0),
+            _make_team("Michigan St Spartans", 0.03, trend=-0.0),
+        ]
+
+        movers = compute_movers(teams, "championship")
+
+        assert [m["name"] for m in movers] == [
+            "Eastern Michigan Eagles",
+            "Texas Tech Red Raiders",
+        ]
+        # CHROME_MOVERS_MIN is 3: a truthful length is what lets the league
+        # page's gate suppress a strip that has nothing to say.
+        assert len(movers) < 3
 
 
 class TestSortTeamsByChampionship:
