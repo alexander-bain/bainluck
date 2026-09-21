@@ -1,6 +1,8 @@
 """B7 up-link resolver — L2-91. Tests the shared server-side market -> concept/hub
 resolver (`app/utils/concept_links.py`) that the futures-detail response attaches."""
 
+from datetime import datetime, timezone
+
 from app.utils.concept_links import (
     derive_market_category_page,
     derive_market_concept_key,
@@ -38,9 +40,17 @@ class TestConceptKey:
         )
 
     def test_tennis_winner_field(self):
+        # #7792: the name claims the 2026 edition, and since that guard landed the
+        # claim is read against the edition in play — so the clock is INJECTED here
+        # rather than inherited, or this case would invert on 2027-01-01 (gotcha #44).
+        # The premise under test is unchanged: a winner field resolves to its slug.
         assert (
             derive_market_concept_key(
-                "kalshi:KXWTAMATCH-...", "2026 Women's Wimbledon Winner", "tennis", 128
+                "kalshi:KXWTAMATCH-...",
+                "2026 Women's Wimbledon Winner",
+                "tennis",
+                128,
+                now=datetime(2026, 7, 4, tzinfo=timezone.utc),
             )
             == "event:tennis:2026-women-s-wimbledon-winner"
         )

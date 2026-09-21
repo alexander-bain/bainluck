@@ -26,6 +26,7 @@ graphs, and keeping them lazy holds this module circular-import safe + cheap.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 # Golf major -> a phrase that must appear in the market name for the concept link to
 # fire. `_normalize_tournament` is tuned for markets already KNOWN to be golf, so its
@@ -100,6 +101,36 @@ def derive_market_sport_page_key(
     return key
 
 
+# #7792: the tennis / F1 / golf keys below are EDITION-BLIND, so a market naming a
+# future edition must get NO link rather than a link into the edition in play.
+#
+# The three year-less domains reach their concept differently and are blind in the
+# same way: tennis and F1 key on `clean_slug(market.name)` and their adapters list
+# `2024 2025 2026 2027` as STOPWORDS (`_TENNIS_STOPWORDS`, `_F1_STOPWORDS`), so the
+# year is dropped before identity is computed; `_golf_major_concept_key` carries no
+# year at all. Measured on production 2026-09-21: "2027 US Open Men's Singles Winner"
+# (61308736, open) stamped a key that folded to `event:tennis:us-open-men-s-singles-
+# winner` — SETTLED, "Final result: Alexander Zverev — WON" — under a link labelled
+# "Part of: 2027 US Open Men's Singles ->", and "2027 The Masters Champion" (61056094)
+# pointed at the settled 2026 Masters. Same shape as #7782 in soccer.
+#
+# The soccer deriver can compare against a CONFIGURED edition; these three have none,
+# so "the edition in play" is the calendar year. An empty result means "the name makes
+# no edition claim" and keeps its link, exactly as in `event_soccer._named_editions`.
+_EDITION_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _names_a_foreign_edition(name: str | None, now: datetime | None = None) -> bool:
+    """True when the market name claims an edition year that is not the one in play.
+
+    False when it claims none — a bare "US Open Men's Singles Winner" must keep
+    resolving to the current edition, which is the shape most rows have."""
+    years = {int(y) for y in _EDITION_YEAR_RE.findall(name or "")}
+    if not years:
+        return False
+    return (now or datetime.now(timezone.utc)).year not in years
+
+
 def _golf_major_concept_key(name: str | None) -> str | None:
     """`event:golf:<slug>` for a golf MAJOR winner/prop market, else None.
 
@@ -138,12 +169,16 @@ def derive_market_concept_key(
     name: str | None,
     llm_sport_category: str | None = None,
     n_outcomes: int | None = None,
+    now: datetime | None = None,
 ) -> str | None:
     """Resolve a market to its event-concept key (`event:<domain>:<slug>`) or None.
 
     Tries each domain's canonical derivation in precedence order; the first hit wins.
     Ticker-based derivations (awards / combat) are authoritative regardless of
-    category; the winner-field domains gate on category + a winner-market name."""
+    category; the winner-field domains gate on category + a winner-market name.
+
+    `now` is injectable so the #7792 edition guard below is testable without the
+    calendar (gotcha #44); callers leave it unset and get the real clock."""
     cat = (llm_sport_category or "").lower()
 
     # 1. Awards ceremonies — ticker stem (unambiguous) then name keyword.
@@ -227,12 +262,16 @@ def derive_market_concept_key(
         pass
 
     # 3. Winner-field domains — name-slug (adapters resolve token-tolerantly).
+    #    #7792: token-tolerant means EDITION-BLIND here (the adapters' stopword lists
+    #    hold the years), so a board naming another edition gets no link at all.
+    foreign_edition = _names_a_foreign_edition(name, now)
+
     if cat == "tennis":
         try:
             from app.utils.event_tennis import is_winner_market
             from app.utils.name_normalization import clean_slug
 
-            if is_winner_market(name):
+            if is_winner_market(name) and not foreign_edition:
                 slug = clean_slug(name or "")
                 return f"event:tennis:{slug}" if slug else None
         except Exception:
@@ -247,7 +286,11 @@ def derive_market_concept_key(
             # Require "grand prix" in the name to stay F1-scoped — guards against
             # non-race markets miscategorized as motorsports (e.g. the World Cup
             # KXWCGROUPPTS "Any Group Winner" market) leaking a nonsense concept.
-            if is_gp_winner_market(name) and "grand prix" in (name or "").lower():
+            if (
+                is_gp_winner_market(name)
+                and "grand prix" in (name or "").lower()
+                and not foreign_edition
+            ):
                 slug = clean_slug(name or "")
                 return f"event:f1:{slug}" if slug else None
         except Exception:
@@ -255,6 +298,6 @@ def derive_market_concept_key(
         return None
 
     if cat == "golf":
-        return _golf_major_concept_key(name)
+        return None if foreign_edition else _golf_major_concept_key(name)
 
     return None
