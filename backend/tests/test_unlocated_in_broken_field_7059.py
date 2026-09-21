@@ -419,11 +419,21 @@ async def test_the_composition_hands_this_arm_the_ids_the_four_above_refused():
     the arm is tested alone — the mutant that makes that substitution survived every
     direct test in this file.
 
-    The specimen is built to need NO DATABASE: every leg carries a bid above zero, so
-    no leg is a candidate for ``needs_trade_evidence`` (its ask-only screen requires a
-    zero bid) and the market is Kalshi, so none is a candidate for the Polymarket
-    disconfirmation arm. Both async arms therefore return before they query, and
-    ``db`` is never touched.
+    🪤 THE SPECIMEN USED TO NEED NO DATABASE AND NO LONGER DOES (#7747). The original
+    premise was that every leg carries a bid above zero, so none is a candidate for
+    ``needs_trade_evidence`` (its ask-only screen requires a zero bid), and ``db`` was
+    passed as ``None`` to prove the arms returned before querying. #7747 added a
+    second screen to that same candidate list — ``needs_unbacked_ask_evidence``, which
+    asks whether the book LOCATES the price rather than whether it is empty — and legs
+    A and B both serve their own 0.93 ask across a 0.92 spread, so both are now
+    candidates and the trade read is reached. That is a real widening, not a test
+    artifact, so the fixture gains a session instead of being bent back into shape.
+
+    The session returns NO trade rows, which is the honest way to hold this test on
+    its own subject: ``has_trade_evidence`` is then False for both legs, #7747's arm
+    fails OPEN (gotcha #53 — "we never looked" is not "it never traded"), and the
+    composition's answer is unchanged. #7747's own file owns the case where a trade
+    row exists.
 
     Leg A serves 0.97 above its own 0.93 ask and is refused by the #6532 arm. The
     column a reader is shown is B and C, which names ONE favourite — so this arm must
@@ -432,6 +442,10 @@ async def test_the_composition_hands_this_arm_the_ids_the_four_above_refused():
     """
     from app.routes.futures import _withheld_price_outcome_ids
 
+    class _NoTrades:
+        async def execute(self, statement):
+            return SimpleNamespace(all=lambda: [])
+
     market = _market(
         [
             ("refuted by its own book", 0.97, 0.01, 0.93),
@@ -439,7 +453,7 @@ async def test_the_composition_hands_this_arm_the_ids_the_four_above_refused():
             ("longshot on a real book", 0.01, 0.01, 0.06),
         ]
     )
-    assert await _withheld_price_outcome_ids(None, market) == {0}
+    assert await _withheld_price_outcome_ids(_NoTrades(), market) == {0}
 
 
 def test_the_arm_is_one_pass_and_does_not_iterate_to_coherence():
