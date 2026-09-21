@@ -28,7 +28,7 @@ import {
   MatchedBucketRow,
 } from "@/lib/calibrationMath";
 import { describeActivityScope, describeCohort, partitionByActivity } from "@/lib/calibrationCohort";
-import { orderCorrections } from "@/lib/calibrationCorrections";
+import { correctionTitle, correctionsNeedingCopy, orderCorrections } from "@/lib/calibrationCorrections";
 import { readCoverageAccounting, PLOTTED_RUNG, RUNG_LABELS } from "@/lib/calibrationCoverage";
 import { readNamedExclusions } from "@/lib/calibrationNamedExclusions";
 import { mceIntervalForCohort, formatMceInterval } from "@/lib/calibrationIntervalScope";
@@ -2789,12 +2789,19 @@ export default function CalibrationPage() {
           exactly the diagnostic prose notice 34 removes. It travels as data
           attributes instead, so the gap stays measurable without being read
           (notice 34's failing-self-audit remedy). */}
+      {/* #7729 — `data-corrections-needing-copy` is rows whose producer title
+          carries a tracker id the page has no chosen words for. Zero today, and
+          pinned at zero against `precompute_calibration.py` in the suite;
+          published so the gap is readable from the page the day the producer
+          grows one (notice 34's failing-self-audit remedy, the same contract
+          `data-unlisted-rules` carries on the exclusions fold). */}
       {data.corrections && data.corrections.length > 0 && (
         <section
           className="bg-surface-card rounded-xl border border-surface-border"
           data-testid="calibration-corrections"
           data-corrections={data.corrections.length}
           data-corrections-with-rows={data.corrections.filter(c => c.rows != null).length}
+          data-corrections-needing-copy={correctionsNeedingCopy(data.corrections)}
         >
           <details className="group">
             <summary className="cursor-pointer list-none p-5 flex items-center justify-between gap-3 select-none">
@@ -2841,8 +2848,21 @@ export default function CalibrationPage() {
                           are what survives. #7363 took "rows affected" out of
                           the intro's promise precisely because this guard is
                           reached on 11 of 13 live entries. */}
+                      {/* #7729 — AND THE TITLE IS NOT THE BACKEND'S EITHER. The
+                          note above moved the render off `description` because
+                          that field is auditor prose; `title` is written in the
+                          same literal, by the same hand, in the same sitting, and
+                          `corrections[9]`'s ends "— corrected discriminator
+                          (Queue #186)". That shipped our handoff directory's own
+                          numbering to a reader at 390px on the page whose whole
+                          subject is whether our numbers can be checked — the
+                          exact thing CERT-2295 named, one field later.
+                          `correctionTitle` is the page's own words for it, with a
+                          withhold floor under the map. Why the page and not the
+                          producer, and why the floor is not the fix:
+                          `lib/calibrationCorrections.ts`. */}
                       <div className="text-sm font-medium text-text-primary">
-                        {c.title}
+                        {correctionTitle(c.title)}
                         {c.rows != null && (
                           <span className="ml-2 text-xs font-normal text-text-muted tabular-nums">
                             {c.rows.toLocaleString()} rows
