@@ -1489,6 +1489,63 @@ async def _build_trend_chart(
     }
 
 
+def _in_scope(team, scope_keys: set[str]) -> int:
+    """1 when this row's sport is one the league config asked for, else 0.
+
+    `getattr` rather than `team.sport.key` because a row whose sport did not
+    load must rank as out-of-scope, not raise.
+    """
+    sport_key = getattr(getattr(team, "sport", None), "key", None)
+    return 1 if (scope_keys and sport_key in scope_keys) else 0
+
+
+def _alias_may_claim(
+    alias_norm: str,
+    team,
+    canonical_owners: dict[str, tuple[int, object, int]],
+    scope_keys: set[str],
+) -> bool:
+    """May `team` index itself under `alias_norm`, an abbreviation or alias?
+
+    AN ALIAS IS A CLAIM; A ROW'S OWN `name` IS THE ROW (#7727). The lookup this
+    guards is last-one-wins by `id`, so before this an alias belonging to a
+    higher-id row silently deleted a lower-id row's own name — and the deleted
+    row then vanished from the grid, its markets merging into the claimant on
+    the shared `team_id`. Measured on production 2026-09-21: `Auburn Tigers`
+    (id 271) carries the alias `Texas Tech Red Raiders`, so the men's NCAA grid
+    printed "Texas Tech Red Raiders" over Auburn's crest, `AUB` and Auburn's
+    22-16 record, and Auburn had no row at all. `Akron Zips` claimed
+    `Michigan Wolverines`; `Oklahoma St Cowgirls` claimed `Oklahoma Sooners`.
+
+    THE DISCRIMINATOR IS THE ANCHOR, NOT THE NAME (ruling 048). Most keys where
+    an alias beats a name are ONE club holding two rows — `Bournemouth` and
+    `AFC Bournemouth`, `St.Louis Cardinals` and `St. Louis Cardinals` — and
+    there the alias winning is the behaviour every other grid rule is built on;
+    flipping those regresses far more rows than it fixes (930's measurement on
+    this same function). So the claim is refused only when the two rows are
+    anchored to DIFFERENT ESPN teams. Absent either anchor the rule fails
+    closed and today's order stands — those rows need the anchor channel
+    (#7676), not a looser name rule.
+
+    Scope is untouched: the refusal applies only within one scope tier, so an
+    in-scope row still beats an out-of-scope one exactly as before.
+    """
+    owner = canonical_owners.get(alias_norm)
+    if owner is None:
+        return True  # nobody's own name
+    _owner_id, owner_espn_id, owner_in_scope = owner
+    # A row aliasing its OWN name needs no clause of its own: it is its own
+    # anchor, so the equal-anchor return below already admits it.
+    if owner_in_scope != _in_scope(team, scope_keys):
+        return True  # cross-tier: scope decides, as it always has
+    my_espn_id = getattr(team, "espn_id", None)
+    if not my_espn_id or not owner_espn_id:
+        return True  # no anchor channel — fail closed
+    if str(my_espn_id) == str(owner_espn_id):
+        return True  # one club, two rows
+    return False
+
+
 async def _get_team_metadata(
     session: AsyncSession,
     team_names: set[str],
@@ -1560,16 +1617,30 @@ async def _get_team_metadata(
     def _rank(team) -> tuple[int, int]:
         """Sort key: out-of-scope first, in-scope last, `id` ascending inside.
 
-        `getattr` rather than `team.sport.key` because a row whose sport did not
-        load must rank as out-of-scope, not raise: the grid degrading to today's
-        behaviour is survivable, the grid 500ing is not.
+        The scope half is `_in_scope`, shared with `_alias_may_claim` so the
+        ordering and the refusal can never disagree about which tier a row is
+        in: the refusal is deliberately confined to one tier.
         """
-        sport_key = getattr(getattr(team, "sport", None), "key", None)
-        in_scope = 1 if (scope_keys and sport_key in scope_keys) else 0
         team_id = getattr(team, "id", 0)
-        return (in_scope, team_id if isinstance(team_id, int) else 0)
+        return (
+            _in_scope(team, scope_keys),
+            team_id if isinstance(team_id, int) else 0,
+        )
 
     teams = sorted(loaded, key=_rank)
+
+    # Who owns each key as their OWN name, in the same last-one-wins order the
+    # lookup below uses. Computed first because an alias can be written before
+    # the row it would overwrite is even reached.
+    canonical_owners: dict[str, tuple[int, object, int]] = {}
+    for team in teams:
+        if not team.name:
+            continue
+        canonical_owners[_normalize_team_name(team.name)] = (
+            team.id,
+            getattr(team, "espn_id", None),
+            _in_scope(team, scope_keys),
+        )
 
     # Build lookup by normalized name
     team_lookup: dict[str, dict] = {}
@@ -1637,14 +1708,18 @@ async def _get_team_metadata(
         norm = _normalize_team_name(team.name)
         team_lookup[norm] = meta
 
-        # Also index by abbreviation if available
+        # Secondary identifiers. An abbreviation or an alternate name is a
+        # CLAIM about who a row is; the row's own `name` is the row itself. So
+        # a claim may not take a key that is another CLUB's own name — see
+        # `_alias_may_claim`.
+        secondary = []
         if team.abbreviation:
-            team_lookup[_normalize_team_name(team.abbreviation)] = meta
-
-        # And alternate names
-        alt_names = team.alternate_names or []
-        for alt in alt_names:
-            team_lookup[_normalize_team_name(alt)] = meta
+            secondary.append(team.abbreviation)
+        secondary.extend(team.alternate_names or [])
+        for alt in secondary:
+            alt_norm = _normalize_team_name(alt)
+            if _alias_may_claim(alt_norm, team, canonical_owners, scope_keys):
+                team_lookup[alt_norm] = meta
 
     return team_lookup
 
