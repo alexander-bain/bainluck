@@ -47,9 +47,16 @@ property PostgreSQL decides:
 
 ## the corpus
 
-Two tables in a database of this gate's own, created with
-``autovacuum_enabled = false`` so the dead tuples cannot be reclaimed out from
-under the read:
+``SEARCH_TEST_DATABASE_URL`` names the ``search-recall`` job's SHARED database,
+which several dozen sibling gates populate. Three arms here assert on *which*
+table is worst by dead-tuple ratio and on there being *no* qualifying table at
+all, so a shared database would let step ordering decide them. The fixture
+therefore uses that URL only for its host and credentials and provisions
+``bl_vacuum_signals_2006`` beside it — created on first use, kept, with the
+tables and the role dropped on both ends of every test.
+
+Two tables in it, created with ``autovacuum_enabled = false`` so the dead tuples
+cannot be reclaimed out from under the read:
 
 * ``vacuum_probe_dirty_2006`` — 2,000 rows inserted, 1,990 deleted ⇒ 99.5% dead.
 * ``vacuum_probe_clean_2006`` — 2,000 rows, none deleted ⇒ 0% dead.
@@ -68,9 +75,8 @@ uses — because a held transaction is the specimen here, and a SQLAlchemy
 connection that manages its own transaction boundaries is the wrong instrument
 for holding one open deliberately.
 
-Read-only against ``pg_stat_activity``; the whole database is created and
-dropped by the fixture. Nothing in this file cancels a backend, and nothing in
-it runs against production.
+Read-only against ``pg_stat_activity``. Nothing in this file cancels a backend,
+and nothing in it runs against production.
 """
 
 from __future__ import annotations
@@ -110,6 +116,17 @@ DIRTY_PCT_FLOOR = 99.0
 STATS_TIMEOUT_S = 20.0
 
 
+#: This gate provisions and owns a database of its own on the same server.
+#:
+#: NOT ``bl_searchtest``. The ``search-recall`` job's shared database is
+#: populated by several dozen sibling gates, and three arms here assert on
+#: *which* table is the worst by dead-tuple ratio and on there being *no*
+#: qualifying table at all — both of which another gate's leftovers would decide
+#: instead. Pointing this file at the shared URL would produce arms that pass or
+#: fail on step ordering.
+GATE_DB = "bl_vacuum_signals_2006"
+
+
 def _plain_dsn(url: str) -> str:
     """asyncpg wants a libpq URL, not SQLAlchemy's ``+asyncpg`` form."""
     return url.replace("postgresql+asyncpg://", "postgresql://", 1).replace(
@@ -117,14 +134,22 @@ def _plain_dsn(url: str) -> str:
     )
 
 
-def _sqlalchemy_url(url: str) -> str:
-    plain = _plain_dsn(url)
-    return plain.replace("postgresql://", "postgresql+asyncpg://", 1)
+def _with_database(url: str, database: str) -> str:
+    head, _, _tail = _plain_dsn(url).rpartition("/")
+    return f"{head}/{database}"
 
 
-def _role_dsn(url: str) -> str:
-    """The same database, reached as the unprivileged probe role."""
-    tail = _plain_dsn(url).split("@", 1)[1]
+def _gate_dsn() -> str:
+    return _with_database(DB_URL, GATE_DB)
+
+
+def _sqlalchemy_url() -> str:
+    return _gate_dsn().replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
+def _role_dsn() -> str:
+    """This gate's database, reached as the unprivileged probe role."""
+    tail = _gate_dsn().split("@", 1)[1]
     return f"postgresql://{PROBE_ROLE}:{PROBE_SECRET}@{tail}"
 
 
@@ -163,11 +188,25 @@ async def _burn_xids(conn, count: int) -> None:
 
 @pytest.fixture
 async def pg():
-    """A superuser asyncpg connection, the two probe tables, and the role."""
+    """This gate's own database, its two probe tables, and the probe role.
+
+    The database is created on first use and left in place; the tables and the
+    role are dropped on both ends of every test. Nothing here touches the
+    ``bl_searchtest`` database the rest of the job shares.
+    """
     import asyncpg
 
-    dsn = _plain_dsn(DB_URL)
-    conn = await asyncpg.connect(dsn)
+    admin = await asyncpg.connect(_with_database(DB_URL, "postgres"))
+    try:
+        exists = await admin.fetchval(
+            "SELECT 1 FROM pg_database WHERE datname = $1", GATE_DB
+        )
+        if not exists:
+            await admin.execute(f"CREATE DATABASE {GATE_DB}")
+    finally:
+        await admin.close()
+
+    conn = await asyncpg.connect(_gate_dsn())
 
     async def _drop():
         for table in (DIRTY_TABLE, CLEAN_TABLE):
@@ -242,7 +281,7 @@ class TestTheShippedSqlRunsOnARealServer:
         """The signal that carries the one-hour bar, executed end to end."""
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT
 
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             rows = await pg.fetch(Q_VACUUM_OLDEST_XACT)
 
         assert rows, "the shipped statement found no non-idle transaction at all"
@@ -258,7 +297,7 @@ class TestTheShippedSqlRunsOnARealServer:
     async def test_the_xid_signal_names_the_backend_holding_the_horizon(self, pg):
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XMIN
 
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             await _burn_xids(pg, 60)
             row = await pg.fetchrow(Q_VACUUM_OLDEST_XMIN)
 
@@ -282,12 +321,12 @@ class TestTheShippedSqlRunsOnARealServer:
 
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT, Q_VACUUM_OLDEST_XMIN
 
-        async with _HeldTransaction(_role_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_role_dsn()) as held:
             # Let the held transaction age past a second so the reader cannot
             # pass the age assertion on a zero.
             await asyncio.sleep(1.1)
             await _burn_xids(pg, 60)
-            reader = await asyncpg.connect(_role_dsn(DB_URL))
+            reader = await asyncpg.connect(_role_dsn())
             try:
                 assert await reader.fetchval("SELECT current_user") == PROBE_ROLE
                 assert not await reader.fetchval(
@@ -320,9 +359,9 @@ class TestTheShippedSqlRunsOnARealServer:
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XMIN
 
         # The holder is the SUPERUSER — a different role from the reader.
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             await _burn_xids(pg, 60)
-            reader = await asyncpg.connect(_role_dsn(DB_URL))
+            reader = await asyncpg.connect(_role_dsn())
             try:
                 row = await reader.fetchrow(Q_VACUUM_OLDEST_XMIN)
                 own_pid = await reader.fetchval("SELECT pg_backend_pid()")
@@ -349,9 +388,9 @@ class TestTheShippedSqlRunsOnARealServer:
 
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT
 
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             await asyncio.sleep(1.1)
-            reader = await asyncpg.connect(_role_dsn(DB_URL))
+            reader = await asyncpg.connect(_role_dsn())
             try:
                 rows = await reader.fetch(Q_VACUUM_OLDEST_XACT)
                 cross_role = await reader.fetchrow(
@@ -373,7 +412,7 @@ class TestTheShippedSqlRunsOnARealServer:
         and cannot be a blanket."""
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT
 
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             await held.set_application_name("pg_dump")
             hidden = {r["pid"] for r in await pg.fetch(Q_VACUUM_OLDEST_XACT)}
 
@@ -441,7 +480,7 @@ class TestTheReadIsBoundedAndWiredToTheRealSession:
         from app.tasks import base as task_base
         from app.tasks.watchdog import VACUUM_QUERY_TIMEOUT_MS
 
-        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url(DB_URL))
+        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url())
 
         async with task_base.get_task_session(
             statement_timeout_ms=VACUUM_QUERY_TIMEOUT_MS
@@ -457,7 +496,7 @@ class TestTheReadIsBoundedAndWiredToTheRealSession:
 
         from app.tasks import base as task_base
 
-        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url(DB_URL))
+        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url())
 
         with pytest.raises(Exception) as excinfo:
             async with task_base.get_task_session(statement_timeout_ms=250) as session:
@@ -479,9 +518,9 @@ class TestTheReadIsBoundedAndWiredToTheRealSession:
         from app.tasks import base as task_base
         from app.tasks.watchdog import _read_vacuum_signals, classify_vacuum_signals
 
-        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url(DB_URL))
+        monkeypatch.setattr(task_base, "DATABASE_URL", _sqlalchemy_url())
 
-        async with _HeldTransaction(_plain_dsn(DB_URL)) as held:
+        async with _HeldTransaction(_gate_dsn()) as held:
             signals = await _read_vacuum_signals()
 
         assert signals["xmin_age"] is not None
