@@ -365,17 +365,24 @@ class TestThePassWritesToRealPostgres:
             )
             stats = await poly._refresh_linked_polymarket_books()
 
-        assert stats["outcomes_created"] == 1, stats
-        assert stats["snapshots_written"] == 1, stats
+        # 2 since #7505, not 1. The specimen is a sole-moneyline event whose
+        # venue payload names BOTH fighters (`outcomes: ["Ozzy Diaz", "Ryan
+        # Gandra"]`), so the branch now writes the partner leg as well — the
+        # defect being that a card named two fighters and priced one. The
+        # moneyline leg below is asserted exactly as before; the partner is
+        # asserted separately rather than folded into a looser count.
+        assert stats["outcomes_created"] == 2, stats
+        assert stats["snapshots_written"] == 2, stats
 
         row = (
             await pg_session.execute(
                 text(
                     "SELECT external_id, current_probability, current_yes_bid, "
                     "       is_winner, resolution_source "
-                    "  FROM futures_outcomes WHERE market_id = :m"
+                    "  FROM futures_outcomes "
+                    " WHERE market_id = :m AND external_id = :cid"
                 ),
-                {"m": ids["specimen"]},
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
             )
         ).one()
         assert row.external_id == MONEYLINE_CID
@@ -387,14 +394,35 @@ class TestThePassWritesToRealPostgres:
         )
         assert row.resolution_source is None
 
+        # #7505: the partner leg the venue named, on the row a reader meets.
+        partner = (
+            await pg_session.execute(
+                text(
+                    "SELECT external_id, name, current_probability "
+                    "  FROM futures_outcomes "
+                    " WHERE market_id = :m AND external_id <> :cid"
+                ),
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
+            )
+        ).one()
+        assert partner.external_id == f"{MONEYLINE_CID}_side1", (
+            "the partner leg must stay OUT of the _yes/_no namespace — keyed "
+            "there, drop_duplicate_legs filters it at serve time because the "
+            "bare condition id is on the same market"
+        )
+        assert partner.name == "Ryan Gandra"
+        assert float(partner.current_probability) == pytest.approx(
+            1 - MONEYLINE_PRICE
+        ), "the two sides of one fight must sum to 1 on the card"
+
         snap = (
             await pg_session.execute(
                 text(
                     "SELECT s.bookmaker, s.probability FROM futures_odds_snapshots s "
                     "  JOIN futures_outcomes o ON o.id = s.outcome_id "
-                    " WHERE o.market_id = :m"
+                    " WHERE o.market_id = :m AND o.external_id = :cid"
                 ),
-                {"m": ids["specimen"]},
+                {"m": ids["specimen"], "cid": MONEYLINE_CID},
             )
         ).one()
         assert snap.bookmaker == "polymarket"
@@ -452,7 +480,10 @@ class TestThePassWritesToRealPostgres:
             first = await poly._refresh_linked_polymarket_books()
             second = await poly._refresh_linked_polymarket_books()
 
-        assert first["outcomes_created"] == 1
+        # 2 since #7505 (both fighters). The IDEMPOTENCE claim is untouched and
+        # is what this test is for: the second pass still writes nothing, and
+        # the leg count after two runs is still the count after one.
+        assert first["outcomes_created"] == 2
         assert second["terminal"] == "no_dark_linked_markets_in_window"
         legs = (
             await pg_session.execute(
@@ -460,7 +491,7 @@ class TestThePassWritesToRealPostgres:
                 {"m": ids["specimen"]},
             )
         ).scalar()
-        assert legs == 1
+        assert legs == 2
 
 
 class TestTheReaderCanActuallySeeIt:
@@ -546,7 +577,9 @@ class TestTheReaderCanActuallySeeIt:
                 )
             )
             stats = await poly._refresh_linked_polymarket_books()
-        assert stats["outcomes_created"] == 1, stats
+        # 2 since #7505 — both fighters. The reader assertions below are the
+        # subject of this class and are unchanged.
+        assert stats["outcomes_created"] == 2, stats
 
         resp = await self._related(pg_session, ids["_near_event_id"])
         rows = self._all_rows(resp)
