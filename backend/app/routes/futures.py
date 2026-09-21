@@ -6502,7 +6502,75 @@ def _format_market_detail(
             # on the board and in what order. Left reading `o.rank` so a row the
             # pipeline never reaches still carries something.
             "rank": o.rank,
-            "rank_change_24h": o.rank_change_24h,
+            # #7299 — THE ARROW IS THE SAME UNDATED CLAIM ITS NEIGHBOUR ALREADY
+            # REFUSES, SO IT IS REFUSED BY THE SAME RULE.
+            #
+            # WHAT A READER SAW. On one row of `/futures/60268421`'s All Outcomes
+            # ladder: `↓5` … `LAST MOVE —` … `LATEST 4%`. The LAST MOVE column is
+            # blank because the guard ten lines below refused it — we could not
+            # date the move, so we said nothing — and then the arrow beside the
+            # same outcome's name says the row fell five places in that same
+            # twenty-four hours. We refuse one 24h number and print another one
+            # next to it, off a basis we have just declared unusable. Seven of
+            # fourteen visible rows did this; `/futures/58321581` (a named #4079
+            # control) printed `↓18` on a row whose `probability_change_24h` is
+            # null, and a collapsed row carried `rank_change_24h: -1` with
+            # `probability: null` — a rank move on a row with no price at all.
+            #
+            # 🔴 NO BANK CAN DATE THIS ONE, WHICH IS WHY THIS IS A REFUSAL AND NOT
+            # A SECOND CALL TO `dated_movement_points`. That helper re-derives its
+            # answer by SUBTRACTING an observed price, so a banked row can be
+            # rescued. There is no equivalent here: the writers store
+            # `old_rank - new_rank` FOR ONE POLL (`assign_display_ranks`'s own
+            # docstring names the writer), so the stored integer is a rank change
+            # over the gap between two polls of unknown length, labelled "24h".
+            # Co-dating it with the price bank — the first shape this was filed
+            # with — only narrows the mislabel: a per-poll delta on a row whose
+            # PRICE basis happens to be datable is still a per-poll delta.
+            #
+            # A TRUE DATED ARROW IS A PROPERTY OF THE WHOLE BOARD, AND THE ROUTE
+            # CANNOT SEE ONE. "Rank then" is only meaningful when EVERY row on the
+            # board has a basis in the window, so the rule would be all-or-nothing
+            # per market. Measured on production 2026-09-21 over the 24,398 open
+            # markets with a future `resolution_date` (162,611 outcomes): the bank
+            # dates 1,704 outcomes (1.0%), and exactly **37 markets** are covered
+            # on every row. Those 37 hold 48 outcomes between them — they are
+            # two-leg binaries, not ladders — and carry **4 arrows across 2
+            # markets**, one of which has more than two outcomes. So computing
+            # here would preserve 4 of the 9,748 arrows now live across 1,785
+            # markets, 39 of which sit on rows with no price, and would cost a
+            # rank-then ordering that has to agree with `assign_display_ranks`
+            # after the drops, the withholding and the squeeze have run.
+            #
+            # 🔴 AND IT WOULD DECIDE A QUESTION THIS LANE DOES NOT OWN. Computing
+            # an arrow means choosing its SIGN, and the sign is #6607 — the arrow's
+            # direction, live and owned by ux. A refusal is sign-agnostic and
+            # cannot collide with that fix; a computed integer would silently
+            # settle it here. The direction defect keeps its own issue.
+            #
+            # WIDER COVERAGE IS REACHABLE AND IS NOT THIS SHIP.
+            # `futures_odds_snapshots` carries per-outcome history with
+            # `captured_at` and covers whole boards the bank does not (24/24 on
+            # 58321581), but it is raw per-bookmaker and vig-inclusive, so the
+            # ranking would have to stay inside one bookmaker or it is #1844
+            # again, and it needs a per-market window query this route does not
+            # make today. That is a costed follow-on, not a reason to keep
+            # printing the number in the meantime.
+            #
+            # 🔴 THE COLUMN IS UNTOUCHED, here as in #4079. `/api/futures/movers`
+            # still ranks on it, `compute_futures_highlight` still reads it off
+            # its own query, `/futures/available` still serves it beside the raw
+            # `probability_change_24h` that route also serves ungated, and the
+            # A5/A6 sweeps still retire it. This nulls ONE served field on ONE
+            # payload — the ladder a reader actually reads the arrow off.
+            #
+            # PRESENT AND NULL, NEVER OMITTED, and null rather than 0: every
+            # client already draws nothing on null (`OutcomeRow` gates on
+            # `rankChange !== null && rankChange !== 0`, `FuturesDetailView` on
+            # `if let rankChange`, both shipped), while 0 is the answer for a day
+            # something MEASURED as flat and would be the one wrong value this
+            # can afford least.
+            "rank_change_24h": None,
             # #4079 NUMERIC HALF (N3) — THE LADDER'S 24h COLUMN IS DATED OR ABSENT.
             #
             # This is the field behind Alex's phone line 21: `FuturesDetailView`
