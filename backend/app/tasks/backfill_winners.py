@@ -8119,6 +8119,73 @@ async def _backfill_polymarket_winners_from_api(
                                         stats["winners_set"] += r.rowcount
                                     else:
                                         stats["losers_set"] += r.rowcount
+
+                                    # #7505 — the companion, on THIS branch too.
+                                    #
+                                    # 🔴 A SINGLE-MARKET EVENT CAN REACH EITHER
+                                    # BRANCH, and only one of them was patched
+                                    # at first. `group_type` is assigned
+                                    # `negrisk` on `event.neg_risk` BEFORE the
+                                    # market count is consulted
+                                    # (`tasks/polymarket.py`), so a
+                                    # sole-moneyline negRisk event is written
+                                    # with `group_type='negrisk'` AND reaches
+                                    # `_parent_outcome_data`'s single-market
+                                    # branch — it can carry a companion and it
+                                    # arrives HERE, not at the bare branch
+                                    # below. Measured on production 2026-09-21
+                                    # over Polymarket `% vs%` markets holding
+                                    # one leg and keyed by event id:
+                                    # polymarket_event 7,379 · polymarket_single
+                                    # 6,198 · null 2,330 · **negrisk 1,931**.
+                                    # Covering only the other branch would have
+                                    # left 11% of the population ungraded while
+                                    # every test passed.
+                                    #
+                                    # Unreachable on a real ladder by
+                                    # construction: `_side1` is only ever
+                                    # written beside a BARE condition id on a
+                                    # sole-moneyline row, so on a many-legged
+                                    # negRisk field this key matches nothing and
+                                    # the statement is a no-op. Same complement
+                                    # reasoning as the bare branch — `is_winner`
+                                    # is `m_prices[0] >= 0.90` and the two legs
+                                    # were written off that same index-aligned
+                                    # array.
+                                    if len(m_prices) > 1:
+                                        await session.execute(
+                                            text("""
+                                                UPDATE futures_outcomes
+                                                SET current_probability = :price
+                                                WHERE market_id = :mid
+                                                  AND external_id = :cid
+                                                  AND (current_probability IS NULL
+                                                       OR ABS(current_probability - :price) > 0.001)
+                                            """),
+                                            {
+                                                "price": m_prices[1],
+                                                "mid": row.id,
+                                                "cid": f"{m_cid}_side1",
+                                            },
+                                        )
+                                    r_c = await session.execute(
+                                        update(FuturesOutcome)
+                                        .where(
+                                            FuturesOutcome.market_id == row.id,
+                                            FuturesOutcome.external_id
+                                            == f"{m_cid}_side1",
+                                        )
+                                        .values(
+                                            is_winner=(not is_winner),
+                                            resolution_source="api_settlement",
+                                            last_updated=func.now(),
+                                        )
+                                    )
+                                    if r_c.rowcount > 0:
+                                        if is_winner:
+                                            stats["losers_set"] += r_c.rowcount
+                                        else:
+                                            stats["winners_set"] += r_c.rowcount
                                 elif is_winner:
                                     # #6110 — the update matched nothing and the
                                     # venue says this leg WON. That is the one

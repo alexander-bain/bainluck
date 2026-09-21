@@ -541,7 +541,7 @@ class _GradeRecorder:
         return 1
 
 
-def _install_settlement(monkeypatch, recorder, event_payload):
+def _install_settlement(monkeypatch, recorder, event_payload, *, row=None):
     from unittest.mock import AsyncMock, MagicMock
 
     import app.services.polymarket_api as poly_api_mod
@@ -585,7 +585,9 @@ def _install_settlement(monkeypatch, recorder, event_payload):
         sql = str(getattr(stmt, "text", stmt))
         if "FROM futures_markets fm" in sql:
             p = params or {}
-            picked = [r for r in [_SettleRow()] if r.id > (p.get("last_id") or 0)]
+            picked = [
+                r for r in [row or _SettleRow()] if r.id > (p.get("last_id") or 0)
+            ]
             return _Result(picked[: (p.get("limit") or len(picked))])
         if "UPDATE futures_outcomes" in sql:
             # the price-sync `text()` statements, one per leg
@@ -700,3 +702,101 @@ class TestBothSidesOfTheFightAreGraded:
             "a lone bare leg is graded once and nothing else is claimed. "
             f"Graded: {recorder.grades!r}"
         )
+
+
+class _NegRiskRow(_SettleRow):
+    """The same sole-moneyline market, written as negRisk.
+
+    `tasks/polymarket.py` assigns `group_type` on `event.neg_risk` BEFORE it
+    consults the market count, so a sole-moneyline negRisk event is stored
+    `negrisk` and still reaches `_parent_outcome_data`'s single-market branch —
+    it can carry a companion, and at settlement it takes the OTHER branch.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.group_type = "negrisk"
+
+
+def _ladder_event():
+    """A real many-legged negRisk field, which must be untouched."""
+    return {
+        "id": SETTLE_EVENT_ID,
+        "title": "Some Tournament: Winner",
+        "closed": True,
+        "markets": [
+            {
+                "conditionId": f"{SETTLE_CID}_leg{i}",
+                "question": f"Will rider {i} win?",
+                "outcomes": '["Yes", "No"]',
+                "outcomePrices": '["1.0", "0.0"]' if i == 0 else '["0.0", "1.0"]',
+                "closed": True,
+            }
+            for i in range(3)
+        ],
+    }
+
+
+@pytest.mark.asyncio
+class TestTheNegRiskRouteGradesBothSidesToo:
+    """Seam 4, second branch — the 11% a one-branch fix would have missed.
+
+    🔴 THE TWO BRANCHES ARE CHOSEN BY `group_type`, NOT BY SHAPE.
+    `is_negrisk or (condition_id == event_id and len(api_markets) > 1)` sends a
+    sole-moneyline market down the multi-market path whenever its event carried
+    `negRisk`, because `group_type` is decided on that flag before the market
+    count is looked at. Measured on production 2026-09-21 over Polymarket
+    `% vs%` markets holding exactly one leg and keyed by event id:
+    `polymarket_event` 7,379 · `polymarket_single` 6,198 · null 2,330 ·
+    **`negrisk` 1,931**. Patching one branch leaves 11% of the population
+    permanently half-graded with every other arm in this file still green —
+    which is exactly how the first version of this repair was written.
+    """
+
+    async def test_the_companion_is_graded_on_the_negrisk_route(self, monkeypatch):
+        recorder = _GradeRecorder({SETTLE_CID, f"{SETTLE_CID}_side1"})
+        bw = _install_settlement(
+            monkeypatch, recorder, _settled_event(draxl_won=True), row=_NegRiskRow()
+        )
+
+        await bw._backfill_polymarket_winners_from_api(limit=10)
+
+        assert recorder.grades == {
+            SETTLE_CID: True,
+            f"{SETTLE_CID}_side1": False,
+        }, f"the negRisk route must grade both sides. Graded: {recorder.grades!r}"
+
+    async def test_it_inverts_on_the_negrisk_route_as_well(self, monkeypatch):
+        recorder = _GradeRecorder({SETTLE_CID, f"{SETTLE_CID}_side1"})
+        bw = _install_settlement(
+            monkeypatch, recorder, _settled_event(draxl_won=False), row=_NegRiskRow()
+        )
+
+        await bw._backfill_polymarket_winners_from_api(limit=10)
+
+        assert recorder.grades == {
+            SETTLE_CID: False,
+            f"{SETTLE_CID}_side1": True,
+        }, f"Graded: {recorder.grades!r}"
+
+    async def test_a_real_ladder_gains_no_companion(self, monkeypatch):
+        """The control that matters most on this branch: a genuine many-legged
+        negRisk field iterates every sub-market, so the companion write is
+        attempted once per leg. `_side1` is only ever written beside a BARE
+        condition id on a sole-moneyline row, so every one of those must match
+        nothing — a ladder that grew phantom `_side1` grades would be this
+        repair inventing losers across the whole negRisk population."""
+        stored = {f"{SETTLE_CID}_leg{i}" for i in range(3)}
+        recorder = _GradeRecorder(stored)
+        bw = _install_settlement(
+            monkeypatch, recorder, _ladder_event(), row=_NegRiskRow()
+        )
+
+        await bw._backfill_polymarket_winners_from_api(limit=10)
+
+        assert recorder.grades == {
+            f"{SETTLE_CID}_leg0": True,
+            f"{SETTLE_CID}_leg1": False,
+            f"{SETTLE_CID}_leg2": False,
+        }, f"the ladder grades exactly as before, and nothing else. {recorder.grades!r}"
+        assert not any("_side1" in k for k in recorder.grades)
