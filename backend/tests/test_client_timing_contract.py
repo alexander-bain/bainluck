@@ -429,6 +429,23 @@ def test_cache_status_domain_matches_its_producer():
     produced |= set(re.findall(r'_set_feed_cache_status\([^,]+,\s*"([a-z_]+)"\)', text))
     assert produced, "could not parse any cache_status producer — the regex rotted"
 
+    # #2143: `assert produced` catches TOTAL rot only. A refactor that moves
+    # SOME call sites off a string literal leaves this parsing the survivors —
+    # `missing` empty, test green, the moved value silently absent from the
+    # domain. Pin the floor the parse reaches today so partial rot is red. Same
+    # pin, same reason, in `test_bucket_allowlist_covers_everything_its_writer_emits`
+    # (`test_latency_stats.py`), which reads this same producer.
+    floor = {
+        "miss", "hit", "stale_hit", "error", "coalesced", "last_good",
+        "unavailable", "disabled", "disabled_debug", "disabled_reviewed_filter",
+    }
+    unparsed = floor - produced
+    assert not unparsed, (
+        f"the producer parse no longer reaches {sorted(unparsed)} — either feed.py "
+        "genuinely stopped writing them (update this pin in the same commit) or the "
+        "regex rotted and this guard is now vacuous"
+    )
+
     missing = produced - _ENUM_DOMAINS["cache_status"]
     assert not missing, (
         f"feed.py writes X-Feed-Cache values the contract drops: {sorted(missing)} — "
