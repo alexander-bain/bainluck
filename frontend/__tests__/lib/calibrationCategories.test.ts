@@ -38,6 +38,7 @@ import {
   DISPLAY_NAMES,
   categoryLabel,
   nicheCatLabel,
+  SINGLE_WORD_COMPOUNDS,
   normalizeCat,
 } from "@/lib/calibrationCategories";
 import { LEAGUE_DISPLAY } from "@/lib/sportCategories";
@@ -232,11 +233,19 @@ describe("UX-P189 — the label keeps every word of the key", () => {
   test("no key in the live census silently loses a word", () => {
     // The class form of the two tests above, over the whole measured payload.
     //
-    // Two exemptions, both principled: a key with a curated LEAGUE_DISPLAY name
-    // is a deliberate RENAME (`icehockey_sweden_hockey_league` -> "SHL"), and a
-    // key `normalizeCat` folds onto its parent sport is deliberately labelled
-    // with the parent (`basketball_nba` -> "Basketball"). Everything else must
-    // account for every segment of its key except a dropped sport prefix.
+    // Three exemptions, all principled: a key with a curated LEAGUE_DISPLAY
+    // name is a deliberate RENAME (`icehockey_sweden_hockey_league` -> "SHL"),
+    // a key `normalizeCat` folds onto its parent sport is deliberately labelled
+    // with the parent (`basketball_nba` -> "Basketball"), and a
+    // SINGLE_WORD_COMPOUNDS key is a deliberate SPLIT (#7892: `xgames` ->
+    // "X Games"). Everything else must account for every segment of its key
+    // except a dropped sport prefix.
+    //
+    // The split is exempted here rather than handled by relaxing the rule,
+    // because the rule is a containment test and "x games" does not contain
+    // "xgames" for the same reason it would not contain a token that really had
+    // been dropped. The exemption cannot hide a drop: the test below pins that
+    // every compound label preserves its key's letters exactly.
     const droppablePrefixes = new Set(
       [...Object.keys(LEAGUE_DISPLAY)]
         .filter(k => k.includes("_"))
@@ -246,6 +255,7 @@ describe("UX-P189 — the label keeps every word of the key", () => {
     for (const key of ALL_LABELLED_KEYS_2026_08_30) {
       if (LEAGUE_DISPLAY[key]) continue;
       if (normalizeCat(key) !== key) continue;
+      if (SINGLE_WORD_COMPOUNDS[key]) continue;
       const label = nicheCatLabel(key).toLowerCase();
       key.split("_").forEach((tok, i) => {
         if (i === 0 && droppablePrefixes.has(tok)) return;
@@ -334,6 +344,39 @@ describe("UX-P189 — a single-word key is cased, not passed through", () => {
     expect(categoryLabel("chess")).toBe("Chess");
     expect(categoryLabel("crypto")).toBe("Crypto");
     expect(categoryLabel("commodities")).toBe("Commodities");
+  });
+
+  test("#7892 — a key spelled as ONE word still gets its words back", () => {
+    // The tokenizer splits on `_`, so a key that never had a separator has
+    // nothing to split and the casing rule alone produced "Aussierules" and
+    // "Xgames". Both pass every assertion in this file's other tests — not a
+    // raw key, not lowercase, no underscore, not shouting — and neither is a
+    // name anyone writes.
+    //
+    // These stayed hidden because they are PARKED categories: they render on
+    // the niche chips and nowhere else, and the card showed only the top eight
+    // of 42. `aussierules` is 9th and `xgames` 40th, so both sat inside the
+    // "+34 more" the reader could not open (#7892).
+    expect(nicheCatLabel("aussierules")).toBe("Aussie Rules");
+    expect(nicheCatLabel("xgames")).toBe("X Games");
+
+    // The compound map must not have leaked into normalisation. If
+    // `aussierules` ever became a DISPLAY_NAMES key, `normalizeCat` would fold
+    // `aussierules_afl` onto it and the AFL would stop being its own row.
+    expect(DISPLAY_NAMES["aussierules"]).toBeUndefined();
+    expect(DISPLAY_NAMES["xgames"]).toBeUndefined();
+    expect(normalizeCat("aussierules_afl")).toBe("aussierules_afl");
+
+    // ...and the curated league name still wins, verbatim.
+    expect(nicheCatLabel("aussierules_afl")).toBe("AFL");
+
+    // The exemption this buys in the word-loss guard above cannot hide a
+    // dropped word: a split may only INSERT spaces, so removing them has to
+    // give the key back, letter for letter. "X Gams" would fail here.
+    for (const [key, label] of Object.entries(SINGLE_WORD_COMPOUNDS)) {
+      expect(label.toLowerCase().replace(/\s+/g, "")).toBe(key);
+      expect(label).not.toBe(key);
+    }
   });
 
   test("no label on either surface starts lowercase or keeps an underscore", () => {

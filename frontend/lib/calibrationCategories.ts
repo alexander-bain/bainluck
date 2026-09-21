@@ -139,6 +139,38 @@ const TITLE_SMALL_WORDS: ReadonlySet<string> = new Set([
   "and", "da", "de", "del", "di", "du", "of", "the",
 ]);
 
+/**
+ * Single-token keys the payload spells as ONE word, mapped to the words.
+ *
+ * #7892. The tokenizer splits on `_`, so a key that never had a separator has
+ * nothing to split: `aussierules` came out "Aussierules" and `xgames` came out
+ * "Xgames". Neither is a raw key and neither is lowercase, so both slip past the
+ * rule `nicheCatLabel` is written to enforce — and both are still names nobody
+ * writes.
+ *
+ * They were invisible until the niche card's remainder became openable: these
+ * are parked categories, so they appear on the chips and nowhere else — never in
+ * the published breakdown table — and the chips showed the top eight. The two
+ * are ranked 9th and 40th of 42.
+ *
+ * This map is deliberately NOT `DISPLAY_NAMES`. That one is read by
+ * `normalizeCat`, where a new key changes which categories FOLD TOGETHER:
+ * `DISPLAY_NAMES["aussierules"]` would quietly re-point `aussierules_afl` from
+ * its own row onto a parent. This is a labelling opinion and nothing else.
+ *
+ * Nor is it `LEAGUE_DISPLAY`, which is shared site-wide: `aussierules_afl` is
+ * already curated there as "AFL", and the bare sport key is a calibration
+ * payload category, not a league.
+ *
+ * Measured on the live payload 2026-09-21: 31 of the 109 categories are
+ * single-token, and these are the only two whose words the tokenizer cannot
+ * find. `bmx` and `mlb` are acronyms and already print as BMX and MLB.
+ */
+export const SINGLE_WORD_COMPOUNDS: Record<string, string> = {
+  aussierules: "Aussie Rules",
+  xgames: "X Games",
+};
+
 function labelToken(token: string, isFirst: boolean): string {
   if (CURATED_ACRONYMS.has(token)) return token.toUpperCase();
   if (!isFirst && TITLE_SMALL_WORDS.has(token)) return token;
@@ -163,6 +195,11 @@ export function nicheCatLabel(raw: string): string {
   // turned LEAGUE_DISPLAY's own "NCAAF" into "Ncaaf".
   const curated = LEAGUE_DISPLAY[raw];
   if (curated) return curated;
+
+  // #7892 — before tokenizing, because the whole point is that there is no
+  // separator to tokenize on.
+  const compound = SINGLE_WORD_COMPOUNDS[raw];
+  if (compound) return compound;
 
   const tokens = raw.split("_").filter(Boolean);
   if (tokens.length === 0) return raw;
