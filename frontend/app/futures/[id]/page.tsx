@@ -1012,6 +1012,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             // top down the #2451 ladder — zero stays the floor, the labels state the
             // top. A binary market, and a resolved one whose winner is at 100%, both
             // land back on the 1.0 rung untouched. See lib/chartCeiling.ts.
+            // #7813: the ONE call site that passes a board name, for the same
+            // reason the hero and the All Outcomes rows take one (#6765) — this
+            // page's `<h1>` is the board's name, so a legend entry that repeats
+            // it wraps to two lines to say `Set 1 Winner`. The chart's other
+            // seven call sites pass nothing and are byte-identical; the rule is
+            // a property of THIS page, not of the names.
             <FuturesChart
               historyData={historyOutcomes}
               selectedOutcomes={selectedOutcomes}
@@ -1020,6 +1026,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               fixedYAxis
               fieldCeiling
               settled={isResolved}
+              marketName={market?.name}
             />
           )}
           {/* The clarification: WHY the blend line moved (#871-style). Suppressed
