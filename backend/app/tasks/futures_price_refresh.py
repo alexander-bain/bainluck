@@ -168,6 +168,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1291,6 +1292,46 @@ async def _write_prices(
             ) + len(legs)
             continue
 
+        # #7747 — READ OFF THE ITEM, LIKE THE EMPTY-BOOK GUARD ABOVE AND FOR THE
+        # SAME REASON. Volume is a fact about the MARKET, not about which side of
+        # it you address: `_legs` can return the yes leg and the no leg, and those
+        # are the same CLOB addressed from two tokens. One traded contract is one
+        # traded contract from either side, so both legs carry the item's figure.
+        #
+        # OMITTED, NEVER NULLED, when the venue did not supply one. This function
+        # is shared with Polymarket, whose items carry no `volume_24h` at all, and
+        # a Kalshi payload can drop the field too. Writing `None` would erase a
+        # real reading; writing `None` WITH a fresh stamp would be worse still —
+        # it would assert "the venue says nobody is trading this, measured just
+        # now", which is the one reading the consumer withholds on.
+        #
+        # 🔴 AND OMITTING IS NOT MERELY SAFE, IT IS SELF-CORRECTING. Skipping both
+        # columns leaves the old stamp behind the `last_updated` this same UPDATE
+        # advances, so the consumer's freshness test (`volume_24h_at >=
+        # last_updated`) goes false on its own and the leg is SERVED. A venue that
+        # stops reporting volume therefore stops withholding prices, without
+        # anything here having to notice.
+        #
+        # BUILT AS AN ANNOTATED DICT AND FILLED BY SUBSCRIPT, not as a
+        # conditional expression, and that shape is deliberate.
+        # `tests/test_price_stamp_writer_scan_4958.py` walks the AST of every
+        # price write against `FuturesOutcome` to prove each one maintains
+        # `price_changed_at`, and it resolves a `**splat` by reading the local
+        # mapping it names. It understands `x: dict = {}` plus `x[...] = ...`
+        # (the shape `kalshi.py` and `polymarket.py` already use) and reports a
+        # `{...} if c else {}` as UNREADABLE — which is a failure, not a pass,
+        # because an unreadable write could be hiding a missing stamp. Keeping
+        # this statically legible costs nothing and keeps that guard's reach.
+        volume_24h = item.get("volume_24h")
+        volume_values: dict = {}
+        if volume_24h is not None:
+            volume_values["volume_24h"] = volume_24h
+            # `func.now()` for both this and `last_updated`, so the stamp and the
+            # touch-stamp are the same transaction timestamp to the microsecond
+            # and the consumer's `>=` comparison is exact rather than
+            # tolerance-based.
+            volume_values["volume_24h_at"] = func.now()
+
         for outcome_id, side in legs:
             side_prob = side.get("probability")
             if side_prob is None or not (0 < side_prob < 1):
@@ -1364,6 +1405,7 @@ async def _write_prices(
                         # falls through, and the column keeps the value it has.
                         else_=FuturesOutcome.probability_change_24h,
                     ),
+                    **volume_values,
                 )
             )
             await session.execute(
@@ -1392,6 +1434,56 @@ async def _write_prices(
 #: ``kalshi._refresh_linked_game_books`` now asks the same question of the same
 #: payload. Imported by its real name rather than aliased back: two names for
 #: one function is how the next reader ends up copying the wrong one.
+
+
+def venue_volume_24h(raw_market: dict) -> Optional[float]:
+    """The venue's own 24-hour volume for ONE market, without flooring it (#7747).
+
+    🔴 WHY THIS IS NOT ``KalshiMarket.volume_24h``, WHICH IS RIGHT THERE AND
+    PARSED ALREADY. That field is built by
+    ``parse_int_str(volume_24h_fp) or market_data.get("volume_24h")``, and both
+    halves of that expression destroy the only distinction this ship turns on:
+
+    * ``parse_int_str`` is ``int(float(val))``, so the venue's ``"0.04"`` becomes
+      **0** — and 0 is not a rounding of 0.04 here, it is the exact value the
+      consumer reads as "nobody is trading this leg". Congo Republic, one of the
+      three legs CERT-3244 named, trades $0.04.
+    * the ``or`` treats a parsed **0** as falsy and falls through to the legacy
+      ``volume_24h`` key. Read from the venue 2026-09-21, the modern payload
+      carries ONLY the ``_fp`` form, so a genuine zero becomes ``None`` — which
+      this ship must read as "we never asked" and serve. The specimen itself
+      publishes ``volume_24h_fp: '0.00'``, so the shipped field would have made
+      Mensik unwithholdable and the whole ship inert.
+
+    That expression is CORRECT for its own consumer — ``tasks/kalshi.py`` sums it
+    into ``FuturesMarket.volume_24h``, a per-board BigInteger where sub-unit
+    remainders and a None-for-zero are both immaterial (``sum(m.volume_24h or 0)``
+    treats them identically). So it is deliberately left alone rather than
+    "fixed": changing a shared parser under a live ranking consumer to serve one
+    new caller is how a narrow ship becomes a wide regression.
+
+    Reading the RAW dict is normally refused on this path — the docstring below
+    says so, because Kalshi quotes PRICES in two formats and re-deriving that is
+    how ``95`` arrives where ``0.95`` belongs. That warning does not reach here:
+    ``volume_24h_fp`` is a single unambiguous decimal string, the plain
+    ``volume_24h`` fallback is the same figure as an integer, and neither can be
+    confused for the other by a factor of a hundred.
+
+    ABSENT AND ZERO ARE DIFFERENT ANSWERS and this is the function that keeps them
+    apart (gotcha #53): a missing or unparseable key returns ``None`` ("we never
+    asked"), while ``"0.00"`` returns ``0.0`` ("the venue says nobody traded it").
+    """
+    for key in ("volume_24h_fp", "volume_24h"):
+        raw = raw_market.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            # A key we cannot read is not a zero. Fall through to the next
+            # spelling, and to None if neither parses.
+            continue
+    return None
 
 
 async def _fetch_kalshi_prices(service, external_id: str):
@@ -1479,6 +1571,13 @@ async def _fetch_kalshi_prices(service, external_id: str):
     if not event:
         return None
 
+    # #7747. Keyed by ticker off the RAW list, because the parsed object's own
+    # `volume_24h` cannot answer this question — see `venue_volume_24h`. Built
+    # once per event rather than searched per market so this stays linear.
+    volume_by_ticker = {
+        m.get("ticker"): venue_volume_24h(m) for m in raw_markets if m.get("ticker")
+    }
+
     priced: list[dict] = []
     for market in event.markets:
         if not market.ticker:
@@ -1499,6 +1598,15 @@ async def _fetch_kalshi_prices(service, external_id: str):
                 "yes_bid": market.yes_bid,
                 "yes_ask": market.yes_ask,
                 "last_price": market.last_price,
+                # #7747. THE VENUE ALREADY TOLD US THIS AND WE WERE DROPPING IT.
+                # It arrives on every one of these payloads and carrying it costs
+                # no request, no round trip and no budget. It is the ONLY field
+                # in this dict that distinguishes a leg being traded at its ask
+                # from one that is not — see the column's comment on
+                # `FuturesOutcome` for the measurement that establishes nothing
+                # else does, and `venue_volume_24h` for why the parsed
+                # `market.volume_24h` beside it cannot be used.
+                "volume_24h": volume_by_ticker.get(market.ticker),
             }
         )
     return priced

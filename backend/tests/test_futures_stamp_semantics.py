@@ -495,6 +495,21 @@ def test_futures_outcome_timestamp_columns() -> None:
     So it flips rather than being deleted. The claim it now pins is the one that
     replaced it: `price_changed_at` exists, and `last_updated` is still there
     beside it, unnarrowed, because `routes/playoffs.py` gates the grid on it.
+
+    ── IT RED A SECOND TIME WHEN `volume_24h_at` LANDED (#7747) ───────────────
+
+    Which is again what it is for: a fourth stamp on this table is exactly the
+    event this enumeration exists to stop passing silently. Flipped again rather
+    than loosened — the set is still exhaustive, so a fifth stamp reds it too.
+
+    `volume_24h_at` records when the VENUE'S 24-HOUR VOLUME was observed, which
+    is a third distinct question from the three already here, and it is a
+    separate column for the same reason #2024 refused option 1. #7747's consumer
+    withholds a price when that figure reads zero, so it must know the reading is
+    current; borrowing `last_updated` would let any writer that touches only the
+    touch-stamp (the resolution writes, the withdrawal clears) present a
+    three-day-old zero as a reading taken minutes ago. That ship was BLOCKed
+    twice for conflations of exactly this shape before the column was added.
     """
     from app.models.models import FuturesOutcome
 
@@ -507,14 +522,20 @@ def test_futures_outcome_timestamp_columns() -> None:
         "opening_captured_at",
         "last_updated",
         "price_changed_at",
+        "volume_24h_at",
     }, f"FuturesOutcome's timestamp columns changed. found={sorted(timestamps)}"
 
-    # NULLABLE, and it must stay so. The column is populated forward by the
-    # polls; a NOT NULL with a server_default would stamp every historical row
-    # with the deploy time — a fabricated answer to "when did this price last
-    # move", which is gotcha #53 written into a schema.
-    assert FuturesOutcome.__table__.c.price_changed_at.nullable is True
-    assert FuturesOutcome.__table__.c.price_changed_at.server_default is None
+    # NULLABLE, and they must stay so. Both are populated forward by the polls; a
+    # NOT NULL with a server_default would stamp every historical row with the
+    # deploy time — a fabricated answer to "when did this price last move" or
+    # "when did we last ask the venue about this leg's volume", which is gotcha
+    # #53 written into a schema. Asserted for BOTH stamps, because the newer one
+    # carries the sharper consequence: a fabricated volume stamp makes a stale
+    # zero look fresh, and a fresh zero WITHHOLDS A PRICE.
+    for name in ("price_changed_at", "volume_24h_at"):
+        column = FuturesOutcome.__table__.c[name]
+        assert column.nullable is True, f"{name} must stay nullable"
+        assert column.server_default is None, f"{name} must carry no server default"
 
 
 #: Every price-writing site that must maintain `price_changed_at`, MEASURED.

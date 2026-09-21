@@ -3386,7 +3386,8 @@ async def _unsupported_price_outcome_ids(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             in_exclusive_field=in_exclusive_field,
-            price_changed_at=getattr(o, "price_changed_at", None),
+            volume_24h=getattr(o, "volume_24h", None),
+            volume_24h_at=getattr(o, "volume_24h_at", None),
             last_seen_at=getattr(o, "last_updated", None),
         )
     ]
@@ -3455,7 +3456,8 @@ async def _unsupported_price_outcome_ids(
             # `getattr` throughout: a caller may hand this a market whose
             # outcomes never loaded these columns, and an absent stamp must read
             # as "do not withhold" rather than raise.
-            price_changed_at=getattr(o, "price_changed_at", None),
+            volume_24h=getattr(o, "volume_24h", None),
+            volume_24h_at=getattr(o, "volume_24h_at", None),
             last_seen_at=getattr(o, "last_updated", None),
         )
     }

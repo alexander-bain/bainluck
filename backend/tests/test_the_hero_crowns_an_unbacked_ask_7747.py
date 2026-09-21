@@ -50,8 +50,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.tasks.futures_price_refresh import venue_volume_24h
 from app.utils.futures_unsupported_price import (
-    UNBACKED_ASK_STATIC_FOR,
+    VOLUME_MEANS_UNTRADED,
     needs_unbacked_ask_evidence,
     price_is_an_unbacked_ask,
 )
@@ -127,34 +128,40 @@ BY_NAME = {row[1]: row for row in USOPEN_2027}
 #: the fixture is measured against. Production value at capture.
 LAST_SEEN = datetime(2026, 9, 21, 10, 52, 29, tzinfo=timezone.utc)
 
-#: Hours each leg's price has sat UNMOVED — `last_updated - price_changed_at`,
-#: read off production for this board. `None` is a NULL `price_changed_at`.
+#: The venue's own 24-hour volume per leg, READ FROM KALSHI 2026-09-21
+#: (`GET /trade-api/v2/markets?event_ticker=KXATP-27USO`, notice 26 — the venue's
+#: API, not our mirror). These are `volume_24h_fp` verbatim.
 #:
-#: 🪤 THESE ARE NOT DECORATION AND THE BOARD IS NOT UNIFORM. Sinner and Alcaraz
-#: moved 14 hours ago and the rest of the field has been frozen for 78, so the
-#: recency term is actually exercised by the fixture rather than being constant
-#: across it. Mensik's 70.0 is the number CERT-3242's repair turns on.
-STATIC_HOURS = {"Jakub Mensik": 70.0, "Jannik Sinner": 14.0, "Carlos Alcaraz": 14.0}
-STATIC_HOURS_DEFAULT = 78.0
-STATIC_HOURS_NULL = {"Valentin Vacherot"}
+#: 🪤 THESE ARE NOT DECORATION AND THE BOARD IS NOT UNIFORM. Sinner is the one leg
+#: of the 25 anybody traded in the last day, so the volume term is actually
+#: exercised by the fixture rather than being constant across it. Mensik's 0.00 —
+#: beside a lifetime `volume_fp` of 189.01, so the contract is not new, just
+#: dormant — is the number CERT-3244's repair turns on.
+VOLUME_24H = {"Jannik Sinner": 1.74}
+VOLUME_24H_DEFAULT = 0.00
+
+#: Legs we have never asked the venue about. NULL is "we never looked", not
+#: "nobody traded it" (gotcha #53), and it must FAIL OPEN.
+VOLUME_24H_NULL = {"Valentin Vacherot"}
 
 
-def _stamps(name):
-    """(price_changed_at, last_updated) for a leg, from :data:`STATIC_HOURS`."""
-    if name in STATIC_HOURS_NULL:
-        return None, LAST_SEEN
-    hours = STATIC_HOURS.get(name, STATIC_HOURS_DEFAULT)
-    return LAST_SEEN - timedelta(hours=hours), LAST_SEEN
+def _volume(name):
+    """(volume_24h, volume_24h_at, last_updated) for a leg, from :data:`VOLUME_24H`.
+
+    The stamp equals `last_updated` because the capture writes both from one
+    `func.now()` in a single UPDATE — see `venue_reports_no_recent_trading` for
+    why the freshness test is that equality and carries no constant.
+    """
+    if name in VOLUME_24H_NULL:
+        return None, None, LAST_SEEN
+    return VOLUME_24H.get(name, VOLUME_24H_DEFAULT), LAST_SEEN, LAST_SEEN
 
 
-#: A price frozen far longer than `UNBACKED_ASK_STATIC_FOR` (the specimen's own
-#: 70 hours) and one that moved well inside it (Cameron Dicker's 2.0, one of the
-#: four live executions CERT-3242 falsified the first cut with).
-#:
-#: The unit classes below are about the BOOK terms, so they hold the time term
-#: fixed at STALE; the recency term has its own class and its own controls.
-STALE = (LAST_SEEN - timedelta(hours=70), LAST_SEEN)
-FRESH = (LAST_SEEN - timedelta(hours=2), LAST_SEEN)
+#: A leg the venue reports as untraded, and one it reports as traded. The unit
+#: classes below are about the BOOK terms, so they hold the volume term fixed at
+#: UNTRADED; the volume term has its own class and its own controls.
+UNTRADED = (0.00, LAST_SEEN, LAST_SEEN)
+TRADED = (1.74, LAST_SEEN, LAST_SEEN)
 
 
 class _FakeResult:
@@ -184,7 +191,7 @@ class _FakeSession:
 
 
 def _outcome(oid, name, prob, bid, ask, *, resolution_source=None):
-    price_changed_at, last_updated = _stamps(name)
+    volume_24h, volume_24h_at, last_updated = _volume(name)
     return SimpleNamespace(
         id=oid,
         name=name,
@@ -203,7 +210,9 @@ def _outcome(oid, name, prob, bid, ask, *, resolution_source=None):
         team_id=None,
         team=None,
         resolution_source=resolution_source,
-        price_changed_at=price_changed_at,
+        price_changed_at=None,
+        volume_24h=volume_24h,
+        volume_24h_at=volume_24h_at,
         last_updated=last_updated,
     )
 
@@ -388,8 +397,9 @@ class TestRuleTwosExemptionIsIntact:
             last,
             has_trade_evidence=kw.pop("has_trade_evidence", True),
             in_exclusive_field=kw.pop("in_exclusive_field", True),
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
 
     def test_a_trade_inside_the_spread_still_acquits(self):
@@ -429,8 +439,9 @@ class TestTheRuleIsSymmetricAcrossBookShapes:
             0.74,
             has_trade_evidence=True,
             in_exclusive_field=True,
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
 
     @pytest.mark.parametrize("bid", [0.0, 0.01, 0.04, 0.10, 0.23])
@@ -463,8 +474,9 @@ class TestTheBoundsAreTheModulesOwnAndAreNotRestated:
             ask,
             has_trade_evidence=True,
             in_exclusive_field=True,
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
 
     def test_a_spread_exactly_at_the_bound_is_refused(self):
@@ -496,8 +508,9 @@ class TestSettledMeansSettled:
             0.99,
             has_trade_evidence=True,
             in_exclusive_field=True,
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
 
     @pytest.mark.parametrize(
@@ -547,8 +560,9 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
             last,
             has_trade_evidence=True,
             in_exclusive_field=True,
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
         admitted = needs_unbacked_ask_evidence(
             "kalshi",
@@ -557,8 +571,9 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
             bid,
             ask,
             in_exclusive_field=True,
-            price_changed_at=STALE[0],
-            last_seen_at=STALE[1],
+            volume_24h=UNTRADED[0],
+            volume_24h_at=UNTRADED[1],
+            last_seen_at=UNTRADED[2],
         )
         assert not (
             refused and not admitted
@@ -574,8 +589,9 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
                 0.00,
                 0.57,
                 in_exclusive_field=True,
-                price_changed_at=STALE[0],
-                last_seen_at=STALE[1],
+                volume_24h=UNTRADED[0],
+                volume_24h_at=UNTRADED[1],
+                last_seen_at=UNTRADED[2],
             )
             is False
         )
@@ -590,8 +606,9 @@ class TestTheCheapScreenAgreesWithTheFullPredicate:
                 0.04,
                 0.74,
                 in_exclusive_field=True,
-                price_changed_at=STALE[0],
-                last_seen_at=STALE[1],
+                volume_24h=UNTRADED[0],
+                volume_24h_at=UNTRADED[1],
+                last_seen_at=UNTRADED[2],
             )
             is False
         )
@@ -639,40 +656,54 @@ def _detail_by_name(detail):
     return {row["name"]: row for row in detail["outcomes"]}
 
 
-class TestRecentExecutedAskIsEvidence:
-    """CERT-3242 BLOCKed the first cut and was RIGHT, so this class is the repair.
+class TestTradeActivityNotPriceMovement:
+    """CERT-3244 BLOCKed the repair and was RIGHT, so this class is the second one.
 
-    The first cut refused EVERY price printing at its own ask over a wide spread.
-    The grader falsified it against the venue in minutes — four legs that are
-    being traded right now at exactly that ask:
+    The story is worth keeping whole, because the two BLOCKs are different
+    mistakes and only the second one is subtle.
 
-        leg               served   book           Kalshi 24h volume
-        Tunisia            0.79    0.22 / 0.79    $87.67
-        Gambia             0.80    0.13 / 0.80    $54.43
-        Cameron Dicker     0.52    0.00 / 0.52    $9.30
-        Davante Adams      0.85    0.00 / 0.85    $6.10
+    CERT-3242 refused EVERY price printing at its own ask over a wide spread. The
+    grader falsified it in minutes against four legs being traded at exactly that
+    ask (Tunisia $87.67 of 24h volume, Gambia $54.43, Cameron Dicker $9.30,
+    Davante Adams $6.10).
 
-    All four are served on production and all four were withheld by the staged
-    code. 🔴 A trade at the ask is not evidence because it is STALE, not because
-    it is at the ask — and the specimen's own diagnosis had already said so
-    (`volume_24h 0.00`, `liquidity 0.0000`) while the predicate failed to encode
-    it. The cross-tab that justified the first cut separated trades by PRICE; the
-    axis it was missing is TIME.
+    The repair read the missing axis as TIME — `last_updated - price_changed_at`
+    over 24 hours. 🔴 **A market can trade repeatedly at an unchanged price**, so
+    that refused three more:
 
-    The four sit at 2.0, 6.0, 6.8 and 7.9 hours static against the specimen's
-    70.0, read off `last_updated - price_changed_at` on production.
+        leg               served   static for   Kalshi 24h volume
+        Egypt              0.70     48.5h       $8.73
+        Arch Manning       0.60    308h         $3.24
+        Congo Republic     0.70     48.5h       $0.04
+
+    Time does not separate this population AT ALL: Manning is 308 hours static and
+    trading, the specimen 70 hours static and not. The axis is
+    `venue_reports_no_recent_trading`, which is the ship's own criterion rather
+    than a proxy for it — #7747's first sentence says "whose venue reports zero
+    24-hour volume".
+
+    🪤 Congo Republic is the reason the stored column is `Numeric(14, 2)` and the
+    reason `venue_volume_24h` exists. **$0.04 floors to 0 under `int()`**, and 0 is
+    the withhold trigger — so an integral column, or the shared parser's
+    `int(float(val))`, would turn the grader's own counterexample into the very
+    defect it blocked.
     """
 
-    # (name, served, bid, ask, hours static) — production, 2026-09-21.
+    # (name, served, bid, ask, 24h volume) — production + venue, 2026-09-21.
+    # The first four falsified CERT-3242's cut; the last three falsified
+    # CERT-3244's. All seven are served today and must keep their number.
     LIVE_EXECUTIONS = [
-        ("Tunisia", 0.79, 0.22, 0.79, 6.8),
-        ("Gambia", 0.80, 0.13, 0.80, 6.0),
-        ("Cameron Dicker", 0.52, 0.00, 0.52, 2.0),
-        ("Davante Adams", 0.85, 0.00, 0.85, 7.9),
+        ("Tunisia", 0.79, 0.22, 0.79, 87.67),
+        ("Gambia", 0.80, 0.13, 0.80, 54.43),
+        ("Cameron Dicker", 0.52, 0.00, 0.52, 9.30),
+        ("Davante Adams", 0.85, 0.00, 0.85, 6.10),
+        ("Egypt", 0.70, 0.10, 0.70, 8.73),
+        ("Arch Manning", 0.60, 0.00, 0.60, 3.24),
+        ("Congo Republic", 0.70, 0.10, 0.70, 0.04),
     ]
 
     @staticmethod
-    def _p(prob, bid, ask, hours):
+    def _p(prob, bid, ask, volume_24h, *, volume_24h_at=LAST_SEEN):
         return price_is_an_unbacked_ask(
             "kalshi",
             None,
@@ -682,90 +713,155 @@ class TestRecentExecutedAskIsEvidence:
             ask,  # the trade IS the ask in every one of these
             has_trade_evidence=True,
             in_exclusive_field=True,
-            price_changed_at=LAST_SEEN - timedelta(hours=hours),
+            volume_24h=volume_24h,
+            volume_24h_at=volume_24h_at,
             last_seen_at=LAST_SEEN,
         )
 
-    @pytest.mark.parametrize("name,prob,bid,ask,hours", LIVE_EXECUTIONS)
-    def test_the_four_legs_that_falsified_the_first_cut_keep_their_price(
-        self, name, prob, bid, ask, hours
+    @pytest.mark.parametrize("name,prob,bid,ask,volume", LIVE_EXECUTIONS)
+    def test_the_seven_legs_that_falsified_the_two_cuts_keep_their_price(
+        self, name, prob, bid, ask, volume
     ):
         assert (
-            self._p(prob, bid, ask, hours) is False
-        ), f"{name} is being traded at its ask right now"
+            self._p(prob, bid, ask, volume) is False
+        ), f"{name} traded ${volume} in the last 24 hours"
 
     def test_the_specimen_is_still_withheld(self):
-        assert self._p(0.74, 0.04, 0.74, 70.0) is True
+        assert self._p(0.74, 0.04, 0.74, 0.00) is True
+
+    def test_four_cents_of_trading_is_trading(self):
+        """🔴 The single assertion that separates this ship from its second BLOCK.
+
+        Congo Republic is a real leg the grader named, and `$0.04` is the whole
+        margin between "the venue says nobody traded this" and "somebody did".
+        A column, parser or comparison that rounds is caught here and nowhere
+        else in this file.
+        """
+        assert self._p(0.70, 0.10, 0.70, 0.04) is False
+        assert self._p(0.70, 0.10, 0.70, 0.00) is True
 
     def test_the_bound_is_the_named_constant_and_not_a_literal(self):
-        hours = UNBACKED_ASK_STATIC_FOR.total_seconds() / 3600.0
-        assert self._p(0.74, 0.04, 0.74, hours) is True
-        assert self._p(0.74, 0.04, 0.74, hours - 0.1) is False
+        assert VOLUME_MEANS_UNTRADED == 0
+        assert self._p(0.74, 0.04, 0.74, VOLUME_MEANS_UNTRADED) is True
+        assert self._p(0.74, 0.04, 0.74, VOLUME_MEANS_UNTRADED + 0.01) is False
 
-    def test_a_null_price_stamp_fails_open(self):
-        """gotcha #53 — 409 of 467 legs of this shape carry no stamp at all."""
-        assert (
-            price_is_an_unbacked_ask(
-                "kalshi",
-                None,
-                0.74,
-                0.04,
-                0.74,
-                0.74,
-                has_trade_evidence=True,
-                in_exclusive_field=True,
-                price_changed_at=None,
-                last_seen_at=LAST_SEEN,
-            )
-            is False
-        )
+    def test_a_null_volume_fails_open(self):
+        """gotcha #53 — the column is populated FORWARD, so every row predating
+        the first capture reads NULL. That is "we never asked the venue", not
+        "the venue says nobody is trading this", and only a positive reading may
+        withhold."""
+        assert self._p(0.74, 0.04, 0.74, None) is False
 
-    def test_an_ingestion_outage_cannot_blank_the_fleet(self):
-        """The gap is between two columns of ONE row, so it FREEZES in an outage.
+    def test_a_reading_older_than_the_rows_last_touch_fails_open(self):
+        """The anti-self-sealing term, and the reason the stamp is its own column.
 
-        If the poller stops, `last_updated` stops advancing with
-        `price_changed_at`, so a leg that was fresh when ingestion died stays
-        fresh however long the outage runs. An absolute `now - price_changed_at`
-        would have turned a two-day outage into a fleet-wide blanking — this is
-        #7537's structural property on the pair of columns that answers THIS
-        question.
+        A writer that advances `last_updated` without taking a volume reading —
+        the resolution writes in `tasks/kalshi.py`, the withdrawal clears, the
+        empty-book decline that skips the row entirely — leaves the stamp behind.
+        Reading a three-day-old zero as current would present it as "the venue
+        says nobody is trading this, measured minutes ago", which is exactly the
+        conflation #2024 split `price_changed_at` off `last_updated` to end.
         """
-        moved = LAST_SEEN - timedelta(hours=2)
+        stale_reading = LAST_SEEN - timedelta(hours=72)
+        assert self._p(0.74, 0.04, 0.74, 0.00, volume_24h_at=stale_reading) is False
+
+    def test_an_ingestion_outage_cannot_widen_the_withheld_set(self):
+        """Both columns are on ONE row, so the comparison FREEZES in an outage.
+
+        If the poller stops, `volume_24h_at` and `last_updated` stop advancing
+        together, so every leg keeps whatever verdict it had when ingestion died
+        and NO new leg is withheld. A wall-clock bound (`now - volume_24h_at <
+        6h`) would instead have gone false fleet-wide during the outage and —
+        worse — gone TRUE again on a stale zero the moment one unrelated writer
+        touched the row. This is #7537's structural property, on the pair of
+        columns that answers THIS question.
+        """
         for outage_days in (0, 1, 7, 30):
-            frozen_touch = LAST_SEEN  # the poller is dead; it stops advancing
+            # The poller is dead; neither stamp advances, whatever the clock says.
             assert (
-                price_is_an_unbacked_ask(
-                    "kalshi",
-                    None,
-                    0.74,
-                    0.04,
-                    0.74,
-                    0.74,
-                    has_trade_evidence=True,
-                    in_exclusive_field=True,
-                    price_changed_at=moved,
-                    last_seen_at=frozen_touch,
-                )
-                is False
-            ), f"a {outage_days}-day outage must not withhold a fresh price"
+                self._p(0.70, 0.10, 0.70, 8.73) is False
+            ), f"a {outage_days}-day outage must not withhold a traded leg"
+            assert (
+                self._p(0.74, 0.04, 0.74, 0.00) is True
+            ), f"a {outage_days}-day outage must not acquit the specimen either"
+
+
+class TestTheVenueFigureSurvivesTheRead:
+    """`venue_volume_24h` — the parse, and why it is not the shipped one.
+
+    🔴 `KalshiMarket.volume_24h` is built by
+    `parse_int_str(volume_24h_fp) or market_data.get("volume_24h")`, and BOTH
+    halves destroy the distinction this ship turns on. `int(float("0.04"))` is 0,
+    and the `or` then treats that 0 as falsy and falls through to a legacy key the
+    modern payload does not carry — so a four-cent trade AND a genuine zero both
+    arrive as `None`. The specimen publishes `volume_24h_fp: '0.00'`, so the
+    shipped field would have made Mensik unwithholdable and the ship inert.
+
+    The payloads below are verbatim from
+    `GET /trade-api/v2/markets?event_ticker=KXATP-27USO`, read 2026-09-21.
+    """
+
+    def test_the_specimens_own_zero_arrives_as_zero_and_not_as_absent(self):
+        assert venue_volume_24h({"volume_24h_fp": "0.00"}) == 0.0
+
+    def test_a_four_cent_trade_is_not_floored_to_untraded(self):
+        assert venue_volume_24h({"volume_24h_fp": "0.04"}) == pytest.approx(0.04)
+
+    def test_the_one_traded_leg_on_the_specimen_board_reads_its_real_figure(self):
+        assert venue_volume_24h({"volume_24h_fp": "1.74"}) == pytest.approx(1.74)
+
+    def test_the_shipped_parser_would_have_broken_both_of_those(self):
+        """The control that proves the previous three are not vacuous.
+
+        Reproduces `parse_int_str(...) or ...` on the same inputs. If someone
+        later "simplifies" `venue_volume_24h` back onto the shared helper, the
+        three assertions above fail — but only this one says WHY, and only this
+        one fails if the shared helper is ever fixed and the duplication becomes
+        removable.
+        """
+        shipped = lambda fp: (int(float(fp)) or None)  # noqa: E731
+        assert shipped("0.00") is None, "a genuine zero became 'we never asked'"
+        assert shipped("0.04") is None, "a four-cent trade became 'we never asked'"
+        assert shipped("1.74") == 1, "and a real figure lost its decimals"
+
+    def test_a_legacy_integer_payload_still_reads(self):
+        assert venue_volume_24h({"volume_24h": 12}) == 12.0
+
+    def test_the_fixed_point_form_wins_when_both_are_present(self):
+        """`_fp` is the precise one; the plain key is the same figure truncated."""
+        assert venue_volume_24h(
+            {"volume_24h_fp": "0.04", "volume_24h": 0}
+        ) == pytest.approx(0.04)
+
+    @pytest.mark.parametrize(
+        "payload", [{}, {"volume_24h_fp": None}, {"volume_24h_fp": ""}]
+    )
+    def test_an_absent_figure_is_none_and_never_zero(self, payload):
+        """gotcha #53. Absent must not arrive wearing the withhold trigger."""
+        assert venue_volume_24h(payload) is None
+
+    def test_an_unreadable_figure_is_none_and_never_zero(self):
+        assert venue_volume_24h({"volume_24h_fp": "not-a-number"}) is None
 
 
 @pytest.mark.asyncio
-class TestRecentExecutedAskIsEvidenceEndToEnd:
+class TestTradeActivityNotPriceMovementEndToEnd:
     """The same rule through the ROUTE and through the SERVED FORMATTER.
 
-    CERT-3242 named this shape explicitly, and the reason it is not redundant
-    with the class above is that a predicate is not a page: the helper hands back
-    ids and the formatter is what nulls the fields.
+    CERT-3244 named this shape explicitly, and the reason it is not redundant with
+    the class above is that a predicate is not a page: the helper hands back ids
+    and the formatter is what nulls the fields.
     """
 
     @staticmethod
     def _board_with_a_live_execution():
-        """The specimen board with ONE leg repriced two hours ago.
+        """The specimen board with ONE leg traded at an unchanged price.
 
-        Alexander Zverev is given Mensik's exact book and price so the two rows
-        are identical in every column this rule reads EXCEPT the time one. That
-        is what makes the pair a control rather than two unrelated legs.
+        Alexander Zverev is given Mensik's exact book and price, so the two rows
+        are identical in every column this rule reads EXCEPT the volume one. That
+        is what makes the pair a control rather than two unrelated legs — and it
+        is the precise shape CERT-3244 blocked, since NEITHER row's price has
+        moved.
         """
         rows = []
         for oid, name, p, b, a, lp in USOPEN_2027:
@@ -775,18 +871,24 @@ class TestRecentExecutedAskIsEvidenceEndToEnd:
                 rows.append((oid, name, p, b, a, lp))
         return rows
 
-    async def test_recent_executed_trade_at_ask_remains_priced_while_stale_zero_volume_mensik_is_withheld(
+    async def test_recent_same_price_execution_remains_priced_after_24h_while_zero_volume_mensik_is_withheld(
         self,
     ):
+        """The guard CERT-3244 required, by name.
+
+        Both legs are 70 hours static on an identical 0.04/0.74 book, so every
+        term of the predicate except volume is equal between them. Zverev traded
+        $3.24 without moving his price — the Arch Manning shape — and keeps his
+        number; Mensik traded nothing and loses his.
+        """
         rows = self._board_with_a_live_execution()
-        # Zverev's price moved 2 hours ago; Mensik's has not moved in 70.
-        STATIC_HOURS["Alexander Zverev"] = 2.0
+        VOLUME_24H["Alexander Zverev"] = 3.24
         try:
             names, _ = await _withheld_names(rows)
-            assert "Jakub Mensik" in names, "70 hours static on a 4c bid"
+            assert "Jakub Mensik" in names, "zero 24h volume on a 4c bid"
             assert (
                 "Alexander Zverev" not in names
-            ), "identical book, identical price, traded 2 hours ago"
+            ), "identical book, identical price, unmoved for 70h — and traded $3.24"
 
             # ...and the same, as the reader is served it.
             detail = _detail(rows, withheld_names=names)
@@ -796,7 +898,7 @@ class TestRecentExecutedAskIsEvidenceEndToEnd:
                 0.74, abs=0.01
             )
         finally:
-            STATIC_HOURS.pop("Alexander Zverev", None)
+            VOLUME_24H.pop("Alexander Zverev", None)
 
     async def test_the_served_board_nulls_the_leg_and_keeps_the_row(self):
         names, _ = await _withheld_names()
@@ -815,3 +917,255 @@ class TestRecentExecutedAskIsEvidenceEndToEnd:
             if o.get("probability") is not None
         ]
         assert max(priced)[1] == "Jannik Sinner"
+
+
+class TestTheCaptureActuallyUsesTheFaithfulParse:
+    """🔴 THE GUARD THAT WAS MISSING, AND A MUTANT FOUND IT.
+
+    Mutating the capture in `_fetch_kalshi_prices` from
+    `volume_by_ticker.get(market.ticker)` back to the shipped `market.volume_24h`
+    left **every other test in this file green**. That swap is not cosmetic: it is
+    the difference between the ship working and the ship being INERT, because the
+    shipped field turns the specimen's own `volume_24h_fp: '0.00'` into `None`
+    (see `venue_volume_24h`) and a `None` fails open and serves.
+
+    Unit-testing `venue_volume_24h` cannot catch it — the function stays correct
+    and simply stops being called. So this class runs the REAL fetch over the REAL
+    parser and asserts the figure that comes out the other end.
+
+    The payload is verbatim from
+    `GET /trade-api/v2/markets?event_ticker=KXATP-27USO`, read 2026-09-21, trimmed
+    to the two legs that matter: the specimen (zero volume) and the one leg on the
+    board anybody traded.
+    """
+
+    RAW_EVENT = {
+        "event_ticker": "KXATP-27USO",
+        "title": "US Open Men's Singles Winner",
+        "markets": [
+            {
+                "ticker": "KXATP-27USO-MEN",
+                "event_ticker": "KXATP-27USO",
+                "title": "US Open Men's Singles: Jakub Mensik wins",
+                "status": "active",
+                "result": "",
+                "yes_bid_dollars": "0.0400",
+                "yes_ask_dollars": "0.7400",
+                "last_price_dollars": "0.7400",
+                "volume_24h_fp": "0.00",
+                "volume_fp": "189.01",
+            },
+            {
+                "ticker": "KXATP-27USO-SIN",
+                "event_ticker": "KXATP-27USO",
+                "title": "US Open Men's Singles: Jannik Sinner wins",
+                "status": "active",
+                "result": "",
+                "yes_bid_dollars": "0.0700",
+                "yes_ask_dollars": "0.5600",
+                "last_price_dollars": "0.5500",
+                "volume_24h_fp": "1.74",
+                "volume_fp": "105.75",
+            },
+        ],
+    }
+
+    class _Venue:
+        """`get_event` over a fixed payload; the PARSER is the real one.
+
+        Same shape as `test_venue_answered_is_not_a_price_5771._Venue`, and the
+        real parser is the point — a fake that handed back pre-parsed markets
+        would skip the very step this class is testing.
+        """
+
+        def __init__(self, raw):
+            from app.services.kalshi_api import KalshiAPIService
+
+            self._raw = raw
+            self._svc = KalshiAPIService(api_key=None)
+
+        async def get_event(self, ticker, with_nested_markets=True):
+            return self._raw
+
+        def _parse_event(self, raw):
+            return self._svc._parse_event(raw)
+
+    def _priced(self):
+        import asyncio
+
+        from app.tasks import futures_price_refresh as fpr
+
+        items = asyncio.run(
+            fpr._fetch_kalshi_prices(self._Venue(self.RAW_EVENT), "KXATP-27USO")
+        )
+        return {item["external_id"]: item for item in items}
+
+    def test_the_specimens_zero_reaches_the_write_as_zero_not_as_absent(self):
+        """The assertion the surviving mutant needed.
+
+        `0.0` withholds; `None` fails open and serves. The shipped
+        `KalshiMarket.volume_24h` yields `None` here, so this fails the moment the
+        capture is pointed back at it.
+        """
+        item = self._priced()["KXATP-27USO-MEN"]
+        assert item["volume_24h"] == 0.0
+        assert item["volume_24h"] is not None, (
+            "the specimen's own '0.00' arrived as 'we never asked', which serves "
+            "the price — the ship would be inert"
+        )
+
+    def test_the_traded_leg_keeps_its_fractional_figure(self):
+        item = self._priced()["KXATP-27USO-SIN"]
+        assert item["volume_24h"] == pytest.approx(1.74)
+
+    def test_the_parsed_field_beside_it_really_does_disagree(self):
+        """The control that proves the two assertions above are not vacuous.
+
+        If `KalshiMarket.volume_24h` is ever fixed to carry the faithful figure,
+        the capture's own indirection becomes removable — and this test is what
+        says so out loud instead of leaving a stale workaround in place.
+        """
+        from app.services.kalshi_api import KalshiAPIService
+
+        event = KalshiAPIService(api_key=None)._parse_event(self.RAW_EVENT)
+        parsed = {m.ticker: m.volume_24h for m in event.markets}
+
+        assert parsed["KXATP-27USO-MEN"] is None, (
+            "the shipped parser no longer collapses a genuine zero to None; "
+            "`venue_volume_24h`'s indirection may now be removable"
+        )
+        assert parsed["KXATP-27USO-SIN"] == 1, "and it still floors 1.74 to 1"
+
+
+class TestTheWriteCarriesTheFigureAndItsStamp:
+    """🔴 THREE MORE MUTANTS SURVIVED UNTIL THIS CLASS EXISTED.
+
+    Nothing exercised `_write_prices`' half of the capture, so all three of these
+    edits passed the whole file:
+
+      * dropping `volume_24h_at` from the write — which makes the freshness test
+        self-sealing, the exact defect the stamp was split out to prevent;
+      * writing the columns even when the venue supplied nothing — which stamps
+        `NULL` as a fresh reading, and a fresh NULL is not merely useless, it is
+        an assertion we never made;
+      * reading the volume off the LEG instead of the ITEM — which silently drops
+        it for every market, because only the item carries it.
+
+    The sibling suites' `_WriteSession` counts updates but not their CONTENTS, so
+    it cannot see any of this; the recorder below keeps the statements.
+    """
+
+    class _RecordingSession:
+        """`_write_prices`' session, keeping every statement it is handed."""
+
+        def __init__(self, rows=((11, "KXATP-27USO-MEN"),)):
+            self.rows = list(rows)
+            self.statements = []
+
+        async def execute(self, statement, params=None):
+            sql = str(statement).lstrip().upper()
+            self.statements.append(statement)
+            if sql.startswith("SELECT ID, EXTERNAL_ID FROM FUTURES_OUTCOMES"):
+                return _WriteResult(self.rows)
+            return _WriteResult(rowcount=1)
+
+        def updates(self):
+            return [
+                s
+                for s in self.statements
+                if str(s).lstrip().upper().startswith("UPDATE FUTURES_OUTCOMES")
+            ]
+
+    @staticmethod
+    def _item(volume_24h):
+        """The specimen leg, priced, with the venue's volume attached or absent."""
+        item = {
+            "external_id": "KXATP-27USO-MEN",
+            "probability": 0.74,
+            "yes_bid": 0.04,
+            "yes_ask": 0.74,
+            "last_price": 0.74,
+        }
+        if volume_24h is not _ABSENT:
+            item["volume_24h"] = volume_24h
+        return item
+
+    async def _write(self, volume_24h):
+        from app.tasks import futures_price_refresh as fpr
+
+        session = self._RecordingSession()
+        stats: dict = {}
+        await fpr._write_prices(
+            session, 61308736, "kalshi", [self._item(volume_24h)], stats
+        )
+        updates = session.updates()
+        assert len(updates) == 1, f"expected one UPDATE, got {len(updates)}"
+        return updates[0]
+
+    async def test_a_zero_reading_is_written_with_a_stamp(self):
+        """The specimen's own case: the figure lands AND it is dated."""
+        sql = str(await self._write(0.0))
+        assert "volume_24h=" in sql, "the venue's figure never reached the row"
+        assert "volume_24h_at=" in sql, (
+            "the figure was written with no observation time — the consumer's "
+            "freshness test then reads whatever an unrelated writer last did to "
+            "last_updated, which is the self-sealing lie the stamp prevents"
+        )
+
+    async def test_the_written_value_is_the_venues_and_not_a_rounding(self):
+        update = await self._write(0.04)
+        params = update.compile().params
+        written = [v for k, v in params.items() if k.startswith("volume_24h")]
+        assert written == [pytest.approx(0.04)], (
+            f"the row would have stored {written}; four cents of trading must not "
+            "arrive as zero, which is the withhold trigger"
+        )
+
+    async def test_the_stamp_and_the_touch_stamp_are_one_transaction_clock(self):
+        """They must be EQUAL, not merely close — the consumer compares them with
+        `>=` and carries no tolerance. Both are `now()`, evaluated once per
+        statement by Postgres, so the rendered SQL shows the same function on both
+        columns rather than a Python timestamp on one of them."""
+        sql = str(await self._write(0.0)).lower()
+        set_clause = sql.split(" where ")[0]
+        assert "volume_24h_at=now()" in set_clause.replace(" ", "")
+        assert "last_updated=now()" in set_clause.replace(" ", "")
+
+    async def test_a_venue_that_supplies_no_volume_writes_neither_column(self):
+        """OMITTED, NEVER NULLED — and this is what makes the omission safe.
+
+        `_write_prices` is shared with Polymarket, whose items carry no volume at
+        all. Writing NULL would erase a real reading; writing NULL with a fresh
+        stamp would assert "the venue says nobody is trading this, measured just
+        now". Skipping both leaves the old stamp behind the `last_updated` this
+        same UPDATE advances, so the consumer's freshness test goes false on its
+        own and the leg is SERVED.
+        """
+        sql = str(await self._write(_ABSENT))
+        assert "volume_24h" not in sql, (
+            "a market the venue said nothing about must not have its volume "
+            "columns touched at all"
+        )
+        assert "last_updated=" in sql, "the price write itself must still happen"
+
+    async def test_an_explicit_none_is_also_not_written(self):
+        """The same property through the other door: the key present, value None."""
+        sql = str(await self._write(None))
+        assert "volume_24h" not in sql
+
+
+#: Sentinel for "the key is not in the item at all", which is a different input
+#: from "the key is present and None" — both must decline to write.
+_ABSENT = object()
+
+
+class _WriteResult:
+    def __init__(self, rows=(), rowcount=0):
+        self._rows = list(rows)
+        self.rowcount = rowcount
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def all(self):
+        return list(self._rows)
