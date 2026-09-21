@@ -11,7 +11,12 @@ const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] 
     links: [
       { label: "Discover", href: "/discover" },
       { label: "Sports", href: "/sports" },
-      { label: "Calibration", href: "/calibration" },
+      // #7738. The route stays `/calibration` (sitemap + canonical); the LABEL
+      // is the only nav entry point to the accuracy page and was the one
+      // statistics term beside Discover / Sports / My Stuff, opening a page
+      // whose own `<h1>` never says it back. "Accuracy" is Alex's word for this
+      // surface (D137 / notice 45).
+      { label: "Accuracy", href: "/calibration" },
       { label: "My Stuff", href: "/my-stuff" },
     ],
   },
