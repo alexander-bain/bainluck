@@ -4,6 +4,7 @@ import { useMemo, useState, type CSSProperties } from "react";
 import type { DivisionRace, DivisionRaceRow, DivisionRaceSortKey } from "@/lib/teamDivisionRace";
 import { DIVISION_RACE_STATUS_KEY, sortDivisionRows } from "@/lib/teamDivisionRace";
 import { GRID_CELL_TERMINAL_GLYPH } from "@/lib/gridCellState";
+import { probabilityCellText } from "@/lib/probabilityCellText";
 
 // ---------------------------------------------------------------------------
 // Division-race grid (L2-162). Compact rivals × (Division / Playoffs / Champion)
@@ -12,8 +13,29 @@ import { GRID_CELL_TERMINAL_GLYPH } from "@/lib/gridCellState";
 // Mobile-first: the table scrolls horizontally inside a card on narrow screens.
 // ---------------------------------------------------------------------------
 
+// #7710 — these cells ARE the playoffs grid's cells, so they print what it
+// prints.
+//
+// `buildDivisionRace` builds this table from `GET /api/playoffs/{league}`, the
+// same payload `/playoffs/mlb` renders through `probabilityCellText` (#7670,
+// #7692). This renderer had its own bare `Math.round(v * 100)`, so the two
+// surfaces gave a reader two different answers for one number: measured on
+// production 2026-09-21, of 52 live MLB grid cells, five sat strictly inside
+// (0, 1) and printed `0%` here while the playoffs page printed `0.4%` / `<0.1%`
+// for the same cell. Baltimore's `pennant` and `championship` at `0.0005` and
+// Toronto's `championship` at `0.0035` each appear on all five AL East team
+// pages, under the `✕` we use for clubs that really are out.
+//
+// So: `probabilityCellText`, not `formatProbabilityPercent`. The grid keeps the
+// decimal where the decimal is the whole of the information. The row-shaped
+// cards on this page (`TeamChampionshipPath`, `TeamPropFamilies`) speak the
+// other vocabulary, which is why the split is stated in both places.
+//
+// The terminal states never reach here — `cellContent` returns the ✓/✕ glyph
+// first — so a number arriving at this function is a live one, and `100%` stays
+// reserved for the cells whose payload states an absolute.
 function pct(v: number | null): string {
-  return v === null ? "—" : `${Math.round(v * 100)}%`;
+  return v === null ? "—" : probabilityCellText(v);
 }
 
 /**
