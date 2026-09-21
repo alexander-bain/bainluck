@@ -560,3 +560,194 @@ def test_the_marker_still_answers_exactly_as_it_did_before_the_extraction():
     }
     assert gmh.build_bank_marker(_payload(points=[]), now=NOW) is None
     assert gmh.build_bank_marker(None, now=NOW) is None
+
+
+# ── the publish ORDER: Postgres first, or nothing at all (CERT-3247) ────────
+#
+# The ship is not "the bank is also written to Postgres" — it is "a bank that
+# Redis can lose is recoverable". Staging the durable write and letting the task
+# session commit it on its clean exit satisfied the first sentence and not the
+# second: Redis went visible, the claim was released, and only THEN did Postgres
+# commit. A worker death in that interval — or a commit that simply failed —
+# left the Redis-only bank this issue exists to abolish, and the next eviction
+# put the thin chart back. The task session wraps the whole batch, so the
+# exposure was a whole run, not an instant.
+
+
+class _OrderedSession:
+    """A task session that records the ORDER of everything done to it."""
+
+    def __init__(self, market, log, *, commit_raises=False):
+        self.market = market
+        self.log = log
+        self.commits = 0
+        self.rollbacks = 0
+        self._commit_raises = commit_raises
+
+    async def execute(self, *_a, **_k):
+        # One fake answers both calls the fill makes of it: the market SELECT and
+        # the marker's JSONB merge. The marker write is recorded because it must
+        # ride the same transaction as the bank — if a future change let it land
+        # separately, the two could disagree about whether a bank exists.
+        self.log.append("pg-execute")
+        market = self.market
+        return SimpleNamespace(scalar_one_or_none=lambda: market)
+
+    async def commit(self):
+        self.commits += 1
+        if self._commit_raises:
+            self.log.append("pg-commit-FAILED")
+            raise RuntimeError("could not serialize access")
+        self.log.append("pg-commit")
+
+    async def rollback(self):
+        self.rollbacks += 1
+        self.log.append("pg-rollback")
+
+
+class _OrderedRedis:
+    """Redis, recording writes and claim releases into the same log."""
+
+    def __init__(self, log):
+        self.log = log
+        self.kv = {}
+
+    def get(self, key):
+        return self.kv.get(key)
+
+    def set(self, key, value, ex=None):
+        self.log.append("redis-set")
+        self.kv[key] = value
+        return True
+
+    def delete(self, *keys):
+        self.log.append("redis-claim-released")
+        for key in keys:
+            self.kv.pop(key, None)
+        return 1
+
+
+async def _run_fill(monkeypatch, *, log, commit_raises=False, durable_status=None,
+                    points=None):
+    """Drive the real `fill_generic_market_history` over recording doubles."""
+    market = _market()
+    market.outcomes = [_outcome()]
+    market.market_metadata = {}
+    # `stats` carries the keys `build_generic_history` really produces — the
+    # fill reads `outcomes_built` out of them on both its exit paths, and a fake
+    # missing one fails the test for a shape reason that looks nothing like the
+    # ordering question being asked.
+    payload = _payload(market, points=points, stats={
+        "source": market.source,
+        "outcomes_built": 0 if points == [] else 1,
+        "outcomes_empty": 1 if points == [] else 0,
+        "fetched_points": 0 if points == [] else 3,
+    })
+
+    async def _built(*_a, **_k):
+        return payload
+
+    monkeypatch.setattr(fill, "build_generic_history", _built)
+    if durable_status is not None:
+        async def _durable(*_a, **_k):
+            return {"status": durable_status}
+        monkeypatch.setattr(fill, "publish_durable_history", _durable)
+    else:
+        import app.services.durable_snapshots as ds
+
+        async def _ok(_db, _envelope):
+            return {"status": "ok"}
+        monkeypatch.setattr(ds, "publish_snapshot_in_txn", _ok)
+
+    session = _OrderedSession(market, log, commit_raises=commit_raises)
+    rc = _OrderedRedis(log)
+    result = await fill.fill_generic_market_history(session, market.id, rc=rc, now=NOW)
+    return result, session, rc
+
+
+async def test_postgres_has_the_bank_before_redis_publishes_it(monkeypatch):
+    """The ordering the ship rests on, asserted as an ORDER and not as a set.
+
+    Asserting only that both writes happened is what let the defect through:
+    both DID happen, in the order that makes the durable copy worthless.
+    """
+    log = []
+    result, session, rc = await _run_fill(monkeypatch, log=log)
+
+    assert result["cached"] is True
+    assert result["durable"] == "ok"
+    assert session.commits == 1 and session.rollbacks == 0
+    assert log.index("pg-commit") < log.index("redis-set"), (
+        "Redis must never be able to hold a bank Postgres has not committed"
+    )
+    assert log.index("redis-set") < log.index("redis-claim-released"), (
+        "the claim is the in-flight flag; releasing it before the write would "
+        "invite a second fill to race this one"
+    )
+
+
+async def test_a_bank_postgres_could_not_keep_is_never_published_to_redis(monkeypatch):
+    """Fail closed. The claim's TTL is the retry, so the market is re-filled."""
+    log = []
+    result, session, rc = await _run_fill(monkeypatch, log=log, commit_raises=True)
+
+    assert result["cached"] is False
+    assert result["durable"] == "commit_failed"
+    assert result["bank_marker_written"] is False, (
+        "the marker rode the rolled-back transaction; reporting it written "
+        "would claim a row that does not exist"
+    )
+    assert "redis-set" not in log, (
+        "publishing here is worse than not shipping #7807: the reader gets a "
+        "series nothing can restore, wearing this ship's name"
+    )
+    assert "redis-claim-released" not in log, (
+        "the claim must expire on its own TTL so the fill is retried"
+    )
+    assert session.rollbacks == 1, "the next market in the batch needs a clean transaction"
+
+
+async def test_a_durable_write_that_errored_is_never_published_either(monkeypatch):
+    """The other half of "fail closed on durable/commit failure"."""
+    log = []
+    result, session, rc = await _run_fill(monkeypatch, log=log, durable_status="error")
+
+    assert result["durable"] == "error"
+    assert result["cached"] is False
+    assert "redis-set" not in log and "redis-claim-released" not in log
+    assert session.commits == 0, (
+        "the staging attempt already raised inside the transaction — there is "
+        "nothing good in it to commit"
+    )
+    assert session.rollbacks == 1
+
+
+async def test_an_empty_answer_still_reaches_the_bounded_negative_cache(monkeypatch):
+    """The control that keeps fail-closed from becoming an outage amplifier.
+
+    `skipped` means there was no bank to lose. If a pointless answer failed
+    closed too, one venue outage would strip the `REFRESH_AFTER_SECONDS` throttle
+    and every cold key would re-ask the venue immediately — a strictly worse
+    failure than the one this repair fixes.
+    """
+    log = []
+    result, session, rc = await _run_fill(monkeypatch, log=log, points=[])
+
+    assert result["durable"] == "skipped"
+    assert result["cached"] is True
+    assert "redis-set" in log, "an empty answer is still cached, as it always was"
+    assert "redis-claim-released" in log
+
+
+async def test_an_empty_answer_survives_a_failed_commit_it_owed_nothing_to(monkeypatch):
+    """Fail-closed is scoped to a bank that existed, not to every commit."""
+    log = []
+    result, session, rc = await _run_fill(
+        monkeypatch, log=log, points=[], commit_raises=True
+    )
+
+    assert result["durable"] == "skipped"
+    assert result["cached"] is True, (
+        "nothing durable was owed, so a failed commit must not also cost the "
+        "market its negative cache"
+    )

@@ -937,6 +937,41 @@ async def _stamp_bank_marker(session: Any, market_id: int, marker: dict) -> None
     )
 
 
+async def _rollback_quietly(session: Any, market_id: int) -> None:
+    """Discard this market's staged writes. NEVER raises.
+
+    The batch is a loop over one session, so a market that cannot land its own
+    writes must hand the next market a clean transaction rather than a poisoned
+    one. A rollback that itself fails is logged and swallowed for the same
+    reason: one market must never take the other nineteen with it.
+    """
+    try:
+        await session.rollback()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("generic market history: rollback failed for %s: %s",
+                       market_id, str(exc)[:160])
+
+
+async def _commit_durable_bank(session: Any, market_id: int) -> bool:
+    """Land the staged marker + durable bank. True only if Postgres HAS them.
+
+    🔴 THE RETURN VALUE IS A FACT ABOUT POSTGRES, NOT ABOUT THE CALL COMPLETING.
+    Everything downstream — the Redis publish, the claim release — is gated on
+    it, so "it returned" must never read as "it worked" (gotcha #53). A failed
+    commit rolls back and answers False; it does not raise, because a durability
+    problem on one market is not a reason to abandon the batch, and the caller
+    already knows what to do with False.
+    """
+    try:
+        await session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("generic market history: durable commit failed for %s: %s",
+                       market_id, str(exc)[:200])
+        await _rollback_quietly(session, market_id)
+        return False
+
+
 async def fill_generic_market_history(
     session: Any, market_id: int, *, dry_run: bool = False,
     kalshi_service: Any = None, polymarket_service: Any = None,
@@ -1005,6 +1040,58 @@ async def fill_generic_market_history(
             session, market_id, payload, settled=settled
         )
         durable_status = str(durable.get("status"))
+        # 🔴 THE DURABLE BANK IS COMMITTED BEFORE REDIS SEES ANYTHING, AND THE
+        # ORDER IS THE WHOLE SHIP (CERT-3247). Staging both writes and letting
+        # `get_task_session` commit on its clean exit put the publish in the
+        # wrong order — Redis visible → claim released → Postgres commit — so a
+        # worker death or a failed commit anywhere in that interval left exactly
+        # the Redis-only bank this issue exists to abolish, and the next eviction
+        # restored the thin chart. The window was never microseconds either: that
+        # session wraps the WHOLE batch, so a failure on the fifth market rolled
+        # back the durable rows of the first four whose banks were already in
+        # Redis and whose claims were already released.
+        #
+        # `skipped` is the one status that owes nothing here. It means the
+        # payload carried no points (or no build stamp), so there is no bank to
+        # lose, and the bounded Redis negative cache — which makes a venue outage
+        # read as "nothing here" for `REFRESH_AFTER_SECONDS` instead of for ever
+        # — has to keep working exactly as it did. Failing closed on an empty
+        # answer would turn every outage into an unthrottled re-ask.
+        durable_owed = durable_status != "skipped"
+        if durable_status == "error":
+            # The staging attempt already raised inside `publish_durable_history`,
+            # so this transaction may be poisoned; rolling back is what makes the
+            # session usable for the next market in the batch. No commit is
+            # attempted — there is nothing good in it to keep.
+            await _rollback_quietly(session, market_id)
+            durable_landed = False
+        else:
+            durable_landed = await _commit_durable_bank(session, market_id)
+        if durable_owed and not durable_landed:
+            # FAIL CLOSED. No Redis write and no claim release: a bank Postgres
+            # does not hold must not be published as though it does. The claim is
+            # left to expire on its own TTL, which is the bounded retry that
+            # already exists for a fill dying earlier (see the note below) — one
+            # attempt per `CLAIM_TTL_SECONDS` — so the market is re-filled rather
+            # than left believing it is banked. Publishing anyway would be worse
+            # than never shipping #7807: the reader would get a series nothing
+            # can restore, which is the pre-#7807 behaviour wearing this ship's
+            # name.
+            return {
+                "market_id": market_id,
+                "status": payload["status"],
+                "outcomes_built": payload["stats"]["outcomes_built"],
+                "points": {k: len(v["points"]) for k, v in payload["outcomes"].items()},
+                "cached": False,
+                "bank_marker_written": False,
+                "durable": "commit_failed" if durable_status != "error" else "error",
+                "stats": {k: v for k, v in payload["stats"].items()
+                          if k != "candles_unpriced"},
+            }
+        # The marker rode the same transaction, so it only really exists if that
+        # transaction landed. Say so rather than reporting a write the rollback
+        # took back.
+        marker_written = marker_written and durable_landed
         written = write_cached_history(market_id, payload, settled=settled, rc=rc)
         if written:
             # THE CLAIM MEANS "A FILL IS IN FLIGHT", and this one has landed. From
