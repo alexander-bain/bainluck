@@ -56,12 +56,29 @@ from app.utils.matcher_pass_runs import (
     never_attempted_floor,
 )
 
-#: The production reading this file is built from. Fixed, never `now()` —
-#: gotcha #44: a test anchor that branches on the clock is not an anchor.
-PASS_RAN_AT = datetime(2026, 9, 21, 12, 20, 0, 62114, tzinfo=timezone.utc)
-NOW = datetime(2026, 9, 21, 12, 33, 5, tzinfo=timezone.utc)
-NEWBORN_AT = datetime(2026, 9, 21, 12, 26, 14, 130773, tzinfo=timezone.utc)
-WAVE_828_AT = datetime(2026, 8, 28, 4, 0, 0, tzinfo=timezone.utc)
+#: The production reading this file is built from, held as OFFSETS from one
+#: captured instant rather than as absolute wall-clock literals.
+#:
+#: The literals were 2026-09-21 12:20:00.062114Z / 12:33:05Z / 12:26:14.130773Z
+#: / 2026-08-28 04:00Z, and they were unconditional — no `if`, so gotcha #44's
+#: "an anchor that branches on the clock is not an anchor" was satisfied. What
+#: they could not survive is that HALF this file's subject reads the real clock:
+#: `never_attempted_floor` takes the LATER of the pass's own run and
+#: `now - NEVER_ATTEMPTED_MAX_GRACE_S`, and `check_receipt_coverage` calls it
+#: with no `now=`. So the whole file was green for exactly the two hours after
+#: 12:20Z and went red at 14:20:00Z on 2026-09-21 — on a byte-identical tree,
+#: which is the tell that the variable is the clock. It reddened master's CI
+#: within the hour (run 35611423327) and skipped the deploy job behind it.
+#:
+#: Offsets first, then the anchors derived from them (gotcha #44's positive
+#: half): the pass ran 13m05s ago, so it is the later arm and the pass arm binds
+#: at every wall-clock time; the newborn wave is 6m51s old, inside that; the
+#: 8/28 wave is 24 days old, far outside it. Every relationship the fixture
+#: asserts is preserved exactly, and now it holds at 03:00Z as well as 13:00Z.
+NOW = datetime.now(timezone.utc)
+PASS_RAN_AT = NOW - timedelta(minutes=13, seconds=4, microseconds=937886)
+NEWBORN_AT = NOW - timedelta(minutes=6, seconds=50, microseconds=869227)
+WAVE_828_AT = NOW - timedelta(days=24, hours=8, minutes=33, seconds=5)
 
 
 # =============================================================================

@@ -2040,11 +2040,17 @@ class TestTheCoverageBlockPublishesTheScopedCountBesideTheRawOne:
     def test_the_floor_is_the_policys_answer_for_the_published_pass_run(self):
         """The two must be reconcilable by a reader: the floor is derived from
         the ``backlog_pass`` block printed beside it, not from a private clock."""
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
 
         from app.utils.matcher_pass_runs import PassRunFact, never_attempted_floor
 
-        ran_at = datetime(2026, 9, 21, 12, 20, 0, 62114, tzinfo=timezone.utc)
+        # Relative, not the 2026-09-21 12:20:00.062114Z literal it was written
+        # with: the floor is the LATER of this stamp and `now - grace`, so once
+        # the literal aged past the two-hour grace BOTH sides of the assertion
+        # became `now - grace` read at two different instants and the test
+        # failed on microseconds (.407252 vs .407554). Thirteen minutes keeps
+        # the pass arm binding, which is the healthy path this test is about.
+        ran_at = datetime.now(timezone.utc) - timedelta(minutes=13)
         cov, _ = self._coverage(
             scalar=0,
             pass_run=PassRunFact(
