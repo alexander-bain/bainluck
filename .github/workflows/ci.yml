@@ -3381,7 +3381,15 @@ jobs:
           # request, and B15 requires that the durable copy is NOT served once
           # past the 36 h the cache declared — the tier makes that TTL real, not
           # longer.
-          EXPECTED = 47
+          # 48 with #7547: C9's fixture moved to the two-minute cadence our live
+          # poll writes, and its ORIGINAL ninety-minute fixture became C9b, where
+          # the same points are the POSITIVE case — a dense-but-coarse chart asks
+          # for fine history and the minute candles reach the served payload.
+          # 49 with CERT-3255's required repair: C9c walks twenty refused coarse
+          # reads across ONE real Redis and requires the thin reserve to be where
+          # they found it — the depletion only exists BETWEEN requests, so it
+          # cannot be shown on a double that is fresh per assertion.
+          EXPECTED = 49
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

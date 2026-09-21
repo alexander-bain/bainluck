@@ -81,9 +81,32 @@ TICKER = "KXCAPGAINDOWN-26AUG-27JAN01"
 #: requests exactly (asserted in `test_B1`).
 FROZEN_NOW = datetime.fromtimestamp(1789875752, tz=timezone.utc)  # 2026-09-20T03:42:32Z
 
-#: The three requests that produced the Kalshi fixture bytes, verbatim.
+from app.utils.futures_chart_series import (  # noqa: E402 — after the skip gate
+    FINE_TIER_HOURS as _FINE_TIER_HOURS,
+    KALSHI_MAX_CANDLES_PER_REQUEST as _KALSHI_BUDGET,
+)
+
+#: The three requests that produced the Kalshi fixture bytes, verbatim — except
+#: the fine tier's `start_ts`, which #7547 moved and which is therefore DERIVED.
+#:
+#: ⚠️ THE FINE BYTES ANSWER A NARROWER ASK THAN THE ONE NOW MADE, AND THAT IS
+#: STATED RATHER THAN HIDDEN. `kalshi-1m-24h.json` is Kalshi's real answer for
+#: `start_ts = end_ts − 24h`, fetched 2026-09-20T03:42:32Z. #7547 widened the fine
+#: tier to `FINE_TIER_HOURS` (144h) because a reader scrubbing 1W was being served
+#: a week drawn from hours, so the fill now asks for six days of minutes and the
+#: saved bytes answer one day of them. Replaying them against the wider ask is
+#: CONSERVATIVE in the only direction that matters — a sub-window of the venue's
+#: real answer can under-serve this file's assertions, never invent a candle — so
+#: every admitted/rejected timestamp below still comes from bytes Kalshi sent.
+#: What it does NOT do is prove the venue serves the extra five days; that is
+#: proved against the venue itself and recorded on #7547, not here.
+#:
+#: Derived from `FINE_TIER_HOURS` rather than written as 1789357352 so the day the
+#: tier moves again this constant moves with it instead of reddening as a literal
+#: nobody can date.
 RECORDED_KALSHI_REQUESTS = [
-    {"period_interval": 1, "start_ts": 1789789352, "end_ts": 1789875752, "file": "kalshi-1m-24h.json"},
+    {"period_interval": 1, "start_ts": 1789875752 - int(_FINE_TIER_HOURS * 3600),
+     "end_ts": 1789875752, "file": "kalshi-1m-24h.json"},
     {"period_interval": 60, "start_ts": 1787197352, "end_ts": 1789875752, "file": "kalshi-60m-31d.json"},
     {"period_interval": 1440, "start_ts": 1787093355, "end_ts": 1789875752, "file": "kalshi-1440m-life.json"},
 ]
@@ -1467,7 +1490,32 @@ def test_C4_an_exclusive_fields_venue_instants_must_answer_for_themselves(venue,
     # The phone's reader plots the RAW scale by ruling (#7284) and may serve them.
     tl = _timeline(FIELD_MARKET_ID)
     assert tl["venue_history"]["points_served"] == 12
-    assert len(venue.provider_requests()) == 3, "four tickers ride ONE batched request per tier"
+
+    # 🔴 WHAT THE WIDENED FINE TIER COSTS AT THE VENUE, DERIVED AND STATED.
+    # Four tickers used to ride ONE batched request per tier — three requests for
+    # the market. Kalshi's candlestick budget is `tickers × periods ≤ 9,000`, and
+    # #7547 took the fine tier from 24h to 144h, so ONE ticker's minute window is
+    # now 8,640 periods and no second ticker fits beside it. The fine tier is
+    # therefore one request per ticker while the hourly and daily tiers still
+    # batch, and a four-outcome field costs six requests instead of three.
+    #
+    # That is the venue's arithmetic, not a regression in the batcher, so it is
+    # asserted as arithmetic: `ticker_batches` is asked how it splits this field,
+    # and the number of requests must equal the number of batches it names. A
+    # literal 6 here would go stale the moment either constant moves, and — worse
+    # — would read as a number someone chose.
+    from collections import Counter
+
+    from app.utils.futures_chart_series import ticker_batches
+
+    fine_periods = int(_FINE_TIER_HOURS * 60)
+    fine_batches = len(ticker_batches(["a", "b", "c", "d"], periods=fine_periods,
+                                      max_candles=_KALSHI_BUDGET))
+    by_interval = Counter(r["period_interval"] for r in venue.provider_requests())
+    assert by_interval == Counter({1: fine_batches, 60: 1, 1440: 1}), (
+        f"{what}: the fine tier splits into {fine_batches} request(s) at "
+        f"{fine_periods} periods per ticker; the coarser tiers still batch"
+    )
 
 
 def test_C4b_an_exclusive_field_with_a_hole_at_the_venue_instant_is_refused(venue, broker):
@@ -1790,6 +1838,54 @@ def test_C9b_a_dense_but_coarse_chart_asks_for_fine_history_and_serves_what_come
     # And the fence still holds for the market next door: captures are never
     # displaced by the venue points that arrive.
     assert set(_history_points(cold_h, oid)) <= set(_history_points(warm_h, oid))
+
+
+def test_C9c_refused_coarse_reads_cannot_spend_the_thin_reserve_on_one_real_redis(venue, broker):
+    """🔴 CERT-3255's finding, replayed on a REAL Redis through the real routes.
+
+    The reserve was two caps over one counter, advanced before the cap was
+    consulted, so a coarse read that was REFUSED — no claim kept, no dispatch, no
+    venue request — had still spent a unit of the hour finding that out. The
+    graded sequence: the coarse share is gone, twenty more coarse readers arrive
+    and are turned away, and then an EMPTY chart asks. It was answered
+    `hourly_cap` at a counter of 61, having been starved entirely by refusals.
+
+    It takes a shared Redis across requests to see: every counter here is read
+    from the same instance the app writes, and the twenty refusals are twenty
+    real HTTP reads of the same route a crawler would walk. A per-assertion
+    double cannot express the depletion, because the depletion IS the crossing.
+    """
+    from app.tasks.generic_market_history_fill import COARSE_FILL_CAP
+    from app.utils.generic_market_history import budget_key, coarse_budget_key
+
+    hour = FROZEN_NOW.strftime("%Y%m%d%H")
+    bkey, ckey = budget_key(hour), coarse_budget_key(hour)
+
+    coarse_id, oid = 59165502, 219755003
+    captures = [(FROZEN_NOW - timedelta(minutes=90 * i + 17), round(0.40 + 0.001 * (i % 7), 4))
+                for i in range(100)]
+    _seed_specimen()
+    _arun(_seed([{"id": coarse_id, "source": "kalshi", "external_id": "KXCOARSE2-26",
+                  "name": "Coarsely captured market, budget", "outcomes": [
+                      {"id": oid, "external_id": "KXCOARSE2-26-Y", "name": "Yes", "p": 0.40,
+                       "captures": captures}]}]))
+
+    # The hour as it stands after forty coarse fills really ran: forty against
+    # coarseness's share, and the same forty against the hour.
+    _redis().set(bkey, COARSE_FILL_CAP)
+    _redis().set(ckey, COARSE_FILL_CAP)
+
+    refusals = [_timeline(coarse_id)["venue_history"]["fill"] for _ in range(20)]
+    assert refusals == ["coarse_hourly_cap"] * 20, refusals
+    assert broker.calls == [], "a refused coarse read dispatched a fill"
+    assert int(_redis().get(bkey)) == COARSE_FILL_CAP, (
+        "twenty refusals did no work and must have cost the hour nothing"
+    )
+    assert int(_redis().get(ckey)) == COARSE_FILL_CAP, "the coarse counter drifted"
+
+    # The empty chart this ship's reserve exists for. It was refused here.
+    assert _timeline()["venue_history"]["fill"] == "requested"
+    assert int(_redis().get(bkey)) == COARSE_FILL_CAP + 1
 
 
 def test_C10_the_concept_envelope_and_its_cache_are_untouched(venue, broker):
