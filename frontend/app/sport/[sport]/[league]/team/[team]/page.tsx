@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchTeamPage, fetchChampionshipGrid, fetchTeamPropFamilies } from "@/lib/api";
-import type { TeamPageResponse, TeamFutureItem, PropFamily } from "@/lib/api";
+import type { TeamPageResponse, PropFamily } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { getSiteUrl } from "@/lib/siteUrl";
@@ -14,7 +14,11 @@ import { describeTeamRoute } from "@/lib/teamRouteSport";
 import { resolveTeamForRoute } from "@/lib/teamRouteResolve";
 import { isGameLive, assignGameNumbers } from "@/lib/teamGames";
 import { sportKeyToGridSlug } from "@/lib/gridSlug";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import {
+  formatMovementPoints,
+  formatProbabilityPercent,
+  isRenderedMove,
+} from "@/lib/probabilityDisplay";
 import { buildDivisionRace } from "@/lib/teamDivisionRace";
 import { teamTextColor } from "@/lib/teamColors";
 import { teamHeadline } from "@/lib/teamHeadline";
@@ -23,6 +27,7 @@ import { TeamChampionshipPath } from "@/components/TeamChampionshipPath";
 import { TeamSeasonJourney } from "@/components/TeamSeasonJourney";
 import { TeamDivisionRace } from "@/components/TeamDivisionRace";
 import { TeamPropFamilies } from "@/components/TeamPropFamilies";
+import { TeamFutureRow } from "@/components/TeamFutureRow";
 
 export default function TeamPage() {
   const params = useParams();
@@ -315,7 +320,13 @@ export default function TeamPage() {
               className="font-mono font-bold text-3xl leading-none tabular-nums"
               style={{ color: teamTextColor(team.primary_color) || undefined }}
             >
-              {Math.round(headline.probability * 100)}%
+              {/* #7710 — the loudest instance of the same defect. This 3xl
+                  number is the page's signature, and Baltimore's read `0%` in
+                  team orange over `↓ 0.1 pts today`, for a served `0.004`: the
+                  page said the season was over for them and that the price of
+                  it being over had moved. Boundary rule, same as every other
+                  number on the page. */}
+              {formatProbabilityPercent(headline.probability)}
             </span>
             {/* UX-P275: ask the STRING, not the number. `!== 0` let a move that
                 rounds to nothing through, so a 0.0034-point drift printed a
@@ -405,7 +416,7 @@ export default function TeamPage() {
             {propsAndAwards.length > 0 && (
               <div className="flex flex-col gap-3">
                 {propsAndAwards.map((item) => (
-                  <FutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
+                  <TeamFutureRow key={`${item.market_id}-${item.outcome_id}`} item={item} />
                 ))}
               </div>
             )}
@@ -420,73 +431,3 @@ export default function TeamPage() {
   );
 }
 
-function FutureRow({ item }: { item: TeamFutureItem }) {
-  const tierLabels: Record<number, string> = {
-    1: "Championship",
-    2: "Conference",
-    3: "Award",
-    4: "Division",
-    5: "Prop",
-  };
-  const tierLabel = item.market_tier
-    ? tierLabels[item.market_tier] || "Market"
-    : "Market";
-  // L2-174 Item 3d — settled-means-settled. A graded winner (is_winner=True)
-  // surfaces here at ~100% because Kalshi settled markets stay status='open'
-  // (gotcha #33). Frame it as a RESULT (the L2-147 "What hit" grammar), not a
-  // live 100% probability: settled eyebrow, a Won badge, and no 24h movement.
-  const settledWon = item.is_winner === true;
-
-  return (
-    <Link
-      href={`/futures/${item.market_id}`}
-      className="bg-surface-card border border-surface-border rounded-card p-4 hover:shadow-md transition-shadow flex items-center justify-between"
-    >
-      <div className="min-w-0 flex-1">
-        <div className={`text-xs mb-0.5 ${settledWon ? "text-text-muted" : "text-accent-brand"}`}>
-          {settledWon ? "What hit" : tierLabel}
-        </div>
-        <div className="flex items-center gap-1.5 min-w-0">
-          <div className="text-sm font-medium text-text-primary truncate">
-            {item.outcome_name}
-          </div>
-          {settledWon && (
-            <span className="flex-shrink-0 rounded-full bg-accent-live/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent-live">
-              ✓ Won
-            </span>
-          )}
-        </div>
-        <div className="text-xs text-text-secondary truncate">
-          {item.market_name}
-        </div>
-      </div>
-      <div className="text-right flex-shrink-0 ml-4">
-        <div className={`text-lg font-mono font-bold ${settledWon ? "text-accent-live" : "text-text-primary"}`}>
-          {item.probability !== null
-            ? `${Math.round(item.probability * 100)}%`
-            : "—"}
-        </div>
-        {!settledWon && item.rank && item.total_outcomes && (
-          <div className="text-xs text-text-muted">
-            #{item.rank} of {item.total_outcomes}
-          </div>
-        )}
-        {/* UX-P275, same class as the headline above: the specimen for #5652 was
-            this row — Boston Red Sox / MLB World Series Winner at
-            `probability_change_24h = 0.000034`, printed as a green "+0.0%". */}
-        {!settledWon && isRenderedMove(item.probability_change_24h) && (
-          <div
-            className={`text-xs ${
-              item.probability_change_24h! > 0
-                ? "text-accent-live"
-                : "text-accent-danger"
-            }`}
-          >
-            {item.probability_change_24h! > 0 ? "+" : "-"}
-            {formatMovementPoints(item.probability_change_24h)} pts
-          </div>
-        )}
-      </div>
-    </Link>
-  );
-}

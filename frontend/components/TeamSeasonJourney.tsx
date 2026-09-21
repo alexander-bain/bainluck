@@ -7,6 +7,7 @@ import type { FuturesOutcomeHistory } from "@/lib/types";
 import { pickJourneyFuture } from "@/lib/teamSeasonJourney";
 import { journeyRangeLabel } from "@/lib/teamSeason";
 import { teamTextColor } from "@/lib/teamColors";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { FuturesChart } from "@/components/FuturesChart";
 
 // ---------------------------------------------------------------------------
@@ -74,8 +75,13 @@ export function TeamSeasonJourney({
   const colorMap = teamColor
     ? new Map<number, string>([[outcome.outcome_id, teamColor]])
     : undefined;
+  // #7710 — the journey's current number obeys the boundary rule too. It is the
+  // SAME market as the page headline (both come from `pickJourneyFuture`), so a
+  // bare round here would have printed `0%` a few hundred pixels under a
+  // headline printing `<1%` for one probability. The chart's Y axis is a scale,
+  // not a claim about an outcome, and is deliberately left alone.
   const currentPct =
-    pick.probability !== null ? Math.round(pick.probability * 100) : null;
+    pick.probability !== null ? formatProbabilityPercent(pick.probability) : null;
 
   return (
     <section className="mb-8">
@@ -95,7 +101,7 @@ export function TeamSeasonJourney({
               className="ml-auto font-mono font-bold text-lg tabular-nums"
               style={{ color: teamTextColor(teamColor) || undefined }}
             >
-              {currentPct}%
+              {currentPct}
             </span>
           )}
         </div>

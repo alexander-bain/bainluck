@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import EntityImage from "@/components/EntityImage";
+import { formatProbabilityPercent, NO_READING } from "@/lib/probabilityDisplay";
 import type { PropFamily, PropFamilyRow } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -19,8 +20,27 @@ import type { PropFamily, PropFamilyRow } from "@/lib/api";
 // must not embarrass on sparse teams).
 // ---------------------------------------------------------------------------
 
+// #7710 — the row's number obeys UX-P046's boundary rule.
+//
+// This was a bare `Math.round(v * 100)`, so a row the backend ranked and priced
+// could print `0%`, which reads as "cannot happen" over a link to the market
+// pricing it as possible. Measured on production 2026-09-21 across 12 MLB
+// teams, 315 prop-family rows: Dylan Beavers sat at `0.0005` in Baltimore's "Al
+// Rookie Of The Year" card and Andy Pages at `0.0005` in the Dodgers' MVP card,
+// both printing `0%` beside a full-height cohort bar.
+//
+// `formatProbabilityPercent` and NOT `probabilityCellText`: this is an outcome
+// ROW, the same idiom as `TeamChampionshipPath` two sections up the same page
+// (routed by #7687) and as every feed/futures row, so it prints `<1%` / `>99%`.
+// The grid vocabulary with its decimal band belongs to grid cells — see
+// `TeamDivisionRace`, which is a slice of the playoffs grid and speaks that one.
+//
+// Settled rows are unaffected, and that is measured rather than assumed: of 156
+// settled rows, every one carries exactly `0.0` or exactly `1.0`, the two
+// boundaries the payload states and the helper prints plainly. A `✓ Won` badge
+// therefore still sits beside `100%`.
 function pct(v: number | null): string {
-  return v === null ? "—" : `${Math.round(v * 100)}%`;
+  return v === null ? NO_READING : formatProbabilityPercent(v);
 }
 
 // `result` has THREE states and each needs its own branch (#7405). It used to

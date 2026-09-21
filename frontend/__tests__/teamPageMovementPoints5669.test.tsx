@@ -92,11 +92,23 @@ describe("#5669 part 1 — formatMovementPoints returns POINTS, so a '%' beside 
 // ---------------------------------------------------------------------------
 
 describe("#5669 part 2 — the team page badge says points, and still says something", () => {
-  const src = fs.readFileSync(path.join(ROOT, TEAM_PAGE), "utf8");
+  // #7710 LIFTED ONE OF THE TWO SITES OUT OF THE PAGE. The futures row this
+  // suite counts below is now `components/TeamFutureRow.tsx`, moved verbatim so
+  // a render guard could reach it (the page fills itself from effects, which
+  // `renderToStaticMarkup` never runs). Both sites still exist and both still
+  // print `pts`; what changed is which file each lives in. The scan therefore
+  // reads BOTH files and keeps the count at two — weakening it to "one on the
+  // page" would let the row's badge be deleted without a test noticing, which
+  // is precisely what this test was written to prevent.
+  const TEAM_FUTURE_ROW = "components/TeamFutureRow.tsx";
+  const pageSrc = fs.readFileSync(path.join(ROOT, TEAM_PAGE), "utf8");
+  const rowSrc = fs.readFileSync(path.join(ROOT, TEAM_FUTURE_ROW), "utf8");
+  const src = `${pageSrc}\n${rowSrc}`;
 
   test("the scan read the real page, so every assertion below is about something", () => {
     // Without this, a moved file makes the rest of this describe vacuous.
-    expect(src.length).toBeGreaterThan(5000);
+    expect(pageSrc.length).toBeGreaterThan(5000);
+    expect(rowSrc.length).toBeGreaterThan(1000);
     expect(src).toContain("formatMovementPoints");
     expect(src).toContain("isRenderedMove");
   });
