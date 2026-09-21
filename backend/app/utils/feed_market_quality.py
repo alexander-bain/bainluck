@@ -1967,6 +1967,9 @@ _GENERIC_HEADLINES = {
     # makes the copy fix's own acceptance unmeasurable. Filed as the #4805
     # follow-up instead.
     RESOLVING_WITHIN_MONTH_HEADLINE,
+    # (#4842 adds no entry, because it emits no headline: the two day rungs are
+    # CAPTION rungs. Nothing this set classifies changes — which is the whole
+    # design, for the reason the refusal above gives.)
     "Multi-source",
 }
 

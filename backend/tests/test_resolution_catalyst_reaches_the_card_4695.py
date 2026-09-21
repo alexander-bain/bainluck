@@ -71,10 +71,23 @@ def _resolution_codes(result):
 @pytest.mark.parametrize(
     "days_until,expected",
     [
-        # `micro_bet` owns today/tomorrow — a daily settle is suppressed, not
-        # announced, and that behaviour is unchanged by this fix.
-        (0, []),
-        (1, []),
+        # `micro_bet` owns today/tomorrow — a daily settle is SUPPRESSED, and
+        # that half is still unchanged by this fix and pinned by
+        # `test_emitting_the_code_moves_no_score` below.
+        #
+        # 🟢 #4842 AMENDS THE OTHER HALF. These two rows read `[]` from #4695
+        # until 2026-09-21, and that emptiness was the defect #4842 names: the
+        # suppression is the `if` arm of the same `if/elif` that owns the display
+        # codes, so days 0-1 were the one window inside thirty days that could
+        # say nothing about a resolution — a card resolving tomorrow, the most
+        # time-urgent thing on the page, was the one card that could not say when.
+        # The score term is untouched; only the caption arrived. Two rungs rather
+        # than one because `.days <= 1` spans 0h to 47h59m and the padding below
+        # puts these rows at 1h and 25h. Pinned end-to-end, with the neutrality
+        # of the headline it does NOT write, in
+        # `test_a_card_resolving_today_says_so_4842.py`.
+        (0, ["resolving_soon_1d"]),
+        (1, ["resolving_soon_2d"]),
         # 7d interval: both edges.
         (2, ["resolving_soon_7d"]),
         (6, ["resolving_soon_7d"]),

@@ -88,6 +88,14 @@ DIAGNOSTIC_PHRASE_RE = re.compile(
 #: tested against these names — `test_resolution_copy_is_a_duration_4805.py`
 #: asserts the join, because a producer and a consumer that agree on a
 #: vocabulary with nothing testing it is exactly how #4695 happened.
+#:
+#: #4842 adds two rungs UNDER the week one — "within a day" and "within two
+#: days" — for the window `micro_bet` had silenced. They are spelled inline
+#: rather than named here, and that is the difference that matters: these two
+#: constants are named because a HEADLINE is a ranking input that several
+#: modules must agree on, and #4842's rungs never reach a headline. Two
+#: durations, because `.days <= 1` spans 0h to 47h59m and "within a day" is
+#: false for most of the second half of it.
 RESOLVING_WITHIN_WEEK_HEADLINE = "Resolving within a week"
 RESOLVING_WITHIN_MONTH_HEADLINE = "Resolving within a month"
 
@@ -1198,6 +1206,38 @@ def compose_binary_card_copy(
     if deadline_label:
         level = f"{answer} {DEADLINE_PREPOSITION} {deadline_label}"
         return composed(level, level)
+
+    # 🟢 #4842 — THE LAST RUNG BEFORE THE EMPTY TERMINAL, AND ITS HEADLINE IS THE
+    # EMPTY STRING ON PURPOSE.
+    #
+    # A card resolving today is the most time-urgent thing on the page, and days
+    # 0-1 were the one window inside thirty days that could say nothing about it:
+    # `compute_futures_highlight`'s micro-bet suppression is the `if` arm of the
+    # same `if/elif` that owns the resolution codes, so the caption went out with
+    # the -20 beside it. The producer half now emits `resolving_soon_1d` /
+    # `resolving_soon_2d` there; this is where they are spoken.
+    #
+    # TWO decisions, and both are the red note fifty lines above taken literally
+    # ("a headline that changed here would move the card's ORDER as well as its
+    # words"):
+    #
+    #  * The rung is LAST, not up beside its week sibling. Everything above it
+    #    already returns a headline, so placing it there would replace a
+    #    non-generic headline (a dated move) with something else and re-decide
+    #    `has_specific_explanation` for that card. Here, the only card it can
+    #    reach is one whose headline is already `""` — the #4056 terminal — so no
+    #    card's class moves. The editorial cost is stated plainly: a card that has
+    #    both a dated lifetime move and a deadline inside two days keeps leading
+    #    with the move. Re-ordering those two is a ranking decision and is not
+    #    this ship.
+    #  * The headline it composes is `""`, IDENTICAL to the terminal it precedes.
+    #    The reader-visible string on a binary card is the CONTEXT slot (the same
+    #    measurement the red note cites), and that is the slot this fills.
+    if "resolving_soon_1d" in reasons:
+        return composed("", f"{answer}, resolving within a day")
+    if "resolving_soon_2d" in reasons:
+        return composed("", f"{answer}, resolving within two days")
+
     return BinaryCardCopy("", "", "")
 
 
@@ -2133,6 +2173,28 @@ def generate_futures_reason(
         return f"Odds shifting in {market_name}"
 
     # Resolving soon
+    # (#4842 — the day rung. Same shape as the week rung below it, one duration
+    # shorter; it speaks only for days 0-1, where nothing spoke before.)
+    if "resolving_soon_1d" in reasons:
+        if leader_name and leader_probability is not None:
+            if _no_leader_subject:
+                return f"{market_name} resolving within a day"
+            pct = _display_pct(leader_probability, rendered_leader_percent)
+            clause = leader_standing_clause(
+                leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
+            )
+            return f"{market_name} resolving within a day, {clause}"
+        return f"{market_name} resolving within a day"
+    if "resolving_soon_2d" in reasons:
+        if leader_name and leader_probability is not None:
+            if _no_leader_subject:
+                return f"{market_name} resolving within two days"
+            pct = _display_pct(leader_probability, rendered_leader_percent)
+            clause = leader_standing_clause(
+                leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
+            )
+            return f"{market_name} resolving within two days, {clause}"
+        return f"{market_name} resolving within two days"
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
@@ -2369,6 +2431,9 @@ def generate_futures_headline(
         else:
             return f"{_side_label(top_mover_name)} {direction} {_points(top_mover_change)} today"
 
+    # (#4842's day rungs are deliberately absent from this generator — the
+    # headline is a ranking input and they are captions. The argument is written
+    # out once, at the last rung of `compose_binary_card_copy`.)
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject and market_name:
@@ -2599,6 +2664,16 @@ def generate_futures_context_summary(
 
     leader = leader_clause()
 
+    if "resolving_soon_1d" in reasons:
+        return (
+            f"{leader}; resolves within a day" if leader else "Resolves within a day"
+        )
+    if "resolving_soon_2d" in reasons:
+        return (
+            f"{leader}; resolves within two days"
+            if leader
+            else "Resolves within two days"
+        )
     if "resolving_soon_7d" in reasons:
         return (
             f"{leader}; resolves within a week"
@@ -2623,6 +2698,10 @@ def generate_futures_context_summary(
             # (No divergence / source-count rungs here either: when the headline
             # only restates the question, the honest answer is the leader or the
             # resolution window, never a number about our own rows.)
+            if "resolving_soon_1d" in reasons:
+                return "Resolves within a day"
+            if "resolving_soon_2d" in reasons:
+                return "Resolves within two days"
             if "resolving_soon_7d" in reasons:
                 return "Resolves within a week"
             if "resolving_soon_30d" in reasons:

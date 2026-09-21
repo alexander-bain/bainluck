@@ -114,6 +114,12 @@ LEADER_REASON_SETS = [
     [],
     ["multi_source"],
     ["leader_change"],
+    # #4842's two day rungs. They reach `generate_futures_reason` and
+    # `generate_futures_context_summary` (never the headline — see that ship's
+    # note), and both compose the same `leader_standing_clause`, so they are the
+    # same class this guard is over and the source pin above found them for us.
+    ["resolving_soon_1d"],
+    ["resolving_soon_2d"],
     ["resolving_soon_7d"],
     ["resolving_soon_30d"],
 ]
