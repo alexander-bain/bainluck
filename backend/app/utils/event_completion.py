@@ -840,6 +840,167 @@ def retired_row_start_moved_into_future(
     return commence_time > now + tolerance
 
 
+def row_carries_a_result(home_score, away_score, completed_at) -> bool:
+    """Does this row hold a game's outcome?
+
+    The one fact that makes a row irreplaceable. Any of the three present is
+    enough: a score without a ``completed_at`` is a game in progress whose
+    result is already on the page, and a ``completed_at`` without a score is a
+    sport that does not carry one (a fight, a match decided on sets).
+    """
+    return (
+        home_score is not None or away_score is not None or completed_at is not None
+    )
+
+
+def row_carries_an_authority_id(espn_id, statpal_fixture_id) -> bool:
+    """Is this row anchored to a schedule source that can still speak for it?
+
+    ``_provider_id_present`` rather than a truth test for the reason it gives:
+    a provider that wrote an empty string has told us nothing, and ``or None``
+    would also swallow a literal ``0``.
+    """
+    return _provider_id_present(espn_id) or _provider_id_present(
+        statpal_fixture_id
+    )
+
+
+#: How far apart two rows may start and still be PROVED the same fixture, for
+#: the one caller that writes a terminal on the answer (#7594, CERT-3213).
+#:
+#: 🔴 IT IS NOT :data:`~app.tasks.espn_sync.SURVIVING_COUNTERPART_WINDOW`, AND
+#: THAT IS THE WHOLE OF CERT-3213's FINDING. That window is ±30h because the
+#: revival's screen is asked about rows whose clock was WRONG, and there erring
+#: wide costs a REFUSAL — a row stays invisible. Spending the same window on a
+#: destructive write inverts the cost, and it sweeps in games that are not
+#: duplicates at all.
+#:
+#: MEASURED ON PRODUCTION 2026-09-21, over 120 days, pairs of rows carrying
+#: DISTINCT ``espn_id``s (so provably two real games) with the same two clubs
+#: inside 30h:
+#:
+#:     same orientation (doubleheaders, back-to-backs)   628   min gap  6.00h
+#:     reversed orientation (home-and-home)               12   min gap 19.00h
+#:
+#: An MLB doubleheader's second game is 6h from its first. Under the ±30h
+#: window, a resultless id-less second game beside an evidenced first game is a
+#: take-back — this arm would delete a real fixture from the site.
+#:
+#: One hour is six times inside that measured floor, and it costs nothing on the
+#: population this arm exists for: all four production specimens share their
+#: kickoff to the SECOND (delta 0.000000 on every pair). It is the same hour
+#: :data:`RETIRED_REVIVAL_TOLERANCE` uses and for the same reason — it absorbs a
+#: settlement/refinement nudge of minutes without ever being the thing that
+#: decides the answer.
+TERMINAL_TAKEBACK_SAME_START_TOLERANCE = timedelta(hours=1)
+
+
+def starts_prove_the_same_fixture(
+    subject_commence,
+    other_commence,
+    *,
+    tolerance=TERMINAL_TAKEBACK_SAME_START_TOLERANCE,
+) -> bool:
+    """Are these two rows close enough in time to be one game? (#7594)
+
+    Fails closed on a missing clock: a row whose start we do not know cannot be
+    PROVED to be anything, and the caller writes a terminal on this answer.
+    """
+    if subject_commence is None or other_commence is None:
+        return False
+    return abs(other_commence - subject_commence) <= tolerance
+
+
+def revived_twin_may_be_taken_back(
+    *,
+    retired_by_the_arm,
+    has_surviving_counterpart,
+    subject_carries_result,
+    subject_carries_authority_id,
+    a_survivor_proves_the_same_fixture,
+    a_survivor_carries_evidence,
+) -> bool:
+    """Is this revived row the disposable half of a pair a reader can see? (#7594)
+
+    WHAT A READER SEES WITHOUT THIS. ``/search?q=hurricanes``, measured on
+    production 2026-09-21 04:1xZ, two adjacent cards for one game:
+
+        15302884  OTHER HOCKEY  Hurricanes / Panthers   "No result reported"
+        15312312  NHL           Panthers / Hurricanes   "Sep 20 FINAL 6-3"
+
+    Not a duplicate a reader can shrug off — **the same game contradicting
+    itself about whether it has been played.** Three NHL fixtures and one WNBA
+    fixture are in that exact shape tonight.
+
+    🔴 THE REVIVAL SCREEN IS ASKED ONCE, AND THAT IS THE STRUCTURAL HOLE THIS
+    CLOSES. :func:`retired_row_start_moved_into_future` refuses a revival while
+    a surviving row holds the fixture, and since #7594 it asks that question in
+    both orientations. But the answer is a fact about the instant of revival: a
+    row legitimately revived on Monday as the only card for Friday's game
+    becomes a twin the moment a canonical is minted on Thursday, and nothing
+    re-asks. The one-shot repair that cleaned the rows the orientation-blind
+    screen let out could only reach rows still AHEAD of their kickoff, because
+    past kickoff it had no way to say which row was the keeper.
+
+    🔴 THIS PREDICATE IS THAT MISSING ANSWER, AND IT IS EVIDENCE, NOT TIME. The
+    keeper is the row that holds something — a result, or an anchor to a source
+    that can still speak for the fixture. Four refusals, each of which is the
+    conservative direction:
+
+    * **no surviving counterpart** ⇒ keep. An orphan is the whole point of
+      #7260; voiding it deletes the game from the site.
+    * **the subject carries a result** ⇒ keep. A row holding a score or a
+      ``completed_at`` is never taken back, whatever else is true of it. This
+      is the test that makes the arm unable to destroy a result *by
+      construction* rather than by the caller's care.
+    * **the subject carries an authority id** ⇒ keep. An anchored row is
+      #2693's to reconcile under the anchor channel (#1946), and D39 puts that
+      population in another lane. This arm only ever disposes of rows with
+      nothing behind them.
+    * **no survivor starts within :data:`TERMINAL_TAKEBACK_SAME_START_TOLERANCE`**
+      ⇒ keep. CERT-3213's finding: the screen's ±30h window is sized for a
+      REFUSAL and cannot be spent as the identity for a destructive write. 640
+      measured pairs of provably-distinct real games sit inside it — MLB
+      doubleheaders from 6h, back-to-backs around 23h — and without this test
+      the arm deletes the second game of a doubleheader because the first one
+      finished with a score. The screen still decides which rows are
+      CANDIDATES; this decides which of them is the same GAME.
+    * **no survivor carries evidence** ⇒ keep. Two resultless, unanchored rows
+      past their kickoff are a pair this arm cannot rank, and "we cannot tell"
+      must never be spent as "go ahead". #7617 owns that shape.
+
+    So the rule is strictly narrower than the one the shipped one-shot repair
+    ran on (a survivor exists, full stop) — it can only ever refuse rows that
+    repair would have taken, never reach a row it would not.
+
+    🔴 AND THE ASYMMETRY IS DELIBERATE. At revival time a false positive from
+    the screen costs a row that stays invisible; here it costs a card that
+    DISAPPEARS. That is the more expensive direction, which is why the screen's
+    verdict alone is not enough to license a write and the evidence tests are
+    stacked on top of it. Every one of them fails closed.
+
+    ``retired_by_the_arm`` is the same fence the sibling predicate carries and
+    for the same reason: 2,544 rows are ``voided`` for unrelated reasons and
+    match the retirement predicate, so scope is membership of the arm's own
+    backup table, established by the caller's JOIN rather than re-derived here.
+
+    Keyword-only with no defaults: every input is a question the caller must
+    have actually asked. A caller that is out of date fails to construct the
+    call rather than silently getting a permissive answer.
+    """
+    if not retired_by_the_arm:
+        return False
+    if not has_surviving_counterpart:
+        return False
+    if subject_carries_result:
+        return False
+    if subject_carries_authority_id:
+        return False
+    if not a_survivor_proves_the_same_fixture:
+        return False
+    return bool(a_survivor_carries_evidence)
+
+
 def is_retired_event_status(status) -> bool:
     """Has this row been taken off the schedule without being deleted?
 
