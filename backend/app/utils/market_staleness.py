@@ -1033,10 +1033,19 @@ def is_probability_extreme(probability: float | None) -> bool:
     return probability < PROBABILITY_EXTREME_LOW or probability > PROBABILITY_EXTREME_HIGH
 
 
-# The threshold vocabulary shared by every surface that has to tell a cumulative
-# ladder from a set of competing outcomes. `routes/economics.py` has carried this
-# tuple since #2563 and keeps its long rationale; the canonical copy lives here
-# because the featured gate below now has to ask the same question and a second
+# Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
+# partition into mutually exclusive brackets. Each row of such a ladder is an
+# independent "at or above X" probability (gotcha #17), so the rows are NOT a
+# distribution: they legitimately sum well over 100% and must never be
+# normalized or rescaled against each other.
+#
+# The temporal forms belong here for the same reason: "Before Jan 1, 2028" is
+# a deadline the market either clears or doesn't, and the rungs nest. Every
+# prefix below is attested in the open economics pool — a first-word census on
+# 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
+#
+# Carried by `routes/economics.py` since #2563; moved here for #6704, when the
+# featured gate below had to ask the same question. One copy, because a second
 # transcription of the vocabulary is a second thing to forget to update.
 CUMULATIVE_THRESHOLD_PREFIXES = (
     "above ",

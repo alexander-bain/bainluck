@@ -34,7 +34,6 @@ from app.utils.economics_headline import (
     select_recession_headline,
 )
 from app.utils.market_staleness import (
-    CUMULATIVE_THRESHOLD_PREFIXES,
     featured_leader_probability,
     outcome_names_are_cumulative_ladder,
     should_exclude_from_featured,
@@ -346,7 +345,7 @@ def _up_leg(market: FuturesMarket):
 # the shape test has to keep them out on its own, before any probability is read.
 _STRIKE_RE = re.compile(r"^\$?\d[\d,]*(?:\.\d+)?$")
 
-# The threshold words this page already recognises (`_CUMULATIVE_PREFIXES`),
+# The threshold words this page already recognises (`CUMULATIVE_THRESHOLD_PREFIXES`),
 # here in the position they take when the venue puts the threshold in the market
 # NAME and leaves the rungs bare: "S&P 500 (SPY) closes above ___".
 _NAME_THRESHOLD_WORDS = ("above", "over", "at least")
@@ -528,22 +527,11 @@ def _stock_row(market: FuturesMarket) -> dict | None:
     }
 
 
-# Outcome-name prefixes that mark a CUMULATIVE threshold ladder rather than a
-# partition into mutually exclusive brackets. Each row of such a ladder is an
-# independent "at or above X" probability (gotcha #17), so the rows are NOT a
-# distribution: they legitimately sum well over 100% and must never be
-# normalized or rescaled against each other.
-#
-# The temporal forms belong here for the same reason: "Before Jan 1, 2028" is
-# a deadline the market either clears or doesn't, and the rungs nest. Every
-# prefix below is attested in the open economics pool — a first-word census on
-# 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
-#
-# The tuple itself moved to `utils/market_staleness.py` for #6704, where the
-# featured gate now has to ask the same question of markets on four routes. This
-# name stays bound so every reference on this page — and the two guard tests
-# that read it — keeps working, and so the rationale above stays next to it.
-_CUMULATIVE_PREFIXES = CUMULATIVE_THRESHOLD_PREFIXES
+# The threshold vocabulary this page reads — `CUMULATIVE_THRESHOLD_PREFIXES`,
+# with its rationale, in `utils/market_staleness.py`. It moved there for #6704,
+# when the featured gate had to ask the same question; this file kept a local
+# alias for one commit, and CodeQL was right that nothing but prose referred to
+# it (`py/unused-global-variable`). Comments below name the canonical constant.
 
 
 def _is_cumulative_ladder(market: FuturesMarket) -> bool:
@@ -614,10 +602,11 @@ def _oil_row(market: FuturesMarket) -> dict | None:
                                            rungs summing to 777.5%, rescaled
                                            into 12.5
 
-    The second is this file's own rule, one call site short: the
-    ``_CUMULATIVE_PREFIXES`` block above says in as many words that a cumulative
-    ladder's rows "legitimately sum well over 100% and must never be normalized
-    or rescaled against each other", and ``_is_cumulative_ladder`` has been here
+    The second is this page's own rule, one call site short: the
+    ``CUMULATIVE_THRESHOLD_PREFIXES`` block says in as many words that a
+    cumulative ladder's rows "legitimately sum well over 100% and must never be
+    normalized or rescaled against each other", and ``_is_cumulative_ladder``
+    has been here
     since #2563 to detect exactly that. The energy branch asks a weaker question
     (`any("above" in name)`), which "At least 370" fails, so the ladder falls
     through to the partition path and is rescaled.
@@ -673,7 +662,7 @@ def _distribution_row(
     ``_market_row`` returns None above five outcomes, which silently drops
     priced markets out of the sections that only render Market rows. This
     keeps them by serving their shape instead: a cumulative threshold ladder
-    stays raw (see ``_CUMULATIVE_PREFIXES``), a partition is normalized into
+    stays raw (see ``CUMULATIVE_THRESHOLD_PREFIXES``), a partition is normalized into
     brackets. Returns None when nothing is priced.
 
     ``min_outcomes`` defaults to 6 because that is where ``_market_row`` gives
@@ -1537,7 +1526,7 @@ async def get_economics(db: AsyncSession):
     # a CUMULATIVE ladder, and `_brackets_from_outcomes` rescales anything
     # summing past 105% back to 100: a thirteen-rung ladder summing to 1111%
     # printed its 94.5% rung as 8.5%. That is this file's own rule — see
-    # `_CUMULATIVE_PREFIXES`, which says such rows "must never be normalized or
+    # `CUMULATIVE_THRESHOLD_PREFIXES`, which says such rows "must never be normalized or
     # rescaled against each other" — and the branch simply never asked.
     #
     # A non-ladder mortgage market is therefore NOT a candidate: it would take
