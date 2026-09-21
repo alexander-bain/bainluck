@@ -224,12 +224,24 @@ class TestTheHeadlineIsNotAlsoARowBeneathItself:
         assert rec["main_market_id"] not in side_ids
 
     async def test_every_other_candidate_is_still_offered_as_a_row(self):
-        """Excluding the headline must not delete anything else. `side_markets`
-        is capped at 6, so compare against the pool minus the headline, capped
-        the same way."""
+        """Excluding the headline must not delete anything else.
+
+        This asserted the exact list `[pool minus the headline][:6]` until
+        #6704, which gave the page a deterministic most-traded-first order
+        before the slice. WHICH six survive a cap is that order's business —
+        this test's claim, stated in its own name, is that the slice contains
+        only real candidates, never the headline, and is short only because of
+        the cap. Pinning the arrival order here would make this guard fail
+        every time the page's ranking legitimately changes, which is how a
+        guard for one ship ends up blocking another.
+        """
         rec = await _run(_production_markets())
-        expected = [mid for mid, _, _ in _PRODUCTION_POOL if mid != 113012][:6]
-        assert [r["market_id"] for r in rec["side_markets"]] == expected
+        pool_ids = {mid for mid, _, _ in _PRODUCTION_POOL}
+        side_ids = [r["market_id"] for r in rec["side_markets"]]
+
+        assert len(side_ids) == min(6, len(pool_ids) - 1)
+        assert len(set(side_ids)) == len(side_ids)
+        assert set(side_ids) <= pool_ids - {113012}
 
 
 @pytest.mark.asyncio

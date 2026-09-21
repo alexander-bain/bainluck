@@ -33,7 +33,12 @@ from app.utils.economics_headline import (
     select_mortgage_ladder,
     select_recession_headline,
 )
-from app.utils.market_staleness import should_exclude_from_featured
+from app.utils.market_staleness import (
+    CUMULATIVE_THRESHOLD_PREFIXES,
+    featured_leader_probability,
+    outcome_names_are_cumulative_ladder,
+    should_exclude_from_featured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -533,28 +538,19 @@ def _stock_row(market: FuturesMarket) -> dict | None:
 # a deadline the market either clears or doesn't, and the rungs nest. Every
 # prefix below is attested in the open economics pool — a first-word census on
 # 2026-08-29 counted 798 markets on "above", 44 on "before" and 16 on "below".
-_CUMULATIVE_PREFIXES = (
-    "above ",
-    "at least ",
-    "more than ",
-    "over ",
-    "greater than ",
-    "below ",
-    "before ",
-)
+#
+# The tuple itself moved to `utils/market_staleness.py` for #6704, where the
+# featured gate now has to ask the same question of markets on four routes. This
+# name stays bound so every reference on this page — and the two guard tests
+# that read it — keeps working, and so the rationale above stays next to it.
+_CUMULATIVE_PREFIXES = CUMULATIVE_THRESHOLD_PREFIXES
 
 
 def _is_cumulative_ladder(market: FuturesMarket) -> bool:
     """True when a multi-outcome market's rows are cumulative thresholds."""
-    outcomes = list(market.outcomes)
-    if len(outcomes) < 2:
-        return False
-    marked = sum(
-        1
-        for o in outcomes
-        if (o.name or "").strip().lower().startswith(_CUMULATIVE_PREFIXES)
+    return outcome_names_are_cumulative_ladder(
+        (o.name for o in market.outcomes)
     )
-    return marked >= 2 and marked == len(outcomes)
 
 
 def _ladder_rung(market: FuturesMarket):
@@ -1036,13 +1032,40 @@ async def get_economics(db: AsyncSession):
     # representative market with merged outcomes (BR62 / #487).
     all_markets = group_markets_by_group_id(all_markets)
 
+    # ─── MOST-TRADED FIRST, BECAUSE EVERY SECTION BELOW IS A `[:n]` (#6704) ──
+    #
+    # The query above carries no ORDER BY and every section publishes a slice —
+    # `side_markets[:6]`, `oil[:4]`, `cards[:4]`. Which markets a reader sees was
+    # therefore heap order, and this file already says so in three places (see
+    # the mortgage card's "last match wins, on a query with no ORDER BY").
+    #
+    # It has to be fixed HERE, in the same change that stops the featured gate
+    # deleting wide ladders, because that gate is what kept the pools small
+    # enough for the arbitrariness to be cheap. Measured on production
+    # 2026-09-21: the metals pool goes from 6 markets to 11 for four card slots,
+    # and the five the gate was deleting include `KXCOPPERMON` — at 12,225 in
+    # 24h volume the most-traded metals market we hold — while the pool it would
+    # be sliced against includes `KXSILVERW` at **34**. Widening the gate
+    # without an order is how the 34 takes the slot from the 12,225.
+    #
+    # ⚠️ The key is TOTAL, not just "mostly ordered". Markets with no
+    # `volume_24h` — Polymarket representatives, much of the name-matched pool,
+    # and every fixture in this page's test suites — all score 0, and a sort
+    # that stopped there would leave the biggest remaining question (which of
+    # 40 zero-volume markets fills the last slot) answered by heap order again.
+    # The id breaks it: oldest first, stable across requests and across a
+    # cache rebuild, which is what makes a before/after on this page readable.
+    all_markets.sort(
+        key=lambda m: (-float(getattr(m, "volume_24h", None) or 0), m.id or 0)
+    )
+
     def _leader_prob(m):
-        outcomes = sorted(
-            (m.outcomes or []),
-            key=lambda o: float(o.current_probability or 0),
-            reverse=True,
+        # #6704: a cumulative ladder is judged on the rung nearest even money,
+        # not on its loosest bound, which is a near-certainty by construction.
+        # Anything that is not a ladder keeps the maximum, unchanged.
+        return featured_leader_probability(
+            (o.name, o.current_probability) for o in (m.outcomes or [])
         )
-        return float(outcomes[0].current_probability) if outcomes and outcomes[0].current_probability else None
 
     # Classify into themes — exclude resolved, extreme, and title-stale markets.
     # ``spotlight_eligible`` is the set this page is willing to RENDER, kept so
