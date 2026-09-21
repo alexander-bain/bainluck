@@ -48,6 +48,15 @@ logger = logging.getLogger(__name__)
 # Base URLs for ESPN API
 ESPN_API_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 ESPN_CORE_API = "https://sports.core.api.espn.com/v2/sports"
+# Standings live on the `apis/v2` host, NOT under `apis/site/v2`. Its own
+# constant because the wrong one does not fail: measured 2026-09-21,
+# `apis/site/v2/sports/baseball/mlb/standings` answers **200** with the body
+# `{"fullViewLink": {...}}` — no entries, no error. `_get` returns that dict,
+# it is truthy, the parser finds nothing and reports `{}`, which reads as
+# "ESPN says nobody has clinched" and disables this authority silently and
+# permanently (gotcha #53: an empty 200 is a response shape, not an absence).
+# So nobody tidies the one URL that differs into the shared base.
+ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports"
 
 # Mapping from our sport keys to ESPN sport/league paths
 from app.utils.sport_keys import SPORT_LEAGUE_MAP  # noqa: E402
@@ -659,6 +668,42 @@ class ESPNAPIService:
 
         logger.info(f"Fetched {len(teams)} teams for {sport_key}")
         return teams
+
+    async def get_standings_clinch(self, sport_key: str) -> Optional[dict[str, str]]:
+        """``{espn_team_id: claim}`` from ESPN's standings — the clinch authority.
+
+        See :mod:`app.utils.espn_clinch` for what a claim is and why it is read
+        off the ``description`` rather than the letter or the numeric value.
+
+        Returns ``{}`` when ESPN answers with no clinch state (an out-of-season
+        or not-yet-played league, which is an answer), and ``None`` when ESPN
+        did not answer — gotcha #53, the two must not collapse: a caller that
+        blanked cells on a dark authority would erase the grid.
+
+        No ``season`` parameter. ESPN's season-less standings body already
+        labels itself ``season.year: 2027`` while serving 2026's played table,
+        so a season we computed and a season ESPN believes in are two different
+        numbers and pinning ours would be a clock bomb (gotcha #44). Letting
+        ESPN choose, and requiring games played on the entry, is the pair that
+        makes the reading safe.
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return {}
+
+        sport, league = path
+        url = f"{ESPN_STANDINGS_BASE}/{sport}/{league}/standings"
+
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
+        if not data:
+            return {}
+
+        from app.utils.espn_clinch import parse_standings_clinch
+
+        return parse_standings_clinch(data)
 
     async def get_team(self, sport_key: str, team_id: str) -> Optional[ESPNTeam]:
         """

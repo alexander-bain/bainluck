@@ -875,7 +875,17 @@ _RECORDED_ASYNC_POOL_SITES = {
     # gated by `_serve_stale_and_refresh`'s in-flight set, so it fires at most
     # once per league per lapse, NOT once per request, and only while the fresh
     # key is cold. Comment read before the entry moved, as this census asks.
-    "routes/playoffs.py": 9,
+    #
+    # 9 -> 10 (#7663). `_espn_clinch_claims` caches ESPN's clinch/elimination
+    # reading for a league. Same third kind — a pool per call, lazy, one `get`
+    # and at most one `set`, then dropped — and bounded by the same thing the
+    # entry above is: it is reached only from a COLD grid rebuild, so at most
+    # once per league per ~65 minutes (the grid's own 3900s cache), never once
+    # per request. The claim is deliberately weaker than it could be: if Redis
+    # is unavailable the helper drops the client and reads ESPN anyway, so this
+    # site can also build zero pools, never more than one. Comment read before
+    # the entry moved, as this census asks.
+    "routes/playoffs.py": 10,
     "routes/politics.py": 2,
     "routes/tournaments.py": 3,
     "routes/weather.py": 1,
