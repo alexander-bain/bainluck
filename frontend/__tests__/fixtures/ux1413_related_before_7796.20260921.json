@@ -1,0 +1,1228 @@
+{
+ "_provenance": "THE BEFORE. Produced by rendering `RelatedByTag` AS IT STOOD ON origin/master (cdf31b0fe, the pre-change file) against ux1413_related_futures_zero_row_7796.20260921.json, on 2026-09-21 while the defect was live. It is a MEASUREMENT of the old component, not a re-implementation of its rule \u2014 a table computed from the payload would agree with the payload by construction and would pass against the unfixed file. Never re-snapshot this from a tree that already carries the fix: a fresh BEFORE contains no defect (notice 50).",
+ "cards": [
+  {
+   "title": "Which parties will be part of the next government of New Zealand?",
+   "rows": [
+    {
+     "name": "Green Party",
+     "printed": "68%"
+    },
+    {
+     "name": "Labour Party",
+     "printed": "54%"
+    },
+    {
+     "name": "National Party",
+     "printed": "53%"
+    }
+   ]
+  },
+  {
+   "title": "2026-27 Stanley Cup\u00ae Finals Winner",
+   "rows": [
+    {
+     "name": "Florida Panthers",
+     "printed": "11%"
+    },
+    {
+     "name": "Colorado Avalanche",
+     "printed": "10%"
+    },
+    {
+     "name": "Carolina Hurricanes",
+     "printed": "8%"
+    }
+   ]
+  },
+  {
+   "title": "Will Dallas Stars advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+   "rows": [
+    {
+     "name": "Not Dallas Stars",
+     "printed": "59%"
+    },
+    {
+     "name": "Dallas Stars",
+     "printed": "41%"
+    }
+   ]
+  },
+  {
+   "title": "US x Iran ceasefire continues through September 25?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "95%"
+    },
+    {
+     "name": "No",
+     "printed": "5%"
+    }
+   ]
+  },
+  {
+   "title": "Will Hawaii reach Coral Bleaching Alert Level 1 by December 31, 2026?",
+   "rows": [
+    {
+     "name": "Hawaii",
+     "printed": "94%"
+    }
+   ]
+  },
+  {
+   "title": "Which party will win the U.S. House?",
+   "rows": [
+    {
+     "name": "Democratic Party",
+     "printed": "91%"
+    },
+    {
+     "name": "Republican Party",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "Minas Gerais Governor Election Winner",
+   "rows": [
+    {
+     "name": "Cleitinho Azevedo",
+     "printed": "89%"
+    },
+    {
+     "name": "Patrus Ananias",
+     "printed": "5%"
+    },
+    {
+     "name": "Mateus Sim\u00f5es",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Titled Tuesday Winner: September 22",
+   "rows": [
+    {
+     "name": "Magnus Carlsen",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "Nobel Peace Prize Winner 2026",
+   "rows": [
+    {
+     "name": "Sudan&#x27;s Emergency Response Rooms",
+     "printed": "13%"
+    },
+    {
+     "name": "Save the Children",
+     "printed": "10%"
+    },
+    {
+     "name": "Yulia Navalnaya",
+     "printed": "8%"
+    }
+   ]
+  },
+  {
+   "title": "Will the U.S. invade Iran before 2027?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "17%"
+    }
+   ]
+  },
+  {
+   "title": "Brazil Presidential Election",
+   "rows": [
+    {
+     "name": "Fl\u00e1vio Bolsonaro",
+     "printed": "59%"
+    },
+    {
+     "name": "Luiz In\u00e1cio Lula da Silva",
+     "printed": "41%"
+    },
+    {
+     "name": "Renan Santos",
+     "printed": "1%"
+    }
+   ]
+  },
+  {
+   "title": "Next French Presidential Election",
+   "rows": [
+    {
+     "name": "Marine Le Pen",
+     "printed": "37%"
+    },
+    {
+     "name": "\u00c9douard Philippe",
+     "printed": "24%"
+    },
+    {
+     "name": "Jean-Luc M\u00e9lenchon",
+     "printed": "13%"
+    }
+   ]
+  },
+  {
+   "title": "NFL Super Bowl Winner",
+   "rows": [
+    {
+     "name": "Los Angeles Rams",
+     "printed": "11%"
+    },
+    {
+     "name": "Buffalo Bills",
+     "printed": "10%"
+    },
+    {
+     "name": "Baltimore Ravens",
+     "printed": "7%"
+    }
+   ]
+  },
+  {
+   "title": "Meta (META) closes above ___ on September 21?",
+   "rows": [
+    {
+     "name": "$670",
+     "printed": "86%"
+    },
+    {
+     "name": "$680",
+     "printed": "60%"
+    },
+    {
+     "name": "$690",
+     "printed": "29%"
+    }
+   ]
+  },
+  {
+   "title": "MLB World Series Winner",
+   "rows": [
+    {
+     "name": "Los Angeles Dodgers",
+     "printed": "28%"
+    },
+    {
+     "name": "Milwaukee Brewers",
+     "printed": "12%"
+    },
+    {
+     "name": "New York Yankees",
+     "printed": "10%"
+    }
+   ]
+  },
+  {
+   "title": "WTI Crude Oil (WTI) closes above ___ on September 21?",
+   "rows": [
+    {
+     "name": "$91",
+     "printed": "94%"
+    },
+    {
+     "name": "$92",
+     "printed": "81%"
+    },
+    {
+     "name": "$93",
+     "printed": "59%"
+    }
+   ]
+  },
+  {
+   "title": "Iran leadership change?",
+   "rows": [
+    {
+     "name": "June 30, 2027",
+     "printed": "27%"
+    },
+    {
+     "name": "December 31",
+     "printed": "16%"
+    },
+    {
+     "name": "November 30",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "Will Florida Panthers advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+   "rows": [
+    {
+     "name": "Florida Panthers",
+     "printed": "54%"
+    },
+    {
+     "name": "Not Florida Panthers",
+     "printed": "46%"
+    }
+   ]
+  },
+  {
+   "title": "NASCAR Cup Series: 2026 Champion",
+   "rows": [
+    {
+     "name": "Kyle Larson",
+     "printed": "23%"
+    },
+    {
+     "name": "Denny Hamlin",
+     "printed": "21%"
+    },
+    {
+     "name": "Christopher Bell",
+     "printed": "12%"
+    }
+   ]
+  },
+  {
+   "title": "Dancing with the Stars Season 35 \u00b7 Winner",
+   "rows": [
+    {
+     "name": "Maura Higgins",
+     "printed": "21%"
+    },
+    {
+     "name": "Harry Shum Jr.",
+     "printed": "21%"
+    },
+    {
+     "name": "Ezra Frech",
+     "printed": "16%"
+    }
+   ]
+  },
+  {
+   "title": "Will Costco (COST) beat quarterly earnings?",
+   "rows": [
+    {
+     "name": "Costco (COST)",
+     "printed": "72%"
+    }
+   ]
+  },
+  {
+   "title": "Prime Minister of Israel after the next election?",
+   "rows": [
+    {
+     "name": "Gadi Eizenkot",
+     "printed": "53%"
+    },
+    {
+     "name": "Benjamin Netanyahu",
+     "printed": "30%"
+    },
+    {
+     "name": "Naftali Bennett",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "NATO x Russia military clash?",
+   "rows": [
+    {
+     "name": "December 31",
+     "printed": "30%"
+    },
+    {
+     "name": "October 31",
+     "printed": "17%"
+    }
+   ]
+  },
+  {
+   "title": "Venezuela leader end of 2026?",
+   "rows": [
+    {
+     "name": "Nicol\u00e1s Maduro",
+     "printed": "58%"
+    },
+    {
+     "name": "Delcy Rodr\u00edguez",
+     "printed": "41%"
+    },
+    {
+     "name": "No Head of State",
+     "printed": "1%"
+    }
+   ]
+  },
+  {
+   "title": "Will Taylor Swift release &quot;Taylor Swift (Taylor&#x27;s Version)&quot; in 2026?",
+   "rows": [
+    {
+     "name": "Taylor Swift",
+     "printed": "75%"
+    }
+   ]
+  },
+  {
+   "title": "Will Trump buy at least part of Greenland?",
+   "rows": [
+    {
+     "name": "Before January 20, 2029",
+     "printed": "12%"
+    },
+    {
+     "name": "Before 2027",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Which of these Republicans will be the first to announce a run for President?",
+   "rows": [
+    {
+     "name": "J.D. Vance",
+     "printed": "35%"
+    },
+    {
+     "name": "Ron DeSantis",
+     "printed": "19%"
+    },
+    {
+     "name": "Rand Paul",
+     "printed": "13%"
+    }
+   ]
+  },
+  {
+   "title": "Traffic through the Panama Canal? (9/14 - 9/20)",
+   "rows": [
+    {
+     "name": "Above 175",
+     "printed": "97%"
+    },
+    {
+     "name": "Above 200",
+     "printed": "65%"
+    },
+    {
+     "name": "Above 225",
+     "printed": "2%"
+    }
+   ]
+  },
+  {
+   "title": "How many Senate seats will Democrats hold after the Midterms?",
+   "rows": [
+    {
+     "name": "Above 52",
+     "printed": "37%"
+    },
+    {
+     "name": "51",
+     "printed": "16%"
+    },
+    {
+     "name": "50",
+     "printed": "14%"
+    }
+   ]
+  },
+  {
+   "title": "What will be the top US Netflix movie this week?",
+   "rows": [
+    {
+     "name": "Why Did I Get Married Again?",
+     "printed": "33%"
+    },
+    {
+     "name": "The Seemingly Perfect Family",
+     "printed": "3%"
+    },
+    {
+     "name": "Turning Point: Generation 9/11",
+     "printed": "1%"
+    }
+   ]
+  },
+  {
+   "title": "When will Apple release the iPhone 18?",
+   "rows": [
+    {
+     "name": "Before April 2027",
+     "printed": "84%"
+    },
+    {
+     "name": "Before March 2027",
+     "printed": "17%"
+    },
+    {
+     "name": "Before February 2027",
+     "printed": "7%"
+    }
+   ]
+  },
+  {
+   "title": "2026 Midterms: Congress Balance of Power?",
+   "rows": [
+    {
+     "name": "D-House, D-Senate",
+     "printed": "59%"
+    },
+    {
+     "name": "D-House, R-Senate",
+     "printed": "30%"
+    },
+    {
+     "name": "R-House, R-Senate",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "Next Prime Minister of Morocco? (Invested)",
+   "rows": [
+    {
+     "name": "Fatima Ezzahra El Mansouri",
+     "printed": "39%"
+    },
+    {
+     "name": "Mohamed Chaouki",
+     "printed": "21%"
+    },
+    {
+     "name": "Nizar Baraka",
+     "printed": "20%"
+    }
+   ]
+  },
+  {
+   "title": "Price of Dozen Eggs in September?",
+   "rows": [
+    {
+     "name": "$2.20 to $2.30",
+     "printed": "41%"
+    },
+    {
+     "name": "$2.10 to $2.20",
+     "printed": "20%"
+    },
+    {
+     "name": "$2.30 to $2.40",
+     "printed": "16%"
+    }
+   ]
+  },
+  {
+   "title": "Trump x Greenland deal signed by September 23?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "88%"
+    },
+    {
+     "name": "No",
+     "printed": "12%"
+    }
+   ]
+  },
+  {
+   "title": "Port of Mobile container volume in 2026",
+   "rows": [
+    {
+     "name": "Above 425,000 TEUs",
+     "printed": "95%"
+    },
+    {
+     "name": "Above 450,000 TEUs",
+     "printed": "93%"
+    },
+    {
+     "name": "Above 475,000 TEUs",
+     "printed": "91%"
+    }
+   ]
+  },
+  {
+   "title": "Friedrich Merz out as Chancellor of Germany?",
+   "rows": [
+    {
+     "name": "December 31, 2026",
+     "printed": "21%"
+    },
+    {
+     "name": "October 31, 2026",
+     "printed": "14%"
+    },
+    {
+     "name": "September 30, 2026",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Big Brother Season 28 \u00b7 Winner",
+   "rows": [
+    {
+     "name": "Rick Devens",
+     "printed": "36%"
+    },
+    {
+     "name": "Dee Valladares",
+     "printed": "27%"
+    },
+    {
+     "name": "Drew Campbell",
+     "printed": "13%"
+    }
+   ]
+  },
+  {
+   "title": "WTA Sao Paulo Winner",
+   "rows": [
+    {
+     "name": "Kaitlin Quevedo",
+     "printed": "55%"
+    },
+    {
+     "name": "Nadia Podoroska",
+     "printed": "46%"
+    },
+    {
+     "name": "Mary Stoiana",
+     "printed": "0%"
+    }
+   ]
+  },
+  {
+   "title": "Argentina Monthly Inflation - September",
+   "rows": [
+    {
+     "name": "1.9 to 2.1%",
+     "printed": "52%"
+    },
+    {
+     "name": "1.6 to 1.8%",
+     "printed": "31%"
+    },
+    {
+     "name": "1.3 to 1.5%",
+     "printed": "6%"
+    }
+   ]
+  },
+  {
+   "title": "Who will be Trump&#x27;s next Press Secretary?",
+   "rows": [
+    {
+     "name": "Scott Jennings",
+     "printed": "19%"
+    },
+    {
+     "name": "Anna Kelly",
+     "printed": "13%"
+    },
+    {
+     "name": "Roma Daravi",
+     "printed": "8%"
+    }
+   ]
+  },
+  {
+   "title": "What will USD/BRL hit in 2026?",
+   "rows": [
+    {
+     "name": "\u21916.5",
+     "printed": "59%"
+    },
+    {
+     "name": "\u21934.5",
+     "printed": "50%"
+    },
+    {
+     "name": "\u21916",
+     "printed": "39%"
+    }
+   ]
+  },
+  {
+   "title": "Golden Boy 2026 Winner",
+   "rows": [
+    {
+     "name": "Pau Cubarsi",
+     "printed": "93%"
+    },
+    {
+     "name": "Kenan Yildiz",
+     "printed": "3%"
+    },
+    {
+     "name": "Geovany Quenda",
+     "printed": "2%"
+    }
+   ]
+  },
+  {
+   "title": "Pakistan military action against Yemen?",
+   "rows": [
+    {
+     "name": "December 31",
+     "printed": "19%"
+    },
+    {
+     "name": "October 31",
+     "printed": "8%"
+    },
+    {
+     "name": "September 30",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "What will be said on the next Lemonade Stand Podcast? (September 23)",
+   "rows": [
+    {
+     "name": "Money",
+     "printed": "96%"
+    },
+    {
+     "name": "China / Chinese",
+     "printed": "93%"
+    },
+    {
+     "name": "AI / Artificial Intelligence 10+ times",
+     "printed": "82%"
+    }
+   ]
+  },
+  {
+   "title": "Will the Starship for SpaceX Starship Flight Test 14 achieve a successful splashdown?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "77%"
+    },
+    {
+     "name": "No",
+     "printed": "23%"
+    }
+   ]
+  },
+  {
+   "title": "UEFA Champions League: League Phase Winner",
+   "rows": [
+    {
+     "name": "Manchester United",
+     "printed": "5%"
+    },
+    {
+     "name": "Inter Milan",
+     "printed": "4%"
+    },
+    {
+     "name": "Napoli",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Central Bank of Colombia decision in October",
+   "rows": [
+    {
+     "name": "No change",
+     "printed": "77%"
+    },
+    {
+     "name": "25 bps increase",
+     "printed": "10%"
+    },
+    {
+     "name": "25 bps decrease",
+     "printed": "7%"
+    }
+   ]
+  },
+  {
+   "title": "Houthis enter Aden by December 31, 2026?",
+   "rows": [
+    {
+     "name": "No",
+     "printed": "71%"
+    },
+    {
+     "name": "Yes",
+     "printed": "29%"
+    }
+   ]
+  },
+  {
+   "title": "Texas Senate winner?",
+   "rows": [
+    {
+     "name": "James Talarico",
+     "printed": "59%"
+    },
+    {
+     "name": "Ken Paxton",
+     "printed": "41%"
+    }
+   ]
+  },
+  {
+   "title": "Romanian parliament dissolved?",
+   "rows": [
+    {
+     "name": "December 31",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "Which parties will win a seat in the 2026 Knesset elections?",
+   "rows": [
+    {
+     "name": "Ra&#x27;am",
+     "printed": "88%"
+    },
+    {
+     "name": "RZP-Zehut",
+     "printed": "88%"
+    },
+    {
+     "name": "Amcha Yisrael",
+     "printed": "59%"
+    }
+   ]
+  },
+  {
+   "title": "Will Jacob Coxon publicly testify before congress by October 31?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "87%"
+    }
+   ]
+  },
+  {
+   "title": "Dancing with the Stars Season 35 \u00b7 Top 3 Finishers",
+   "rows": [
+    {
+     "name": "Maura Higgins",
+     "printed": "66%"
+    },
+    {
+     "name": "Jenna Dewan",
+     "printed": "62%"
+    },
+    {
+     "name": "Harry Shum Jr.",
+     "printed": "62%"
+    }
+   ]
+  },
+  {
+   "title": "Kimi K4 released by December 31, 2026?",
+   "rows": [
+    {
+     "name": "No",
+     "printed": "90%"
+    },
+    {
+     "name": "Yes",
+     "printed": "10%"
+    }
+   ]
+  },
+  {
+   "title": "Next Sonnet Model: Text Arena Debut?",
+   "rows": [
+    {
+     "name": "1470+",
+     "printed": "23%"
+    },
+    {
+     "name": "1480+",
+     "printed": "16%"
+    },
+    {
+     "name": "1490+",
+     "printed": "13%"
+    }
+   ]
+  },
+  {
+   "title": "Anthropic announces a Millennium Prize solution?",
+   "rows": [
+    {
+     "name": "December 31, 2027",
+     "printed": "67%"
+    },
+    {
+     "name": "December 31, 2026",
+     "printed": "39%"
+    },
+    {
+     "name": "September 30, 2026",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Walmart NW Arkansas Championship presented by P&amp;G Winner",
+   "rows": [
+    {
+     "name": "Camille Boyd",
+     "printed": "49%"
+    },
+    {
+     "name": "Carlota Ciganda",
+     "printed": "49%"
+    },
+    {
+     "name": "Auston Kim",
+     "printed": "49%"
+    }
+   ]
+  },
+  {
+   "title": "Hochelaga-Maisonneuve Quebec National Assembly Election Winner",
+   "rows": [
+    {
+     "name": "Alexandre Leduc",
+     "printed": "42%"
+    },
+    {
+     "name": "Maude Brossard-Sabourin",
+     "printed": "35%"
+    },
+    {
+     "name": "B\u00e9atrice Hodonou",
+     "printed": "1%"
+    }
+   ]
+  },
+  {
+   "title": "WNBA: 2026 Champion",
+   "rows": [
+    {
+     "name": "Minnesota Lynx",
+     "printed": "48%"
+    },
+    {
+     "name": "Golden State Valkyries",
+     "printed": "12%"
+    },
+    {
+     "name": "Las Vegas Aces",
+     "printed": "12%"
+    }
+   ]
+  },
+  {
+   "title": "Ohio Senate winner?",
+   "rows": [
+    {
+     "name": "Sherrod Brown",
+     "printed": "56%"
+    },
+    {
+     "name": "Jon Husted",
+     "printed": "44%"
+    }
+   ]
+  },
+  {
+   "title": "UEFA Champions League 2027: Home country of champion",
+   "rows": [
+    {
+     "name": "England",
+     "printed": "32%"
+    },
+    {
+     "name": "Spain",
+     "printed": "30%"
+    },
+    {
+     "name": "France",
+     "printed": "15%"
+    }
+   ]
+  },
+  {
+   "title": "Women&#x27;s Pro Basketball Champion",
+   "rows": [
+    {
+     "name": "Minnesota",
+     "printed": "46%"
+    },
+    {
+     "name": "Golden State",
+     "printed": "13%"
+    },
+    {
+     "name": "Las Vegas",
+     "printed": "12%"
+    }
+   ]
+  },
+  {
+   "title": "Astra removed from public access?",
+   "rows": [
+    {
+     "name": "October 31",
+     "printed": "6%"
+    },
+    {
+     "name": "September 30",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Mecklenburg-Vorpommern Parliamentary Election: More Votes to BSW or Gr\u00fcne?",
+   "rows": [
+    {
+     "name": "BSW",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Will &quot;Resident Evil&quot; score at least 96 on the Rotten Tomatoes Tomatometer?",
+   "rows": [
+    {
+     "name": "Yes",
+     "printed": "82%"
+    },
+    {
+     "name": "No",
+     "printed": "18%"
+    }
+   ]
+  },
+  {
+   "title": "Pro Baseball Champion",
+   "rows": [
+    {
+     "name": "Los Angeles Dodgers",
+     "printed": "31%"
+    },
+    {
+     "name": "Milwaukee",
+     "printed": "16%"
+    },
+    {
+     "name": "New York Yankees",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "KBO Korean Series Champion (2026)",
+   "rows": [
+    {
+     "name": "KT Wiz",
+     "printed": "22%"
+    },
+    {
+     "name": "LG Twins",
+     "printed": "17%"
+    },
+    {
+     "name": "Samsung Lions",
+     "printed": "16%"
+    }
+   ]
+  },
+  {
+   "title": "NPB Japan Series Champion (2026)",
+   "rows": [
+    {
+     "name": "Fukuoka SoftBank Hawks",
+     "printed": "21%"
+    },
+    {
+     "name": "Yokohama DeNA BayStars",
+     "printed": "9%"
+    },
+    {
+     "name": "Hanshin Tigers",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "College Football Big 12 Championship Winner",
+   "rows": [
+    {
+     "name": "Texas Tech",
+     "printed": "37%"
+    },
+    {
+     "name": "BYU",
+     "printed": "16%"
+    },
+    {
+     "name": "Utah",
+     "printed": "15%"
+    }
+   ]
+  },
+  {
+   "title": "FedEx Open de France Winner",
+   "rows": [
+    {
+     "name": "Ludvig \u00c5berg",
+     "printed": "8%"
+    },
+    {
+     "name": "Viktor Hovland",
+     "printed": "8%"
+    },
+    {
+     "name": "Tommy Fleetwood",
+     "printed": "7%"
+    }
+   ]
+  },
+  {
+   "title": "WTA Singapore Singles Winner",
+   "rows": [
+    {
+     "name": "Mirra Andreeva",
+     "printed": "49%"
+    },
+    {
+     "name": "Alexandra Eala",
+     "printed": "40%"
+    },
+    {
+     "name": "Elise Mertens",
+     "printed": "39%"
+    }
+   ]
+  },
+  {
+   "title": "Worlds 2026: Winner",
+   "rows": [
+    {
+     "name": "Gen.G",
+     "printed": "34%"
+    },
+    {
+     "name": "Hanwha Life Esports",
+     "printed": "19%"
+    },
+    {
+     "name": "Bilibili Gaming",
+     "printed": "18%"
+    }
+   ]
+  },
+  {
+   "title": "Top Coding AI this week",
+   "rows": [
+    {
+     "name": "ChatGPT",
+     "printed": "67%"
+    },
+    {
+     "name": "Claude",
+     "printed": "7%"
+    },
+    {
+     "name": "Qwen",
+     "printed": "4%"
+    }
+   ]
+  },
+  {
+   "title": "Azerbaijan Grand Prix Winner",
+   "rows": [
+    {
+     "name": "Andrea Kimi Antonelli",
+     "printed": "37%"
+    },
+    {
+     "name": "Lando Norris",
+     "printed": "16%"
+    },
+    {
+     "name": "Max Verstappen",
+     "printed": "10%"
+    }
+   ]
+  },
+  {
+   "title": "MotoGP World Champion (2026)",
+   "rows": [
+    {
+     "name": "Marc Marquez",
+     "printed": "72%"
+    },
+    {
+     "name": "Jorge Martin",
+     "printed": "22%"
+    },
+    {
+     "name": "Marco Bezzecchi",
+     "printed": "5%"
+    }
+   ]
+  },
+  {
+   "title": "Demacia Cup Global Invitational 2026: Winner",
+   "rows": [
+    {
+     "name": "KT Rolster",
+     "printed": "65%"
+    },
+    {
+     "name": "GAM Esports",
+     "printed": "10%"
+    },
+    {
+     "name": "LGD Gaming",
+     "printed": "9%"
+    }
+   ]
+  },
+  {
+   "title": "ESL Pro League Season 24: Winner",
+   "rows": [
+    {
+     "name": "Spirit",
+     "printed": "25%"
+    },
+    {
+     "name": "Vitality",
+     "printed": "22%"
+    },
+    {
+     "name": "Falcons",
+     "printed": "14%"
+    }
+   ]
+  },
+  {
+   "title": "UEFA Nations League 2026-27: Group D1 Winner",
+   "rows": [
+    {
+     "name": "Malta",
+     "printed": "38%"
+    },
+    {
+     "name": "Andorra",
+     "printed": "38%"
+    },
+    {
+     "name": "Gibraltar",
+     "printed": "25%"
+    }
+   ]
+  }
+ ]
+}
