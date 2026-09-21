@@ -442,3 +442,176 @@ def test_the_declined_counter_is_bumped_on_the_decline_and_nothing_else_is():
     assert hit is True and value == {"v": 1}
     assert unbound["cross_worker_hits"] == 1
     assert unbound["cross_worker_declined_age"] == 0
+
+
+# --------------------------------------------------------------------------
+# 5. LAT-P277 (#2143): the SAME rule, in the tier that is read FIRST
+# --------------------------------------------------------------------------
+#
+# `cross_worker_declined_age` above is the Redis half. The bound is enforced in
+# TWO places — `_read_cross_worker` and `_read_fresh` — by a byte-identical
+# predicate, and only one of them was instrumented. `_read_fresh` is the tier
+# consulted FIRST (`get_or_build`: process-local dict -> Redis -> builder), and
+# the warm rail runs every `FEED_LIVE_REPUBLISH_PERIOD_S` in a process that just
+# published the artifact, so on a warm worker the decline happens in L1 and the
+# Redis hop is never reached. The counter that existed covered the rarer path.
+#
+# Folded into `builds`, a decline is indistinguishable from a cold miss — and
+# those have opposite readings. A cold miss says sharing did not reach this
+# worker; a decline says sharing reached it and the warm rail chose to refresh.
+# That is the same argument the `cross_worker_declined_age` comment makes, and
+# it applies with more force here, because this is the path that actually runs.
+
+
+def test_the_local_tier_decline_is_counted_and_not_folded_into_builds():
+    """The L1 half of the bound reports itself, exactly as the Redis half does.
+
+    Drives the identical scenario as
+    `test_the_warm_rail_declines_an_artifact_older_than_the_bound_and_rebuilds`
+    — which proves the decline HAPPENS — and asserts the event is now readable
+    from `shared_build_stats()`. Without the counter that test passes and an
+    operator still cannot tell the rail is refreshing rather than missing.
+    """
+    builds = []
+
+    async def builder():
+        builds.append(1)
+        return {"v": len(builds)}
+
+    async def run():
+        t = [1000.0]
+        await pic.get_or_build(NS, KEY, builder, ttl_s=60.0, clock=lambda: t[0])
+        t[0] += MEASURED_ARTIFACT_AGE_S
+        return await pic.get_or_build(
+            NS,
+            KEY,
+            builder,
+            ttl_s=60.0,
+            max_age_s=warm_rail_max_shared_artifact_age_s(),
+            clock=lambda: t[0],
+        )
+
+    pic.clear_shared_builds()
+    out = asyncio.run(run())
+    stats = pic.shared_build_stats()
+
+    # The behaviour this file already guarantees, restated so a failure here is
+    # never mistaken for the bound itself having stopped working.
+    assert len(builds) == 2 and out == {"v": 2}
+
+    assert stats["declined_age"] == 1, (
+        "an L1 artifact inside its TTL and past the caller's bound must be "
+        "counted as a decline, not silently absorbed into `builds`"
+    )
+    # Named by artifact, for the same reason as every other counter here: the
+    # aggregate cannot say WHICH shared artifact the rail keeps refreshing.
+    assert stats["by_namespace"][NS]["declined_age"] == 1
+
+
+def test_a_local_decline_is_not_reported_as_a_cross_worker_event():
+    """The two tiers keep their own books. Otherwise one hides the other.
+
+    A decline in L1 must never move the Redis counters: the Redis hop is not
+    even reached on this path, so a nonzero `cross_worker_*` here would be an
+    instrument reporting traffic that did not occur.
+    """
+
+    async def builder():
+        return {"v": 1}
+
+    async def run():
+        t = [1000.0]
+        await pic.get_or_build(NS, KEY, builder, ttl_s=60.0, clock=lambda: t[0])
+        t[0] += MEASURED_ARTIFACT_AGE_S
+        return await pic.get_or_build(
+            NS,
+            KEY,
+            builder,
+            ttl_s=60.0,
+            max_age_s=warm_rail_max_shared_artifact_age_s(),
+            clock=lambda: t[0],
+        )
+
+    pic.clear_shared_builds()
+    asyncio.run(run())
+    stats = pic.shared_build_stats()
+
+    assert stats["declined_age"] == 1
+    assert stats["cross_worker_declined_age"] == 0
+    assert stats["hits"] == 0, "a declined read is not a hit"
+
+
+def test_an_artifact_inside_the_bound_bumps_no_decline_counter():
+    """The control. Without it the counter could be bumped on every L1 read."""
+
+    async def builder():
+        return {"v": 1}
+
+    async def run():
+        t = [1000.0]
+        await pic.get_or_build(NS, KEY, builder, ttl_s=60.0, clock=lambda: t[0])
+        t[0] += warm_rail_max_shared_artifact_age_s() / 2.0
+        return await pic.get_or_build(
+            NS,
+            KEY,
+            builder,
+            ttl_s=60.0,
+            max_age_s=warm_rail_max_shared_artifact_age_s(),
+            clock=lambda: t[0],
+        )
+
+    pic.clear_shared_builds()
+    asyncio.run(run())
+    stats = pic.shared_build_stats()
+
+    assert stats["declined_age"] == 0
+    assert stats["hits"] == 1
+
+
+def test_an_unbounded_read_past_the_bound_bumps_no_decline_counter():
+    """The second control, and the one that pins the counter to the BOUND.
+
+    The same artifact at the same age, read by a caller that asked for no
+    narrower bound, is a plain hit. So `declined_age` counts the caller's
+    choice — not the artifact's age, which every other reader is still happily
+    consuming (`test_a_declined_artifact_is_still_there_for_everybody_else`).
+    """
+
+    async def builder():
+        return {"v": 1}
+
+    async def run():
+        t = [1000.0]
+        await pic.get_or_build(NS, KEY, builder, ttl_s=60.0, clock=lambda: t[0])
+        t[0] += MEASURED_ARTIFACT_AGE_S
+        return await pic.get_or_build(NS, KEY, builder, ttl_s=60.0, clock=lambda: t[0])
+
+    pic.clear_shared_builds()
+    asyncio.run(run())
+    stats = pic.shared_build_stats()
+
+    assert stats["declined_age"] == 0
+    assert stats["hits"] == 1
+
+
+def test_both_enforcement_sites_of_the_bound_are_instrumented():
+    """The class guard: one rule with two implementations, both counted.
+
+    This file's defect was not a missing counter — it was a rule implemented
+    twice and instrumented once. A third tier, or a refactor that moves the
+    predicate, must not re-open that gap silently, so the guard is on the
+    SOURCE: every `age_s > read_bound` decline must sit beside a counter bump.
+    """
+    import inspect
+
+    source = inspect.getsource(pic)
+    predicate = "if read_bound is not None and age_s > read_bound:"
+    sites = source.count(predicate)
+    assert sites == 2, (
+        f"expected the bound to be enforced in exactly 2 tiers, found {sites} — "
+        "a new enforcement site needs its own decline counter"
+    )
+    for counter in ("declined_age", "cross_worker_declined_age"):
+        assert f'_bump(namespace, "{counter}")' in source, (
+            f"{counter} must be bumped by name at its enforcement site"
+        )
