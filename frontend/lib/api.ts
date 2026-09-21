@@ -2176,6 +2176,18 @@ export interface EconThemeEnergy {
   oil: { sym?: string; prob: number; range?: string; src: string; q?: string; leader?: string | null }[];
 }
 
+/** Gold, silver, copper, platinum and palladium price series (#7809).
+ *  Their own theme rather than rows inside `energy`: that section's
+ *  `side_markets` is capped at 8 and crude oil already filled 7, so a metal
+ *  folded in there was dropped by a cap rather than shown. `cards` are the
+ *  cumulative "Above $X" ladders drawn as bracket histograms, the same shape
+ *  as the natural-gas card; `markets` catches any that produced no brackets. */
+export interface EconThemeMetals {
+  count: number;
+  cards: { label: string; val: string; prob: number; brackets: number[][]; src: string }[];
+  markets: EconMarketRow[];
+}
+
 export interface EconThemeSimple {
   count: number;
   markets: EconMarketRow[];
@@ -2216,6 +2228,10 @@ export interface EconData {
     recession: EconThemeRecession;
     markets: EconThemeMarkets;
     energy: EconThemeEnergy;
+    /** Optional for the same reason as `mortgage_dist` above: the hourly
+     *  precompute's cached payload predates this field, and the page renders
+     *  the section only when it arrives with a non-zero count. */
+    metals?: EconThemeMetals;
     housing: EconThemeHousing;
     trade: EconThemeSimple;
     government: EconThemeGovernment;

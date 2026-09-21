@@ -71,6 +71,31 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxwti", "energy"),
     ("kxbrent", "energy"),
     ("kxoil", "energy"),
+    # Metals (#7809). These are the venue's price-SERIES families, spelled out
+    # rather than a bare `kxgold`/`kxcopper`, for two measured reasons:
+    #   - a bare metal name collides with novelty markets that are not
+    #     commodities at all — `KXGOLDCARDS` ("How many Gold Cards will Trump
+    #     issue before May?") and `KXCOPPERCABLE` (Section 232 restrictions);
+    #   - the `*15M` families are ~8,700 fifteen-minute scalping ladders
+    #     (KXGOLD15M 3,566, KXSILVER15M 3,503, KXCOPPER15M 1,638, plus
+    #     platinum/palladium) and would bury every other row on the page.
+    # `kxgoldd` also covers `KXGOLDDIRY` (the year-end market). The hourly `*H`
+    # series run ~23 markets per metal per day but each resolves inside its own
+    # hour, so only ~1-2 are open at once.
+    ("kxgoldd", "metals"),
+    ("kxgoldw", "metals"),
+    ("kxgoldmon", "metals"),
+    ("kxgoldh", "metals"),
+    ("kxgoldvssilver", "metals"),
+    ("kxsilverd", "metals"),
+    ("kxsilverw", "metals"),
+    ("kxsilvermon", "metals"),
+    ("kxsilverh", "metals"),
+    ("kxcopperd", "metals"),
+    ("kxcopperw", "metals"),
+    ("kxcoppermon", "metals"),
+    ("kxplatinumh", "metals"),
+    ("kxpalladiumh", "metals"),
     # Housing
     ("kxmortgage", "housing"),
     ("kxhousing", "housing"),
@@ -1213,6 +1238,7 @@ async def get_economics(db: AsyncSession):
     recession_markets = themed.get("recession", [])
     markets_markets = themed.get("markets", [])
     energy_markets = themed.get("energy", [])
+    metals_markets = themed.get("metals", [])
 
     # --- Inflation section ---
     cpi_releases = []
@@ -1410,6 +1436,48 @@ async def get_economics(db: AsyncSession):
             if _row:
                 oil_rows.append(_row)
 
+    # --- Metals section (#7809) ---
+    # Metals get their own theme rather than riding `energy`, for two reasons
+    # measured on the served payload before this was written:
+    #   - `energy.side_markets` is capped at 8 and already held 7 crude-oil
+    #     rows, so folding metals in would have surfaced at most ONE of them,
+    #     and which one is arbitrary (the query has no ORDER BY);
+    #   - the energy headline is "Gas, oil, and the price at the pump", which a
+    #     gold market falsifies.
+    # The card shape is the natural-gas bracket card: these are cumulative
+    # "Above $X" ladders, and `_market_row` refuses a multi-outcome market, so
+    # rows that never become brackets would otherwise vanish the same way.
+    metals_cards = []
+    metals_rows = []
+    for m in metals_markets:
+        outcomes = _outcomes_sorted(m)
+        brackets = None
+        if len(outcomes) >= 3:
+            has_cumulative = any("above" in (o.name or "").lower() for o in outcomes)
+            if has_cumulative:
+                brackets = _cumulative_to_discrete(outcomes, max_buckets=6)
+            else:
+                brackets = _brackets_from_outcomes(m)
+        if brackets:
+            _, modal_prob, modal_label = _modal_bracket(brackets)
+            short_label = m.name or ""
+            if len(short_label) > 40:
+                for trim in [" on ", " at ", " for ", " in "]:
+                    if trim in short_label.lower():
+                        short_label = short_label[:short_label.lower().index(trim)]
+                        break
+            metals_cards.append({
+                "label": short_label,
+                "val": modal_label,
+                "prob": modal_prob,
+                "brackets": brackets,
+                "src": _source(m),
+            })
+            continue
+        _row = _market_row(m)
+        if _row:
+            metals_rows.append(_row)
+
     # --- Housing section ---
     # The mortgage card is CHOSEN and it ships its own question, the same repair
     # #2674 made to the recession headline one section up (#6702). It used to be
@@ -1514,6 +1582,14 @@ async def get_economics(db: AsyncSession):
             "gas": gas_markets_list[:2],
             "oil": oil_rows[:4],
             "side_markets": [r for m in energy_markets if (r := _market_row(m))][:8],
+        },
+        # #7809. The count describes what the section RENDERS, not the theme
+        # list — the rule CERT-2899's grader drew out of #2870, and the reason
+        # the energy header can say 21 over 12 drawn rows.
+        "metals": {
+            "count": len(metals_cards[:4]) + len(metals_rows[:6]),
+            "cards": metals_cards[:4],
+            "markets": metals_rows[:6],
         },
         "housing": {
             "count": len(housing_markets),
