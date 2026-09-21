@@ -716,6 +716,31 @@ jobs:
             exit 1
           fi
 
+      - name: "#5024 a decided ladder's row is reachable by touch age (real Postgres)"
+        # #5024. The whole change is a SQL predicate: `RECENT_FINAL_SELECT_SQL`
+        # gains an OR arm that reaches a row no leg has touched inside
+        # `LIVE_STALE_TOUCH_MINUTES`. The sibling unit gate can only assert
+        # substrings of that SQL, and a substring cannot see an inverted
+        # `NOT EXISTS`, a dropped existence guard, or a `max(last_updated)`
+        # aggregate that one served leg hides — all three are mutations this
+        # file kills and the unit file does not.
+        #
+        # It is wired HERE, and not left to the shards, for the reason the
+        # #7501 step above states in one line: this job names each PG file
+        # explicitly, so a `*_pg.py` nobody adds here runs nowhere. The four
+        # backend shards do collect it (`ci_shard.py` rglobs `test_*.py`), but
+        # they never set SEARCH_TEST_DATABASE_URL, so all 10 tests SKIP there
+        # and the shard goes green having tested none of them. That is the
+        # exact shape this job's skip detection exists to end.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_stale_touch_reach_5024_pg.py \
+            -v -rs 2>&1 | tee /tmp/stale5024.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/stale5024.txt; then
+            echo "::error::#5024 stale-touch reach SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Provenance enum contract (real Postgres)
         # C-ADHOC-PROV-CORE. The receiver accepted `play` while the migration's
         # enum declared six values without it, and the route specimen STORED it

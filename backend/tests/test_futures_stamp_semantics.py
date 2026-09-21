@@ -411,6 +411,22 @@ READ_SIDE_CONSUMERS = {
         "price that the API keeps returning would age into this branch and be "
         "zeroed. PRE-EXISTING and unaudited until Q482 widened the scan."
     ),
+    "app/tasks/kalshi_resolution_sweep.py": (
+        "POLLER ALIVE — #5024's live arm. `NOT EXISTS (… fo.last_updated >= "
+        ":stale_touch_floor)` reaches a LIVE market no leg of which has been "
+        "touched inside `LIVE_STALE_TOUCH_MINUTES`, on the reading that the "
+        "venue stopped quoting it because the question is already decided — "
+        "the ladder then stops printing as live. The stamp's age was measured "
+        "against the venue's own `close_time` and tracks it to the poll "
+        "cadence (20/20, 19/20, 16/17, 13/14 min), which is why it reads the "
+        "settlement rather than merely correlating with it. Under option 1 "
+        "this is the worst inversion in the dict: a market whose prices are "
+        "simply STABLE during play would stop advancing its stamp, age past "
+        "the floor while the game is still being played, and be flipped to "
+        "settled — the arm would manufacture the exact defect #5024 exists to "
+        "remove, on live games, instead of removing it. It is also the one "
+        "consumer here whose write is READER-FACING within minutes."
+    ),
 }
 
 _GATE = re.compile(r"last_updated\s*(?:<|>=|<=|>)\s*")

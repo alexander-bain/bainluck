@@ -112,6 +112,65 @@ RECENT_FINAL_WINDOW_HOURS = 6
 #: not a claim about how long games last.
 LIVE_EVENT_WINDOW_HOURS = 12
 
+#: How long a LIVE event's leg may go untouched by the price poller before the
+#: row is treated as one the venue has stopped serving — #5024, second reach.
+#:
+#: WHAT THIS SCREEN ASSERTS, AND WHY IT IS CAUSAL RATHER THAN CIRCUMSTANTIAL.
+#: `FuturesOutcome.last_updated` is the unconditional TOUCH stamp — the model
+#: says so out loud ("poller alive", as against `price_changed_at`'s "price
+#: fresh") — so it advances on every price-writing poll whether or not the number
+#: moved. Kalshi drops a finalized market from the scan the live poller reads, so
+#: the stamp stops advancing the moment the venue stops trading it. A live game's
+#: still-traded market is touched every beat; a decided one is not touched again,
+#: ever. That is a fact about the VENUE's listing, not an inference from a price.
+#:
+#: 5 MINUTES AGAINST A MEASURED 2-MINUTE CADENCE. Production 2026-09-20 22:1xZ,
+#: all 328 live open KX rows: 262 touched inside 3 minutes, then a tail — 16 in
+#: [3,5), 20 in [5,10), 7 in [10,15), 12 in [15,30), 11 past 30. The healthy bulk
+#: and the tail are separated by that gap, and 5 minutes is two missed beats of
+#: slack so ordinary poll jitter cannot manufacture a candidate.
+#:
+#: THE TOUCH AGE IS THE TIME SINCE THE VENUE CLOSED THE MARKET, MEASURED. This
+#: is the evidence that the screen reads the settlement rather than correlating
+#: with it. 2026-09-20 22:34Z, the 16 oldest rows this screen takes that the
+#: empty book does not, each asked at the venue by ticker and its `close_time`
+#: read back::
+#:
+#:     ticker                          touch age   venue verdict   closed for
+#:     KXNFL1HTEAMTOTAL-26SEP20SEAARI    20 min    all-terminal      20 min
+#:     KXNFL1H-26SEP20SEAARI             19 min    all-terminal      20 min
+#:     KXNFL1HSPREAD-26SEP20WASDAL       16 min    all-terminal      17 min
+#:     KXNFL3QSPREAD-26SEP20JACDEN       13 min    all-terminal      14 min
+#:
+#: The two columns agree to the poll cadence on all ten all-terminal rows. The
+#: six that were still open are the shape you would predict — markets that stay
+#: open until the whistle and are simply quiet (4th-quarter BTTS, safety,
+#: defensive touchdown) — and each costs exactly one venue question and no
+#: write, because `derive_venue_settlement` still decides.
+#:
+#: MEASURED PRECISION — 54% AND 63% ON TWO INDEPENDENT SAMPLES, NOT THE
+#: SUSPENDED ARM'S 87%, AND THE NUMBERS ARE STATED BECAUSE THEY ARE LOWER.
+#: 24 selected rows at 22:19Z: 13 all-terminal. The 16 above at 22:34Z: 10. A
+#: CONTROL of 8 rows touched inside the minute returned 0 all-terminal, so the
+#: screen is doing real work rather than selecting a slate at random.
+#:
+#: WHY NOT REUSE THE SUSPENDED ARM'S FROZEN-BOOK PREDICATE, WHICH IS ALREADY
+#: WRITTEN. Measured on this population rather than inherited: on live events it
+#: selects 218 of 328 rows at 25% precision (24 asked at the venue, 6
+#: all-terminal). Its 87% was measured on SUSPENDED rows, where the game is over
+#: and every book is a relic; during play a wide book beside a moved probability
+#: is what a live market NORMALLY looks like. Widening on it would spend four
+#: reads in five on healthy markets. This screen takes 50 rows instead of 218 and
+#: is right about twice as often.
+#:
+#: THE RESIDUAL, NAMED. The aggregate is per MARKET — a row is stale only when
+#: NO leg has been touched — so one still-served leg keeps a part-settled market
+#: fresh and out of this band. That is deliberate (`derive_venue_settlement`
+#: refuses a part-settled event anyway, so selecting it would buy a read and no
+#: write) but it does mean an event whose venue keeps quoting a dormant leg is
+#: reached by the completed arm at the whistle, not by this one.
+LIVE_STALE_TOUCH_MINUTES = 5
+
 #: How far back the SUSPENDED arm's band reaches, in hours — #5596.
 #:
 #: 14 days, and the number is a leash rather than a claim. A `suspended` event
@@ -275,12 +334,32 @@ RECENT_FINAL_SELECT_SQL = """
               e.status = 'live'
               AND e.commence_time IS NOT NULL
               AND e.commence_time >= :live_floor
-              AND EXISTS (
-                    SELECT 1
-                      FROM futures_outcomes fo
-                     WHERE fo.market_id = fm.id
-                       AND fo.current_yes_bid = 0
-                       AND fo.current_yes_ask = 1
+              AND (
+                    EXISTS (
+                          SELECT 1
+                            FROM futures_outcomes fo
+                           WHERE fo.market_id = fm.id
+                             AND fo.current_yes_bid = 0
+                             AND fo.current_yes_ask = 1
+                    )
+                    -- #5024's second reach: the venue has stopped serving this
+                    -- market to the price poller. See LIVE_STALE_TOUCH_MINUTES.
+                    -- The EXISTS guard is not ceremony — without it a row with
+                    -- no legs at all satisfies the NOT EXISTS vacuously, and
+                    -- "we have never priced this" is not "the venue dropped it".
+                 OR (
+                      EXISTS (
+                            SELECT 1
+                              FROM futures_outcomes fo
+                             WHERE fo.market_id = fm.id
+                      )
+                      AND NOT EXISTS (
+                            SELECT 1
+                              FROM futures_outcomes fo
+                             WHERE fo.market_id = fm.id
+                               AND fo.last_updated >= :stale_touch_floor
+                      )
+                    )
               )
             )
          OR (
@@ -1352,6 +1431,7 @@ async def run_recent_finals(
     window_hours: int = RECENT_FINAL_WINDOW_HOURS,
     live_window_hours: int = LIVE_EVENT_WINDOW_HOURS,
     suspended_window_hours: int = SUSPENDED_EVENT_WINDOW_HOURS,
+    stale_touch_minutes: int = LIVE_STALE_TOUCH_MINUTES,
     frozen_gap: float = FROZEN_BOOK_GAP,
     session_maker: Optional[Callable] = None,
     client_factory: Optional[Callable[[], object]] = None,
@@ -1390,6 +1470,46 @@ async def run_recent_finals(
     book so a normally-trading market is never asked about, and ordered so a
     finished game still takes the batch first.
 
+    AND THE LIVE ARM'S SECOND REACH — #5024 again, because the empty book
+    ARRIVES LATE. Measured end to end on production during Raiders@Chargers,
+    2026-09-20, with every stamp read rather than inferred:
+
+    * 21:27:47Z — Kalshi closes Tre Tucker's leg, ``result='yes'``. The first
+      touchdown is a fact, and the play feed at the top of our own page says so.
+    * 22:07:46Z — the last of the 26 legs finalizes. From here
+      ``derive_venue_settlement`` would answer ``settled_past_dormant_legs`` the
+      moment it were asked.
+    * 22:15Z — our row still reads ``status='open'``. NOT ONE of its 26 legs
+      carries the empty book (Tucker: ``0.0200 / 0.3300`` beside a stored 0.99,
+      the last two-sided quote from before the close), so the screen above does
+      not select it. The page draws the 26-rung ladder #5024 was filed for,
+      summing to 189% — and three cards below it, ``1st Las Vegas Touchdown``
+      prints ``Tre Tucker — Won``. Same fact, same screen, two answers.
+    * 22:30:00Z — the empty book has by now been written, the existing screen
+      selects the row and it flips ``resolved``. 22 minutes after the venue
+      finished, 62 minutes after the question was decided.
+
+    🔴 SO THE FIRST READING OF THIS DEFECT WAS WRONG AND IS RECORDED AS WRONG:
+    "Kalshi omits ``yes_bid``/``yes_ask`` from a finalized market on both doors,
+    therefore no poll can ever write the 0/1" is FALSE. The doors do omit them —
+    that part is a real venue read — but our poller writes the empty book for an
+    absent quote anyway, just tens of minutes later. This arm is therefore not
+    unreachable, it is LATE, against #4655's own 30-minute bar. The correction
+    matters because the fix it argues for is the same but the claim it makes for
+    it is much smaller, and a docstring that overstates its case is how the next
+    reader gets misled.
+
+    The second screen is therefore not another reading of the price but a reading
+    of the POLLER: a market the venue has stopped serving stops being touched,
+    and the touch age tracks the venue's own ``close_time`` to the poll cadence
+    on every all-terminal row measured. At 22:34Z it took 31 rows the empty book
+    had not yet reached; the ten of the sixteen sampled that the venue called
+    all-terminal had been decided for 14 to 20 minutes and were still open. See
+    :data:`LIVE_STALE_TOUCH_MINUTES` for that table, the cadence measurement, the
+    two precision samples and their control, and why the suspended arm's
+    frozen-book predicate was measured on this population (25%) and refused
+    rather than reused.
+
     AND THE SUSPENDED ARM — #5596. Both arms above key on our own event reaching
     `completed` or `live`, and a `suspended` event reaches neither, ever. Over
     #5596's entire Kalshi population (51 markets / 114 legs, 114/114 `finalized`
@@ -1414,6 +1534,7 @@ async def run_recent_finals(
     final_floor = now - timedelta(hours=window_hours)
     live_floor = now - timedelta(hours=live_window_hours)
     suspended_floor = now - timedelta(hours=suspended_window_hours)
+    stale_touch_floor = now - timedelta(minutes=stale_touch_minutes)
     maker = session_maker or default_session_maker()
 
     async with maker() as session:
@@ -1424,6 +1545,7 @@ async def run_recent_finals(
                     "final_floor": final_floor,
                     "live_floor": live_floor,
                     "suspended_floor": suspended_floor,
+                    "stale_touch_floor": stale_touch_floor,
                     "frozen_gap": frozen_gap,
                     "limit": limit,
                 },
@@ -1451,6 +1573,8 @@ async def run_recent_finals(
     report["live_floor"] = live_floor.isoformat()
     report["suspended_window_hours"] = suspended_window_hours
     report["suspended_floor"] = suspended_floor.isoformat()
+    report["stale_touch_minutes"] = stale_touch_minutes
+    report["stale_touch_floor"] = stale_touch_floor.isoformat()
     report["frozen_gap"] = frozen_gap
     report["batch_limit"] = limit
     # A full batch means finals are arriving faster than one run drains them, so
