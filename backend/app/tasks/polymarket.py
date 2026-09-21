@@ -38,6 +38,7 @@ from app.utils.settled_price import (  # #5246 / #7767
 )
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.futures_liveness import preserve_venue_settled  # #2222
+from app.utils.event_taxonomy import NON_SPORT_CATEGORIES  # #7814 — see below
 from app.utils.event_completion import (  # #6073
     POLYMARKET_VENUE_COMMENCE_SOURCE,
 )
@@ -676,16 +677,14 @@ def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
     return "other", None
 
 
-# Categories that must never flip a market to `category="championship"`. Module-level
-# and named once: it used to be re-declared inside the poller loop's function body,
-# which is a copy waiting to disagree with the one above it.
-NON_SPORT_CATEGORIES = frozenset(
-    {
-        "other", "politics", "economics", "tech", "crypto",
-        "weather", "health", "geopolitics", "legal",
-        "culture", "entertainment",
-    }
-)
+# `NON_SPORT_CATEGORIES` — the set that must never flip a market to
+# `category="championship"` — used to be defined here. Named once: it had already
+# been de-duplicated out of the poller loop's function body, which was "a copy
+# waiting to disagree with the one above it". #7814 gave it a second reader
+# outside this module (the taxonomy reconcile arm asks the same question of the
+# same column), so the definition moved to `app.utils.event_taxonomy` beside the
+# tag vocabulary it is read against. Imported at the top of this file; a second
+# module-level copy would be the same defect one import further out.
 
 
 def resolve_event_category(

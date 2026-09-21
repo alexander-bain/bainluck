@@ -31,6 +31,26 @@ marquee fixture's tag mid-tournament.
 **The refusal is the difference between a repair and a regression**, so it is
 counted rather than silent: that shape means the classification is wrong, not
 the tag, and it belongs to the classifier (#3559).
+
+## #7814 — the refusal was also catching the opposite row
+
+A market whose column reads `tech` or `weather` is not a sport, so emitting no
+sport tag is the CORRECT answer and refusing the drop pins a wrong tag in place
+forever. Measured on production 2026-09-21: **23 of 23** OPEN rows standing in
+this arm's population were that shape and **none** were the `table_tennis`
+shape, so the refusal had become 100% of the arm's remaining work rather than a
+rare safety stop. `58015857` "Will Anthropic sign the Open Weights and American
+AI Leadership letter?" carried `sport:golf` — #2161's first-match-wins name scan
+scoring the word "Open" — and was listed under **MORE GOLF** on the 2027 Masters
+page at `/futures/61056094`.
+
+So the refusal is now two clauses and the column decides which one a row gets.
+The split keys on an ALLOWLIST of known non-sports, never on "absent from
+`ALLOWED_TAGS['sport']`", so a sport the classifier learns before the tag
+vocabulary does still fails safe —
+`test_an_unknown_category_fails_safe_toward_the_refusal` is that guard, and
+`table_tennis` moved from being this file's refusal specimen to being its own
+control.
 """
 
 from __future__ import annotations
@@ -109,8 +129,17 @@ def _run(session, **kw):
 
 # The production specimens, as data, so every arm argues about a real row.
 SENATE = dict(market_id=25924714, sport_category="politics", tags=["sport:hockey"])
-GEOPOLITICS = dict(market_id=115299, sport_category="geopolitics", tags=["sport:politics"])
 NFL = dict(market_id=52755820, sport_category="football", tags=["sport:baseball"])
+
+# #7814's specimens. The refusal's TRUE safety case is a real sport the tag
+# vocabulary does not carry — #4440's own filing names it: live US Open ATP
+# matches misclassified `table_tennis` whose stored `sport:tennis` is the correct
+# half. `geopolitics` used to stand here and no longer can; it is a known
+# non-sport, which is the other clause.
+TABLE_TENNIS = dict(market_id=25916882, sport_category="table_tennis", tags=["sport:tennis"])
+ANTHROPIC = dict(market_id=58015857, sport_category="tech", tags=["sport:golf"])
+HURRICANES = dict(market_id=25925283, sport_category="weather", tags=["sport:hockey"])
+GEOPOLITICS = dict(market_id=115299, sport_category="geopolitics", tags=["sport:politics"])
 
 
 class TestItRepairsWhatNeitherOtherArmCanReach:
@@ -147,26 +176,45 @@ class TestTheRefusalIsTheSafetyArgument:
     def test_a_recompute_that_would_drop_the_sport_tag_is_refused(self):
         """🔴 The write that would be a regression, not a repair.
 
-        `geopolitics` is not in `ALLOWED_TAGS["sport"]`, so the recompute emits
-        no sport tag at all. Writing it would delete the row's only sport tag.
+        `table_tennis` is not in `ALLOWED_TAGS["sport"]` and is not a category we
+        know to be a non-sport, so the recompute emits no sport tag at all and
+        writing it would strip a marquee fixture's correct tag mid-tournament.
         """
-        market = _Market(**GEOPOLITICS)
+        market = _Market(**TABLE_TENNIS)
         session = _Session([market])
 
         stats = _run(session)
 
         assert stats["refused_would_drop_sport"] == 1
         assert stats["changed"] == 0
-        assert market.market_tags == ["sport:politics"], (
+        assert market.market_tags == ["sport:tennis"], (
             "a correct sport tag was deleted because the CLASSIFICATION is the "
             "thing that is wrong"
         )
         assert session.commits == 0, "nothing changed, so nothing should commit"
 
+    def test_an_unknown_category_fails_safe_toward_the_refusal(self):
+        """#7814's direction-of-failure control.
+
+        The split keys on an ALLOWLIST of known non-sports, so a sport the
+        classifier learns before the tag vocabulary does must still be refused.
+        An implementation that keyed on "not in ALLOWED_TAGS['sport']" instead
+        would pass every other test in this class and strip these.
+        """
+        for unknown in ("pickleball", "padel", "table_tennis"):
+            market = _Market(market_id=1, sport_category=unknown, tags=["sport:tennis"])
+
+            stats = _run(_Session([market]))
+
+            assert stats["refused_would_drop_sport"] == 1, unknown
+            assert market.market_tags == ["sport:tennis"], (
+                f"{unknown} is not a known non-sport, so its tag must survive"
+            )
+
     def test_the_refusal_does_not_stop_the_slice(self):
         """THE CONTROL. A refusal that aborted the pass would strand the rest."""
         good = _Market(**SENATE)
-        session = _Session([_Market(**GEOPOLITICS), good])
+        session = _Session([_Market(**TABLE_TENNIS), good])
 
         stats = _run(session)
 
@@ -180,6 +228,106 @@ class TestTheRefusalIsTheSafetyArgument:
         stats = _run(_Session([market]))
 
         assert stats["refused_would_drop_sport"] == 0
+
+
+class TestANonSportColumnMeansTheTagIsTheWrongHalf:
+    """#7814. The refusal above also caught the OPPOSITE row and pinned it.
+
+    Measured on production 2026-09-21: 23 of 23 OPEN rows standing in this arm's
+    population had a non-sport column and a sport tag, and none had the
+    `table_tennis` shape. The refusal was the whole of the arm's remaining work.
+    """
+
+    def test_the_anthropic_market_stops_being_golf(self):
+        """🔴 The reader-visible defect: an AI-policy question under MORE GOLF.
+
+        `58015857` is classified correctly in every column (`llm_sport_category`
+        = tech) and wrongly in its tags — `sport:golf`, because #2161's
+        first-match-wins name scan scored the word "Open". The "More Golf" rail
+        on `/futures/61056094` (2027 Masters) reads the tag, so it listed it.
+        """
+        market = _Market(**ANTHROPIC)
+        session = _Session([market])
+
+        stats = _run(session)
+
+        assert stats["dropped_sport_non_sport_column"] == 1
+        assert stats["refused_would_drop_sport"] == 0
+        assert stats["changed"] == 1
+        assert not [t for t in market.market_tags if t.startswith("sport:")], (
+            "the Anthropic AI-policy market still carries a sport tag — it stays "
+            "in the MORE GOLF rail's candidate base"
+        )
+        assert session.commits == 1
+
+    def test_the_rest_of_the_row_survives_the_drop(self):
+        """Dropping the sport tag is not licence to empty the column."""
+        market = _Market(**ANTHROPIC, category="prop", source="kalshi")
+
+        _run(_Session([market]))
+
+        assert "category:prop" in market.market_tags
+        assert "source:kalshi" in market.market_tags
+
+    def test_every_non_sport_category_in_the_standing_population_moves(self):
+        """The 23 are six distinct columns, not one. A fix that only knew `tech`
+        would clear the specimen and leave nine hurricanes tagged `sport:hockey`.
+        """
+        rows = [
+            _Market(market_id=i, sport_category=cat, tags=["sport:hockey"])
+            for i, cat in enumerate(
+                ("tech", "weather", "economics", "crypto", "geopolitics", "legal"), 1
+            )
+        ]
+
+        stats = _run(_Session(rows))
+
+        assert stats["dropped_sport_non_sport_column"] == 6
+        assert stats["refused_would_drop_sport"] == 0
+        for market in rows:
+            assert not [t for t in market.market_tags if t.startswith("sport:")]
+
+    def test_the_hurricanes_leave_the_hockey_rail(self):
+        """Nine of the 23. `sport:hockey` off the Carolina Hurricanes."""
+        market = _Market(**HURRICANES)
+
+        _run(_Session([market]))
+
+        assert "sport:hockey" not in market.market_tags
+
+    def test_geopolitics_is_a_drop_now_and_not_a_refusal(self):
+        """It stood as this file's refusal specimen until #7814. Naming the
+        reversal so a reader of the diff is not left to infer it.
+        """
+        market = _Market(**GEOPOLITICS)
+
+        stats = _run(_Session([market]))
+
+        assert stats["dropped_sport_non_sport_column"] == 1
+        assert stats["refused_would_drop_sport"] == 0
+
+    def test_a_non_sport_column_that_keeps_a_tag_is_untouched_by_the_split(self):
+        """THE CONTROL. `politics` is a non-sport AND an allowed tag value, so the
+        recompute emits `sport:politics` and the new clause must never be reached
+        — otherwise the split would be silently dropping tags it never examined.
+        """
+        market = _Market(**SENATE)
+
+        stats = _run(_Session([market]))
+
+        assert stats["dropped_sport_non_sport_column"] == 0
+        assert stats["changed"] == 1
+        assert "sport:politics" in market.market_tags
+
+    def test_the_two_verdicts_never_share_a_counter(self):
+        """Opposite outcomes on the same shape, reported separately or an
+        operator cannot tell a repairing pass from a refusing one.
+        """
+        stats = _run(_Session([_Market(**ANTHROPIC), _Market(**TABLE_TENNIS)]))
+
+        assert stats["dropped_sport_non_sport_column"] == 1
+        assert stats["refused_would_drop_sport"] == 1
+        assert stats["checked"] == 2
 
 
 class TestTheReportCannotShareAZero:
@@ -228,6 +376,41 @@ class TestTheReportCannotShareAZero:
 
         assert stats["errors"] == 1
         assert stats["changed"] == 1, "a healthy sibling was lost to a poison row"
+
+
+class TestTheNonSportSetIsDefinedOnce:
+    """#7814 gave `NON_SPORT_CATEGORIES` a second reader. The polymarket copy's
+    own comment says it exists because it "used to be re-declared inside the
+    poller loop's function body, which is a copy waiting to disagree" — a second
+    module-level copy is that defect one import further out.
+    """
+
+    def test_polymarket_reads_the_same_object_not_a_copy(self):
+        from app.tasks import polymarket
+        from app.utils import event_taxonomy
+
+        assert polymarket.NON_SPORT_CATEGORIES is event_taxonomy.NON_SPORT_CATEGORIES, (
+            "polymarket re-declared the set instead of importing it; the two can "
+            "now drift and the taxonomy reconcile will disagree with the poller"
+        )
+
+    def test_the_categories_the_23_rows_use_are_all_in_it(self):
+        from app.utils.event_taxonomy import NON_SPORT_CATEGORIES
+
+        measured = {"tech", "weather", "economics", "crypto", "geopolitics", "legal"}
+        assert measured <= NON_SPORT_CATEGORIES
+
+    def test_a_real_sport_is_never_in_it(self):
+        """If a sport ever lands here, this arm starts stripping correct tags."""
+        from app.utils.event_taxonomy import ALLOWED_TAGS, NON_SPORT_CATEGORIES
+
+        # `politics` and `entertainment` are in both by design: futures support
+        # them as tag values, so the recompute keeps their tag and the split
+        # never decides those rows.
+        overlap = (ALLOWED_TAGS["sport"] & NON_SPORT_CATEGORIES) - {
+            "politics", "entertainment",
+        }
+        assert overlap == set(), f"{overlap} is both an allowed sport tag and a non-sport"
 
 
 class TestItIsWiredAndOnItsOwnBudget:

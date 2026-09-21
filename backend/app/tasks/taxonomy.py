@@ -15,7 +15,11 @@ from sqlalchemy.orm import selectinload
 from app.tasks.base import get_task_session
 from app.models.models import Event, FuturesMarket
 from app.utils.aggregation import compute_aggregate_probability
-from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
+from app.utils.event_taxonomy import (
+    NON_SPORT_CATEGORIES,
+    compute_event_tags,
+    compute_market_tags,
+)
 from app.utils.highlights import compute_highlight
 
 logger = logging.getLogger(__name__)
@@ -273,6 +277,21 @@ async def _reconcile_disagreeing_market_tags(
     counted: that shape means the classification is wrong, not the tag, and it
     belongs to the classifier (#3559) rather than here.
 
+    #7814 SPLIT THAT REFUSAL IN TWO, because it was also catching the opposite
+    row. A market whose column reads `tech`, `weather`, `economics`, `crypto`,
+    `geopolitics` or `legal` is not a sport at all, so emitting no sport tag is
+    the CORRECT answer and the drop is the repair — refusing it pins a wrong tag
+    in place permanently. Measured on production 2026-09-21: 23 of 23 OPEN rows
+    standing in this arm's population were that shape and none were the
+    `table_tennis` shape, so the refusal had become the whole of the arm's
+    remaining work. `58015857` "Will Anthropic sign the Open Weights and American
+    AI Leadership letter?" carried `sport:golf` (the #2161 name-keyword scan
+    scoring "Open") and was listed under **MORE GOLF** on the 2027 Masters page.
+
+    So the column decides: a value in ``NON_SPORT_CATEGORIES`` allows the drop; an
+    unrecognised value keeps the refusal, so a sport the tag vocabulary has not
+    caught up with still fails safe.
+
     Poison-isolated per row, and no cursor: the population is small and drains
     itself, so a slice that cannot make progress is visible as a standing
     `remaining` rather than hidden behind a cursor that has moved past it.
@@ -313,6 +332,10 @@ async def _reconcile_disagreeing_market_tags(
         "changed": 0,
         "unchanged": 0,
         "refused_would_drop_sport": 0,
+        # #7814. Its own counter, beside the refusal it was split out of: the two
+        # are opposite verdicts on the same shape and a reader must be able to see
+        # which one a pass reached.
+        "dropped_sport_non_sport_column": 0,
         "errors": 0,
         "remaining": int(remaining),
     }
@@ -345,13 +368,35 @@ async def _reconcile_disagreeing_market_tags(
             stats["unchanged"] += 1
             continue
         if _sport_tags(old_tags) and not _sport_tags(new_tags):
-            stats["refused_would_drop_sport"] += 1
+            # TWO CLAUSES, not one (#7814). "Refuse a recompute that would drop
+            # the sport tag" was written for a row whose CLASSIFICATION is wrong
+            # (`table_tennis` on a live US Open ATP match), where the stored tag
+            # is the correct half. It also caught the opposite row — a genuinely
+            # non-sport market whose tag is the wrong half — and refused to repair
+            # it, forever: measured 2026-09-21, 23 of 23 rows standing in this
+            # arm's population were that shape, so the refusal was 100% of the
+            # remaining work rather than a rare safety stop.
+            #
+            # The column decides which row this is. A category we positively know
+            # is not a sport means the row HAS no sport, so emitting no sport tag
+            # is the right answer and the drop is the repair. Anything else —
+            # including a sport the tag vocabulary has not caught up with — keeps
+            # the original refusal, because an unrecognised value is not evidence
+            # of a non-sport.
+            if (market.llm_sport_category or "").lower() not in NON_SPORT_CATEGORIES:
+                stats["refused_would_drop_sport"] += 1
+                logger.info(
+                    "taxonomy reconcile: refused to drop the sport tag on market %s "
+                    "(llm_sport_category=%r is not an allowed sport) — #4440/#3559",
+                    market.id, market.llm_sport_category,
+                )
+                continue
+            stats["dropped_sport_non_sport_column"] += 1
             logger.info(
-                "taxonomy reconcile: refused to drop the sport tag on market %s "
-                "(llm_sport_category=%r is not an allowed sport) — #4440/#3559",
+                "taxonomy reconcile: dropped the sport tag on market %s "
+                "(llm_sport_category=%r is not a sport) — #7814",
                 market.id, market.llm_sport_category,
             )
-            continue
         market.market_tags = new_tags
         stats["changed"] += 1
 
