@@ -401,13 +401,27 @@ struct ChampionshipStageBadges: View {
                let trend = stage.trend24h,
                ChampionshipRowLayout.showsTrendBadge(trend: trend) {
                 HStack(spacing: 1) {
+                    // #7780 — the ARROW follows the number and the COLOUR follows
+                    // the news, and for `relegation` those point opposite ways.
+                    // This whole badge read `trend > 0 ? .green : .red`, so a club
+                    // whose relegation risk ROSE was congratulated in green and one
+                    // whose risk FELL was printed in red. Web carried the identical
+                    // assumption and fixed it in #7745 / PR #7769; polarity is
+                    // declared per column key in `GridColumnPolarity`, off the
+                    // structured `stage.key` and never off `label`, which re-words.
+                    //
+                    // The arrow is deliberately NOT flipped: which way the number
+                    // moved is a fact about the number, and turning the arrow to
+                    // make it agree with the colour would misstate the data.
                     Image(systemName: trend > 0 ? "arrow.up" : "arrow.down")
                         .font(.system(size: 7, weight: .bold))
                     Text(String(format: "%.1f%%", abs(trend * 100)))
                         .font(.system(size: 9, weight: .medium))
                         .lineLimit(1)
                 }
-                .foregroundStyle(trend > 0 ? .green : .red)
+                .foregroundStyle(
+                    GridColumnPolarity.isGoodNews(trend: trend, columnKey: stage.key) ? .green : .red
+                )
             }
 
             if isClinched {
