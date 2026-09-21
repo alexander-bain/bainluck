@@ -187,7 +187,10 @@ while (Date.now() - started < MAX_MS) {
   lastState = s;
   log(`state: ${JSON.stringify(s)}`);
 
-  if ((s.status === 'completed' || s.completed_at) && !finalSeen) {
+  // No `&& !finalSeen` guard: this block ends in `break`, so the loop cannot come back round with
+  // it set, and CodeQL (js/trivial-conditional) correctly read the negation as always-true. The
+  // `break` IS the guard; `finalSeen` survives only to stamp the summary.
+  if (s.status === 'completed' || s.completed_at) {
     finalSeen = Date.now();
     log('FINAL detected — shooting held + fresh, then holding 10 min WITHOUT refreshing');
     await shoot(held, 'f1-held-at-final', 'HELD @ final (never reloaded)');
