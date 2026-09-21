@@ -34,15 +34,26 @@ registered and high-value markets the pollers cannot reach, so a price crossing
 there re-created the served defect within the hour on rows nothing else was
 going to repair.
 
-So the population is taken by AST from ``app/tasks/**`` rather than typed from
-memory, and a module that writes the price must either re-derive the field or be
-named in :data:`EXEMPT_WRITERS` with a reason. A seventh writer fails a test on
-the day it is written. The behaviour that guard protects — a crossing actually
-reordering the board — is executed in
+So the population is taken by AST from the application tree rather than typed
+from memory, and a module that writes the price must either re-derive the field
+or be named in :data:`EXEMPT_WRITERS` with a reason. A further writer fails a
+test on the day it is written. The behaviour that guard protects — a crossing
+actually reordering the board — is executed in
 ``test_futures_price_refresh_reranks_the_field_6598.py``.
+
+WIDENED FROM ``app/tasks/**`` TO ``app/**`` BY CERT-3189's NAMED FOLLOW-UP.
+That scope was never a finding that only tasks write the price; it was the blast
+radius of the bounce. Outside it sat `routes/admin_providers.py`, an operator
+pass that reprices every Odds API board and commits — the same defect reaching
+the reader by the operator's hand rather than the hourly poll's. Widening a
+detector demands narrowing it first, because its two failure modes are not
+symmetric: a false positive is loud and pressures someone into writing an
+untrue exemption, while a false negative is silent forever. Both were present
+and both are pinned by their own control below.
 """
 
 import os
+import re
 import sys
 
 import pytest
@@ -66,7 +77,10 @@ def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
 
 
 from app.models.models import Base, FuturesOutcome  # noqa: E402
-from app.utils.futures_rank import rerank_market_field_stmt  # noqa: E402
+from app.utils.futures_rank import (  # noqa: E402
+    rerank_market_field_stmt,
+    rerank_market_fields_stmt,
+)
 
 #: The board from #6598, with the stored ranks it actually served: three `1`s
 #: from three different writes, no `4`, and Christopher Bell (10.5%) numbered
@@ -326,48 +340,166 @@ def test_the_stale_row_a_poll_never_saw_keeps_its_age(session):
 #   polymarket_ws.py               1  per flush
 #   datagolf.py                    2  pre-tournament poll · live poll
 #   prediction_market_matching.py  2  the live poll's Kalshi and Polymarket arms
+#
+# Keyed by path relative to `app/`, not by bare filename. The population is the
+# whole application now (see `_price_writing_modules`), and two packages may
+# hold the same filename — under bare names the wrong file would satisfy an
+# entry and the real writer would leave the population silently.
 WIRED_WRITERS = {
-    "futures.py": 1,
-    "kalshi.py": 2,
-    "polymarket.py": 2,
-    "futures_price_refresh.py": 4,
-    "tournament_price_refresh.py": 1,
-    "kalshi_ws.py": 1,
-    "polymarket_ws.py": 1,
-    "datagolf.py": 2,
-    "prediction_market_matching.py": 2,
+    "tasks/futures.py": 1,
+    "tasks/kalshi.py": 2,
+    "tasks/polymarket.py": 2,
+    "tasks/futures_price_refresh.py": 4,
+    "tasks/tournament_price_refresh.py": 1,
+    "tasks/kalshi_ws.py": 1,
+    "tasks/polymarket_ws.py": 1,
+    "tasks/datagolf.py": 2,
+    "tasks/prediction_market_matching.py": 2,
+    # CERT-3189's named residual, wired by #6598's follow-up. The operator
+    # normalization pass rewrites the price across every Odds API board and
+    # commits; one deduped statement after the flush re-derives their fields.
+    "routes/admin_providers.py": 1,
 }
 
 #: Writers that move ``current_probability`` and deliberately do NOT re-derive
-#: the field. Both write 1.0/0.0 as a SETTLEMENT onto a board that is over, and
+#: the field. Named here rather than merely absent, because "nobody wired it"
+#: and "we decided not to" are the two states this file exists to keep apart.
+#:
+#: The first two write 1.0/0.0 as a SETTLEMENT onto a board that is over, and
 #: #6325 refused to renumber a settled board: a finished field's `rank` is the
 #: record of how it finished, and re-deriving it from the grade would collapse
-#: every loser onto one number. Named here rather than merely absent, because
-#: "nobody wired it" and "we decided not to" are the two states this file exists
-#: to keep apart.
+#: every loser onto one number.
+#:
+#: The third is a different kind of exemption and the difference matters: it is
+#: not a write at all. `playoffs.py` coerces a winner's price to 1.0 on ORM
+#: objects inside a GET whose session is `get_db`, which is read-only BY
+#: CONSTRUCTION — its docstring is "closes without committing… accidental
+#: writes are silently discarded". So the coercion is a display value that
+#: never reaches a row, and re-deriving a rank from it would write a rank the
+#: stored prices do not support. That exemption is CONDITIONAL, and the
+#: condition is asserted by
+#: `test_the_playoffs_exemption_still_rests_on_a_read_only_session` below —
+#: the day that module takes a writable session the exemption is wrong, and a
+#: reason nobody re-checks is how a stale exemption hides a real writer.
 EXEMPT_WRITERS = {
-    "backfill_winners.py": "settlement — writes the grade, not a quote (#6325)",
-    "repair_winner_field.py": "settlement repair — same board, same refusal",
+    "tasks/backfill_winners.py": "settlement — writes the grade, not a quote (#6325)",
+    "tasks/repair_winner_field.py": "settlement repair — same board, same refusal",
+    "routes/playoffs.py": "display-only coercion in a read-only GET — never persisted",
 }
 
 
-def _price_writing_task_modules():
-    """Modules under `app/tasks` that WRITE ``futures_outcomes.current_probability``.
+#: Call shapes that persist a price, measured rather than assumed: across the
+#: whole of `app/`, the only callees taking a ``current_probability=`` keyword
+#: are `.values(...)` (7 modules, Core insert/update) and the `FuturesOutcome`
+#: constructor. The one other caller is `_MidPricedOutcome(...)` in
+#: `utils/live_blend.py` — a local dataclass that models an outcome for the
+#: blend and touches no row. Without this the widened population would carry
+#: that dataclass, and the only way back out would be an exemption saying "not
+#: really a writer", which is how an exemption list stops meaning anything.
+_PERSISTING_CALLEES = {".values", "FuturesOutcome"}
+
+_SET_CLAUSE_RE = re.compile(
+    r"\bSET\b(.*?)(?:\bWHERE\b|\bRETURNING\b|\bFROM\b|$)", re.S | re.I
+)
+_SQL_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
+
+
+def sql_set_assignment_targets(body: str) -> list[str]:
+    """The column names a SET clause ASSIGNS, ignoring anything on the right.
+
+    Module-level and separately tested ON PURPOSE. Its first home was a closure
+    inside the scanner, and the control that was supposed to prove it worked
+    asserted that `tasks/kalshi.py` was in the population — which that module
+    satisfies through its seven ``.values()`` calls no matter what this parser
+    does. Deleting the comment-stripping left the suite green. A helper reached
+    only through a caller that has other ways to succeed is a helper with no
+    test, so it is tested on the clause text itself.
+
+    Comments are stripped BEFORE the split because a ``--`` comment's prose
+    contains commas (see `tasks/kalshi.py`), and a comma inside what is
+    logically one assignment shreds the clause.
+    """
+    body = _SQL_COMMENT_RE.sub(" ", body)
+    parts, depth, cur = [], 0, ""
+    for ch in body:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+
+    targets = []
+    for part in parts:
+        depth = 0
+        for i, ch in enumerate(part):
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth -= 1
+            elif (
+                ch == "="
+                and depth == 0
+                and (i + 1 >= len(part) or part[i + 1] not in "=<>")
+                and (i == 0 or part[i - 1] not in "!<>=")
+            ):
+                targets.append(part[:i].strip().strip('"').split(".")[-1])
+                break
+    return targets
+
+
+def _price_writing_modules():
+    """Modules under `app/` that WRITE ``futures_outcomes.current_probability``.
 
     By AST, not by grep, so the essay-length comments and docstrings this
     codebase runs on — several of which quote the column inside SQL — cannot
     enter the population and cannot be used to leave it either. Three shapes are
-    a write and nothing else is: a ``.values()``/constructor keyword, an ORM
-    attribute assignment on something that is not ``self``, and the column
-    appearing in the SET clause of a raw-SQL string.
+    a write and nothing else is: a persisting call keyword, an ORM attribute
+    assignment on something that is not ``self``, and the column being an
+    ASSIGNMENT TARGET in the SET clause of a raw-SQL string.
+
+    WIDENED FROM `app/tasks` BY CERT-3189's FOLLOW-UP, AND NARROWED FIRST
+    =====================================================================
+
+    The tasks-only scope was not a judgement that only tasks write the price —
+    it was the blast radius of the bounce that created this file. It missed
+    `routes/admin_providers.py`, an operator pass that reprices every Odds API
+    board and commits.
+
+    Widening a detector before narrowing it is the trap, because the two
+    failures are not symmetric. A false POSITIVE is loud: it fails this suite
+    until someone wires or exempts an innocent module, and the pressure is to
+    write the exemption. A false NEGATIVE is silent forever. Both were present
+    and both are fixed here, each with its own control test below:
+
+    * false positive — `routes/admin_data_quality.py` runs
+      ``SET is_winner = (fo.current_probability = mu.max_prob)``. The column is
+      on the RIGHT of that assignment, as a comparison; the column being
+      ASSIGNED is `is_winner`. A substring search for ``current_probability =``
+      inside the SET body cannot tell the two apart, so the body is split into
+      its top-level assignments and only the text left of each ``=`` counts.
+    * false negative — `tasks/kalshi.py` really does assign the column in a SET
+      clause, but a ``--`` comment sits between the commas and its PROSE
+      CONTAINS COMMAS. Splitting on commas without stripping SQL comments first
+      shreds that clause and loses a genuine writer. Comments go before the
+      split, not after.
     """
     import ast
     import pathlib
-    import re
 
     column = "current_probability"
-    set_clause = re.compile(r"\bSET\b(.*?)(?:\bWHERE\b|\bRETURNING\b|$)", re.S | re.I)
-    assigned = re.compile(r"\b" + column + r"\s*=")
+
+    def _callee(node):
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id
+        if isinstance(func, ast.Attribute):
+            return f".{func.attr}"
+        return "?"
 
     def _docstrings(tree):
         out = set()
@@ -385,14 +517,20 @@ def _price_writing_task_modules():
                     out.add(id(body[0].value))
         return out
 
-    root = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks"
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
     writers = set()
-    for path in sorted(root.glob("*.py")):
-        tree = ast.parse(path.read_text())
+    # `rglob`, so a writer added inside a sub-package is seen the day it lands.
+    for path in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:  # pragma: no cover - not our file to fix
+            continue
+        key = path.relative_to(root).as_posix()
         docs = _docstrings(tree)
         for node in ast.walk(tree):
-            if isinstance(node, ast.keyword) and node.arg == column:
-                writers.add(path.name)
+            if isinstance(node, ast.Call) and _callee(node) in _PERSISTING_CALLEES:
+                if any(kw.arg == column for kw in node.keywords):
+                    writers.add(key)
             elif isinstance(node, ast.Assign):
                 for target in node.targets:
                     if (
@@ -403,7 +541,7 @@ def _price_writing_task_modules():
                             and target.value.id == "self"
                         )
                     ):
-                        writers.add(path.name)
+                        writers.add(key)
             elif (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
@@ -411,33 +549,148 @@ def _price_writing_task_modules():
                 and "UPDATE" in node.value.upper()
             ):
                 if any(
-                    assigned.search(m.group(1))
-                    for m in set_clause.finditer(node.value)
+                    column in sql_set_assignment_targets(m.group(1))
+                    for m in _SET_CLAUSE_RE.finditer(node.value)
                 ):
-                    writers.add(path.name)
+                    writers.add(key)
     return writers
 
 
 def test_the_detector_finds_the_writers_this_ship_was_bounced_for():
     """The guard's own control, and it is not ceremony.
 
-    Everything below rests on `_price_writing_task_modules` seeing a write. A
+    Everything below rests on `_price_writing_modules` seeing a write. A
     detector that quietly stopped matching would turn the whole population empty
     and every assertion after it vacuous — which is the exact shape of the
     failure this file is being rewritten to fix, one level down. So: the module
     CERT-3182 named, two it did not, and one non-writer that must stay out.
     """
-    writers = _price_writing_task_modules()
+    writers = _price_writing_modules()
 
-    assert "futures_price_refresh.py" in writers, (
+    assert "tasks/futures_price_refresh.py" in writers, (
         "the detector cannot see the hourly writer CERT-3182 named — every "
         "assertion below is vacuous"
     )
-    assert {"kalshi_ws.py", "polymarket_ws.py"} <= writers
+    assert {"tasks/kalshi_ws.py", "tasks/polymarket_ws.py"} <= writers
     # A reader, not a writer: `precompute_interestingness` selects the column
     # and never assigns it. If this ever enters the population the detector has
     # started matching reads, and the exemption list will grow to hide it.
-    assert "precompute_interestingness.py" not in writers
+    assert "tasks/precompute_interestingness.py" not in writers
+
+
+def test_the_detector_reaches_outside_app_tasks():
+    """CERT-3189's residual was invisible because the population had a folder.
+
+    `routes/admin_providers.py` reprices every Odds API board and commits, and
+    sat outside the scan for the whole of #6598. Pin the reach itself: a scope
+    that silently narrowed back to `app/tasks` would take this writer with it.
+    """
+    writers = _price_writing_modules()
+
+    assert "routes/admin_providers.py" in writers, (
+        "the operator normalization pass is not in the population — the scan "
+        "has narrowed back towards app/tasks and CERT-3189's residual is "
+        "invisible again"
+    )
+    assert any(not key.startswith("tasks/") for key in writers)
+
+
+def test_a_comparison_in_a_set_clause_is_not_a_write():
+    """The false POSITIVE, pinned on the statement that produced it.
+
+    `admin_data_quality.py` grades a multi-outcome board with
+    ``SET is_winner = (fo.current_probability = mu.max_prob)``. The column is
+    read there, on the right of an assignment to a different column. A detector
+    that counts it demands that a settlement grader "re-derive the field", and
+    the only way to satisfy that demand is an exemption that is not true.
+    """
+    writers = _price_writing_modules()
+
+    assert "routes/admin_data_quality.py" not in writers, (
+        "a SET clause that COMPARES current_probability is being read as a "
+        "write — the detector is matching the right-hand side"
+    )
+
+
+def test_a_dataclass_that_models_an_outcome_is_not_a_write():
+    """The other false positive the widening would have introduced.
+
+    `utils/live_blend.py` builds `_MidPricedOutcome(current_probability=...)`,
+    a local dataclass standing in for an outcome while blending. It touches no
+    row. It is kept out by the shape of the CALLEE rather than by name, so a
+    second such dataclass does not need a second exemption.
+    """
+    writers = _price_writing_modules()
+
+    assert "utils/live_blend.py" not in writers
+
+
+#: `tasks/kalshi.py`'s settlement clause, reduced to the shape that matters: a
+#: `--` comment between two assignments WHOSE PROSE CONTAINS COMMAS.
+_COMMENTED_SET_CLAUSE = """
+    is_winner = :w, resolution_source = 'api_settlement',
+        -- #5246 / CERT-2637. The grade is a BIND PARAM here, so the price
+        -- has to follow the same param rather than a literal: two
+        -- statements keyed off one `:w` cannot disagree, a literal could.
+        current_probability = CASE WHEN :w THEN 1.0 ELSE 0.0 END
+"""
+
+#: `routes/admin_data_quality.py`'s pass-7 grading clause. `current_probability`
+#: appears on the RIGHT, inside a comparison, and `is_winner` is what is written.
+_COMPARING_SET_CLAUSE = """
+    is_winner = (fo.current_probability = mu.max_prob),
+    resolution_source = 'multi_max_prob'
+"""
+
+
+def test_the_set_clause_parser_reads_targets_and_not_the_right_hand_side():
+    """Both SQL failure modes, tested on the parser itself rather than through it.
+
+    THIS TEST EXISTS BECAUSE ITS FIRST VERSION WAS VACUOUS. It asserted that
+    `tasks/kalshi.py` was in the writer population, which looks like a test of
+    the comment-stripping and is not: that module also writes through seven
+    ``.values()`` calls, so it stays in the population no matter how badly this
+    parser fails. Deleting the comment-stripping altogether left the suite
+    green. A mutation that survives is the assertion telling you it cannot
+    fail, so the parser is now called directly on both clauses.
+    """
+    commented = sql_set_assignment_targets(_COMMENTED_SET_CLAUSE)
+    assert "current_probability" in commented, (
+        "a real assignment was lost behind a `--` comment whose prose contains "
+        "commas — comments must be stripped BEFORE the clause is split"
+    )
+    assert commented == ["is_winner", "resolution_source", "current_probability"]
+
+    compared = sql_set_assignment_targets(_COMPARING_SET_CLAUSE)
+    assert compared == ["is_winner", "resolution_source"]
+    assert "current_probability" not in compared, (
+        "a COMPARISON on the right-hand side is being read as a write target"
+    )
+
+
+def test_the_playoffs_exemption_still_rests_on_a_read_only_session():
+    """An exemption nobody re-checks is how a stale reason hides a live writer.
+
+    `playoffs.py` is exempt for one reason only: its coercion of a winner's
+    price to 1.0 happens on ORM objects in a GET served by `get_db`, which
+    never commits, so no row moves. That reason is a property of the MODULE,
+    not of the line — the day a handler there takes `get_db_rw` or commits, the
+    coercion starts persisting a price with no rank behind it and the exemption
+    becomes a lie. So assert the condition, not the conclusion.
+    """
+    import pathlib
+
+    source = (
+        pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "playoffs.py"
+    ).read_text()
+
+    assert "routes/playoffs.py" in EXEMPT_WRITERS
+    assert "get_db_rw" not in source and ".commit()" not in source, (
+        "playoffs.py has taken a writable session or started committing, so "
+        "its price coercion may now persist. Its EXEMPT_WRITERS reason "
+        "('never persisted') no longer holds — wire the rerank or re-derive "
+        "the reason."
+    )
 
 
 def test_every_writer_of_the_price_re_derives_the_rank_or_is_exempt_by_name():
@@ -449,7 +702,7 @@ def test_every_writer_of_the_price_re_derives_the_rank_or_is_exempt_by_name():
     population is therefore every price writer, and silence is not a permitted
     answer for any of them.
     """
-    writers = _price_writing_task_modules()
+    writers = _price_writing_modules()
     unaccounted = writers - set(WIRED_WRITERS) - set(EXEMPT_WRITERS)
 
     assert unaccounted == set(), (
@@ -466,7 +719,7 @@ def test_each_wired_writer_still_re_derives_at_every_boundary_it_claims():
     """A call site lost is the defect back, silently, on that path only."""
     import pathlib
 
-    root = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks"
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
     for module, boundaries in sorted(WIRED_WRITERS.items()):
         src = (root / module).read_text()
         assert "from app.utils.futures_rank import" in src, (
@@ -488,9 +741,108 @@ def test_an_exempt_writer_is_still_a_writer():
     A name left here after the module stopped writing the price is a reason
     nobody can check, and it is how an exemption outlives the argument for it.
     """
-    writers = _price_writing_task_modules()
+    writers = _price_writing_modules()
     stale = set(EXEMPT_WRITERS) - writers
     assert stale == set(), (
         f"{sorted(stale)} are exempted from re-deriving `rank` but no longer "
         "write the price. Drop the exemption rather than carrying it."
+    )
+
+
+# ── CERT-3189's residual: the operator path, executed ────────────────────────
+
+
+def _operator_repriced_board(session, *, flush_before_rerank, autoflush=True):
+    """The normalization pass's shape: ORM price writes, then the Core re-rank.
+
+    Faithful about the part under test and honest about the rest. The prices are
+    written the way `normalize_futures_probabilities` writes them — attribute
+    assignment on loaded `FuturesOutcome` rows, which is what makes this path
+    different from every other wired writer (they all write through Core). The
+    snapshot averaging that DERIVES those numbers is not reproduced: the claim
+    here is "the ordering follows whatever the pass wrote", so the written
+    prices are what the stand-in must be faithful about.
+    """
+    session.autoflush = autoflush
+    # Seeded ranks agree with the seeded prices — the board starts CORRECT, so
+    # the only thing that can produce the expected numbers is a re-derivation
+    # after the crossing. (Seeded the other way round, the stale ranks happen to
+    # equal the right answer and every assertion below passes on a no-op. That
+    # was the first version of this fixture and a mutation caught it.)
+    _seed(session, 7, [("Drifted long", 0.10, 2), ("Shortened", 0.80, 1)])
+
+    # The crossing: the pass recomputes both legs and they swap places.
+    for outcome in (
+        session.execute(select(FuturesOutcome).where(FuturesOutcome.market_id == 7))
+        .scalars()
+        .all()
+    ):
+        outcome.current_probability = 0.85 if outcome.name == "Drifted long" else 0.05
+
+    if flush_before_rerank:
+        session.flush()
+    session.execute(rerank_market_fields_stmt([7]))
+    session.commit()
+    return dict(_field(session, 7))
+
+
+def test_the_operator_pass_leaves_the_board_ordered_by_the_prices_it_wrote(session):
+    """CERT-3189's residual as behaviour, not as a call-site count.
+
+    `test_each_wired_writer_still_re_derives_at_every_boundary_it_claims` reads
+    the source and counts. That catches a deleted call and cannot catch a call
+    that runs at the wrong moment, which is the only interesting way this
+    particular path breaks.
+    """
+    assert _operator_repriced_board(session, flush_before_rerank=True) == {
+        "Drifted long": 1,
+        "Shortened": 2,
+    }
+
+
+def test_without_the_rerank_the_operator_pass_serves_the_old_ordering(session):
+    """The strawman. Without it the two tests above would pass on a no-op.
+
+    This is the defect as the reader meets it: the operator normalizes the book,
+    every price is correct, and the board still lists the 5% leg first because
+    `rank` was left holding the ordering of whatever wrote it last.
+    """
+    _seed(session, 8, [("Drifted long", 0.10, 2), ("Shortened", 0.80, 1)])
+    for outcome in (
+        session.execute(select(FuturesOutcome).where(FuturesOutcome.market_id == 8))
+        .scalars()
+        .all()
+    ):
+        outcome.current_probability = 0.85 if outcome.name == "Drifted long" else 0.05
+    session.commit()  # commit WITHOUT re-deriving, as the pass did before #6598
+
+    ranks = dict(_field(session, 8))
+    prices = {
+        o.name: float(o.current_probability)
+        for o in session.execute(
+            select(FuturesOutcome).where(FuturesOutcome.market_id == 8)
+        )
+        .scalars()
+        .all()
+    }
+    # The 85% leg is numbered BELOW the 5% leg: stale `rank`, correct prices.
+    assert ranks["Drifted long"] == 2 and prices["Drifted long"] == 0.85
+    assert ranks["Shortened"] == 1 and prices["Shortened"] == 0.05
+
+
+def test_the_rerank_reads_the_written_prices_and_not_the_ones_it_replaced(session):
+    """Why the flush is written out even though autoflush would do it.
+
+    With `autoflush=False` the Core statement re-derives from the prices still
+    on disk, and the board comes out EXACTLY INVERTED — a fresh-looking ordering
+    that is precisely wrong. This pins the ordering of the two operations rather
+    than the session flag that currently hides the question.
+    """
+    unflushed = _operator_repriced_board(
+        session, flush_before_rerank=False, autoflush=False
+    )
+    assert unflushed == {"Drifted long": 2, "Shortened": 1}, (
+        "expected the unflushed path to rank the OLD prices — if this now "
+        "matches the written prices, the statement is no longer reading them "
+        "back and this control has stopped meaning anything"
     )

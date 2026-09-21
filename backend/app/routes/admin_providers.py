@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, get_db_rw
 from app.utils import probability_to_american
+from app.utils.futures_rank import rerank_market_fields_stmt
 from app.utils.espn_candidate_selection import select_authorized_espn_candidate
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
 
@@ -564,6 +565,12 @@ async def normalize_futures_probabilities(
     )
     markets = result.scalars().all()
 
+    # #6598 / CERT-3189's named residual. `rank` is DERIVED from
+    # `current_probability`, so every market this pass reprices owes a
+    # re-derivation of its field — see the flush below for why it is collected
+    # rather than done inline.
+    repriced_market_ids: list[int] = []
+
     for market in markets:
         outcome_ids = [o.id for o in market.outcomes]
         if not outcome_ids:
@@ -643,6 +650,16 @@ async def normalize_futures_probabilities(
                 )
                 new_american = probability_to_american(avg_current) if avg_current > 0 else None
                 if not dry_run:
+                    # `Numeric(7, 6)` comes back as Decimal, and comparing that
+                    # to a float reports a change on almost every row
+                    # (`Decimal("0.85") != 0.85`). Compared as floats at the
+                    # column's own precision, so "nothing moved" stays a real
+                    # answer rather than one the types make impossible.
+                    before = outcome.current_probability
+                    if before is None or round(float(before), 6) != round(
+                        avg_current, 6
+                    ):
+                        repriced_market_ids.append(market.id)
                     outcome.current_probability = avg_current
                     outcome.current_american_odds = new_american
 
@@ -666,6 +683,40 @@ async def normalize_futures_probabilities(
             stats["outcomes_updated"] += 1
 
     if not dry_run:
+        # #6598 / CERT-3189. This pass rewrites `current_probability` across
+        # every Odds API futures board, and `rank` is derived from that column —
+        # so without this the boards keep the ordering of whatever wrote them
+        # last, which is CERT-3182's finding arriving by the operator's hand
+        # instead of the hourly poll's. `/economics` sorts on `rank` with no
+        # number on screen to contradict it, and the team-page season-futures
+        # badge prints it as "#N of M".
+        #
+        # FLUSH FIRST — EXPLICITLY, THOUGH TODAY IT IS BELT AND BRACES
+        # (gotcha #5). The prices above are ORM attribute assignments sitting in
+        # the identity map; `rerank_market_fields_stmt` is a Core UPDATE that
+        # re-derives the rank by SELECTing those prices back. Rank the map
+        # before it is flushed and the statement reads the OLD prices and writes
+        # a confidently wrong ordering — worse than the stale one it replaces,
+        # because it looks freshly computed.
+        #
+        # Measured, not assumed: `async_session_maker` does not set `autoflush`,
+        # so it is SQLAlchemy's default `True` and `db.execute()` would flush
+        # these writes on its own. The ordering is therefore already correct
+        # without this line today. It is written anyway because the correctness
+        # of a price-then-rank pair should not rest on a session flag set three
+        # modules away — with `autoflush=False` the ranks come out exactly
+        # inverted, which is the one failure mode a reader cannot spot, and
+        # nothing near this code would say why.
+        #
+        # Deduped and done in ONE statement: the pass walks every Odds API
+        # market, so a per-market round trip here is a per-market round trip
+        # over the whole book. An empty list compiles to a false predicate and
+        # is a no-op, so the "nothing moved" run pays nothing.
+        if repriced_market_ids:
+            await db.flush()
+            await db.execute(
+                rerank_market_fields_stmt(sorted(set(repriced_market_ids)))
+            )
         await db.commit()
 
     return {
