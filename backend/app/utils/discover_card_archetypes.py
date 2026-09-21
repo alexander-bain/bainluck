@@ -235,14 +235,23 @@ def _outcome_threshold_value(label: str) -> tuple[float, str, str] | None:
 # rungs carries no rise word, and the 277 band ladders #4226 measured carry no
 # direction word at all. Negating on a per-label token instead — the obvious
 # implementation — would have moved every one of them.
+# The vocabulary is POLICY VERBS, and deliberately excludes the ordinary-English
+# direction words — "up", "down", "rise", "fall", "drop". Measured over every
+# open market (70 sign), those five are load-bearing for NOTHING: removing all of
+# them loses exactly two markets and both are false positives —
+# "Top U.S. Selling Vinyl Album: 2026" and its CD twin, which sign on the single
+# track title "The Rise and Fall of a Midwest Princess" (one label supplying both
+# halves of the gate) alongside "The Fall Off" and "Hurry Up Tomorrow". The
+# load-bearing tokens are `hike`/`cut` (43 markets each) and
+# `increase`/`decrease` (25 each); the rest are unused today and kept because
+# they are unambiguous policy verbs a venue may yet use.
 _LADDER_FALL_RE = re.compile(
-    r"\b(?:cut|cuts|fall|falls|lower|lowers|decrease|decreases|"
-    r"decline|declines|drop|drops|down|ease|eases)\b",
+    r"\b(?:cut|cuts|lower|lowers|decrease|decreases|"
+    r"decline|declines|ease|eases)\b",
     re.I,
 )
 _LADDER_RISE_RE = re.compile(
-    r"\b(?:hike|hikes|rise|rises|raise|raises|increase|increases|"
-    r"climb|climbs|up)\b",
+    r"\b(?:hike|hikes|raise|raises|increase|increases|climb|climbs)\b",
     re.I,
 )
 # The interior rung of a signed ladder. On an UNSIGNED ladder "no change" is not

@@ -32,6 +32,7 @@ collided because a sign was lost and the colliding labels are opposites.
 from app.utils.discover_card_archetypes import (
     _LADDER_FALL_RE,
     _LADDER_RISE_RE,
+    _ladder_axis_is_signed,
     _outcome_threshold_value,
     _threshold_points,
 )
@@ -221,6 +222,26 @@ def test_the_venues_own_word_for_hold_is_the_zero_rung():
     assert len(points) == 5
     assert _by_label(points)["Fed maintains rate"] == 0.0
     assert max(points, key=lambda p: p["probability"])["label"] == "Fed maintains rate"
+
+
+def test_an_album_title_is_not_a_monetary_policy_decision():
+    # The signing vocabulary is POLICY VERBS and excludes the ordinary-English
+    # direction words. "Top U.S. Selling Vinyl Album: 2026" is live, and it
+    # signed on ONE track title carrying both halves of the gate — "The Rise and
+    # Fall of a Midwest Princess" — beside "The Fall Off" and "Hurry Up
+    # Tomorrow". Measured over every open market, dropping up/down/rise/fall/drop
+    # loses exactly two markets and both are this false positive; the
+    # load-bearing tokens are hike/cut (43 markets each) and increase/decrease
+    # (25 each).
+    labels = [
+        "The Rise and Fall of a Midwest Princess",
+        "The Fall Off",
+        "Hurry Up Tomorrow",
+        "1989 (Taylor's Version)",
+        "Folklore",
+    ]
+    assert not _ladder_axis_is_signed(labels)
+    assert _ladder("Top U.S. Selling Vinyl Album: 2026", [(x, 0.2) for x in labels]) == []
 
 
 def test_a_zero_rung_is_never_a_ladder_by_itself():
