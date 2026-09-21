@@ -1,3 +1,15 @@
 
 RESIDUAL A total (non-exclusive boards the gate lets keep the podium): 0
 RESIDUAL B total (gate's 3-leg basis <=100 while the 4 DRAWN rows exceed it): 0
+
+RESIDUAL C (found by CI, 2026-09-21 19:04Z, the #4610 fixture pin):
+  A refused cumulative ladder is a genuinely non-exclusive board, and it keeps its
+  podium whenever the venue's flag is absent or True — the two-signal rule's flag
+  arm is the deciding one. `refusedLadderField4610.json` is exactly that case: a
+  three-rung board printing 70 / 55 / 20 (sum 145) whose market fixture carries no
+  `mutually_exclusive` attribute at all, so the route resolves True and the card
+  regenerates with `field_is_a_race: true`.
+  Reach measured on the served edition: 0 of 71 futures carry
+  `ladder_treatment_refused`, so 0 refused-ladder boards are drawn today.
+  Left open deliberately — widening to the flag alone is what half one measured
+  over-fires (12 of 20 non-exclusive cards print true copy).
