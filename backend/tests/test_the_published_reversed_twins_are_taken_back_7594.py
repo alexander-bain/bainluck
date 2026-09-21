@@ -370,6 +370,12 @@ class _Recorder:  # pragma: no cover - test rail
         return [s for s in self.sql if s.strip().upper().startswith("UPDATE EVENTS")]
 
 
+#: The canonical row the recording rig's stubbed screen names. Only its id and
+#: status reach the SQL, so it does not need a seeded row on that rail — the
+#: recorder never executes the statement it records.
+_CANONICAL_ID = 15312312
+
+
 def _event(event_id=15309597):
     from types import SimpleNamespace
 
@@ -396,7 +402,15 @@ async def _run_with(repair, monkeypatch, args, events=None):
     async def _always_a_twin(_s, _e):
         return True
 
+    async def _always_a_twin_row(_s, _e):
+        # #7594/CERT-3199: the screen now hands back the rows it accepted, so
+        # the take-back can bind its write to them. The canonical this stub
+        # names is the one `_CANONICAL` seeds on the sqlite rail, so the two
+        # rigs describe the same world.
+        return [(_CANONICAL_ID, "scheduled")]
+
     monkeypatch.setattr(repair, "_row_has_surviving_counterpart", _always_a_twin)
+    monkeypatch.setattr(repair, "_surviving_counterpart_rows", _always_a_twin_row)
     monkeypatch.setattr(
         repair, "candidates", lambda _s: _wrap([e.id for e in events])
     )
@@ -895,6 +909,56 @@ class TestALostRaceIsOwnedOrReportedByTheExitCode:
         assert _status(session, revived.id) == "live"
         assert _bank_rows(session, repair) == []
         assert _cards_a_reader_can_reach(session) == [(revived.id, "live")]
+        assert "its canonical disappeared" in capsys.readouterr().out
+
+    async def test_canonical_retirement_between_screen_and_first_cas_preserves_one_visible_card(  # noqa: E501
+        self, repair, monkeypatch, capsys
+    ):
+        """CERT-3199's required repair, `7594-FIRST-TAKEBACK-CANNOT-RETIRE-THE-LAST-CARD`.
+
+        The test above is the same hazard on the RETRY path, and it is saved by
+        the subject also moving: the compare-and-swap on this row's own status
+        misses, and only then is the screen re-asked. Here nothing touches the
+        subject. The canonical alone retires, in the instant between the screen
+        and the first write — so a swap conditioned on this row's status ALONE
+        matches, both rows commit retired, and the pass exits 0 over a fixture
+        with zero reader-visible cards. That is the #7260 defect produced by its
+        own repair, and re-asking a screen one statement earlier can never close
+        it: a screen is a fact about the instant it was read.
+
+        What closes it is that the UPDATE carries the condition itself — it may
+        match only while one of the rows the screen accepted is still in the
+        status it accepted. Losing THAT is a rowcount of 0, and the loop then
+        re-screens and keeps this row as the only card for the game.
+
+        RED before the repair: exit 0, bank one row, `cards: []`.
+        """
+        session, (revived, canonical) = _a_revived_twin_and_its_canonical_row()
+        _ledger(session, repair, [revived.id])
+
+        def only_the_canonical_goes(s):
+            # The subject is deliberately untouched: the CAS on its own status
+            # would still match, which is what made this reachable.
+            s.execute(
+                sa_text("UPDATE events SET status = :s WHERE id = :i"),
+                {"s": UNREACHABLE_SUSPENDED_TERMINAL, "i": canonical.id},
+            )
+
+        code, _shim = await _drive(
+            session=session,
+            module=repair,
+            monkeypatch=monkeypatch,
+            args=_args(apply=True, backup=True),
+            before_update=only_the_canonical_goes,
+        )
+
+        # THE SHIP'S ACCEPTANCE IS THE COUNT ON THE PAGE, so it is asserted as a
+        # count and not as "the revived row did not move".
+        assert _cards_a_reader_can_reach(session) == [(revived.id, "scheduled")]
+        assert _status(session, revived.id) == "scheduled"
+        assert code == 0
+        # Nothing was written, so the undo has nothing to claim (CERT-3194).
+        assert _bank_rows(session, repair) == []
         assert "its canonical disappeared" in capsys.readouterr().out
 
     async def test_a_row_another_arm_retired_first_is_left_alone(

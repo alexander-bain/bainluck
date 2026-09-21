@@ -57,11 +57,25 @@ the beat fires every ten minutes and would re-revive every row on the next pass.
 
 WHAT THE WRITE ACTUALLY IS
 --------------------------
-``UPDATE events SET status = 'voided' WHERE id = :i AND status = :before`` — a
-compare-and-swap on the status this script read, so a row another writer has
-moved on is never overwritten on a stale read: the swap simply matches nothing,
-and the row is re-read and re-attempted against the status it moved to (below).
-Nothing else on the row is touched: no score, no blend, no ``commence_time``.
+``UPDATE events SET status = 'voided' WHERE id = :i AND status = :before AND
+EXISTS (a row the screen just accepted, still in the status it accepted it in)``
+— a compare-and-swap on BOTH rows at once. On this row's own status, so a row
+another writer has moved on is never overwritten on a stale read; and on the
+canonical's, so the take-back is licensed only while a card a reader can reach
+still holds the fixture. Either half missing is a rowcount of 0, the row is
+re-read, and the attempt is made again against what the database actually says
+(below). Nothing else on the row is touched: no score, no blend, no
+``commence_time``.
+
+🔴 THE SECOND HALF IS CERT-3199's REPAIR, AND A RE-ASKED SCREEN COULD NOT DO IT.
+A screen is a fact about the instant it was read; the write is a different
+instant. Retire the canonical in between and a swap conditioned on this row's
+status alone still matches — both rows commit retired, the pass reports success,
+and the fixture has ZERO reader-visible cards. That is the #7260 defect produced
+by its own repair, so the condition has to travel INSIDE the statement. The rule
+about which rows are the same fixture does not move into SQL: ``espn_sync``'s
+``_surviving_counterpart_rows`` still decides that in Python and hands back the
+ids it accepted, and the WHERE clause re-checks only their liveness.
 
 🔴 THE SWAP IS THE CLAIM, SO THE BANK IS WRITTEN AFTER IT AND ONLY ON A WIN.
 The UPDATE goes first; the bank row is inserted only when it matched. Both are
@@ -140,6 +154,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.tasks.espn_sync import (  # noqa: E402
     UNREACHABLE_SUSPENDED_BACKUP_TABLE,
     _row_has_surviving_counterpart,
+    _surviving_counterpart_rows,
 )
 from app.utils.event_completion import UNREACHABLE_SUSPENDED_TERMINAL  # noqa: E402
 
@@ -170,6 +185,10 @@ _WHY_LEFT_ALONE = {
     "gone": "the row no longer exists",
     "already_retired": "another arm retired it first",
     "last_row_standing": "its canonical disappeared, so this is the only card",
+    "unscreenable": (
+        "the shipped screen cannot run on this row, so there is no canonical "
+        "to bind the take-back to"
+    ),
 }
 
 
@@ -291,6 +310,13 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
         The counterpart disappeared under us, so this row is now the only card
         for the fixture. Voiding it would delete the game from the site — the
         #7260 defect, arrived at from the other side — so it is KEPT.
+    ``unscreenable``
+        The shipped screen could not be run on this row at all (no usable name,
+        or a sport with no family). There is no canonical to bind the take-back
+        to, so nothing is written. MEASURED 2026-09-21 over the whole #7260
+        ledger — 13,566 rows, of which 0 lack a name and 0 lack a sport key — so
+        this branch costs nothing on the population that exists; it is here so
+        that "we could not tell" can never be spent as "go ahead".
     ``unresolved``
         Still reader-visible beside a surviving canonical after every attempt.
         The caller must not report this pass as clean, and must not exit 0.
@@ -301,11 +327,25 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
     a third writer landing between the read and the retry loses the same way the
     first race lost, and is retried the same way rather than silently clobbered.
 
-    🔴 THE SCREEN IS RE-ASKED BEFORE EVERY RETRY, and that is what makes taking
-    a started game back safe. The condition is not "this row is a duplicate" but
-    "a row a reader can still reach holds this fixture RIGHT NOW" — so if the
-    canonical is what moved, the retry stops and keeps this row instead. The
-    pass can never take back the last card for a game, whatever the race does.
+    🔴 AND THE SWAP IS ON BOTH ROWS AT ONCE, IN ONE STATEMENT — CERT-3199's
+    ``7594-FIRST-TAKEBACK-CANNOT-RETIRE-THE-LAST-CARD``. Re-asking the screen
+    before each attempt is not enough and could never be: a screen is a fact
+    about the instant it was read, and the write is a different instant. If the
+    canonical retires in between, the compare-and-swap on this row's own status
+    still matches, both rows commit retired, and the pass reports success over a
+    fixture with ZERO reader-visible cards — the #7260 harm, produced by its own
+    repair. So the UPDATE carries its own ``EXISTS``: it may only match while one
+    of the rows the screen just accepted is still in the status the screen
+    accepted it in. Lose that race and the rowcount is 0 and the loop re-screens,
+    exactly as it does for a lost race on this row's own status.
+
+    THE RULE ITSELF DOES NOT MOVE INTO SQL, and that distinction is the whole
+    reason this is safe to do. ``_surviving_counterpart_rows`` still decides in
+    Python which rows are the same fixture — name containment both ways, the
+    sport family, the ±30h window — and hands back the ids it accepted. The
+    WHERE clause below re-checks only the LIVENESS of those ids. A test can
+    still put a counter-example to the rule, because the rule is still a
+    function.
     """
     from sqlalchemy import text
 
@@ -313,17 +353,37 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
 
     before = event.status
     for _attempt in range(LOST_RACE_ATTEMPTS + 1):
+        survivors = await _surviving_counterpart_rows(s, event)
+        if survivors is None:
+            return "unscreenable", before
+        if not survivors:
+            return "last_row_standing", before
+
+        params = {
+            "after": UNREACHABLE_SUSPENDED_TERMINAL,
+            "i": event.id,
+            "before": before,
+        }
+        # One `(id, status)` pair per accepted counterpart, ORed: the take-back
+        # is licensed while ANY of them is still standing as it was read. All of
+        # them, not the first — a fixture with two reachable siblings must not
+        # have its take-back refused because one of them moved.
+        bound = []
+        for n, (other_id, other_status) in enumerate(survivors):
+            bound.append(f"(c.id = :c{n}_id AND c.status = :c{n}_status)")
+            params[f"c{n}_id"] = other_id
+            params[f"c{n}_status"] = other_status
+
         moved = (
             await s.execute(
                 text(
                     "UPDATE events SET status = :after "
-                    "WHERE id = :i AND status = :before"
+                    "WHERE id = :i AND status = :before "
+                    "AND EXISTS (SELECT 1 FROM events c WHERE "
+                    + " OR ".join(bound)
+                    + ")"
                 ),
-                {
-                    "after": UNREACHABLE_SUSPENDED_TERMINAL,
-                    "i": event.id,
-                    "before": before,
-                },
+                params,
             )
         ).rowcount
         if moved:
@@ -348,9 +408,10 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
                 )
             return "took", before
 
-        # Lost. Read the row BY ID — never from the ORM object, which still
-        # holds the status this pass read, and never from `candidates()`, whose
-        # predicate is the thing the row has just left.
+        # Lost — and the statement above has TWO ways to lose now, so the first
+        # question is which row moved. Read this one BY ID: never from the ORM
+        # object, which still holds the status this pass read, and never from
+        # `candidates()`, whose predicate is the thing the row has just left.
         now_status = (
             await s.execute(
                 text("SELECT status FROM events WHERE id = :i"), {"i": event.id}
@@ -360,8 +421,10 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
             return "gone", None
         if is_retired_event_status(now_status):
             return "already_retired", now_status
-        if not await _row_has_surviving_counterpart(s, event):
-            return "last_row_standing", now_status
+        # Unchanged here means the CANONICAL is what moved, and the next
+        # iteration's screen is what says so — it returns the survivors as they
+        # are NOW, so an empty answer ends the loop at `last_row_standing` and a
+        # changed status is what the next attempt binds to.
         before = now_status
 
     return "unresolved", before

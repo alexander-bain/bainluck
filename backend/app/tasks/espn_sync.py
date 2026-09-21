@@ -1186,6 +1186,49 @@ SURVIVING_COUNTERPART_WINDOW = timedelta(hours=30)
 async def _row_has_surviving_counterpart(session, event) -> bool:
     """Does a row a reader can still reach hold this same fixture? (#7260)
 
+    ``bool`` half of :func:`_surviving_counterpart_rows`, which is where the rule
+    lives. Kept as its own name because that is the question this arm's verdict
+    asks, and because the fail-closed answer is TRUE — "we could not show this
+    row is an orphan" has to refuse a revival, and an empty list would permit
+    one (#7594/CERT-3199).
+    """
+    return _counterpart_screen_refuses(
+        await _surviving_counterpart_rows(session, event)
+    )
+
+
+def _counterpart_screen_refuses(rows) -> bool:
+    """Read :func:`_surviving_counterpart_rows`'s three answers as one boolean.
+
+    ``None`` (the screen could not be run) and a non-empty list both mean "do not
+    treat this row as the only card for its fixture". Written once, here, so the
+    two callers cannot read the sentinel in opposite directions — which is the
+    single way this refactor could have put a twin back on a reader's screen.
+    """
+    return rows is None or bool(rows)
+
+
+async def _surviving_counterpart_rows(session, event):
+    """Which reachable rows hold this same fixture? ``(id, status)`` each. (#7260)
+
+    Returns ``None`` when the screen cannot be run at all — a row with no usable
+    name, or a sport with no family — because "we cannot tell" must fail closed
+    in both of this function's uses, and a caller that flattened it to an empty
+    list would read it as "this row is an orphan" and publish a twin.
+
+    🔴 IT RETURNS THE ROWS, NOT A VERDICT, AND THAT IS #7594's REPAIR
+    (CERT-3199's ``7594-FIRST-TAKEBACK-CANNOT-RETIRE-THE-LAST-CARD``). A boolean
+    is a fact about the instant it was read, and the take-back repair then wrote
+    on the strength of it one statement later: the canonical could retire in
+    between, the compare-and-swap on the subject's own status still matched, and
+    both rows committed retired — zero cards for a game, reported as success. A
+    caller cannot close that window with a boolean, because it has nothing to
+    bind its write to. With the ids and the statuses in hand it can make the
+    take-back conditional on the very rows this screen accepted still being in
+    the very statuses it accepted them in, in ONE statement. The rule stays
+    here, in Python, where a test can put a counter-example to it; the caller's
+    SQL re-checks only the liveness of the ids this function named.
+
     The revival verdict's ``has_surviving_counterpart`` argument, and the line
     between this arm and #2693's twin authority (D39). Kept a separate read for
     the reason :func:`_row_has_market_anchor` gives: a boolean smuggled out of a
@@ -1280,8 +1323,9 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
     away = (event.away_team_normalized or event.away_team_name or "").lower()
     if not home or not away:
         # FAIL CLOSED. A row with no usable name cannot be shown to be an
-        # orphan, and the cost of guessing wrong is a twin.
-        return True
+        # orphan, and the cost of guessing wrong is a twin. `None`, not `[]`:
+        # see `_counterpart_screen_refuses`.
+        return None
 
     # One extra PK read per candidate rather than a join in the caller's recall,
     # and it is affordable because the pass is capped at
@@ -1296,7 +1340,7 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
     if family is None:
         # FAIL CLOSED again, and for the same reason as the nameless row above:
         # a row whose sport we cannot name cannot be shown to be an orphan.
-        return True
+        return None
 
     home_col = func.lower(
         func.coalesce(Event.home_team_normalized, Event.home_team_name)
@@ -1347,6 +1391,11 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
     def _same(a: str, b: str) -> bool:
         return a in b or b in a
 
+    # EVERY match, not the first one. A caller binding a write to "the canonical
+    # is still there" has to be told about all of them, or a fixture with two
+    # reachable siblings would have its take-back refused the moment the one
+    # this loop happened to see first moved (#7594).
+    survivors: list[tuple[int, str]] = []
     for row in others:
         if is_retired_event_status(row.status):
             continue
@@ -1354,11 +1403,11 @@ async def _row_has_surviving_counterpart(session, event) -> bool:
         other_away = (row.away_team_normalized or row.away_team_name or "").lower()
         if not other_home or not other_away:
             continue
-        if _same(home, other_home) and _same(away, other_away):
-            return True
-        if _same(home, other_away) and _same(away, other_home):
-            return True
-    return False
+        if (_same(home, other_home) and _same(away, other_away)) or (
+            _same(home, other_away) and _same(away, other_home)
+        ):
+            survivors.append((row.id, row.status))
+    return survivors
 
 
 def _unreachable_suspended_budget() -> int:
