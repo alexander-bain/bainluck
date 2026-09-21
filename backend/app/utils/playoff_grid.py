@@ -201,6 +201,102 @@ def propagate_elimination(teams: list[dict], columns: list) -> int:
     return rewritten
 
 
+def propagate_division_complement(
+    teams: list[dict], columns: list, division_key: str = "division",
+) -> int:
+    """One club won the division, so its rivals did not. Returns cells rewritten.
+
+    `propagate_elimination` runs the VERTICAL ladder — a club out at one stage is
+    out of every stage behind it, within its own row. This is the HORIZONTAL one,
+    across the cohort, and until #7695 nothing computed it: on 2026-09-21 the MLB
+    grid said Atlanta had won the NL East and, three rows down, priced
+    Philadelphia at 1.0% to win the NL East. Both statements on one screen.
+
+    Philadelphia was the single row where neither authority spoke. ESPN marks
+    only the club that clinched — it publishes nothing about that club's rivals,
+    and Philadelphia legitimately carries no `clincher` because it is still alive
+    for a wild card. Every other NL East club already read eliminated because the
+    venue had graded its division leg. So the gap is narrow and it is ours.
+
+    A division is a CLOSED COHORT WITH EXACTLY ONE WINNER, so the complement is
+    arithmetic, not inference — the same standing that makes the elimination
+    ladder safe. Three things keep it that way:
+
+    * **This column only.** `make_playoffs` is not a one-winner cohort
+      (Philadelphia is ~99% to make the playoffs, and that is true), and neither
+      is a wild card. Writing a complement into a multi-winner column would
+      manufacture exactly the false settled claim the clinch overlay exists to
+      prevent.
+    * **The cohort key is (conference, division), and an unplaced club is
+      skipped.** Pooling on the division LABEL alone puts the AL East and the NL
+      East in one bucket and eliminates five clubs on another league's clinch.
+      A club missing either half cannot be pooled at all, so it is left alone —
+      this fails closed, and a league with divisions but no conferences gets no
+      complement rather than a wrong one.
+    * **A venue grade is never overwritten**, same order as
+      `apply_clinch_overlay` and `propagate_elimination`.
+
+    Two winners in one cohort is a contradiction this must not resolve: picking
+    one would eliminate a club that a venue or ESPN says has won. It is logged
+    and the cohort is left exactly as it stands.
+
+    Idempotent: a second pass finds the same lone winner and every rival already
+    decided. Call it beside the clinch overlay, before normalization, so the
+    column is summed over what is actually live.
+    """
+    keys = {c.key if hasattr(c, "key") else c for c in (columns or [])}
+    if division_key not in keys:
+        return 0
+
+    cohorts: dict[tuple, list[dict]] = {}
+    for team in teams:
+        conference = team.get("conference")
+        division = team.get("division")
+        if not conference or not division:
+            continue
+        cohorts.setdefault((conference, division), []).append(team)
+
+    rewritten = 0
+    for (conference, division), cohort in cohorts.items():
+        winners = [
+            team for team in cohort
+            if ((team.get("cells") or {}).get(division_key) or {}).get("state") == "won"
+        ]
+        if len(winners) != 1:
+            if len(winners) > 1:
+                logger.warning(
+                    "Grid division complement: %s %s has %d clubs marked won "
+                    "(%s) — leaving the cohort alone",
+                    conference, division, len(winners),
+                    ", ".join(t.get("name", "?") for t in winners),
+                )
+            continue
+
+        winner = winners[0]
+        # The winner needs no special case: its own cell reads `won`, so the
+        # decided-state guard below leaves it exactly where it is. A separate
+        # identity check here would be a branch no specimen can ever reach.
+        for team in cohort:
+            cell = (team.get("cells") or {}).get(division_key)
+            if cell is None:
+                # Absent is not eliminated (#6442). A club this column never
+                # priced gets no cell invented for it.
+                continue
+            if cell.get("state") in DECIDED_STATES:
+                continue
+            logger.info(
+                "Grid division complement: %s won the %s %s, so %s (%s) cannot",
+                winner.get("name", "?"), conference, division,
+                team.get("name", "?"), cell.get("merged_probability"),
+            )
+            cell["merged_probability"] = None
+            cell["sources"] = []
+            cell["trend_24h"] = None
+            cell["state"] = "eliminated"
+            rewritten += 1
+    return rewritten
+
+
 def normalize_column_sums(
     teams: list[dict],
     columns: list,
