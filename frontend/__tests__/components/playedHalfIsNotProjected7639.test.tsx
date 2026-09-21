@@ -229,6 +229,80 @@ describe("#7639 a live game's half card whose ladder has stopped quoting", () =>
     );
   });
 
+  it("NFL, the second specimen: a played half projecting the team that LOST it", () => {
+    // Chiefs-Colts, Sunday night, `/events/14780544` — photographed in the
+    // no-refresh pass at 7:08 PM PDT with the game live in the 2nd half
+    // (`artifacts/ux-1401/norefresh/20260920-snf-kc-ind-1908PT-y1500.png`).
+    // The card printed BOTH tiles at once:
+    //
+    //     ACTUAL  IND by 3          PROJECTION  KC by 2.5+
+    //
+    // — the half's real result beside a forecast for it naming the other team.
+    //
+    // The 15 rungs below are that ladder at 02:10Z, verbatim. `IND by 2.5+` is
+    // settled TRUE at 0.99 and every other rung is 0.01/0.03: ZERO interior.
+    // And it is why the tile named the loser — |0.99 - 0.5| and |0.01 - 0.5|
+    // are both exactly 0.49, so `closest50`'s strict `<` keeps whichever rung
+    // came first, which is a KC one at 1%. The wrong team was a tie-break.
+    const text = visibleText(
+      renderToStaticMarkup(
+        <MarketMapSection
+          gameMarkets={
+            {
+              event_id: 14780544,
+              home_team: "Kansas City Chiefs",
+              away_team: "Indianapolis Colts",
+              home_score: 17,
+              away_score: 20,
+              status: "live",
+              player_props: [],
+              team_totals: [],
+              period_markets: [
+                ...[2.5, 3.5, 4.5, 6.5, 7.5, 9.5, 10.5, 13.5].map((t) =>
+                  spread("1H", "KC vs IND: First Half Spread", `KC Chiefs wins 1H by over ${t} points`, 0.01, 2.0)
+                ),
+                spread("1H", "KC vs IND: First Half Spread", "IND Colts wins 1H by over 2.5 points", 0.99, 2.0),
+                ...[3.5, 4.5, 6.5, 9.5, 10.5].map((t) =>
+                  spread("1H", "KC vs IND: First Half Spread", `IND Colts wins 1H by over ${t} points`, 0.01, 2.0)
+                ),
+                spread("1H", "KC vs IND: First Half Spread", "IND Colts wins 1H by over 7.5 points", 0.03, 2.0),
+                spread("2H", "KC vs IND: Second Half Spread", "KC Chiefs wins 2H by over 2.5 points", 0.6, 2.0),
+                spread("2H", "KC vs IND: Second Half Spread", "KC Chiefs wins 2H by over 6.5 points", 0.43, 2.0),
+                spread("2H", "KC vs IND: Second Half Spread", "IND Colts wins 2H by over 2.5 points", 0.21, 2.0),
+              ],
+              matchups: [],
+              other: [],
+              pace: null,
+              props_script: [],
+              spreads: [],
+              totals: [],
+            } as never
+          }
+          eventStatus="live"
+          homeTeam="Kansas City Chiefs"
+          awayTeam="Indianapolis Colts"
+          homeAbbr="KC"
+          awayAbbr="IND"
+          sportKey="americanfootball_nfl"
+        />
+      )
+    );
+
+    // The forecast for the played half is gone, and specifically the tile that
+    // named the losing team.
+    expect(cardBody(text, "1st half margin")).not.toContain("Projection");
+    expect(cardBody(text, "1st half margin")).not.toContain("Projection KC by 2.5+");
+    // The half still being played is untouched — the control that this is a
+    // per-ladder suppression and not a per-page one, on a second sport.
+    expect(cardBody(text, "2nd half margin")).toContain("Projection");
+    // And what the card now says about that half is what actually happened:
+    // the settled ladder, with the rung IND really cleared reading 99%. The
+    // bare string `KC by 2.5+` is still here at 1%, correctly — it is a rung,
+    // not a forecast, and banning it would be a different and wrong ship.
+    expect(cardBody(text, "1st half margin")).toContain("IND by 2.5+ 99%");
+    expect(cardBody(text, "1st half margin")).toContain("KC by 2.5+ 1%");
+  });
+
   it("the finished-game arm was already right, and has not moved", () => {
     // #5488's predicate refuses this exact ladder once the whistle goes; that
     // arm is the reason the defect was only ever visible while live. If this
