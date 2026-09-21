@@ -110,20 +110,33 @@ RAW = {
 class TestShapeIsClockInjected:
     def test_same_bytes_shape_differently_on_two_different_days(self):
         """THE load-bearing property. If this fails, an hour-old cache can print
-        'This Week' over a tournament that finished last month."""
-        during = shape_golf_schedule(RAW, "2026-04-10")
+        'This Week' over a tournament that finished last month.
+
+        #7690 corrected the dates this test reads on. It used to call
+        "2026-04-10" the DURING case for an event running 2026-08-27 -> 08-30 —
+        139 days early — and assert `current_event_id == "201"` there, which
+        froze the production defect into the suite as expected behaviour. The
+        property being proven is unchanged; the three reads below now bracket
+        the window instead of sitting outside it.
+        """
+        before = shape_golf_schedule(RAW, "2026-04-10")
+        during = shape_golf_schedule(RAW, "2026-08-28")
         after = shape_golf_schedule(RAW, "2026-09-01")
 
         # The euro tour carries no upstream `status`, so which of its events is
         # "current" is PURELY date-derived — exactly where a frozen cache lies.
-        # Same cached bytes; the badge moves with the day, as it must.
+        # Same cached bytes; the badge moves with the day, as it must, and it is
+        # absent on BOTH sides of the window, not just after it.
+        assert before["tours"][1]["current_event_id"] is None
         assert during["tours"][1]["current_event_id"] == "201"
         assert after["tours"][1]["current_event_id"] is None
+        assert [e["is_current"] for e in before["tours"][1]["events"]] == [False, False]
         assert [e["is_current"] for e in during["tours"][1]["events"]] == [False, True]
         assert [e["is_current"] for e in after["tours"][1]["events"]] == [False, False]
 
         # And the other direction: where DataGolf DOES state a status, the answer
         # is date-independent, so the cascade was not silently re-based.
+        assert before["tours"][0]["current_event_id"] == "101"
         assert during["tours"][0]["current_event_id"] == "101"
         assert after["tours"][0]["current_event_id"] == "101"
 
@@ -172,8 +185,8 @@ class TestStatusCascadeUnchanged:
             ]}],
             "fetched_at": "2026-06-01T00:00:00+00:00",
         }
-        # Past start, past end, no upstream status, and it IS picked as current
-        # by the end_date rung only if end_date >= now. Here it is not.
+        # Past start, past end, no upstream status, and the date rung cannot
+        # claim it because 2026-06-01 is outside 01-01 -> 01-04.
         events = shape_golf_schedule(raw, "2026-06-01")["tours"][0]["events"]
         assert events[0]["status"] == "unknown"
         assert events[0]["is_current"] is False
@@ -186,6 +199,101 @@ class TestStatusCascadeUnchanged:
     def test_empty_tour_is_dropped(self):
         raw = {"tours": [{"tour": "pga", "tournaments": []}], "fetched_at": "x"}
         assert shape_golf_schedule(raw, "2026-04-10")["tours"] == []
+
+
+# ---------------------------------------------------------------------------
+# 2b. #7690 — "THIS WEEK" means the tournament has STARTED
+# ---------------------------------------------------------------------------
+class TestCurrentMeansStarted:
+    """The date rung used to ask only "has this tournament not finished yet".
+
+    The schedule is chronological, so the first unfinished tournament is the
+    NEXT one: between tournaments the next event was always badged current, for
+    however long the gap ran. Production specimen, /playoffs/golf at 2026-09-20:
+    a "THIS WEEK" card over a Presidents Cup starting 2026-09-24.
+    """
+
+    #: The served payload on 2026-09-21, trimmed to the rows that decide it.
+    PRESIDENTS_CUP = {
+        "tours": [{"tour": "pga", "tournaments": [
+            _tournament("499", "Procore Championship", "2026-09-10", "2026-09-13",
+                        status="completed"),
+            _tournament("500", "Presidents Cup", "2026-09-24", "2026-09-27"),
+            _tournament("501", "Bank of Utah Championship", "2026-10-01", "2026-10-04"),
+        ]}],
+        "fetched_at": "2026-09-21T04:26:02.904699+00:00",
+    }
+
+    def test_the_production_specimen_is_not_current_four_days_early(self):
+        tour = shape_golf_schedule(self.PRESIDENTS_CUP, "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] is None
+        assert [e["is_current"] for e in tour["events"]] == [False, False, False]
+
+    def test_the_specimen_reads_upcoming_not_current(self):
+        """The badge is only half of it — the row's own label was wrong too."""
+        tour = shape_golf_schedule(self.PRESIDENTS_CUP, "2026-09-20")["tours"][0]
+        by_id = {e["event_id"]: e for e in tour["events"]}
+        assert by_id["500"]["status"] == "upcoming"
+
+    def test_the_same_specimen_IS_current_once_it_tees_off(self):
+        """The fix must not simply delete the rung."""
+        tour = shape_golf_schedule(self.PRESIDENTS_CUP, "2026-09-25")["tours"][0]
+        assert tour["current_event_id"] == "500"
+        by_id = {e["event_id"]: e for e in tour["events"]}
+        assert by_id["500"]["is_current"] is True
+        assert by_id["500"]["status"] == "current"
+
+    @pytest.mark.parametrize("day", ["2026-09-24", "2026-09-27"])
+    def test_both_edges_of_the_window_are_inside_it(self, day):
+        """First day and last day inclusive — a tournament is current on the day
+        it tees off and on the day it finishes."""
+        tour = shape_golf_schedule(self.PRESIDENTS_CUP, day)["tours"][0]
+        assert tour["current_event_id"] == "500"
+
+    @pytest.mark.parametrize("day", ["2026-09-23", "2026-09-28"])
+    def test_one_day_outside_the_window_on_either_side_is_not_current(self, day):
+        tour = shape_golf_schedule(self.PRESIDENTS_CUP, day)["tours"][0]
+        assert tour["current_event_id"] is None
+
+    def test_a_future_event_does_not_stop_the_scan(self):
+        """The old rung broke out of the loop on the first unfinished event. If
+        that break survives a refactor, an event actually in progress behind a
+        future one is missed — so this asserts the scan continues."""
+        raw = {
+            "tours": [{"tour": "pga", "tournaments": [
+                _tournament("600", "Next Month", "2026-10-01", "2026-10-04"),
+                _tournament("601", "Happening Now", "2026-09-17", "2026-09-20"),
+            ]}],
+            "fetched_at": "2026-09-18T00:00:00+00:00",
+        }
+        tour = shape_golf_schedule(raw, "2026-09-18")["tours"][0]
+        assert tour["current_event_id"] == "601"
+
+    def test_an_upstream_status_still_outranks_the_dates(self):
+        """Unchanged precedence: when DataGolf states a live status we trust it,
+        even against the dates. Pinned so the fix cannot invert the cascade."""
+        raw = {
+            "tours": [{"tour": "pga", "tournaments": [
+                _tournament("700", "Weather Delay", "2026-09-24", "2026-09-27",
+                            status="in-progress", rnd=1),
+            ]}],
+            "fetched_at": "2026-09-21T00:00:00+00:00",
+        }
+        tour = shape_golf_schedule(raw, "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] == "700"
+
+    def test_an_event_with_no_start_date_is_never_current(self):
+        """'THIS WEEK' over a tournament whose start we do not know is an
+        over-claim; the old rung made exactly that claim on end_date alone."""
+        raw = {
+            "tours": [{"tour": "pga", "tournaments": [
+                {**_tournament("800", "No Start", "2026-09-24", "2026-12-31"),
+                 "start_date": None},
+            ]}],
+            "fetched_at": "2026-09-21T00:00:00+00:00",
+        }
+        tour = shape_golf_schedule(raw, "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] is None
 
     def test_last_updated_is_the_fetch_time_not_the_serve_time(self):
         """Once a cache exists, a serve-time stamp is a freshness claim the
