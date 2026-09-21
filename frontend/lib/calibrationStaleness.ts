@@ -140,11 +140,23 @@ export interface CalibrationStalenessNotice {
 export interface CalibrationProducerDisclosure {
   stalled?: unknown;
   beats_missed?: unknown;
+  /**
+   * The artifact's age at SERVE time, in seconds. Tier-independent: `_serve`'s
+   * docstring commits to it "on every answer, not only the dated ones", and it
+   * is recomputed there from the payload's own `generated_at`. This is the
+   * fallback `cache.age_s` needs — see `decideCalibrationStaleness`.
+   */
+  age_s?: unknown;
 }
 
 /** The shape this module needs. Deliberately narrower than `CalibrationData`. */
 export interface CalibrationStalenessInput {
   availability?: unknown;
+  /**
+   * When the PRODUCER built this artifact, baked into the payload by the
+   * producer itself. Present on every tier, unlike `cache.generated_at`.
+   */
+  generated_at?: unknown;
   staged?: CalibrationStagedDisclosure | null;
   producer?: CalibrationProducerDisclosure | null;
   cache?: {
@@ -234,8 +246,33 @@ export function decideCalibrationStaleness(
   const stagedIsObject = typeof staged === "object" && staged !== null;
   const stagedMeasured = stagedIsObject && staged.measured === true;
 
-  const generatedAt = asString(data?.cache?.generated_at);
-  const ageS = asCount(data?.cache?.age_s);
+  // #7696 — the artifact's DATE was the last thing still behind the tier-gated
+  // door #4113 opened for the artifact's HEALTH.
+  //
+  // `cache` is attached by `_dated()` and by nothing else, so it exists only on
+  // a fallback tier. The main tier can still refuse `fresh`: `_serve` clamps the
+  // declaration down for a stalled producer OR for a staged bank it could not
+  // read (`availability_floor`, `measured is not True` -> stale), and attaches
+  // no `cache` doing it. So on that path both of these read `null` and the
+  // banner could not date the artifact it was warning about.
+  //
+  // Measured on the real production envelope, 2026-09-21T05:30Z: the same bytes
+  // served by the dated tier give the reader "built Sep 15, 4:16 AM (5 days
+  // ago)"; served by the main tier they give "We can't confirm how current this
+  // is" and no date at all — while `generated_at` and `producer.age_s` sit in
+  // that same payload stating the answer exactly.
+  //
+  // The fallbacks are the tier-independent statements of the same two facts:
+  // top-level `generated_at` is baked in by the producer, and `producer.age_s`
+  // is `_serve`'s own serve-time arithmetic over it, promised "on every answer".
+  // `cache` still wins where it exists — a fallback tier measured the age of the
+  // copy it is actually serving, which is the more specific claim.
+  //
+  // Order matters and absence still means absence: an unreadable value falls
+  // through to `null` exactly as before, so nothing here invents a date (gotcha
+  // #53). The states that never had a date keep not having one.
+  const generatedAt = asString(data?.cache?.generated_at) ?? asString(data?.generated_at);
+  const ageS = asCount(data?.cache?.age_s) ?? asCount(producer?.age_s);
   const stagedAt = stagedMeasured ? asString(staged.staged_at) : null;
   const stagedAgeS = stagedMeasured ? asCount(staged.staged_age_s) : null;
   const unitsDrifted = stagedMeasured ? asCount(staged.units_drifted) : null;
@@ -323,7 +360,21 @@ export function stalenessHeadline(notice: CalibrationStalenessNotice): string {
         ? "The curve is current. The data behind it is older."
         : "We can't confirm the curve is current. The data behind it is older.";
     case "undisclosed":
-      return "We can't confirm how current this is.";
+      // #7696: "how current THIS is" is a claim about the artifact, and once
+      // the date fallback above reaches the main tier we know exactly how
+      // current the artifact is — the very next sentence prints the day and the
+      // hour. Confessing ignorance of a fact you are about to state is the
+      // mirror image of #4113's defect: there the page asserted currency it had
+      // not proven, here it disclaims currency it had measured, and a reader who
+      // believes either one is misled about what we know.
+      //
+      // What is genuinely unread in this state is the INPUT staging — which is
+      // what the body sentence has always said, and what the headline now
+      // scopes itself to. Undated, nothing changed: no date follows, the broad
+      // sentence is the honest one, and it is returned verbatim.
+      return notice.generatedAt !== null
+        ? "We can't confirm how current the data behind this is."
+        : "We can't confirm how current this is.";
   }
 }
 

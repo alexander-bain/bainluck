@@ -16,6 +16,7 @@
 import {
   decideCalibrationStaleness,
   methodologyRefreshClause,
+  stalenessAgeLabel,
   stalenessDriftClause,
   stalenessHeadline,
   stalenessScheduleClause,
@@ -532,5 +533,136 @@ describe("stalenessHeadline", () => {
     );
     expect(new Set(lines).size).toBe(3);
     expect(lines.every(l => l.trim().length > 0)).toBe(true);
+  });
+});
+
+/**
+ * #7696 — the artifact's DATE was behind the same tier-gated door #4113 opened
+ * for the artifact's HEALTH.
+ *
+ * `cache` is built by `_dated()` and nothing else, so it exists only on a
+ * fallback tier. The main tier still refuses `fresh` — `_serve` clamps for a
+ * stalled producer, and `availability_floor` clamps for a staged bank it could
+ * not read (`measured is not True` -> stale) — and attaches no `cache`. Both
+ * the date and the age were read off `cache` alone, so on that path the banner
+ * could not date the artifact it was warning about.
+ *
+ * MAIN_TIER below is the real production envelope of 2026-09-21T05:30Z with the
+ * two fallback-tier-only blocks removed, which is what the main tier answers
+ * with. The `cache`-bearing original is DATED_TIER, the control.
+ */
+describe("#7696 the artifact date survives the tier it was served on", () => {
+  /** Verbatim from artifacts/calibration-2687/prod-envelope-20260921T0530Z.json. */
+  const DATED_TIER = {
+    availability: "stale",
+    generated_at: "2026-09-15T11:16:10.215051+00:00",
+    cache: {
+      status: "stale",
+      reason: "main_key_absent_durable",
+      age_s: 497636,
+      generated_at: "2026-09-15T11:16:10.215051+00:00",
+    },
+    staged: { measured: false, reason: "served_bank_empty" },
+    producer: {
+      task: "precompute_calibration_main",
+      interval_s: 3600,
+      stall_after_s: 14400,
+      age_s: 497636,
+      beats_missed: 138,
+      stalled: true,
+    },
+  };
+  /** The same artifact, answered by the main tier: no `cache`. */
+  const MAIN_TIER = (() => {
+    const { cache: _cache, ...rest } = DATED_TIER;
+    return rest;
+  })();
+
+  it("control: the dated tier is unchanged — `cache` still wins", () => {
+    const n = decideCalibrationStaleness(DATED_TIER)!;
+    expect(n.kind).toBe("last-good");
+    expect(n.generatedAt).toBe("2026-09-15T11:16:10.215051+00:00");
+    expect(n.ageS).toBe(497636);
+  });
+
+  it("`cache` wins over the top-level fallback when the two disagree", () => {
+    // Not cosmetic: a fallback tier measured the age of the COPY it is serving,
+    // which is the more specific claim. A test that fed both the same value
+    // would pass against either precedence.
+    const n = decideCalibrationStaleness({
+      ...DATED_TIER,
+      generated_at: "2020-01-01T00:00:00+00:00",
+      producer: { ...DATED_TIER.producer, age_s: 1 },
+    })!;
+    expect(n.generatedAt).toBe("2026-09-15T11:16:10.215051+00:00");
+    expect(n.ageS).toBe(497636);
+  });
+
+  it("the main tier now dates the same artifact", () => {
+    const n = decideCalibrationStaleness(MAIN_TIER)!;
+    expect(n.kind).toBe("undisclosed");
+    expect(n.generatedAt).toBe("2026-09-15T11:16:10.215051+00:00");
+    expect(n.ageS).toBe(497636);
+    expect(stalenessAgeLabel(n.ageS!)).toBe("5 days");
+  });
+
+  it("absence is still absence — no date is invented (gotcha #53)", () => {
+    // The whole fix is a fallback, so the one way it could go wrong is by
+    // manufacturing a reading where the payload states none.
+    const n = decideCalibrationStaleness({
+      availability: "stale",
+      staged: { measured: false },
+      producer: { stalled: true, beats_missed: 3 },
+    })!;
+    expect(n.kind).toBe("undisclosed");
+    expect(n.generatedAt).toBeNull();
+    expect(n.ageS).toBeNull();
+  });
+
+  it("an unreadable date or age falls through rather than rendering garbage", () => {
+    const n = decideCalibrationStaleness({
+      availability: "stale",
+      generated_at: 1_789_470_970_215,
+      staged: { measured: false },
+      producer: { stalled: true, beats_missed: 3, age_s: "497636" },
+    } as never)!;
+    expect(n.generatedAt).toBeNull();
+    expect(n.ageS).toBeNull();
+  });
+
+  describe("the headline scopes itself to what it actually knows", () => {
+    const base = {
+      kind: "undisclosed" as const,
+      reason: "",
+      generatedAt: null as string | null,
+      ageS: null as number | null,
+      stagedAt: null,
+      stagedAgeS: null,
+      unitsDrifted: null,
+      unitsDriftUnknown: null,
+      unitsBanked: null,
+      producerStalled: null,
+      beatsMissed: null,
+      producerProvenCurrent: false,
+    };
+
+    it("dated: does NOT disclaim the currency it is about to state", () => {
+      const line = stalenessHeadline({ ...base, generatedAt: "2026-09-15T11:16:10+00:00" });
+      expect(line).toBe("We can't confirm how current the data behind this is.");
+      // The defect, asserted as the absence it is: the broad claim about the
+      // artifact may not survive next to a printed build date.
+      expect(line).not.toBe("We can't confirm how current this is.");
+    });
+
+    it("undated: the broad sentence is the honest one and is unchanged", () => {
+      expect(stalenessHeadline(base)).toBe("We can't confirm how current this is.");
+    });
+
+    it("still a different sentence from every other state", () => {
+      const dated = stalenessHeadline({ ...base, generatedAt: "2026-09-15T11:16:10+00:00" });
+      for (const kind of ["last-good", "frozen-inputs"] as const) {
+        expect(stalenessHeadline({ ...base, kind })).not.toBe(dated);
+      }
+    });
   });
 });
