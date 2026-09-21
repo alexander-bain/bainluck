@@ -401,6 +401,13 @@ _NCAA_ROUND_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Canadian Football League detection (#7851). The CFL shares our
+# `americanfootball` prefix and the LLM files it under `llm_sport_category =
+# 'football'`, which is the one arm of the related-futures sport net that admits
+# a market carrying neither a US-league ticker nor a sport_id — so the Grey Cup
+# reaches every NFL, NCAAF and FCS event page.
+_CFL_MARKET_RE = re.compile(r"\bCFL\b|\bGrey\s+Cup\b|\bCanadian\s+Football\b", re.IGNORECASE)
+
 
 # ── Category assignment ──────────────────────────────────────────────────
 
@@ -774,6 +781,25 @@ def is_wrong_sport_leak(
     # ── College Baseball leaking into MLB games ──────────────────────────
     if "baseball" in event_sport_key and "_mlb" in event_sport_key:
         if re.search(r"College Baseball", raw_name, re.I):
+            return True
+
+    # ── CFL leaking into US football (NFL / NCAAF / FCS) ─────────────────
+    # #7851, reported by a reader watching Stanford–Duke on 2026-09-19:
+    # `/api/events/15311565/related-futures` served "2026 CFL Grey Cup
+    # Champion || Winnipeg Blue Bombers 0.125" as the SECOND card of Duke Blue
+    # Devils' championship path. `_team_name_patterns("Duke Blue Devils")`
+    # emits the bare token "Blue", and "Blue" occupies whole tokens of
+    # "Winnipeg Blue Bombers", so the #6806 boundary rule cannot refuse it.
+    # Measured the same day on the FCS page 15313355: "British Columbia Lions"
+    # reached Columbia Lions by the same route, so this is a class, not a
+    # specimen.
+    #
+    # The refusal is on the LEAGUE, not the token, because the token rule has
+    # no way to know Winnipeg is not Duke. Scoped to leave a real CFL page
+    # alone: event 15312374 (Hamilton Tiger-Cats vs Montreal Alouettes) serves
+    # the Grey Cup correctly to both sides and must keep doing so.
+    if sport_prefix == "americanfootball" and "_cfl" not in event_sport_key:
+        if _CFL_MARKET_RE.search(raw_name):
             return True
 
     # ── NBA conference markets leaking into NCAA games ───────────────────
