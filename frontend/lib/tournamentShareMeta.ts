@@ -117,12 +117,24 @@ const MAX_TITLE_LEADERS = 2;
 /**
  * The probability at or above which a board stops being a FORECAST (#6149).
  *
- * `formatShareProbability` rounds, so the reader-visible claim turns over one
- * rounding step below 1.0: 0.995 prints "100%" and 0.994 prints "99%". The
- * constant is the formatter's own boundary rather than a taste judgement about
- * what counts as nearly certain, and `tournamentCertaintyUnfurl6149.test.tsx`
- * asserts both sides of it against `formatShareProbability` itself — if the
- * formatter ever stops rounding, that test fails rather than this drifting.
+ * The reader-visible claim turns over one rounding step below 1.0: 0.995 is the
+ * first price at which the formatter stops printing a plain integer, and 0.994
+ * still prints "99%". The constant is the formatter's own boundary rather than a
+ * taste judgement about what counts as nearly certain, and
+ * `tournamentCertaintyUnfurl6149.test.tsx` asserts both sides of it against
+ * `formatShareProbability` itself — if the formatter ever moves, that test fails
+ * rather than this drifting.
+ *
+ * #7716 IS THAT TEST PAYING OUT. `formatShareProbability` printed "100%" from
+ * 0.995 up when this was written and now prints `probabilityDisplay`'s upper
+ * boundary marker instead. THE CONSTANT AND THE WITHHELD SET ARE UNCHANGED —
+ * 0.995 is still exactly where a plain rounded integer stops being available, so
+ * this ship's band did not move a single price. Only the sentence above did, and
+ * it moved because the assertion caught it.
+ *
+ * ⚠️ Named residue: the marker makes "leads at >99% over a live final" a TRUE
+ * sentence, so whether this band should withhold AT ALL is now a live question —
+ * and it is #6149's to re-open, not #7716's to answer in passing.
  *
  * Deliberately a second declaration rather than an import of
  * `eventConceptShareMeta`'s. That module is `/event/[domain]/[slug]`'s copy and

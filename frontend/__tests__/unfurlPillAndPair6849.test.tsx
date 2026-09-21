@@ -262,11 +262,50 @@ describe("#6849 the two sides of one bout are rounded once, together", () => {
     // The trap the first version of this fix fell into, caught by this module's
     // own suite: two survivors out of four, totalling 0.99 by coincidence.
     // Naming both leaders is a display choice; normalizing them claims a shape
-    // the contest does not have. 56 + 43 = 99 is the correct output here.
+    // the contest does not have. 57 + 43 = 100 is the correct output here.
+    //
+    // 🔴 THIS FIXTURE NO LONGER DISCRIMINATES, AND SAYING SO IS THE POINT.
+    // It asserted 56/43 and `not.toContain("57%")` because normalizing 0.565
+    // over the 0.99 total printed 57 while the honest read printed 56. #7716
+    // moved `formatShareProbability` onto `renderedPercent`, and 0.565 is one of
+    // the four wire values #3867 measured as moving — so the honest read is now
+    // 57 too. Normalized and unnormalized agree on this specimen, exactly, and a
+    // renumbered assertion here would pass just as happily against the defect.
+    // The production fixture is kept because it is measured and the rest of this
+    // file reads it; the DISCRIMINATION moves to the test below.
     const said = await everythingSaid(TENNIS_FIELD, "tennis");
-    expect(said).toContain("56%");
+    expect(said).toContain("57%");
     expect(said).toContain("43%");
-    expect(said).not.toContain("57%");
+  });
+
+  it("re-arms the field guard on a pair the two rules still disagree about", async () => {
+    // Same SHAPE as TENNIS_FIELD — four competitors, two priced, total 0.99, so
+    // `isComplementPair` would fire if the predicate ever counted survivors — at
+    // prices chosen so the two answers differ under today's rounding:
+    //
+    //   passed through (correct)  renderedPercent(0.55)=55, renderedPercent(0.44)=44
+    //   normalized     (the bug)  0.55/0.99 = 0.5555… -> 56, and 100 - 56 = 44
+    //
+    // So a regression to survivor-counting prints 56 and this fails. Derived
+    // rather than measured, and labelled as such: a control whose only job is to
+    // still be able to fail does not get to borrow a production specimen's
+    // authority.
+    const field: EventConceptShareSource = {
+      ...TENNIS_FIELD,
+      primary: {
+        label: "Winner",
+        competitors: [
+          { name: "Alexander Zverev", probability: 0.55, won: false },
+          { name: "Ben Shelton", probability: 0.44, won: false },
+          { name: "Cameron Norrie", probability: 0.0, won: false },
+          { name: "Karen Khachanov", probability: 0.0, won: false },
+        ],
+      },
+    };
+    const said = await everythingSaid(field, "tennis");
+    expect(said).toContain("55%");
+    expect(said).toContain("44%");
+    expect(said).not.toContain("56%");
   });
 
   it("a pairing that would print a certainty withholds the board instead", async () => {

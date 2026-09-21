@@ -80,6 +80,7 @@ import {
   eventConceptShareFacts,
   type EventConceptShareSource,
 } from "@/lib/eventConceptShareMeta";
+import { ABOVE_NINETY_NINE_PERCENT } from "@/lib/probabilityDisplay";
 import { formatShareProbability } from "@/lib/share";
 
 /** The element `ImageResponse` was constructed with. `mock`-prefixed for jest hoisting. */
@@ -346,17 +347,34 @@ describe("#6029 the threshold is the formatter's own boundary", () => {
   /**
    * The one assertion that keeps `PRINTS_AS_CERTAIN` honest.
    *
-   * The constant is 0.995 because that is where `formatShareProbability`'s
-   * `Math.round` turns over — not because 0.995 is a nice number. Asserting the
-   * formatter directly means this suite fails if the rounding ever changes,
-   * rather than the module silently withholding the wrong band.
+   * The constant is 0.995 because that is where `formatShareProbability` turns
+   * over — not because 0.995 is a nice number. Asserting the formatter directly
+   * means this suite fails if the rounding ever changes, rather than the module
+   * silently withholding the wrong band.
+   *
+   * #7716 IS THE DAY THAT HAPPENED, AND IT IS WHY THIS TEST EXISTS. The
+   * formatter used to print "100%" from 0.995 up and now prints the boundary
+   * marker `probabilityDisplay` owns. The CONSTANT does not move: 0.995 is still
+   * the exact price at which a plain rounded integer stops being available, so
+   * the withheld set below is byte-identical and this ship's band is untouched.
+   * Only the sentence describing WHY changed, and it changed here rather than
+   * drifting, which is the whole purpose of asserting the formatter.
+   *
+   * Pinned against the exported constant rather than a typed-out string: the
+   * spelling has one home (`probabilityDisplay.ts`), and a literal here would be
+   * a second copy of the decision this module is trying not to re-take.
+   *
+   * ⚠️ NAMED RESIDUE, NOT AN OVERSIGHT: now that the marker makes ">99% over a
+   * live final" a TRUE sentence, whether this band should still withhold at all
+   * is #6149/#6029's question to re-open, not #7716's to answer in passing. The
+   * behaviour is deliberately unchanged.
    */
-  it("0.995 prints 100% and 0.994 prints 99%", () => {
-    expect(formatShareProbability(0.995)).toBe("100%");
+  it("0.995 is where the formatter stops printing a plain integer", () => {
+    expect(formatShareProbability(0.995)).toBe(ABOVE_NINETY_NINE_PERCENT);
     expect(formatShareProbability(0.994)).toBe("99%");
   });
 
-  it("the withheld set is exactly the set that would print 100% or more", () => {
+  it("the withheld set is exactly the set at or above the boundary", () => {
     const withheld = (fraction: number) =>
       eventConceptShareFacts({
         event: { name: "T", status: "live" },
