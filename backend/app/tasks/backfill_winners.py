@@ -650,6 +650,32 @@ async def _repair_openings_from_first_snapshot(
     Returns a stats dict. `restored` is the number that means the ship is
     happening; a run reporting healthy with `restored` and `examined` both 0
     forever has recovered nothing (gotcha #53).
+
+    AND THE DICT CARRIES A `terminal`, BECAUSE THE SENTENCE ABOVE WAS TRUE AND
+    UNENFORCED (#7781). The loop below catches every exception, appends it to
+    `errors` and RETURNS — so without a terminal a run that raised on its first
+    batch banked `successes_24h: 1`, `consecutive_failures: 0`, `health:
+    healthy`, and `verdict_for` read `not_enforced(unknown:no_terminal_fields)`.
+    There was no path by which this beat could report a bad run. That matters
+    more here than for most beats: the in-pipeline phase is unreachable (#7665),
+    so this is the ONLY thing promoting openings, and the accuracy page prices a
+    settled question with `COALESCE(calibration_probability,
+    opening_probability)`.
+
+    WHAT THE TERMINAL DELIBERATELY DOES NOT SAY. #7665 pre-registered a
+    falsifier — `examined > 400,000` with `restored == 0` means the promotion is
+    broken — and it was true on 2026-09-21 and it INVERTS. The cursor advances
+    over what was EXAMINED, not what was repaired, and the walk wraps, so once
+    the promotable population is drained the healthy steady state is exactly
+    "examined a million, restored zero", forever. Encoding that falsifier here
+    would turn this beat permanently red at the moment it finished its job. The
+    durable form of the alarm is "restored 0 across a full WRAP cycle while
+    promotable rows still exist", which needs a wrap counter this beat does not
+    keep; the omission is deliberate, not an oversight.
+
+    `deadline_hit` likewise does not downgrade: the wall stopping a run partway
+    is this beat's design and was true of the healthy first fire (484.5 s,
+    380,808 restored).
     """
     import time as _t
 
@@ -732,6 +758,23 @@ async def _repair_openings_from_first_snapshot(
     except Exception as exc:
         stats["errors"].append(str(exc))
         logger.error("Phase 0c-repair beat error: %s", exc)
+
+    # #7781 — the terminal, graded on what the run COULD do, never on what it
+    # found. `failed` only when it errored AND walked nothing, because a run
+    # that examined rows did its job whatever it promoted. `no_work` when there
+    # was nothing to walk: that is the wrap, and an invocation that banked
+    # nothing cannot vouch for the task's health, which is exactly what
+    # `_TERMINAL_NO_WORK` means. Otherwise `complete` — and a `complete` run
+    # still holding `errors` is downgraded to PARTIAL by `_has_damage` with no
+    # code here, which is how the malformed-cursor path stays loud: it appends
+    # to `errors` before the loop, so a run that silently restarted from the
+    # head reports `complete_with:errors` rather than a clean success.
+    if stats["errors"] and stats["examined"] == 0:
+        stats["terminal"] = "failed"
+    elif stats["examined"] == 0:
+        stats["terminal"] = "no_work"
+    else:
+        stats["terminal"] = "complete"
 
     logger.info(
         "Phase 0c-repair beat: examined %d in %d batches, restored %d "

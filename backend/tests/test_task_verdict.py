@@ -526,6 +526,28 @@ class TestEnforcementScope:
             # produced a hub. `skipped` while the tables are absent, `partial`
             # when it ran and edged nobody, `complete` only with a member.
             "assemble_containers",
+            # #7781: the openings-repair drain (#7665), enrolled in the change
+            # that gives it a terminal — it had none and read
+            # `not_enforced(unknown:no_terminal_fields)`. Its loop catches every
+            # exception into `errors` and RETURNS, so there was no path by which
+            # it could report a bad run: a raise on the first batch banked
+            # `successes_24h: 1`, `consecutive_failures: 0`, `health: healthy`.
+            # It is the only thing promoting openings now that the in-pipeline
+            # phase is unreachable, and the accuracy page prices a settled
+            # question with `COALESCE(calibration_probability,
+            # opening_probability)`.
+            #
+            # 🔴 The trap this one is the specimen for is a falsifier that
+            # INVERTS. #7665 pre-registered "examined > 400,000 with restored ==
+            # 0 means the promotion is broken", and it was true the day it was
+            # written. The cursor advances over what was EXAMINED and the walk
+            # wraps, so once the promotable population is drained that is the
+            # HEALTHY steady state, forever. It is therefore deliberately not
+            # graded on `restored` — nor on `deadline_hit`, which is the design.
+            # `failed` only when it errored AND examined nothing, `no_work` on
+            # the wrap, `complete` otherwise. Terminal comes from
+            # `_repair_openings_from_first_snapshot`.
+            "opening_repair_drain",
         }
 
     def test_enforced_task_partial_blocks_success(self):

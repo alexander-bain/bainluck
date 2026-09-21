@@ -590,6 +590,32 @@ ENFORCED_TASKS = frozenset({
     # `_tracked_run` records a bare returning invocation — a hub producer that
     # has never produced a hub, permanently green.
     "assemble_containers",             # terminal + members + edges_written
+    # #7781, enrolled IN THE SAME CHANGE that gives it a terminal — same reason
+    # as the three entries above, and the same cost shape. `opening_repair_drain`
+    # is the beat #7665 shipped because the in-pipeline phase it replaces sits
+    # five `_cannot_afford` gates below an exit that task's own source calls its
+    # only path. Its loop catches every exception into `errors` and RETURNS, so
+    # before this it read `not_enforced(unknown:no_terminal_fields)` and there
+    # was no path by which it could report a bad run: a raise on the first batch
+    # banked `successes_24h: 1`, `consecutive_failures: 0`, `health: healthy`.
+    # It is now the ONLY thing promoting openings, and the accuracy page prices
+    # a settled question with `COALESCE(calibration_probability,
+    # opening_probability)`, so a silently dead drain is settled questions
+    # quietly ceasing to gain the price they opened at.
+    #
+    # `failed` only when it errored AND examined nothing; `no_work` when there
+    # was nothing to walk (the wrap); `complete` otherwise, downgraded to
+    # PARTIAL by `_has_damage` when `errors` is non-empty.
+    #
+    # WHAT IT IS NOT GRADED ON. Not `restored`, and not #7665's pre-registered
+    # `examined > 400,000 with restored == 0` falsifier — that was true on
+    # 2026-09-21 and it INVERTS. The cursor advances over what was EXAMINED, not
+    # what was repaired, and the walk wraps, so once the promotable population
+    # is drained "examined a million, restored zero" is the healthy steady
+    # state. Grading on it would redden this beat permanently at the moment it
+    # finished its job. Not `deadline_hit` either: the wall stopping a run
+    # partway is the design, and was true of the healthy first fire.
+    "opening_repair_drain",            # terminal + errors
 })
 
 
