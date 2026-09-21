@@ -26,7 +26,8 @@ def scale(rows):
 flips = {"ladder": [], "divisor": [], "bars": [], "collapse": [], "leader": []}
 read = 0
 for path in sorted(glob.glob('/tmp/d349_pages_after/*.json')):
-    d = json.load(open(path))
+    with open(path) as handle:
+        d = json.load(handle)
     if not isinstance(d, dict):
         continue
     q = d.get("name") or ""
@@ -74,5 +75,5 @@ for mid, q in flips["bars"]:
     print(f"  BARS      {mid:<10} {q!r}")
 for mid, q in flips["collapse"]:
     print(f"  COLLAPSE  {mid:<10} {q!r}")
-json.dump({k: v for k, v in flips.items()},
-          open(os.path.join(os.path.dirname(__file__), 'census.json'), 'w'), indent=1)
+with open(os.path.join(os.path.dirname(__file__), 'census.json'), 'w') as out:
+    json.dump({k: v for k, v in flips.items()}, out, indent=1)
