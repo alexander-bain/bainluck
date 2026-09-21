@@ -4623,7 +4623,6 @@ async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -
     return int(result.rowcount or 0)
 
 
-
 def _last_trade_survives_own_book(market) -> float | None:
     """The leg's last trade, or ``None`` when its OWN live book prices it out (#7548).
 
@@ -4677,6 +4676,7 @@ def _last_trade_survives_own_book(market) -> float | None:
     if book_refutes_price(market.best_bid, market.best_ask, float(last)):
         return None
     return float(last)
+
 
 def _parent_outcome_data(event) -> list[dict]:
     """The PARENT market's outcome rows for one Gamma event. Pure, no DB, no network.
