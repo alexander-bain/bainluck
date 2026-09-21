@@ -33,7 +33,7 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 import FeedCard from "@/components/FeedCard";
-import { feedContextSnippet } from "@/components/discover/utils";
+import { feedContextSnippet, resolvesLabel } from "@/components/discover/utils";
 import type { FeedItem } from "@/lib/types";
 
 /**
@@ -166,7 +166,10 @@ describe("#6560 — the caption under the heading does not restate it", () => {
     const holeInOne = SERVED.find((s) => s.label === "resolves-within-template")!;
     const caption = captionText(render(holeInOne))!;
     expect(caption.length).toBeLessThan(holeInOne.reason.length - 40);
-    expect(caption).toBe("1+ holes-in-one leads; resolves within a month");
+    // #7872 — shorter again, and for a second reason: this fixture carries a
+    // `resolution_date`, so the card prints "Resolves Feb 8, 2027" as its eyebrow
+    // and the caption no longer restates that same field as a 30-day window.
+    expect(caption).toBe("1+ holes-in-one leads");
   });
 
   test("NEGATIVE CONTROL — a headline that says something new is not dropped", () => {
@@ -202,7 +205,17 @@ describe("#6560 — /sports resolves the caption the way Discover does (notice 3
   test.each(SERVED)("$label — the rendered caption IS the shared chain's answer", (served) => {
     // Not "the same rule" — the same function. A second copy of the preference
     // order is how the two surfaces drifted apart in the first place.
-    expect(captionText(render(served))).toBe(feedContextSnippet(futuresItem(served)));
+    //
+    // #7872 — and the same ARGUMENT: the chain is told what eyebrow the caller
+    // renders, so it is handed the same string this card prints. Derived through
+    // `resolvesLabel` rather than written out, because the fixture's resolution
+    // date is a fixed 2027 instant and a literal here would branch on the clock
+    // (gotcha #44).
+    const item = futuresItem(served);
+    const eyebrow = resolvesLabel(
+      (item.data as { resolution_date?: string | null }).resolution_date,
+    );
+    expect(captionText(render(served))).toBe(feedContextSnippet(item, eyebrow));
   });
 });
 
@@ -214,13 +227,30 @@ describe("#6560 — the pill still yields to the sentence beneath it (#4403 held
     },
   );
 
-  test("a pill whose words the caption lacks still renders — the live Playoff card", () => {
-    // The one live specimen where `context_summary` and `headline` differ enough
-    // to clear the echo test in both directions. It is the reachable half of the
-    // rule: the pill is suppressed far more often than before, never more rarely,
-    // and it is not dead.
-    const playoff = SERVED.find((s) => s.label === "chance-template")!;
-    expect(pillText(render(playoff))).toBe("Resolving within a month");
+  test("a pill whose words the caption lacks still renders — the live golf card", () => {
+    // The reachable half of the rule: the pill is suppressed far more often than
+    // before, never more rarely, and it is not dead.
+    //
+    // #7872 MOVED THIS SPECIMEN, and the move is the point. The Playoff card that
+    // used to prove liveness had the pill "Resolving within a month" over an
+    // eyebrow reading "Resolves Feb 8, 2027" — the badge WAS the duplication this
+    // issue is about, so it is now dropped, and a test demanding it render would
+    // be pinning the defect. Replaced with a specimen measured on the same
+    // production payload (`GET /api/feed?limit=200`, 2026-09-21 23:15Z) where a
+    // pill still renders AFTER the change — 1 pill on page one before, the same 1
+    // after, so the component is live and the claim is not asserted into being.
+    const walmart = {
+      label: "live-pill",
+      name: "Walmart NW Arkansas Championship presented by P&G Winner",
+      headline: "Resolving soon: Na Rin An leads at 32%",
+      reason:
+        "Odds shifting in Walmart NW Arkansas Championship presented by P&G Winner",
+      context_summary: "Na Rin An leads at 32%; resolves within a week",
+    };
+    const html = render(walmart);
+    expect(pillText(html)).toBe("Resolving soon: Na Rin An leads at 32%");
+    // ...over a caption that has stopped restating the resolution.
+    expect(captionText(html)).toBe("Na Rin An leads at 32%");
   });
 
   test("the pill can never come BACK on a card where #4403 suppressed it", () => {
@@ -231,6 +261,9 @@ describe("#6560 — the pill still yields to the sentence beneath it (#4403 held
     const soon = SERVED.find((s) => s.label === "resolving-soon-template")!;
     const html = render(soon);
     expect(pillText(html)).toBeNull();
-    expect(captionText(html)).toBe("Rory McIlroy leads at 7%; resolves within a week");
+    // #7872 — the caption lost the window clause the eyebrow already states, and
+    // the pill STAYS suppressed: the `item.reason` half of the echo test is what
+    // holds here, which is exactly why #6560 kept it beside the caption test.
+    expect(captionText(html)).toBe("Rory McIlroy leads at 7%");
   });
 });

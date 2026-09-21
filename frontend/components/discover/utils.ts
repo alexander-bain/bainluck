@@ -589,7 +589,81 @@ export function stripCardTitleHead(
   return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
-export function feedContextSnippet(item: FeedItem): string {
+/** The resolution-window clauses `feed_reasons.py` composes, and only those.
+ *
+ *  Four windows (`resolving_soon_1d/2d/7d/30d`) in two tenses: the leader-clause
+ *  ladder writes `resolves`, the headline templates write `resolving`. Nothing
+ *  else is listed, because this expression only ever DELETES, and a pattern
+ *  wider than the copy the backend actually emits would delete a sentence
+ *  nobody wrote. */
+const RESOLUTION_WINDOW = String.raw`resolv(?:es|ing) within (?:a day|two days|a week|a month)`;
+/** `"Resolves within a month"` — the whole caption is the clause. */
+const WINDOW_ONLY_RE = new RegExp(`^(?:${RESOLUTION_WINDOW})\\.?$`, "i");
+/** `"Na Rin An leads at 32%; resolves within a week"` — and the `,` twin. */
+const WINDOW_TAIL_RE = new RegExp(`\\s*[;,]\\s*(?:${RESOLUTION_WINDOW})\\.?\\s*$`, "i");
+/** `"… resolving within a day, {clause}"` once the heading is subtracted. */
+const WINDOW_HEAD_RE = new RegExp(`^(?:${RESOLUTION_WINDOW})\\s*,\\s*`, "i");
+
+/**
+ * Drop a resolution-window clause the card's own eyebrow already states exactly.
+ *
+ * #7872. The eyebrow and the caption are two renderings of ONE field. The
+ * eyebrow is `resolvesLabel(data.resolution_date)`; the caption's trailing
+ * clause is `feed_reasons.py`'s `resolving_soon_*` rung, keyed off the same
+ * date. So the card says one fact twice, once exactly and once vaguely:
+ *
+ *     Resolves Oct 10, 2026                                     ← eyebrow
+ *     Sudan's Emergency Response Rooms leads; resolves within a month
+ *
+ * The vague half is never the better half — in all three shapes the eyebrow is
+ * strictly more precise about the same field ("Closes in 5h" over "resolves
+ * within a day") — and it costs the caption's second clause, the one line the
+ * card has for a why-now. Measured on production `GET /api/feed?limit=200`
+ * 2026-09-21 23:15Z: 31 of 91 served futures cards carry the shape, and one of
+ * them (`S&P 500 (SPY) closes above ___ on September 22?`) has NOTHING else in
+ * its caption — "Resolves within a day" under "Closes in 21h" was the whole
+ * line, and with the clause gone the chain falls through to "Big odds
+ * movement", a sentence the reader cannot get from the eyebrow.
+ *
+ * THE GATE IS THE CALLER'S, NOT THIS MODULE'S, and that is the whole care in
+ * this change. `resolution_date` being present does NOT mean the reader can see
+ * it: `FuturesCompactRow` — the group/bundle member row — prints this caption
+ * and no eyebrow at all, and its own comment quotes `Core CPI YoY - September
+ * 2026 · 2.4% · Resolves within a month`, where the clause is the row's ONLY
+ * statement of when. Reading the date here and inferring the eyebrow would
+ * delete it. So the caller passes the string it actually renders, and a caller
+ * that renders none passes nothing and keeps every word.
+ *
+ * A DELETION, NOT A REWRITE (ruling 003) — the same subtraction
+ * `stripCardTitleHead` performs on the other end of the sentence. No copy is
+ * minted: every remaining word is a word the backend served. And when the
+ * clause was the entire candidate this returns `""`, so the chain moves to the
+ * next door rather than printing a blank line — which is why the count of cards
+ * this SILENCES is 0 of 91 and not 1.
+ */
+export function stripResolutionWindowClause(
+  text: string | null | undefined,
+  resolutionLabel: string | null | undefined,
+): string {
+  const raw = (text ?? "").trim();
+  // No eyebrow, no duplication: the clause is the reader's only timing signal.
+  if (!raw || !(resolutionLabel ?? "").trim()) return raw;
+  if (WINDOW_ONLY_RE.test(raw)) return "";
+  const rest = raw.replace(WINDOW_TAIL_RE, "").replace(WINDOW_HEAD_RE, "").trim();
+  if (!rest) return "";
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/**
+ * @param resolutionLabel the resolution eyebrow THIS CALLER RENDERS, verbatim
+ *   (`resolvesLabel(data.resolution_date)`), or nothing if it renders none.
+ *   Futures only, and it can only ever subtract — see
+ *   `stripResolutionWindowClause` for why the caller has to be the one to say.
+ */
+export function feedContextSnippet(
+  item: FeedItem,
+  resolutionLabel?: string | null,
+): string {
   if (item.type === "futures") {
     // #4265 — ONE chain with iOS (`DiscoverCaption.feedCaption`), graded
     // against `fixtures/discover/caption-chain-record-2026-09-09.json`.
@@ -612,11 +686,20 @@ export function feedContextSnippet(item: FeedItem): string {
     // predicate and this chain from drifting apart, and a bare `data.name`
     // inside it would read as a fifth door.
     const heading = data.name;
+    // #7872 — the second subtraction, hoisted for exactly the reason `heading`
+    // is: it is what the card already prints, so it can only be taken away.
+    // Both live OUTSIDE the array literal so the four doors stay the four doors
+    // the backend guard counts.
+    const strip = (candidate: string | null | undefined): string =>
+      stripResolutionWindowClause(
+        stripCardTitleHead(candidate, heading),
+        resolutionLabel,
+      );
     return firstMeaningful([
-      stripCardTitleHead(item.context_summary, heading),
-      stripCardTitleHead(item.headline, heading),
-      stripCardTitleHead(item.reason, heading),
-      stripCardTitleHead(data.hook_description, heading),
+      strip(item.context_summary),
+      strip(item.headline),
+      strip(item.reason),
+      strip(data.hook_description),
     ]);
   }
   if (item.context_summary) return item.context_summary;

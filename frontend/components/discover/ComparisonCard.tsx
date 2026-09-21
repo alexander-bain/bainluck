@@ -39,9 +39,11 @@ export function ComparisonCard({
 }: ComparisonCardProps) {
   const catStyle = getCat(data.llm_sport_category);
   const category = data.sport_name || data.llm_sport_category || "Markets";
-  const contextSnippet = feedContextSnippet(item);
-  const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
+  // #7872 — the eyebrow this card prints at the end of its header row, handed to
+  // the caption chain so the same field is not stated twice at two precisions.
+  const contextSnippet = feedContextSnippet(item, resolveText);
+  const expandedContext = feedExpandedContext(item);
   const shareUrl = buildDiscoverShareUrl(`/futures/${data.id}`, "futures", data.id);
   const shareText = `Compare: ${data.name} on Bain Luck.`;
 

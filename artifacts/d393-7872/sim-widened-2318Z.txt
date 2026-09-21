@@ -1,0 +1,107 @@
+futures cards: 91   unchanged: 60
+CHANGED (caption keeps saying something): 31
+SILENCED (caption becomes empty): 0
+
+  Nobel Peace Prize Winner 2026   [Resolves Oct 10, 2026]
+    before: Sudan's Emergency Response Rooms leads; resolves within a month
+    after : Sudan's Emergency Response Rooms leads   (door: context_summary)
+  Brazil Presidential Election   [Resolves Oct 4, 2026]
+    before: Flávio Bolsonaro leads; resolves within a month
+    after : Flávio Bolsonaro leads   (door: context_summary)
+  Walmart NW Arkansas Championship presented by P&G Winner   [Closes Sep 27]
+    before: Na Rin An leads at 32%; resolves within a week
+    after : Na Rin An leads at 32%   (door: context_summary)
+  Will Rocket Lab USA, Inc. (RKLB) hit (HIGH) $74 Week of September 21 2026?   [Closes Sep 25]
+    before: 50% chance, resolving within a week
+    after : 50% chance   (door: context_summary)
+  Will NVIDIA (NVDA) hit (LOW) $220 Week of September 21 2026?   [Closes Sep 25]
+    before: 37% chance, resolving within a week
+    after : 37% chance   (door: context_summary)
+  Will Costco (COST) beat quarterly earnings?   [Closes Sep 24]
+    before: 72% chance, resolving within a week
+    after : 72% chance   (door: context_summary)
+  Argentina Monthly Inflation - September   [Resolves Oct 13, 2026]
+    before: 1.9 to 2.1% leads; resolves within a month
+    after : 1.9 to 2.1% leads   (door: context_summary)
+  Next Prime Minister of Morocco? (Invested)   [Closes Sep 23]
+    before: Fatima Ezzahra El Mansouri leads at 55%; resolves within a week
+    after : Fatima Ezzahra El Mansouri leads at 55%   (door: context_summary)
+  Price of Dozen Eggs in September?   [Resolves Oct 15, 2026]
+    before: $2.20 to $2.30 leads; resolves within a month
+    after : $2.20 to $2.30 leads   (door: context_summary)
+  Will Opendoor Technologies Inc. (OPEN) hit (HIGH) $2.75 Week of September 21 2026?   [Closes Sep 25]
+    before: 81% chance, resolving within a week
+    after : 81% chance   (door: context_summary)
+  FedEx Open de France Winner   [Closes Sep 27]
+    before: Ludvig Åberg at 9%; resolves within a week
+    after : Ludvig Åberg at 9%   (door: context_summary)
+  WTA Singapore Singles Winner   [Closes Sep 27]
+    before: Linda Fruhvirtova leads at 38%; resolves within a week
+    after : Linda Fruhvirtova leads at 38%   (door: context_summary)
+  #2 Spotify song this week? (September 25)   [Closes Sep 25]
+    before: Earrings - Malcolm Todd leads at 62%; resolves within a week
+    after : Earrings - Malcolm Todd leads at 62%   (door: context_summary)
+  Will S&P 500 (SPY) hit (HIGH) $780 Week of September 21 2026?   [Closes Sep 25]
+    before: 51% chance, resolving within a week
+    after : 51% chance   (door: context_summary)
+  Top Global Netflix Movie this week?   [Closes in 5h]
+    before: Why Did I Get Married Again? leads at 90%; resolves within a day
+    after : Why Did I Get Married Again? leads at 90%   (door: context_summary)
+  Minas Gerais Governor Election Winner   [Resolves Oct 4, 2026]
+    before: Cleitinho Azevedo leads; resolves within a month
+    after : Cleitinho Azevedo leads   (door: context_summary)
+  Titled Tuesday Winner: September 22   [Resolves Oct 7, 2026]
+    before: Denis Lazavik leads; resolves within a month
+    after : Denis Lazavik leads   (door: context_summary)
+  S&P 500 (SPY) closes above ___ on September 22?   [Closes in 21h]
+    before: Resolves within a day
+    after : Big odds movement   (door: headline)
+  DP World Tour: Open de France Winner   [Closes Sep 28]
+    before: Ludvig Aaberg at 7%; resolves within a week
+    after : Ludvig Aaberg at 7%   (door: context_summary)
+  Will Palantir Technologies Inc. (PLTR) hit (LOW) $174 Week of September 21 2026?   [Closes Sep 25]
+    before: 41% chance, resolving within a week
+    after : 41% chance   (door: context_summary)
+  Will NVIDIA (NVDA) finish week of September 21 above $225?   [Closes Sep 25]
+    before: 64% chance, resolving within a week
+    after : 64% chance   (door: context_summary)
+  Will Tesla, Inc. (TSLA) hit (HIGH) $382.50 Week of September 21 2026?   [Closes Sep 25]
+    before: 69% chance, resolving within a week
+    after : 69% chance   (door: context_summary)
+  Will Tesla (TSLA) finish week of September 21 above $365?   [Closes Sep 25]
+    before: 79% chance, resolving within a week
+    after : 79% chance   (door: context_summary)
+  Will Meta Platforms, Inc. (META) hit (LOW) $660 Week of September 21 2026?   [Closes Sep 25]
+    before: 6% chance, resolving within a week
+    after : 6% chance   (door: context_summary)
+  Will Meta (META) finish week of September 21 above $690?   [Closes Sep 25]
+    before: 90% chance, resolving within a week
+    after : 90% chance   (door: context_summary)
+  Will Alphabet Inc. (GOOGL) hit (HIGH) $360 Week of September 21 2026?   [Closes Sep 25]
+    before: 72% chance, resolving within a week
+    after : 72% chance   (door: context_summary)
+  Will Amazon.com, Inc. (AMZN) hit (HIGH) $264 Week of September 21 2026?   [Closes Sep 25]
+    before: 58% chance, resolving within a week
+    after : 58% chance   (door: context_summary)
+  Will Microsoft Corporation (MSFT) hit (HIGH) $502.50 Week of September 21 2026?   [Closes Sep 25]
+    before: 83% chance, resolving within a week
+    after : 83% chance   (door: context_summary)
+  Will Apple (AAPL) hit (HIGH) $340 Week of September 21 2026?   [Closes Sep 25]
+    before: 92% chance, resolving within a week
+    after : 92% chance   (door: context_summary)
+  Will South Korea ETF (EWY) hit (LOW) $180 Week of September 21 2026?   [Closes Sep 25]
+    before: 27% chance, resolving within a week
+    after : 27% chance   (door: context_summary)
+  Azerbaijan Grand Prix Winner   [Closes Sep 26]
+    before: Andrea Kimi Antonelli leads at 37%; resolves within a week
+    after : Andrea Kimi Antonelli leads at 37%   (door: context_summary)
+
+=== SILENCED — every door, so the loss is visible ===
+
+=== CONTROL: cards with no eyebrow ===
+  [no-date] MLB World Series Winner
+    before: 'Los Angeles Dodgers lead at 28%, Milwaukee Brewers up 10.2 points since Feb 2'
+    after : 'Los Angeles Dodgers lead at 28%, Milwaukee Brewers up 10.2 points since Feb 2'   UNTOUCHED
+  [no-date] NFL Super Bowl Winner
+    before: 'Los Angeles Rams lead at 11%'
+    after : 'Los Angeles Rams lead at 11%'   UNTOUCHED
