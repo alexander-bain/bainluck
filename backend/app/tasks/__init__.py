@@ -1674,7 +1674,18 @@ def fill_generic_market_history(self, market_ids=None, dry_run: bool = False):
 
     NAMED MARKETS ONLY, at most `MAX_MARKETS_PER_TASK`. There is no bare mode and
     no beat entry: the only dispatcher is `routes/futures.py`, behind a
-    per-market claim and an hourly site-wide budget. Writes Redis only.
+    per-market claim and an hourly site-wide budget.
+
+    THE SERIES GOES TO REDIS; ONE BOOKKEEPING KEY GOES TO POSTGRES (#7736). This
+    said "Writes Redis only" until the bank marker landed, and that sentence is
+    the one a reader consults to decide whether this task touches production data
+    — so it is corrected here rather than left to mislead. The write is
+    `futures_markets.market_metadata->'venue_history_bank'`, merged by
+    `_stamp_bank_marker`, at most ONCE per market and never under `dry_run`; it
+    exists because the series cache is Redis-only under `allkeys-lru`, so an
+    eviction would otherwise take the only evidence the bank ever existed. It
+    pins `updated_at` to itself, so no market's data-freshness clock moves
+    (CERT-949); no other column and no other metadata key is touched.
     """
     from app.tasks.generic_market_history_fill import run_generic_market_history_fill
     return _tracked_run(
