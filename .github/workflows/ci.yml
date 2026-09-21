@@ -3317,6 +3317,119 @@ jobs:
           print("#7351 generic-market history acceptance GREEN on all", t, "tests")
           PY
 
+      - name: "#7548 trade-print refusal — provision the disposable Postgres + Redis"
+        # Same bargain as the #7351 step above: the suite DROPS AND RECREATES THE
+        # WHOLE SCHEMA and FLUSHES ITS REDIS DB, so it gets a database of its own
+        # (`bl_nascar_print_7548`), Redis logical db 14 on the job-local service
+        # (14, not 15 — #7351 flushes 15 and two gates sharing one logical db
+        # would each erase the other's sentinel), and a fresh per-run nonce
+        # planted in BOTH. The suite refuses any Postgres or Redis that is not
+        # loopback or does not carry the nonce, and `NASCAR_7548_*` deliberately
+        # do NOT fall back to `$DATABASE_URL` / `$REDIS_URL`.
+        run: |
+          set -o pipefail
+          python - <<'PY' > /tmp/nascar7548.env
+          import asyncio, secrets, sys
+          import asyncpg, redis
+
+          NONCE = secrets.token_hex(24)
+          DB = "bl_nascar_print_7548"
+          REDIS = "redis://localhost:56379/14"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database=DB,
+                  host="localhost", port=5432)
+              await c.execute(
+                  "CREATE TABLE nascar_7548_disposable_sentinel (nonce text NOT NULL)")
+              await c.execute(
+                  "INSERT INTO nascar_7548_disposable_sentinel VALUES ($1)", NONCE)
+              print("server_version:", await c.fetchval("SHOW server_version"),
+                    file=sys.stderr)
+              await c.close()
+
+          asyncio.run(go())
+          rc = redis.Redis.from_url(REDIS, socket_timeout=5)
+          rc.flushdb()
+          rc.set("nascar7548:disposable-sentinel", NONCE)
+          print("redis_version:", rc.info("server")["redis_version"], file=sys.stderr)
+          print(f"NASCAR_7548_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}")
+          print(f"NASCAR_7548_REDIS_URL={REDIS}")
+          print(f"NASCAR_7548_NONCE={NONCE}")
+          PY
+          cat /tmp/nascar7548.env >> "$GITHUB_ENV"
+          echo "provisioned bl_nascar_print_7548 + redis db 14 with a fresh sentinel nonce"
+
+      - name: "#7548 a ~$45 trade print is not a championship probability"
+        # PILLAR: TRUTH. SHIP: the NASCAR championship chart and the hero
+        # sparkline show the supported price journey without an unsupported
+        # spike, while a genuine near-100% move still draws.
+        #
+        # THIS STEP IS THE WHOLE GATE, and it is a CI-only one. The suite needs
+        # Postgres 15+ (`app.models.models` builds `uq_container_anchor` with
+        # `NULLS NOT DISTINCT`) and a real Redis. A lane VM has neither: its
+        # sandbox refuses `shmget`, so `initdb` cannot mint a cluster, and the
+        # loopback server it does carry is 14, which fails the schema build with
+        # `syntax error at or near "NULLS"`. Measured in live/481 — so a reviewer
+        # reading "the builder ran it locally" on this file should disbelieve it.
+        #
+        # Real writer, real routes, real Postgres, real Redis; only the venues'
+        # HTTP transport (saved Gamma/CLOB/tape bytes) and the clock are
+        # controlled. `REDIS_URL` is set FOR THIS STEP ONLY so the app's own
+        # clients land on the disposable Redis — the suite refuses to run if they
+        # would not.
+        #
+        # Same three refusals as the steps around it (skip / zero / short count),
+        # and pytest's exit code is read for its VALUE (gotcha #54).
+        env:
+          REDIS_URL: redis://localhost:56379/14
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_polymarket_trade_print_7548_real_pg.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/nascar7548-junit.xml 2>&1 | tee /tmp/nascar7548.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          # 15 in the delivered candidate, and the split is worth stating because
+          # a shrinking one is how a ship quietly loses its controls: 2 venue
+          # arithmetic (V1 identity, V2 the venue's own series never reached the
+          # print), 4 writer ship (W1 x3 candidate books + W3 the hourly refresh
+          # sharing the refusal), 4 writer CONTROLS (W0 the reconstruction space
+          # is non-empty, W2 x3 genuine shapes that must still be written), and
+          # 5 reader (R1-R5, of which R2/R3 are controls).
+          EXPECTED = 15
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/nascar7548-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#7548 gate produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#7548 gate collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#7548 gate SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#7548 gate ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#7548 gate RED: {f} failed, {e} errors")
+          print("#7548 trade-print refusal GREEN on all", t, "tests")
+          PY
+
       - name: "#7147 a settled ESPN final survives a real scores pass (real Postgres)"
         # PILLAR: TRUTH. SHIP: a finished game keeps the score it finished with.
         #

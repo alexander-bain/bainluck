@@ -19,6 +19,7 @@ from app.utils.feed_market_quality import (
     is_empty_book_midpoint,
     is_fabricated_midpoint,
 )
+from app.utils.kalshi_empty_book import book_refutes_price  # #7548
 from app.utils.winner_field_coherence import (
     DUPLICATE_CONDITION_LEG_SQL,
     count_near_certain,
@@ -4622,6 +4623,61 @@ async def _retire_unpriced_legs(session, futures_market_id: int, external_ids) -
     return int(result.rowcount or 0)
 
 
+def _last_trade_survives_own_book(market) -> float | None:
+    """The leg's last trade, or ``None`` when its OWN live book prices it out (#7548).
+
+    Every place this file substitutes ``lastTradePrice`` for a quote rests on one
+    sentence — "somebody actually transacted there, so it is a belief". Q428
+    already bounded that sentence in TIME (the 24-hour volume test). This bounds it
+    against the other thing Gamma sends in the same payload: the book.
+
+    WHAT A READER SAW. ``/futures/56947465`` (*NASCAR Cup Series: 2026 Champion*)
+    drew Kyle Larson spiking to **98.9%** for one stamp (2026-09-19T20:31:08Z) in a
+    week otherwise near 19-25%, on the Probability Trend AND the hero sparkline.
+    The venue's own tape for that condition (data-api ``/trades``, saved) shows a
+    ladder of 46-share market buys walking an empty ask side at 20:00:48-20:01:27Z
+    and ONE 46-share print at **0.989** at 20:10:35Z — about $45. The venue's own
+    minute series (CLOB ``/prices-history``, saved) never exceeds 0.586 that day
+    and reads 0.3815-0.3935 across 20:30-20:32Z; a midpoint of 0.39 is
+    arithmetically impossible with an ask at or above 0.989 (it would need a
+    negative bid), so at our capture instant the ask sat far BELOW the print. We
+    chose the venue's stalest number over its freshest one. Identity was never in
+    question: right event, right condition, right YES token.
+
+    THE RULE IS NOT NEW AND IS NOT RE-DERIVED. ``book_refutes_price`` is #5121's
+    shipped predicate — "the trade is a memory; the quote is an offer" — written
+    for ``_kalshi_yes_probability`` rule 2 on exactly this shape (12 of 12 rungs
+    storing the venue's ``last_price`` above the venue's own ask). It is imported,
+    with its own half-cent tolerance and its own empty-book carve-out. Polymarket
+    ticks are 0.001-0.01, so half a cent is at least as conservative here as on
+    Kalshi's cent grid: it can only refute LESS.
+
+    WHAT SURVIVES, BY CONSTRUCTION AND NOT BY EXEMPTION:
+
+    * **A genuine near-100% move.** A leg that really ran to 0.99 has a book up
+      there (or a cleared one). ``bid 0.985 / ask 0.992 / last 0.989`` is inside
+      its book; ``ask None`` or ``ask 1.0`` cannot be exceeded. Gotcha #19's
+      blowout is the second shape and is untouched.
+    * **A price that is not a substituted trade.** This is asked only where a
+      last trade is about to stand in for a quote. ``outcome_prices`` that pass
+      the existing gates are returned before any of these sites is reached —
+      Larson today reads 0.2505 off ``outcome_prices`` beside ``last 0.175`` and
+      ``bid 0.223``, a trade BELOW the bid, and nothing here looks at it.
+
+    A REFUSAL IS A SKIP, the same as every other refusal in this resolver: the
+    caller writes nothing for the leg on this pass, the row keeps its last
+    supported number, and the chart shows an honest gap at that stamp. It does NOT
+    fall through to the ask-only fallback — that would print one side of the same
+    wide book this file already refuses to average.
+    """
+    last = market.last_trade_price
+    if last is None or not (0 < float(last) < 1):
+        return None
+    if book_refutes_price(market.best_bid, market.best_ask, float(last)):
+        return None
+    return float(last)
+
+
 def _parent_outcome_data(event) -> list[dict]:
     """The PARENT market's outcome rows for one Gamma event. Pure, no DB, no network.
 
@@ -4686,12 +4742,8 @@ def _parent_outcome_data(event) -> list[dict]:
             if is_fabricated_midpoint(
                 prob, market.best_bid, market.best_ask
             ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
-                prob = (
-                    float(market.last_trade_price)
-                    if market.last_trade_price is not None
-                    and 0 < market.last_trade_price < 1
-                    else None
-                )
+                # #7548: ...and only a trade the leg's own book has not priced out.
+                prob = _last_trade_survives_own_book(market)
             if prob is None or prob <= 0:
                 continue
             # Q492: this is the parent anchor of a game-level event, and its
@@ -4897,12 +4949,12 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
         prob, market.best_bid, market.best_ask
     ) or is_empty_book_midpoint(prob, market.best_bid, market.best_ask):
         recently_traded = bool(market.volume_24h and float(market.volume_24h) > 0)
-        if (
-            recently_traded
-            and market.last_trade_price is not None
-            and 0 < market.last_trade_price < 1
-        ):
-            return float(market.last_trade_price), "last_trade_price"
+        # #7548: Q428 bounded "somebody transacted there" in TIME. The same payload
+        # also carries the book, and a print the live ask (or bid) has moved past
+        # is a memory, not a belief — see `_last_trade_survives_own_book`.
+        surviving_trade = _last_trade_survives_own_book(market)
+        if recently_traded and surviving_trade is not None:
+            return surviving_trade, "last_trade_price"
         return None, None
 
     if prob is not None and prob > 0:
@@ -4926,6 +4978,13 @@ def _resolve_market_probability_with_source(market) -> tuple[float | None, str |
 
     # Last trade fallback
     if market.last_trade_price is not None and market.last_trade_price > 0:
+        # #7548: a print the leg's own live book prices out is declined, and the
+        # decline is a SKIP — it must not fall through to the ask-only fallback
+        # below, which would publish one side of the book this path just refused.
+        if book_refutes_price(
+            market.best_bid, market.best_ask, float(market.last_trade_price)
+        ):
+            return None, None
         return market.last_trade_price, "last_trade_price"
 
     # Ask-only fallback: reject if ask >= 0.99 (placeholder/no real market)
