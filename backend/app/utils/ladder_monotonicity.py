@@ -918,17 +918,26 @@ _POST_DOWN = {"below", "lower", "less", "under"}
 #: A date rung has to be a plausible calendar year, not a 4-digit quantity.
 _PLAUSIBLE_YEARS = range(2000, 2101)
 
-#: ``before/by/after <date>``, and nothing else on the leg. Anchored at both ends
-#: for the same reason :data:`PLUS_BRACKET_RE` is: trailing prose is text this
-#: grammar cannot account for, and that is exactly the text that would decide
-#: whether the leg is one-sided. ``(?P<day>\d{1,2})(?!\d)`` stops the ``20`` of
-#: ``2027`` being taken as a day of the month.
-_CUMULATIVE_DATE_RE = re.compile(
-    r"^\s*(?P<dword>before|by|after)\s+(?:"
+#: The DATE ITSELF — ``September 30``, ``Dec 31, 2026``, ``2027`` — with no
+#: direction word and no anchors. Named once because two grammars read it: the
+#: leg that carries its own ``before/by/after`` (below) and the leg that gets
+#: its direction from the market question (#7667). They must not drift apart,
+#: and a shared constant is the only way to say that which a later edit cannot
+#: quietly undo. ``(?P<day>\d{1,2})(?!\d)`` stops the ``20`` of ``2027`` being
+#: taken as a day of the month.
+_DATE_BODY = (
+    r"(?:"
     r"(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
     r"(?:\s+(?P<day>\d{1,2})(?!\d))?(?:,?\s*(?P<yr>\d{4}))?"
     r"|(?P<bare>\d{4})"
-    r")\s*\.?\s*$", re.I)
+    r")")
+
+#: ``before/by/after <date>``, and nothing else on the leg. Anchored at both ends
+#: for the same reason :data:`PLUS_BRACKET_RE` is: trailing prose is text this
+#: grammar cannot account for, and that is exactly the text that would decide
+#: whether the leg is one-sided.
+_CUMULATIVE_DATE_RE = re.compile(
+    rf"^\s*(?P<dword>before|by|after)\s+{_DATE_BODY}\s*\.?\s*$", re.I)
 
 #: ``after`` is the only descending date word: a later floor contains LESS.
 _DATE_DOWN = {"after"}
@@ -969,20 +978,34 @@ def _cumulative_date_leg_parts(text: str | None) -> tuple[float, str, str] | Non
     m = _CUMULATIVE_DATE_RE.match(text)
     if not m:
         return None
-    word = m.group("dword").lower()
+    return _date_parts_under_word(m, m.group("dword").lower(), "date")
+
+
+def _date_parts_under_word(
+    match: "re.Match[str]", word: str, namespace: str,
+) -> tuple[float, str, str] | None:
+    """A matched :data:`_DATE_BODY` read as a rung under the date word ``word``.
+
+    Shared by the leg that carries its own ``before/by/after`` and the leg whose
+    word comes from the market question (#7667), so the sort key, the year fence
+    and the ceiling convention are decided in ONE place. The two callers differ
+    only in where the word was found, which is exactly what ``namespace``
+    records: a family may not mix the two readings, and the affix key is what
+    refuses that (see :func:`cumulative_outcome_ladder`'s one-affix rule).
+    """
     ceiling = word in _DATE_CEIL_WORDS
-    if m.group("bare"):
-        year = int(m.group("bare"))
+    if match.group("bare"):
+        year = int(match.group("bare"))
         month_day = 1299 if ceiling else 0
     else:
-        year = int(m.group("yr") or DEFAULT_YEAR)
-        day = m.group("day")
-        month_day = _MONTHS[m.group("mon").lower()[:3]] * 100 + (
+        year = int(match.group("yr") or DEFAULT_YEAR)
+        day = match.group("day")
+        month_day = _MONTHS[match.group("mon").lower()[:3]] * 100 + (
             int(day) if day is not None else (99 if ceiling else 0))
     if year not in _PLAUSIBLE_YEARS:
         return None
     direction = DEC if word in _DATE_DOWN else INC
-    return float(year * 10000 + month_day), direction, f"date:{word}"
+    return float(year * 10000 + month_day), direction, f"{namespace}:{word}"
 
 
 # --- #7674 — the rung whose COMPARATOR IS IN THE QUESTION. ------------------
@@ -1085,9 +1108,105 @@ def _bare_magnitude_leg_parts(
     )
 
 
+# --- #7667 — the DEADLINE whose preposition is in the question. -------------
+#
+# #7674 above reads a comparator from the question and a bare MAGNITUDE from the
+# leg. Polymarket's deadline series writes the same way about time: the
+# preposition sits in the question, once, with a blank where the date goes.
+#
+#     Next Muse Spark (1.4+) released by...?
+#         September 30   .45        October 31   .725          (60197960)
+#
+# Substituting a leg into the blank gives back an ordinary ``by October 31``
+# rung, which #7650's grammar already reads. So these nest exactly as hard —
+# whatever ships by Sept 30 also ships by Oct 31 — and the card divided .725 by
+# the 1.175 sum of its own nested legs and printed .617, 10.8 points light.
+#
+# A BARE DATE IS THE AMBIGUOUS CASE, AND THE QUESTION IS WHAT RESOLVES IT. This
+# is why #7650 deliberately stopped short of it. The very same legs are a
+# PARTITION under a different preposition, and the venue ships both shapes with
+# leg lists that are indistinguishable:
+#
+#     Next Muse Spark (1.4+) released by...?          nested    (60197960)
+#     Will gas be below $3.75 in any state on...?     exclusive (61305564)
+#
+# ``on`` is not a deadline word, so the second is not read at all and keeps the
+# reading — and the divisor — it has today. That control is live, and it is the
+# adversarial one on purpose: its question also contains ``below``, a direction
+# word, which does not bind because it introduces no blank.
+#
+# MEASURED, on 2026-09-21, over every open market whose name carries the blank:
+# 261 use ``by``, of which 94 have date-only legs and 32 sit in the divisor's
+# ``1.0 < sum <= 2.0`` band and move. The other 167 hold ``Yes``/``No`` legs
+# merged in from a companion binary; an unreadable leg disqualifies its whole
+# market under the all-legs rule, so they are refused and unchanged.
+#
+# OPT-IN, and carried by the same ``question`` argument #7674 added, because it
+# is the same claim about the same sentence: the question may say WHICH WAY a
+# ladder runs, never that a set of legs IS one. Every other discriminator keeps
+# doing its work, and one does the deciding here — a family mixing a
+# question-read date with a leg-read ``by October 31`` is refused on the affix
+# key, which is namespaced ``qdate:`` for exactly that reason.
+
+#: The blank a leg substitutes into. Polymarket writes it with dots in the date
+#: templates (``by...?``) and with underscores in the strike ones (``above___``),
+#: and one series writes four dots (``ChatGPT Outage by....?``, 60093934).
+#: :data:`_QUESTION_RUNG_RE` above deliberately keeps its underscore-only form:
+#: its population was censused for #7674 as written, and widening a grammar is
+#: what earns a census, not what follows one.
+_BLANK = r"(?:_{2,}|\.{2,})"
+
+#: A deadline preposition IMMEDIATELY followed by the blank its date substitutes
+#: into — ``by...?``, ``before ...``. Immediacy is the discipline
+#: :data:`_QUESTION_RUNG_RE` keeps and for the same reason: with slop allowed, a
+#: ``by`` anywhere in a long question could claim a blank it has nothing to do
+#: with. The lookarounds are :data:`_UP_WORDS`' own, guarding the same failure —
+#: the ``by`` inside "nearby", the ``after`` inside "afterwards".
+_QUESTION_DATE_RE = re.compile(
+    rf"(?<![a-z])(?P<dword>before|by|after)(?![a-z])\s*{_BLANK}", re.I)
+
+
+def question_ladder_date_word(question: str | None) -> str | None:
+    """The deadline word a market QUESTION states over a blank, or ``None``.
+
+    ``None`` — never a guess — for a question with no blank, for a blank no
+    deadline word introduces, and for more than one distinct word, which is a
+    two-sided template (``after ___ and before ___``) and not one ladder.
+
+    Also ``None`` when :func:`question_ladder_direction` reads a MAGNITUDE
+    comparator out of the same sentence. A question that states both is one this
+    module has no measured reading of, and the two grammars would then compete
+    for the same legs — ``September 30`` parses as the magnitude 30 under a
+    label, so the competition has a real winner and it is the wrong one. Refusing
+    leaves such a market exactly where it is today.
+    """
+    if not question or question_ladder_direction(question) is not None:
+        return None
+    words = {
+        match.group("dword").lower()
+        for match in _QUESTION_DATE_RE.finditer(question)
+    }
+    return words.pop() if len(words) == 1 else None
+
+
+#: A leg that is ONLY a date — ``September 30``, ``Dec 31, 2026``, ``2027`` —
+#: carrying no preposition of its own. :func:`question_ladder_date_word`
+#: supplies it. Anchored at both ends exactly as :data:`_CUMULATIVE_DATE_RE` is,
+#: and over the same shared :data:`_DATE_BODY`, so a date either grammar can
+#: read is read the same way by both.
+_BARE_DATE_RE = re.compile(rf"^\s*{_DATE_BODY}\s*\.?\s*$", re.I)
+
+
+def _bare_date_leg_parts(text: str, word: str) -> tuple[float, str, str] | None:
+    """A bare-date leg, read under a deadline word the QUESTION supplied."""
+    match = _BARE_DATE_RE.match(text)
+    return None if match is None else _date_parts_under_word(match, word, "qdate")
+
+
 def parse_cumulative_leg(
     text: str | None, *, dates: bool = False,
     question_direction: str | None = None,
+    question_date_word: str | None = None,
 ) -> tuple[float, str] | None:
     """An outcome leg that is a cumulative threshold: ``(value, direction)``.
 
@@ -1109,15 +1228,22 @@ def parse_cumulative_leg(
 
     ``question_direction`` (#7674) additionally reads a BARE magnitude leg under
     a direction its market question stated. Off by default for the same reason.
+
+    ``question_date_word`` (#7667) does the same for a BARE date leg under a
+    deadline word its market question stated. Off by default, and mutually
+    exclusive with ``question_direction`` at the one place both are derived —
+    see :func:`question_ladder_date_word`.
     """
     parts = _cumulative_leg_parts(
-        text, dates=dates, question_direction=question_direction)
+        text, dates=dates, question_direction=question_direction,
+        question_date_word=question_date_word)
     return None if parts is None else (parts[0], parts[1])
 
 
 def _cumulative_leg_parts(
     text: str | None, *, dates: bool = False,
     question_direction: str | None = None,
+    question_date_word: str | None = None,
 ) -> tuple[float, str, str] | None:
     """:func:`parse_cumulative_leg` plus the leg's affix key.
 
@@ -1153,6 +1279,8 @@ def _cumulative_leg_parts(
             return dated
     if question_direction is not None:
         return _bare_magnitude_leg_parts(text, question_direction)
+    if question_date_word is not None:
+        return _bare_date_leg_parts(text, question_date_word)
     return None
 
 
@@ -1184,6 +1312,14 @@ def cumulative_outcome_ladder(
     market question states the comparator and marks the leg's place with a
     blank. Left unset, the answer is byte-identical for the same reason.
 
+    IT CARRIES TWO GRAMMARS AND THEY CANNOT BOTH FIRE (#7667). The same sentence
+    may instead state a DEADLINE word over the blank (``released by...?``), which
+    reads a BARE DATE leg. Both are the one claim — the question says which way
+    the ladder runs — so both ride this argument rather than a second flag; a
+    question stating a comparator AND a deadline is refused outright, at the one
+    place the two are derived (:func:`question_ladder_date_word`), because the
+    two grammars would otherwise compete for the same legs.
+
     ONE DISCRIMINATOR WEAKENS UNDER ``question`` AND THE OTHERS DO NOT. Every
     leg read this way is handed the same direction, so the "all legs point the
     same way" check below cannot fail for such a family — it is carrying no
@@ -1197,6 +1333,7 @@ def cumulative_outcome_ladder(
     if len(outcomes) < 2:
         return None
     question_direction = question_ladder_direction(question)
+    question_date_word = question_ladder_date_word(question)
     out: list[tuple[float, Mapping[str, object]]] = []
     directions = set()
     affixes: set[str] = set()
@@ -1205,7 +1342,8 @@ def cumulative_outcome_ladder(
         name = row.get(name_key)
         parsed = _cumulative_leg_parts(
             name if isinstance(name, str) else None, dates=dates,
-            question_direction=question_direction)
+            question_direction=question_direction,
+            question_date_word=question_date_word)
         if parsed is None:
             return None
         value, direction, affix = parsed
