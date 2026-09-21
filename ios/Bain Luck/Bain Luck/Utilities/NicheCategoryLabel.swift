@@ -86,11 +86,23 @@ nonisolated func nicheCategoryLabel(_ raw: String) -> String {
 /// #7532 — while a team row wants the sport. This map is therefore scoped to
 /// the chip rather than shared, and adding an entry here changes nothing
 /// anywhere else. Strings are web's `LEAGUE_DISPLAY` values for the same keys.
+///
+/// #7722 added `aussierules_afl`, and the reason it needs an ENTRY rather than a
+/// token is worth keeping: the derivation cannot reach "AFL" from either end.
+/// `aussierules` is not in `sportFamilyDisplayNames`, so the prefix is not
+/// droppable and both tokens survive; and shouting `afl` in `nicheKeyAcronyms`
+/// — where `nrl` already lives, which is why `rugbyleague_nrl` needs no entry:
+/// `rugbyleague` IS a known family, so its prefix drops and "NRL" is all that is
+/// left — would only turn "Aussierules Afl" into "Aussierules AFL". Adding
+/// `aussierules` to the shared family map would fix the prefix and change every
+/// Discover badge and search row in the app for one calibration label, which is
+/// the trade #5780 already refused in the other direction.
 private let nicheLeagueNames: [String: String] = [
     "icehockey_sweden_hockey_league": "SHL",
     "icehockey_sweden_allsvenskan": "Allsvenskan",
     "lacrosse_ncaa": "NCAA Lacrosse",
     "lacrosse_pll": "PLL",
+    "aussierules_afl": "AFL",
 ]
 
 /// Tokens printed in capitals that `knownAcronyms` has no reason to carry:

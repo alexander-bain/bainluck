@@ -856,8 +856,28 @@ final class CalibrationViewModel: ObservableObject {
     /// #1938: the map first, then ACRONYM-AWARE casing — never `.capitalized`,
     /// which renders the raw key "mma" as "Mma" (Alex, bug report 145). Any key
     /// the map does not carry is exactly the case that needs the safe formatter.
+    ///
+    /// #7722 — the safe formatter is not enough, and web already knew it. Its
+    /// twin is `calibrationCategories.ts` `categoryLabel`, which reads
+    /// `DISPLAY_NAMES[cat] || nicheCatLabel(cat)` — the LEAGUE-AWARE labeller,
+    /// not a bare title-caser. This app carried the map and the bare title-caser,
+    /// so the two surfaces answered differently for a compound league key the
+    /// map does not carry: web printed **AFL** and **NRL** and the phone printed
+    /// **"Aussierules Afl"** and **"Rugbyleague Nrl"**, a database identifier
+    /// with its underscore swapped for a space, in the Category Breakdown.
+    ///
+    /// Routing this fallback to `nicheCategoryLabel` — which already exists, is
+    /// already the Swift twin of `nicheCatLabel`, and already names a row by its
+    /// OWN tokens — makes the two surfaces the same shape rather than adding two
+    /// labels. That matters because the defect is scheduled, not accidental: the
+    /// web file's own header records it, and both keys reached a reader on the
+    /// day upstream growth carried them past the 1,000-outcome floor. Nothing on
+    /// our side changed. The next key to cross it gets the league-aware name.
+    ///
+    /// Measured on the payload served 2026-09-21, this moves exactly two of the
+    /// 21 published rows, both of them onto web's string.
     static func categoryDisplayName(_ category: String) -> String {
-        categoryDisplayNames[category] ?? toTitleCaseAcronymSafe(category)
+        categoryDisplayNames[category] ?? nicheCategoryLabel(category)
     }
 
     /// #3657 — the SOURCE path had the #1938 defect the CATEGORY path above was
@@ -919,6 +939,14 @@ final class CalibrationViewModel: ObservableObject {
         "esports": "Esports", "politics": "Politics", "geopolitics": "Geopolitics",
         "entertainment": "Entertainment", "weather": "Weather", "economics": "Economics",
         "tech": "Tech", "motorsports": "Motorsports",
+        // #7722 — web's `DISPLAY_NAMES` has carried this since UX-P075 item (e)
+        // (Alex, 2026-08-13) and this map did not. Both surfaces already PRINT
+        // "Table Tennis" — web from the entry, the phone from its fallback — so
+        // this changes no pixel. It is here because the published set is where
+        // the two maps must agree key-for-key (#3557): a curated label that
+        // exists on one surface and is derived on the other is a drift waiting
+        // for one of the two derivations to change.
+        "table_tennis": "Table Tennis",
     ]
 
     /// **This map is what the phone prints, not the server's vocabulary.**
