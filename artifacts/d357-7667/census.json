@@ -1,0 +1,949 @@
+{
+ "arm_b_candidates": 291,
+ "arm_b_priced": 264,
+ "ladder": [
+  [
+   "112926",
+   "Will Trump be impeached by...?"
+  ],
+  [
+   "113017",
+   "Will Tesla release Optimus by...?"
+  ],
+  [
+   "113184",
+   "OpenAI IPO by...?"
+  ],
+  [
+   "113435",
+   "AI bubble burst by...?"
+  ],
+  [
+   "113776",
+   "Will Apple release a foldable iPhone by...?"
+  ],
+  [
+   "113896",
+   "Trump suspends U.S. entry for more countries by...?"
+  ],
+  [
+   "114082",
+   "Ukraine coup attempt by...?"
+  ],
+  [
+   "11415147",
+   "Will Trump try to fire Powell as Fed Board Member by...?"
+  ],
+  [
+   "114521",
+   "Anthony Albanese out as Prime Minister of Australia by.."
+  ],
+  [
+   "115374",
+   "Tesla and SpaceX merger officially announced by...?"
+  ],
+  [
+   "20569234",
+   "Google x SpaceX agree to put data centers in space by..."
+  ],
+  [
+   "20571305",
+   "AI data center in space by...?"
+  ],
+  [
+   "34676422",
+   "Confirmed US Screwworm case in Livestock beyond Texas by"
+  ],
+  [
+   "34911109",
+   "Screwworm National Emergency declared by...?"
+  ],
+  [
+   "56869097",
+   "Will Novak Djokovic announce his retirement by...?"
+  ],
+  [
+   "57416694",
+   "Next Claude Opus released by...?"
+  ],
+  [
+   "57661977",
+   "Situational Awareness announces fund wind-down by...?"
+  ],
+  [
+   "57661981",
+   "Leopold Aschenbrenner charged by...?"
+  ],
+  [
+   "57661982",
+   "Bloomberg IPO by...?"
+  ],
+  [
+   "58918690",
+   "Critical Discord Incident by...?"
+  ],
+  [
+   "58957126",
+   "NVIDIA (NVDA) all-time high by ___?"
+  ],
+  [
+   "58957132",
+   "Further substantive progress on the Riemann Hypothesis b"
+  ],
+  [
+   "58997416",
+   "Next Alibaba Qwen Max (3.9+) released by...?"
+  ],
+  [
+   "58997430",
+   "Next DeepSeek Pro released by...?"
+  ],
+  [
+   "58997431",
+   "Next Z.ai GLM (5.4+) released by...?"
+  ],
+  [
+   "58997433",
+   "Next Google Gemini Flash-Lite Model (3.6+) released by.."
+  ],
+  [
+   "58997438",
+   "Next OpenAI GPT Luna (5.7+) released by...?"
+  ],
+  [
+   "58997439",
+   "Next OpenAI GPT Terra (5.7+) released by...?"
+  ],
+  [
+   "58997440",
+   "Next OpenAI GPT Sol (5.7+) released by...?"
+  ],
+  [
+   "59159681",
+   "Lindsay Clancy convicted of murder by...?"
+  ],
+  [
+   "59169147",
+   "Will Iran target Egypt by...?"
+  ],
+  [
+   "59236212",
+   "FDA approves skin cancer vaccine by...?"
+  ],
+  [
+   "59262643",
+   "GitHub Git Operations critical incident by...?"
+  ],
+  [
+   "59329600",
+   "Heidi Overton confirmed as FDA Commissioner by...?"
+  ],
+  [
+   "59612272",
+   "Somali Pirates successfully seize a vessel by...?"
+  ],
+  [
+   "59955259",
+   "Next Qwen Flash (3.9+) released by...?"
+  ],
+  [
+   "60019291",
+   "Will Valve add Cobblestone to the map pool by...?"
+  ],
+  [
+   "60027971",
+   "Israel x Syria diplomatic meeting by...?"
+  ],
+  [
+   "60027973",
+   "Will Russia enter Oleksiievo-Druzhkivka again by...?"
+  ],
+  [
+   "60074172",
+   "Daejon Love pleads guilty to federal crime by...?"
+  ],
+  [
+   "60093934",
+   "ChatGPT Outage by....?"
+  ],
+  [
+   "60093936",
+   "Next Fable Model (5.2+) released by...?"
+  ],
+  [
+   "60093973",
+   "Next Gemini Flash Model (3.9+) released by...?"
+  ],
+  [
+   "60130278",
+   "Will any aircraft land or take off at Kyiv Boryspil Airp"
+  ],
+  [
+   "60197872",
+   "Claude 6 released by...?"
+  ],
+  [
+   "60197922",
+   "Meta's \"Watermelon\" model released by...?"
+  ],
+  [
+   "60197960",
+   "Next Muse Spark (1.4+) released by...?"
+  ],
+  [
+   "60199694",
+   "GPT-7 released by...?"
+  ],
+  [
+   "60204030",
+   "GPT Astra 6.1+ released by...?"
+  ],
+  [
+   "60207712",
+   "Will Drake release a new album by...?"
+  ],
+  [
+   "60401093",
+   "Trump renames New Mexico to New America by...?"
+  ],
+  [
+   "60493401",
+   "Will Jynxzi reach Gold rank in League of Legends by...?"
+  ],
+  [
+   "60518652",
+   "AI lab announces another Millennium Prize solution by..."
+  ],
+  [
+   "60607594",
+   "Anthropic announces a Millennium Prize solution by...?"
+  ],
+  [
+   "60607595",
+   "OpenAI announces another Millennium Prize solution by..."
+  ],
+  [
+   "60607626",
+   "Michael Carrick out as Manchester United manager by...?"
+  ],
+  [
+   "60607721",
+   "SB Energy IPO by...?"
+  ],
+  [
+   "60613302",
+   "Will CMI declare the Navier-Stokes problem solved by ___"
+  ],
+  [
+   "60626092",
+   "Anthropic resets Claude usage limit by...?"
+  ],
+  [
+   "60626093",
+   "Kimi (Moonshot AI) IPO by...?"
+  ],
+  [
+   "60626094",
+   "Tristan Buckmaster sues OpenAI by...?"
+  ],
+  [
+   "60627569",
+   "Will Iran target Jordan by...?"
+  ],
+  [
+   "60627571",
+   "Will Iran target an Arab country by...?"
+  ],
+  [
+   "60699835",
+   "Astra removed from public access by...?"
+  ],
+  [
+   "60710685",
+   "Houthis seize an oil tanker by...?"
+  ],
+  [
+   "60710686",
+   "Houthis enter Aden by...?"
+  ],
+  [
+   "60778119",
+   "0 ships transit Bab el-Mandeb on any date by..?"
+  ],
+  [
+   "60789477",
+   "Saudi troops fighting in Yemen by...?"
+  ],
+  [
+   "61002052",
+   "OpenAI resumes US ChatGPT Pro 20x signups by...?"
+  ],
+  [
+   "61079567",
+   "Will Trump pardon anyone by...?"
+  ],
+  [
+   "61085863",
+   "Next DeepSeek Flash released by...?"
+  ],
+  [
+   "61085890",
+   "OpenAI resets Codex weekly usage limit by...?"
+  ],
+  [
+   "61093139",
+   "Tesla Roadster delivered by...?"
+  ],
+  [
+   "61093141",
+   "Anthropic reports another AI sandbox escape by...?"
+  ],
+  [
+   "61093142",
+   "OpenAI reports another AI sandbox escape by...?"
+  ],
+  [
+   "61248301",
+   "Ren Zhengfei confirmed outside China by...?"
+  ],
+  [
+   "61248311",
+   "Ren Zhengfei public appearance by...?"
+  ],
+  [
+   "61300652",
+   "Saudi Arabia military action against Iran by...?"
+  ],
+  [
+   "61300894",
+   "Trump publicly insults Warsh by...?"
+  ],
+  [
+   "61309310",
+   "Trump issues AI Restrictions Executive Order by...?"
+  ],
+  [
+   "61319611",
+   "Trump meets with Netanyahu by...?"
+  ],
+  [
+   "61321725",
+   "CoreWeave announces bankruptcy by...?"
+  ],
+  [
+   "61321726",
+   "NuScale announces bankruptcy by...?"
+  ],
+  [
+   "61321727",
+   "Anthropic announces bankruptcy by...?"
+  ],
+  [
+   "61321742",
+   "OpenAI announces bankruptcy by...?"
+  ],
+  [
+   "61425488",
+   "Base iPhone 18 released by...?"
+  ],
+  [
+   "61433230",
+   "Payward announces bankruptcy by...?"
+  ],
+  [
+   "61433262",
+   "OpenAI or Anthropic announces recursive self-improvement"
+  ],
+  [
+   "61442027",
+   "Anthropic lab leak by...?"
+  ],
+  [
+   "61551805",
+   "Will Lauren Boebert resign by...?"
+  ]
+ ],
+ "divisor": [
+  [
+   "113776",
+   "Will Apple release a foldable iPhone by...?",
+   1.98,
+   1.0,
+   49.0
+  ],
+  [
+   "115374",
+   "Tesla and SpaceX merger officially announced by...",
+   1.993,
+   1.0,
+   32.6
+  ],
+  [
+   "34676422",
+   "Confirmed US Screwworm case in Livestock beyond Te",
+   1.23,
+   1.0,
+   16.3
+  ],
+  [
+   "34911109",
+   "Screwworm National Emergency declared by...?",
+   1.03,
+   1.0,
+   1.5
+  ],
+  [
+   "58957126",
+   "NVIDIA (NVDA) all-time high by ___?",
+   1.035,
+   1.0,
+   2.5
+  ],
+  [
+   "58997416",
+   "Next Alibaba Qwen Max (3.9+) released by...?",
+   1.462,
+   1.0,
+   30.1
+  ],
+  [
+   "58997431",
+   "Next Z.ai GLM (5.4+) released by...?",
+   1.115,
+   1.0,
+   8.9
+  ],
+  [
+   "58997433",
+   "Next Google Gemini Flash-Lite Model (3.6+) release",
+   1.41,
+   1.0,
+   25.9
+  ],
+  [
+   "58997439",
+   "Next OpenAI GPT Terra (5.7+) released by...?",
+   1.225,
+   1.0,
+   14.1
+  ],
+  [
+   "59236212",
+   "FDA approves skin cancer vaccine by...?",
+   1.345,
+   1.0,
+   16.5
+  ],
+  [
+   "59955259",
+   "Next Qwen Flash (3.9+) released by...?",
+   1.57,
+   1.0,
+   31.9
+  ],
+  [
+   "60027973",
+   "Will Russia enter Oleksiievo-Druzhkivka again by..",
+   1.445,
+   1.0,
+   23.7
+  ],
+  [
+   "60093936",
+   "Next Fable Model (5.2+) released by...?",
+   1.665,
+   1.0,
+   35.7
+  ],
+  [
+   "60093973",
+   "Next Gemini Flash Model (3.9+) released by...?",
+   1.865,
+   1.0,
+   43.8
+  ],
+  [
+   "60197872",
+   "Claude 6 released by...?",
+   1.755,
+   1.0,
+   37.2
+  ],
+  [
+   "60197922",
+   "Meta's \"Watermelon\" model released by...?",
+   1.5,
+   1.0,
+   29.5
+  ],
+  [
+   "60197960",
+   "Next Muse Spark (1.4+) released by...?",
+   1.175,
+   1.0,
+   10.8
+  ],
+  [
+   "60199694",
+   "GPT-7 released by...?",
+   1.11,
+   1.0,
+   8.3
+  ],
+  [
+   "60204030",
+   "GPT Astra 6.1+ released by...?",
+   1.375,
+   1.0,
+   25.8
+  ],
+  [
+   "60493401",
+   "Will Jynxzi reach Gold rank in League of Legends b",
+   1.65,
+   1.0,
+   33.5
+  ],
+  [
+   "60518652",
+   "AI lab announces another Millennium Prize solution",
+   1.6,
+   1.0,
+   32.1
+  ],
+  [
+   "60607595",
+   "OpenAI announces another Millennium Prize solution",
+   1.545,
+   1.0,
+   29.5
+  ],
+  [
+   "60607721",
+   "SB Energy IPO by...?",
+   1.43,
+   1.0,
+   25.6
+  ],
+  [
+   "60626092",
+   "Anthropic resets Claude usage limit by...?",
+   1.175,
+   1.0,
+   13.9
+  ],
+  [
+   "60626093",
+   "Kimi (Moonshot AI) IPO by...?",
+   1.438,
+   1.0,
+   21.8
+  ],
+  [
+   "60627569",
+   "Will Iran target Jordan by...?",
+   1.06,
+   1.0,
+   4.2
+  ],
+  [
+   "60627571",
+   "Will Iran target an Arab country by...?",
+   1.436,
+   1.0,
+   23.7
+  ],
+  [
+   "61002052",
+   "OpenAI resumes US ChatGPT Pro 20x signups by...?",
+   1.285,
+   1.0,
+   17.4
+  ],
+  [
+   "61093142",
+   "OpenAI reports another AI sandbox escape by...?",
+   1.961,
+   1.0,
+   41.9
+  ],
+  [
+   "61248311",
+   "Ren Zhengfei public appearance by...?",
+   1.445,
+   1.0,
+   24.3
+  ],
+  [
+   "61425488",
+   "Base iPhone 18 released by...?",
+   1.705,
+   1.0,
+   32.7
+  ]
+ ],
+ "bars": [],
+ "collapse": [],
+ "leader": [
+  [
+   "112926",
+   "Will Trump be impeached by...?"
+  ],
+  [
+   "113017",
+   "Will Tesla release Optimus by...?"
+  ],
+  [
+   "113184",
+   "OpenAI IPO by...?"
+  ],
+  [
+   "113435",
+   "AI bubble burst by...?"
+  ],
+  [
+   "113776",
+   "Will Apple release a foldable iPhone by...?"
+  ],
+  [
+   "113896",
+   "Trump suspends U.S. entry for more countries by...?"
+  ],
+  [
+   "114082",
+   "Ukraine coup attempt by...?"
+  ],
+  [
+   "11415147",
+   "Will Trump try to fire Powell as Fed Board Member by...?"
+  ],
+  [
+   "114521",
+   "Anthony Albanese out as Prime Minister of Australia by.."
+  ],
+  [
+   "115374",
+   "Tesla and SpaceX merger officially announced by...?"
+  ],
+  [
+   "20569234",
+   "Google x SpaceX agree to put data centers in space by..."
+  ],
+  [
+   "20571305",
+   "AI data center in space by...?"
+  ],
+  [
+   "34676422",
+   "Confirmed US Screwworm case in Livestock beyond Texas by"
+  ],
+  [
+   "34911109",
+   "Screwworm National Emergency declared by...?"
+  ],
+  [
+   "56869097",
+   "Will Novak Djokovic announce his retirement by...?"
+  ],
+  [
+   "57416694",
+   "Next Claude Opus released by...?"
+  ],
+  [
+   "57661977",
+   "Situational Awareness announces fund wind-down by...?"
+  ],
+  [
+   "57661981",
+   "Leopold Aschenbrenner charged by...?"
+  ],
+  [
+   "57661982",
+   "Bloomberg IPO by...?"
+  ],
+  [
+   "58918690",
+   "Critical Discord Incident by...?"
+  ],
+  [
+   "58957126",
+   "NVIDIA (NVDA) all-time high by ___?"
+  ],
+  [
+   "58957132",
+   "Further substantive progress on the Riemann Hypothesis b"
+  ],
+  [
+   "58997416",
+   "Next Alibaba Qwen Max (3.9+) released by...?"
+  ],
+  [
+   "58997430",
+   "Next DeepSeek Pro released by...?"
+  ],
+  [
+   "58997431",
+   "Next Z.ai GLM (5.4+) released by...?"
+  ],
+  [
+   "58997433",
+   "Next Google Gemini Flash-Lite Model (3.6+) released by.."
+  ],
+  [
+   "58997438",
+   "Next OpenAI GPT Luna (5.7+) released by...?"
+  ],
+  [
+   "58997439",
+   "Next OpenAI GPT Terra (5.7+) released by...?"
+  ],
+  [
+   "58997440",
+   "Next OpenAI GPT Sol (5.7+) released by...?"
+  ],
+  [
+   "59159681",
+   "Lindsay Clancy convicted of murder by...?"
+  ],
+  [
+   "59169147",
+   "Will Iran target Egypt by...?"
+  ],
+  [
+   "59236212",
+   "FDA approves skin cancer vaccine by...?"
+  ],
+  [
+   "59262643",
+   "GitHub Git Operations critical incident by...?"
+  ],
+  [
+   "59329600",
+   "Heidi Overton confirmed as FDA Commissioner by...?"
+  ],
+  [
+   "59612272",
+   "Somali Pirates successfully seize a vessel by...?"
+  ],
+  [
+   "59955259",
+   "Next Qwen Flash (3.9+) released by...?"
+  ],
+  [
+   "60019291",
+   "Will Valve add Cobblestone to the map pool by...?"
+  ],
+  [
+   "60027971",
+   "Israel x Syria diplomatic meeting by...?"
+  ],
+  [
+   "60027973",
+   "Will Russia enter Oleksiievo-Druzhkivka again by...?"
+  ],
+  [
+   "60074172",
+   "Daejon Love pleads guilty to federal crime by...?"
+  ],
+  [
+   "60093934",
+   "ChatGPT Outage by....?"
+  ],
+  [
+   "60093936",
+   "Next Fable Model (5.2+) released by...?"
+  ],
+  [
+   "60093973",
+   "Next Gemini Flash Model (3.9+) released by...?"
+  ],
+  [
+   "60130278",
+   "Will any aircraft land or take off at Kyiv Boryspil Airp"
+  ],
+  [
+   "60197872",
+   "Claude 6 released by...?"
+  ],
+  [
+   "60197922",
+   "Meta's \"Watermelon\" model released by...?"
+  ],
+  [
+   "60197960",
+   "Next Muse Spark (1.4+) released by...?"
+  ],
+  [
+   "60199694",
+   "GPT-7 released by...?"
+  ],
+  [
+   "60204030",
+   "GPT Astra 6.1+ released by...?"
+  ],
+  [
+   "60207712",
+   "Will Drake release a new album by...?"
+  ],
+  [
+   "60401093",
+   "Trump renames New Mexico to New America by...?"
+  ],
+  [
+   "60493401",
+   "Will Jynxzi reach Gold rank in League of Legends by...?"
+  ],
+  [
+   "60518652",
+   "AI lab announces another Millennium Prize solution by..."
+  ],
+  [
+   "60607594",
+   "Anthropic announces a Millennium Prize solution by...?"
+  ],
+  [
+   "60607595",
+   "OpenAI announces another Millennium Prize solution by..."
+  ],
+  [
+   "60607626",
+   "Michael Carrick out as Manchester United manager by...?"
+  ],
+  [
+   "60607721",
+   "SB Energy IPO by...?"
+  ],
+  [
+   "60613302",
+   "Will CMI declare the Navier-Stokes problem solved by ___"
+  ],
+  [
+   "60626092",
+   "Anthropic resets Claude usage limit by...?"
+  ],
+  [
+   "60626093",
+   "Kimi (Moonshot AI) IPO by...?"
+  ],
+  [
+   "60626094",
+   "Tristan Buckmaster sues OpenAI by...?"
+  ],
+  [
+   "60627569",
+   "Will Iran target Jordan by...?"
+  ],
+  [
+   "60627571",
+   "Will Iran target an Arab country by...?"
+  ],
+  [
+   "60699835",
+   "Astra removed from public access by...?"
+  ],
+  [
+   "60710685",
+   "Houthis seize an oil tanker by...?"
+  ],
+  [
+   "60710686",
+   "Houthis enter Aden by...?"
+  ],
+  [
+   "60778119",
+   "0 ships transit Bab el-Mandeb on any date by..?"
+  ],
+  [
+   "60789477",
+   "Saudi troops fighting in Yemen by...?"
+  ],
+  [
+   "61002052",
+   "OpenAI resumes US ChatGPT Pro 20x signups by...?"
+  ],
+  [
+   "61079567",
+   "Will Trump pardon anyone by...?"
+  ],
+  [
+   "61085863",
+   "Next DeepSeek Flash released by...?"
+  ],
+  [
+   "61085890",
+   "OpenAI resets Codex weekly usage limit by...?"
+  ],
+  [
+   "61093139",
+   "Tesla Roadster delivered by...?"
+  ],
+  [
+   "61093141",
+   "Anthropic reports another AI sandbox escape by...?"
+  ],
+  [
+   "61093142",
+   "OpenAI reports another AI sandbox escape by...?"
+  ],
+  [
+   "61248301",
+   "Ren Zhengfei confirmed outside China by...?"
+  ],
+  [
+   "61248311",
+   "Ren Zhengfei public appearance by...?"
+  ],
+  [
+   "61300652",
+   "Saudi Arabia military action against Iran by...?"
+  ],
+  [
+   "61300894",
+   "Trump publicly insults Warsh by...?"
+  ],
+  [
+   "61309310",
+   "Trump issues AI Restrictions Executive Order by...?"
+  ],
+  [
+   "61319611",
+   "Trump meets with Netanyahu by...?"
+  ],
+  [
+   "61321725",
+   "CoreWeave announces bankruptcy by...?"
+  ],
+  [
+   "61321726",
+   "NuScale announces bankruptcy by...?"
+  ],
+  [
+   "61321727",
+   "Anthropic announces bankruptcy by...?"
+  ],
+  [
+   "61321742",
+   "OpenAI announces bankruptcy by...?"
+  ],
+  [
+   "61425488",
+   "Base iPhone 18 released by...?"
+  ],
+  [
+   "61433230",
+   "Payward announces bankruptcy by...?"
+  ],
+  [
+   "61433262",
+   "OpenAI or Anthropic announces recursive self-improvement"
+  ],
+  [
+   "61442027",
+   "Anthropic lab leak by...?"
+  ],
+  [
+   "61551805",
+   "Will Lauren Boebert resign by...?"
+  ]
+ ]
+}
