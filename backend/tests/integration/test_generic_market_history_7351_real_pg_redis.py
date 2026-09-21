@@ -263,7 +263,28 @@ _CLOCKED_MODULES = (
 
 @pytest.fixture(autouse=True)
 def _world(monkeypatch):
-    """Frozen clock, clean rows, clean Redis, the app pointed at the scratch DB."""
+    """Frozen clock, clean rows, clean Redis, the app pointed at the scratch DB.
+
+    🔴 `durable_state_snapshots` IS PART OF THE WORLD (#7807), and it was the one
+    piece the reset used to miss. Flushing Redis stopped clearing the bank the
+    moment the bank stopped being Redis-only — that is the whole point of the
+    tier — and a leaked row does not merely make a cold test warm. It interacts
+    with THIS FIXTURE'S OWN CLOCK RESET, in both directions:
+
+      * a test that advances `FrozenDatetime.current` (B9/B10/B13 go to +20h)
+        leaves a row stamped in the FUTURE relative to the next test. The next
+        test reads it as `STALE` — `decode_envelope` rejects `age_s < 0` rather
+        than clamping it, deliberately — so an evicted bank reads COLD;
+      * and `publish_snapshot`'s `stored.generation <= EXCLUDED.generation` guard
+        then REFUSES that test's own honest write, because its generation is
+        smaller. The future row sticks, and a later test that advances its clock
+        finds it inside the age bound again and reads WARM where it wants cold.
+
+    So a missing line here does not fail loudly in one place; it produces two
+    opposite wrong answers in two different tests. Both are real behaviour, both
+    are correct outside a rig that rewinds time, and neither is reachable in
+    production, where clocks go forwards.
+    """
     import importlib
 
     monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
@@ -286,7 +307,7 @@ def _world(monkeypatch):
         async with engine.begin() as conn:
             await conn.execute(text(
                 "TRUNCATE futures_odds_snapshots, futures_outcomes, futures_markets, "
-                "sports RESTART IDENTITY CASCADE"
+                "sports, durable_state_snapshots RESTART IDENTITY CASCADE"
             ))
         await engine.dispose()
 
@@ -1158,6 +1179,87 @@ def test_B13_failed_settled_attempts_do_not_exhaust_the_silence_ceiling(
     assert broker.calls == []
 
 
+def test_B14_an_evicted_bank_is_served_from_the_durable_tier_without_asking_the_venue(
+    venue, broker
+):
+    """#7807 — the eviction #7563 measured, staged for real, costs the reader nothing.
+
+    THE DEFECT. The bank lives only in `futures:generic-history:v1:{id}` on a
+    100 MB `allkeys-lru` instance. A ~35 KB value nobody reads is the ideal
+    eviction victim, so the declared 36 h bought under four hours on 3 of 3
+    markets: three charts proven warm at 13:05Z read `cold` at 17:17Z with the
+    pre-#7351 numbers back. `DEL` is exactly what LRU does to that key, and it is
+    the only thing this test does differently from B1.
+
+    Everything asserted below is the same chart, from the same payload, through
+    the same three identity bindings — the tier that held it is the only change.
+    """
+    from app.tasks.generic_market_history_fill import CACHE_TTL_SECONDS
+    from app.utils.generic_market_history import cache_key
+
+    _seed_specimen()
+    _, _, warm_t, warm_h = _cold_then_warm(broker)
+    assert warm_t["venue_history"]["state"] == "warm"
+    assert warm_t["venue_history"]["tier"] == "cache", "Redis is still the fast tier"
+    _assert_named_contract(warm_t, warm_h)
+    served = _in_week(_timeline_points(warm_t))
+    asked = len(venue.provider_requests())
+
+    # ── the eviction, and nothing else ──────────────────────────────────────
+    # The DELETE is the staged eviction, so it may not live inside an `assert`:
+    # under `python -O` the assert vanishes and with it the only thing this test
+    # does differently from B1 — it would pass having evicted nothing
+    # (`py/side-effect-in-assert`, and here the side effect IS the experiment).
+    evicted = _redis().delete(cache_key(MARKET_ID))
+    assert evicted == 1, "the bank was not in Redis to begin with"
+    assert _payload() is None, "the bank is gone from Redis"
+
+    after_t, after_h = _timeline(), _history()
+
+    assert after_t["venue_history"]["state"] == "warm", (
+        "an evicted bank read as `cold` — the durable tier did not answer, and "
+        "this is #7563's defect exactly"
+    )
+    assert after_t["venue_history"]["tier"] == "durable"
+    assert _in_week(_timeline_points(after_t)) == served, "a different chart"
+    _assert_named_contract(after_t, after_h)
+    assert len(venue.provider_requests()) == asked, (
+        "recovering an evicted bank must cost NO outbound venue request"
+    )
+    assert broker.calls == [], "nor a fill"
+
+    # ── and the next reader is back on the fast tier, not on the database ───
+    ttl = _redis().ttl(cache_key(MARKET_ID))
+    assert 0 < ttl <= CACHE_TTL_SECONDS, (
+        f"rehydrated with ttl={ttl}: a restored bank must get what is LEFT of "
+        "its declared life, never a fresh one"
+    )
+    assert _timeline()["venue_history"]["tier"] == "cache"
+
+
+def test_B15_a_durable_bank_past_its_declared_life_is_not_served(venue, broker):
+    """#7807 makes the declared 36 h REAL — it does not make it longer.
+
+    The durable row has no TTL of its own, so without this bound the tier would
+    quietly convert an expiring cache into a permanent one and hand a reader a
+    price line the cache policy had already retired. Past the declared life the
+    market is cold and the planner gets its chance to refill, which is the same
+    answer the reader would have had before this ship.
+    """
+    from app.tasks.generic_market_history_fill import CACHE_TTL_SECONDS
+    from app.utils.generic_market_history import cache_key
+
+    _seed_specimen()
+    _cold_then_warm(broker)
+    _redis().delete(cache_key(MARKET_ID))
+
+    FrozenDatetime.current = FROZEN_NOW + timedelta(seconds=CACHE_TTL_SECONDS + 60)
+    body = _timeline()
+
+    assert body["venue_history"]["state"] == "cold"
+    assert body["venue_history"]["fill"] == "requested", "the planner still asks"
+
+
 # ═══ C — IDENTITY AND SHAPE ═════════════════════════════════════════════════
 
 OTHER_MARKET_ID, OTHER_OUTCOME_ID, OTHER_TICKER = 59165100, 219751700, "KXOTHERQUESTION-26-YES1"
@@ -1724,7 +1826,11 @@ def test_D3_reverting_the_reader_integration_makes_the_named_contract_fail_again
     _, _, warm_t, warm_h = _cold_then_warm(broker)
     _assert_named_contract(warm_t, warm_h)                      # green with the seam
 
-    async def _base_reader(market, charted_outcomes, exclusive_field_ids):
+    async def _base_reader(market, charted_outcomes, exclusive_field_ids, db=None):
+        # `db` mirrors the real signature since #7807 gave the reader its durable
+        # second tier. Reverting the seam has to revert BOTH tiers — a stub that
+        # took only the first three would raise TypeError, which `pytest.raises
+        # (AssertionError)` below would not catch as the contract failing.
         return routes._GenericVenueHistory()                    # what base does: nothing
 
     monkeypatch.setattr(routes, "_load_generic_venue_history", _base_reader)

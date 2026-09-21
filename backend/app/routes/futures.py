@@ -4643,6 +4643,14 @@ class _GenericVenueHistory:
         self.unsupported_dropped = 0
         self.fill = "not_considered"
         self.thin_basis: Optional[str] = None
+        #: Which tier ANSWERED — `cache` (Redis), `durable` (Postgres, #7807), or
+        #: None when neither did. Published so the two-tier read is READABLE from
+        #: the served payload rather than inferred from a chart that looks the
+        #: same either way, which is the only way an after-check can tell the
+        #: durable tier paid. It names a tier that produced a payload: a cold
+        #: read reports None, because saying `cache` there would describe a tier
+        #: that answered nothing.
+        self.tier: Optional[str] = None
 
     def in_window(self, cutoff: datetime, capture_rows: list, outcome_ids) -> list:
         """Venue rows at/after `cutoff` that no capture already speaks for."""
@@ -4668,6 +4676,7 @@ class _GenericVenueHistory:
         payload = self.payload or {}
         block = {
             "state": self.state if not scale_refused else "refused",
+            "tier": self.tier,
             "points_served": len(served_rows),
             "outcomes_served": len({r.outcome_id for r in served_rows}),
             "observed_from": min(stamps).isoformat() if stamps else None,
@@ -4791,16 +4800,33 @@ def _request_path_redis():
 
 
 async def _load_generic_venue_history(
-    market: FuturesMarket, charted_outcomes: list, exclusive_field_ids: set
+    market: FuturesMarket, charted_outcomes: list, exclusive_field_ids: set,
+    db: Optional[AsyncSession] = None,
 ) -> _GenericVenueHistory:
-    """Read + vet the cached venue history. NEVER raises, NEVER calls a provider."""
+    """Read + vet the venue history. NEVER raises, NEVER calls a provider.
+
+    TWO TIERS, FAST ONE FIRST (#7807). Redis answers when it has the bank; when
+    it does not — which #7563 measured is most of the time, because a 100 MB
+    `allkeys-lru` instance evicts a rarely-read 35 KB value within hours — the
+    durable copy in `durable_state_snapshots` answers instead. Only when BOTH
+    miss is the chart cold. The payload is identical and goes through the
+    identical `validate_payload` bindings either way: which tier held it is a
+    fact about our storage, never about whether the series may be trusted.
+    """
     venue = _GenericVenueHistory()
     try:
         from app.tasks.generic_market_history_fill import (
+            declared_ttl_seconds,
             market_is_fillable,
             read_cached_history,
+            read_durable_history,
+            write_cached_history,
         )
-        from app.utils.generic_market_history import as_snapshot_rows, validate_payload
+        from app.utils.generic_market_history import (
+            as_snapshot_rows,
+            payload_built_at,
+            validate_payload,
+        )
 
         if not market_is_fillable(market, charted_outcomes):
             return venue
@@ -4810,6 +4836,29 @@ async def _load_generic_venue_history(
         payload = await asyncio.to_thread(
             read_cached_history, market.id, _request_path_redis()
         )
+        if payload is not None:
+            venue.tier = "cache"
+        elif db is not None:
+            payload = await read_durable_history(db, market.id)
+            if payload is not None:
+                venue.tier = "durable"
+                # Put it back in front of the next reader, with what is LEFT of
+                # its declared life — never a fresh TTL, which would let a bank
+                # outlive its own lifetime once per eviction. Best-effort in
+                # every direction: this is an optimisation for the NEXT request
+                # and may not cost this one its series.
+                built = payload_built_at(payload)
+                if built is not None:
+                    settled = bool(payload.get("market_settled"))
+                    remaining = declared_ttl_seconds(settled=settled) - (
+                        datetime.now(timezone.utc) - built
+                    ).total_seconds()
+                    if remaining > 0:
+                        await asyncio.to_thread(
+                            write_cached_history, market.id, payload,
+                            settled=settled, rc=_request_path_redis(),
+                            ttl_s=int(remaining),
+                        )
         if payload is None:
             venue.state = "cold"
             return venue
@@ -5084,7 +5133,7 @@ async def get_probability_timeline(
     # missed, already through the support filter above, and never an instant a
     # capture already speaks for. With a cold cache this is `[]` and every line
     # below behaves exactly as it did.
-    venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids)
+    venue = await _load_generic_venue_history(market, charted_outcomes, _field_ids, db)
     venue_rows = venue.in_window(cutoff, snapshots, all_outcome_ids)
     # Thin is judged on OUR captures in the window the reader ASKED for — the
     # same `< 20` this route has always used to call a window sparse — so a
@@ -5927,7 +5976,7 @@ async def get_futures_history(
     # identity-bound venue history for this market's own contracts, read from
     # cache, support-filtered, and never displacing a capture. `[]` when cold.
     venue = await _load_generic_venue_history(
-        market, charted_outcomes, _history_field_ids
+        market, charted_outcomes, _history_field_ids, db
     )
     venue_rows = venue.in_window(cutoff, snapshots, outcome_ids)
     await _consider_generic_history_fill(

@@ -768,6 +768,41 @@ jobs:
             exit 1
           fi
 
+      - name: "#7807 the durable venue-history tier (real Postgres)"
+        # #7807. The bank #7351 recovers lives only in Redis, and #7563 measured
+        # `allkeys-lru` deleting it inside four hours on 3 of 3 markets — so the
+        # reader who arrives after an eviction gets the thin chart back. The tier
+        # added here keeps the same payload in `durable_state_snapshots`.
+        #
+        # THE ARM THAT NEEDS A REAL SERVER is the `statement_timeout`. The durable
+        # read bounds itself with `SET LOCAL statement_timeout = 2000`, which
+        # lives until the end of the TRANSACTION — and `get_probability_timeline`
+        # runs its 30/90-day auto-extend query afterwards on that same session.
+        # So the read runs inside a savepoint that is ROLLED BACK. A fake can
+        # record that `rollback()` was called; only Postgres can say whether that
+        # restores the outer bound, and whether `RELEASE` (what
+        # `async with db.begin_nested()` does on a clean exit) leaks it. Both
+        # directions are asserted, so the arm cannot pass for the wrong reason.
+        # The other two are #6215's class: nested JSONB through asyncpg, and an
+        # `ON CONFLICT ... WHERE generation <= EXCLUDED.generation` guard that is
+        # an unparsed string to a double.
+        #
+        # Wired HERE for the reason the #7501 and #5024 steps both state: this
+        # job names each PG file explicitly, so a `*_pg.py` nobody adds here runs
+        # nowhere. The file builds only `durable_state_snapshots` from its own
+        # model rather than the whole schema, so it also runs on a developer's
+        # Postgres 14 (the full schema needs 15+ for `NULLS NOT DISTINCT`).
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_durable_venue_history_7807_pg.py \
+            -v -rs 2>&1 | tee /tmp/durable7807.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/durable7807.txt; then
+            echo "::error::#7807 durable venue-history tier SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#5024 a decided ladder's row is reachable by touch age (real Postgres)"
         # #5024. The whole change is a SQL predicate: `RECENT_FINAL_SELECT_SQL`
         # gains an OR arm that reaches a row no leg has touched inside
@@ -3340,7 +3375,13 @@ jobs:
           # 45 with CERT-3156's: B13, parametrized over 429 and 500, proves a run
           # of FAILED settled attempts never spends a ceiling that is about a
           # venue's silence.
-          EXPECTED = 45
+          # 47 with #7807's durable tier: B14 stages the eviction #7563 measured
+          # (a real `DEL` of the bank's key, which is exactly what `allkeys-lru`
+          # does) and requires the same chart back from Postgres with no venue
+          # request, and B15 requires that the durable copy is NOT served once
+          # past the 36 h the cache declared — the tier makes that TTL real, not
+          # longer.
+          EXPECTED = 47
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

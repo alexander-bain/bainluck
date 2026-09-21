@@ -478,10 +478,41 @@ def test_the_generic_fill_never_blends_venues_matches_legs_or_dispatches():
                       "find_cross_source_markets", "_polymarket_token_id",
                       "apply_async", "delay", "send_task"):
         assert forbidden not in used, f"generic fill uses `{forbidden}`"
-    # …and it writes no table: no session write verb appears in the module at all.
+    # …and it is not a general writer: no ORM write verb appears in the module.
     # (`delete` is absent from this list on purpose — it is the Redis claim release.)
-    for writer in ("insert", "add", "add_all", "merge", "commit", "flush", "bulk_insert_mappings"):
+    for writer in ("insert", "add", "add_all", "merge", "flush", "bulk_insert_mappings"):
         assert writer not in used, f"generic fill calls `{writer}`"
+
+
+def test_the_only_commit_in_the_generic_fill_is_the_durable_banks(monkeypatch):
+    """`commit` left the blanket ban above, and this is what replaced it.
+
+    The ban read "no session write verb appears in the module at all", and that
+    claim had already stopped being true: #7736's marker and #7807's durable bank
+    both write, through `update()` and `publish_snapshot_in_txn`, neither of which
+    the name list can see. #7807's ordering repair (CERT-3247) then needed a real
+    `commit` — Postgres must hold the bank BEFORE Redis publishes it, or a worker
+    death in between leaves the Redis-only bank the ship exists to abolish.
+
+    So the fence is narrowed rather than dropped: the module may commit, in
+    exactly one named place. A second `commit` appearing anywhere else is the
+    thing the old ban was actually protecting against — a fill that starts ending
+    other people's transactions — and it fails here by name.
+    """
+    path = APP / "tasks" / "generic_market_history_fill.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owners = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Attribute) and inner.attr == "commit":
+                owners.append(node.name)
+    # `ast.walk` descends into nested functions, so an inner def's commit is
+    # attributed to its parent too; the set, not the list, is the assertion.
+    assert set(owners) == {"_commit_durable_bank"}, (
+        f"`commit` appears outside the durable bank's own helper: {sorted(set(owners))}"
+    )
 
 
 def test_this_attempts_yield_is_counted_before_the_last_good_merge():

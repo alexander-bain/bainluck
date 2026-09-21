@@ -57,6 +57,7 @@ from typing import Any
 
 from app.utils.generic_market_history import (
     BANK_MARKER_KEY,
+    CACHE_VERSION,
     VENUE_SOURCES,
     VenuePoint,
     budget_key,
@@ -64,10 +65,13 @@ from app.utils.generic_market_history import (
     build_payload,
     cache_key,
     claim_key,
+    durable_identity,
     kalshi_contract,
     market_had_bank,
     merge_last_good,
     payload_age_seconds,
+    payload_built_at,
+    payload_point_count,
     polymarket_contract,
     strip_polymarket_leg,
     validate_payload,
@@ -150,15 +154,177 @@ def read_cached_history(market_id: int, rc: Any = None) -> dict | None:
         return None
 
 
-def write_cached_history(market_id: int, payload: dict, *, settled: bool, rc: Any = None) -> bool:
+def declared_ttl_seconds(*, settled: bool) -> int:
+    """The lifetime this bank is WRITTEN with — the one number both tiers obey."""
+    return SETTLED_CACHE_TTL_SECONDS if settled else CACHE_TTL_SECONDS
+
+
+def write_cached_history(
+    market_id: int, payload: dict, *, settled: bool, rc: Any = None,
+    ttl_s: int | None = None,
+) -> bool:
+    """Cache the bank. ``ttl_s`` overrides the declared TTL with what is LEFT of it.
+
+    The override exists for one caller — the durable tier's rehydration (#7807).
+    A bank recovered from Postgres is not a new bank and must not be given a new
+    36 hours: re-caching it at full TTL would let a payload outlive the lifetime
+    it was written with, every time it were evicted and restored. So the reader
+    passes the remainder and the bank expires when it always would have.
+    """
     try:
-        ttl = SETTLED_CACHE_TTL_SECONDS if settled else CACHE_TTL_SECONDS
+        ttl = declared_ttl_seconds(settled=settled) if ttl_s is None else int(ttl_s)
+        if ttl <= 0:
+            return False
         _client(rc).set(cache_key(market_id), json.dumps(payload, separators=(",", ":")), ex=ttl)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("generic market history: cache write failed for %s: %s",
                        market_id, str(exc)[:160])
         return False
+
+
+# ---------------------------------------------------------------------------
+# The durable tier (#7807) — the same bank, where `allkeys-lru` cannot reach it
+# ---------------------------------------------------------------------------
+#
+# THE BANK'S DECLARED TTL WAS ASPIRATIONAL AND #7563 MEASURED IT. Redis here is
+# 100 MB under `allkeys-lru`; a ~35 KB value that is read rarely is the ideal
+# eviction victim, so the `ex=36h` above bought a real lifetime under four hours
+# on 3 of 3 markets. Eviction ignores TTL by design. The series has no other
+# home — `FuturesOddsSnapshot` holds OUR polls and nothing else — so an evicted
+# bank is not stale data to refresh, it is lost data, and the reader gets the
+# thin chart back with the dashed gap #7351 had just closed.
+#
+# This tier is the same payload in `durable_state_snapshots`, the existing
+# cross-process store built for exactly this (#1512) — no migration and no new
+# table, which is the ruling `utils/matcher_pass_runs.py` already recorded for
+# this class. Redis stays the fast tier and is read first; this is only paid
+# when it has already missed.
+#
+# 🔴 IT DOES NOT EXTEND THE BANK'S LIFE, AND THAT IS A DELIBERATE LIMIT. The read
+# applies the SAME declared TTL, so this ship makes 36 h real rather than making
+# it longer. A durable row past its declared life is not served — the market is
+# cold, the planner re-asks the venue, and the reader is told the truth about
+# what we hold.
+
+#: Recorded on the row so an operator reading `durable_state_snapshots` can see
+#: which producer wrote it without decoding the payload.
+DURABLE_SOURCE = "generic_market_history_fill"
+
+
+async def publish_durable_history(
+    session: Any, market_id: int, payload: dict, *, settled: bool = False
+) -> dict:
+    """Stage the bank in the caller's transaction. NEVER raises, NEVER commits.
+
+    Staged rather than committed so it lands in the same transaction as #7736's
+    marker and the fill's own work — the bank and the receipt that it exists are
+    one fact, and CERT-851's rule is that they land together or not at all.
+
+    🔴 AN EMPTY ANSWER IS NEVER PERSISTED. `payload_point_count` is the gate, the
+    same one the marker uses. A durable `empty` would be a negative cache with no
+    expiry: one venue outage, and the market is frozen as "nothing here" for
+    everyone, for ever. The Redis negative cache is bounded by
+    `REFRESH_AFTER_SECONDS` precisely so it can be wrong for three hours instead.
+    """
+    from app.services.durable_snapshots import publish_snapshot_in_txn
+    from app.utils.durable_state import DurableEnvelope
+
+    points = payload_point_count(payload)
+    if points <= 0:
+        return {"status": "skipped", "reason": "no_points"}
+    stamp = payload_built_at(payload)
+    if stamp is None:
+        # The generation IS the build stamp; without one there is no ordering and
+        # a later write could lose to an earlier one. Refuse rather than invent.
+        return {"status": "skipped", "reason": "no_built_at"}
+    try:
+        return await publish_snapshot_in_txn(
+            session,
+            DurableEnvelope.build(
+                identity=durable_identity(market_id),
+                schema_version=CACHE_VERSION,
+                payload=payload,
+                generated_at=stamp,
+                source=DURABLE_SOURCE,
+            ),
+        )  # ← trailing comment is load-bearing; see the note on the read below
+    except Exception as exc:  # noqa: BLE001 — a durable write never fails a fill
+        logger.warning("generic market history: durable publish failed for %s: %s",
+                       market_id, str(exc)[:160])
+        return {"status": "error", "error": str(exc)[:200]}
+
+
+async def read_durable_history(
+    db: Any, market_id: int, *, now: datetime | None = None
+) -> dict | None:
+    """The durable bank if it is within its declared life, else None. NEVER raises.
+
+    🔴 THE READ RUNS IN A SAVEPOINT THAT IS ROLLED BACK, AND THE ROLLBACK IS THE
+    POINT. `read_snapshot` bounds itself with `SET LOCAL statement_timeout =
+    2000`, and `SET LOCAL` lasts until the end of the TRANSACTION — not until the
+    end of the statement. The house pattern calls it straight on the request
+    session (`routes/calibration.py`), which is safe there and is not safe here:
+    `get_probability_timeline` runs its 30/90-day auto-extend query AFTER this
+    read, on this same session, and a 2 s ceiling is exactly what that query can
+    breach. Reading on a standalone session is not the alternative —
+    `get_task_session` builds its own engine, i.e. a second pool per web process,
+    which is #1197's hazard.
+    A savepoint's GUC stack unwinds on ROLLBACK and NOT on RELEASE (measured both
+    ways on Postgres; `async with db.begin_nested()` RELEASEs on a clean exit,
+    which leaks the 2 s). Hence the explicit rollback in `finally`, and
+    `test_durable_read_restores_the_outer_statement_timeout_7807` holds it there.
+    """
+    from app.services.durable_snapshots import read_snapshot
+
+    stamp = now or datetime.now(timezone.utc)
+    nested = None
+    read = None
+    try:
+        nested = await db.begin_nested()
+        read = await read_snapshot(
+            db,
+            durable_identity(market_id),
+            expected_version=CACHE_VERSION,
+            # The generous bound of the two, because which one applies is a fact
+            # carried BY the payload and cannot be known before reading it.
+            max_age_s=SETTLED_CACHE_TTL_SECONDS,
+            now=stamp,
+        )  # ← THE TRAILING COMMENT IS LOAD-BEARING, and not for a reader.
+        # `scan_mutation_residue` Pass B sweeps every CHANGED file for the
+        # REPLACEMENT half of every registered mutant, and
+        # `typeahead_outcome_arm_mutations:M2-NO-LIMIT` replaces its needle with
+        # a bare `        )` followed by exactly `    except Exception as exc:
+        # # noqa: BLE001`. A closing paren at this indent directly above such a
+        # handler therefore reds CI as residue in a file that harness has never
+        # touched. Deleting either comment restores the collision; the scan is
+        # right to be blunt, and the cost is one clause. Same fix as
+        # `repair_polymarket_single_leg_label.py` and four siblings.
+    except Exception as exc:  # noqa: BLE001 — a durable read never breaks a chart
+        logger.warning("generic market history: durable read failed for %s: %s",
+                       market_id, str(exc)[:160])
+        return None
+    finally:
+        if nested is not None:
+            try:
+                await nested.rollback()
+            except Exception:  # noqa: BLE001 — the read is done; nothing to undo
+                pass
+
+    if read is None or not read.ok or read.envelope is None:
+        return None
+    payload = read.envelope.payload
+    if not isinstance(payload, dict):
+        return None
+    # The declared TTL, applied for real. `market_settled` is the state the fill
+    # RAN under, which is the state that chose the Redis TTL — so this reproduces
+    # the lifetime the bank was actually written with, rather than re-deciding it
+    # from a status that may have changed since.
+    ttl = declared_ttl_seconds(settled=bool(payload.get("market_settled")))
+    age = (stamp - read.envelope.generated_at).total_seconds()
+    if age > ttl:
+        return None
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -771,6 +937,41 @@ async def _stamp_bank_marker(session: Any, market_id: int, marker: dict) -> None
     )
 
 
+async def _rollback_quietly(session: Any, market_id: int) -> None:
+    """Discard this market's staged writes. NEVER raises.
+
+    The batch is a loop over one session, so a market that cannot land its own
+    writes must hand the next market a clean transaction rather than a poisoned
+    one. A rollback that itself fails is logged and swallowed for the same
+    reason: one market must never take the other nineteen with it.
+    """
+    try:
+        await session.rollback()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("generic market history: rollback failed for %s: %s",
+                       market_id, str(exc)[:160])
+
+
+async def _commit_durable_bank(session: Any, market_id: int) -> bool:
+    """Land the staged marker + durable bank. True only if Postgres HAS them.
+
+    🔴 THE RETURN VALUE IS A FACT ABOUT POSTGRES, NOT ABOUT THE CALL COMPLETING.
+    Everything downstream — the Redis publish, the claim release — is gated on
+    it, so "it returned" must never read as "it worked" (gotcha #53). A failed
+    commit rolls back and answers False; it does not raise, because a durability
+    problem on one market is not a reason to abandon the batch, and the caller
+    already knows what to do with False.
+    """
+    try:
+        await session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("generic market history: durable commit failed for %s: %s",
+                       market_id, str(exc)[:200])
+        await _rollback_quietly(session, market_id)
+        return False
+
+
 async def fill_generic_market_history(
     session: Any, market_id: int, *, dry_run: bool = False,
     kalshi_service: Any = None, polymarket_service: Any = None,
@@ -816,6 +1017,7 @@ async def fill_generic_market_history(
     )
     written = False
     marker_written = False
+    durable_status = "not_attempted"
     if not dry_run:
         # THE DURABLE HALF OF THE BANK (#7736). The series itself goes to Redis
         # below, where `allkeys-lru` may evict it at any time; this stamp is what
@@ -829,6 +1031,67 @@ async def fill_generic_market_history(
         if marker is not None and not market_had_bank(market):
             await _stamp_bank_marker(session, market_id, marker)
             marker_written = True
+        # THE SERIES ITSELF, WHERE EVICTION CANNOT REACH IT (#7807). Staged in
+        # this same transaction as the marker above, so the bank and the record
+        # that it exists can never disagree. Unlike the marker this is written on
+        # EVERY fill that carries points — it is the data, not a one-off fact
+        # about the market, and a later build must replace an earlier one.
+        durable = await publish_durable_history(
+            session, market_id, payload, settled=settled
+        )
+        durable_status = str(durable.get("status"))
+        # 🔴 THE DURABLE BANK IS COMMITTED BEFORE REDIS SEES ANYTHING, AND THE
+        # ORDER IS THE WHOLE SHIP (CERT-3247). Staging both writes and letting
+        # `get_task_session` commit on its clean exit put the publish in the
+        # wrong order — Redis visible → claim released → Postgres commit — so a
+        # worker death or a failed commit anywhere in that interval left exactly
+        # the Redis-only bank this issue exists to abolish, and the next eviction
+        # restored the thin chart. The window was never microseconds either: that
+        # session wraps the WHOLE batch, so a failure on the fifth market rolled
+        # back the durable rows of the first four whose banks were already in
+        # Redis and whose claims were already released.
+        #
+        # `skipped` is the one status that owes nothing here. It means the
+        # payload carried no points (or no build stamp), so there is no bank to
+        # lose, and the bounded Redis negative cache — which makes a venue outage
+        # read as "nothing here" for `REFRESH_AFTER_SECONDS` instead of for ever
+        # — has to keep working exactly as it did. Failing closed on an empty
+        # answer would turn every outage into an unthrottled re-ask.
+        durable_owed = durable_status != "skipped"
+        if durable_status == "error":
+            # The staging attempt already raised inside `publish_durable_history`,
+            # so this transaction may be poisoned; rolling back is what makes the
+            # session usable for the next market in the batch. No commit is
+            # attempted — there is nothing good in it to keep.
+            await _rollback_quietly(session, market_id)
+            durable_landed = False
+        else:
+            durable_landed = await _commit_durable_bank(session, market_id)
+        if durable_owed and not durable_landed:
+            # FAIL CLOSED. No Redis write and no claim release: a bank Postgres
+            # does not hold must not be published as though it does. The claim is
+            # left to expire on its own TTL, which is the bounded retry that
+            # already exists for a fill dying earlier (see the note below) — one
+            # attempt per `CLAIM_TTL_SECONDS` — so the market is re-filled rather
+            # than left believing it is banked. Publishing anyway would be worse
+            # than never shipping #7807: the reader would get a series nothing
+            # can restore, which is the pre-#7807 behaviour wearing this ship's
+            # name.
+            return {
+                "market_id": market_id,
+                "status": payload["status"],
+                "outcomes_built": payload["stats"]["outcomes_built"],
+                "points": {k: len(v["points"]) for k, v in payload["outcomes"].items()},
+                "cached": False,
+                "bank_marker_written": False,
+                "durable": "commit_failed" if durable_status != "error" else "error",
+                "stats": {k: v for k, v in payload["stats"].items()
+                          if k != "candles_unpriced"},
+            }
+        # The marker rode the same transaction, so it only really exists if that
+        # transaction landed. Say so rather than reporting a write the rollback
+        # took back.
+        marker_written = marker_written and durable_landed
         written = write_cached_history(market_id, payload, settled=settled, rc=rc)
         if written:
             # THE CLAIM MEANS "A FILL IS IN FLIGHT", and this one has landed. From
@@ -844,6 +1107,7 @@ async def fill_generic_market_history(
         "points": {k: len(v["points"]) for k, v in payload["outcomes"].items()},
         "cached": written,
         "bank_marker_written": marker_written,
+        "durable": durable_status,
         "stats": {k: v for k, v in payload["stats"].items() if k != "candles_unpriced"},
     }
 

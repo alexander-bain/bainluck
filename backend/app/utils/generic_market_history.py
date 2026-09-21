@@ -90,6 +90,21 @@ def cache_key(market_id: int) -> str:
     return f"futures:generic-history:{CACHE_VERSION}:{int(market_id)}"
 
 
+def durable_identity(market_id: int) -> str:
+    """This market's row in ``durable_state_snapshots`` (#7807).
+
+    🔴 THE VERSION IS DELIBERATELY NOT IN THIS STRING, and that is the one way it
+    differs from :func:`cache_key`. A Redis key may carry the version because the
+    old key EXPIRES: bump to v2 and every orphaned v1 key deletes itself. A
+    Postgres row has no TTL, so a versioned identity would leave one dead row per
+    market per bump, for ever. Sharing the identity makes a v2 write REPLACE its
+    own v1 row, and the reader is protected by ``schema_version`` instead —
+    ``read_snapshot(expected_version=CACHE_VERSION)`` types a not-yet-replaced v1
+    row as ``wrong_version`` and refuses to serve it. Same guarantee, no orphans.
+    """
+    return f"generic-history:{int(market_id)}"
+
+
 def claim_key(market_id: int) -> str:
     return f"futures:generic-history-claim:{CACHE_VERSION}:{int(market_id)}"
 
@@ -279,6 +294,20 @@ def build_payload(
     }
 
 
+def payload_built_at(payload: dict | None) -> datetime | None:
+    """The instant this payload was BUILT, or None when it will not say.
+
+    Deliberately narrower than :func:`payload_age_seconds`, which falls back to
+    `attempted_at`: an attempt that wrote nothing still dates itself, and that is
+    the right stamp for "may a reader ask again". It is the wrong stamp for the
+    durable tier's GENERATION, which orders builds — taking an attempt's stamp
+    would let a fill that produced nothing outrank the build it failed to beat.
+    """
+    if not isinstance(payload, dict):
+        return None
+    return _parse_aware(payload.get("built_at"))
+
+
 def payload_age_seconds(payload: dict | None, *, now: datetime) -> float | None:
     """Seconds since the last fill ATTEMPT that wrote, or None when it will not say."""
     if not isinstance(payload, dict):
@@ -323,6 +352,27 @@ def market_had_bank(market: Any) -> bool:
     return bank_marker(market) is not None
 
 
+def payload_point_count(payload: dict | None) -> int:
+    """How many venue observations this payload actually carries.
+
+    The one predicate behind BOTH durable writes: #7736's marker and #7807's
+    durable bank. An `empty` or `degraded` answer carries nothing, and neither
+    write may be made on one — see :func:`build_bank_marker` for the marker's
+    reasoning and `publish_durable_history` for the bank's, which is the same
+    argument about a negative cache that cannot expire.
+    """
+    if not isinstance(payload, dict):
+        return 0
+    outcomes = payload.get("outcomes")
+    if not isinstance(outcomes, dict):
+        return 0
+    return sum(
+        len(entry.get("points") or [])
+        for entry in outcomes.values()
+        if isinstance(entry, dict)
+    )
+
+
 def build_bank_marker(payload: dict | None, *, now: datetime) -> dict | None:
     """The stamp to persist for `payload`, or None when it has not earned one.
 
@@ -332,18 +382,10 @@ def build_bank_marker(payload: dict | None, *, now: datetime) -> dict | None:
     instruction to re-ask on every cold key, which is the negative cache
     (`REFRESH_AFTER_SECONDS`) spent backwards.
     """
-    if not isinstance(payload, dict):
-        return None
-    outcomes = payload.get("outcomes")
-    if not isinstance(outcomes, dict):
-        return None
-    points = sum(
-        len(entry.get("points") or [])
-        for entry in outcomes.values()
-        if isinstance(entry, dict)
-    )
+    points = payload_point_count(payload)
     if points <= 0:
         return None
+    outcomes = payload.get("outcomes") or {}
     return {
         "first_built_at": payload.get("built_at") or now.isoformat(),
         "points": int(points),
