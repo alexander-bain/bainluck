@@ -234,8 +234,8 @@ final class LiveSparklineDomainTests: XCTestCase {
             [point(9, 0.4, now: now), point(3, 0.6, now: now)], minutes: 10, now: now)
         let down = LiveSparklineChart.windowed(
             [point(9, 0.6, now: now), point(3, 0.4, now: now)], minutes: 10, now: now)
-        XCTAssertTrue(LiveSparklineChart.isRising(up))
-        XCTAssertFalse(LiveSparklineChart.isRising(down))
+        XCTAssertEqual(LiveSparklineChart.direction(up), .up)
+        XCTAssertEqual(LiveSparklineChart.direction(down), .down)
     }
 
     func testAccessibilityLabelNamesBothEndsOfTheWindow() {
