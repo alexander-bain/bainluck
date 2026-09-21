@@ -21,10 +21,25 @@ happen:
 
 import ast
 import inspect
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.tasks import repair_polymarket_leg_label as rail
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _aged(days: float) -> datetime:
+    """A resolution date exactly ``days`` old, as an OFFSET from now.
+
+    Never a literal date: an anchor that names 2026-09-21 passes today and fails
+    in October, and an anchor that BRANCHES on the clock to avoid that is not
+    fixed either (Hot List #44). Offsets have neither problem.
+    """
+    return _now() - timedelta(days=days)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +121,53 @@ class _Session:
             )
         return self.writes[0][0]
 
+    def _selected(self, sql: str, params: dict) -> list:
+        """The page rows a real Postgres would have returned for THIS statement.
+
+        🔴 THE FAKE APPLIES THE SCOPE AND THE BAND ITSELF. A fake that handed
+        back ``self.page`` whatever the WHERE clause said would pass every
+        #7701 assertion below against a rail that dropped the clause entirely —
+        the band tests would be measuring the fixture, not the rail. So the two
+        selectors are re-implemented here from the STATEMENT, not from the call
+        arguments: the scope is read from which status predicate the SQL carries
+        and the band from the binds the rail actually sent.
+        """
+        rows = list(self.page)
+
+        # Scope: read off the predicate in the SQL, so a page that silently kept
+        # the original cohort while reporting the widened one fails here.
+        if "fm.status IS DISTINCT FROM 'open'" in sql:
+            rows = [r for r in rows if r[7] != "open"]
+        elif "fm.status = 'open'" in sql:
+            rows = [r for r in rows if r[7] == "open"]
+
+        # Band: MAX age is the OLDER edge, so it is a LOWER bound on the date.
+        # Inverting it here would make the rail's own inversion invisible.
+        now = _now()
+        lo, hi = params.get("band_min_age"), params.get("band_max_age")
+        if lo is not None or hi is not None:
+            kept = []
+            for r in rows:
+                when = r[6]
+                if when is None:
+                    # NULL compares unknown in SQL: an age band cannot see a row
+                    # with no resolution_date, and the rail's docstring says so.
+                    continue
+                age = (now - when).total_seconds() / 86400.0
+                if hi is not None and age > hi:
+                    continue
+                if lo is not None and age < lo:
+                    continue
+                kept.append(r)
+            rows = kept
+
+        # `after_id` and `cap` are deliberately NOT re-implemented here: the
+        # existing guards drive them through fixtures that state the page they
+        # expect, and a fake that also paged would change what those tests are
+        # measuring. The two selectors above are enforced because the #7701
+        # guards below would otherwise be vacuous.
+        return rows
+
     async def execute(self, stmt, params=None):
         sql = " ".join(str(stmt).split())
         self.statements.append((sql, dict(params or {})))
@@ -118,19 +180,25 @@ class _Session:
             if self.landed is not None:
                 ids = [i for i in ids if i in self.landed]
             return _Result(rows=[(i,) for i in ids])
-        if "LIMIT CAST(:cap AS int)" in sql:
-            return _Result(rows=self.page)
-        # Routed BEFORE the generic count: the complement-of-scope query also
-        # starts `SELECT count(`, and reading it as the remaining-count would
-        # hand the rail a number that means the opposite of what it asked for.
-        if "IS DISTINCT FROM 'open'" in sql:
+        # Routed BEFORE the complement count, which it also looks like: the
+        # census selects the same two aggregates and is told apart by its
+        # GROUP BY and nothing else.
+        if "GROUP BY" in upper:
+            return _Result(rows=self.census_rows)
+        # Routed BEFORE the generic count AND before the page, on the aggregate
+        # PAIR rather than on the status predicate: since #7701 the widened
+        # page and its terminal count both carry `IS DISTINCT FROM 'open'` too,
+        # and routing on that string handed the rail's `scalar_one()` a
+        # two-column result whose default scalar is 0 — a silent wrong zero in
+        # exactly the tests added to stop silent wrong zeros.
+        if "count(DISTINCT fm.id) AS markets" in sql:
             if self.out_of_scope is None:
                 raise RuntimeError("out-of-scope count failed")
             return _Result(one=tuple(self.out_of_scope))
+        if "LIMIT CAST(:cap AS int)" in sql:
+            return _Result(rows=self._selected(sql, dict(params or {})))
         if upper.startswith("SELECT COUNT("):
             return _Result(scalar=self.remaining)
-        if "GROUP BY" in upper:
-            return _Result(rows=self.census_rows)
         return _Result()
 
     async def commit(self):
@@ -154,9 +222,33 @@ class _Market:
         self.group_item_title = group_item_title
 
 
-def _row(outcome_id, market_id, condition_id, name, category="tennis"):
-    """One page row, in the tuple order the rail's own SELECT emits."""
-    return (outcome_id, market_id, condition_id, name, name, category)
+def _row(
+    outcome_id,
+    market_id,
+    condition_id,
+    name,
+    category="tennis",
+    resolution_date=None,
+    market_status="open",
+):
+    """One page row, in the tuple order the rail's own SELECT emits.
+
+    ``resolution_date`` defaults to None — the age-UNKNOWN case — on purpose.
+    Every pre-#7701 test built rows without one and must keep passing unchanged,
+    and a default of "30 days ago" would have made the unknown bucket reachable
+    only by a test that asked for it, which is the bucket most likely to be
+    mis-folded (see ``AGE_BUCKET_UNKNOWN``).
+    """
+    return (
+        outcome_id,
+        market_id,
+        condition_id,
+        name,
+        name,
+        category,
+        resolution_date,
+        market_status,
+    )
 
 
 class _FakeService:
@@ -731,8 +823,28 @@ def test_the_census_and_the_pager_share_one_population_predicate():
     # "in scope 0, out of scope N" sentence stops adding up to the whole defect.
     assert src.count("fm.status = 'open'") == 1
     assert src.count("fm.status IS DISTINCT FROM 'open'") == 1
-    assert src.count("{IN_SCOPE_STATUS_SQL}") == 3
+    # The census still names its own cohort directly; the PAGER and its terminal
+    # count now reach a scope through the shared map, which is what lets
+    # `status_scope` widen them without minting a third spelling of the status
+    # test (#7701).
+    assert src.count("{IN_SCOPE_STATUS_SQL}") == 1
     assert src.count("{OUT_OF_SCOPE_STATUS_SQL}") == 1
+    assert src.count("{STATUS_SCOPE_SQL[scope]}") == 2, (
+        "the pager and its terminal count no longer share one scope "
+        "expression; a banded page walking one cohort while its own "
+        "'remaining' counts another is the same number meaning two things"
+    )
+    # 🔴 THE IDENTITY, NOT JUST THE SPELLING. The widened scope is only safe to
+    # read as "the other half of the defect" while it IS the complement the
+    # counter counts. Written as a value comparison rather than a substring
+    # count because a third cohort added here — `resolved`, say, which is
+    # narrower than the complement — would leave every text assertion above
+    # passing while the rail's "in scope 0, out of scope N" sentence quietly
+    # stopped adding up.
+    assert rail.STATUS_SCOPE_SQL == {
+        "open": rail.IN_SCOPE_STATUS_SQL,
+        "not_open": rail.OUT_OF_SCOPE_STATUS_SQL,
+    }
 
 
 def test_the_predicate_is_the_null_safe_spelling_that_makes_the_query_run():
@@ -969,7 +1081,15 @@ async def test_every_statement_this_rail_emits_actually_binds_its_parameters():
     assert session.statements, "the rail issued nothing — this guard is vacuous"
 
     expected = {
-        "LIMIT CAST(:cap AS int)": {"after_id", "sport", "cap"},
+        # The two band binds are ALWAYS present in the page SQL, bound to None
+        # on an unbanded call — the clause is `CAST(:band_max_age AS ...) IS
+        # NULL OR ...`, so an unbanded page passes the bind and short-circuits
+        # rather than rendering a different statement. That is deliberate: one
+        # statement shape means the banded and unbanded forms cannot drift, and
+        # it is why this guard covers the band clause without a second call.
+        "LIMIT CAST(:cap AS int)": {
+            "after_id", "sport", "cap", "band_min_age", "band_max_age",
+        },
         "IS DISTINCT FROM 'open'": {"sport"},
     }
     seen = 0
@@ -1175,3 +1295,380 @@ async def test_this_rails_sql_carries_no_dash_comment():
             "this rail's SQL carries a `--` comment; put the explanation in a "
             f"Python comment above the statement instead: {sql[:160]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. #7701 rung 1 — the widened scope is a LOOKING instrument
+#
+# The ship these guards protect: on 2026-09-21 this rail's writable cohort
+# measured 0 while 25,469 collapsed legs — every one of them a card printing
+# "US Open WTA: Iga Swiatek vs Nadia Podoroska 89.5%" instead of a side name —
+# sat one status value away. The drain could not so much as LOOK at them, so
+# Polymarket's retention edge for resolved markets was unmeasurable and the
+# widening that fixes those cards had nothing to be sized against.
+#
+# The three ways this rung can go wrong, in the order they would happen:
+#   1. A selector silently not binding, so a "sample" is the whole population
+#      wearing a band's label.
+#   2. The widened scope learning to WRITE before the bound exists.
+#   3. A banded page reporting `scan_exhausted` — one 30-day slice running out,
+#      read as the defect being drained. That is the same lie
+#      `out_of_scope_legs` was added to stop, one layer further in.
+# ---------------------------------------------------------------------------
+
+
+def _resolved_row(outcome_id, condition_id, name, *, age_days, status="resolved"):
+    return _row(
+        outcome_id,
+        outcome_id * 10,
+        condition_id,
+        name,
+        resolution_date=None if age_days is None else _aged(age_days),
+        market_status=status,
+    )
+
+
+def test_the_default_scope_is_the_original_cohort_and_nothing_moved():
+    """The widening is additive or it is a regression. An operator who passes
+    neither selector must get the rail that was certed."""
+    assert rail.parse_status_scope(None) == rail.DEFAULT_STATUS_SCOPE == "open"
+    assert rail.parse_band(None) is None
+    assert rail.STATUS_SCOPE_SQL["open"] == rail.IN_SCOPE_STATUS_SQL
+
+
+async def test_an_unknown_scope_is_refused_by_name_and_never_served_from_open():
+    """🔴 THE MOST DANGEROUS DEFAULT THIS RAIL COULD HAVE.
+
+    `status_scope=resolved` is the spelling an operator will reach for first —
+    the issue itself calls it "the resolved cohort" — and it is not the name of
+    the complement. Served quietly from `open`, it returns a truthful empty page
+    for a cohort measured at 0 and reads as "the resolved legs are clean", which
+    is the strongest possible wrong answer this rail can give.
+    """
+    session = _Session(page=[_resolved_row(1, "0xa", "A vs B", age_days=10)])
+    out = await rail.repair(session, apply=False, status_scope="resolved")
+
+    assert out["terminal"] == "refused"
+    assert out["refused_code"] == "STATUS_SCOPE_UNKNOWN"
+    assert "not_open" in out["reason"], "the refusal must name the spelling that works"
+    assert session.statements == [], (
+        "the rail queried the database before validating its selector — a "
+        "refusal that still reads is a refusal that can still be misread"
+    )
+    assert out["counts"]["legs_examined"] == 0
+
+
+async def test_the_widened_scope_walks_the_complement_and_not_the_open_cohort(
+    monkeypatch, fast
+):
+    """The page must carry the complement predicate, and the rows it examines
+    must be the ones the open cohort excludes."""
+    page = [
+        _resolved_row(1, "0xa", "A vs B", age_days=10),
+        _resolved_row(2, "0xb", "C vs D", age_days=10, status="open"),
+    ]
+    session = _Session(page=page, remaining=1)
+    _venue(monkeypatch, _FakeService([_Market("0xa", "A vs B", ["A", "B"])]))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open")
+
+    assert out["status_scope"] == "not_open"
+    assert rail.OUT_OF_SCOPE_STATUS_SQL in session.page_sql
+    assert rail.IN_SCOPE_STATUS_SQL not in session.page_sql
+    # The `open` row is the control: if the scope predicate never bound, the
+    # rail would have examined both.
+    assert out["counts"]["legs_examined"] == 1
+    assert out["by_status"] == {"resolved": 1}
+
+
+async def test_an_apply_against_the_widened_scope_is_refused_by_name(monkeypatch, fast):
+    """Rung 2's guard, planted at rung 1. The widened scope may not learn to
+    write until Gamma's retention edge is measured AND this rail stages an undo
+    receipt — 25,469 rows is not the population to debut an unreversible write
+    on, and a drain that crosses an unmeasured retention edge counts the purged
+    tail `not_at_venue` and stops, which is indistinguishable from finishing."""
+    page = [_resolved_row(1, "0xa", "A vs B", age_days=10)]
+    session = _Session(page=page)
+    _venue(monkeypatch, _FakeService([_Market("0xa", "A vs B", ["A", "B"])]))
+
+    out = await rail.repair(session, apply=True, status_scope="not_open")
+
+    assert out["terminal"] == "refused"
+    assert out["refused_code"] == "STATUS_SCOPE_APPLY_REFUSED"
+    assert out["applied"] is False
+    assert session.writes == [], "the rail wrote in the scope it refuses to write in"
+    assert session.statements == []
+
+
+async def test_an_apply_against_the_default_scope_still_writes(monkeypatch, fast):
+    """The negative control for the refusal above. A guard that only proves the
+    new scope cannot write is satisfied by a rail that cannot write at all."""
+    page = [_row(1, 10, "0xa", "A vs B")]
+    session = _Session(page=page)
+    _venue(monkeypatch, _FakeService([_Market("0xa", "A vs B", ["A", "B"])]))
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["terminal"] != "refused"
+    assert out["applied"] is True
+    assert session.writes, "the ORIGINAL cohort stopped writing — the refusal is too wide"
+    assert out["counts"]["relabelled"] == 1
+
+
+async def test_the_band_actually_bounds_the_page_it_claims_to_sample(
+    monkeypatch, fast
+):
+    """🔴 THE GUARD THE WHOLE RUNG RESTS ON.
+
+    The deliverable of this rung is a retention CURVE, and a curve read from a
+    band that never bound is one number repeated six times with six different
+    labels on it. The fake applies the band itself, from the binds the rail
+    actually sent, so a rail that dropped the clause fails here rather than
+    quietly returning the whole population.
+    """
+    page = [
+        _resolved_row(1, "0xa", "A vs B", age_days=10),
+        _resolved_row(2, "0xb", "C vs D", age_days=45),
+        _resolved_row(3, "0xc", "E vs F", age_days=200),
+    ]
+    session = _Session(page=page, remaining=1)
+    _venue(
+        monkeypatch,
+        _FakeService(
+            [
+                _Market("0xa", "A vs B", ["A", "B"]),
+                _Market("0xb", "C vs D", ["C", "D"]),
+                _Market("0xc", "E vs F", ["E", "F"]),
+            ]
+        ),
+    )
+
+    out = await rail.repair(session, apply=False, status_scope="not_open", band="30-60")
+
+    assert out["band"] == [30, 60]
+    assert out["counts"]["legs_examined"] == 1, (
+        "the band did not bind — a 30-60 day slice examined rows aged 10 and 200"
+    )
+    assert out["by_age_bucket"] == {"30-60": {"relabellable": 1}}
+    assert session.page_params["band_min_age"] == 30
+    assert session.page_params["band_max_age"] == 60
+
+
+async def test_the_bands_max_is_the_older_edge_and_the_sql_bounds_it_that_way():
+    """Reading the pair as "max age => max date" inverts the window and returns
+    the slice NEXT to the one asked for — a page that looks entirely plausible
+    and is off by a bucket. Pinned on the SQL, because the fake's own filter
+    would otherwise be the only thing asserting the direction."""
+    session = _Session(page=[], out_of_scope=(1, 1))
+    await rail.repair(session, apply=False, status_scope="not_open", band="30-60")
+    sql = " ".join(session.page_sql.split())
+
+    assert "fm.resolution_date >= NOW() - (CAST(:band_max_age AS double precision)" in sql, (
+        "the OLDER edge (max age) must be a LOWER bound on the date"
+    )
+    assert "fm.resolution_date <= NOW() - (CAST(:band_min_age AS double precision)" in sql, (
+        "the YOUNGER edge (min age) must be an UPPER bound on the date"
+    )
+
+
+async def test_a_banded_page_never_reports_the_scan_exhausted(monkeypatch, fast):
+    """#3257's ruling, and the reason this rung cannot borrow the default
+    branch's vocabulary: a slice running out of rows is not a cohort being
+    drained. Band exhaustion and population exhaustion are two fields."""
+    session = _Session(page=[], out_of_scope=(25469, 25402))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open", band="30-60")
+
+    assert out["scan_exhausted"] is False, (
+        "an empty 30-day slice reported the whole cohort scanned"
+    )
+    assert out["band_exhausted"] is True
+    assert "THIS BAND" in out["reason"] or "band" in out["reason"].lower()
+
+
+async def test_an_unbanded_page_still_reports_the_scan_exhausted(monkeypatch, fast):
+    """The negative control for the one above: the two-field split must not have
+    been bought by making `scan_exhausted` permanently False."""
+    page = [_resolved_row(1, "0xa", "A vs B", age_days=10)]
+    session = _Session(page=page, remaining=0)
+    _venue(monkeypatch, _FakeService([_Market("0xa", "A vs B", ["A", "B"])]))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open")
+
+    assert out["scan_exhausted"] is True
+    assert out["band_exhausted"] is None, (
+        "an unbanded page has no band to exhaust; reporting False would read as "
+        "a band that still has rows in it"
+    )
+
+
+async def test_an_age_unknown_row_gets_its_own_bucket_and_is_not_aged_into_the_tail(
+    monkeypatch, fast
+):
+    """🔴 THE CLASSIFIER TRAP. `resolution_date` is NULL on a real part of this
+    cohort, and folding those into `365+` would manufacture exactly the reading
+    this rung exists to take: a pile of old rows the venue cannot answer for.
+    "We do not know when this resolved" is a different fact and gets a different
+    bucket."""
+    page = [
+        _resolved_row(1, "0xa", "A vs B", age_days=None),
+        _resolved_row(2, "0xb", "C vs D", age_days=400),
+    ]
+    session = _Session(page=page, remaining=0)
+    _venue(monkeypatch, _FakeService([_Market("0xb", "C vs D", ["C", "D"])]))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open")
+
+    assert out["by_age_bucket"] == {
+        rail.AGE_BUCKET_UNKNOWN: {"not_at_venue": 1},
+        "365+": {"relabellable": 1},
+    }
+
+
+async def test_a_band_cannot_see_an_age_unknown_row_and_the_rail_says_so(
+    monkeypatch, fast
+):
+    """The other half of the trap: every comparison against NULL is unknown, so
+    an age band silently excludes the age-unknown tail. That is correct SQL and
+    a reader who sampled six bands would conclude they had covered the cohort.
+    The unbanded page is the only thing that counts those rows."""
+    page = [_resolved_row(1, "0xa", "A vs B", age_days=None)]
+    session = _Session(page=page, out_of_scope=(1, 1))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open", band="0-3650")
+
+    assert out["counts"]["legs_examined"] == 0
+    assert "NULL" in out["reason"], (
+        "a band that cannot see the age-unknown tail must say so in the answer "
+        "an operator actually reads"
+    )
+    assert "resolution_date" in rail.repair.__doc__ or "resolution_date" in rail.__doc__
+
+
+async def test_a_banded_resume_is_refused_rather_than_silently_re_anchored():
+    """CERT-1935 on the sibling rail: a band's ages re-measured from today while
+    the keyset stays put strand every row sharing the cursor's own timestamp —
+    after the cursor AND outside the new window — and report it as the band
+    being exhausted. That rail closed it with a `band_as_of` anchor. This rung
+    does not need a banded WALK, so it refuses the case instead of implementing
+    it subtly wrong."""
+    session = _Session(page=[], out_of_scope=(1, 1))
+
+    out = await rail.repair(
+        session, apply=False, status_scope="not_open", band="30-60", after_id=99
+    )
+
+    assert out["terminal"] == "refused"
+    assert out["refused_code"] == "BAND_RESUME_UNSUPPORTED"
+    assert out["next_cursor"] == {"after_id": 99}, (
+        "a refusal must hand back the cursor it was given, unchanged — a "
+        "refusal that advances the cursor loses the page it declined to walk"
+    )
+    assert session.statements == []
+
+
+async def test_a_banded_apply_is_refused():
+    """A banded apply drains one age slice and then reports that slice running
+    out, which an operator reads as the population being drained."""
+    out = await rail.repair(_Session(page=[]), apply=True, band="30-60")
+    assert out["refused_code"] == "BAND_ON_APPLY_REFUSED"
+    assert out["applied"] is False
+
+
+@pytest.mark.parametrize(
+    "band",
+    ["60-30", "30", "", "thirty-sixty", "30-30", "-30", "30-60-90"],
+)
+async def test_a_band_this_rail_cannot_read_is_refused_never_dropped(band):
+    """🔴 NEVER `None` FOR A VALUE THAT WAS SUPPLIED. A band silently dropped
+    walks the whole population while the response echoes the band the operator
+    asked for — a 120-row sample of 25,469 rows, labelled "30-60 days", used to
+    size a write."""
+    out = await rail.repair(_Session(page=[]), apply=False, band=band)
+    assert out["terminal"] == "refused", f"?band={band!r} was not refused"
+    assert out["refused_code"].startswith("BAND_")
+
+
+def test_the_band_parser_is_not_the_kalshi_one_and_has_no_retention_floor():
+    """🔴 THE SHARED-HELPER TRAP, DECLINED ON PURPOSE.
+
+    `repair_kalshi_fabricated_loss.parse_band` is the same grammar and the
+    wrong rule here: it refuses any band reaching past `PROVABLY_PURGED_AGE_DAYS`
+    because Kalshi's retention floor is a MEASURED constant. Polymarket has no
+    such constant — finding where its edge is, is the entire point of banding
+    here — so importing that parser would have refused exactly the slices worth
+    reading, and the failure would have looked like an empty tail.
+    """
+    assert rail.parse_band("300-3650") == (300, 3650)
+    # Read from the IMPORT NODES, not from the source text: the docstring on
+    # `parse_band` explains at length why the Kalshi parser is not imported, and
+    # a substring guard would read that explanation as the thing it forbids.
+    tree = ast.parse(inspect.getsource(rail))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+        elif isinstance(node, ast.Import):
+            imported.update(a.name for a in node.names)
+    assert not any("repair_kalshi_fabricated_loss" in m for m in imported), (
+        "this rail imported the Kalshi band parser; its retention floor is a "
+        "measurement over a different venue and would refuse this cohort's "
+        "oldest slices by name"
+    )
+
+
+def test_the_age_buckets_are_contiguous_and_the_labels_do_not_wrap():
+    """A running lower bound rather than `EDGES.index(edge) - 1`, which wraps to
+    the LAST edge on the first bucket and labels 0-30 as "365-30"."""
+    now = _now()
+    assert rail.age_bucket(_aged(1), now) == "0-30"
+    assert rail.age_bucket(_aged(45), now) == "30-60"
+    assert rail.age_bucket(_aged(75), now) == "60-90"
+    assert rail.age_bucket(_aged(120), now) == "90-180"
+    assert rail.age_bucket(_aged(300), now) == "180-365"
+    assert rail.age_bucket(_aged(400), now) == "365+"
+    assert rail.age_bucket(None, now) == rail.AGE_BUCKET_UNKNOWN
+    # A close date in the FUTURE on a market we no longer hold open: its own
+    # bucket, because folding it into `0-30` reports a row that has not reached
+    # its own close as a fresh resolution.
+    assert rail.age_bucket(_aged(-5), now) == "future_date"
+
+
+def test_the_bucket_clock_is_an_argument_and_never_read_inside_the_fold():
+    """Hot List #44. A bucket boundary re-read per row sorts two rows of one
+    resolution into two slices while the loop is still running, and a guard
+    built on a live clock changes its own answer as it runs."""
+    assert "now" in inspect.signature(rail.age_bucket).parameters
+    # Walked as CALLS, not as text: this function's own docstring is about
+    # reading the clock, so a substring guard fails on the explanation rather
+    # than on the behaviour.
+    fn = ast.parse(inspect.getsource(rail.age_bucket)).body[0]
+    called = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+    }
+    assert not called & {"now", "utcnow", "today", "time", "monotonic"}, (
+        f"age_bucket reads the clock instead of being handed one: {sorted(called)}"
+    )
+
+
+async def test_only_examined_rows_are_folded_into_the_retention_reading(
+    monkeypatch, fast
+):
+    """🔴 A ROW THE LOOP NEVER REACHED IS NOT A VENUE ANSWER. When the venue
+    refuses a batch nothing in it was examined, and folding those rows into a
+    bucket would put `not_at_venue`-shaped absences into the very table whose
+    only value is that its absences ARE venue answers."""
+    page = [_resolved_row(i, f"0x{i}", f"A{i} vs B{i}", age_days=45) for i in range(1, 4)]
+    session = _Session(page=page, out_of_scope=(1, 1))
+    _venue(monkeypatch, _FakeService([], raises=RuntimeError("429 from Gamma")))
+
+    out = await rail.repair(session, apply=False, status_scope="not_open")
+
+    assert out["counts"]["legs_examined"] == 0
+    assert out["by_age_bucket"] == {}, (
+        "rows the venue never answered for were folded into an age bucket; the "
+        "reading would show a retention cliff that is really a rate limit"
+    )
+    assert out["terminal"] == "paused_venue"
