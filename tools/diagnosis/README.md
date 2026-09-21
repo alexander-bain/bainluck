@@ -9,9 +9,13 @@ From this checkout:
 ./diagnosis-lane.sh start
 ./diagnosis-lane.sh status
 ./diagnosis-lane.sh stop
+./diagnosis-lane.sh window   # open/reuse the Terminal view and ensure worker is started
+./diagnosis-lane.sh watch    # show status/output in this terminal
 ```
 
 `start` installs the single-user launch agent `com.bainluck.diagnosis`. This runs while the Mac is awake and the user session is available; it is not a cloud worker. `stop` terminates the current worker group through the runner's signal handler, retains artifacts and leaves PAUSED so login does not resume work. `start` clears PAUSED. Other lanes are untouched. The launch agent points to the checkout from which it was installed: retain this checkout until reinstalling from the merged canonical source.
+
+`start-lanes.sh` also opens the **TBH diagnosis** Terminal window. It shows current issue, progress and recent results from the same supervised worker. Re-running the starter reuses the window. Closing it or pressing Ctrl-C closes only the view; use `diagnosis-lane.sh stop` to pause actual work. Starting all lanes resumes a paused diagnosis worker, just as `start` does. The view has no authority to accept results or run model tools.
 
 State and results: `~/bainluck-diagnosis/STATUS.json`, `state.json`, `service.log`, and `runs/<timestamp>-<issue>-<id>/`. Each run includes its source checkout, issue snapshot, prompt, raw model log, report and result. Exit 0 alone does not count as delivery: a completed model terminal event and a validated result/report/evidence contract are required. Controller status is execution status, never product acceptance.
 

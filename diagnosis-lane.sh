@@ -9,5 +9,9 @@ case "${1:-status}" in
     exec "$PYTHON" "$RUNNER" "${1:-status}" ;;
   start|stop)
     exec "$PYTHON" "$SELF_DIR/tools/diagnosis/service.py" "$1" ;;
-  *) echo "Usage: $0 {start|stop|status|once|dry-run}" >&2; exit 2 ;;
+  window)
+    exec "$PYTHON" "$SELF_DIR/tools/diagnosis/window.py" ;;
+  watch)
+    exec "$PYTHON" -u "$SELF_DIR/tools/diagnosis/monitor.py" ;;
+  *) echo "Usage: $0 {start|stop|status|once|dry-run|window|watch}" >&2; exit 2 ;;
 esac
