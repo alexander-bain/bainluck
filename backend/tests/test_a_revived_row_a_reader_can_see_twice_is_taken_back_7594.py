@@ -23,14 +23,16 @@ can execute the locking it is about. sqlite serialises writers and ignores
 from __future__ import annotations
 
 import inspect
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.utils.event_completion import (
+    TERMINAL_TAKEBACK_SAME_START_TOLERANCE,
     revived_twin_may_be_taken_back,
     row_carries_a_result,
     row_carries_an_authority_id,
+    starts_prove_the_same_fixture,
 )
 
 
@@ -64,6 +66,7 @@ def _permitted(**overrides):
         "has_surviving_counterpart": True,
         "subject_carries_result": False,
         "subject_carries_authority_id": False,
+        "a_survivor_proves_the_same_fixture": True,
         "a_survivor_carries_evidence": True,
     }
     args.update(overrides)
@@ -118,6 +121,22 @@ class TestTheKeeperIsTheRowWithTheEvidence:
             is False
         )
 
+    def test_a_counterpart_that_is_a_different_game_licenses_nothing(self):
+        """CERT-3213. The second game of a doubleheader is not a duplicate.
+
+        The screen's +-30h window is sized for a REFUSAL — there, erring wide
+        costs a row that stays invisible. Spent as the identity for a
+        destructive write it deletes real fixtures: 640 pairs of
+        provably-distinct games (distinct `espn_id`s, same two clubs) sit inside
+        it on production, from 6h apart.
+        """
+        assert (
+            revived_twin_may_be_taken_back(
+                **_permitted(a_survivor_proves_the_same_fixture=False)
+            )
+            is False
+        )
+
     def test_the_arms_own_ledger_is_the_scope(self):
         """2,544 rows are `voided` for unrelated reasons and match the rule.
 
@@ -150,6 +169,18 @@ class TestTheKeeperIsTheRowWithTheEvidence:
                 subject_carries_result=False,
             )
 
+    def test_the_new_refusal_was_added_to_the_permit_and_not_only_to_the_rule(self):
+        """A refusal whose argument is missing from `_permitted` is untested.
+
+        Every case in this class is `_permitted` with ONE override, so an
+        argument that never appears there can only ever be exercised at its
+        default — and it has no default. This asserts the helper and the
+        signature agree, which is the one thing a per-case override cannot.
+        """
+        assert set(_permitted()) == set(
+            inspect.signature(revived_twin_may_be_taken_back).parameters
+        )
+
 
 class TestWhatCountsAsEvidence:
     @pytest.mark.parametrize(
@@ -180,6 +211,60 @@ class TestWhatCountsAsEvidence:
     def test_an_empty_string_is_not_an_id(self, espn, statpal):
         """A provider that wrote an empty string has told us nothing."""
         assert row_carries_an_authority_id(espn, statpal) is False
+
+
+class TestWhichRowsAreTheSameGame:
+    """CERT-3213's repair, measured rather than asserted.
+
+    Production 2026-09-21, 120 days, pairs carrying DISTINCT `espn_id`s with the
+    same two clubs inside the screen's 30h window: 628 same-orientation
+    (doubleheaders, back-to-backs) with a minimum gap of **6.00h**, and 12
+    reversed (home-and-home) with a minimum of **19.00h**. All four production
+    specimens of the defect share their kickoff to the SECOND.
+    """
+
+    def test_the_tolerance_sits_far_inside_the_measured_floor(self):
+        """Six times inside the closest legitimate repeat on the site."""
+        assert TERMINAL_TAKEBACK_SAME_START_TOLERANCE == timedelta(hours=1)
+        assert TERMINAL_TAKEBACK_SAME_START_TOLERANCE * 6 <= timedelta(hours=6)
+
+    @pytest.mark.parametrize("gap_hours", [6.0, 8.083, 19.0, 23.0, 29.99])
+    def test_a_real_repeat_inside_the_screens_window_is_a_different_game(
+        self, gap_hours
+    ):
+        """The MLB doubleheader (6h and 8h05), the back-to-back (23h), the
+        home-and-home (19h), and the far edge of the screen's own window."""
+        start = datetime(2026, 9, 20, 23, 0, tzinfo=timezone.utc)
+        assert (
+            starts_prove_the_same_fixture(
+                start, start + timedelta(hours=gap_hours)
+            )
+            is False
+        )
+
+    @pytest.mark.parametrize("delta_minutes", [0, 1, -1, 59, -59])
+    def test_a_refinement_of_minutes_is_still_one_game(self, delta_minutes):
+        """The tolerance absorbs a settlement nudge without deciding anything:
+        every production specimen is delta 0, so it is never load-bearing."""
+        start = datetime(2026, 9, 20, 23, 0, tzinfo=timezone.utc)
+        assert (
+            starts_prove_the_same_fixture(
+                start, start + timedelta(minutes=delta_minutes)
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            (None, datetime(2026, 9, 20, 23, 0, tzinfo=timezone.utc)),
+            (datetime(2026, 9, 20, 23, 0, tzinfo=timezone.utc), None),
+            (None, None),
+        ],
+    )
+    def test_a_missing_clock_proves_nothing(self, a, b):
+        """A terminal is written on this answer, so "we do not know" is False."""
+        assert starts_prove_the_same_fixture(a, b) is False
 
 
 class TestTheArmIsBoundedAndUndoable:

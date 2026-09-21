@@ -4703,6 +4703,7 @@ async def _take_back_revived_twins_impl() -> dict:
         "taken_back": 0,
         "takeback_kept_orphan": 0,
         "takeback_kept_subject_evidenced": 0,
+        "takeback_kept_a_different_game": 0,
         "takeback_kept_no_evidenced_counterpart": 0,
         "takeback_unscreenable": 0,
         "takeback_lost_race": 0,
@@ -4783,23 +4784,33 @@ async def _take_back_revived_twins_impl() -> dict:
             subject_has_anchor = row_carries_an_authority_id(
                 event.espn_id, event.statpal_fixture_id
             )
-            evidenced = await _counterparts_carrying_evidence(
-                session, [row_id for row_id, _st in survivors]
+            # 🔴 THE SCREEN NAMES CANDIDATES; THIS NAMES THE SAME GAME
+            # (CERT-3213). The screen's ±30h window is sized for a refusal, and
+            # 640 measured pairs of provably-distinct real games sit inside it.
+            # So the destructive write is licensed only by a counterpart that
+            # starts within an hour of this row — and the take-back is bound to
+            # THOSE ids, not to every id the screen returned.
+            same_fixture, evidenced = await _counterparts_that_are_the_same_game(
+                session, [row_id for row_id, _st in survivors], event.commence_time
             )
             if not revived_twin_may_be_taken_back(
                 retired_by_the_arm=True,
                 has_surviving_counterpart=True,
                 subject_carries_result=subject_has_result,
                 subject_carries_authority_id=subject_has_anchor,
+                a_survivor_proves_the_same_fixture=bool(same_fixture),
                 a_survivor_carries_evidence=bool(evidenced),
             ):
                 if subject_has_result or subject_has_anchor:
                     stats["takeback_kept_subject_evidenced"] += 1
+                elif not same_fixture:
+                    stats["takeback_kept_a_different_game"] += 1
                 else:
                     stats["takeback_kept_no_evidenced_counterpart"] += 1
                 continue
 
-            if await _take_back_one_revived_twin(session, event, survivors):
+            proven = [pair for pair in survivors if pair[0] in set(same_fixture)]
+            if await _take_back_one_revived_twin(session, event, proven):
                 stats["taken_back"] += 1
             else:
                 # A lost compare-and-swap is not retried in-pass. The beat fires
@@ -4812,24 +4823,34 @@ async def _take_back_revived_twins_impl() -> dict:
     return stats
 
 
-async def _counterparts_carrying_evidence(session, ids) -> list[int]:
-    """Which of these rows hold a result or an authority id? (#7594)
+async def _counterparts_that_are_the_same_game(session, ids, subject_commence):
+    """Of these candidates, which are the same GAME, and which of those hold
+    evidence? Returns ``(same_fixture_ids, evidenced_ids)``. (#7594, CERT-3213)
 
-    The half of the keeper question the screen cannot answer: it returns
+    Both halves of the keeper question the screen cannot answer. It returns
     ``(id, status)`` because that is what the take-back's compare-and-swap binds
     to, and widening its contract would change a function two shipped callers
-    already depend on. One indexed read by primary key instead.
+    already depend on — so this is one indexed read by primary key instead.
+
+    🔴 ``evidenced`` IS A SUBSET OF ``same_fixture``, NOT AN INDEPENDENT LIST.
+    An evidenced row that is a DIFFERENT game — the first leg of a doubleheader,
+    finished, 6h earlier — is exactly the input CERT-3213 falsified the arm on.
+    Computing the two separately and asking the predicate for "some survivor is
+    the same game AND some survivor is evidenced" would let those two conditions
+    be satisfied by two different rows, which is the same defect wearing a test.
     """
     from app.utils.event_completion import (
         row_carries_a_result,
         row_carries_an_authority_id,
+        starts_prove_the_same_fixture,
     )
 
     if not ids:
-        return []
+        return [], []
     rows = (await session.execute(
         select(
             Event.id,
+            Event.commence_time,
             Event.home_score,
             Event.away_score,
             Event.completed_at,
@@ -4837,12 +4858,22 @@ async def _counterparts_carrying_evidence(session, ids) -> list[int]:
             Event.statpal_fixture_id,
         ).where(Event.id.in_(list(ids)))
     )).all()
-    return [
-        row.id
+    same_fixture = [
+        row
         for row in rows
-        if row_carries_a_result(row.home_score, row.away_score, row.completed_at)
-        or row_carries_an_authority_id(row.espn_id, row.statpal_fixture_id)
+        if starts_prove_the_same_fixture(subject_commence, row.commence_time)
     ]
+    return (
+        [row.id for row in same_fixture],
+        [
+            row.id
+            for row in same_fixture
+            if row_carries_a_result(
+                row.home_score, row.away_score, row.completed_at
+            )
+            or row_carries_an_authority_id(row.espn_id, row.statpal_fixture_id)
+        ],
+    )
 
 
 async def _take_back_revived_twin_bank(session, event_id, before) -> None:

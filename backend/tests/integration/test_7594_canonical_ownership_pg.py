@@ -326,7 +326,9 @@ class TestTheCanonicalIsOwnedThroughTheTakeBack:
 # deleted.
 
 
-async def _takeback_seed(session, *, subject_status, canonical_result):
+async def _takeback_seed(
+    session, *, subject_status, canonical_result, canonical_offset_hours=0.0
+):
     """The production shape: one game PAST its kickoff, two cards.
 
     `subject_status` is `suspended` by default because that is what the
@@ -354,7 +356,10 @@ async def _takeback_seed(session, *, subject_status, canonical_result):
         sport_id=nhl.id,
         home_team_name="Florida Panthers",
         away_team_name="Carolina Hurricanes",
-        commence_time=start,
+        # CERT-3213: a NEGATIVE offset puts the evidenced row EARLIER, which is
+        # the real shape — the first leg of a doubleheader has finished while
+        # the second has not started to us.
+        commence_time=start + timedelta(hours=canonical_offset_hours),
         status="completed" if canonical_result else "suspended",
         home_score=6 if canonical_result else None,
         away_score=3 if canonical_result else None,
@@ -390,6 +395,7 @@ async def takeback_world(request):
         subject_score=None,
         subject_nameless=False,
         canonical_result=True,
+        canonical_offset_hours=0.0,
         bank=True,
         ledger=True,
     )
@@ -416,6 +422,7 @@ async def takeback_world(request):
             session,
             subject_status=opts["subject_status"],
             canonical_result=opts["canonical_result"],
+            canonical_offset_hours=opts["canonical_offset_hours"],
         )
         if opts["subject_nameless"]:
             # An empty name is what `_surviving_counterpart_rows` returns its
@@ -557,6 +564,19 @@ class TestTheBeatTakesBackTheTwinAReaderCanSeeTwice:
                 {"ledger": False},
                 "takeback_candidates",
                 "this arm never revived it, so it is not in scope at all",
+            ),
+            (
+                {"canonical_offset_hours": -6.0},
+                "takeback_kept_a_different_game",
+                "it is the second game of a doubleheader, not a duplicate of "
+                "the first — 6.00h is the closest legitimate repeat measured "
+                "on production",
+            ),
+            (
+                {"canonical_offset_hours": -23.0},
+                "takeback_kept_a_different_game",
+                "it is the second half of a back-to-back, which the screen's "
+                "own +-30h window admits",
             ),
             (
                 {"subject_nameless": True},

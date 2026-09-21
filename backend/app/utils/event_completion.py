@@ -865,12 +865,59 @@ def row_carries_an_authority_id(espn_id, statpal_fixture_id) -> bool:
     )
 
 
+#: How far apart two rows may start and still be PROVED the same fixture, for
+#: the one caller that writes a terminal on the answer (#7594, CERT-3213).
+#:
+#: 🔴 IT IS NOT :data:`~app.tasks.espn_sync.SURVIVING_COUNTERPART_WINDOW`, AND
+#: THAT IS THE WHOLE OF CERT-3213's FINDING. That window is ±30h because the
+#: revival's screen is asked about rows whose clock was WRONG, and there erring
+#: wide costs a REFUSAL — a row stays invisible. Spending the same window on a
+#: destructive write inverts the cost, and it sweeps in games that are not
+#: duplicates at all.
+#:
+#: MEASURED ON PRODUCTION 2026-09-21, over 120 days, pairs of rows carrying
+#: DISTINCT ``espn_id``s (so provably two real games) with the same two clubs
+#: inside 30h:
+#:
+#:     same orientation (doubleheaders, back-to-backs)   628   min gap  6.00h
+#:     reversed orientation (home-and-home)               12   min gap 19.00h
+#:
+#: An MLB doubleheader's second game is 6h from its first. Under the ±30h
+#: window, a resultless id-less second game beside an evidenced first game is a
+#: take-back — this arm would delete a real fixture from the site.
+#:
+#: One hour is six times inside that measured floor, and it costs nothing on the
+#: population this arm exists for: all four production specimens share their
+#: kickoff to the SECOND (delta 0.000000 on every pair). It is the same hour
+#: :data:`RETIRED_REVIVAL_TOLERANCE` uses and for the same reason — it absorbs a
+#: settlement/refinement nudge of minutes without ever being the thing that
+#: decides the answer.
+TERMINAL_TAKEBACK_SAME_START_TOLERANCE = timedelta(hours=1)
+
+
+def starts_prove_the_same_fixture(
+    subject_commence,
+    other_commence,
+    *,
+    tolerance=TERMINAL_TAKEBACK_SAME_START_TOLERANCE,
+) -> bool:
+    """Are these two rows close enough in time to be one game? (#7594)
+
+    Fails closed on a missing clock: a row whose start we do not know cannot be
+    PROVED to be anything, and the caller writes a terminal on this answer.
+    """
+    if subject_commence is None or other_commence is None:
+        return False
+    return abs(other_commence - subject_commence) <= tolerance
+
+
 def revived_twin_may_be_taken_back(
     *,
     retired_by_the_arm,
     has_surviving_counterpart,
     subject_carries_result,
     subject_carries_authority_id,
+    a_survivor_proves_the_same_fixture,
     a_survivor_carries_evidence,
 ) -> bool:
     """Is this revived row the disposable half of a pair a reader can see? (#7594)
@@ -910,6 +957,14 @@ def revived_twin_may_be_taken_back(
       #2693's to reconcile under the anchor channel (#1946), and D39 puts that
       population in another lane. This arm only ever disposes of rows with
       nothing behind them.
+    * **no survivor starts within :data:`TERMINAL_TAKEBACK_SAME_START_TOLERANCE`**
+      ⇒ keep. CERT-3213's finding: the screen's ±30h window is sized for a
+      REFUSAL and cannot be spent as the identity for a destructive write. 640
+      measured pairs of provably-distinct real games sit inside it — MLB
+      doubleheaders from 6h, back-to-backs around 23h — and without this test
+      the arm deletes the second game of a doubleheader because the first one
+      finished with a score. The screen still decides which rows are
+      CANDIDATES; this decides which of them is the same GAME.
     * **no survivor carries evidence** ⇒ keep. Two resultless, unanchored rows
       past their kickoff are a pair this arm cannot rank, and "we cannot tell"
       must never be spent as "go ahead". #7617 owns that shape.
@@ -940,6 +995,8 @@ def revived_twin_may_be_taken_back(
     if subject_carries_result:
         return False
     if subject_carries_authority_id:
+        return False
+    if not a_survivor_proves_the_same_fixture:
         return False
     return bool(a_survivor_carries_evidence)
 

@@ -3467,11 +3467,16 @@ jobs:
         # with ownership stubbed out MUST empty the fixture, or the rig is not
         # reproducing the hazard and its partner proves nothing.
         #
-        # 10 of the 12 are the FORWARD arm (`_take_back_revived_twins_impl`),
+        # 12 of the 14 are the FORWARD arm (`_take_back_revived_twins_impl`),
         # added when the beat gained the take-back. They belong on real Postgres
         # for three reasons a sqlite version could not reach: the recall orders
         # on `abs(extract(epoch FROM (…- now())))`, the write takes the same
         # `FOR UPDATE`, and the bank gate is a `to_regclass`.
+        #
+        # Two of those twelve are CERT-3213's required preservation controls: a
+        # doubleheader's second game (6h) and a back-to-back's (23h) sit inside
+        # the screen's own ±30h window and MUST survive the arm. Restoring that
+        # window as the write's identity turns both red.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_7594_canonical_ownership_pg.py \
@@ -3480,9 +3485,9 @@ jobs:
             echo "::error::#7594 ownership contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
-          grep -qE "[^0-9]12 passed," /tmp/own7594.txt || {
-            echo "::error::#7594 contract did not run all twelve cases"
+          # `[^0-9]` so a future `114 passed` cannot satisfy a gate asking for 14.
+          grep -qE "[^0-9]14 passed," /tmp/own7594.txt || {
+            echo "::error::#7594 contract did not run all fourteen cases"
             exit 1
           }
 
