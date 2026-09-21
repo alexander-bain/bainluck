@@ -1,0 +1,1241 @@
+{
+ "captured": "2026-09-21",
+ "note": "Real (period, game_clock) pairs from production /api/events/{id}/history espn_history. Every row is a pair the win-probability tooltip actually renders.",
+ "rows": [
+  {
+   "period": "15:00 - 1st Quarter",
+   "clock": "15:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "14:23 - 1st Quarter",
+   "clock": "14:23",
+   "event_id": 14780544
+  },
+  {
+   "period": "13:44 - 1st Quarter",
+   "clock": "13:44",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:29 - 1st Quarter",
+   "clock": "12:29",
+   "event_id": 14780544
+  },
+  {
+   "period": "11:50 - 1st Quarter",
+   "clock": "11:50",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:54 - 1st Quarter",
+   "clock": "10:54",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:15 - 1st Quarter",
+   "clock": "10:15",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:08 - 1st Quarter",
+   "clock": "9:08",
+   "event_id": 14780544
+  },
+  {
+   "period": "8:25 - 1st Quarter",
+   "clock": "8:25",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:43 - 1st Quarter",
+   "clock": "7:43",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:01 - 1st Quarter",
+   "clock": "7:01",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:17 - 1st Quarter",
+   "clock": "6:17",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:09 - 1st Quarter",
+   "clock": "6:09",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:03 - 1st Quarter",
+   "clock": "6:03",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:18 - 1st Quarter",
+   "clock": "5:18",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:34 - 1st Quarter",
+   "clock": "4:34",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:27 - 1st Quarter",
+   "clock": "4:27",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:49 - 1st Quarter",
+   "clock": "3:49",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:27 - 1st Quarter",
+   "clock": "2:27",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:45 - 1st Quarter",
+   "clock": "1:45",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:38 - 1st Quarter",
+   "clock": "1:38",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:17 - 1st Quarter",
+   "clock": "0:17",
+   "event_id": 14780544
+  },
+  {
+   "period": "End of 1st Quarter",
+   "clock": "0:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "15:00 - 2nd Quarter",
+   "clock": "15:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "14:48 - 2nd Quarter",
+   "clock": "14:48",
+   "event_id": 14780544
+  },
+  {
+   "period": "14:07 - 2nd Quarter",
+   "clock": "14:07",
+   "event_id": 14780544
+  },
+  {
+   "period": "13:32 - 2nd Quarter",
+   "clock": "13:32",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:42 - 2nd Quarter",
+   "clock": "12:42",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:00 - 2nd Quarter",
+   "clock": "12:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "11:17 - 2nd Quarter",
+   "clock": "11:17",
+   "event_id": 14780544
+  },
+  {
+   "period": "11:11 - 2nd Quarter",
+   "clock": "11:11",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:26 - 2nd Quarter",
+   "clock": "10:26",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:44 - 2nd Quarter",
+   "clock": "9:44",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:39 - 2nd Quarter",
+   "clock": "9:39",
+   "event_id": 14780544
+  },
+  {
+   "period": "8:55 - 2nd Quarter",
+   "clock": "8:55",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:46 - 2nd Quarter",
+   "clock": "7:46",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:10 - 2nd Quarter",
+   "clock": "7:10",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:51 - 2nd Quarter",
+   "clock": "5:51",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:09 - 2nd Quarter",
+   "clock": "5:09",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:58 - 2nd Quarter",
+   "clock": "3:58",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:50 - 2nd Quarter",
+   "clock": "3:50",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:09 - 2nd Quarter",
+   "clock": "3:09",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:25 - 2nd Quarter",
+   "clock": "2:25",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:00 - 2nd Quarter",
+   "clock": "2:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:24 - 2nd Quarter",
+   "clock": "1:24",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:13 - 2nd Quarter",
+   "clock": "1:13",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:10 - 2nd Quarter",
+   "clock": "1:10",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:59 - 2nd Quarter",
+   "clock": "0:59",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:54 - 2nd Quarter",
+   "clock": "0:54",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:46 - 2nd Quarter",
+   "clock": "0:46",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:35 - 2nd Quarter",
+   "clock": "0:35",
+   "event_id": 14780544
+  },
+  {
+   "period": "Halftime",
+   "clock": "0:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "15:00 - 3rd Quarter",
+   "clock": "15:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "13:53 - 3rd Quarter",
+   "clock": "13:53",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:33 - 3rd Quarter",
+   "clock": "12:33",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:29 - 3rd Quarter",
+   "clock": "12:29",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:00 - 3rd Quarter",
+   "clock": "12:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "11:23 - 3rd Quarter",
+   "clock": "11:23",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:42 - 3rd Quarter",
+   "clock": "10:42",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:52 - 3rd Quarter",
+   "clock": "9:52",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:17 - 3rd Quarter",
+   "clock": "9:17",
+   "event_id": 14780544
+  },
+  {
+   "period": "8:36 - 3rd Quarter",
+   "clock": "8:36",
+   "event_id": 14780544
+  },
+  {
+   "period": "8:01 - 3rd Quarter",
+   "clock": "8:01",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:55 - 3rd Quarter",
+   "clock": "7:55",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:34 - 3rd Quarter",
+   "clock": "6:34",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:53 - 3rd Quarter",
+   "clock": "5:53",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:39 - 3rd Quarter",
+   "clock": "5:39",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:12 - 3rd Quarter",
+   "clock": "5:12",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:45 - 3rd Quarter",
+   "clock": "4:45",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:40 - 3rd Quarter",
+   "clock": "4:40",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:46 - 3rd Quarter",
+   "clock": "2:46",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:06 - 3rd Quarter",
+   "clock": "2:06",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:00 - 3rd Quarter",
+   "clock": "2:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:38 - 3rd Quarter",
+   "clock": "1:38",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:48 - 3rd Quarter",
+   "clock": "0:48",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:41 - 3rd Quarter",
+   "clock": "0:41",
+   "event_id": 14780544
+  },
+  {
+   "period": "End of 3rd Quarter",
+   "clock": "0:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "14:15 - 4th Quarter",
+   "clock": "14:15",
+   "event_id": 14780544
+  },
+  {
+   "period": "14:09 - 4th Quarter",
+   "clock": "14:09",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:40 - 4th Quarter",
+   "clock": "12:40",
+   "event_id": 14780544
+  },
+  {
+   "period": "12:03 - 4th Quarter",
+   "clock": "12:03",
+   "event_id": 14780544
+  },
+  {
+   "period": "11:29 - 4th Quarter",
+   "clock": "11:29",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:03 - 4th Quarter",
+   "clock": "10:03",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:38 - 4th Quarter",
+   "clock": "9:38",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:07 - 4th Quarter",
+   "clock": "9:07",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:52 - 4th Quarter",
+   "clock": "7:52",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:10 - 4th Quarter",
+   "clock": "7:10",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:23 - 4th Quarter",
+   "clock": "6:23",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:37 - 4th Quarter",
+   "clock": "5:37",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:57 - 4th Quarter",
+   "clock": "4:57",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:15 - 4th Quarter",
+   "clock": "4:15",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:09 - 4th Quarter",
+   "clock": "4:09",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:15 - 4th Quarter",
+   "clock": "3:15",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:00 - 4th Quarter",
+   "clock": "2:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:43 - 4th Quarter",
+   "clock": "0:43",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:40 - 4th Quarter",
+   "clock": "0:40",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:24 - 4th Quarter",
+   "clock": "0:24",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:16 - 4th Quarter",
+   "clock": "0:16",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:11 - 4th Quarter",
+   "clock": "0:11",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:03 - 4th Quarter",
+   "clock": "0:03",
+   "event_id": 14780544
+  },
+  {
+   "period": "End of 4th Quarter",
+   "clock": "0:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "10:00 - OT",
+   "clock": "10:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "9:18 - OT",
+   "clock": "9:18",
+   "event_id": 14780544
+  },
+  {
+   "period": "8:38 - OT",
+   "clock": "8:38",
+   "event_id": 14780544
+  },
+  {
+   "period": "7:57 - OT",
+   "clock": "7:57",
+   "event_id": 14780544
+  },
+  {
+   "period": "6:49 - OT",
+   "clock": "6:49",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:24 - OT",
+   "clock": "5:24",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:18 - OT",
+   "clock": "5:18",
+   "event_id": 14780544
+  },
+  {
+   "period": "5:04 - OT",
+   "clock": "5:04",
+   "event_id": 14780544
+  },
+  {
+   "period": "4:05 - OT",
+   "clock": "4:05",
+   "event_id": 14780544
+  },
+  {
+   "period": "3:15 - OT",
+   "clock": "3:15",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:29 - OT",
+   "clock": "2:29",
+   "event_id": 14780544
+  },
+  {
+   "period": "2:00 - OT",
+   "clock": "2:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "1:30 - OT",
+   "clock": "1:30",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:42 - OT",
+   "clock": "0:42",
+   "event_id": 14780544
+  },
+  {
+   "period": "0:01 - OT",
+   "clock": "0:01",
+   "event_id": 14780544
+  },
+  {
+   "period": "End of OT",
+   "clock": "0:00",
+   "event_id": 14780544
+  },
+  {
+   "period": "Final",
+   "clock": "Final",
+   "event_id": 14780544
+  },
+  {
+   "period": "19:24 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "18:49 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "18:28 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "17:58 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "16:35 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "15:28 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "15:03 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "13:27 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "12:04 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "11:08 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "10:43 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "8:43 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "7:20 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "6:19 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "5:49 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:25 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:03 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "2:07 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "0:06 - 1st Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "19:36 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "17:04 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "15:41 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "14:56 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "14:24 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "13:43 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "13:04 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "12:48 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "11:04 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "10:10 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "10:02 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "9:27 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "8:42 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "6:44 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:11 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:08 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "3:51 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "3:03 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "2:21 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "1:34 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "0:43 - 2nd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "20:00 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "19:16 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "17:54 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "17:21 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "16:24 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "15:54 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "15:05 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "13:44 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "12:45 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "11:56 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "8:39 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "8:29 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "7:30 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:34 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "4:23 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "3:33 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "2:59 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "2:32 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "1:04 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "0:44 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "0:12 - 3rd Period",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "5:00 - OT",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "1:02 - OT",
+   "clock": null,
+   "event_id": 15311366
+  },
+  {
+   "period": "20:00 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "19:43 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "19:06 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "18:02 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "17:26 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "15:46 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "15:07 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "14:30 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:40 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:08 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "12:43 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "12:17 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "11:25 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:49 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:31 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "8:29 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "6:30 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "5:39 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "4:54 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "3:53 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "2:21 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "0:49 - 1st Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "20:00 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "17:34 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "16:24 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "15:46 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:46 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:28 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:05 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "12:09 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "10:49 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:19 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "8:34 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "7:52 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "6:09 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "5:42 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "5:24 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "3:23 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "3:10 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "1:53 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "1:06 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "0:47 - 2nd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "19:04 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "18:12 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "17:38 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "16:45 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "16:02 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "15:37 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "14:44 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:52 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:24 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "13:01 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "12:11 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "10:06 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:42 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:23 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "9:13 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "6:46 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "5:27 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "4:37 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "4:07 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "3:43 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "2:29 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "1:45 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "1:07 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  },
+  {
+   "period": "0:34 - 3rd Period",
+   "clock": null,
+   "event_id": 15311365
+  }
+ ]
+}
