@@ -861,6 +861,100 @@ class TestTheScreenAgainstARealDatabase:
         )
         assert await _screen(session, subject) is True
 
+    async def test_a_survivor_with_the_sides_reversed_is_still_a_survivor(self):
+        """🔴 THE PRODUCTION SPECIMEN. False here is a duplicate on the site.
+
+        The shipped screen asked home↔home AND away↔away only, so the survivor
+        could not enter it at all and the beat published a second card.
+        Measured 2026-09-20 ~20:18Z: `15302884` "Hurricanes v Panthers" went
+        out beside `15312312` "Florida Panthers v Carolina Hurricanes" — one
+        game, the same minute, adjacent rows in
+        `/api/events/search?q=hurricanes`.
+
+        The containment test was never the problem; "predators" IS inside
+        "nashville predators". Only the pairing was.
+        """
+        session, subject = _seeded(
+            "icehockey_other",
+            (
+                "icehockey_nhl",
+                "Toronto Maple Leafs",
+                "Nashville Predators",
+                "scheduled",
+                timedelta(),
+            ),
+        )
+        assert await _screen(session, subject) is True
+
+    async def test_the_reversed_pairing_is_asked_in_sql_not_only_in_python(self):
+        """The SQL screen is a NARROWING — a row it drops is never re-asked.
+
+        Both halves widened together, so this pins the one that cannot be seen
+        from the verdict: a reversed survivor whose names are also spelled
+        differently on the two sides must survive the WHERE clause. If only the
+        Python loop learned the crossed pairing, the row never reaches it.
+        """
+        session, subject = _seeded(
+            "soccer_other",
+            (
+                "soccer_netherlands_eredivisie",
+                "Toronto Maple Leafs",
+                "Nashville Predators",
+                "scheduled",
+                timedelta(hours=2),
+            ),
+        )
+        assert await _screen(session, subject) is True
+
+    async def test_a_reversed_row_in_another_family_is_still_not_a_survivor(self):
+        """The widening adds a pairing, never a sport — the 65 stay revivable."""
+        session, subject = _seeded(
+            "baseball_other",
+            ("esports", "Maple Leafs", "Predators", "scheduled", timedelta()),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_reversed_row_outside_the_window_is_not_a_survivor(self):
+        """±30h still bounds the new pairing; a return fixture is a real game."""
+        session, subject = _seeded(
+            "icehockey_other",
+            (
+                "icehockey_nhl",
+                "Maple Leafs",
+                "Predators",
+                "scheduled",
+                timedelta(hours=31),
+            ),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_reversed_retired_row_does_not_count(self):
+        """Two hidden rows are not a twin, in either orientation."""
+        session, subject = _seeded(
+            "icehockey_other",
+            (
+                "icehockey_nhl",
+                "Maple Leafs",
+                "Predators",
+                UNREACHABLE_SUSPENDED_TERMINAL,
+                timedelta(),
+            ),
+        )
+        assert await _screen(session, subject) is False
+
+    async def test_a_half_reversed_row_is_not_a_fixture(self):
+        """One shared club is a DIFFERENT game, and must stay revivable.
+
+        The crossed arm is an AND over both sides for exactly this reason: on a
+        night the Predators host the Leafs, the Leafs' own next fixture against
+        somebody else must not read as this fixture's survivor.
+        """
+        session, subject = _seeded(
+            "icehockey_other",
+            ("icehockey_nhl", "Maple Leafs", "Senators", "scheduled", timedelta()),
+        )
+        assert await _screen(session, subject) is False
+
 
 class TestTheSportFamilyRule:
     """`sport_family_key` — the pure rule the screen's SQL is built from."""
