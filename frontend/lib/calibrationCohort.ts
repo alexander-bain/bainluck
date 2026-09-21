@@ -258,8 +258,18 @@ export function describeCohort(
       key: "all",
       cohortN,
       fullN,
-      shortLabel: "All markets",
-      headline: `Showing all markets (${fmt(fullN)})`,
+      // #7750 — `shortLabel` is the ADJECTIVE SLOT, not a noun phrase. Two of
+      // its three consumers supply their own noun over their own number
+      // (page.tsx: "{shortLabel} ({cohortN} outcomes)" and the chart series
+      // "{shortLabel} ({cohortN})"), which is why the sibling cohort below is
+      // the bare word "Traded". "All markets" was the odd one out and it
+      // printed "All markets (747,028 outcomes)" — a noun and its counter-noun
+      // over one number. Keeping the slot adjectival fixes every consumer at
+      // once and makes the next one correct by construction; spelling it "All
+      // outcomes" would instead have produced "All outcomes (747,028
+      // outcomes)". The chip reads "ALL" beside its sibling's "TRADED".
+      shortLabel: "All",
+      headline: `Showing all outcomes (${fmt(fullN)})`,
       // Two cohorts, not three. "Not applicable" named a category the ruling
       // dissolved; the sportsbook count survives as a parenthetical inside the
       // cohort it actually belongs to.
@@ -308,7 +318,14 @@ export function describeCohort(
   // blocks of this class now live. The rows are named and counted in `detail`
   // either way.
   const shortLabel = "Traded";
-  const headline = `Showing traded markets (${fmt(defaultCohortN)})`;
+  // #7750 — the unit is the OUTCOME. Four things on this one screen count the
+  // same population and the headline was the only one out of step with the
+  // other three: its own `excluded` clause below ("Excluded: N untraded
+  // OUTCOMES", same sentence), the source table's OUTCOMES column, and the
+  // RESOLVED OUTCOMES hero card. A market resolves into many outcomes, so
+  // "markets (449,027)" is not a loose synonym here — it is a different and
+  // much smaller quantity, printed on the page whose only job is credibility.
+  const headline = `Showing traded outcomes (${fmt(defaultCohortN)})`;
   // An empty excluded side excludes NOTHING, so it gets no clause — "Excluded:
   // 0 untraded outcomes" states a non-fact. It was caught by the proxy-footnote
   // pairing test on that test's first run (the pairing is gone with D101, the

@@ -388,6 +388,23 @@ async function commonRenderedClaims(text: string, page: Page): Promise<Claim[]> 
     const hit = b.re.exec(text);
     claims.push({ id: b.id, ok: !hit, detail: hit ? `rendered "${hit[0]}"` : "absent" });
   }
+  // #7750 — FOUR WITNESSES TO ONE POPULATION, ON ONE SCREEN.
+  //
+  // The banner headline, its own excluded clause one space later, the source
+  // table's column header and the RESOLVED OUTCOMES hero card all count the
+  // same rows. The headline shipped counting "markets" while the other three
+  // said outcomes — not a loose synonym, since a market resolves into many
+  // outcomes. Read as a captured NOUN rather than as a pinned literal, so the
+  // claim survives the next time the count or the cohort wording moves.
+  const headlineNoun = /Showing (?:traded|all) (\w+) \(/.exec(text)?.[1] ?? null;
+  const heroSaysOutcomes = text.includes("Resolved Outcomes");
+  claims.push({
+    id: "copy.headline_counts_the_unit_the_page_counts",
+    ok: headlineNoun === "outcomes" && heroSaysOutcomes,
+    detail: `headline counts "${headlineNoun ?? "—"}"; hero card ` +
+      `${heroSaysOutcomes ? "says" : "does NOT say"} "Resolved Outcomes"`,
+  });
+
   const reconciles = await attr(page, '[data-testid="calibration-cohort-toggle"]', "data-partition-reconciles");
   claims.push({
     id: "partition.reconciles",
@@ -430,7 +447,7 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     // #7330: the subset claim no longer repeats the traded count, which the
     // headline printed one space earlier in the same rendered sentence. The
     // claim ID is unchanged because the requirement is — "Of those" says subset.
-    has("copy.headline_is_one_traded_number", text, "Showing traded markets (389,385)"),
+    has("copy.headline_is_one_traded_number", text, "Showing traded outcomes (389,385)"),
     has("copy.sportsbook_named_as_a_subset", text, "Of those, 40,075 are sportsbook lines."),
     has("copy.excluded_side_counted", text, "Excluded: 263,022 untraded outcomes, whose price never moved off its opening line."),
     has("copy.toggle_names_what_it_adds", text, "Include untraded (+263,022)"),
@@ -438,7 +455,7 @@ async function productionNumberClaims(text: string, page: Page): Promise<Claim[]
     // whole page, so this is scoped to the banner's own two halves joined.
     {
       id: "copy.traded_count_not_doubled",
-      ok: !text.includes("Showing traded markets (389,385) 389,385"),
+      ok: !text.includes("Showing traded outcomes (389,385) 389,385"),
       detail: "#7330: headline count must not be restated by the sentence after it",
     },
     // D101 (Alex, Wed 2026-09-09): `copy.proxy_footnote_rendered` stood here and
@@ -527,7 +544,7 @@ test.describe("calibration cohort copy", () => {
       const claims = await commonRenderedClaims(text, p);
       // Swapped: the moved side is now the 263,022-row cohort.
       claims.push(
-        has("copy.headline_follows_the_swap", text, "Showing traded markets (303,097)"),
+        has("copy.headline_follows_the_swap", text, "Showing traded outcomes (303,097)"),
         has("copy.sportsbook_named_as_a_subset", text, "Of those, 40,075 are sportsbook lines."),
         has("copy.excluded_side_counted", text, "Excluded: 349,310 untraded outcomes, whose price never moved off its opening line."),
         await partitionArithmetic(p, {
