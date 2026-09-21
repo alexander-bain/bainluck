@@ -818,6 +818,16 @@ def _cpi_release_sort_key(market: FuturesMarket) -> tuple[int, float]:
     return (0, resolves.timestamp())
 
 
+# A ladder rung worded as a SUFFIX, and nothing else: the whole label is one
+# bare threshold token followed by "or above". Anchored on purpose — the CPI
+# combo ladder says "Headline: 0.5% or above, Core: 0.3% or above", where
+# stripping the trailing clause would leave a half-sentence (#7827).
+_SUFFIX_THRESHOLD_RE = re.compile(
+    r'^\s*(\$?-?[\d.,]+%?)\s+or\s+(?:above|more|higher|greater)\s*$',
+    re.IGNORECASE,
+)
+
+
 def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     """Convert cumulative 'Above X' outcomes to discrete bracket probabilities.
 
@@ -838,6 +848,13 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
 
     The `(?<!\\w)` guard keeps a hyphen inside a word from reading as a sign,
     so "COVID-19 above 5%" still parses 19 rather than -19.
+
+    The threshold is ALSO parsed with its thousands separator (#7827). `[\\d.]*`
+    has no comma, so it stops at one: "4,300 or above" and "4,800 or above" both
+    parsed 4, every rung in a thousand tied, and the stable sort left them in DB
+    order — the same failure as the sign, by the same mechanism, and #7081's fix
+    left it behind. The separator group is exactly three digits, so a date
+    ("Sep 21, 2026") still parses 21 rather than 212026.
     """
     import re as _re
 
@@ -845,14 +862,21 @@ def _cumulative_to_discrete(outcomes: list, max_buckets: int = 8) -> list[list]:
     for o in outcomes:
         p = float(o.current_probability or 0) * 100
         label = (o.name or "").strip()
-        nums = _re.findall(r'(?<!\w)-?\d[\d.]*', label)
+        nums = _re.findall(r'(?<!\w)-?\d[\d.]*(?:,\d{3})*', label)
         try:
-            sort_val = float(nums[0]) if nums else 0
+            sort_val = float(nums[0].replace(",", "")) if nums else 0
         except ValueError:
             # A malformed token ("1.2.3") must not 500 the whole page.
             sort_val = 0
-        # Clean label: remove "Above " prefix
+        # Clean label: remove the threshold wording, whichever side the venue
+        # puts it on. The prefix strip runs first and unchanged, so every label
+        # that carries "Above " is byte-identical to before; only a label the
+        # prefix strip left alone is offered to the suffix form (#7827).
         clean = label.replace("Above ", "").strip()
+        if clean == label:
+            _suffix = _SUFFIX_THRESHOLD_RE.match(clean)
+            if _suffix:
+                clean = _suffix.group(1).strip()
         raw.append((p, clean, sort_val))
 
     if not raw:
