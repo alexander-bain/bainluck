@@ -213,13 +213,25 @@ class TestCurrentMeansStarted:
     a "THIS WEEK" card over a Presidents Cup starting 2026-09-24.
     """
 
-    #: The served payload on 2026-09-21, trimmed to the rows that decide it.
+    #: The UPSTREAM payload on 2026-09-21, trimmed to the rows that decide it,
+    #: with every `status` exactly as DataGolf's `get-schedule` sent it.
+    #:
+    #: The first cut of this fixture left `status` unset on 500 and 501, and that
+    #: omission is the whole reason the first #7690 fix shipped inert: the field
+    #: it dropped is the field that decided the answer. DataGolf stamps a
+    #: not-yet-started tournament `"upcoming"`, the rung above the dates asked
+    #: only `!= "completed"`, and so the dates were never consulted in
+    #: production — while this fixture, carrying `None`, reached them every time
+    #: and printed a pass. Measured against the vendor 2026-09-21 06:26Z: 47 pga
+    #: rows, `{"completed": 38, "upcoming": 9}`, and event 500 `"upcoming"`.
     PRESIDENTS_CUP = {
         "tours": [{"tour": "pga", "tournaments": [
             _tournament("499", "Procore Championship", "2026-09-10", "2026-09-13",
                         status="completed"),
-            _tournament("500", "Presidents Cup", "2026-09-24", "2026-09-27"),
-            _tournament("501", "Bank of Utah Championship", "2026-10-01", "2026-10-04"),
+            _tournament("500", "Presidents Cup", "2026-09-24", "2026-09-27",
+                        status="upcoming"),
+            _tournament("501", "Bank of Utah Championship", "2026-10-01",
+                        "2026-10-04", status="upcoming"),
         ]}],
         "fetched_at": "2026-09-21T04:26:02.904699+00:00",
     }
@@ -300,6 +312,118 @@ class TestCurrentMeansStarted:
         payload cannot back."""
         shaped = shape_golf_schedule(RAW, "2026-04-10")
         assert shaped["last_updated"] == "2026-04-10T06:25:00+00:00"
+
+
+# ---------------------------------------------------------------------------
+# 2b. "Not finished" is not "in progress" — the rung ABOVE the dates
+# ---------------------------------------------------------------------------
+class TestUpcomingIsNotInProgress:
+    """#7690, second half, measured on production after the first half shipped.
+
+    The date rung landed and the badge did not move: `/api/playoffs/golf/schedule`
+    on 2026-09-21 06:23:47Z, served by `4e3e7674` (confirmed via `/api/health`
+    `commit` + a `web.1` restart at 06:22:31Z), still carried three `is_current`
+    rows whose tournaments had not started — Presidents Cup and FedEx Open de
+    France three days out, Compliance Solutions Championship ten.
+
+    The rung above the dates was short-circuiting on `status != "completed"`.
+    Read from the vendor the same minute, DataGolf's whole `get-schedule`
+    vocabulary is `{"completed": 38, "upcoming": 9}` across 47 pga rows — there is
+    no third value in the live feed — so "not finished" selected the next event on
+    the calendar and `break`'d before any date was compared. Ten days early is the
+    proof it was never an upstream liveness claim: no feed calls a tournament live
+    a week and a half out.
+    """
+
+    @staticmethod
+    def _one(status):
+        return {
+            "tours": [{"tour": "pga", "tournaments": [
+                _tournament("500", "Presidents Cup", "2026-09-24", "2026-09-27",
+                            status=status),
+            ]}],
+            "fetched_at": "2026-09-21T04:26:02.904699+00:00",
+        }
+
+    def test_upcoming_does_not_make_a_future_tournament_current(self):
+        """THE production specimen, with the field the first fixture dropped."""
+        tour = shape_golf_schedule(self._one("upcoming"), "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] is None
+        assert tour["events"][0]["is_current"] is False
+        assert tour["events"][0]["status"] == "upcoming"
+
+    def test_the_ten_day_specimen_is_not_current_either(self):
+        """The Korn Ferry row, which is the one that cannot be explained away as
+        an upstream liveness claim."""
+        raw = {
+            "tours": [{"tour": "kft", "tournaments": [
+                _tournament("166", "Compliance Solutions Championship",
+                            "2026-10-01", "2026-10-04", status="upcoming"),
+            ]}],
+            "fetched_at": "2026-09-21T04:26:02.904699+00:00",
+        }
+        tour = shape_golf_schedule(raw, "2026-09-21")["tours"][0]
+        assert tour["current_event_id"] is None
+
+    @pytest.mark.parametrize("status", ["scheduled", "postponed", "cancelled",
+                                        "tbd", "", "   ", None])
+    def test_no_unrecognised_status_can_assert_play_is_underway(self, status):
+        """An allowlist, not a wider denylist: a value we have never seen must
+        fall through to the dates, never short-circuit past them. This is the
+        direction the first fix got wrong, generalised beyond `"upcoming"`."""
+        tour = shape_golf_schedule(self._one(status), "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] is None
+
+    @pytest.mark.parametrize("status", ["in-progress", "in_progress",
+                                        "in progress", "active", "live",
+                                        "IN-PROGRESS", " In-Progress "])
+    def test_a_genuine_live_status_still_outranks_the_dates(self, status):
+        """The capability half of the correction, and it must not be lost: a
+        tournament DataGolf says is underway is current even when the dates
+        disagree — a Monday finish, a weather-delayed final round. Case and
+        surrounding space are upstream formatting, not meaning."""
+        tour = shape_golf_schedule(self._one(status), "2026-09-20")["tours"][0]
+        assert tour["current_event_id"] == "500"
+
+    def test_a_live_status_does_not_resurrect_a_completed_tournament(self):
+        """`completed` is still terminal, and it is checked by the same
+        normalisation as the rest."""
+        tour = shape_golf_schedule(self._one("COMPLETED"), "2026-09-25")["tours"][0]
+        assert tour["events"][0]["status"] == "completed"
+
+    def test_the_whole_production_shape_serves_no_future_current_row(self):
+        """The issue's acceptance criterion, as a test: across every tour, no
+        `is_current` row may have a start date in the future. Shaped from the
+        upstream statuses as measured, not from a fixture that omits them."""
+        raw = {
+            "tours": [
+                {"tour": "pga", "tournaments": [
+                    _tournament("499", "Procore", "2026-09-10", "2026-09-13",
+                                status="completed"),
+                    _tournament("500", "Presidents Cup", "2026-09-24",
+                                "2026-09-27", status="upcoming"),
+                ]},
+                {"tour": "euro", "tournaments": [
+                    _tournament("2026137", "FedEx Open de France", "2026-09-24",
+                                "2026-09-27", status="upcoming"),
+                ]},
+                {"tour": "kft", "tournaments": [
+                    _tournament("166", "Compliance Solutions", "2026-10-01",
+                                "2026-10-04", status="upcoming"),
+                ]},
+            ],
+            "fetched_at": "2026-09-21T05:25:25.788360+00:00",
+        }
+        now = "2026-09-21"
+        shaped = shape_golf_schedule(raw, now)
+        offenders = [
+            (t["tour"], e["event_id"], e["start_date"])
+            for t in shaped["tours"]
+            for e in t["events"]
+            if e["is_current"] and e["start_date"] and e["start_date"] > now
+        ]
+        assert offenders == []
+        assert [t["current_event_id"] for t in shaped["tours"]] == [None, None, None]
 
 
 # ---------------------------------------------------------------------------

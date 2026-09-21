@@ -2882,6 +2882,39 @@ GOLF_SCHEDULE_TTL_S = 3900
 #: is right; serving nothing while DataGolf is down is not.
 GOLF_SCHEDULE_STALE_TTL_S = 86400
 
+#: The upstream `status` values that actually mean A BALL IS IN THE AIR.
+#:
+#: #7690 rung 2 taught the date test to ask whether a tournament had STARTED, and
+#: measured on production immediately afterwards it changed nothing, because the
+#: rung above it never let the dates be consulted: it asked only
+#: `status != "completed"`, and DataGolf's live vocabulary on `get-schedule` is
+#: `{"completed", "upcoming"}` — 38 and 9 of 47 pga rows on 2026-09-21, with the
+#: Presidents Cup (start 2026-09-24) carrying `"upcoming"`. So "not finished" was
+#: read as "in progress" for every tournament on the calendar, and the first one
+#: of them won the `break`.
+#:
+#: An ALLOWLIST rather than a wider denylist, because the two directions fail in
+#: opposite directions and only one of them is safe: a value we have not seen
+#: before must not be able to assert that play is underway. Anything unrecognised
+#: — including `"upcoming"` — falls through to the date window, which is the
+#: honest test and the authority. An explicit upstream status can therefore only
+#: ADD a tournament the dates would have missed (a delayed finish, a Monday
+#: playoff), never invent one that has not teed off.
+GOLF_LIVE_STATUSES: frozenset[str] = frozenset(
+    {"in-progress", "in_progress", "in progress", "inprogress", "active", "live", "started"}
+)
+
+
+def _golf_status(tournament: dict) -> str:
+    """One upstream `status`, folded once, for every comparison in the cascade.
+
+    Case and surrounding space are upstream formatting, not meaning. The point of
+    a single helper is that the liveness test and the terminal `completed` test
+    cannot drift apart: fold on one side only and a row can be neither finished
+    nor live, which is precisely the gap a badge falls through.
+    """
+    return (tournament.get("status") or "").strip().lower()
+
 
 async def fetch_golf_schedule_raw() -> dict:
     """Fetch every tour's schedule from DataGolf. Contains NO clock-derived state.
@@ -2971,7 +3004,14 @@ def shape_golf_schedule(raw: dict, now_str: str) -> dict:
         # Find current event for this tour
         current_event_id = None
         for t in tournaments:
-            if t.get("status") and t.get("status") != "completed":
+            # #7690 rung 1. This used to read "any status that is not
+            # `completed`" as in-progress, which is how a tournament three days
+            # out kept the THIS WEEK badge even after the date rung below was
+            # taught to require a start: DataGolf stamps future events
+            # `"upcoming"`, so this rung fired and broke before the dates were
+            # ever consulted. Only a status that genuinely means play is
+            # underway short-circuits now; see GOLF_LIVE_STATUSES.
+            if _golf_status(t) in GOLF_LIVE_STATUSES:
                 current_event_id = t.get("event_id")
                 break
             # #7690: this rung used to ask only "has it not finished yet", and
@@ -2992,8 +3032,12 @@ def shape_golf_schedule(raw: dict, now_str: str) -> dict:
         events = []
         for t in tournaments:
             is_current = t.get("event_id") == current_event_id
-            # Determine display status
-            if t.get("status") == "completed":
+            # Determine display status. The terminal test reads through the same
+            # normalisation as the liveness test above: with one side exact and
+            # the other folded, a `"COMPLETED"` row escapes "finished" here and
+            # is then eligible to be badged current by the date rung — the same
+            # class of defect this fix exists to close, one branch over.
+            if _golf_status(t) == "completed":
                 display_status = "completed"
             elif is_current:
                 display_status = "current"
