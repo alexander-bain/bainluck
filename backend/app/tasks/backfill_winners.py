@@ -497,17 +497,46 @@ async def _select_kalshi_early_settled_tickers(session, limit: int) -> list[str]
 #: price, and the row is skipped rather than the outcome — so a leg that opened
 #: on an empty book and later traded still gets its opening from the first
 #: snapshot that WAS a real price.
+#:
+#: The `fos.captured_at <= fm.resolution_date` clause is #7648, and it is the
+#: write-side half of the same rule #7642 gave the Polymarket poll: "the
+#: earliest snapshot we hold" and "a price taken before the answer was known"
+#: are different claims, and for a market first seen after it settled they come
+#: apart completely — #2027 measured only 481 of 35,976 hindsight rows (1.34%)
+#: holding ANY snapshot before their own `resolution_date`, and 0 of 1,259 for
+#: `hockey/container_member`. `resolution_date` is when trading stops
+#: (CAL-P989/#2660), so a snapshot at or before it is a price somebody could
+#: still have taken. The bound is `<=` because the read side classifies
+#: `opening_captured_at > fm.resolution_date` as `after_resolution`
+#: (`app/utils/calibration_price_provenance.py`); this clause accepts exactly
+#: that predicate's complement, so what the writer banks and what the reader
+#: would exclude can never disagree.
+#:
+#: It is strictly conservative: it can only promote FEWER openings, never a
+#: different one, and it rewrites no stored value. Where no honest snapshot
+#: exists the `CROSS JOIN LATERAL` drops the outcome and the opening stays NULL,
+#: which is the true answer — we never saw a price for it.
+#:
+#: `opening_captured_at` is written from the SAME snapshot the price comes from,
+#: for the same reason: a promoted price whose stamp stays NULL lands in the
+#: `no_capture_ts` provenance class rather than a dated one, and a row we DO
+#: know the time of must not sit in the bucket that means "we do not know when
+#: we first looked" (gotcha #53). The stamp and the price are one fact and are
+#: written together — a stamp describing some earlier, withdrawn opening would
+#: be worse than none.
 PHASE_0C_REPAIR_SQL = f"""
     WITH first_snaps AS (
-        SELECT fo2.id AS outcome_id, snap.probability
+        SELECT fo2.id AS outcome_id, snap.probability, snap.captured_at
         FROM futures_outcomes fo2
         JOIN futures_markets fm ON fm.id = fo2.market_id
         CROSS JOIN LATERAL (
-            SELECT fos.probability
+            SELECT fos.probability, fos.captured_at
             FROM futures_odds_snapshots fos
             WHERE fos.outcome_id = fo2.id
               AND fos.probability > 0 AND fos.probability < 1
               AND NOT {lone_ask_on_empty_book_sql("fos")}
+              AND (fm.resolution_date IS NULL
+                   OR fos.captured_at <= fm.resolution_date)
             ORDER BY fos.captured_at ASC
             LIMIT 1
         ) snap
@@ -517,7 +546,8 @@ PHASE_0C_REPAIR_SQL = f"""
     )
     UPDATE futures_outcomes fo
     SET opening_probability = fs.probability,
-        opening_source = 'first_snapshot'
+        opening_source = 'first_snapshot',
+        opening_captured_at = fs.captured_at
     FROM first_snaps fs
     WHERE fo.id = fs.outcome_id
 """
