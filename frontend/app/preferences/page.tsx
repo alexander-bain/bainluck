@@ -20,7 +20,10 @@ import {
   bindToPrincipal,
   dataForPrincipal,
 } from "@/lib/clientPrincipal";
-import { TelemetryPreferences } from "@/components/Analytics";
+// Imported from its own module, not the barrel: `/preferences` is the only page
+// that renders it, and the barrel is on every route's blocking entry path
+// (LAT-P204 / #2673, see components/Analytics/index.ts).
+import { TelemetryPreferences } from "@/components/Analytics/TelemetryPreferences";
 import EventCard from "@/components/EventCard";
 import { hostCuesForEvents } from "@/lib/sameFixtureHostCue";
 import FuturesCard from "@/components/FuturesCard";
