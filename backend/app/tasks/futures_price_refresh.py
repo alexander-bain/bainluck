@@ -1202,12 +1202,45 @@ async def _write_prices(
     }
 
     def _legs(item: dict) -> list[tuple[int, dict]]:
-        """``(outcome_id, side)`` pairs, in whichever convention this market holds."""
+        """``(outcome_id, side)`` pairs, in whichever convention this market holds.
+
+        THREE CONVENTIONS, NOT TWO (#7505). A binary condition is stored either
+        under its bare id, or decomposed into ``{cid}_yes`` / ``{cid}_no`` — and,
+        since #7505, as the bare id PLUS ``{cid}_side1`` on a sole-moneyline
+        event, where the venue named both sides but published only one market so
+        the decomposition branch never runs.
+
+        🔴 THE BARE MATCH USED TO ``return`` AND THAT IS WHAT MADE THE PAIR ROT.
+        The companion is written once at ingest and then never re-priced, so the
+        two sides drift apart on the first price move and the card stops summing
+        to 1 — a reader sees `Draxl 55%` beside `Halys 45%` quoted minutes
+        apart, which is worse than the half-filled bar #7505 set out to fix.
+        CERT-3251 blocked the ship on exactly this: one snapshot written where
+        two rows were stored.
+
+        The companion's side is ``item["no"]`` — the SAME object the ``_yes`` /
+        ``_no`` arm below pairs, not a second derivation of it. That is
+        deliberate: ingest priced ``{cid}_side1`` at ``1 - prob`` over
+        ``complementary_book(...)``, and ``item["no"]`` is built by that identical
+        rule at the fetch (see its own note on why it is never
+        ``outcome_prices[1]``). Two producers of "the other side" is how a pair
+        starts disagreeing by half a point, and the item-level empty-book guard
+        below already rests on there being one.
+
+        Markets with no companion row are byte-identical: ``existing`` holds no
+        ``_side1`` key, so the list is the single bare leg it always was, and a
+        Kalshi item — which carries no ``"no"`` side at all — cannot grow one.
+        """
         key = item["external_id"]
+        legs: list[tuple[int, dict]] = []
         bare = existing.get(key)
         if bare is not None:
-            return [(bare, item)]
-        legs: list[tuple[int, dict]] = []
+            legs.append((bare, item))
+            side1_id = existing.get(f"{key}_side1")
+            side1 = item.get("no")
+            if side1_id is not None and side1:
+                legs.append((side1_id, side1))
+            return legs
         yes_id = existing.get(f"{key}_yes")
         if yes_id is not None:
             legs.append((yes_id, item))

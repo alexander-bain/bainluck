@@ -83,7 +83,23 @@ VENUE_SOURCES = ("kalshi", "polymarket")
 #: whose period closes as the fill runs.
 FUTURE_SKEW = timedelta(minutes=5)
 
-POLYMARKET_LEG_SUFFIXES = ("_yes", "_no")
+#: Suffixes a Polymarket LEG id wears on top of its condition id.
+#:
+#: `_side1` joined the pair in #7505: on a sole-moneyline event the venue names
+#: both sides but publishes one market, so the decomposition that would have made
+#: a `_yes`/`_no` pair never runs and the partner is stored beside the bare id
+#: instead. Left out, `strip_polymarket_leg` returned `0x…_side1` as the CONDITION
+#: id, Gamma's `by_condition` map missed it, and every companion counted as
+#: `no_exact_condition` — a stored, priced, reader-visible leg whose chart could
+#: never be drawn (CERT-3251 measured exactly that: `no_exact_condition: 1`).
+#:
+#: 🔴 NOT THE SAME LIST AS `duplicate_condition_outcomes.BINARY_LEG_SUFFIXES`,
+#: and the two must not be unified. That one decides whether a suffixed leg is a
+#: DUPLICATE of the bare row beside it and drops it at serve time; the companion
+#: is a real second rung, so teaching it `_side1` would filter #7505 off every
+#: reader surface. This list only answers "what is this leg's condition id",
+#: which is the same question for all three suffixes.
+POLYMARKET_LEG_SUFFIXES = ("_yes", "_no", "_side1")
 
 
 def cache_key(market_id: int) -> str:

@@ -268,11 +268,20 @@ def condition_id_of(external_id: Optional[str]) -> Optional[str]:
     """The Gamma condition id a ``FuturesMarket.external_id`` addresses, or None.
 
     Polymarket sub-market rows store the bare condition id; outcome rows store it
-    with a ``_yes`` / ``_no`` suffix, and a caller holding the wrong one is a
-    404 (the reason `12fd2496` exists).  ``removesuffix`` rather than the
+    with a ``_yes`` / ``_no`` / ``_side1`` suffix, and a caller holding the wrong
+    one is a 404 (the reason `12fd2496` exists).  ``removesuffix`` rather than the
     ``rstrip("_yes")`` in that commit: ``rstrip`` takes a CHARACTER SET, so it
     eats any trailing run of ``_``/``y``/``e``/``s`` — on a hex condition id
     ending in ``e`` it silently truncates a real character.
+
+    ``_side1`` is #7505's companion leg, written beside the BARE id on a
+    sole-moneyline event where the decomposition that makes a ``_yes``/``_no``
+    pair never runs.  Without it here the companion's id never reduces to a
+    condition id, ``condition_id_of`` returns None on an id that plainly starts
+    ``0x``, and the leg gets no CLOB token top-up — so the one row a reader was
+    given a price for is the one row whose book goes cold.  The suffixes are
+    chained rather than listed because they are mutually exclusive by
+    construction: a leg wears exactly one.
 
     Returns None for parent rows, whose ``external_id`` is a Gamma EVENT id
     (a bare integer), not a condition id.  Those rows are addressable one level
@@ -282,7 +291,9 @@ def condition_id_of(external_id: Optional[str]) -> Optional[str]:
     """
     if not external_id:
         return None
-    cid = external_id.removesuffix("_yes").removesuffix("_no")
+    cid = (
+        external_id.removesuffix("_yes").removesuffix("_no").removesuffix("_side1")
+    )
     return cid if cid.startswith("0x") else None
 
 

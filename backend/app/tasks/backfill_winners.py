@@ -8238,6 +8238,74 @@ async def _backfill_polymarket_winners_from_api(
                                 stats["winners_set"] += r_bare.rowcount
                             else:
                                 stats["losers_set"] += r_bare.rowcount
+
+                            # #7505 — AND THE COMPANION, WHICH IS THE OTHER HALF
+                            # OF THIS MARKET'S ANSWER.
+                            #
+                            # A sole-moneyline event stores `cid` and
+                            # `{cid}_side1` — the venue's `outcomes[0]` and
+                            # `outcomes[1]` — because the decomposition that
+                            # would have made a `_yes`/`_no` pair is gated on the
+                            # event having more than one market and never runs.
+                            # The bare update above crowns one side and returns,
+                            # so the companion stayed ungraded for ever: a
+                            # settled fight showing a result for one fighter and
+                            # a live-looking price for the other, which is the
+                            # `settled means settled` rule broken on the same
+                            # card it was just satisfied on.
+                            #
+                            # 🔴 NOT AN INFERENCE — THE SAME INDEX ALIGNMENT THE
+                            # GRADE ITSELF RESTS ON. `yes_won` is
+                            # `prices[0] >= 0.90`, and Gamma serves
+                            # `outcomePrices` index-aligned with `outcomes`;
+                            # ingest wrote the bare leg from `outcomes[0]` and
+                            # `_side1` from `outcomes[1]` off that same array. So
+                            # `not yes_won` for the companion is the same
+                            # statement as `yes_won` for the bare row, read one
+                            # index along. The `len(prices) < 2` refusal and the
+                            # `max >= 0.90 / min <= 0.10` decidedness gate above
+                            # both already hold here, so `prices[1]` exists and
+                            # the pair is genuinely decided.
+                            #
+                            # Scoped to `market_id` AND the exact `_side1` key,
+                            # and written with the same statement shape as
+                            # `r_bare` rather than the guarded form used
+                            # elsewhere in this module: two sides of one pair
+                            # graded under two different rules is the defect
+                            # class, not the fix for it. A market with no
+                            # companion matches nothing and is byte-identical.
+                            await session.execute(
+                                text("""
+                                    UPDATE futures_outcomes
+                                    SET current_probability = :price
+                                    WHERE market_id = :mid
+                                      AND external_id = :cid
+                                      AND (current_probability IS NULL
+                                           OR ABS(current_probability - :price) > 0.001)
+                                """),
+                                {
+                                    "price": prices[1],
+                                    "mid": row.id,
+                                    "cid": f"{cid}_side1",
+                                },
+                            )
+                            r_side1 = await session.execute(
+                                update(FuturesOutcome)
+                                .where(
+                                    FuturesOutcome.market_id == row.id,
+                                    FuturesOutcome.external_id == f"{cid}_side1",
+                                )
+                                .values(
+                                    is_winner=(not yes_won),
+                                    resolution_source="api_settlement",
+                                    last_updated=func.now(),
+                                )
+                            )
+                            if r_side1.rowcount > 0:
+                                if yes_won:
+                                    stats["losers_set"] += r_side1.rowcount
+                                else:
+                                    stats["winners_set"] += r_side1.rowcount
                         else:
                             # Sub-market game props: outcomes have _yes/_no suffix
                             r1 = await session.execute(
