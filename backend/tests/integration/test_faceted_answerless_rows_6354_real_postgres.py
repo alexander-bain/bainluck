@@ -22,18 +22,35 @@ exact axis that matters. The server has to be the oracle.
 The formatter counts outcomes AFTER `_GARBAGE_OUTCOME_RE`, so "has a row" and
 "has a row a reader can see" are two different predicates and the route now
 depends on them agreeing. They are written in two languages — Python `re` in the
-formatter, POSIX `~*` in the gate — and they diverge in two places if nobody is
+formatter, POSIX `~*` in the gate — and they diverge in four places if nobody is
 watching:
 
   * `re.match` anchors only at the start; POSIX `~*` anchors nowhere.
   * a NULL name is a REAL outcome to the formatter (`o.name or ""` is `""`, which
     the pattern does not match) and would be NULL — hence not-true, hence
     EXCLUDED — to a bare `!~*`.
+  * `$` is not `$`: Python's matches before one trailing newline, POSIX's does
+    not. Hence the `\n?`.
+  * **`\s` is not `[[:space:]]`, and whether it is depends on the server.**
+    Python's `\s` is Unicode and fixed; `[[:space:]]` is the database's ctype. The
+    first version of this file hand-picked five Unicode spaces, found them equal,
+    and wrote "measured equal here" into the route — true of PostgreSQL 14 at
+    `en_US.UTF-8`, false of CI's server, which does not take NBSP. PG 14 in turn
+    failed on `\x85` and `\x1c`, which the five did not include. Each one is a
+    name the formatter calls garbage and the gate calls answerable: the blank row,
+    again. The route now writes the class out from Python's own set, so the two
+    agree by construction rather than by a measurement of one machine, and this
+    file generates all 29 characters instead of choosing some.
 
 So the equivalence itself is a test, graded by running both engines over the same
 names on the same server. That is what stops a later widening of the regex from
 quietly reopening the hole in the gate, which is the failure this whole class is
 made of.
+
+Two of the tests here need no Postgres and are not skipped — the written-out class
+and the shape of the SQL mirror are graded on a laptop with no database, because
+"the guard only runs where the schema builds" is how the NOT NULL `external_id`
+in `_seed` survived into CI.
 """
 
 from __future__ import annotations
@@ -92,14 +109,23 @@ async def _seed(session, rows):
 
     `resolution_date` is left NULL so every row satisfies the route's unresolved
     arm and the ordering between them is never what decides a test.
+
+    🔴 `external_id` IS SET, and it has to be. The column is NOT NULL, so a seed
+    that omits it raises `NotNullViolationError` on the INSERT and every test in
+    this file errors before it asserts anything — which is exactly how this file
+    first ran in CI. It is invisible on a machine that cannot run the file at all
+    (the schema needs PostgreSQL 15 for `NULLS NOT DISTINCT`; Homebrew's default
+    is 14), so the harness was only ever graded by the server that could build it.
+    The value is per-row unique because the real table treats it as an identity.
     """
     from app.models import FuturesMarket, FuturesOutcome
 
     made = {}
-    for name, tag, outcome_names in rows:
+    for index, (name, tag, outcome_names) in enumerate(rows):
         market = FuturesMarket(
             name=name,
             source="polymarket",
+            external_id=f"seed-6354-{index}",
             status="open",
             event_id=None,
             resolution_date=None,
@@ -108,10 +134,11 @@ async def _seed(session, rows):
         )
         session.add(market)
         await session.flush()
-        for outcome_name in outcome_names:
+        for position, outcome_name in enumerate(outcome_names):
             session.add(
                 FuturesOutcome(
                     market_id=market.id,
+                    external_id=f"seed-6354-{index}-{position}",
                     name=outcome_name,
                     current_probability=0.5,
                 )
@@ -287,20 +314,53 @@ async def test_every_served_row_has_a_number_including_the_garbage_named(pg_sess
 
 
 @needs_postgres
-async def test_a_nameless_outcome_still_counts_as_an_answer(pg_session):
-    """The arm a careless simplification deletes.
+async def test_the_is_null_arm_is_defence_and_the_schema_says_so(pg_session):
+    """The `IS NULL` arm, graded honestly — it guards a state the column forbids.
 
-    `o.name or ""` makes a NULL name a REAL outcome to the formatter, while a
-    bare `name !~* '...'` evaluates to NULL — not true — and would withdraw the
-    market. Dropping the `IS NULL` arm takes a priced rung off the page and no
-    other test in this file would notice.
+    🔴 THIS TEST USED TO SEED `name=None` AND ASSERT THE ROW SURVIVED, and that
+    was wrong in a way worth keeping written down: `futures_outcomes.name` is
+    `NOT NULL`, in the model AND on production (`information_schema` says
+    `is_nullable = NO`; `count(*) WHERE name IS NULL` is 0 of ~1.1M). So the seed
+    could not be inserted at all — it died on the constraint, in CI, where the
+    file first ran — and the thing it claimed to prove ("a nameless-but-priced
+    rung stays on the page") describes a row that cannot exist.
+
+    The `IS NULL` arm STAYS. It costs nothing, it fails safe, and the SQL reason
+    for it is real: a bare `name !~* '…'` is NULL — hence not true, hence
+    excluded — for a NULL name, so the arm is what the predicate would need the
+    day that column becomes nullable. What changes is the claim: it is defence,
+    not a live path, and the file may not pretend otherwise.
+
+    So this asserts the world we are actually in, and becomes a tripwire the day
+    we leave it: if `name` is ever made nullable, this fails and whoever did it
+    re-reads the arm and writes the behavioural test that is possible by then.
     """
-    await _seed(pg_session, [("Nameless but priced", "sport:tennis", [None])])
+    from sqlalchemy import text
 
-    payload = await _faceted(pg_session)
+    nullable = (
+        await pg_session.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'futures_outcomes' AND column_name = 'name'"
+            )
+        )
+    ).scalar()
 
-    assert [m["name"] for m in payload["markets"]] == ["Nameless but priced"]
-    assert payload["markets"][0]["outcome_count"] == 1
+    assert nullable == "NO", (
+        "`futures_outcomes.name` is now nullable — the `IS NULL` arm of "
+        "`_HAS_ANY_OUTCOME_ROW` just stopped being defensive and became a live "
+        "path. Write the behavioural test that is possible now, and correct the "
+        "route comment, which describes this arm as guarding real rows."
+    )
+
+    # The arm is still there. Textual, deliberately: there is no reachable state
+    # left to observe it with, and a test that cannot fail is worse than one that
+    # says plainly which kind of check it is.
+    from app.routes.futures import _HAS_ANY_OUTCOME_ROW
+
+    assert "IS NULL" in str(
+        _HAS_ANY_OUTCOME_ROW.compile(compile_kwargs={"literal_binds": True})
+    ), "the IS NULL arm was removed while the column it guards is still NOT NULL"
 
 
 @needs_postgres
@@ -342,15 +402,26 @@ async def test_the_gate_and_the_formatter_agree_on_every_name(pg_session):
         "player AB\n",  # THE HOLE: Python `$` takes it, bare POSIX `$` does not
         "player AB\n\n",  # control: two newlines are garbage to NEITHER engine
         "player AB\nx",  # control: text after the newline, garbage to neither
-        "player AB ",  # control: `\n?` must not drift into `[[:space:]]?`
+        "player AB ",  # control: `\n?` must not drift into a whitespace class
         "player AB\r",  # control: CR is not the newline `$` forgives
-        # `\s` is Unicode-aware and `[[:space:]]` is locale-driven; measured
-        # equal here, and pinned so a collation or encoding change has to say so.
-        "player\tAB",
-        "player\xa0AB",  # NBSP
-        "player　AB",  # ideographic space
-        "player\x0bAB",  # vertical tab
-        "player\rAB",  # CR as the inner separator
+        "player AB\xa0",  # control: nor is any other space the `$` forgives
+        "xplayer AB",  # control: `re.match` anchors at the start, `~*` must too
+    ] + [
+        # ── THE SECOND HOLE, and the reason the list is generated ────────────
+        # An earlier version of this file hand-picked five Unicode spaces, found
+        # them equal on the machine it ran on, and wrote "measured equal here"
+        # into the route. That claim was true of PostgreSQL 14 at `en_US.UTF-8`
+        # and false of CI's server, where `[[:space:]]` does not take NBSP: the
+        # name was garbage to the formatter and answerable to the gate, which is
+        # the same blank row as the newline hole. On PG 14 the same form failed
+        # on `\x85` and `\x1c`, which the hand-picked five did not include.
+        #
+        # A measurement of a locale-dependent operator over a list somebody chose
+        # is not a contract. So: EVERY character Python's `\s` matches, in both
+        # letter cases, generated — the gate has to agree on all 29 or say which.
+        f"player{space}{initials}"
+        for space in (chr(c) for c in range(0x110000) if chr(c).isspace())
+        for initials in ("AB", "ab")
     ]
 
     for name in names:
@@ -365,3 +436,50 @@ async def test_the_gate_and_the_formatter_agree_on_every_name(pg_session):
             f"{name!r}: the formatter says garbage={in_python} and the gate says "
             f"garbage={in_postgres} — the card and the page no longer agree"
         )
+
+
+async def test_the_written_out_space_class_is_exactly_pythons():
+    """`_PYTHON_SPACE_CHARS` is hardcoded; this is the scan that keeps it honest.
+
+    The route writes the whitespace class out rather than asking the server for
+    `[[:space:]]`, which is what makes the two engines agree independently of the
+    database's ctype. The cost of hardcoding is that a Python upgrade adding a
+    whitespace character would silently narrow the gate — one character the
+    formatter calls garbage and the gate calls answerable, which is the blank row
+    again. So the full code-point range is scanned HERE, where 1.1M iterations are
+    affordable and an import is not.
+
+    Needs no Postgres: it grades the constant, not the server. That is on purpose
+    — this half must fail on a laptop with no database, not only in CI.
+    """
+    from app.routes.futures import _PYTHON_SPACE_CHARS
+
+    expected = "".join(chr(c) for c in range(0x110000) if chr(c).isspace())
+
+    assert _PYTHON_SPACE_CHARS == expected, (
+        "the written-out class has drifted from Python's own `\\s`: missing "
+        f"{[hex(ord(c)) for c in expected if c not in _PYTHON_SPACE_CHARS]}, extra "
+        f"{[hex(ord(c)) for c in _PYTHON_SPACE_CHARS if c not in expected]}"
+    )
+    # Ordered by code point and free of the four characters a bracket expression
+    # reads as syntax — the two properties that let it be interpolated raw.
+    assert list(_PYTHON_SPACE_CHARS) == sorted(_PYTHON_SPACE_CHARS)
+    assert not (set(_PYTHON_SPACE_CHARS) & set("]^-\\"))
+
+
+async def test_the_sql_mirror_asks_the_server_nothing_about_whitespace():
+    """The property the fix is, stated where a reader of the diff will see it.
+
+    `[[:space:]]` is decided by the database's ctype, so a predicate built on it
+    is a different predicate on a different server — and both of this file's
+    whitespace holes were that, not a typo. A reviewer restoring the "simpler"
+    POSIX class would pass every other test in this file on their own machine.
+    """
+    from app.routes.futures import _GARBAGE_OUTCOME_SQL, _PYTHON_SPACE_CHARS
+
+    assert "[:space:]" not in _GARBAGE_OUTCOME_SQL, (
+        "the gate must not ask the server what whitespace is — that is the bug"
+    )
+    assert "[" + _PYTHON_SPACE_CHARS + "]" in _GARBAGE_OUTCOME_SQL
+    # The trailing `\n?` mirrors Python's `$` and is NOT part of the class.
+    assert _GARBAGE_OUTCOME_SQL.endswith(r"\n?$")

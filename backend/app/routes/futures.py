@@ -1211,25 +1211,67 @@ async def _rebuild_futures_categories() -> None:
 #:     written out.
 #:   * **A NULL name is a REAL outcome to the formatter** (`o.name or ""` makes it `""`,
 #:     which the regex does not match) and would be a NULL — hence not-true, hence
-#:     EXCLUDED — to a bare `!~*`. The `IS NULL` arm is what keeps a nameless-but-priced
-#:     rung on the page, and it is the arm a careless simplification deletes first.
+#:     EXCLUDED — to a bare `!~*`. Hence the `IS NULL` arm.
+#:
+#:     🔴 It is DEFENCE, not a live path, and the first version of this comment said
+#:     otherwise. `futures_outcomes.name` is `NOT NULL` — in the model and on production,
+#:     where `information_schema` reads `is_nullable = NO` and there are 0 NULL names in
+#:     ~1.1M rows — so no reachable row exercises this arm today. It stays because it
+#:     costs nothing, fails safe, and is what the predicate would need the day the column
+#:     becomes nullable; `test_the_is_null_arm_is_defence_and_the_schema_says_so` asserts
+#:     that day has not come and fails loudly when it does.
 #:
 #:   * **`$` IS NOT `$`.** Python's `$` matches at the end of the string OR immediately
 #:     before a single trailing newline; POSIX `$` matches only at the end. So
 #:     `"player AB\n"` is GARBAGE to the formatter (`outcome_count: 0`) and NOT garbage
 #:     to a bare `…{1,3}$` gate — the market passes the gate and still serves a blank
 #:     row, which is precisely the defect this predicate exists to remove, reintroduced
-#:     by the gate meant to close it. Measured both engines over 18 names on real
-#:     PostgreSQL: this is the ONLY divergence (Unicode whitespace agrees — `\s` and
-#:     `[[:space:]]` both take NBSP, en space, U+3000, VT, FF and CR here). The trailing
-#:     `\n?` is what mirrors Python's `$`; it must not become `[[:space:]]?`, which would
-#:     swallow a trailing space that Python's `$` rejects and start hiding real rows.
+#:     by the gate meant to close it. The trailing `\n?` is what mirrors Python's `$`; it
+#:     must not become a whitespace class, which would swallow a trailing space that
+#:     Python's `$` rejects and start hiding real rows.
+#:
+#:   * **`\s` IS NOT `[[:space:]]`, AND WHETHER IT IS DEPENDS ON THE SERVER.** Python's
+#:     `\s` on a `str` is Unicode and fixed: 29 characters, exactly `str.isspace()`.
+#:     `[[:space:]]` is the server's, and it is decided by the database's ctype — so the
+#:     two agree on one machine and disagree on the next, which is the worst shape a
+#:     predicate can have. MEASURED, both engines, same names: on PostgreSQL 14 at
+#:     `en_US.UTF-8` the old `[[:space:]]` form diverged on `\x85` (NEL) and `\x1c` (file
+#:     separator); on CI's server it diverged on `\xa0` (NBSP) as well. Each divergence is
+#:     the same defect as the newline one — garbage to the formatter, answerable to the
+#:     gate, blank row served.
+#:
+#:     So the class is no longer asked of the server. It is WRITTEN OUT from Python's own
+#:     set below, which makes the two engines agree BY CONSTRUCTION rather than by a
+#:     measurement that was only ever true of the machine it was taken on. It also closes
+#:     the mirror-image hole nobody had looked for: a locale whose `[[:space:]]` is WIDER
+#:     than `\s` would make the gate stricter than the formatter and start hiding rows
+#:     that do have a visible outcome.
 #:
 #: It goes in `conditions` — the list shared by the count query, the data query and the
 #: facet counts — deliberately, and NOT as a filter over `formatted`. Filtering after the
 #: `LIMIT` would hand the app short pages, a `total` that disagrees with what it can
 #: actually scroll to, and facet chips that promise more than the list holds.
-_GARBAGE_OUTCOME_SQL = r"^player[[:space:]]+[A-Za-z]{1,3}\n?$"
+
+#: Every character Python's `\s` matches on a `str`, written out so the SQL mirror does
+#: not have to ask the server what whitespace is. Hardcoded rather than derived, because
+#: deriving it means scanning 1.1M code points at import; `test_the_written_out_space_
+#: class_is_exactly_pythons` does that scan instead and fails if a Python upgrade ever
+#: adds one. Ordered by code point. No character here is `]`, `^`, `-` or `\`, so every
+#: one is literal inside the bracket expression and none needs escaping.
+_PYTHON_SPACE_CHARS = (
+    "\t\n\v\f\r"  # HT LF VT FF CR
+    "\x1c\x1d\x1e\x1f"  # the four ASCII separators — NOT in POSIX `[[:space:]]`
+    " "  # SPACE
+    "\x85"  # NEL — diverged on PostgreSQL 14 / en_US.UTF-8
+    "\xa0"  # NBSP — diverged on CI's server
+    " "  # OGHAM SPACE MARK
+    "           "  # EN QUAD…HAIR
+    "  "  # LINE / PARAGRAPH SEPARATOR
+    "  "  # NARROW NBSP, MEDIUM MATHEMATICAL SPACE
+    "　"  # IDEOGRAPHIC SPACE
+)
+
+_GARBAGE_OUTCOME_SQL = "^player[" + _PYTHON_SPACE_CHARS + "]+[A-Za-z]{1,3}\\n?$"
 
 _HAS_ANY_OUTCOME_ROW = exists().where(
     and_(
