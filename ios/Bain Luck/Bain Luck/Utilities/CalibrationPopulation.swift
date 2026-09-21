@@ -19,14 +19,19 @@ import Foundation
 /// and prints the contradiction in full; the defect report and the BEFORE shot
 /// are on the web half (#7518).
 ///
-/// **The native table does not currently render that row** — `categories` takes
-/// the 15 largest by all-cohort outcomes and `topCategoryRows` then takes 10 by
-/// ECE, and `geopolitics` is 19th of the 21 that clear the bar. So on this
-/// surface today the *consequence* is invisible while the *mismatch* is not:
-/// the caption's bar counts Soccer's 132,357 while the column beside it prints
-/// 58,440. A reader has no way to tell that from a stuck number. (The two
-/// slices are their own defect and are filed separately — this file is about
-/// what the caption claims, not about which rows reach it.)
+/// **The native table renders that row as of #7533.** It did not when this file
+/// was written: `categories` took the 15 largest by all-cohort outcomes and
+/// `topCategoryRows` took a further 10 by ECE, and `geopolitics` is 19th of the
+/// 21 that clear the bar. Those two slices were the separately-filed defect this
+/// paragraph pointed at, and deleting them is what made the consequence visible
+/// here — so the clause below now fires on the default cohort rather than
+/// waiting for a payload that trips it.
+///
+/// That transition needed no edit to the gating rule, which is the point of
+/// keying it on the rendered counts: the caption started explaining the row in
+/// the same commit that put the row on screen. Had it been switched on a cohort
+/// flag, #7533 would have shipped a published 732 under a 1,000 bar with nothing
+/// to reconcile it.
 ///
 /// ── TWO CLAUSES, EARNING THEIR PLACE DIFFERENTLY ────────────────────────────
 ///

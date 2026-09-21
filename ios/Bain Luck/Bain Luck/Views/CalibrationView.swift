@@ -634,7 +634,7 @@ struct CalibrationSurfaceView: View {
         cardSection("Category Breakdown",
                     sub: CalibrationPopulation.categoryTableNote(
                         bar: viewModel.minCategoryOutcomes,
-                        renderedRowOutcomes: viewModel.topCategoryRows.map(\.n))) {
+                        renderedRowOutcomes: viewModel.categoryRows.map(\.n))) {
             if let best = viewModel.bestCategoryRow, let worst = viewModel.worstCategoryRow {
                 HStack(spacing: 10) {
                     categorySummaryCard("Best calibrated", best, .green)
@@ -664,9 +664,14 @@ struct CalibrationSurfaceView: View {
 
                 Divider()
 
-                ForEach(Array(viewModel.topCategoryRows.enumerated()), id: \.element.id) { idx, row in
+                // #7533 — every category that clears the publish bar, which is
+                // the only filter the caption above declares. No `.prefix` here
+                // or in the view model: a cap applied to one of these two lists
+                // drops rows into the gap between them, and both read as
+                // exhaustive.
+                ForEach(Array(viewModel.categoryRows.enumerated()), id: \.element.id) { idx, row in
                     categoryMetricRow(row, color: Self.catColors[idx % Self.catColors.count])
-                    if row.id != viewModel.topCategoryRows.last?.id { Divider().padding(.leading, 12) }
+                    if row.id != viewModel.categoryRows.last?.id { Divider().padding(.leading, 12) }
                 }
             }
             .background(Color.systemGray6, in: RoundedRectangle(cornerRadius: 10))

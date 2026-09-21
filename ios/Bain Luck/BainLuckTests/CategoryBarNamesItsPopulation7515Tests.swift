@@ -13,15 +13,21 @@ import XCTest
 /// all-cohort and 58,440 traded — and nothing on the card let a reader tell that
 /// from a stuck number.
 ///
-/// **The consequence is live on web and latent here**, which is why the second
+/// **The consequence was live on web and latent here**, which is why the second
 /// clause is keyed on data rather than switched on. `geopolitics` is 1,749
 /// all-cohort / **732** traded against a 1,000 bar, and web publishes that row.
-/// Native's table takes the 15 largest categories by all-cohort outcomes and
-/// then the top 10 of those by ECE, and `geopolitics` is 19th of the 21 that
-/// clear the bar, so it does not reach this screen today. A clause hard-wired on
-/// would be a permanent paragraph about a row nobody can see (notice 34); a
-/// clause hard-wired off is the defect. It is gated on the rendered counts, so
-/// it says something true on both surfaces and on tomorrow's payload.
+/// When this suite was written native's table took the 15 largest categories by
+/// all-cohort outcomes and then the top 10 of those by ECE, and `geopolitics` is
+/// 19th of the 21 that clear the bar, so it did not reach the screen. A clause
+/// hard-wired on would be a permanent paragraph about a row nobody can see
+/// (notice 34); a clause hard-wired off is the defect. It is gated on the
+/// rendered counts, so it says something true on both surfaces and on
+/// tomorrow's payload.
+///
+/// **#7533 deleted both slices, and the gating earned its design:** the row
+/// reached the screen and the clause began explaining it in the same commit,
+/// with no edit here. The case that fixed that in place is
+/// `testTheRowsTheUncappedTableAddsEarnTheConsequenceClause`.
 ///
 /// Every case below is a state of the two populations, not a happy path with
 /// variations.
@@ -48,11 +54,19 @@ final class CategoryBarNamesItsPopulation7515Tests: XCTestCase {
                       "the caption states a bar without saying which outcomes it counts: \(note)")
     }
 
-    /// The same clause on the native top-10 as it actually renders today, so the
-    /// suite carries the measured shape and not only invented ones.
+    /// A measured all-above-bar shape, so the suite carries a real payload's
+    /// numbers and not only invented ones.
+    ///
+    /// These ten were the rows native actually drew on 2026-09-20, when the
+    /// table was capped at `categoryRows.prefix(10)`. #7533 deleted that cap, so
+    /// this is no longer "what renders today" — it is kept unchanged because the
+    /// assertion is about the shape (ten counts, none below the bar ⇒ no
+    /// warning), and that is true of these numbers whenever they are passed.
+    /// `testTheRowsTheUncappedTableAddsEarnTheConsequenceClause` below carries
+    /// the post-#7533 rendered set.
     func testTodaysNativeTopTenGetsTheUnitsClauseAndNoWarning() {
-        // Traded-cohort `n` for the ten rows `topCategoryRows` draws, measured
-        // against `/api/calibration` on 2026-09-20 14:05Z in ECE order.
+        // Traded-cohort `n`, measured against `/api/calibration` on 2026-09-20
+        // 14:05Z, in ECE order.
         let rendered = [129_771, 10_207, 118_714, 8_108, 22_684,
                         58_440, 8_329, 19_211, 13_872, 12_967]
         let note = CalibrationPopulation.categoryTableNote(bar: 1000, renderedRowOutcomes: rendered)
@@ -62,6 +76,38 @@ final class CategoryBarNamesItsPopulation7515Tests: XCTestCase {
                        "no row on this screen is below the bar today, so the warning is noise")
         XCTAssertTrue(note.hasSuffix("traded or not."),
                       "the unconditional clause must close the sentence when it is the last one")
+    }
+
+    /// The post-#7533 rendered set: the same ten above plus the eleven the two
+    /// slices were hiding, `geopolitics` among them at **732** against a 1,000
+    /// bar. The row that made this clause conditional rather than absent is now
+    /// on the screen, so the clause fires — and it fires because the counts
+    /// changed, not because anything in `CalibrationPopulation` was touched.
+    ///
+    /// 🪤 Pair this with the case above: the two differ only by the rows #7533
+    /// stopped hiding, so a regression that re-caps the table flips this one
+    /// while leaving that one green.
+    func testTheRowsTheUncappedTableAddsEarnTheConsequenceClause() {
+        // The ten above, plus the six of the eleven formerly-hidden categories
+        // whose traded `n` #7533 measured against `/api/calibration` on
+        // 2026-09-20: tech 1,370 · cricket 1,456 · other 1,356 ·
+        // geopolitics 732 · rugbyleague_nrl 1,219 · aussierules_afl 1,211.
+        //
+        // The other five (tennis, weather, table_tennis, mma, motorsports) are
+        // deliberately absent: their traded counts were not measured, and a
+        // plausible-looking number invented to round the list out to 21 would be
+        // this screen's own defect written into its guard. Sixteen real counts
+        // prove the clause; five fabricated ones would prove nothing.
+        let renderedAfter = [129_771, 10_207, 118_714, 8_108, 22_684,
+                             58_440, 8_329, 19_211, 13_872, 12_967,
+                             1_370, 1_456, 1_356, 732, 1_219, 1_211]
+        let note = CalibrationPopulation.categoryTableNote(
+            bar: 1000, renderedRowOutcomes: renderedAfter)
+
+        XCTAssertTrue(note.contains("so a row here can show fewer than 1.0K in the Outcomes column."),
+                      "geopolitics is drawn at 732 under a 1.0K bar with nothing to reconcile it: \(note)")
+        XCTAssertTrue(note.contains(Self.unitsClause),
+                      "the consequence replaced the units clause instead of extending it")
     }
 
     // MARK: - The consequence clause is conditional on the rendered rows
@@ -153,10 +199,15 @@ final class CategoryBarNamesItsPopulation7515Tests: XCTestCase {
 
         XCTAssertTrue(body.contains("CalibrationPopulation.categoryTableNote("),
                       "Category Breakdown no longer derives its caption")
-        XCTAssertTrue(body.contains("renderedRowOutcomes: viewModel.topCategoryRows.map(\\.n)"),
+        // #7533 renamed the drawn array from `topCategoryRows` (which was
+        // `categoryRows.prefix(10)`) to `categoryRows` itself. What this case is
+        // about is unchanged and is not the spelling: the caption must be keyed
+        // on the SAME array the ForEach iterates. So assert the relationship,
+        // not the name — a future rename fails only if it splits the two.
+        XCTAssertTrue(body.contains("renderedRowOutcomes: viewModel.categoryRows.map(\\.n)"),
                       "the clause is keyed on something other than the rows the ForEach draws")
-        XCTAssertTrue(body.contains("ForEach(Array(viewModel.topCategoryRows.enumerated())"),
-                      "the table stopped drawing topCategoryRows, so the caption now describes "
+        XCTAssertTrue(body.contains("ForEach(Array(viewModel.categoryRows.enumerated())"),
+                      "the table stopped drawing categoryRows, so the caption now describes "
                           + "an array that is not on screen")
         XCTAssertFalse(body.contains("resolved outcomes are held out — see below.\")"),
                        "the pre-#7515 literal caption is back in the view")
