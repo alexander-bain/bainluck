@@ -156,6 +156,42 @@ describe("describeCategoryPopulation", () => {
     expect(d.sentence).toContain("not just this slice");
   });
 
+  // THE WHOLE CLAUSE, NOT A SUBSTRING OF IT. The three assertions above are all
+  // `toContain`, and every one of them passed while the sentence a reader got
+  // was "This row measured over traded outcomes only." — the verb lived in the
+  // clause SEPARATOR, so the one-clause branch never received it. A substring
+  // assertion cannot see a missing word between two substrings it matched; only
+  // the leading clause, quoted whole, can. Both branches are pinned here because
+  // the pooled one was correct and must stay correct: it is the control.
+  it.each([
+    [
+      "a row that pools nothing",
+      ["politics"],
+      "This row is measured over traded outcomes only.",
+    ],
+    [
+      "a row that pools",
+      HOCKEY_POOL,
+      "This row covers 4 categories grouped under one name",
+    ],
+  ])("states a grammatical leading clause for %s", (_what, pool, expected) => {
+    const d = describeCategoryPopulation(
+      pool[0] === "politics" ? "politics" : "hockey",
+      pool,
+      PUBLISHED,
+      "excluding_never_moved"
+    );
+
+    // `sentence` and `title` are built from the same `build()`, so a defect in
+    // either branch reaches the reader through whichever one the page renders.
+    // The page renders `title`; both are asserted so a future split cannot fix
+    // one and leave the other.
+    expect(d.sentence.startsWith(expected)).toBe(true);
+    expect(d.title.startsWith(expected)).toBe(true);
+    // No sentence on this page begins "This row <bare participle>".
+    expect(d.sentence).not.toMatch(/^This row (measured|covers \d+ [a-z]+, measured)/);
+  });
+
   it("claims no whole-population twin when the displayed name is not a payload key", () => {
     // `football` is a DISPLAY name — the payload publishes
     // `americanfootball_nfl` and friends, never `football`. Inventing a
