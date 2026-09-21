@@ -108,6 +108,13 @@ OPEN_TIME = datetime(2026, 4, 2, 17, 0, 0, tzinfo=timezone.utc)
 KALSHI_MARKET = 9174501
 OPEN_MARKET = 9174502
 PM_MARKET = 9174503
+#: #7648's market, and the only one in this corpus with a `resolution_date`.
+#: The other three leave it NULL, which is what makes the existing
+#: `PHASE_0C_CONTROL` assertion the unchanged-behaviour arm for free.
+DATED_MARKET = 9174504
+
+#: When trading stops on `DATED_MARKET` (Kalshi: max(close_time), CAL-P989).
+RESOLUTION_TIME = OPEN_TIME + timedelta(hours=3)
 
 MARNER = 9174601
 TRADED = 9174602
@@ -122,6 +129,21 @@ UNRESOLVED = 9174609
 #: re-promotion gate, where it proves the phase ran at all.
 PHASE_0C_CONTROL = 9174610
 
+# --- #7648: Phase 0c must not promote a price taken after trading stopped ----
+#: The subject. Resolved market, NULL opening, and its ONLY snapshot is a real
+#: two-sided book recorded AFTER `resolution_date` — the shape a market first
+#: seen post-settlement has, which #7642 made reachable by leaving the opening
+#: NULL instead of stamping it in the poll.
+HINDSIGHT = 9174611
+#: The positive control, without which the subject's assertion is vacuous: a
+#: dated market whose earliest snapshot IS honest. It also holds a later
+#: post-resolution snapshot at a different price, so a clause that reversed the
+#: ordering or took the wrong end of the range would be caught here.
+PRE_RESOLUTION = 9174612
+#: The boundary. Its only snapshot sits EXACTLY on `resolution_date` — the last
+#: moment somebody could still trade — so it pins `<=` against `<`.
+BOUNDARY = 9174613
+
 #: The production specimen: *Mitch Marner: 3+ points*, bid 0.00 / ask 0.98 /
 #: last 0.00, published 0.98.
 BAD_ASK = 0.98
@@ -129,6 +151,15 @@ BAD_ASK = 0.98
 HONEST = 0.22
 #: An independently-derived calibration price (production arm c mean: 0.392).
 INDEPENDENT_PRICE = 0.34
+#: #7648: the price on a book recorded AFTER trading stopped. Deliberately not
+#: equal to `HONEST`, so "took the post-resolution snapshot" and "took the
+#: pre-resolution one" are distinguishable rather than agreeing by accident.
+LATE_PRICE = 0.71
+#: A SECOND eligible price on the positive-control leg, later than its earliest
+#: but still before `resolution_date`. Its only job is to make "takes the
+#: earliest eligible snapshot" falsifiable: with one eligible snapshot, ASC and
+#: DESC return the same row and the ordering assertion cannot fail.
+MID_PRICE = 0.44
 
 
 def _asyncpg_url(url: str) -> str:
@@ -175,10 +206,11 @@ async def _seed(session):
     """
     from app.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
 
-    for mid, status, source in (
-        (KALSHI_MARKET, "resolved", "kalshi"),
-        (OPEN_MARKET, "open", "kalshi"),
-        (PM_MARKET, "resolved", "polymarket"),
+    for mid, status, source, resolution_date in (
+        (KALSHI_MARKET, "resolved", "kalshi", None),
+        (OPEN_MARKET, "open", "kalshi", None),
+        (PM_MARKET, "resolved", "polymarket", None),
+        (DATED_MARKET, "resolved", "kalshi", RESOLUTION_TIME),
     ):
         session.add(
             FuturesMarket(
@@ -190,6 +222,7 @@ async def _seed(session):
                 status=status,
                 event_id=None,
                 commence_time=OPEN_TIME + timedelta(hours=6),
+                resolution_date=resolution_date,
             )
         )
 
@@ -205,6 +238,11 @@ async def _seed(session):
         (SAME_VALUE, KALSHI_MARKET, BAD_ASK, "first_snapshot", None),
         (UNRESOLVED, OPEN_MARKET, BAD_ASK, "first_snapshot", None),
         (PHASE_0C_CONTROL, KALSHI_MARKET, None, None, None),
+        # #7648: all three carry a NULL opening, so all three are in Phase 0c's
+        # population. What separates them is only WHEN their snapshots landed.
+        (HINDSIGHT, DATED_MARKET, None, None, None),
+        (PRE_RESOLUTION, DATED_MARKET, None, None, None),
+        (BOUNDARY, DATED_MARKET, None, None, None),
     )
     for oid, mid, opening, source, cal in outcomes:
         session.add(
@@ -224,6 +262,11 @@ async def _seed(session):
     # (outcome, bookmaker, probability, yes_bid, yes_ask, last_price, offset)
     empty_book = (0.0, BAD_ASK, 0.0)
     real_book = (0.20, 0.24, 0.21)
+    #: #7648's post-resolution book. Two-sided and traded — an honest RECORD of
+    #: a settled market, which is exactly why time is the only thing that can
+    #: disqualify it. Nothing about the book itself is wrong.
+    late_book = (0.69, 0.73, 0.71)
+    mid_book = (0.42, 0.46, 0.44)
     snapshots = (
         # The subject: one empty book, and nothing else, ever.
         (MARNER, "kalshi", BAD_ASK, *empty_book, timedelta(0)),
@@ -244,6 +287,23 @@ async def _seed(session):
         (UNRESOLVED, "kalshi", BAD_ASK, *empty_book, timedelta(0)),
         # Phase 0c's positive control: an honest book on a NULL-opening leg.
         (PHASE_0C_CONTROL, "kalshi", HONEST, *real_book, timedelta(0)),
+        # #7648. Every one of these is a real two-sided book — the guard that
+        # already exists (`lone_ask_on_empty_book`) accepts all of them, so the
+        # ONLY thing that can separate them is `captured_at` vs the market's
+        # `resolution_date` at +3h.
+        #
+        # The subject: first and only sighting is two hours after trading
+        # stopped. Nobody could have taken this price.
+        (HINDSIGHT, "kalshi", LATE_PRICE, *late_book, timedelta(hours=5)),
+        # The positive control. THREE snapshots at three distinct prices: two
+        # eligible (+1h, +2h) and one not (+5h). Two eligible ones are what
+        # make the ordering assertion able to fail — with a single eligible
+        # snapshot, ASC and DESC agree and the test would be vacuous.
+        (PRE_RESOLUTION, "kalshi", HONEST, *real_book, timedelta(hours=1)),
+        (PRE_RESOLUTION, "kalshi", MID_PRICE, *mid_book, timedelta(hours=2)),
+        (PRE_RESOLUTION, "kalshi", LATE_PRICE, *late_book, timedelta(hours=5)),
+        # The boundary: exactly ON resolution_date, the last tradeable moment.
+        (BOUNDARY, "kalshi", HONEST, *real_book, timedelta(hours=3)),
     )
     for oid, book, prob, bid, ask, last, delta in snapshots:
         session.add(
@@ -470,6 +530,173 @@ async def test_phase_0c_does_not_re_promote_a_withdrawn_row(session):
     assert (await _row(session, MARNER)) == (None, None, None, None), (
         "Phase 0c re-promoted a withdrawn row: the repair is not a fixed point "
         "and the curve reverts within one 6-hour cycle"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #7648 — Phase 0c must not promote a price recorded after trading stopped
+#
+# These run THE SHIPPED CONSTANT for the same reason the gate above does: the
+# claim is about what Phase 0c does to a row, and a retyped statement would be
+# asserting agreement with its own copy.
+#
+# Every #7648 specimen carries a real two-sided book, so the empty-book guard
+# accepts all of them and `captured_at` is the only thing that can separate
+# them. All three sit on `DATED_MARKET`, the one market here with a
+# `resolution_date`; the other three leave it NULL, which is what makes
+# `PHASE_0C_CONTROL` the unchanged-behaviour arm.
+# ---------------------------------------------------------------------------
+
+
+async def _run_phase_0c(session):
+    """Execute the SHIPPED Phase 0c promotion."""
+    import importlib
+    import sys
+
+    from sqlalchemy import text
+
+    importlib.import_module("app.tasks.backfill_winners")
+    sql = sys.modules["app.tasks.backfill_winners"].PHASE_0C_REPAIR_SQL
+
+    await session.execute(text(sql))
+    await session.commit()
+
+
+async def _stamp(session, outcome_id: int):
+    """``opening_captured_at`` as stored — the column ``_row`` does not carry."""
+    from sqlalchemy import text
+
+    got = (
+        await session.execute(
+            text(
+                "SELECT opening_captured_at FROM futures_outcomes WHERE id = :oid"
+            ),
+            {"oid": outcome_id},
+        )
+    ).scalar_one()
+    return got
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_phase_0c_refuses_a_price_first_seen_after_trading_stopped(session):
+    """#7648's ship, with its positive control in the SAME execution.
+
+    A market first seen after it settled holds exactly one kind of snapshot:
+    the settled book. Promoting it records a price nobody could have taken as
+    the opening line. Production measured 1.34% of hindsight rows holding any
+    pre-resolution snapshot at all, so for the other 98.66% "earliest snapshot
+    we hold" is the answer read back to us.
+
+    The `PRE_RESOLUTION` assertion is load-bearing, not decoration: a clause
+    that refused EVERY dated market — or a Phase 0c that stopped promoting
+    anything at all — would satisfy the subject perfectly.
+    """
+    await _seed(session)
+
+    await _run_phase_0c(session)
+
+    assert (await _row(session, PRE_RESOLUTION))[1] == HONEST, (
+        "Phase 0c promoted nothing on a dated market — the refusal asserted "
+        "below would be vacuous"
+    )
+    assert (await _row(session, HINDSIGHT)) == (None, None, None, None), (
+        "Phase 0c promoted a book recorded after trading stopped: the opening "
+        "line is a price nobody could have taken"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_phase_0c_keeps_the_earliest_honest_price_not_the_latest(session):
+    """The bound narrows the range; it must not reverse or slide it.
+
+    `PRE_RESOLUTION` holds TWO eligible books — `HONEST` at +1h and `MID_PRICE`
+    at +2h — plus an ineligible one at +5h. Two eligible snapshots are what
+    make this assertion able to fail at all: with one, `ASC` and `DESC` return
+    the same row and the test would be green no matter what the statement did.
+    """
+    await _seed(session)
+
+    await _run_phase_0c(session)
+
+    opening = (await _row(session, PRE_RESOLUTION))[1]
+    assert opening != MID_PRICE, (
+        "Phase 0c took the LATEST eligible snapshot: the clause changed which "
+        "row is picked, not merely which rows are eligible"
+    )
+    assert opening == HONEST, (
+        "Phase 0c did not take the earliest eligible snapshot"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_snapshot_on_the_resolution_boundary_is_still_tradeable(session):
+    """`<=`, not `<`.
+
+    `resolution_date` is when trading STOPS (CAL-P989/#2660), so a price
+    recorded at that instant is the last one somebody could still have taken.
+    It is also the boundary the read side draws: `calibration_price_provenance`
+    calls `opening_captured_at > resolution_date` `after_resolution`, and this
+    clause must accept exactly that predicate's complement or the writer and
+    the reader disagree about one row.
+    """
+    await _seed(session)
+    assert (await _stamp(session, BOUNDARY)) is None, "seed precondition"
+
+    await _run_phase_0c(session)
+
+    assert (await _row(session, BOUNDARY))[1] == HONEST, (
+        "a snapshot exactly ON resolution_date was refused: the bound is `<` "
+        "where the read side's complement is `<=`, and the two now disagree"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_phase_0c_stamps_the_snapshot_it_promoted(session):
+    """A promoted opening must not land in the `no_capture_ts` class.
+
+    Writing the price without the stamp is what let this hole hide: the row's
+    provenance became "we do not know when we first looked" rather than a dated
+    class, walking past the very predicate ruling 103 builds to catch it. We DO
+    know — it is the snapshot this statement just chose — so it is recorded
+    (gotcha #53: a missing record must never resolve to the reassuring reading).
+    """
+    await _seed(session)
+
+    await _run_phase_0c(session)
+
+    assert (await _stamp(session, PRE_RESOLUTION)) == OPEN_TIME + timedelta(
+        hours=1
+    ), (
+        "the promoted opening carries no capture time, or carries one that is "
+        "not the snapshot it came from"
+    )
+    assert (await _stamp(session, HINDSIGHT)) is None, (
+        "a refused outcome was stamped anyway"
+    )
+
+
+@needs_postgres
+@pytest.mark.asyncio
+async def test_a_market_with_no_resolution_date_is_promoted_exactly_as_before(
+    session,
+):
+    """The NULL arm, asserted rather than left to the other tests to imply.
+
+    Most of the historical population has no `resolution_date`. If the clause
+    dropped those, it would stop repairing the rows it was never about — the
+    silent over-refusal this bound is most likely to cause.
+    """
+    await _seed(session)
+
+    await _run_phase_0c(session)
+
+    assert (await _row(session, PHASE_0C_CONTROL))[1] == HONEST, (
+        "an outcome on a market with no resolution_date lost its promotion: "
+        "the clause over-refuses on the NULL arm"
     )
 
 
