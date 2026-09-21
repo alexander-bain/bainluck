@@ -30,6 +30,8 @@ from app.utils.futures_unsupported_price import (
     midpoint_refuted_by_last_trade,
     needs_trade_disconfirmation,
     needs_trade_evidence,
+    needs_unbacked_ask_evidence,
+    price_is_an_unbacked_ask,
     price_is_unlocated_in_broken_field,
     price_is_unsupported,
     price_refuted_by_live_book,
@@ -3359,6 +3361,14 @@ async def _unsupported_price_outcome_ids(
         getattr(market, "market_type", None),
         getattr(market, "market_metadata", None),
     )
+    # 🔴 #7747 — A SECOND ARM SHARES THIS CANDIDATE LIST AND THIS SNAPSHOT READ.
+    # `price_is_an_unbacked_ask` asks a different question of the same three
+    # columns (does the book LOCATE the price, not does it REFUTE it) and needs
+    # the same one thing from the snapshot table: the newest Kalshi trade. It is
+    # unioned in here rather than given its own `_..._outcome_ids` helper so the
+    # page still issues ONE trade query per market — the arm adds 38 candidate
+    # legs across 34 boards on production, so the widened `IN` list is noise
+    # against the 429 the sibling already sends.
     candidates = [
         o
         for o in market.outcomes
@@ -3368,6 +3378,17 @@ async def _unsupported_price_outcome_ids(
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             in_exclusive_field=in_exclusive_field,
+        )
+        or needs_unbacked_ask_evidence(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_probability", None)),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+            in_exclusive_field=in_exclusive_field,
+            volume_24h=getattr(o, "volume_24h", None),
+            volume_24h_at=getattr(o, "volume_24h_at", None),
+            last_seen_at=getattr(o, "last_updated", None),
         )
     ]
     if not candidates:
@@ -3418,6 +3439,26 @@ async def _unsupported_price_outcome_ids(
             has_trade_evidence=o.id in latest_trade
             and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
+        )
+        # #7747. An OR, so the two arms are independent screens over one
+        # candidate list: a leg either arm refuses is withheld, and neither can
+        # acquit what the other caught.
+        or price_is_an_unbacked_ask(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_probability", None)),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+            _as_float(latest_trade.get(o.id)),
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
+            in_exclusive_field=in_exclusive_field,
+            # `getattr` throughout: a caller may hand this a market whose
+            # outcomes never loaded these columns, and an absent stamp must read
+            # as "do not withhold" rather than raise.
+            volume_24h=getattr(o, "volume_24h", None),
+            volume_24h_at=getattr(o, "volume_24h_at", None),
+            last_seen_at=getattr(o, "last_updated", None),
         )
     }
 

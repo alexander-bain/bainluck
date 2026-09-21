@@ -98,6 +98,7 @@ between 664 and 585 is legs no reader can reach; it is not claimed as a fix.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Iterable, Optional
 
 from app.utils.feed_market_quality import (
@@ -107,6 +108,8 @@ from app.utils.feed_market_quality import (
 )
 from app.utils.field_opening_coherence import MIN_FIELD_LEGS
 from app.utils.kalshi_empty_book import (
+    ASK_ONLY_TRUSTED_MAX,
+    BOOK_REFUTES_PRICE_EPSILON,
     KALSHI_BOOKMAKER,
     book_refutes_price,
     is_lone_ask_in_exclusive_field,
@@ -737,6 +740,305 @@ def price_refuted_by_live_book(
         # way an absent book does, with no second copy of the rule here.
         return book_refutes_price(None, yes_ask, float(probability))
     return book_refutes_price(yes_bid, yes_ask, float(probability))
+
+
+#: The venue's 24-hour traded volume that means NOBODY IS TRADING THIS (#7747,
+#: CERT-3244's required repair ``7747-TRADE-ACTIVITY-NOT-PRICE-MOVEMENT``).
+#:
+#: NOT A THRESHOLD, AND THAT IS THE POINT. This is not a floor below which we
+#: judge trading "too thin" — it is the venue reporting that the contract did not
+#: trade at all. There is nothing to tune and nothing to fit: one contract of
+#: 24-hour volume acquits the leg. Congo Republic cleared this arm on **$0.04**,
+#: and it should.
+VOLUME_MEANS_UNTRADED = 0
+
+
+def venue_reports_no_recent_trading(
+    volume_24h: Optional[int],
+    volume_24h_at: Optional[datetime],
+    last_seen_at: Optional[datetime],
+) -> bool:
+    """Did the venue, on our most recent look at this row, report zero 24-hour volume? (#7747)
+
+    🔴 THIS COLUMN EXISTS BECAUSE TWO PREVIOUS ANSWERS TO THIS QUESTION WERE
+    FALSIFIED AGAINST THE VENUE, and the second one is worth stating because it is
+    the subtler mistake. CERT-3242 refused every price printing at its own ask
+    over a wide spread; four legs were being traded at that ask right then.
+    CERT-3244 replaced that with PRICE-MOVEMENT recency
+    (``last_updated - price_changed_at >= 24h``) — and a market can trade
+    repeatedly at an unchanged price, so that refused Egypt (48.5h static,
+    **$8.73** of 24h volume), Arch Manning (308h static, **$3.24**) and Congo
+    Republic (48.5h, **$0.04**).
+
+    Measured on production 2026-09-21, the specimen and all three counterexamples
+    are near-identical in every column we stored at the time — each at its own ask
+    across a wide spread, every ``volume`` NULL — and TIME DOES NOT SEPARATE THEM:
+    Manning is 308h static and trading, Mensik 70h static and not. So the axis is
+    not "how long has this sat", it is "did anyone trade it", and the only place
+    that fact existed was the venue. ``KalshiMarket.volume_24h`` was already parsed
+    on every poll and dropped on the floor; the capture in
+    ``tasks/futures_price_refresh._write_prices`` now keeps it.
+
+    🔴 THE FRESHNESS TEST IS ROW-RELATIVE AND CARRIES NO CONSTANT, which is what
+    makes an ingestion outage unable to widen this set. ``volume_24h_at`` and
+    ``last_updated`` are written from the SAME ``func.now()`` in one UPDATE, so a
+    reading taken on our latest look at the row satisfies ``>=`` exactly. Any
+    writer that advances the touch-stamp WITHOUT taking a volume reading — the
+    resolution writes in ``tasks/kalshi.py``, the withdrawal clears, the
+    empty-book decline that skips the row entirely — leaves the stamp behind and
+    this returns False. A wall-clock bound (``now - volume_24h_at < 6h``) would
+    instead have gone false for the whole fleet during an outage and then, worse,
+    gone TRUE again on a stale zero the moment a single unrelated writer touched
+    the row. This is #7537's structural property, on the pair of columns that
+    answers this question.
+
+    🔴 EVERY ABSENCE FAILS OPEN (gotcha #53). The column is populated FORWARD, so
+    every row predating the first capture reads NULL — which is "we have never
+    asked the venue", not "the venue says nobody is trading this". For a rule that
+    WITHHOLDS, only a positive reading may withhold. Those legs are not thereby
+    unguarded: the ones carrying a zero bid and no trade are refused by
+    :func:`price_is_unsupported`, a different arm on different columns.
+    """
+    if volume_24h is None or volume_24h_at is None or last_seen_at is None:
+        return False
+    if volume_24h > VOLUME_MEANS_UNTRADED:
+        return False
+    # The reading must come from our most recent write of this row; see the
+    # freshness note above. `>=` rather than `==` so a future writer that stamps
+    # the volume without touching `last_updated` still counts.
+    return volume_24h_at >= last_seen_at
+
+
+def needs_unbacked_ask_evidence(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    *,
+    in_exclusive_field: bool,
+    volume_24h: Optional[int] = None,
+    volume_24h_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
+) -> bool:
+    """The row-only half of :func:`price_is_an_unbacked_ask` (#7747).
+
+    Same role, and the same reason, as :func:`needs_trade_evidence` has for
+    :func:`price_is_unsupported`: everything here is already on the outcome row,
+    so the serializer can settle the overwhelming majority of legs without
+    touching the snapshot table, and only the survivors cost a trade read. The
+    trade term is the sole thing the full predicate adds, so this is stated as a
+    delegation rather than a second copy of the rule — see the call site, which
+    unions these candidates into the ONE snapshot query the sibling arm already
+    runs rather than opening a second round trip.
+
+    THE VOLUME TERM LIVES HERE RATHER THAN IN THE FULL PREDICATE because all three
+    of its columns are already on the outcome row, so putting it in the cheap
+    screen costs nothing and removes the legs it acquits from the trade read
+    entirely. All three default to ``None`` — which
+    :func:`venue_reports_no_recent_trading` reads as "do not withhold" — so a
+    caller that has not been taught to pass them screens NOTHING IN, rather than
+    screening everything in on an absent reading.
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if not in_exclusive_field:
+        return False
+    if row_carries_a_verdict(resolution_source):
+        return False
+    if probability is None or yes_bid is None or yes_ask is None:
+        return False
+    if float(yes_ask) - float(yes_bid) < ASK_ONLY_TRUSTED_MAX:
+        return False
+    if float(probability) < float(yes_ask) - BOOK_REFUTES_PRICE_EPSILON:
+        return False
+    # CERT-3244's repair. A leg somebody is trading is a live execution even when
+    # its price prints at the ask and has not moved in days — the helper's
+    # docstring carries the seven legs that falsified the two rules without this
+    # term.
+    return venue_reports_no_recent_trading(volume_24h, volume_24h_at, last_seen_at)
+
+
+def price_is_an_unbacked_ask(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+    *,
+    has_trade_evidence: bool,
+    in_exclusive_field: bool,
+    volume_24h: Optional[int] = None,
+    volume_24h_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
+) -> bool:
+    """True when a field leg's price is its own ask and nothing backs that ask (#7747).
+
+    WHAT A READER SAW. ``/futures/61308736`` ("2027 US Open Men's Singles
+    Winner") crowned **Jakub Mensik at 74%** in the page's largest type, ranked
+    #1 above **Jannik Sinner 31%** and **Carlos Alcaraz 27%**, and repeated the
+    card in the "MORE TENNIS" rail of every live tennis event page. Read at the
+    venue the same morning (``KXATP-27USO-MEN``, notices 26/27 — the venue's own
+    API, not our mirror): ``yes_bid 0.0400`` (size 7), ``yes_ask 0.7400``,
+    ``volume_24h 0.00``, ``liquidity 0.0000``. Every actual YES buyer on that
+    book is at three or four cents, 45 contracts in total. The 74 is the FAR
+    SIDE — ``yes_ask`` is ``1 − no_bid``, and the venue quotes both at size 171,
+    the same order.
+
+    🔴 SIX SHIPPED ARMS ACQUIT THIS ROW AND EVERY ONE OF THEM IS RIGHT, which is
+    why it needed a new question rather than a loosened threshold. Measured by
+    calling each of them on the specimen's own columns:
+
+      * :func:`price_is_unsupported` and :func:`needs_trade_evidence` —
+        ``_is_ask_only_book`` requires a bid of zero, and this bid is 0.04. The
+        book is REAL. It simply does not reach the price.
+      * :func:`price_refuted_by_live_book` — ``book_refutes_price`` fires above
+        the ask, and 0.74 IS the ask. A book does not refute its own offer.
+      * :func:`price_is_unlocated_in_broken_field` — its gate
+        (:func:`field_names_two_favourites`) needs two legs above a half, and
+        this board has exactly one.
+      * ``is_empty_book_midpoint`` / ``bout_price_is_supported`` (#6777, #5247)
+        — named in #7747 as the prior art that "would refuse this shape", and
+        they do not: the spread is 0.70 against an ``EMPTY_BOOK_MIN_SPREAD`` of
+        0.90, and the price sits 0.35 from the midpoint against a tolerance of
+        0.01. Two independent failures, so no threshold nudge reaches it. That
+        claim in the issue was an inference and is corrected there.
+
+    THE QUESTION NOBODY WAS ASKING is not "does the book refute this price" but
+    "does the book LOCATE it". A quote of 0.04/0.74 is consistent with every
+    number in a seventy-point range, and we print the top of it.
+
+    WHY A FIELD, AND WHY THIS IS #6846's ARGUMENT AND NOT A NEW ONE.
+    :func:`is_lone_ask_in_exclusive_field` already drops the ask bound inside a
+    PROVED single-winner partition, on the reasoning that "an ask-only book
+    states an UPPER BOUND ... rendering a column of upper bounds as if each were
+    a point estimate is not a small overstatement of each leg; it inverts the
+    ranking and destroys the distribution". A 4c bid under a 74c ask does not
+    turn that upper bound into a point estimate. This arm is that same sentence
+    applied to a book that is two-sided and still locates nothing, and it is
+    scoped to the same proved partition for the same reason — outside a field an
+    upper bound is "a defensible thing to print when it is the only number in the
+    frame", which this module already says and does not retract.
+
+    🔴 RULE 2'S EXEMPTION IS NOT RE-LITIGATED, AND THE MEASUREMENT IS WHY.
+    :func:`price_is_unsupported` deliberately spares a leg carrying a positive
+    ``last_price`` — "trade evidence beats a wide book ... whether a real trade
+    goes stale is the freshness question (#5314, #5781)" — and that exemption is
+    a recorded decision this lane must not overturn on a hunch. It rests on the
+    trade being INDEPENDENT information: a book of 0.00/0.99 with a trade at 0.35
+    is told something by that trade. Measured on production 2026-09-21 over the
+    467 legs of proved exclusive Kalshi fields whose price sits at their own ask
+    across a spread of at least :data:`ASK_ONLY_TRUSTED_MAX`:
+
+        book shape   newest Kalshi trade        legs
+        bid = 0      never traded (0.0)          388
+        bid = 0      AT the ask                   41
+        bid > 0      AT the ask                   38
+        either       INSIDE the spread              0
+
+    **Not one.** The exemption is protecting no independent trade in this
+    population, because in it the trade and the ask are the same number. So the
+    last clause below acquits a leg whose trade locates a price strictly below
+    its ask — rule 2's case, kept whole and now with a control that proves it
+    still fires — and refuses only the ones where the trade corroborates
+    nothing. The 388 are already withheld by #6846; the MARGINAL population is
+    the other 79 legs on 60 boards.
+
+    🪤 THAT PAIR IS A TABLE-LEVEL COUNT AND IS NOT THIS ARM'S REACH, which is the
+    correction CERT-3246 asked for by name
+    (``7747-CORRECT-SERVED-REACH-PROSE``). It counts ``futures_outcomes`` rows
+    matching the book shape; 23 of them were ALREADY withheld at serve time by a
+    sibling arm, and the showcase board ``11589805`` serves ``prices_withheld: 15``
+    of 15 and draws no hero at all. Measured on the SERVED PAYLOAD instead, and
+    after the volume term below narrows it: **22 legs on 22 boards, of which 19
+    change the leg the hero names, and 6 boards are left with no number.** A
+    table-level anomaly is not a defect until the served payload carries it, and
+    reach measured on columns is not reader impact.
+
+    🔴 AND THE TRADE TERM ALONE WAS NOT ENOUGH — CERT-3242 FALSIFIED IT AGAINST
+    THE VENUE. The first cut refused every price printing at its own ask over a
+    wide spread, and that is wrong for a leg somebody is trading RIGHT NOW at that
+    ask: Tunisia 0.79 on $87.67 of 24-hour volume, Gambia 0.80 on $54.43, Cameron
+    Dicker 0.52 on $9.30, Davante Adams 0.85 on $6.10. All four are served today
+    and all four were withheld by the staged code. **A trade at the ask is not
+    evidence because it is STALE, not because it is at the ask** — and the
+    specimen's own diagnosis had said so (``volume_24h 0.00``,
+    ``liquidity 0.0000``) while the predicate quietly failed to encode it. The
+    cross-tab above is still true and was still not sufficient: it separated
+    trades by PRICE and the missing axis was ACTIVITY.
+
+    🔴 AND THE SECOND ANSWER WAS WRONG TOO — CERT-3244 FALSIFIED *THAT* AGAINST
+    THE VENUE, and it is the more instructive of the two. The repair read the
+    missing axis as TIME and used price-movement recency
+    (``last_updated - price_changed_at``). **A market can trade repeatedly at an
+    unchanged price**, so that withheld Egypt 70% (48.5h static, **$8.73** of 24h
+    volume), Arch Manning 60% (308h static, **$3.24**) and Congo Republic 70%
+    (48.5h, **$0.04**). Time does not separate the population at all: Manning is
+    308h static and trading, the specimen 70h static and not.
+
+    :func:`venue_reports_no_recent_trading` is the axis that does, and it is the
+    ship's own criterion rather than a proxy for it — #7747 says "whose venue
+    reports zero 24-hour volume" in its first sentence. It needed a column
+    (``FuturesOutcome.volume_24h``, #7747 step 1): measured on production
+    2026-09-21, the specimen and all three counterexamples were near-identical in
+    every field then stored, so no predicate over the old columns could have
+    expressed it. The figure costs no venue call — ``KalshiMarket.volume_24h`` was
+    already parsed on every poll and discarded.
+
+    AND IT IS SYMMETRIC ACROSS THE BOOK SHAPES, WHICH THE OBVIOUS FIX IS NOT.
+    Carving this to ``yes_bid > 0`` to stay clear of rule 2 was the first draft
+    and it is INVERTED: it refuses a leg bid at one cent while sparing the
+    identical leg bid at nothing, i.e. it is most lenient exactly where the book
+    is weakest. A zero bid backs a 74c ask no better than a 4c bid does.
+
+    SIX BOARDS ARE LEFT WITH NO NUMBER, and that is #6846's measured cost
+    accepted again in its own words — "a field whose only priced legs are all
+    untaken offers has no price discovery to show", and Alex's standing rule that
+    a number which cannot be shown honestly leaves the space empty. Measured on
+    the SERVED PAYLOAD, not on the table: an earlier draft of this paragraph said
+    seventeen of sixty, which was the row-level count and included boards already
+    serving no price at all before this arm existed.
+
+    ``has_trade_evidence`` carries gotcha #53's distinction exactly as it does on
+    :func:`price_is_unsupported`: an absent snapshot is "we never looked", not
+    "it never traded", and it FAILS OPEN. Zero legs of the measured population
+    lack a snapshot, so this costs nothing today and is the honest default the
+    day it does not.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21). Serving the bid instead would be a
+    number we invented, and ``calibration_probability`` coalesces to stored
+    values (gotcha #144 / ruling 103), so an invented price becomes a forecast we
+    are graded on. The leg keeps its name and loses its number.
+
+    SCOPED TO OPEN MARKETS BY ITS CALL SITE and to ungraded rows here: a settled
+    board is a RESULT, and settled means settled.
+    """
+    if not needs_unbacked_ask_evidence(
+        source,
+        resolution_source,
+        probability,
+        yes_bid,
+        yes_ask,
+        in_exclusive_field=in_exclusive_field,
+        volume_24h=volume_24h,
+        volume_24h_at=volume_24h_at,
+        last_seen_at=last_seen_at,
+    ):
+        return False
+    if not has_trade_evidence:
+        return False
+    if last_price is None:
+        return False
+    # The one acquittal, and it is rule 2's own case: a trade that locates a
+    # price STRICTLY BELOW the ask is independent information about where this
+    # outcome trades, and the wide book does not get to overrule it. A trade at
+    # (or above) the ask corroborates nothing the ask did not already say, and a
+    # zero is "never traded" rather than a trade at zero.
+    trade = float(last_price)
+    if 0 < trade < float(yes_ask) - BOOK_REFUTES_PRICE_EPSILON:
+        return False
+    return True
 
 
 #: What "the last trade supports the served price" means, and it is anchored to

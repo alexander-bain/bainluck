@@ -976,6 +976,37 @@ class FuturesOutcome(Base):
         DateTime(timezone=True)
     )
 
+    # #7747. The venue's own 24-hour traded volume FOR THIS LEG, captured on the
+    # price poll. Same vocabulary as `volume` above — NULL = never asked, 0 =
+    # the venue says nobody traded this — and the distinction is load-bearing
+    # rather than tidy: `utils/futures_unsupported_price` WITHHOLDS a price on a
+    # reading of 0, so a fabricated 0 blanks a board. Populated forward, so every
+    # row predating the first capture reads NULL and is served.
+    #
+    # NEITHER EXISTING VOLUME COLUMN ANSWERS THIS QUESTION, measured rather than
+    # assumed (2026-09-21). `volume` above is LIFETIME and is written only on the
+    # ingest INSERT, so it is NULL on the whole specimen population and never
+    # refreshed. `FuturesMarket.volume_24h` is the BOARD's figure and aggregates
+    # every leg on it, so a quiet leg on a busy field is invisible to it — which
+    # is the specimen's exact shape (Mensik's board read 1 while he traded 0).
+    #
+    # Numeric(14, 2) AND NOT AN INTEGER. Kalshi publishes this as a two-decimal
+    # fixed-point string and sub-unit figures are real — the smallest in the
+    # falsifying set is Congo Republic's $0.04, which an integral column stores
+    # as 0, i.e. as the withhold trigger itself. Matches `FuturesMarket.liquidity`,
+    # the existing two-decimal venue money column. Keep in lockstep with the DB
+    # type (`alembic/versions/fo_volume_24h_add_per_leg_venue_volume.py`).
+    volume_24h: Mapped[Optional[float]] = mapped_column(Numeric(14, 2))
+
+    # When `volume_24h` was OBSERVED, and it is a separate column for the reason
+    # #2024 split `price_changed_at` off `last_updated`. Borrowing `last_updated`
+    # as the volume's freshness would let a writer that touches only the
+    # touch-stamp (the resolution writes in `tasks/kalshi.py`, the withdrawal
+    # clears) present a three-day-old zero as a reading taken minutes ago — a
+    # self-sealing lie in the withholding direction. #7747 was BLOCKed twice for
+    # conflations of exactly this shape.
+    volume_24h_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
     __table_args__ = (
         UniqueConstraint("market_id", "external_id", name="uq_outcome_market_external"),
     )
