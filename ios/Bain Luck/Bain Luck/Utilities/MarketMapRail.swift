@@ -804,19 +804,76 @@ enum MarketMapRail {
     /// are ROUTED, not guessed:
     /// `alex-inbox/native-090b-2146PT-…-one-card-needs-your-call.md`.
     ///
+    /// 🔴 **`.projected` IS "NO VERDICT YET", WHICH IS NOT THE SAME THING AS
+    /// "NOT STARTED" — #7655.** ``SpectrumTense/of(finalTotal:isSettled:)`` reaches
+    /// `.projected` whenever the event is not over and this card has no final, and
+    /// a game in its third quarter satisfies both. So every rung of a LIVE ladder
+    /// wore `PRE-GAME` over the price right now. THE PHOTOGRAPH: event 14780544
+    /// (`Colts 13 at Chiefs 10`, `live`, 37:45 left), iPhone 17 at phone width,
+    /// 2026-09-20 18:27 PT, `artifacts-native-020/n278-before-2150.png`:
+    ///
+    /// ```
+    ///    27.5+   PRE-GAME   ███████████   99%
+    ///    36.5+   PRE-GAME   █████████     82%
+    ///    59.5+   PRE-GAME   █████         36%
+    /// ```
+    ///
+    /// 23 points were already on the board, which is why `27.5+` priced at 99% —
+    /// a number that exists BECAUSE the game is underway, captioned as if the game
+    /// had not begun. Six minutes later the cleared rung read `HIT` (#4907) while
+    /// the ones above it still said `PRE-GAME` at prices that had moved again: one
+    /// row admitting the game is on, the rows beside it denying it.
+    ///
+    /// 🟠 **THE CAPTION IS DROPPED, NOT RE-WORDED, AND THAT IS THE WHOLE POINT.**
+    /// #6290 is this same false tense over a **line**, and it had an honest
+    /// substitute to swap in — `opening_odds.over_under`, a served pre-game number.
+    /// There is no per-rung equivalent: #3925 measured and refused it (`movement`
+    /// carries no capture timestamp, 28 of 566 openings were captured 52–172 min
+    /// after first pitch, and 51.4% have none at all). So the repair cannot be
+    /// "draw the right number", and the only alternative to dropping the word is
+    /// inventing one for "this is the price now" — a second tense vocabulary on a
+    /// screen Alex ruled must have exactly one (*settled means settled*, #3930,
+    /// #1650). An uncaptioned row is a line, a bar and a percentage, which is what
+    /// a graded row already looks like beside it.
+    ///
+    /// 🟢 **THIS GATE ALSO MAKES THE LADDER UNIFORM AGAIN.** With the caption
+    /// column drawn only when there IS a caption, a mid-game ladder rendered its
+    /// graded rows and its `PRE-GAME` rows at two different bar widths. Each
+    /// lifecycle now captions all of its rungs the same way or none of them.
+    ///
     /// - Parameters:
     ///   - finalTotal: the card's graded total, or nil. As above.
     ///   - isSettled: whether the event is over — the card's own predicate.
     ///   - canStillBeGraded: #4018's gate, above.
+    ///   - hasStarted: whether first pitch/kickoff has passed — #7655's gate.
+    ///     ``EventState/hasStarted(commenceTime:now:)``, which answers TRUE for a
+    ///     nil commence time on purpose. That default points the right way here:
+    ///     not knowing when a game begins is not a licence to call its prices
+    ///     pre-game — and it costs nothing measurable: of the 9,465 events created
+    ///     in the 14 days to 2026-09-21, **0** carry a null `commence_time`, across
+    ///     every status, so the nil arm is a contract guard rather than a
+    ///     population. Passed in rather than derived from `isSettled`, for the same
+    ///     reason `canStillBeGraded` is — a status can lie about one and not the
+    ///     other, and a `scheduled` row whose commence time has passed is exactly
+    ///     the case where the status is the thing that is stale.
     ///   - rungResult: THIS row's verdict, settled or live. Non-nil ⇒ no caption.
     static func spectrumRowCaption(
         finalTotal: Int?,
         isSettled: Bool,
         canStillBeGraded: Bool,
+        hasStarted: Bool,
         rungResult: TotalLadderResult?
     ) -> String? {
         guard rungResult == nil else { return nil }
         guard canStillBeGraded || isSettled else { return nil }
+        // #7655. Only the `.projected` arm prints a tense that the clock can
+        // falsify; `.settled` is a statement about a finished game and `.graded`
+        // prints nothing. Asking the tense rather than re-testing `isSettled`
+        // keeps this clause attached to the arm it is about, so a fourth case
+        // cannot silently inherit it.
+        if hasStarted, SpectrumTense.of(finalTotal: finalTotal, isSettled: isSettled) == .projected {
+            return nil
+        }
         return spectrumRungCaption(finalTotal: finalTotal, isSettled: isSettled)
     }
 
