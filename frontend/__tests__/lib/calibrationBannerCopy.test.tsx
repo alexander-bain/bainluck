@@ -63,9 +63,16 @@ function bannerRegion(source: string): string {
  * the very documentation that prevents the regression, and the cheapest way to
  * make this suite green would be to delete that explanation. Comments are
  * prose about the copy; only the copy is the copy.
+ *
+ * #7696: it strips BARE `/* ... *\/` blocks too, not only brace-wrapped ones.
+ * Inside a JSX opening tag an attribute-position comment needs no braces, and
+ * the comment explaining a retired attribute reading necessarily QUOTES it —
+ * so a scan that skipped those would read the documentation of a fix as the
+ * defect itself, and the cheapest green would again be deleting the
+ * explanation. Same rule, one more syntax: comments are prose about the copy.
  */
 function withoutComments(region: string): string {
-  return region.replace(/\{\/\*[\s\S]*?\*\/\}/g, " ");
+  return region.replace(/\{\/\*[\s\S]*?\*\/\}/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
 /**
@@ -236,5 +243,46 @@ describe("the calibration staleness banner", () => {
     const raw = bannerRegion(SOURCE);
     expect(raw).toContain("catches up as the backlog");
     expect(raw).toContain("not being refreshed right now");
+  });
+});
+
+/**
+ * #7696 — the banner's temporal facts must not be read off `cache`.
+ *
+ * `cache` is attached by `_dated()` alone, so reading the artifact's date or age
+ * from it makes both invisible on the main tier — which still banners, because
+ * `_serve` clamps `availability` down for an unreadable staged bank without
+ * attaching one. `decideCalibrationStaleness` resolves the tier-independent
+ * fallback (`generated_at`, `producer.age_s`); the page's job is to use it.
+ *
+ * Source assertions, like the rest of this file, and for the same reason: the
+ * page is a `"use client"` SWR component and mounting it proves less.
+ */
+describe("#7696 the banner dates the artifact on every tier", () => {
+  const copy = withoutComments(bannerRegion(SOURCE));
+
+  it("reads no temporal fact off `cache` — the fallback-tier-only block", () => {
+    // The literal defect: `data-generated-at={data.cache?.generated_at ?? ""}`
+    // published an empty attribute on exactly the tier the sentence went blind
+    // on, so the rail could not catch it either.
+    expect(copy).not.toMatch(/data\.cache\?\.(generated_at|age_s)/);
+    expect(copy).toContain("data-generated-at={staleness.generatedAt");
+  });
+
+  it("the undisclosed branch renders the date it now has", () => {
+    // Non-vacuity: this string is absent from the pre-fix page, and the two
+    // assertions above are all satisfiable while the branch stays wordless.
+    const undisclosed = copy.slice(copy.indexOf('staleness.kind === "undisclosed"'));
+    expect(undisclosed).toContain("staleness.generatedAt &&");
+    expect(undisclosed).toContain("These numbers were built");
+    expect(undisclosed).toContain("stalenessAgeLabel(staleness.ageS)");
+  });
+
+  it("and only when it has one — no `earlier` furniture in this branch", () => {
+    // The `last-good` branch prints the literal "earlier" for an undated
+    // artifact. Copying that here would put a word where a fact belongs in the
+    // one state whose subject is that we could not read the inputs.
+    const undisclosed = copy.slice(copy.indexOf('staleness.kind === "undisclosed"'));
+    expect(undisclosed).not.toContain('"earlier"');
   });
 });

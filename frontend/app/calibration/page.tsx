@@ -1050,7 +1050,8 @@ export default function CalibrationPage() {
           data-testid="calibration-stale-banner"
           data-staleness-kind={staleness.kind}
           data-cache-reason={data.cache?.reason ?? ""}
-          data-generated-at={data.cache?.generated_at ?? ""}
+          /* #7696: NOT `data.cache?.generated_at` — blind on the main tier. */
+          data-generated-at={staleness.generatedAt ?? ""}
           /* An undated last-good still banners — dropping it would lose the
              honesty signal entirely — but it cannot say WHEN, and the rail
              should be able to tell those two apart. */
@@ -1159,6 +1160,29 @@ export default function CalibrationPage() {
           )}
           {staleness.kind === "undisclosed" && (
             <>
+              {/* #7696: this state rendered no temporal fact whatsoever — not a
+                  date, not an age — because both were read off `cache`, which
+                  only a fallback tier attaches. This is the state the MAIN tier
+                  lands in whenever the staged bank is unreadable
+                  (`availability_floor`: `measured is not True` -> stale), and
+                  there the curve can be minutes old. A reader was told we
+                  couldn't confirm how current it was, over a payload that dated
+                  itself twice.
+
+                  Same sentence and same format as the `last-good` branch above,
+                  deliberately: one way to date an artifact on this page. It is
+                  conditional because an undated payload is still a real input
+                  and "built earlier" would be furniture, not a fact — the
+                  branch simply stays as it was. */}
+              {staleness.generatedAt && (
+                <>
+                  These numbers were built{" "}
+                  {new Date(staleness.generatedAt).toLocaleString("en-US", {
+                    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                  })}
+                  {staleness.ageS !== null && ` (${stalenessAgeLabel(staleness.ageS)} ago)`}.{" "}
+                </>
+              )}
               {/* #2649: same defect, same fix. The old lead was "The curve
                   rebuilds hourly, but …" — an unconditional schedule claim in
                   the one banner state whose entire subject is that we could
