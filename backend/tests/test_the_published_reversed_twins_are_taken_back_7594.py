@@ -314,15 +314,19 @@ class TestWhichPublishedRowsTheRepairSelects:
 
 
 class _Result:  # pragma: no cover - test rail
-    def __init__(self, scalar=None, rowcount=0):
+    def __init__(self, scalar=None, rowcount=0, rows=()):
         self._scalar = scalar
         self.rowcount = rowcount
+        self._rows = list(rows)
 
     def scalar(self):
         return self._scalar
 
     def scalar_one(self):
         return self._scalar
+
+    def all(self):
+        return self._rows
 
 
 class _Recorder:  # pragma: no cover - test rail
@@ -343,6 +347,14 @@ class _Recorder:  # pragma: no cover - test rail
             return _Result(scalar=0)
         if sql.strip().upper().startswith("UPDATE EVENTS"):
             return _Result(rowcount=1)
+        if "FOR UPDATE" in sql.upper():
+            # CERT-3204: the take-back takes row ownership of the canonical
+            # before it writes. This rig records rather than executes, so it
+            # answers with the same canonical the stubbed screen names — and it
+            # is recognised by `FOR UPDATE`, which is the property that matters:
+            # a change that dropped the lock would stop reaching this branch and
+            # `test_the_canonical_is_owned_before_the_write` would fail.
+            return _Result(rows=[(_CANONICAL_ID, "scheduled")])
         return _Result()
 
     async def get(self, _model, pk):
@@ -478,6 +490,24 @@ class TestWhatThePassIssues:
         banked = rec.inserts_into_bank(repair.BANK_TABLE)
         assert len(banked) == 1
         assert rec.sql.index(banked[0]) > rec.sql.index(rec.updates()[0])
+
+    async def test_the_canonical_is_owned_before_the_write(
+        self, repair, monkeypatch
+    ):
+        """CERT-3204. The take-back locks the canonical, and it does so FIRST.
+
+        The correlated `EXISTS` in the UPDATE is the second half of the same
+        rule and is asserted next door; this is the half that makes the
+        interleaving impossible rather than merely unlikely, so it is pinned on
+        ORDER — a lock taken after the write is not a lock.
+        """
+        _code, rec = await _run_with(
+            repair, monkeypatch, _args(apply=True, backup=True)
+        )
+
+        owned = [sql for sql in rec.sql if "FOR UPDATE" in sql.upper()]
+        assert len(owned) == 1, "the counterparts are owned exactly once per attempt"
+        assert rec.sql.index(owned[0]) < rec.sql.index(rec.updates()[0])
 
     async def test_the_write_is_a_compare_and_swap_on_the_status_read(
         self, repair, monkeypatch

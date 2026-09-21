@@ -3425,6 +3425,60 @@ jobs:
             echo "::error::#7640 rank repair round trip SKIPPED — the gate did not run"
             exit 1
           fi
+      - name: "#7594 canonical ownership — provision the disposable database"
+        # A database of its own, for the reason the #4079 step above gives: this
+        # contract builds and drops the tables the take-back touches, and
+        # `bl_searchtest` has been populated by eighty steps before it, whose
+        # inbound foreign keys make the drop fail outright. Created empty here
+        # and thrown away with the runner.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_canonical_own_7594"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "CANONICAL_OWNERSHIP_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_canonical_own_7594"
+
+      - name: "#7594 the take-back cannot empty a fixture (two real Postgres sessions)"
+        # CERT-3204. The repair holds `FOR UPDATE` row ownership of the canonical
+        # through the take-back, and NOTHING CHEAPER CAN SEE THE HAZARD: the
+        # sqlite rail the other race tests use serialises writers and ignores
+        # `FOR UPDATE` entirely, so those tests pass with the lock, without it,
+        # and with a lock that does nothing. Two real sessions tell the three
+        # apart — one retires the canonical after the screen and holds it
+        # uncommitted, and the take-back is asserted to WAIT.
+        #
+        # The second case is the strawman: the same interleaving with ownership
+        # stubbed out MUST empty the fixture, or the rig is not reproducing the
+        # hazard and the first case proves nothing.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_7594_canonical_ownership_pg.py \
+            -v -rs 2>&1 | tee /tmp/own7594.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/own7594.txt; then
+            echo "::error::#7594 ownership contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          # `[^0-9]` so a future `12 passed` cannot satisfy a gate asking for 2.
+          grep -qE "[^0-9]2 passed," /tmp/own7594.txt || {
+            echo "::error::#7594 ownership contract did not run both cases"
+            exit 1
+          }
 
   frontend-build:
     runs-on: ubuntu-latest

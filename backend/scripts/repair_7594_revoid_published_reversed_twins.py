@@ -291,6 +291,62 @@ async def candidates(s):
     ).scalars().all()
 
 
+async def own_the_canonical(s, ids) -> list[tuple[int, str]]:
+    """Take row ownership of the counterparts, then read their statuses. (CERT-3204)
+
+    Returns the `(id, status)` pairs that are STILL reachable, read under the
+    lock and therefore true until this transaction ends.
+
+    🔴 WHY A CORRELATED ``EXISTS`` IN THE UPDATE WAS NOT ENOUGH, which is the
+    whole of CERT-3204's finding. Under READ COMMITTED a statement's subquery is
+    evaluated against that statement's snapshot, and MVCC readers do not block —
+    so a writer that retires the canonical and commits AFTER the snapshot is
+    taken cannot be seen by the subquery, while the subject's own row is updated
+    perfectly happily. Both rows commit retired and the fixture has zero
+    reader-visible cards: the window is narrower than the one CERT-3199 found,
+    and exactly as fatal.
+
+    ``FOR UPDATE`` closes it because it is the one read that DOES block. Whatever
+    the interleaving:
+
+    * the competing writer got there first and committed ⇒ this read returns the
+      retired status, the caller keeps its row, and nothing is written;
+    * the competing writer is mid-transaction ⇒ this read WAITS for it, then
+      returns the committed status, which is the case above;
+    * the competing writer arrives after this read ⇒ it waits for the take-back's
+      own transaction, so it re-evaluates against a database in which the subject
+      is already retired, rather than against the one this pass started in.
+
+    There is no fourth order. The pair can no longer be judged concurrently by
+    two writers who each believe the other row is alive.
+
+    ``ORDER BY id`` is the deadlock discipline: two passes that lock the same two
+    rows take them in the same sequence. ``with_for_update()`` rather than raw
+    SQL so the sqlite rail the race tests drive ignores the clause instead of
+    failing to parse it — sqlite serialises writers anyway, which is why the
+    interleaving this closes needs REAL Postgres and two REAL sessions to prove
+    (``tests/integration/test_7594_canonical_ownership_pg.py``).
+    """
+    from sqlalchemy import select as _select
+
+    from app.models.models import Event
+    from app.utils.event_completion import is_retired_event_status
+
+    locked = (
+        await s.execute(
+            _select(Event.id, Event.status)
+            .where(Event.id.in_(list(ids)))
+            .order_by(Event.id)
+            .with_for_update()
+        )
+    ).all()
+    return [
+        (row_id, status)
+        for row_id, status in locked
+        if not is_retired_event_status(status)
+    ]
+
+
 async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
     """Take this row back, or establish that not writing it is safe. (CERT-3197)
 
@@ -356,6 +412,10 @@ async def own_or_dispose(s, event, *, bank: bool) -> tuple[str, str | None]:
         survivors = await _surviving_counterpart_rows(s, event)
         if survivors is None:
             return "unscreenable", before
+        if not survivors:
+            return "last_row_standing", before
+
+        survivors = await own_the_canonical(s, [row_id for row_id, _st in survivors])
         if not survivors:
             return "last_row_standing", before
 
