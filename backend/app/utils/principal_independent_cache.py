@@ -1057,6 +1057,23 @@ _stats: dict[str, int] = {
     # misses would make the fix that closes the page-two hole look, on every
     # dashboard, exactly like the tier degrading.
     "cross_worker_declined_age": 0,
+    # LAT-P277 (#2143): the SAME decline, in the tier that is read FIRST.
+    #
+    # The bound is enforced by a byte-identical predicate in two places —
+    # `_read_cross_worker` (counted above) and `_read_fresh` (this one) — and
+    # only the Redis half was ever instrumented. L1 is consulted first, and the
+    # warm rail republishes every `FEED_LIVE_REPUBLISH_PERIOD_S` inside a
+    # process that just stored the artifact, so on a warm worker the decline
+    # happens HERE and the Redis hop is never reached: the counter that existed
+    # covered the rarer path. Absorbed into `builds`, the rail refreshing its
+    # own inputs is indistinguishable from a cold worker rebuilding them, which
+    # is the reading the comment above exists to prevent.
+    #
+    # Counted per READ, not per request: `get_or_build` re-reads under the
+    # coalescing lock, so a request that declines on both sides of the lock
+    # counts twice — and that pair is itself the signal that whoever it queued
+    # behind did not refresh the artifact either.
+    "declined_age": 0,
 }
 
 # --- LAT-P223 (#2143 residual): THE AGGREGATE CANNOT NAME THE ARTIFACT ------
@@ -1970,6 +1987,7 @@ def _read_fresh(
     ttl_s: float,
     now: float,
     read_bound: Optional[float] = None,
+    count_decline: bool = True,
 ) -> tuple[bool, Any, float]:
     """`(hit, value, age_s)` from the process-local tier.
 
@@ -1997,6 +2015,20 @@ def _read_fresh(
         entries.pop(key, None)
         return False, None, 0.0
     if read_bound is not None and age_s > read_bound:
+        # LAT-P277: counted, for the same reason the cross-worker half is. This
+        # branch is only reachable when a caller asked for a bound NARROWER than
+        # the namespace TTL — an equal bound is already spent by the eviction
+        # above — so the counter can only ever mean "the warm rail declined a
+        # still-valid artifact", never "something expired".
+        #
+        # `count_decline` exists because `get_or_build` reads this tier TWICE
+        # per call, on both sides of the coalescing lock, and a decline never
+        # evicts — so the second read is GUARANTEED to decline the same entry
+        # again. Counting both would report exactly double the requests the
+        # bound actually sent to the builder, every time, which is the kind of
+        # constant factor an operator silently divides by or, worse, does not.
+        if count_decline:
+            _bump(namespace, "declined_age")
         return False, None, 0.0
     return True, value, max(0.0, age_s)
 
@@ -2547,7 +2579,12 @@ async def get_or_build(
     try:
         # Re-read under the lock: the caller we queued behind may have just
         # stored it, which is the whole point of coalescing.
-        ok, value, age_s = _read_fresh(namespace, key, _ttl, _clock(), _read_bound)
+        #
+        # LAT-P277: this request's decline, if it declines, was already counted
+        # by the read above — see `count_decline` in `_read_fresh`.
+        ok, value, age_s = _read_fresh(
+            namespace, key, _ttl, _clock(), _read_bound, count_decline=False
+        )
         if ok:
             _note_reuse(namespace, reuse_sink, SHARED_TIER_LOCAL)
             _note_age(namespace, age_s)
