@@ -447,10 +447,10 @@ def test_the_label_the_task_passes_is_the_label_that_is_enrolled():
     """
     import inspect
 
+    from app.tasks import repair_openings_from_first_snapshot
     from app.utils.task_verdict import ENFORCED_TASKS
-    import app.tasks as tasks
 
-    source = inspect.getsource(tasks.repair_openings_from_first_snapshot)
+    source = inspect.getsource(repair_openings_from_first_snapshot)
     enrolled = [name for name in ENFORCED_TASKS if f'"{name}"' in source]
 
     assert enrolled == ["opening_repair_drain"], (
