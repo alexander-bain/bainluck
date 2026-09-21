@@ -1191,7 +1191,34 @@ export default function MarketMapSection({
       // half off four rungs reading 0.02 / 0.005 / 0.01 / 0.01, and
       // `/events/15304450` (Boston College 28-21 Rutgers) carried 21 rungs of
       // which every single one is 0.99, 0.04 or 0.01.
-      if (!isDone || probabilitiesQuoteALine(parsed.map((p) => p.probability))) {
+      // #7639: the question is asked once PLAY HAS STARTED, not only once it
+      // has stopped.
+      //
+      // `!isDone ||` made the GAME's status the gate on whether the ladder was
+      // asked about its shape at all, and a half finishes long before its game
+      // does. Seen at 390px on 2026-09-20 5:58 PM PDT, `/events/15312237`
+      // (Inter Miami 1-1 San Diego, MLS, LIVE at 56'): the 1st half card read
+      // `PROJECTION MIA by 1.5+` over a half that had already finished level,
+      // beside a 2nd half card printing the identical tile in the identical
+      // place on the rail. The venue's own `First Half Winner` in the same
+      // payload read `Tie 0.99 / Miami 0.01 / San Diego 0.01`.
+      //
+      // Its 1H ladder, rendered: `SD by 1.5+ 1%`, `MIA by 1.5+ 1%`. Two rungs,
+      // both settled, ZERO inside the interior band — the exact population
+      // `probabilitiesQuoteALine` was written to refuse, and does refuse the
+      // moment the game goes final. `closest50` over two equal 1% rungs elects
+      // one arbitrarily, so even the TEAM on that tile was rung order.
+      //
+      // WHY NOT `quotesALine` ALONE. Because #5488 considered that and declined
+      // it, and its CONTROL says so in as many words: before the whistle a dead
+      // half ladder is a book that has not opened yet, the marker is still a
+      // projection off a live game, and the shape test has no business removing
+      // it. That control renders `scheduled` and stands untouched here. What it
+      // did not have in view is the state between its two: a game in play, where
+      // a dead half ladder is a book that has CLOSED. Kickoff is the line
+      // between those two readings of the same silence, so kickoff is the gate.
+      const playHasStarted = isLive || isDone;
+      if (!playHasStarted || probabilitiesQuoteALine(parsed.map((p) => p.probability))) {
         halfMarkers.push({
           key: "proj",
           // #5206: the half maps already made this exact distinction for a
