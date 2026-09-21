@@ -8886,6 +8886,33 @@ def _record_trending(q: str) -> None:
         pass
 
 
+def _typeahead_shed_stages(futures_shed: bool, outcome_arm_shed: bool) -> list[str]:
+    """The stage names `/typeahead` declares in `degraded` (#1740).
+
+    Pure, and module-level rather than inline in the route, for the reason
+    `lib/searchAnswerState.ts` gives about its own half of this contract: a
+    decision buried in a 2,000-line request handler cannot be tested, and this
+    one decides whether a client says "nothing matches that" or "we could not
+    finish looking".
+
+    Order is fixed and severity-descending — `futures` loses the whole futures
+    stage, `outcome_names` loses only the bonus outcome-name lane — so a reader
+    diffing two payloads compares lists, not sets. The names are machine-facing:
+    both clients read only the length and neither renders one (notice 34).
+
+    Returns `[]` when nothing shed, which the caller turns into an ABSENT key —
+    absent and empty both mean the answer was complete, matching `/search`.
+    """
+    return [
+        stage
+        for stage, shed in (
+            ("futures", futures_shed),
+            ("outcome_names", outcome_arm_shed),
+        )
+        if shed
+    ]
+
+
 @router.get("/typeahead")
 async def typeahead_search(
     q: str = Query(
@@ -10692,6 +10719,33 @@ async def typeahead_search(
         result["_evidence"] = _evidence_echo
     if did_you_mean:
         result["did_you_mean"] = did_you_mean
+
+    # #1740: THE DROPDOWN DECLARES THE STAGES IT COULD NOT FINISH.
+    #
+    # Both shed flags were computed here and then dropped on the floor — the only
+    # way out was `debug_shed`, inside the `debug_timing` branch below, which a
+    # normal keystroke never sets. So the wire could not distinguish "this prefix
+    # matches nothing" from "we ran out of time looking", and both clients printed
+    # the first sentence for both. That is the claim about the world `/search`
+    # stopped making in #2239, one surface earlier.
+    #
+    # SAME CONTRACT AS `/search`'s payload site, deliberately, because the clients
+    # decide with one shared helper (`lib/searchAnswerState.ts` and its Swift
+    # mirror): a list of stage names, ADDITIVE, absent when the answer is
+    # complete. The names are machine-facing — the helpers read only the length,
+    # content wins over `degraded` so a partial answer still renders what it has,
+    # and neither client puts a stage name on screen (notice 34).
+    #
+    # BOTH flags are declared, not only the futures one, and the cache is why
+    # that is safe to say. A `_ta_degraded` answer is never written below
+    # (LAT-P007), so that label cannot outlive its own request. An outcome-arm
+    # shed IS written — and the 35-trial measurement at that block records it as
+    # bimodal, 5/5 or 0/5 per term, so the label a warm entry carries is the one
+    # the rebuild would compute rather than a stale transient.
+    _ta_shed_stages = _typeahead_shed_stages(_ta_degraded, _ta_outcome_arm_shed)
+    if _ta_shed_stages:
+        result["degraded"] = _ta_shed_stages
+
     if debug_timing:
         # Emitted BEFORE the cache write below, and the write is skipped for any
         # debug answer anyway — a timing echo must never be served to a normal
