@@ -108,6 +108,97 @@ TENNIS_MATCH_WINNER_PREFIXES = frozenset({
 LLM_CATEGORIES_THAT_MAY_NOT_CREATE_EVENTS = frozenset({"football"})
 
 
+# #7739 — WHICH SIDE OF "A vs. B" POLYMARKET NAMES FIRST, AND WHY IT IS A LIST
+# OF LEAGUES RATHER THAN A RULE.
+#
+# `_create_event_from_prediction_market` stamps `home_team_name=team_a`, i.e.
+# the club Polymarket names FIRST. Measured against ESPN's explicit `homeAway`
+# on 2026-09-22 (`artifacts-lane1-591/measure_pm_orientation.py` and its soccer
+# twin — venue-side reads on both sides, no table of ours in the loop):
+#
+#     WNBA + NHL      87 fixtures    87 AWAY-first     0 HOME-first
+#     soccer          34 fixtures     0 AWAY-first    34 HOME-first
+#
+# The one apparent NHL exception, `nhl-ott-mon-2026-09-26`, is ESPN carrying a
+# split-squad home-and-home as two fixtures at the same minute; the join could
+# not tell them apart, and the Polymarket slug matches the other one.
+#
+# So there is NO single convention to encode. Polymarket mirrors each sport's
+# own listing habit: US leagues list the visitor first ("Toronto Tempo vs.
+# Connecticut Sun" is Toronto AT Connecticut), world football lists the host
+# first. `team_a` is therefore RIGHT for soccer and European club basketball and
+# WRONG for the US leagues, and a blanket flip would break the larger half.
+#
+# THE KEY IS A RESOLVED LEAGUE, NOT A SPORT FAMILY. `basketball_other` looks
+# like the bucket to flip and is not: read 2026-09-22, its Polymarket-minted
+# rows are overwhelmingly Lithuanian, Serbian, Italian, German and Spanish club
+# basketball, which lists the host first like the football around it. Only a
+# league resolved from the CLUBS (`placeable_league_for_matchup` /
+# `covered_league_for_matchup`, both of which answer off `teams` and
+# `team_identity_mapping`) separates the WNBA from the Basketball Champions
+# League. `llm_sport_category` is not that key either — it is contaminated
+# (#7900 has chess and a bridge-building contest reading `football`).
+#
+# MEASURED LEAGUES ONLY. NBA, NFL and MLB almost certainly belong here — the
+# habit is the same across US sport — but on 2026-09-22 the venue listed no
+# in-window NBA or NFL fixture and no MLB fixture the join could reach, so they
+# are NOT in this set. Adding one is a measurement, not a guess: re-run the
+# script above when that league's slate is live and append it with its counts.
+#
+# 🔴 WHY NOTHING ON THE MINT PATH CALLS THIS, AND WHY THAT IS THE CORRECT
+# ANSWER RATHER THAN AN OMISSION. The obvious use is to swap the two names in
+# `_create_event_from_prediction_market` before it stamps `home_team_name`. That
+# branch is UNREACHABLE for every league in this set. All three keys are
+# covered by `ODDS_API_COVERED_PREFIXES` (`icehockey_nhl_preseason` by prefix),
+# and `covered_league_for_matchup` refuses the mint outright a few lines above
+# the stamp — so a fixture whose clubs resolve well enough to name its league
+# never reaches the stamp at all, and one whose clubs do NOT resolve has no
+# league to test. The rows this ship repairs exist precisely because they fell
+# in the second group: the WNBA specimen (15310072) predates that refusal, and
+# the NHL rows are titled with bare nicknames ("Capitals vs. Hurricanes") that
+# `teams` cannot resolve.
+#
+# A flip wired into the mint path would therefore have passed CI, read as a
+# fix, and moved nothing — so this knowledge is applied where it can act: the
+# repair in `backend/scripts/repair_polymarket_event_orientation.py`, as the
+# SECOND signal beside ESPN's own `homeAway`. Making the nickname rows resolve
+# is a real and separate ship — and note it does not want a flip either, it
+# wants that same refusal, because a resolvable NHL fixture is a twin of one
+# the schedule already carries (#2693).
+POLYMARKET_AWAY_FIRST_LEAGUES = frozenset({
+    "basketball_wnba",
+    "icehockey_nhl",
+    "icehockey_nhl_preseason",
+})
+
+
+def polymarket_lists_away_first(league: Optional[str]) -> bool:
+    """Whether Polymarket names the AWAY club first for ``league``. #7739.
+
+    ``league`` is a resolved league key, never a catch-all: an unresolved or
+    ``<prefix>_other`` key returns False, so the orientation we already store
+    stands. Fail-closed is the right default here because the unmeasured
+    population is dominated by world football, where naming the first club as
+    the host is CORRECT — a flip on doubt would manufacture the defect it is
+    meant to remove.
+    """
+    return bool(league) and league in POLYMARKET_AWAY_FIRST_LEAGUES
+
+
+def orient_matchup_for_venue(
+    source: Optional[str], league: Optional[str], team_a: str, team_b: str,
+) -> tuple[str, str]:
+    """``(home, away)`` for a game minted from a prediction market. #7739.
+
+    Identity outside the measured Polymarket leagues, which is every Kalshi
+    market (its titles and tickers are a separate convention this ship did not
+    measure) and every league not in :data:`POLYMARKET_AWAY_FIRST_LEAGUES`.
+    """
+    if source == "polymarket" and polymarket_lists_away_first(league):
+        return team_b, team_a
+    return team_a, team_b
+
+
 def auto_create_sport_key_from_category(
     llm_sport_category: Optional[str],
 ) -> Optional[str]:
