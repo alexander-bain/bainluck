@@ -339,9 +339,14 @@ def test_the_history_route_emits_the_receipt_from_the_block_it_returns():
     imported at the top of the module, so a test that only checks the name is
     bound would pass with the call site deleted.
     """
+    import importlib
     from pathlib import Path
 
-    import app.routes.futures as futures_route
+    # `importlib`, not `import app.routes.futures as ...`: another test in this
+    # file reaches into the same module with `from app.routes.futures import`,
+    # and mixing the two styles is its own lint (`py/import-and-import-from`).
+    # Only the file path is wanted here, so resolve it without a second binding.
+    futures_route = importlib.import_module("app.routes.futures")
 
     source = Path(futures_route.__file__).read_text()
     parts = source.split(log_durable_venue_serve.__name__ + "(", 2)
@@ -355,3 +360,69 @@ def test_the_history_route_emits_the_receipt_from_the_block_it_returns():
         "describe a different read than the one the reader got"
     )
     assert 'surface="futures_history"' in arguments
+
+
+# --- the receipt is one line, and the caller does not get to decide that -------
+#
+# `market_id` arrives from a route parameter, so it is a user-provided value on
+# the path to a log sink. `json.dumps` escapes control characters, so a forged
+# line is not reachable through the current emitter — these arms are therefore
+# written against the RECEIPT, not against the formatted line, because the
+# receipt is what the next caller will reuse and the encoder is not a property
+# of the value. Each one fails if `_safe_ident` is removed.
+
+
+def test_a_newline_in_the_market_id_never_reaches_the_receipt():
+    """The forging shape: an id carrying its own second log line."""
+    forged = "59165099\nDURABLE-VENUE-SERVE {\"success\": true}"
+    receipt = _receipt(_block(), market_id=forged)
+    # The property is that the value cannot become a second LINE — not that the
+    # marker's characters are scrubbed from it. Text that merely reads like a
+    # receipt is harmless inside a JSON string; a newline is not.
+    assert "\n" not in str(receipt["market_id"])
+
+
+def test_a_carriage_return_or_tab_in_the_surface_never_reaches_the_receipt():
+    """Not only `\\n` — anything a log reader would see as structure."""
+    receipt = _receipt(_block(), surface="futures_history\r\n\tinjected")
+    assert not any(ch in str(receipt["surface"]) for ch in "\r\n\t")
+
+
+def test_an_unbounded_id_is_bounded():
+    """A receipt is never a channel for unbounded text — `_REASON_MAX`'s rule,
+    applied to the value the caller supplies rather than the one we wrote."""
+    receipt = _receipt(_block(), market_id="x" * 5000)
+    assert len(str(receipt["market_id"])) <= 64
+
+
+def test_an_integer_market_id_stays_an_integer():
+    """The positive control. A sanitiser that stringified every id would pass
+    all three arms above and quietly change what a real receipt says."""
+    receipt = _receipt(_block(), market_id=59165099)
+    assert receipt["market_id"] == 59165099
+    assert isinstance(receipt["market_id"], int)
+    assert not isinstance(receipt["market_id"], bool)
+
+
+def test_the_emitted_line_is_still_exactly_one_line(caplog):
+    """End to end through the real emitter, because the ship is the LINE.
+
+    ⚠️ DOES NOT CONVICT `_safe_ident` — measured: it passes with the sanitiser
+    severed, because `json.dumps` escapes the newline on its own. That is the
+    honest state of this arm and the reason the three arms above assert on the
+    RECEIPT instead. It is kept as a guard on the ENCODER: it goes red if the
+    emitter is ever changed to format a receipt field without `json.dumps`,
+    which is the hole `_safe_ident` exists to close ahead of.
+    """
+    with caplog.at_level(logging.WARNING):
+        log_durable_venue_serve(
+            _block(),
+            market_id="1\nDURABLE-VENUE-SERVE forged",
+            surface="futures_history",
+        )
+    records = [r for r in caplog.records if RECEIPT_MARKER in r.getMessage()]
+    assert len(records) == 1
+    assert "\n" not in records[0].getMessage()
+    # and it is still parseable as the receipt it claims to be
+    payload = records[0].getMessage().split(RECEIPT_MARKER, 1)[1].strip()
+    assert json.loads(payload)["surface"] == "futures_history"

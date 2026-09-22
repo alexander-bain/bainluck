@@ -58,6 +58,40 @@ RECEIPT_MARKER = "DURABLE-VENUE-SERVE"
 #: receipt must never be a channel for unbounded text.
 _REASON_MAX = 120
 
+#: Bound on any identifier copied into the receipt. Same reasoning as
+#: `_REASON_MAX`, applied to the two values that arrive from the caller.
+_IDENT_MAX = 64
+
+
+def _safe_ident(value: Any) -> Any:
+    """A value fit to appear in a log line, whatever the caller handed us.
+
+    `market_id` reaches this module from a route parameter, so it is a
+    user-provided value on the path to a log sink — the shape CodeQL flags as
+    `py/log-injection`, and it is right to: a receipt is a line a person greps,
+    and a line a stranger can add newlines to is a line a stranger can forge.
+
+    `json.dumps` already escapes control characters, so the forging is not
+    reachable TODAY. That is an argument about the current encoder, not about
+    the value, and the encoder is not where this guarantee belongs: the next
+    caller to log a receipt field without `json.dumps` would inherit the hole
+    silently. So the value is narrowed here, at the boundary, once.
+
+    An integer id stays an integer — that is what a market id is, and it is
+    unforgeable by construction. Anything else becomes a bounded string with
+    control characters removed, which keeps the receipt readable when the id is
+    a legitimate non-integer and keeps it to one line when it is not.
+    """
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    # Drop, rather than escape: a receipt has no use for a control character,
+    # and removing them cannot itself introduce one.
+    cleaned = "".join(ch for ch in text if ch.isprintable())
+    return cleaned[:_IDENT_MAX]
+
 
 def _reader_scale_refusal(block: dict) -> Optional[str]:
     """The reader-scope refusal this response carries, if it refused one.
@@ -103,8 +137,8 @@ def durable_serve_receipt(
     outcomes = _as_count(block.get("outcomes_served"))
     scale_refused = _reader_scale_refusal(block)
     return {
-        "market_id": market_id,
-        "surface": surface,
+        "market_id": _safe_ident(market_id),
+        "surface": _safe_ident(surface),
         "tier": "durable",
         # The whole claim, in one boolean, under the guards named in the module
         # docstring. `state == "warm"` is what excludes `cold`, `empty`,
