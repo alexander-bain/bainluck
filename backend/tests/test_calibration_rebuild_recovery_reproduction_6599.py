@@ -111,6 +111,10 @@ SLOW_VM_MS = 100_000
 WINDOW_MS = 1_350_000
 VMS_PER_SLOT = 8
 
+#: The genuine repair predicate, captured at import so the BEFORE arm can be
+#: turned back ON again within one test (see the fixture).
+_REAL_PACKING = sf.packing_split_factor
+
 
 class _StatementCancelled(Exception):
     """Postgres cancelling at its own backstop; the message is what it emits."""
@@ -298,11 +302,29 @@ class _Run:
         #: How many slots carry a recorded cancellation after each beat. This is
         #: the clock the split threshold actually runs against.
         self.per_beat_cancel_entries: list[int] = []
+        #: The most virtual questions this build ever had banked at once, reset
+        #: at each invalidation the way the cursor itself is.
+        #:
+        #: **Units are not a measure of progress once a plan can be refined**
+        #: and this is the number that is. Cutting a slot raises the unit count
+        #: without doing any work, so "21 of a 30-unit plan" and "9 of a 16-unit
+        #: plan" cannot be compared — the underlying QUESTIONS can, because a
+        #: partition conserves them. Every arm below that compares the repair
+        #: against its absence compares this.
+        self.max_banked_vms = 0
 
 
 @pytest.fixture
 def drive(monkeypatch):
-    """Drive the real beat loop over one durable cursor. Returns a callable."""
+    """Drive the real beat loop over one durable cursor. Returns a callable.
+
+    ``packing_splits=False`` is the BEFORE: :func:`packing_split_factor`, the
+    #6599 repair, stubbed to its own "no cut is owed" answer, which is the loop
+    exactly as it stood when this file was written. Sections 1 and 3 reproduce
+    the defect on that arm and assert the repair on the live one, in the same
+    test — the reproduction is preserved rather than refreshed from a tree that
+    no longer has the defect in it (notice 50).
+    """
 
     async def _drive(
         *,
@@ -312,6 +334,7 @@ def drive(monkeypatch):
         reset_every=None,
         window_ms=WINDOW_MS,
         beat_is_slow=False,
+        packing_splits=True,
     ):
         roster = _roster(buckets * VMS_PER_SLOT)
         slots = _slots(roster, buckets)
@@ -325,8 +348,18 @@ def drive(monkeypatch):
         monkeypatch.setattr(cmb, "staged_lease", lambda: 0.0)
         monkeypatch.setattr(cmb, "STAGED_FUTURES_BUCKETS", buckets)
         monkeypatch.setattr(pc, "_futures_generation_sql", lambda: "SELECT 1")
+        # Set both ways round on EVERY call: the loop imports this predicate
+        # inside ``_run_staged_futures``, and ``monkeypatch`` is function-scoped,
+        # so an arm patched mid-test otherwise leaks into every later arm of the
+        # same test and reports the BEFORE as the AFTER.
+        monkeypatch.setattr(
+            sf,
+            "packing_split_factor",
+            _REAL_PACKING if packing_splits else (lambda *_a, **_kw: 0),
+        )
 
         out = _Run()
+        banked_vms: set[str] = set()
         for beat_no in range(1, max_beats + 1):
             runner = _Runner(
                 window_ms=window_ms,
@@ -340,6 +373,10 @@ def drive(monkeypatch):
                 era = (beat_no - 1) // reset_every
                 runner.population_version = f"q268+{era}"
                 runner.ledger.population_version = f"q268+{era}"
+                # The cursor is refused whole, so the questions it had banked are
+                # gone with it — counting them across an invalidation would credit
+                # the build with work it has to do again.
+                banked_vms = set()
             db = _Db(runner, roster, slow, beat_is_slow=beat_is_slow)
             monkeypatch.setattr(
                 pc,
@@ -370,6 +407,9 @@ def drive(monkeypatch):
                 len(payload.get("committed_units") or []),
                 len(payload.get("served_units") or []),
             )
+            for vms in db.completed:
+                banked_vms |= vms
+            out.max_banked_vms = max(out.max_banked_vms, len(banked_vms))
             if rows is not None:
                 out.completed_at = beat_no
                 break
@@ -546,17 +586,47 @@ class TestRefinementIsInertWhenBeatsEndOnTheWindow:
 
         Reproduced without a database and without any claim about WHY a unit is
         slow.
-        """
-        run = await drive(buckets=16, slow_slots=16, max_beats=40)
 
-        assert run.completed_at is not None, "the build does finish, by grinding"
-        assert run.max_cancel_count < STAGED_UNIT_SPLIT_AFTER, (
-            "a slot must cancel twice to be refined; across this whole build no "
-            f"slot cancels more than {run.max_cancel_count} time(s)"
+        **The BEFORE is preserved and the repair is asserted beside it.** The
+        third clause below — not one slot cut in the whole build — is the
+        sentence #6599 exists to falsify, so the repair reddens it by
+        construction. It is kept as the ``packing_splits=False`` arm, which is
+        this loop as it stood when the defect was filed, rather than deleted or
+        re-snapshotted from a tree that no longer contains the defect
+        (notice 50). What the live arm adds is that the cut which now happens
+        cannot have come from the cancellation path: there is still not one
+        cancellation anywhere in the build.
+        """
+        before = await drive(
+            buckets=16, slow_slots=16, max_beats=40, packing_splits=False
         )
-        assert run.first_split_beat is None, (
+
+        assert before.completed_at is not None, "the build does finish, by grinding"
+        assert before.max_cancel_count < STAGED_UNIT_SPLIT_AFTER, (
+            "a slot must cancel twice to be refined; across this whole build no "
+            f"slot cancels more than {before.max_cancel_count} time(s)"
+        )
+        assert before.first_split_beat is None, (
             "not one slot is cut across the entire build — the refinement exists "
             "and is never reached, so it is not the recovery"
+        )
+
+        after = await drive(buckets=16, slow_slots=16, max_beats=40)
+
+        assert after.max_cancel_count == 0, (
+            "the repair must not be reached through a cancellation — if this "
+            "build starts cancelling, the cut below is the OLD mechanism and "
+            f"this test is measuring nothing new: {after.max_cancel_count}"
+        )
+        assert after.first_split_beat == 1, (
+            "the slow success is evidence on the beat it is measured, not after "
+            f"a quorum: {after.first_split_beat}"
+        )
+        assert after.completed_at is not None and (
+            after.completed_at < before.completed_at
+        ), (
+            "and the build that cuts finishes sooner than the one that grinds: "
+            f"{after.completed_at} vs {before.completed_at} beats"
         )
 
     @pytest.mark.asyncio
@@ -565,15 +635,33 @@ class TestRefinementIsInertWhenBeatsEndOnTheWindow:
 
         One slow unit consumes most of the window, so the next one does not fit
         and the beat stops. That is the rate the whole build runs at, and it is
-        what makes completion proportional to the unit count.
+        what makes completion proportional to the unit count. The repair's whole
+        claim is that this number moves, so the BEFORE is pinned on the arm that
+        does not have it and the lift is asserted against that arm rather than
+        against a constant somebody chose.
         """
-        run = await drive(buckets=16, slow_slots=16, max_beats=40)
+        before = await drive(
+            buckets=16, slow_slots=16, max_beats=40, packing_splits=False
+        )
 
-        banking_beats = [n for n in run.per_beat_banked if n]
+        banking_beats = [n for n in before.per_beat_banked if n]
         assert banking_beats, "the rig must bank something, or it measures nothing"
-        assert max(run.per_beat_banked) <= 2, (
-            f"a beat banked {max(run.per_beat_banked)} units; this regime is "
+        assert max(before.per_beat_banked) <= 2, (
+            f"a beat banked {max(before.per_beat_banked)} units; this regime is "
             "defined by one slow unit filling the window"
+        )
+
+        after = await drive(buckets=16, slow_slots=16, max_beats=40)
+
+        assert max(after.per_beat_banked) > max(before.per_beat_banked), (
+            "the pin is what the repair is for: "
+            f"{max(after.per_beat_banked)} vs {max(before.per_beat_banked)} "
+            "units in the best beat"
+        )
+        assert after.max_banked_vms == before.max_banked_vms, (
+            "and it is the same work, re-partitioned — a repair that banked "
+            "FEWER questions while banking more units would be counting its own "
+            f"cuts: {after.max_banked_vms} vs {before.max_banked_vms}"
         )
 
 
@@ -590,9 +678,19 @@ class TestCompletionScalesWithThePopulation:
         8 → 9 beats and 16 → 14 here; 32 → 30 and 64 → 61 on the same rig, left
         out of CI for runtime. At the production plan of 128 units this is ~120
         beats, and a beat is hourly.
+
+        Measured on the arm WITHOUT the #6599 packing cut, because the law being
+        stated is the one that makes the defect a defect: with a fixed partition
+        the build costs a beat per unit. The repair's job is to break that
+        proportionality, and it does — which is why leaving it live here would
+        quietly turn this into a test of the repair.
         """
-        small = await drive(buckets=8, slow_slots=8, max_beats=40)
-        large = await drive(buckets=16, slow_slots=16, max_beats=40)
+        small = await drive(
+            buckets=8, slow_slots=8, max_beats=40, packing_splits=False
+        )
+        large = await drive(
+            buckets=16, slow_slots=16, max_beats=40, packing_splits=False
+        )
 
         assert small.completed_at is not None, "the small build must finish"
         assert large.completed_at is not None, "the large build must finish"
@@ -622,16 +720,38 @@ class TestAnInvalidationShorterThanTheBuild:
         every recorded cancellation. A build that needs ~N beats and is
         invalidated every K < N beats can never reach the end, no matter how
         many beats it is given.
-        """
-        run = await drive(buckets=16, slow_slots=16, max_beats=60, reset_every=8)
 
-        assert run.completed_at is None, (
+        **And the #6599 repair does not fix this, which is the honest half.**
+        The live arm below cuts from beat one and gets measurably further into
+        the population each era — but an invalidation period shorter than the
+        build it interrupts is a livelock about the PERIOD, and better packing
+        shortens the build without ever making it shorter than eight beats. The
+        repair is worth what it banks, not a claim that the page publishes.
+        """
+        before = await drive(
+            buckets=16, slow_slots=16, max_beats=60, reset_every=8,
+            packing_splits=False,
+        )
+
+        assert before.completed_at is None, (
             "the build must NOT complete — this is the reproduction of "
             "'the rebuild has never once reached 128 of 128 before a reset'"
         )
-        assert run.max_split_count == 0, (
+        assert before.max_split_count == 0, (
             "and no slot is ever cut across the whole run, so the recovery half "
             "cannot rescue it either"
+        )
+
+        after = await drive(buckets=16, slow_slots=16, max_beats=60, reset_every=8)
+
+        assert after.completed_at is None, (
+            "THE LIMIT: the repair does not publish a build whose invalidation "
+            "period is shorter than it is, and a test that let this pass "
+            f"silently would be selling one: completed at {after.completed_at}"
+        )
+        assert after.max_banked_vms > before.max_banked_vms, (
+            "what it does buy is depth into the population before each reset: "
+            f"{after.max_banked_vms} vs {before.max_banked_vms} questions"
         )
 
     @pytest.mark.asyncio

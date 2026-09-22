@@ -42,10 +42,12 @@ from app.utils.calibration_phase_ledger import (
 
 # Section 5 only. The sibling control file owns the rig whose census clause this
 # mechanism reddened, and the clause has to be restated against THAT rig or it
-# is a different measurement. Importing ``drive`` registers it as a fixture here.
+# is a different measurement. Importing ``staged_beat_loop`` registers it as a
+# fixture here; the sibling's own ``drive`` is NOT imported, because that one
+# holds this mechanism OFF (see its docstring) and every test below needs it on.
 from tests.test_calibration_oversized_slot_is_cut_on_its_proof_6599 import (  # noqa: E501,F401
     _transient,
-    drive,
+    staged_beat_loop,
 )
 
 #: 8 slots over 1,024 virtual questions — 128 to a slot on average.
@@ -260,6 +262,22 @@ def arena(monkeypatch):
     return make
 
 
+@pytest.fixture
+def drive(staged_beat_loop):
+    """Section 5's rig: the sibling's beat loop with BOTH candidates live.
+
+    That is the composition — ``cancellation_is_conclusive`` and this file's
+    packing cut in the same loop — and it is the loop production runs, which is
+    why the clauses in section 5 are asserted here rather than in the sibling
+    (whose own ``drive`` isolates its candidate by holding this one off).
+
+    A pass-through and not a wrapper with defaults: the knobs a test flips are
+    the knobs the loop takes, so an arm that turns one off says so on its own
+    call and the regime is readable at the assertion rather than up here.
+    """
+    return staged_beat_loop
+
+
 def _arena(monkeypatch, *, packing: bool):
     """Run N beats against one durable cursor. Returns ``(run_beat, bus)``."""
     bus = _Bus()
@@ -338,7 +356,8 @@ async def _until_published(run_beat, roster, *, max_beats=40, **kwargs):
         per_beat.append(_units_this_beat(beat))
         cancels.append(len(beat.db.cancelled))
         if cut_on_beat is None and any(
-            "unit_packing_split:applied:" in k for k in beat.runner.ledger.stages
+            k.endswith("unit_packing_split:applied")
+            for k in beat.runner.ledger.stages
         ):
             cut_on_beat = index
         if beat.rows is not None:
@@ -436,6 +455,13 @@ class TestThePinAtOneUnitPerBeat:
         ``unit_packing_factor`` and ``unit_packing_split:applied`` are what an
         operator greps to tell "the build cut its tail because a unit succeeded
         slowly" from the four other reasons a beat can end early.
+
+        **One DECISION, counted by outcome.** The factor is recorded once,
+        against the slot that was declined — it is a property of the partition,
+        not of a slot — and the outcomes are counts rather than one gauge per
+        slot, because a per-slot ledger over a 203-unit plan is a ledger nobody
+        reads. The count is the assertion that the sweep reached the whole
+        remainder and not just the head of it.
         """
         run_beat, _bus = arena()
         beat = await run_beat(_roster())
@@ -443,15 +469,24 @@ class TestThePinAtOneUnitPerBeat:
 
         assert "staged:window_stop:unit_too_large" in stages
         factors = {k: v for k, v in stages.items() if "unit_packing_factor:" in k}
-        applied = {k for k in stages if "unit_packing_split:applied:" in k}
-        assert len(factors) == 1, f"expected exactly one slot cut, got {factors}"
+        assert len(factors) == 1, (
+            f"the factor is the plan's and is recorded once, got {factors}"
+        )
         assert set(factors.values()) == {2}, (
             "720,000 ms against a 1,350,000 ms window is worth two children, and "
             f"the factor must be that measurement: {factors}"
         )
-        assert len(applied) == 1, f"the cut was not applied: {sorted(stages)}"
-        assert stages.get("staged:units_split") == 1
+        # BUCKETS slots, one of them banked by this very beat before it declined.
+        assert stages.get("staged:unit_packing_split:applied") == BUCKETS - 1, (
+            "the cut is the unbanked REMAINDER's, so every slot but the one this "
+            f"beat banked is cut: {sorted(stages.items())}"
+        )
+        assert stages.get("staged:units_split") == BUCKETS - 1
         assert "staged:unit_packing_not_persisted" not in stages
+        assert not [k for k in stages if k.endswith("unit_packing_split:already")], (
+            "a slot offered to the sweep twice would refuse itself and put a "
+            f"refusal about the LOOP in the plan's ledger: {sorted(stages)}"
+        )
 
 
 # =============================================================================
@@ -799,3 +834,169 @@ class TestTheCutDoesNotChangeAPublishedNumber:
                 f"control {base.splits} — which is the regime half, stated so "
                 "it is a measurement rather than a silent difference"
             )
+
+
+# =============================================================================
+# 6. THE SCOPE OF THE CUT — a plan's evidence, spent on the plan
+# =============================================================================
+
+
+class TestTheCutIsThePlansAndNotOneSlots:
+    """🔬 **The measurement that changed this mechanism, kept as its guard.**
+
+    The first build of this cut refined only the slot the beat had just
+    declined. It measured well at eight slots and was WORSE THAN DOING NOTHING
+    at the size production runs, and the reason is structural rather than
+    incidental: a slot-local cut converts one slot per beat, while the beat's
+    admission fence reads the carried WORST unit, so a beat that opens on an
+    uncut parent refuses the cheap children beside it and the plan never
+    converts. 128 near-uniform slots took 128 beats without the cut and 174
+    with it (lat941, the slot-normalised rig).
+
+    Cutting the unbanked REMAINDER on the same evidence converts the plan in
+    one beat, and the same population goes 128 → 99. The three tests below pin
+    the three things that had to be true for that to be sound rather than
+    merely faster.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_sweep_reaches_the_whole_unbanked_remainder(self, drive):
+        """Scope. One decision, spent on every slot it speaks for.
+
+        Read off the PLAN — the unit count the next beat is handed — rather
+        than off the ledger, because the ledger is this mechanism's own
+        bookkeeping and a count that agrees with itself proves nothing.
+        """
+        cut = await drive(buckets=16, slow_slots=16, max_beats=2)
+        uncut = await drive(
+            buckets=16, slow_slots=16, max_beats=2, packing_splits=False
+        )
+
+        assert uncut.per_beat_splits == [0, 0], (
+            f"the control must cut nothing: {uncut.per_beat_splits}"
+        )
+        # 16 slots, one banked by beat 1 before it declined, so 15 are cut — and
+        # all of them on beat ONE, which is the claim.
+        assert cut.per_beat_splits[0] == 15, (
+            "the whole unbanked remainder is cut on the beat the evidence "
+            f"arrives, not one slot of it: {cut.per_beat_splits}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_carried_reference_may_not_sweep_the_plan_it_cannot_name(
+        self, drive
+    ):
+        """Provenance. The ``max`` has two arms and one of them is anonymous.
+
+        ``unit_reference_ms`` is ``max(worst_unit_ms, prior_unit_ms)``. The
+        first is a unit THIS beat ran, so the partition it was measured at is
+        known and the sweep can scale by it. The second is carried from a
+        previous beat over a partition this beat cannot name — and once the
+        first cut lands, the children running are cheaper than the carried
+        number, so the carried arm wins the ``max`` and STAYS the reference.
+        Sweeping the plan on it re-cuts the children it made last beat, every
+        beat, which is a cascade and not a repair.
+
+        Deliberately on the NON-learning rig, which pins the carried cost the
+        way both #6599 rigs did before ``learns`` existed: that is the regime
+        where the carried arm can win the ``max`` forever, so it is the only
+        regime where this guard is reachable. Without the guard the split map
+        goes 15 → 41 → 74 → 103 on this arm; with it, at most one slot a beat,
+        which is the declined slot and no more.
+        """
+        run = await drive(
+            buckets=16, slow_slots=16, max_beats=12, conclusive_splits=False
+        )
+
+        assert run.per_beat_splits[0] == 15, (
+            "beat one HAS a reference it can name and sweeps the remainder — if "
+            f"it does not, the rest of this test is vacuous: {run.per_beat_splits}"
+        )
+        growth = [
+            later - earlier
+            for earlier, later in zip(run.per_beat_splits, run.per_beat_splits[1:])
+        ]
+        assert max(growth) <= 1, (
+            "after beat one the reference is the carried cost, which names no "
+            "partition, so it may cut the declined slot and nothing else: "
+            f"{run.per_beat_splits}"
+        )
+        assert max(run.per_beat_banked) > 1, (
+            "and the build must still be running units, or a bounded split map "
+            f"is just a stalled rig: {run.per_beat_banked}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_unscalable_reference_speaks_only_for_the_declined_slot(
+        self, drive
+    ):
+        """Provenance. The ``max`` has two arms and only one carries a partition.
+
+        ``unit_reference_ms`` is ``max(worst_unit_ms, prior_unit_ms)``. The
+        first is a unit THIS beat ran, so its slot — and therefore its
+        granularity — is known. The second is carried from a previous beat over
+        a partition this beat cannot name. Attributing the carried number to the
+        granularity of some other unit is exactly the cascade above, and the
+        rule is that an unscalable reference may cut the one slot with direct
+        evidence against it and nothing else.
+
+        ``carried=True, max_beats=1`` with a window too small for even one unit
+        is the state: the beat declines before completing anything, so
+        ``worst_unit_ms`` is zero and the carried cost is all there is.
+        """
+        blind = await drive(
+            buckets=16, oversized_slots=16, max_beats=1, window_ms=900_000
+        )
+
+        assert blind.per_beat_banked == [0], (
+            "the beat must complete nothing, or the reference is not the carried "
+            f"one and this test is about another branch: {blind.per_beat_banked}"
+        )
+        assert blind.per_beat_splits == [1], (
+            "exactly one slot — the declined one — may be cut on a reference "
+            f"whose partition is unknown: {blind.per_beat_splits}"
+        )
+
+
+class TestTheShipAtTheSizeProductionRuns:
+    """📈 **The number the ship is worth, measured where it is claimed.**
+
+    Every arm above is eight or sixteen slots. Production plans 203, and the
+    defect is precisely that the build is proportional to that count: one unit
+    per hourly beat, 108 of 203 banked, a week of the accuracy page serving the
+    same bank.
+
+    **The rig has to LEARN for this to mean anything**, and that is the second
+    measurement-validity finding of this queue. Both #6599 rigs re-pinned the
+    carried unit cost to a production constant on every beat, which fixes the
+    admission fence at a big unit's cost forever — so a mechanism whose entire
+    effect is to make units cheaper could not pay off in either of them, and its
+    first honest-looking numbers (16 → 22, 64 → 87, 128 → 174 beats) were
+    artifacts of that pin. ``learns=True`` carries the beat's own measured cost
+    forward, which is what ``measured_unit_ms`` does in production.
+
+    With it: 64 slots 64 → 52 beats, 128 slots 128 → 99. The 128 arm is left out
+    of CI for runtime; 64 is the one that runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_64_slot_build_publishes_a_fifth_sooner(self, drive):
+        base = await drive(
+            buckets=64, slow_slots=64, max_beats=140, learns=True,
+            conclusive_splits=False, packing_splits=False,
+        )
+        cand = await drive(
+            buckets=64, slow_slots=64, max_beats=140, learns=True,
+            conclusive_splits=False,
+        )
+
+        assert base.completed_at == 64, (
+            "the control is one beat per unit, which is the defect; if it is not "
+            f"64 the regime moved and the number below means something else: "
+            f"{base.completed_at}"
+        )
+        assert cand.completed_at is not None, "the candidate must publish at all"
+        assert cand.completed_at < base.completed_at * 0.9, (
+            "the ship is a materially sooner publish, not a beat or two: "
+            f"{cand.completed_at} vs {base.completed_at} beats"
+        )
