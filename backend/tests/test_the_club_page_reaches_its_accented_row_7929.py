@@ -117,8 +117,25 @@ ABSENT_COMPLETED = 15316893  # Montréal v Ottawa, the specimen, open 0.5830
 VISIBLE_COMPLETED = 15312790  # Montreal v Ottawa, open NULL
 
 
-def _ago(hours):
-    return datetime.now(timezone.utc) - timedelta(hours=hours)
+#: The twin sits this far after its counterpart — the gap the fold tolerates.
+TWIN_GAP = timedelta(minutes=15)
+
+
+def _ago(hours, now=None):
+    """`hours` before now, truncated to the hour — offset FIRST, then truncate.
+
+    The specimen pair is one row and its twin :data:`TWIN_GAP` later, and the
+    fold buckets candidates by UTC *day* on purpose: `event_twin_fold` says
+    two twins either side of midnight are never candidates and fail closed,
+    which is two cards. An untruncated anchor therefore straddles midnight
+    whenever ``now - 20h`` lands in the last quarter hour of a day, and the
+    pair stops folding — red for fifteen minutes a day, green either side of
+    it (gotcha #44). Truncating to the hour leaves 45 minutes of headroom in
+    front of the boundary, which no offset in this file comes near.
+    """
+    return ((now or datetime.now(timezone.utc)) - timedelta(hours=hours)).replace(
+        minute=0, second=0, microsecond=0
+    )
 
 
 def _soon(hours=72):
@@ -178,7 +195,7 @@ def _the_canadiens_rows():
         _event(
             ABSENT_COMPLETED,
             sport_id=S_NHL_PRE,
-            when=_ago(20) + timedelta(minutes=15),
+            when=_ago(20) + TWIN_GAP,
             home=ACCENTED,
             away="Ottawa Senators",
             home_team_id=MTL_PRESEASON,
@@ -471,4 +488,60 @@ class TestTheControls:
         assert ABSENT_UPCOMING not in ids, (
             "the fixture only the widening reaches is present, so this arm did "
             "not actually sever the widening and proves nothing"
+        )
+
+
+# --------------------------------------------------------------------------
+# The anchor itself (gotcha #44)
+# --------------------------------------------------------------------------
+
+
+class TestTheAnchorsDoNotBranchOnTheClock:
+    """The specimen pair must be ONE fold candidate at every minute of the day.
+
+    This file went red in CI for the quarter hour when ``now - 20h`` landed in
+    23:45–00:00 UTC: the twin is :data:`TWIN_GAP` later, so the pair sat either
+    side of midnight, `event_twin_fold` refused them as candidates *by design*
+    (it fails closed across the day boundary), and
+    ``test_the_card_carries_the_number_the_opponents_page_prints`` counted two
+    cards. Green at every other minute, so a re-run "fixed" it.
+
+    A guard that runs at the real clock could only reproduce that for fifteen
+    minutes a day, so this one drives the real helper with an injected instant
+    and walks a whole day a minute at a time.
+    """
+
+    def test_the_pair_shares_a_utc_day_at_every_minute_of_a_day(self):
+        offenders = []
+        midnight = datetime(2026, 9, 22, tzinfo=timezone.utc)
+        for minute in range(24 * 60):
+            now = midnight + timedelta(minutes=minute)
+            anchor = _ago(20, now=now)
+            if anchor.date() != (anchor + TWIN_GAP).date():
+                offenders.append(now.strftime("%H:%M"))
+
+        assert not offenders, (
+            "the twin pair straddles midnight UTC at "
+            f"{len(offenders)} minute(s) of the day — {offenders[:5]} … — so the "
+            "fold sees two candidates and the card count arm is red at exactly "
+            "those clocks"
+        )
+
+    def test_the_guard_would_convict_the_anchor_it_was_written_for(self):
+        """The rot pin: without the truncation this walk MUST find offenders.
+
+        A day-walk that passes against the untruncated anchor too would be
+        proving nothing about the repair.
+        """
+        offenders = []
+        midnight = datetime(2026, 9, 22, tzinfo=timezone.utc)
+        for minute in range(24 * 60):
+            now = midnight + timedelta(minutes=minute)
+            untruncated = now - timedelta(hours=20)
+            if untruncated.date() != (untruncated + TWIN_GAP).date():
+                offenders.append(now.strftime("%H:%M"))
+
+        assert len(offenders) == 15, (
+            "the pre-repair anchor is supposed to straddle midnight for the 15 "
+            f"minutes when now-20h is 23:45–00:00; this walk found {offenders}"
         )
