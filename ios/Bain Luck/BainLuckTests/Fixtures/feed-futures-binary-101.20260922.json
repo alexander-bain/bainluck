@@ -1,0 +1,664 @@
+{
+ "items": [
+  {
+   "type": "futures",
+   "score": 72,
+   "reason": "Will Anthropic's valuation hit (HIGH) $3.0T by December 31: 24% chance, up 6 points since May 24",
+   "headline": "Up 6 points since May 24",
+   "context_summary": "24% chance, up 6 points since May 24",
+   "data": {
+    "id": 22979756,
+    "name": "Will Anthropic's valuation hit (HIGH) $3.0T by December 31?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "economics",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 2,
+    "market_type": "container_member",
+    "status": "open",
+    "resolution_date": "2027-01-01T12:00:00+00:00",
+    "price_observed_at": "2026-09-22T13:30:35+00:00",
+    "top_outcomes": [
+     {
+      "id": 125710341,
+      "name": "Not Anthropic's valuation",
+      "probability": 0.755,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 76
+     },
+     {
+      "id": 125710340,
+      "name": "Anthropic's valuation",
+      "probability": 0.245,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 24
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 2,
+    "canonical_market_key": "economics::game_prop:2027",
+    "group_id": "polymarket:500753",
+    "group_type": "polymarket_sub_market",
+    "discover_card": {
+     "suggested_format": "threshold_heatmap",
+     "bundle_candidate": true,
+     "comparison_theme": "ipo_valuation",
+     "threshold_points": [
+      {
+       "source": "market_name",
+       "label": "Will Anthropic's valuation hit (HIGH) $3.0T by December 31?",
+       "value": 3000000000000.0,
+       "unit": "$T",
+       "direction": "exact",
+       "probability": null
+      }
+     ],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "No",
+       "probability": 0.755,
+       "movement": null
+      },
+      {
+       "label": "Yes",
+       "probability": 0.245,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "threshold_values",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/5831512/pexels-photo-5831512.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 628,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "economics",
+     "subtopic": "valuation",
+     "archetype": "other",
+     "audience_scope": "mainstream",
+     "salience_score": 3,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "market_tags": [
+     "category:game_prop",
+     "market_status:open",
+     "source:polymarket",
+     "tier:2"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 93,
+   "reason": "",
+   "headline": null,
+   "context_summary": "",
+   "data": {
+    "id": 61380677,
+    "name": "Will Florida Panthers advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "hockey",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "container_member",
+    "status": "open",
+    "resolution_date": "2027-05-05T23:59:00+00:00",
+    "price_observed_at": "2026-09-22T13:50:24+00:00",
+    "top_outcomes": [
+     {
+      "id": 231081713,
+      "name": "Florida Panthers",
+      "probability": 0.535,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 54
+     },
+     {
+      "id": 231081714,
+      "name": "Not Florida Panthers",
+      "probability": 0.465,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 46
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 2,
+    "canonical_market_key": null,
+    "group_id": "polymarket:956303",
+    "group_type": "polymarket_sub_market",
+    "discover_card": {
+     "suggested_format": "binary_probability",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Yes",
+       "probability": 0.535,
+       "movement": null
+      },
+      {
+       "label": "No",
+       "probability": 0.465,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "bundle_candidate"
+     ]
+    },
+    "image_url": null,
+    "image_width": null,
+    "image_height": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:game_prop",
+     "league:nhl",
+     "market_status:open",
+     "source:polymarket",
+     "sport:hockey",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 93,
+   "reason": "Will Dallas Stars advance to the Second Round of the...: Down 1 point since Sep 18 \u2014 now 40% chance",
+   "headline": "Down 1 point since Sep 18",
+   "context_summary": "Down 1 point since Sep 18 \u2014 now 40% chance",
+   "data": {
+    "id": 61380701,
+    "name": "Will Dallas Stars advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "hockey",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "container_member",
+    "status": "open",
+    "resolution_date": "2027-05-05T23:59:00+00:00",
+    "price_observed_at": "2026-09-22T13:50:24+00:00",
+    "top_outcomes": [
+     {
+      "id": 231081776,
+      "name": "Not Dallas Stars",
+      "probability": 0.595,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 60
+     },
+     {
+      "id": 231081775,
+      "name": "Dallas Stars",
+      "probability": 0.405,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 40
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 2,
+    "canonical_market_key": null,
+    "group_id": "polymarket:956302",
+    "group_type": "polymarket_sub_market",
+    "discover_card": {
+     "suggested_format": "binary_probability",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "No",
+       "probability": 0.595,
+       "movement": null
+      },
+      {
+       "label": "Yes",
+       "probability": 0.405,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "bundle_candidate"
+     ]
+    },
+    "image_url": null,
+    "image_width": null,
+    "image_height": null,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.1765,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:game_prop",
+     "league:nhl",
+     "market_status:open",
+     "source:polymarket",
+     "sport:hockey",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Milwaukee Brewers is up 10 points since Feb 2 in MLB World Series Winner",
+   "headline": "Los Angeles Dodgers lead at 28%, Milwaukee Brewers up 10 points since Feb 2",
+   "context_summary": "Los Angeles Dodgers lead at 28%, Milwaukee Brewers up 10 points since Feb 2",
+   "data": {
+    "id": 1,
+    "name": "MLB World Series Winner",
+    "sport": "baseball_mlb",
+    "sport_name": "MLB",
+    "llm_sport_category": "baseball",
+    "source": "odds_api",
+    "source_count": 2,
+    "sources": [
+     "odds_api",
+     "polymarket"
+    ],
+    "market_tier": 5,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": null,
+    "price_observed_at": "2026-09-22T12:30:14+00:00",
+    "top_outcomes": [
+     {
+      "id": 1,
+      "name": "Los Angeles Dodgers",
+      "probability": 0.278628,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 28
+     },
+     {
+      "id": 14,
+      "name": "Milwaukee Brewers",
+      "probability": 0.12639,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 13
+     },
+     {
+      "id": 21,
+      "name": "Tampa Bay Rays",
+      "probability": 0.095785,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 10
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": "baseball:MLB:championship:",
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Los Angeles Dodgers",
+       "probability": 0.278628,
+       "movement": null
+      },
+      {
+       "label": "Milwaukee Brewers",
+       "probability": 0.12639,
+       "movement": null
+      },
+      {
+       "label": "Tampa Bay Rays",
+       "probability": 0.095785,
+       "movement": null
+      },
+      {
+       "label": "New York Yankees",
+       "probability": 0.093788,
+       "movement": null
+      },
+      {
+       "label": "Boston Red Sox",
+       "probability": 0.059674,
+       "movement": null
+      },
+      {
+       "label": "Atlanta Braves",
+       "probability": 0.058681,
+       "movement": null
+      },
+      {
+       "label": "Chicago Cubs",
+       "probability": 0.054485,
+       "movement": null
+      },
+      {
+       "label": "Cleveland Guardians",
+       "probability": 0.053187,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/31940399/pexels-photo-31940399.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 465,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.8235,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:odds_api",
+     "sport:baseball"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 98,
+   "reason": "Brazil Presidential Election resolves within a month, Fl\u00e1vio Bolsonaro leads at 59%",
+   "headline": "Fl\u00e1vio Bolsonaro leads; resolves within a month",
+   "context_summary": "Fl\u00e1vio Bolsonaro leads; resolves within a month",
+   "data": {
+    "id": 112996,
+    "name": "Brazil Presidential Election",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "politics",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 2,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-10-04T00:00:00+00:00",
+    "price_observed_at": "2026-09-22T13:50:18+00:00",
+    "top_outcomes": [
+     {
+      "id": 1626862,
+      "name": "Fl\u00e1vio Bolsonaro",
+      "probability": 0.5935,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 59
+     },
+     {
+      "id": 1626861,
+      "name": "Luiz In\u00e1cio Lula da Silva",
+      "probability": 0.405,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 41
+     },
+     {
+      "id": 1626863,
+      "name": "Renan Santos",
+      "probability": 0.0075,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 1
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 32,
+    "canonical_market_key": "politics:US:championship:2026",
+    "group_id": "polymarket:45915",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Fl\u00e1vio Bolsonaro",
+       "probability": 0.5935,
+       "movement": null
+      },
+      {
+       "label": "Luiz In\u00e1cio Lula da Silva",
+       "probability": 0.405,
+       "movement": null
+      },
+      {
+       "label": "Renan Santos",
+       "probability": 0.0075,
+       "movement": null
+      },
+      {
+       "label": "Jair Bolsonaro",
+       "probability": 0.0015,
+       "movement": null
+      },
+      {
+       "label": "Geraldo Alckmin",
+       "probability": 0.0015,
+       "movement": null
+      },
+      {
+       "label": "Tarcisio de Freitas",
+       "probability": 0.0005,
+       "movement": null
+      },
+      {
+       "label": "Fernando Haddad",
+       "probability": 0.0005,
+       "movement": null
+      },
+      {
+       "label": "Michelle Bolsonaro",
+       "probability": 0.0005,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 12,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/31297423/pexels-photo-31297423.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "politics",
+     "subtopic": "elections",
+     "archetype": "other",
+     "audience_scope": "broad",
+     "salience_score": 5,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "market_tags": [
+     "category:conference",
+     "market_status:open",
+     "source:polymarket",
+     "sport:politics",
+     "tier:2"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 30,
+   "reason": "Will the 10-year Treasury yield dip below 4.1% before 2027: Down 17 points today \u2014 now 7% chance",
+   "headline": "Down 17 points today",
+   "context_summary": "Down 17 points today \u2014 now 7% chance",
+   "data": {
+    "id": 61836902,
+    "name": "Will the 10-year Treasury yield dip below 4.1% before 2027?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "economics",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 2,
+    "market_type": "container_member",
+    "status": "open",
+    "resolution_date": "2026-12-31T00:00:00+00:00",
+    "price_observed_at": "2026-09-22T13:50:24+00:00",
+    "top_outcomes": [
+     {
+      "id": 233239722,
+      "name": "No",
+      "probability": 0.9305,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 93
+     },
+     {
+      "id": 233239721,
+      "name": "Yes",
+      "probability": 0.0695,
+      "rank": 2,
+      "movement": -0.17049999999999998,
+      "rendered_percent": 7
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 2,
+    "canonical_market_key": null,
+    "group_id": "polymarket:79123",
+    "group_type": "polymarket_sub_market",
+    "discover_card": {
+     "suggested_format": "threshold_heatmap",
+     "bundle_candidate": true,
+     "comparison_theme": "macro_ranges",
+     "threshold_points": [
+      {
+       "source": "market_name",
+       "label": "Will the 10-year Treasury yield dip below 4.1% before 2027?",
+       "value": 10.0,
+       "unit": "",
+       "direction": "exact",
+       "probability": null
+      }
+     ],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "No",
+       "probability": 0.9305,
+       "movement": null
+      },
+      {
+       "label": "Yes",
+       "probability": 0.0695,
+       "movement": -0.17049999999999998
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "threshold_values",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/4386155/pexels-photo-4386155.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 626,
+    "hook_description": null,
+    "temporal_badge": "New",
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:game_prop",
+     "market_status:open",
+     "source:polymarket",
+     "tier:2"
+    ]
+   }
+  }
+ ]
+}
