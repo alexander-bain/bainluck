@@ -332,12 +332,22 @@ def test_a_receipt_that_cannot_be_built_is_survived(monkeypatch):
 # ── the route actually calls it ─────────────────────────────────────────────
 
 
-def test_the_history_route_emits_the_receipt_from_the_block_it_returns():
-    """The one hunk in `routes/futures.py`, asserted as a wiring fact.
+def test_both_chart_readers_emit_the_receipt_from_the_block_they_return():
+    """The two hunks in `routes/futures.py`, asserted as a wiring fact.
 
     Reads the source rather than the import graph: `log_durable_venue_serve` is
     imported at the top of the module, so a test that only checks the name is
-    bound would pass with the call site deleted.
+    bound would pass with both call sites deleted.
+
+    WHY TWO AND NOT ONE. `/history` and `/probability-timeline` both load the
+    venue bank through `_load_generic_venue_history`, so EITHER can be the first
+    reader to touch an evicted bank — and the first one takes the durable tier
+    and rehydrates Redis for the other. The phone reads
+    `/probability-timeline` and nothing native reads `/history`, so a receipt
+    wired only into `/history` is blind to phone-first fallbacks and the
+    `/history` read that follows one reports `cache`. The count is pinned at
+    exactly two so a third reader cannot be added to this file without either
+    wiring its receipt or deliberately editing this line.
     """
     import importlib
     from pathlib import Path
@@ -349,17 +359,35 @@ def test_the_history_route_emits_the_receipt_from_the_block_it_returns():
     futures_route = importlib.import_module("app.routes.futures")
 
     source = Path(futures_route.__file__).read_text()
-    parts = source.split(log_durable_venue_serve.__name__ + "(", 2)
-    assert len(parts) == 2, (
-        "expected exactly ONE call site — the bare name also appears on the "
-        "import line, which is why the open paren is part of the pattern"
+    # The open paren is part of the pattern because the bare name also appears
+    # on the import line. `split` yields N+1 parts for N call sites.
+    parts = source.split(log_durable_venue_serve.__name__ + "(")
+    assert len(parts) == 3, (
+        f"expected exactly TWO call sites — one per chart reader — got "
+        f"{len(parts) - 1}"
     )
-    arguments = parts[1].split(")")[0]
-    assert 'response["venue_history"]' in arguments, (
-        "the receipt must be handed the block the response carries, so it cannot "
-        "describe a different read than the one the reader got"
+    arguments = [part.split(")")[0] for part in parts[1:]]
+
+    # Each site is checked as a PAIR: the block it passes and the surface it
+    # names. Asserting the two surfaces exist somewhere in the file would pass
+    # if both sites named the same door, which is the defect being guarded.
+    by_surface = {}
+    for argument in arguments:
+        assert 'venue_history' in argument or 'venue_block' in argument, (
+            "the receipt must be handed the block the response carries, so it "
+            "cannot describe a different read than the one the reader got"
+        )
+        surface = argument.split('surface="')[1].split('"')[0]
+        by_surface[surface] = argument
+
+    assert 'response["venue_history"]' in by_surface["futures_history"], (
+        "`/history` must hand the receipt the block its own response carries"
     )
-    assert 'surface="futures_history"' in arguments
+    assert "venue_block" in by_surface["futures_probability_timeline"], (
+        "`/probability-timeline` must hand the receipt the SAME object it puts "
+        "under `venue_history`, not a second `describe()` call — a second call "
+        "would describe a different read"
+    )
 
 
 # --- the receipt is one line, and the caller does not get to decide that -------

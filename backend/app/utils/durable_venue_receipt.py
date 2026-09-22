@@ -5,16 +5,33 @@ reader after the fast cache loses it.
 
 WHY A RECEIPT AND NOT A SAMPLER. #7807 shipped a second tier: when Redis has
 evicted a market's venue-history bank, `durable_state_snapshots` answers instead
-and the chart is unchanged. That is exactly what makes it unobservable from
-outside — the payload a durable serve produces is byte-identical to the payload
-a warm serve produces, and the durable serve REHYDRATES Redis, so by the time
-any sampler looks, the next read says `cache` again. Scheduled reader sampling
-was retired as a proof for this reason: it cannot see the event it is sampling
-for, because the event erases its own evidence.
+and the CHART is unchanged — same points, same outcomes, same line. What differs
+is one metadata field: `venue_history.tier` reads `durable` instead of `cache`,
+and #7351 publishes it precisely so the two-tier read is legible. So a durable
+serve is not invisible; it is visible to EXACTLY ONE PARTY — the reader whose own
+request took the fallback, in that request's own response.
+
+That is what defeats sampling, and the distinction is worth keeping straight. A
+durable serve REHYDRATES Redis, so the next read says `cache` again. A scheduled
+sampler therefore cannot see a durable serve some OTHER reader took: by the time
+it looks, the evidence is gone. It can only ever catch a fallback it causes
+itself, which is a fallback a real user was not having. Scheduled reader sampling
+was retired as a proof for this reason — not because the event leaves no trace,
+but because the trace is only ever in the response of whoever tripped it.
 
 So the reader writes down what it did, at the instant it did it. One line, on
 the response-metadata boundary that already exists, only when the durable tier
 is the tier that answered.
+
+BOTH CHART READERS WRITE IT, AND THE PHONE'S DOOR IS THE ONE THAT MATTERS.
+`/history` and `/probability-timeline` both load the bank through
+`_load_generic_venue_history`, so either can be the first to touch an evicted
+one — and the first through takes the durable tier and rehydrates Redis for the
+second. `APIClient.swift:929` fetches `/probability-timeline`, and nothing native
+fetches `/history`, so the phone is the likelier first reader. Wired into
+`/history` alone, a phone-first fallback wrote nothing and the `/history` read
+behind it reported `cache`: a durable serve that happened and left no record, in
+the half of the traffic that matters most. `surface` names which door fell back.
 
 WHAT IT IS NOT. Not a monitoring program, not a metric, not a new store: no DB
 row, no endpoint, no network call, no periodic anything. Its whole job is to let

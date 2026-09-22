@@ -3400,8 +3400,11 @@ jobs:
           # durable-serve receipt to describe the response that reader returned.
           # B14's own last two lines are why that receipt has to exist — the
           # fallback rehydrates Redis, so the next read says `cache` and no
-          # sampler can ever see that the durable tier paid.
-          EXPECTED = 51
+          # sampler can ever see that the durable tier paid. B14c is the same
+          # proof in the FIRST-READER ORDER PRODUCTION ACTUALLY RUNS: the phone
+          # reads `/probability-timeline`, so it is the likelier door to take
+          # the fallback, and the `/history` read after it reports `cache`.
+          EXPECTED = 52
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

@@ -5517,6 +5517,31 @@ async def get_probability_timeline(
             "current_probability": round(field_current, 6),
         })
 
+    # #7351 — ADDITIVE and only on a market whose venue publishes history.
+    # Built before the return rather than inside it so the receipt below and the
+    # `venue_history` key can be the SAME object: a receipt that described a
+    # second `describe()` call would be describing a different read.
+    venue_block = (
+        venue.describe(_venue_rows_served(venue_cells)) if venue.applicable else None
+    )
+    if venue_block is not None:
+        # #7807 acceptance, second call site — and the one that carries the
+        # PHONE. `APIClient.swift:929` fetches `/probability-timeline`; nothing
+        # native calls `/history`. Both readers go through the same
+        # `_load_generic_venue_history`, so either can be the FIRST to touch an
+        # evicted bank, and the first one takes the durable tier and rehydrates
+        # Redis for the other. With the receipt wired only into `/history`, a
+        # phone-first fallback wrote nothing and the `/history` read that
+        # followed it said `cache` — so the durable serve that actually happened
+        # left no record, which is the exact lost-evidence race this ship exists
+        # to remove. The surface is named distinctly so a reader of the log can
+        # tell WHICH door fell back.
+        log_durable_venue_serve(
+            venue_block,
+            market_id=market_id,
+            surface="futures_probability_timeline",
+        )
+
     return {
         "market_id": market_id,
         "market_name": market.name,
@@ -5550,10 +5575,7 @@ async def get_probability_timeline(
         # Says what the venue-history seam contributed to THIS response, so the
         # coverage above can be read for what it is. Shipped clients ignore an
         # unknown key (`Decodable`); nothing above it changed shape.
-        **(
-            {"venue_history": venue.describe(_venue_rows_served(venue_cells))}
-            if venue.applicable else {}
-        ),
+        **({"venue_history": venue_block} if venue_block is not None else {}),
     }
 
 

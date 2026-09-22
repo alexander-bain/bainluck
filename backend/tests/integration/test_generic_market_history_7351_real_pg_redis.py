@@ -1358,6 +1358,81 @@ def test_B14b_the_durable_serve_writes_a_receipt_naming_the_bank_it_served(
     assert broker.calls == [], "nor a fill"
 
 
+def test_B14c_a_phone_first_durable_serve_writes_the_receipt_too(venue, broker):
+    """#7807 acceptance — the OTHER first-reader order, which is the phone's.
+
+    WHY THIS ARM EXISTS SEPARATELY FROM B14b. B14b reads `/history` first, so
+    the web door takes the fallback and the phone door gets the rehydrated
+    cache. Production's traffic runs the other way round: `APIClient.swift:929`
+    fetches `/probability-timeline` and nothing native fetches `/history`, so
+    the phone is the likelier FIRST reader of an evicted bank. Both doors load
+    the bank through the same `_load_generic_venue_history`, which means the
+    first one through takes the durable tier and rehydrates Redis for the
+    second — and with the receipt wired into `/history` alone, this order wrote
+    NOTHING while the `/history` read that followed reported `cache`. A durable
+    serve happened and left no record: the exact lost-evidence race the receipt
+    exists to remove, surviving in the half of the traffic that matters most.
+
+    So this is B14b's staged eviction with the two reads SWAPPED, and the
+    assertions are the mirror: one receipt, naming the phone's door, describing
+    the phone's response — and no second receipt from the `/history` read that
+    follows, because by then the bank is back on the fast tier.
+    """
+    from app.utils.generic_market_history import cache_key
+
+    _seed_specimen()
+    _, _, warm_t, warm_h = _cold_then_warm(broker)
+    assert warm_t["venue_history"]["tier"] == "cache", "Redis is still the fast tier"
+    warm_points = _in_week(_timeline_points(warm_t))
+    asked = len(venue.provider_requests())
+
+    # ── the eviction, and nothing else (see B14 on why this is not an assert) ─
+    evicted = _redis().delete(cache_key(MARKET_ID))
+    assert evicted == 1, "the bank was not in Redis to begin with"
+
+    with _receipts() as written:
+        after_t = _timeline()
+        following_h = _history()
+
+    block = after_t["venue_history"]
+    assert block["tier"] == "durable", "the phone reader did not take the fallback"
+    assert following_h["venue_history"]["tier"] == "cache", (
+        "the phone's fallback rehydrated the bank, so the web read that follows "
+        "it is on the fast tier — which is precisely why it cannot be the thing "
+        "that writes the record"
+    )
+
+    # ── ONE line, for the ONE read that fell back, and it is the PHONE's ────
+    assert len(written) == 1, (
+        f"expected exactly one receipt for one durable serve, got {written}"
+    )
+    receipt = written[0]
+    assert receipt["surface"] == "futures_probability_timeline", (
+        "the receipt must name the door that actually fell back; naming "
+        "`futures_history` here would attribute the phone's fallback to a "
+        "reader that served from cache"
+    )
+    assert receipt["success"] is True
+    assert receipt["market_id"] == MARKET_ID
+    assert receipt["tier"] == "durable"
+
+    # ── and it describes THIS response, not a plausible one ─────────────────
+    assert receipt["state"] == block["state"] == "warm"
+    assert receipt["built_at"] == block["built_at"], "a different bank"
+    assert receipt["points_served"] == block["points_served"] > 0
+    assert receipt["outcomes_served"] == block["outcomes_served"] > 0
+    assert receipt["scale_refused"] is None
+    assert receipt["unsupported_points_withheld"] == block["unsupported_points_withheld"]
+
+    # ── the payload it describes is the chart B1 proved, recovered whole ─────
+    assert _in_week(_timeline_points(after_t)) == warm_points, "a different chart"
+    _assert_named_contract(after_t, following_h)
+    assert len(venue.provider_requests()) == asked, (
+        "writing the receipt must not cost an outbound venue request"
+    )
+    assert broker.calls == [], "nor a fill"
+
+
 def test_B15_a_durable_bank_past_its_declared_life_is_not_served(venue, broker):
     """#7807 makes the declared 36 h REAL — it does not make it longer.
 
