@@ -1073,19 +1073,40 @@ struct OddsChartView: View {
             let points = dataPoints.filter { $0.source == source }
             let color = colorForSource(source, sources: sources)
             let stroke = strokeStyleForSource(source, sources: sources)
-            ForEach(points) { point in
-                LineMark(
-                    x: .value("Time", point.date),
-                    y: .value("Win probability", point.probability),
-                    series: .value("Source", source)
-                )
-                .foregroundStyle(color)
-                .lineStyle(stroke)
-                // Observed journey only — connect real snapshots with straight
-                // segments. Monotone/curve interpolation invented probability
-                // movement between sparse samples that was never captured, violating
-                // the settled no-smoothing ruling (C43 P1).
-                .interpolationMethod(.linear)
+            // One series per RUN of observations rather than per source (#7878).
+            // Swift Charts joins whatever shares a series value, so a single
+            // identifier per source drew one straight segment across a capture
+            // hole — a flat line and no line became the same picture. Splitting
+            // the identifier leaves the hole empty, which is what we actually
+            // know. This is the same no-invention rule as `.interpolationMethod`
+            // below, applied at the scale where it was still being broken.
+            let segments = Self.observationSegments(points, gameStart: gameStartDate)
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                ForEach(segment) { point in
+                    LineMark(
+                        x: .value("Time", point.date),
+                        y: .value("Win probability", point.probability),
+                        series: .value("Source", "\(source)#\(index)")
+                    )
+                    .foregroundStyle(color)
+                    .lineStyle(stroke)
+                    // Observed journey only — connect real snapshots with straight
+                    // segments. Monotone/curve interpolation invented probability
+                    // movement between sparse samples that was never captured, violating
+                    // the settled no-smoothing ruling (C43 P1).
+                    .interpolationMethod(.linear)
+                }
+                // A run of one is a real observation that no `LineMark` can
+                // draw (it needs two points to join), so it would silently
+                // vanish — losing data to a fix meant to stop losing data.
+                if segment.count == 1, let only = segment.first {
+                    PointMark(
+                        x: .value("Time", only.date),
+                        y: .value("Win probability", only.probability)
+                    )
+                    .foregroundStyle(color)
+                    .symbolSize(18)
+                }
             }
         }
 
@@ -1456,6 +1477,109 @@ struct OddsChartView: View {
             if perSource[point.source]! >= 2 { return true }
         }
         return false
+    }
+
+    // MARK: - Observation gaps (#7878, pure, unit-tested in
+    // AStalledCaptureDrawsAGapNotALine7878Tests)
+
+    /// A capture hole long enough that joining across it would invent the
+    /// interval, expressed BOTH ways because either test alone is wrong.
+    ///
+    /// Measured against production on 2026-09-21 over every in-game snapshot of
+    /// the preceding 18 h (9,163 Kalshi intervals, 6,987 Polymarket):
+    ///
+    /// | | Kalshi | Polymarket |
+    /// |---|---|---|
+    /// | median interval | 48.0 s | 33.4 s |
+    /// | p99 interval | 227.1 s | 138.9 s |
+    /// | longest interval | 7,444.9 s | 371.9 s |
+    /// | worst series' max ÷ its own median | 74.4× | 13.3× |
+    ///
+    /// `floor` sits above Kalshi's p99 AND above the longest in-game interval
+    /// Polymarket produced at all, so ordinary slow polling never trips it.
+    /// `cadenceMultiple` sits above the worst ratio any Polymarket series
+    /// reached, so a legitimately SPARSE series is judged against its own
+    /// rhythm rather than a stranger's — a 2-minute-cadence series and a
+    /// 10-second one do not share a notion of "late".
+    ///
+    /// Requiring both is what makes this safe rather than merely tuned: over
+    /// that window the floor alone flags 34 intervals, the ratio alone flags 34,
+    /// and the conjunction flags 32 — they agree almost everywhere, so the rule
+    /// is not balanced on a knife edge. Polymarket, the healthy control, flags
+    /// ZERO under all three variants, and 30 of 133 Kalshi in-game events flag
+    /// at least once.
+    static let gapFloor: TimeInterval = 600
+    static let gapCadenceMultiple: Double = 15
+
+    /// Split one source's points into runs that may honestly be joined.
+    ///
+    /// Swift Charts joins every point sharing a `series` value, so a single
+    /// series identifier per source is what draws a straight line across a
+    /// three-hour hole — the reader cannot tell "nothing happened" from "we
+    /// stopped watching", because both are one flat segment. Breaking the
+    /// series is the whole fix: each run gets its own identifier and Charts
+    /// leaves the hole empty.
+    ///
+    /// Two deliberate refusals:
+    ///
+    /// 1. **Pre-match intervals are never broken.** A market opens days before
+    ///    play and sleeps overnight, so pre-commence series legitimately hold
+    ///    multi-hour holes — measured p99 2.2 h, longest 5.6 DAYS. Applying an
+    ///    in-game threshold there would shatter every healthy pre-match line
+    ///    into confetti, a far worse lie than the one being fixed. Only
+    ///    intervals with BOTH ends at or after `gameStart` are candidates, and
+    ///    a nil `gameStart` breaks nothing at all.
+    ///
+    ///    This uses the SCHEDULED commence (Alex, 2026-09-14: a scheduled
+    ///    kickoff is not an evidenced start), which means a hole in play that
+    ///    began before the scheduled time is left joined. That is the cheap
+    ///    direction to be wrong in: a missed break shows what we show today,
+    ///    while a false break invents a hole in a line that never had one.
+    ///
+    /// 2. **The cadence is the series' own.** The median is taken over the
+    ///    in-game intervals being judged, so the rule cannot import a fast
+    ///    series' expectations into a slow one.
+    ///
+    /// A series whose gap leaves a run of one point is returned as a run of one
+    /// — the caller draws those as a mark rather than dropping them, because a
+    /// lone observation is something we genuinely saw and a `LineMark` needs two
+    /// points to render.
+    static func observationSegments(
+        _ points: [ChartDataPoint],
+        gameStart: Date?,
+        floor: TimeInterval = OddsChartView.gapFloor,
+        cadenceMultiple: Double = OddsChartView.gapCadenceMultiple
+    ) -> [[ChartDataPoint]] {
+        guard points.count > 1 else { return points.isEmpty ? [] : [points] }
+        let ordered = points.sorted { $0.date < $1.date }
+        guard let gameStart else { return [ordered] }
+
+        // The series' own in-game rhythm. Taken over exactly the intervals the
+        // rule can act on, so a long pre-match sleep cannot inflate it and
+        // thereby excuse a real in-game hole.
+        var inGameIntervals: [TimeInterval] = []
+        for (previous, current) in zip(ordered, ordered.dropFirst())
+        where previous.date >= gameStart {
+            inGameIntervals.append(current.date.timeIntervalSince(previous.date))
+        }
+        guard !inGameIntervals.isEmpty else { return [ordered] }
+        let sortedIntervals = inGameIntervals.sorted()
+        let median = sortedIntervals[sortedIntervals.count / 2]
+
+        var segments: [[ChartDataPoint]] = []
+        var run: [ChartDataPoint] = [ordered[0]]
+        for (previous, current) in zip(ordered, ordered.dropFirst()) {
+            let interval = current.date.timeIntervalSince(previous.date)
+            let inGame = previous.date >= gameStart && current.date >= gameStart
+            if inGame, interval > floor, interval > cadenceMultiple * median {
+                segments.append(run)
+                run = [current]
+            } else {
+                run.append(current)
+            }
+        }
+        segments.append(run)
+        return segments
     }
 
     /// What to say instead of an empty frame (#3278).
