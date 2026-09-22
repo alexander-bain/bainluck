@@ -38,6 +38,31 @@ if (!baseUrl || !eventId || !outDir) {
 mkdirSync(outDir, { recursive: true });
 const URL = `${baseUrl.replace(/\/$/, '')}/events/${eventId}`;
 
+// Is the page itself served from this machine? Asked of the URL's HOST, parsed,
+// never of the URL as a string.
+//
+// It used to be `/localhost|127\.0\.0\.1/.test(baseUrl)`, which matches anywhere
+// in the URL — so `https://bainluck.com/localhost` is "local", and the tool would
+// then intercept `api.bainluck.com` through curl and withhold the proxy bypass on
+// a PRODUCTION run. CodeQL calls that `js/regex/missing-regexp-anchor` and rates
+// it high; here the reachable cost is a probe that quietly measures something
+// other than what its argument said, which is the worse half of it for an
+// instrument. Anchoring the pattern would silence the alert, but comparing the
+// parsed hostname is the thing that is actually being asked.
+//
+// An unparseable base is NOT local: the remote path is the one that works
+// through a proxy, so an argument we cannot read fails toward the safe render.
+function isLoopbackBase(url) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+const LOCAL_PAGE = isLoopbackBase(baseUrl);
+
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
 // 🪤 A LOCALHOST RENDER STILL NEEDS THE PROXY, because the page is local and its
@@ -52,7 +77,7 @@ const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-cr
 // localhost page request to a proxy that cannot see this machine's port.
 if (proxy) {
   args.push(`--proxy-server=${proxy}`);
-  if (!/localhost|127\.0\.0\.1/.test(baseUrl)) args.push('--proxy-bypass-list=<-loopback>');
+  if (!LOCAL_PAGE) args.push('--proxy-bypass-list=<-loopback>');
 }
 
 const browser = await chromium.launch({ headless: true, args });
@@ -74,7 +99,7 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 //
 // `curl` honours the proxy and works, so the API is fetched through it and the
 // response handed back to the page. The browser then needs no egress at all.
-if (/localhost|127\.0\.0\.1/.test(baseUrl)) {
+if (LOCAL_PAGE) {
   await page.route(/api\.bainluck\.com/, async (route) => {
     const url = route.request().url();
     try {
