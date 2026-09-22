@@ -137,6 +137,89 @@ def settlement_pending_sql(price: str, alias: str = "fo") -> str:
     )"""
 
 
+def ungraded_settlement_withdraw_sql(ticker_param: str = "tickers") -> str:
+    """UPDATE: take the fossil price off a settled leg the venue gave no verdict for.
+
+    #7987, and it is this module's own lesson turned around. The clauses above
+    answer "what is a settled contract worth" for the legs the venue graded; this
+    answers it for the legs on the SAME board that it did not. Both are the same
+    fact — the venue has stopped quoting this contract — and the answer differs
+    only because one of them has a side and the other has none.
+
+    THE `continue` IS THE DEFECT. All four Kalshi graders in `backfill_winners`
+    read `kms.gradeable_winner`, correctly refuse to invent a loss when it
+    returns None (#1852), count the refusal, and `continue` — leaving the price
+    exactly where it was. That is "a gate that only refuses to WRITE leaves the
+    old number exactly where it was", the lesson #5031, #5273 and #5771 each paid
+    for and which `futures_price_refresh._KALSHI_WITHDRAW_PRE_KICKOFF_SQL`
+    records in those words. The refusal to grade is right; the price surviving it
+    is not.
+
+    :func:`app.utils.kalshi_market_status.settled_without_verdict` decides WHICH
+    legs; this decides what happens to them. The split is deliberate — the
+    predicate is a fact about the venue's answer and is unit-testable without a
+    database, and the statement is a fact about our rows.
+
+    NOTHING IS GRADED AND NOTHING IS UNGRADED. `is_winner` and
+    `resolution_source` are absent from the SET list, so a leg the venue settled
+    on a number stays exactly as ungraded as it was; only the number a reader
+    reads goes away. `is_winner IS NULL` in the WHERE is the other half of that:
+    a leg any rail has already graded — including one graded between the venue
+    read and this write — is never touched, which is gotcha #21 and #5246's
+    "never un-price a settled row" in its stricter form (this asks for no verdict
+    at all, not merely "not a winner").
+
+    🔴 NO CALIBRATION TRUTH MOVES, AND HERE THAT IS MEASURED RATHER THAN ASSERTED.
+    `precompute_calibration` states that `resolution_source IS NOT NULL` — not
+    `is_winner IS NOT NULL` — is "this repository's canonical grade predicate",
+    and that an ungraded outcome "never reaches ``ranked_outcomes`` at all".
+    Every one of the 2,656 legs this statement can reach on production
+    (2026-09-22 09:5xZ, Kalshi legs with no verdict and a price on a resolved
+    board with a graded sibling) carries `resolution_source IS NULL`, so none of
+    them is in the curve to begin with. `opening_probability` and
+    `calibration_probability` — the curve's two inputs, gotcha #144 — are not in
+    the SET list either, and `futures_odds_snapshots` keeps the price history
+    regardless.
+
+    This is where it DIVERGES from #7582's clear, which refuses a row whose
+    `calibration_probability` is set. That clear fires on OPEN boards, where a
+    closing line may still be pending capture and `current_probability` is the
+    value the capture will read. Here the board is settled, the capture window is
+    shut, and the graders beside this statement already overwrite
+    `current_probability` unconditionally at settlement (:func:`settled_price_values`).
+    Borrowing the guard would have refused 798 of the 2,656 for no benefit.
+
+    STAMPED, for the reason #7582's clear is stamped and
+    `_KALSHI_RETIRE_DELISTED_SQL` is not: the rule is consistency with the writes
+    BESIDE it. Every Kalshi grader in `backfill_winners` writes
+    `last_updated = NOW()`, so an unstamped withdrawal would be the only unstamped
+    write on the path. `price_changed_at` moves unconditionally because the WHERE
+    already requires `current_probability IS NOT NULL` — the value is always
+    really changing, and a price going away IS a change (#2024).
+
+    :param ticker_param: name of the bind holding the leg tickers, so a call site
+        that already binds ``:t`` does not have to rename it and risk binding two
+        different lists.
+    """
+    return f"""
+        UPDATE futures_outcomes fo
+           SET current_probability = NULL,
+               current_american_odds = NULL,
+               current_yes_bid = NULL,
+               current_yes_ask = NULL,
+               probability_change_24h = NULL,
+               last_updated = NOW(),
+               price_changed_at = NOW()
+          FROM futures_markets fm
+         WHERE fo.market_id = fm.id
+           AND fm.source = 'kalshi'
+           AND fo.external_id = ANY(:{ticker_param})
+           AND fo.is_winner IS NULL
+           AND fo.current_probability IS NOT NULL
+     RETURNING fo.id
+    """
+
+
 def settled_price_values(is_winner: bool) -> dict:
     """The same clause for a Core/ORM `.values()` update.
 
