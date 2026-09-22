@@ -703,6 +703,7 @@
       "origin": "app.tasks.precompute_calibration:STAGED_UNIT_WINDOW_SAFETY",
       "sql_interpolated": false,
       "used_in": [
+        "_run_staged_futures",
         "_unit_fits_in_window"
       ]
     },
@@ -888,7 +889,7 @@
   ],
   "schema": "calibration-fingerprint-derived/v1",
   "source": "backend/app/tasks/precompute_calibration.py",
-  "source_sha256": "171cabb6fc40e723acc38f4a1a0f5e4cedadcf413aea3203cbbb1a067636cad0",
+  "source_sha256": "14b5b991367502c755d4076522ee7e1907e3b55ef4ed2e95421edf56220b8b24",
   "uncovered_behavior_or_evidence": 35,
   "uncovered_count": 62,
   "uncovered_sql_shaping": 27

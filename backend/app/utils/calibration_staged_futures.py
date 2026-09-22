@@ -920,6 +920,65 @@ def split_factor(
     return max(2, min(int(max_factor), math.ceil(cancelled / measured)))
 
 
+def packing_split_factor(
+    measured_unit_ms: Any,
+    window_ms: Any,
+    *,
+    safety: float,
+    max_factor: int = STAGED_UNIT_SPLIT_MAX_FACTOR,
+) -> int:
+    """Into how many children a slot that COMPLETES too slowly to pack is cut.
+
+    ``0`` when no cut is owed. Otherwise
+    ``ceil(measured_unit_ms / (window_ms / (1 + safety)))``, floored at two and
+    capped at ``max_factor`` — where the denominator is the largest unit cost at
+    which a beat can admit a SECOND unit under the same rule that admitted the
+    first (``remaining >= reference * safety``, applied to a whole window).
+
+    **The arm this closes, and why nothing else could close it.** Every other
+    refinement in this module keys on a CANCELLATION:
+    :data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_SPLIT_AFTER` cuts a
+    slot that was killed at its bound, :func:`cancellation_is_conclusive` cuts
+    one on its first killing, and :func:`attempt_order` defers one. A slot that
+    is too large for the WINDOW but comfortably inside its statement timeout
+    announces itself the other way round — it *succeeds, slowly* — and under
+    every rule above it is a healthy slot that banks its rows and asks for
+    nothing. Production sat exactly there for a week (#6599): 108 of 203 units
+    banked, **one** 726,124 ms unit per 1,336,679 ms beat, 46% of every window
+    left unusable, and no mechanism by which the build could improve its own
+    packing. The accuracy page served a seven-day-old bank throughout, because
+    a build that never fails never triggers the machinery that would fix it.
+
+    A measurement divided by a measurement, never a pinned number (ruling 075):
+    the numerator is this build's own completed unit cost and the denominator is
+    the window that cost has to fit inside. Neither is a constant anybody chose.
+
+    ``0`` rather than ``1`` for "no cut owed", because one is a refinement that
+    refines nothing and a caller recording a factor of one would record a split
+    that never happened (gotcha #53). It is also the answer for every input the
+    predicate cannot read — an absent measurement, a zero window, a string — so
+    "we cannot tell" and "it fits" both decline to cut, and only a positive
+    measurement over a positive window ever licenses one.
+
+    Like :func:`split_factor` this is a FLOOR, not a promise. The cost of a
+    child is not known until one runs, so one cut may not be enough; a child
+    that still fails this same predicate is cut again on its own measurement,
+    and that recursion — not this arithmetic — is what finally packs the slot.
+    """
+    try:
+        measured = float(measured_unit_ms or 0.0)
+        window = float(window_ms or 0.0)
+        margin = 1.0 + float(safety)
+    except (TypeError, ValueError):
+        return 0
+    if measured <= 0 or window <= 0 or margin <= 0:
+        return 0
+    target = window / margin
+    if measured <= target:
+        return 0
+    return max(2, min(int(max_factor), math.ceil(measured / target)))
+
+
 @dataclass(frozen=True)
 class UnitChunk:
     """One Stage B unit: whole virtual questions and the markets inside them."""

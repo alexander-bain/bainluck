@@ -149,9 +149,10 @@ HEALTHY_SLOT_MS = 64_000
 #: slot that outran THAT is the population the candidate is about.
 SLOW_SLOT_MS = 800_000
 
-#: The genuine predicate, captured at import so the control arm can be turned
-#: back OFF again within one test (see the fixture).
+#: The two genuine predicates, captured at import so either arm can be turned
+#: back ON again within one test (see the fixture).
 _REAL_CONCLUSIVE = pcl.cancellation_is_conclusive
+_REAL_PACKING = sf.packing_split_factor
 
 #: Production's carried measurements at 2026-09-17T17:37:55Z, heavy v41, with
 #: the ring readable again after #6775. Both are real completions.
@@ -252,6 +253,8 @@ class _Runner:
         withdrawn: bool = False,
         ring_readable: bool = True,
         phase_statement_timeout_ms: int | None = None,
+        carried_mean_ms: int | None = None,
+        carried_worst_ms: int | None = None,
     ):
         # CAL-P1304. ``withdrawn`` is the state production has actually been in
         # since #6275: ``unit_costs.futures`` carries the withdrawal marker, so
@@ -259,10 +262,17 @@ class _Runner:
         # repair, i.e. whether the worst-unit ring is still legible as evidence
         # beside that withdrawal. ``withdrawn and not ring_readable`` is the
         # tree CERT-3051 graded.
-        base_worst = PROD_UNIT_WORST_MS if carried else None
+        #: #6599 / lat941: ``carried_*`` is the LEARNING rig — the previous
+        #: beat's own measured cost rather than a constant. Every arm written
+        #: before it passes ``None`` and gets the pinned production numbers
+        #: byte-for-byte; see ``learns`` on the fixture for why a pinned carry
+        #: cannot measure a mechanism whose whole effect is to change unit cost.
+        base_mean = PROD_UNIT_MEAN_MS if carried_mean_ms is None else carried_mean_ms
+        base_worst = PROD_UNIT_WORST_MS if carried_worst_ms is None else carried_worst_ms
+        base_worst = base_worst if carried else None
         self.ledger = _ledger(
             window_ms=window_ms,
-            unit_ms=None if withdrawn else (PROD_UNIT_MEAN_MS if carried else None),
+            unit_ms=None if withdrawn else (base_mean if carried else None),
             unit_ms_worst=None if withdrawn else base_worst,
             unit_ms_worst_observed=base_worst if ring_readable else None,
             units_done=1 if carried else 0,
@@ -439,17 +449,44 @@ class _Run:
         self.per_beat_conclusive: list[dict[str, int]] = []
         #: Per beat, ``(ref, cancelled_after_ms)`` for every cancellation.
         self.per_beat_cancel_ms: list[list[int]] = []
+        #: Per beat, the scope #6599's packing sweep ran at — ``"plan"`` when
+        #: the reference named a partition it could scale by, ``"slot"`` when
+        #: it did not and only the declined slot was eligible, ``None`` when
+        #: the sweep did not run. Read from ``staged:unit_packing_scope:*``.
+        self.per_beat_packing_scope: list[str | None] = []
         #: The PUBLISHED census, present only on a run that completed.
         self.census: dict | None = None
 
 
 @pytest.fixture
-def drive(monkeypatch):
+def staged_beat_loop(monkeypatch):
     """Drive the REAL beat loop over one durable cursor. Returns a callable.
 
-    ``conclusive_splits=False`` is the CONTROL: the candidate's predicate is
-    stubbed to False, which is byte-for-byte the pre-candidate behaviour of this
-    loop. Every comparison below is against that, in the same rig, same beat.
+    **Two independent refinement candidates now live in this loop**, and this
+    fixture holds a knob for each so that neither file that uses it can be
+    reading the other's mechanism by accident:
+
+    * ``conclusive_splits`` — :func:`cancellation_is_conclusive`, the candidate
+      THIS file measures. It cuts a slot on its first window-bounded
+      cancellation.
+    * ``packing_splits`` — :func:`packing_split_factor`, #6599's second defect
+      (``test_calibration_a_slow_success_is_evidence_too_6599``). It cuts a slot
+      that SUCCEEDS too slowly to pack two into a beat, and so fires on runs
+      where nothing ever cancels.
+
+    Both default to LIVE, which is the loop production runs. A file that wants
+    one of them held down says so in ITS OWN ``drive`` fixture, once, where a
+    reader can see the regime — never per call site, and never by flipping a
+    default that a sibling module imports (this fixture is imported across
+    files, so a default is a cross-file coupling).
+
+    Each knob is set on EVERY call, both ways round, never "patch only the
+    control". Two traps, both of which bit this rig before the numbers below
+    were believed: the loop imports these predicates INSIDE
+    ``_run_staged_futures``, so a patch is re-bound every call and a control
+    silently does not control; and ``monkeypatch`` is function-scoped, so a
+    control arm patched mid-test leaks into every later arm of the SAME test and
+    reports the candidate as the control.
     """
 
     async def _drive(
@@ -462,10 +499,12 @@ def drive(monkeypatch):
         window_ms=WINDOW_MS,
         carried=True,
         conclusive_splits=True,
+        packing_splits=True,
         transient=None,
         withdrawn=False,
         ring_readable=True,
         phase_statement_timeout_ms=None,
+        learns=False,
     ):
         roster = _roster(buckets * VMS_PER_SLOT)
         population = _values(buckets * VMS_PER_SLOT)
@@ -497,20 +536,25 @@ def drive(monkeypatch):
         monkeypatch.setattr(cmb, "staged_lease", lambda: 0.0)
         monkeypatch.setattr(cmb, "STAGED_FUTURES_BUCKETS", buckets)
         monkeypatch.setattr(pc, "_futures_generation_sql", lambda: "SELECT 1")
-        # Set on EVERY call, both ways round, never "patch only the control".
-        # Two traps, both of which bit this rig before the numbers below were
-        # believed: the loop imports the predicate INSIDE
-        # ``_run_staged_futures``, so a patch on ``pc`` is re-bound every call
-        # and the control silently does not control; and ``monkeypatch`` is
-        # function-scoped, so a control arm patched mid-test leaks into every
-        # later arm of the SAME test and reports the candidate as the control.
+        # Both knobs, set on EVERY call, both ways round — see the fixture
+        # docstring for the two traps this shape exists to avoid.
         monkeypatch.setattr(
             pcl,
             "cancellation_is_conclusive",
             _REAL_CONCLUSIVE if conclusive_splits else (lambda **_kw: False),
         )
+        # ``0`` is this predicate's own "no cut is owed" answer, so the stub
+        # takes the loop down the branch it already has for a slot that packs,
+        # rather than a branch only a test can reach.
+        monkeypatch.setattr(
+            sf,
+            "packing_split_factor",
+            _REAL_PACKING if packing_splits else (lambda *_a, **_kw: 0),
+        )
 
         out = _Run()
+        carried_mean_ms: int | None = None
+        carried_worst_ms: int | None = None
         for beat_no in range(1, max_beats + 1):
             runner = _Runner(
                 window_ms=window_ms,
@@ -520,6 +564,8 @@ def drive(monkeypatch):
                 withdrawn=withdrawn,
                 ring_readable=ring_readable,
                 phase_statement_timeout_ms=phase_statement_timeout_ms,
+                carried_mean_ms=carried_mean_ms,
+                carried_worst_ms=carried_worst_ms,
             )
             if reset_every and beat_no > 1 and (beat_no - 1) % reset_every == 0:
                 era = (beat_no - 1) // reset_every
@@ -566,6 +612,26 @@ def drive(monkeypatch):
                 }
             )
             out.per_beat_cancel_ms.append([ms for _vms, ms in db.cancelled])
+            out.per_beat_packing_scope.append(
+                next(
+                    (
+                        name.rsplit(":", 1)[1]
+                        for name in runner.ledger.stages
+                        if name.startswith("staged:unit_packing_scope:")
+                    ),
+                    None,
+                )
+            )
+            if learns:
+                # What production carries: the cost of the units THIS beat ran,
+                # so a plan whose units got cheaper is a plan the next beat's
+                # admission fence knows is cheaper. A rig that re-pins the
+                # constant every beat cannot see a refinement pay off, because
+                # the fence it has to pay off against never moves.
+                beat_costs = [db.cost_of(vms) for vms in db.completed]
+                if beat_costs:
+                    carried_mean_ms = int(sum(beat_costs) / len(beat_costs))
+                    carried_worst_ms = int(max(beat_costs))
             if splits:
                 out.splits = max(out.splits, len(splits))
                 if out.first_split_beat is None:
@@ -582,6 +648,43 @@ def drive(monkeypatch):
         return out
 
     return _drive
+
+
+@pytest.fixture
+def drive(staged_beat_loop):
+    """THIS FILE's rig: the #6599 packing candidate is held OFF in BOTH arms.
+
+    Every measurement below is about ONE candidate —
+    :func:`cancellation_is_conclusive` — and its control
+    (``conclusive_splits=False``) is the loop without it. When a second
+    candidate landed in the same loop, that control stopped being the thing this
+    file names and 20 of these tests went red: not one of them at an invariant,
+    every one at a count, a position or a "nothing else cuts here" premise
+    (measured, lat940). A file that measures A against no-A cannot also be the
+    file that measures A+B, so the isolation is declared here, once, rather than
+    written into 47 call sites where the next reader would have to reconstruct
+    it from a keyword.
+
+    **So these numbers are about a loop production does not run**, and that is
+    the point of an isolation control — but it means the two clauses this file
+    used to own for the WHOLE loop cannot be left here:
+
+    * the TRUTH clause (a cut must not change a published census) and the
+      cascade bound are restated against the composed loop in
+      ``test_calibration_a_slow_success_is_evidence_too_6599`` section 5, which
+      imports :func:`staged_beat_loop` with both candidates live;
+    * the composed throughput — what A+B do together at the production plan —
+      is that file's sections 1 and 3.
+
+    A test here that wants the composition asks for ``staged_beat_loop``
+    directly and says which regime it is in.
+    """
+
+    async def _isolated(**kwargs):
+        kwargs.setdefault("packing_splits", False)
+        return await staged_beat_loop(**kwargs)
+
+    return _isolated
 
 
 # =============================================================================

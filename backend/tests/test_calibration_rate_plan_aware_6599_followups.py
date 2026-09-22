@@ -409,27 +409,54 @@ class TestAFailedCancellationMemorySaveIsNotAnUnbankedCompletion:
 
 
 class TestTheCancellationCallSiteIsTheOneThatOptsOut:
-    """The kwarg only pays if the cancellation save passes it and the banking
-    saves do not. Asserted on the source because driving the frozen loop needs
-    a database — but over the PARSE, not over the text.
+    """The kwarg only pays if the saves that BANK a unit do not pass it.
+    Asserted on the source because driving the frozen loop needs a database —
+    but over the PARSE, not over the text.
 
     A ``src.count("banks_a_unit=False")`` reads 2 here and always will: the line
     above the call explains the kwarg and contains it verbatim. A needle that
     matches prose as well as code grades something nobody wrote deliberately, so
     the call sites are taken from the AST and the comments cannot vote.
+
+    **RE-AIMED (lat940, #6599).** This class used to discriminate the banking
+    save from the others by COUNT (``exactly one opts out``) and by POSITION
+    (``the opt-out is ``calls[0]````). Both were true when it was written and
+    neither is the property: they read "this loop happens to hold one
+    non-banking save, and it happens to be the first". A second legitimate
+    non-banking save — one that persists a refinement rather than a completion —
+    reddens both tests while the invariant they name is untouched, and the
+    failure message accuses it of the CAL-P1048 under-count it does not commit.
+
+    The invariant is: *a save whose failure is an unbanked COMPLETION must keep
+    tallying it; a save on a path that completes nothing must not.* So the
+    discriminator is now structural — a save banks a unit when ``done += 1``
+    follows it in the same statement list — and the count is free.
     """
 
-    @staticmethod
-    def _saves() -> list:
-        """Every ``save_staged_cursor(...)`` call in the frozen unit loop."""
+    #: Parsed once, so the nodes ``_saves`` hands out are the same objects
+    #: ``_banks_a_unit`` walks — identity is the join between them.
+    _cached_tree = None
+
+    @classmethod
+    def _tree(cls):
         import ast
         import textwrap
 
-        pcl = import_module("app.tasks.precompute_calibration")
-        tree = ast.parse(textwrap.dedent(inspect.getsource(pcl._run_staged_futures)))
+        if cls._cached_tree is None:
+            pcl = import_module("app.tasks.precompute_calibration")
+            cls._cached_tree = ast.parse(
+                textwrap.dedent(inspect.getsource(pcl._run_staged_futures))
+            )
+        return cls._cached_tree
+
+    @classmethod
+    def _saves(cls) -> list:
+        """Every ``save_staged_cursor(...)`` call in the frozen unit loop."""
+        import ast
+
         return [
             node
-            for node in ast.walk(tree)
+            for node in ast.walk(cls._tree())
             if isinstance(node, ast.Call)
             and getattr(node.func, "id", None) == "save_staged_cursor"
         ]
@@ -441,32 +468,89 @@ class TestTheCancellationCallSiteIsTheOneThatOptsOut:
             for kw in call.keywords
         )
 
-    def test_exactly_one_save_in_the_unit_loop_opts_out(self):
+    @classmethod
+    def _banks_a_unit(cls, call) -> bool:
+        """Does ``done += 1`` follow this call in its own statement list?
+
+        The INNERMOST list, which is what makes this a discriminator rather
+        than a tautology: every call in the loop sits inside the ``for`` body
+        somewhere, and only the one whose immediate siblings include the
+        advance is the one whose failure loses a completion.
+        """
+        import ast
+
+        def counts(node) -> int:
+            return sum(1 for _ in ast.walk(node))
+
+        def is_advance(stmt) -> bool:
+            return any(
+                isinstance(n, ast.AugAssign)
+                and isinstance(n.op, ast.Add)
+                and isinstance(n.target, ast.Name)
+                and n.target.id == "done"
+                for n in ast.walk(stmt)
+            )
+
+        best: tuple[int, bool] | None = None
+        for parent in ast.walk(cls._tree()):
+            for field in ("body", "orelse", "finalbody"):
+                stmts = getattr(parent, field, None)
+                if not isinstance(stmts, list):
+                    continue
+                for index, stmt in enumerate(stmts):
+                    if not any(n is call for n in ast.walk(stmt)):
+                        continue
+                    size = counts(stmt)
+                    banks = any(is_advance(later) for later in stmts[index + 1 :])
+                    if best is None or size < best[0]:
+                        best = (size, banks)
+        assert best is not None, (
+            "the scan did not place this call in any statement list — it has "
+            "stopped reaching its subject"
+        )
+        return best[1]
+
+    def test_the_scan_reaches_both_kinds_of_save(self):
+        """Neither bucket may be empty, or the two tests below are vacuous."""
         calls = self._saves()
 
         assert len(calls) >= 2, (
             "the loop saves on both the cancellation and the banking path; "
             "finding fewer means this scan stopped reaching its subject"
         )
-        assert sum(self._opts_out(c) for c in calls) == 1, (
-            "one cancellation save opts out. Two would mean the banking save "
-            "has been silenced and a real durable failure would go untallied — "
-            "the CAL-P1048 under-count, reintroduced by its own repair"
+        banking = [c for c in calls if self._banks_a_unit(c)]
+        assert len(banking) == 1, (
+            "exactly one save in this loop is followed by the advance that "
+            f"banks a unit; found {len(banking)} of {len(calls)}"
         )
+        assert len(calls) - len(banking) >= 1, "and at least one that is not"
 
     def test_the_save_that_banks_a_unit_still_takes_the_default(self):
-        """Which call is which, by position: the opt-out is the EARLIER one.
+        """The invariant, aimed at the path rather than at the position.
 
-        The cancellation save sits inside the ``continue`` branch, above the
-        commit-and-advance that banks a unit. If a later edit moves the kwarg
-        onto the banking call this reverses, and the behavioural control
-        (``test_a_failed_UNIT_save_is_STILL_counted``) would still pass, because
-        it calls the persister directly rather than through the loop.
+        If a later edit moves the kwarg onto the banking call this fails, and
+        the behavioural control (``test_a_failed_UNIT_save_is_STILL_counted``)
+        would still pass, because it calls the persister directly rather than
+        through the loop.
         """
-        calls = sorted(self._saves(), key=lambda c: c.lineno)
+        for call in self._saves():
+            if self._banks_a_unit(call):
+                assert not self._opts_out(call), (
+                    f"the save on line {call.lineno} is followed by ``done += 1`` "
+                    "— silencing it means a real durable failure goes untallied, "
+                    "the CAL-P1048 under-count reintroduced by its own repair"
+                )
 
-        assert self._opts_out(calls[0]), "the cancellation save is the first one"
-        assert not any(self._opts_out(c) for c in calls[1:]), (
-            "every save after it banks a unit and must keep tallying its own "
-            "failures"
-        )
+    def test_every_save_that_banks_nothing_opts_out(self):
+        """The other direction, which the count never asserted.
+
+        A non-banking save that takes the DEFAULT files its own failure as an
+        unbanked completion — the same under-count, pointing the other way.
+        """
+        for call in self._saves():
+            if not self._banks_a_unit(call):
+                assert self._opts_out(call), (
+                    f"the save on line {call.lineno} completes no unit, so its "
+                    "failure must not be subtracted from this beat's completed "
+                    "count — pass ``banks_a_unit=False`` (CAL-P1302)"
+                )

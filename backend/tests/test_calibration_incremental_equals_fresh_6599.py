@@ -341,6 +341,15 @@ def build(monkeypatch):
     monkeypatch.setattr(cmb, "STAGED_FUTURES_BUCKETS", BUCKETS)
     monkeypatch.setattr(cmb, "staged_lease", lambda: 0.0)
     monkeypatch.setattr(pc, "_futures_generation_sql", lambda: "SELECT 1")
+    # #6599's packing cut is held OFF here. This file's subject is the BANK —
+    # that a warm build does not repeat work a cold one would — and its unit of
+    # account is the plan's slot count. A mechanism that re-partitions the plan
+    # mid-build changes that denominator (``units_read`` went 8 to 11 against a
+    # 8-slot plan the moment it landed), so leaving it live would turn every
+    # count here into a measurement of two things at once. The packing cut's own
+    # effect on reuse is measured in
+    # ``test_calibration_a_slow_success_is_evidence_too_6599``, section 2.
+    monkeypatch.setattr(sf, "packing_split_factor", lambda *_a, **_kw: 0)
     state = _State(_population())
     monkeypatch.setattr(pc, "staged_unit_fingerprint", lambda: state.unit_fingerprint)
 
