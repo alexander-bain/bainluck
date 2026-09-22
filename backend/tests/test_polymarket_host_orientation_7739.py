@@ -539,11 +539,9 @@ def test_every_settle_statement_actually_binds_its_parameters(
 
 def test_a_single_settle_round_is_refused():
     """One round would write and never check, which is the shipped defect."""
-    repair = _load_repair()
     source = REPAIR_PATH.read_text()
     assert "--settle-rounds" in source
     assert "args.settle_rounds < 2" in source
-    del repair
 
 
 def test_the_backup_is_scoped_to_one_run():

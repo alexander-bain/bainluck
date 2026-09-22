@@ -306,7 +306,6 @@ class TestTheSettleStatementsReachTheServer:
     async def test_the_stored_read_prepares_and_reads_the_source(self, session):
         from sqlalchemy import text
 
-        from app.models import Event
         from scripts.repair_polymarket_event_orientation import STORED_SQL
 
         await session.execute(
@@ -323,7 +322,6 @@ class TestTheSettleStatementsReachTheServer:
         # The row with no polymarket leg reads None, not 0.0 — the difference
         # between "we hold nothing" and "we hold zero" is a whole verdict.
         assert by_id[FAR_FUTURE] is None
-        del Event
 
     async def test_the_restamp_writes_only_the_polymarket_value(self, session):
         """It must move `polymarket.value` and leave every sibling source alone.
