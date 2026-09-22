@@ -14,6 +14,48 @@ private enum FuturesSortField: String, CaseIterable {
     case name = "Name"
 }
 
+// MARK: - One decision per market
+
+/// The whole percent this page prints for each outcome, keyed by outcome id.
+///
+/// #8097. Three renderers on this page rounded a probability on their own — the
+/// share sentence, the 52pt hero numeral, and every row — so a two-outcome
+/// complement pair quoted on the venues' half-cent grid printed `60%` and `41%`
+/// in one frame. Measured on production 2026-09-22: **6,743 open two-outcome
+/// complement markets sit exactly on the `.5` boundary, 227 of them tier 1** —
+/// "Set 2 Winner: Elise Mertens vs Barbora Krejcikova" at `59.5 / 40.5` is one.
+/// It is #8035's defect one tap deeper: that ship fixed the Discover card and the
+/// image it shares, and a reader who tapped the fixed card landed here on 101.
+///
+/// ## The order this is decided in is NOT the order the reader sees
+///
+/// `renderedCardPercents` takes SERVED order and treats index 0 as the headline —
+/// the number that survives untouched, so the derived point lands on the side
+/// nobody is quoting. This page lets the reader re-sort the table by name, by
+/// 24-hour change, and in either direction. Deciding over the DISPLAYED order
+/// would therefore let the printed numbers change when a reader sorts by name and
+/// back — the same question answered two ways by a control that is supposed to
+/// reorder rows, not reprice them. So the decision is taken over probability-
+/// descending order and looked up by identity, and the sort moves rows only.
+///
+/// Ties are broken by id so the headline is stable across reloads rather than
+/// left to `sorted(by:)`, which is not guaranteed stable.
+nonisolated func futuresDetailRenderedPercents(_ outcomes: [FuturesOutcome]) -> [Int: Int] {
+    let headlineOrder = outcomes.sorted { a, b in
+        let lhs = a.probability ?? -1
+        let rhs = b.probability ?? -1
+        if lhs != rhs { return lhs > rhs }
+        return a.id < b.id
+    }
+    let printed = renderedCardPercents(headlineOrder.map(\.probability))
+    var byOutcomeId: [Int: Int] = [:]
+    for (index, outcome) in headlineOrder.enumerated() {
+        guard printed.indices.contains(index), let percent = printed[index] else { continue }
+        byOutcomeId[outcome.id] = percent
+    }
+    return byOutcomeId
+}
+
 // MARK: - View
 
 struct FuturesDetailView: View {
@@ -32,7 +74,13 @@ struct FuturesDetailView: View {
         guard let market = viewModel.market else { return "Check this out on Bain Luck" }
         let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
         if let leader, let prob = leader.probability {
-            return "\(leader.name) at \(Int((prob * 100).rounded()))% — \(market.name) on Bain Luck"
+            // The sentence quotes the same integer the hero and the leader row
+            // print. Rounding it here again is how a share read "60%" off a page
+            // that said 59% — and the share is the copy that leaves the app.
+            let percent = futuresDetailRenderedPercents(market.outcomes)[leader.id]
+                ?? renderedPercent(prob)
+                ?? Int((prob * 100).rounded())
+            return "\(leader.name) at \(percent)% — \(market.name) on Bain Luck"
         }
         return "\(market.name) on Bain Luck"
     }
@@ -151,6 +199,9 @@ struct FuturesDetailView: View {
     private func heroSection(_ market: FuturesMarketDetail) -> some View {
         let leader = market.outcomes.max(by: { ($0.probability ?? 0) < ($1.probability ?? 0) })
         let isResolved = market.status == "resolved"
+        // One decision for the whole market, shared with the rows below and the
+        // share sentence above (#8097).
+        let heroPercent = leader.flatMap { futuresDetailRenderedPercents(market.outcomes)[$0.id] }
 
         // #7074, the second instance. The Discover card had this exact shape — a
         // backdrop pinned to a height, a sibling overlay free to exceed it, and a
@@ -206,7 +257,7 @@ struct FuturesDetailView: View {
                     // #5899: the 52pt figure said `0%` for a leader the venue
                     // prices at 0.05%, three scrolls above `<1%` on every
                     // other row of the same market.
-                    Text("\(percentNumber(prob * 100))%")
+                    Text("\(percentNumber(prob * 100, renderedPercent: heroPercent))%")
                         .font(.system(size: 52, weight: .black).monospacedDigit())
                         .minimumScaleFactor(0.76)
                         .foregroundStyle(.white)
@@ -496,6 +547,9 @@ struct FuturesDetailView: View {
     private func outcomesSection(_ market: FuturesMarketDetail) -> some View {
         let color = categoryColor(market)
         let sorted = sortedOutcomes(market.outcomes)
+        // Decided over the SERVED field, not `sorted` — re-sorting the table must
+        // move rows without repricing them (#8097).
+        let percents = futuresDetailRenderedPercents(market.outcomes)
         let displayed = showAllOutcomes ? sorted : Array(sorted.prefix(25))
         let hasMore = sorted.count > 25
 
@@ -529,7 +583,13 @@ struct FuturesDetailView: View {
             }
 
             ForEach(Array(displayed.enumerated()), id: \.element.id) { index, outcome in
-                outcomeRow(outcome, rank: index + 1, color: color, leaderId: sorted.first?.id)
+                outcomeRow(
+                    outcome,
+                    rank: index + 1,
+                    color: color,
+                    leaderId: sorted.first?.id,
+                    percent: percents[outcome.id]
+                )
                 if index < displayed.count - 1 {
                     Divider()
                         .overlay(DS.border)
@@ -625,7 +685,17 @@ struct FuturesDetailView: View {
         }
     }
 
-    private func outcomeRow(_ outcome: FuturesOutcome, rank: Int, color: Color, leaderId: Int?) -> some View {
+    /// `percent` is the card-level decision for THIS outcome (#8097). It is the
+    /// only thing printed; `probability` still drives the bar and the colour,
+    /// because a length and a hue are not printed numbers and moving them by up
+    /// to half a point would buy a reader nothing.
+    private func outcomeRow(
+        _ outcome: FuturesOutcome,
+        rank: Int,
+        color: Color,
+        leaderId: Int?,
+        percent: Int?
+    ) -> some View {
         let isLeader = outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
 
@@ -686,9 +756,14 @@ struct FuturesDetailView: View {
                 // Lead probability via ProbabilityNumber
                 if let prob = outcome.probability {
                     if isLeader {
-                        ProbabilityNumber(value: prob * 100, size: 28, color: DS.probColor(prob * 100))
+                        ProbabilityNumber(
+                            value: prob * 100,
+                            size: 28,
+                            color: DS.probColor(prob * 100),
+                            renderedPercent: percent
+                        )
                     } else {
-                        Text(formatProbability(prob))
+                        Text(formatProbability(prob, renderedPercent: percent))
                             .font(.system(size: 18, weight: .semibold, design: .monospaced))
                             .foregroundStyle(DS.probColor(probPct))
                     }

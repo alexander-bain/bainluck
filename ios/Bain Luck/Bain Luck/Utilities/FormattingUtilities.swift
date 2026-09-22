@@ -43,8 +43,17 @@ func formatProbability(_ value: Double, renderedPercent: Int? = nil) -> String {
 /// `futures_outcomes.current_probability` is `numeric` and holds `0.0005`: a zero
 /// that arrives here is a measured zero, and absence is
 /// `formatProbabilityOrDash`'s dash and stays so.
-func percentNumber(_ percent: Double) -> String {
+/// `renderedPercent` overrides the INTEGER, not the rule — the same bargain
+/// `formatProbability` strikes above, for the two surfaces that draw the figure
+/// and the "%" separately. A caller holding the card-level decision (#2060,
+/// `renderedCardPercents`) passes it here instead of rounding a second time.
+///
+/// The `<1` guard still runs on the POINTS, because it is a claim about the value
+/// rather than about which arithmetic produced the integer: an outcome priced at
+/// `0.0005` reads `<1` whether or not its card decided a whole percent for it.
+func percentNumber(_ percent: Double, renderedPercent: Int? = nil) -> String {
     if percent > 0 && percent < 1 { return "<1" }
+    if let renderedPercent { return "\(renderedPercent)" }
     return "\(Int(percent.rounded()))"
 }
 

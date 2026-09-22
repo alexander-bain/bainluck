@@ -61,7 +61,11 @@ final class FuturesZeroPercentLabel5899Tests: XCTestCase {
     /// `Dune: Messiah` at `0.1` while the card printed `0%`.
     func testTheEntertainmentCardsThirdRowIsSmallNotDead() {
         let topOutcomes = [55.0, 41.0, 0.1]      // Avengers, Spider-Man, Dune: Messiah
-        XCTAssertEqual(topOutcomes.map(percentNumber), ["55", "41", "<1"])
+        // Called through a closure rather than passed as a bare function value:
+        // #8097 gave `percentNumber` a defaulted `renderedPercent:`, which changes
+        // its TYPE to `(Double, Int?) -> String` even though every existing call
+        // still compiles. The assertion is unchanged.
+        XCTAssertEqual(topOutcomes.map { percentNumber($0) }, ["55", "41", "<1"])
     }
 
     // MARK: - The half that must NOT move: the top end
