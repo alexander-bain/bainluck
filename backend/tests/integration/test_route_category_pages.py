@@ -54,12 +54,17 @@ def _query_result(items, rows=None):
 
 
 def _outcome(name, probability, *, outcome_id=1, rank=1, change_24h=0):
+    # `is_winner` / `resolution_source`: #8083 routed the themed dashboards
+    # through `_withheld_price_outcome_ids`, whose arms read the settlement
+    # columns a real `FuturesOutcome` always carries.
     return SimpleNamespace(
         id=outcome_id,
         name=name,
         current_probability=probability,
         probability_change_24h=change_24h,
         rank=rank,
+        is_winner=None,
+        resolution_source=None,
     )
 
 
