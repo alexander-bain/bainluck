@@ -1,0 +1,170 @@
+[
+ {
+  "surface": "politics",
+  "q_kalshi": "How many House seats will Democrats win in Georgia?",
+  "delta": 63.0,
+  "kid": 59693678,
+  "pid": 58840980,
+  "q_poly": "How many House seats will the Democrats win in Ohio?"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Clarence mayoral election winner?",
+  "delta": 30.5,
+  "kid": 61484892,
+  "pid": 60146666,
+  "q_poly": "Clarence Mayoral Election Winner"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Will another country leave OPEC in 2026?",
+  "delta": 17.5,
+  "kid": 13786112,
+  "pid": 13641462,
+  "q_poly": "Will another country leave OPEC in 2026?"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Who will leave Trump's Cabinet next?",
+  "delta": 15.8,
+  "kid": 25922364,
+  "pid": 25370971,
+  "q_poly": "Who will be the next to leave the Trump Cabinet?"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Krak\u00f3w mayoral election winner?",
+  "delta": 10.3,
+  "kid": 59164656,
+  "pid": 58547558,
+  "q_poly": "Krak\u00f3w Mayoral Election Winner"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Blue wave in 2026?",
+  "delta": 10.0,
+  "kid": 108617,
+  "pid": 113770,
+  "q_poly": "Blue wave in 2026?"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Nigerian Senate election winner?",
+  "delta": 10.0,
+  "kid": 108593,
+  "pid": 59704039,
+  "q_poly": "Nigerian Senate Election Winner"
+ },
+ {
+  "surface": "politics",
+  "q_kalshi": "Blue tsunami in 2026?",
+  "delta": 9.0,
+  "kid": 108618,
+  "pid": 114390,
+  "q_poly": "Blue tsunami in 2026?"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "Top Artist on Spotify U.S. 2026",
+  "delta": 75.2,
+  "kid": 109513,
+  "pid": 113987,
+  "q_poly": "Top Spotify Artist 2026"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "#2 Artist on Spotify U.S. in 2026?",
+  "delta": 60.5,
+  "kid": 109515,
+  "pid": 35961535,
+  "q_poly": "#2 Spotify Artist 2026"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "#2 Global Netflix Movie this week?",
+  "delta": 52.6,
+  "kid": 61496007,
+  "pid": 61309025,
+  "q_poly": "What will be the #2 global Netflix movie this week?"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "Kim Kardashian and Lewis Hamilton: Engaged in 2026?",
+  "delta": 20.0,
+  "kid": 109388,
+  "pid": 56799671,
+  "q_poly": "Kim Kardashian and Lewis Hamilton engaged in 2026?"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "Game Awards: Best Multiplayer",
+  "delta": 20.0,
+  "kid": 61484877,
+  "pid": 58399978,
+  "q_poly": "The Game Awards: Best Multiplayer"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "#2 US Netflix Movie this week?",
+  "delta": 16.0,
+  "kid": 61496005,
+  "pid": 61309023,
+  "q_poly": "What will be the #2 US Netflix movie this week?"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "Top Global Netflix Show this week?",
+  "delta": 15.3,
+  "kid": 61496002,
+  "pid": 61309022,
+  "q_poly": "What will be the top global Netflix show this week?"
+ },
+ {
+  "surface": "entertainment",
+  "q_kalshi": "Game Awards: Best Narrative",
+  "delta": 12.5,
+  "kid": 61484876,
+  "pid": 58399941,
+  "q_poly": "The Game Awards: Best Narrative"
+ },
+ {
+  "surface": "economics",
+  "q_kalshi": "Will OpenAI or Anthropic IPO first?",
+  "delta": 3.1,
+  "kid": 108231,
+  "pid": 115417,
+  "q_poly": "Will Anthropic or OpenAI IPO first?"
+ },
+ {
+  "surface": "economics",
+  "q_kalshi": "Which bank will lead OpenAI's IPO?",
+  "delta": 2.5,
+  "kid": 31833076,
+  "pid": 24586956,
+  "q_poly": "Lead Bank in OpenAI's IPO?"
+ },
+ {
+  "surface": "economics",
+  "q_kalshi": "Fed rate cut before 2027?",
+  "delta": 2.1,
+  "kid": 1630482,
+  "pid": 113339,
+  "q_poly": "Fed emergency rate cut before 2027?"
+ },
+ {
+  "surface": "economics",
+  "q_kalshi": "Which bank will lead Anthropic's IPO?",
+  "delta": 1.5,
+  "kid": 31833106,
+  "pid": 30635308,
+  "q_poly": "Lead Bank in Anthropic's IPO?"
+ },
+ {
+  "surface": "economics",
+  "q_kalshi": "Elon Musk out as Tesla CEO before 2027?",
+  "delta": 0.2,
+  "kid": 109490,
+  "pid": 113320,
+  "q_poly": "Musk out as Tesla CEO before 2027?"
+ }
+]

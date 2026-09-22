@@ -1,0 +1,29 @@
+SERVED ROWS READ: 21    KEPT: 20    LOST: 1
+
+=== LOST — every one of these must be read by hand before this ships ===
+  [politics] delta 63.0
+      kalshi: How many House seats will Democrats win in Georgia?
+      poly  : How many House seats will the Democrats win in Ohio?
+      places: ['georgia'] vs ['ohio']   exact_arm=False
+
+=== KEPT ===
+  [politics      ] delta 30.5  exact places [] vs [] | Clarence mayoral election winner?
+  [politics      ] delta 17.5  exact places [] vs [] | Will another country leave OPEC in 2026?
+  [politics      ] delta 15.8  near  places [] vs [] | Who will leave Trump's Cabinet next?
+  [politics      ] delta 10.3  exact places [] vs [] | Kraków mayoral election winner?
+  [politics      ] delta 10.0  exact places [] vs [] | Blue wave in 2026?
+  [politics      ] delta 10.0  exact places [] vs [] | Nigerian Senate election winner?
+  [politics      ] delta 9.0   exact places [] vs [] | Blue tsunami in 2026?
+  [entertainment ] delta 75.2  near  places ['us'] vs [] | Top Artist on Spotify U.S. 2026
+  [entertainment ] delta 60.5  near  places ['us'] vs [] | #2 Artist on Spotify U.S. in 2026?
+  [entertainment ] delta 52.6  near  places [] vs [] | #2 Global Netflix Movie this week?
+  [entertainment ] delta 20.0  exact places [] vs [] | Kim Kardashian and Lewis Hamilton: Engaged in 2026?
+  [entertainment ] delta 20.0  near  places [] vs [] | Game Awards: Best Multiplayer
+  [entertainment ] delta 16.0  near  places ['us'] vs ['us'] | #2 US Netflix Movie this week?
+  [entertainment ] delta 15.3  near  places [] vs [] | Top Global Netflix Show this week?
+  [entertainment ] delta 12.5  near  places [] vs [] | Game Awards: Best Narrative
+  [economics     ] delta 3.1   near  places [] vs [] | Will OpenAI or Anthropic IPO first?
+  [economics     ] delta 2.5   near  places [] vs [] | Which bank will lead OpenAI's IPO?
+  [economics     ] delta 2.1   near  places [] vs [] | Fed rate cut before 2027?
+  [economics     ] delta 1.5   near  places [] vs [] | Which bank will lead Anthropic's IPO?
+  [economics     ] delta 0.2   near  places [] vs [] | Elon Musk out as Tesla CEO before 2027?

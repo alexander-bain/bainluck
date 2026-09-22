@@ -1,0 +1,57 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14+meta, pytest-9.0.3, pluggy-1.6.0
+rootdir: /Users/bain/bainluck-dev/discover/backend
+configfile: pytest.ini
+plugins: asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 15 items
+
+tests/test_cross_source_place_mismatch_6985.py FFFFF........F.           [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_the_specimen_is_refused _________________________
+tests/test_cross_source_place_mismatch_6985.py:84: in test_the_specimen_is_refused
+    assert not is_same_question(KALSHI_GEORGIA, POLY_OHIO)
+E   AssertionError: assert not True
+E    +  where True = is_same_question('How many House seats will Democrats win in Georgia?', 'How many House seats will the Democrats win in Ohio?')
+________ test_no_threshold_can_separate_the_specimen_from_the_duplicate ________
+tests/test_cross_source_place_mismatch_6985.py:110: in test_no_threshold_can_separate_the_specimen_from_the_duplicate
+    assert _score(KALSHI_GEORGIA, POLY_OHIO) is None
+E   AssertionError: assert 0.75 is None
+E    +  where 0.75 = _score('How many House seats will Democrats win in Georgia?', 'How many House seats will the Democrats win in Ohio?')
+_ test_two_different_places_are_never_one_question[How many House seats will Democrats win in Georgia?-How many House seats will the Democrats win in Ohio?] _
+tests/test_cross_source_place_mismatch_6985.py:136: in test_two_different_places_are_never_one_question
+    assert not is_same_question(left, right)
+E   AssertionError: assert not True
+E    +  where True = is_same_question('How many House seats will Democrats win in Georgia?', 'How many House seats will the Democrats win in Ohio?')
+_ test_two_different_places_are_never_one_question[How many House seats will Democrats win in Louisiana?-How many House seats will the Democrats win in Ohio?] _
+tests/test_cross_source_place_mismatch_6985.py:136: in test_two_different_places_are_never_one_question
+    assert not is_same_question(left, right)
+E   AssertionError: assert not True
+E    +  where True = is_same_question('How many House seats will Democrats win in Louisiana?', 'How many House seats will the Democrats win in Ohio?')
+_ test_two_different_places_are_never_one_question[Will North Korea test an intercontinental ballistic missile before July?-Will South Korea test an intercontinental ballistic missile before July?] _
+tests/test_cross_source_place_mismatch_6985.py:136: in test_two_different_places_are_never_one_question
+    assert not is_same_question(left, right)
+E   AssertionError: assert not True
+E    +  where True = is_same_question('Will North Korea test an intercontinental ballistic missile before July?', 'Will South Korea test an intercontinental ballistic missile before July?')
+______________ test_the_spotlight_serves_no_row_for_the_specimen _______________
+tests/test_cross_source_place_mismatch_6985.py:249: in test_the_spotlight_serves_no_row_for_the_specimen
+    assert find_cross_source_markets(markets, market_row_fn=_row_fn) == []
+E   AssertionError: assert [{'category':...9693678, ...}] == []
+E     
+E     Left contains one more item: {'category': '', 'delta': 63.0, 'kalshi': 87.0, 'kalshi_market_id': 59693678, ...}
+E     Use -v to get more diff
+=============================== warnings summary ===============================
+tests/test_cross_source_place_mismatch_6985.py::test_the_specimen_is_refused
+  /Users/bain/bainluck-dev/discover/backend/app/routes/auth.py:118: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class UserProfileResponse(BaseModel):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_the_specimen_is_refused
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_no_threshold_can_separate_the_specimen_from_the_duplicate
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_two_different_places_are_never_one_question[How many House seats will Democrats win in Georgia?-How many House seats will the Democrats win in Ohio?]
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_two_different_places_are_never_one_question[How many House seats will Democrats win in Louisiana?-How many House seats will the Democrats win in Ohio?]
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_two_different_places_are_never_one_question[Will North Korea test an intercontinental ballistic missile before July?-Will South Korea test an intercontinental ballistic missile before July?]
+FAILED tests/test_cross_source_place_mismatch_6985.py::test_the_spotlight_serves_no_row_for_the_specimen
+==================== 6 failed, 9 passed, 1 warning in 1.52s ====================
