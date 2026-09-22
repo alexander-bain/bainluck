@@ -82,6 +82,42 @@ def fast_backoff(monkeypatch):
     return 0.05
 
 
+class _SleepSpy:
+    """Stands in for the ``asyncio`` module inside ``settlement_probe`` and
+    records every delay the probe asks to sleep for.
+
+    Scoped to the subject's own module reference rather than to the stdlib, so
+    the yields httpx and anyio make on their own account are invisible here:
+    ``delays`` holds what THE PROBE slept, which is the thing under test. Every
+    other attribute (``Lock``, ``Semaphore``, ``gather``) falls through to the
+    real module untouched.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self.delays: list[float] = []
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def sleep(self, delay, *args, **kwargs):
+        self.delays.append(delay)
+        return await self._real.sleep(delay, *args, **kwargs)
+
+    @property
+    def paced(self) -> list[float]:
+        """The sleeps that actually cost wall time. ``sleep(0)`` is a bare yield
+        to the loop, not pacing, and the probe's fast paths use it as one."""
+        return [d for d in self.delays if d > 0]
+
+
+@pytest.fixture
+def sleep_spy(monkeypatch):
+    spy = _SleepSpy(sp.asyncio)
+    monkeypatch.setattr(sp, "asyncio", spy)
+    return spy
+
+
 # ---------------------------------------------------------------------------
 # G5 — authenticated when a key exists, harmless when it does not
 # ---------------------------------------------------------------------------
@@ -395,22 +431,35 @@ def test_g7_the_pacer_widens_on_429_and_decays_on_success():
 
 
 @pytest.mark.asyncio
-async def test_g7_healthy_traffic_is_not_paced():
+async def test_g7_healthy_traffic_is_not_paced(sleep_spy):
     """The brake must cost nothing when the source is answering. A pacer that
-    always sleeps would slow the sweep it exists to protect."""
+    always sleeps would slow the sweep it exists to protect.
+
+    Asserted on the sleeps themselves, not on elapsed wall time. The original
+    form of this test measured the batch against a 0.5 s ceiling and reddened
+    the shard whenever the runner was loaded (#6942) — a ceiling cannot separate
+    "the pacer slept" from "the runner was busy", and widening it only moves the
+    load at which it lies. The two assertions below are the two ways the
+    property can break, and neither can be forged by a slow machine: the shared
+    interval must stay at zero, and nothing in the probe may sleep at all.
+    ``pacer.interval`` alone is insufficient — a ``wait_turn`` that slept a fixed
+    floor, or one that advanced ``_next_at`` by a constant instead of by the
+    interval, would pace every request while leaving the interval reading 0.0.
+    """
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"market": {"status": "finalized"}})
 
     pacer = RatePacer()
     items = [(i, "kalshi", TICKER) for i in range(40)]
 
-    started = time.monotonic()
     async with _client(handler) as client:
         await probe_many(items, concurrency=8, client=client, pacer=pacer)
-    elapsed = time.monotonic() - started
 
     assert pacer.interval == 0.0
-    assert elapsed < 0.5, f"healthy traffic was paced ({elapsed:.4f}s)"
+    assert sleep_spy.paced == [], (
+        f"healthy traffic was paced: the probe slept {sleep_spy.paced} "
+        f"({sum(sleep_spy.paced):.4f}s total) against a source answering 200"
+    )
 
 
 @pytest.mark.asyncio
