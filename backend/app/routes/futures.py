@@ -52,7 +52,11 @@ from app.utils.settlement_stamp import (
     last_charted_timestamp as _last_charted_timestamp,
     settled_point_timestamp,
 )
-from app.utils.sport_keys import LLM_CATEGORY_TO_SPORT_PREFIX, sport_display_name
+from app.utils.sport_keys import (
+    LLM_CATEGORY_TO_SPORT_PREFIX,
+    NO_SPORT_CATEGORY,
+    sport_display_name,
+)
 from app.utils.tournament_stages import (
     get_stages_for_sport,
     classify_market_stage,
@@ -4128,6 +4132,45 @@ async def get_related_events(
     # not carry, gets the old behaviour — the alternative is emptying the strip
     # on every non-league market to fix a cross-sport bug, and an absent
     # category is not evidence of a wrong sport.
+    #
+    # ── …EXCEPT THAT "OTHER" IS NOT ABSENT, IT IS DECLINED (#7944) ───────────
+    #
+    # The paragraph above is true of a category that is missing and of one the
+    # map does not carry. `NO_SPORT_CATEGORY` is neither: it is the value the
+    # column holds when the venue was asked for a sport and said there isn't
+    # one — the strongest evidence available that no fixture belongs here — and
+    # it reached the fail-open branch only because `.get()` spells "declined"
+    # and "unmapped" with the same `None`.
+    #
+    # A reader saw the difference on 2026-09-21. `/futures/61461617` — **2027
+    # Steel Bridge National Champion**, a student engineering contest, badged
+    # `other` by #7900 because Kalshi tags the series `Other` — rendered 21
+    # college football fixtures under "Games This Week", captioned "Each team's
+    # odds in this market". Liberty at Coastal Carolina, Clemson at California,
+    # Texas A&M at LSU. The 52 outcomes are universities carrying NCAAF team
+    # ids, which is the same cross-domain link corruption #2553 names above and
+    # is likewise not repaired here.
+    #
+    # So: *absent* fails open, *declined* fails closed. Measured before it was
+    # written (all statuses, 2026-09-22 04:4xZ): ONE market in the database has
+    # this category and a team-linked outcome, and it is the contest — and NO
+    # market with a NULL category has one, so the fail-open arm this preserves
+    # is reached by nothing today. The clause costs zero correct strips and the
+    # reason it is still worth a branch is that the badge rail has ~10,029 rows
+    # left to page, every one of which can mint another honest blank.
+    #
+    # An early return rather than an unsatisfiable filter: there is no sport to
+    # constrain to, so there is no query worth issuing. `total_count` is stated
+    # (the no-links return above predates it) so a consumer of the empty strip
+    # reads 0 instead of `undefined`.
+    if market.llm_sport_category == NO_SPORT_CATEGORY:
+        return {
+            "market_id": market_id,
+            "market_name": market.name,
+            "events": [],
+            "total_count": 0,
+        }
+
     sport_prefix = (
         LLM_CATEGORY_TO_SPORT_PREFIX.get(market.llm_sport_category)
         if market.llm_sport_category
