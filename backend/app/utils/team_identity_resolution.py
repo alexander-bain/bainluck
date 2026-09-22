@@ -75,6 +75,7 @@ __all__ = [
     "kalshi_ticker_abbrev",
     "resolve_row_team_id",
     "row_entity_is_ambiguous",
+    "ticker_team_ids",
 ]
 
 # Kalshi outcome tickers end in the team's canonical abbreviation:
@@ -233,6 +234,36 @@ def _ticker_team_segments(external_id: Optional[str], index: TeamAliasIndex) -> 
         if seg and seg in index.by_abbrev:
             found.add(seg)
     return found
+
+
+def ticker_team_ids(
+    external_id: Optional[str], index: Optional[TeamAliasIndex]
+) -> frozenset:
+    """Every team this Kalshi ticker's own segments name, as team ids.
+
+    Empty means "this ticker names no team I know" — never "no team". It is the
+    same reading `resolve_row_team_id` takes of a silent ticker, and callers must
+    treat it the same way: fall back to whatever they did before.
+
+    The difference from `resolve_row_team_id` is that this one does not collapse
+    a MATCHUP to a refusal. `KXMLBWS-26-LAA-MIA` names two clubs, and for
+    "does this row belong on this page" both of them are the answer — an Angels
+    vs Marlins World Series leg belongs on an Angels page and on a Marlins page
+    and on neither of the Dodgers'. `resolve_row_team_id` returns None there
+    because it is answering the harder question, "who is this market ABOUT",
+    where picking one of two would be a coin flip (#2001).
+
+    Ambiguous abbreviations are already absent from `by_abbrev`, so a shared
+    segment contributes nothing rather than a guess.
+    """
+    if index is None:
+        return frozenset()
+    found = set()
+    for segment in _ticker_team_segments(external_id, index):
+        team_id = index.abbrev_team(segment)
+        if team_id is not None:
+            found.add(team_id)
+    return frozenset(found)
 
 
 def resolve_row_team_id(
