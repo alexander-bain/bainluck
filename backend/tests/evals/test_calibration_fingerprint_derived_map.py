@@ -28,6 +28,17 @@ def _unhashed_cross_module(live,names):
  rows=_rows(live)
  roots=set(live["hashed_roots"])
  return [n for n in names if n in rows and n not in roots and not rows[n]["covered_by_value"] and not rows[n]["origin"].startswith("app.tasks.precompute_calibration")]
+def _moved_roots(live,pinned):
+ """The hashed roots whose own source moved — i.e. the ones that cost the bank.
+
+ The tier ABOVE :func:`_unhashed_cross_module`, and the opposite hazard. There,
+ the digest does NOT move and regenerating hides a bank that can straddle two
+ populations. Here the digest DOES move, the straddle is impossible, and the
+ cost lands somewhere the artifact never mentioned: deploying discards every
+ banked unit and restarts a multi-day convergence from zero.
+ """
+ a=live.get("hashed_root_sha16") or {}; b=pinned.get("hashed_root_sha16") or {}
+ return sorted(n for n in set(a)|set(b) if a.get(n)!=b.get(n))
 def divergence_message(live,pinned):
  """What an author who just reddened the ratchet needs, instead of a dict diff.
 
@@ -52,12 +63,31 @@ def divergence_message(live,pinned):
  note already carries both blocking constraints and the ordering.
  """
  moved=_moved(live,pinned)
+ roots=_moved_roots(live,pinned)
  unhashed=_unhashed_cross_module(live,moved)
- lines=["derived map diverged from the pinned artifact.","inputs that moved: "+(", ".join(moved) if moved else "(none — a count, a hashed root or a by-value declaration moved instead)")]
+ # The "instead" list is narrowed by what the per-root digests now rule out: a
+ # reader two lines above "no hashed root moved" should not be told one might have.
+ nothing_moved="(none — a count, a hashed root or a by-value declaration moved instead)" if roots else "(none — a count, a by-value declaration, or source outside every hashed root moved instead)"
+ lines=["derived map diverged from the pinned artifact.","inputs that moved: "+(", ".join(moved) if moved else nothing_moved)]
+ if roots:
+  # CAL-P1336 (#6868). This branch is the reset side of the ship that made the
+  # beat faster: the accuracy page has to walk ~4 days of beats to publish, and
+  # a fingerprint move resets that walk to zero. Before this the ratchet told
+  # the author of such a change to "regenerate the artifact" and nothing more,
+  # so the largest cost in the whole convergence was the one cost it never
+  # named. It is not an instruction to abandon the change — it is the one fact
+  # that decides WHEN it lands.
+  lines+=["","HASHED ROOT MOVED: "+", ".join(roots),
+   "`_main_input_fingerprint` hashes the source of these functions, so this edit",
+   "moves the digest. Deploying it DISCARDS every banked unit and restarts the",
+   "convergence from zero — days of beats, not hours. Regenerate the artifact,",
+   "and land it immediately after a successful publish, never mid-convergence."]
  if unhashed:
   lines+=["","UNHASHED CROSS-MODULE TIER: "+", ".join(unhashed),"Regenerating this artifact RECORDS your change; it does not make it safe.","",FIX_SEQUENCING_NOTE]
- else:
+ elif moved or roots:
   lines.append("No moved input is in the unhashed cross-module tier — regenerate the artifact.")
+ else:
+  lines.append("No input and no hashed root moved: the digest does not move and the in-flight bank survives this change — regenerate the artifact.")
  return "\n".join(lines)
 def test_generated_map_matches_real_source():
  live,pinned=derive_map(),frozen()
@@ -108,8 +138,11 @@ def test_the_message_withholds_the_note_when_the_moved_input_is_not_in_that_tier
 def test_a_cross_module_hashed_root_is_not_reported_as_unhashed():
  """#6275 / CERT-2902. `identity_quarantine_ctes` is the specimen and the only
  member of its shape: hashed as a ROOT, defined outside the build module, not
- covered by value. Editing it MOVES the digest, so the author must regenerate
- the artifact and nothing else — the opposite of what the note says.
+ covered by value. Editing it MOVES the digest, so the unhashed tier's warning
+ and the sequencing note are both false for it — they are about an input the
+ digest CANNOT see. (CAL-P1336 amends the "and nothing else" this line used to
+ carry: moving the digest discards the in-flight bank, so the HASHED ROOT block
+ does print here, and correctly. The two strings asserted below are unchanged.)
 
  Mutated rather than asserted off the pinned row, because the row would go on
  satisfying a classifier that had stopped consulting `hashed_roots`.
@@ -132,3 +165,58 @@ def test_a_cross_module_hashed_root_is_not_reported_as_unhashed():
 def test_the_message_is_not_a_strawman_on_the_real_tree():
  """A green tree must produce an empty moved-list, or the two tests above pass on noise."""
  assert _moved(derive_map(),frozen())==[]
+ assert _moved_roots(derive_map(),frozen())==[]
+def test_hashed_root_digest_is_the_bytes_the_fingerprint_hashes():
+ """The whole per-root tier is worth nothing if its digest is merely plausible.
+
+ `_main_input_fingerprint` concatenates `inspect.getsource(root)` for six roots
+ and hashes that. So the artifact's digest is checked against those exact bytes
+ on the live objects — not against another AST walk, which would agree with the
+ generator by construction and prove nothing about the real digest.
+ """
+ import hashlib, inspect
+ from app.tasks import precompute_calibration as build
+ live=derive_map()
+ digests=live["hashed_root_sha16"]
+ assert sorted(digests)==sorted(live["hashed_roots"]), "a root is declared but carries no digest"
+ for name in live["hashed_roots"]:
+  expected=hashlib.sha256(inspect.getsource(getattr(build,name)).strip().encode()).hexdigest()[:16]
+  assert digests[name]==expected, f"{name}: the artifact digest is not a digest of the hashed bytes"
+def test_an_edit_inside_a_hashed_root_names_it_and_says_the_bank_is_discarded():
+ """CAL-P1336 (#6868). A COMMENT inside a root is the specimen, on purpose.
+
+ `inspect.getsource` returns a function's text comments and all, so a comment
+ inside a root moves the production digest and discards the bank, while a
+ comment outside every root (the test below) does not. Nothing about the size
+ or the semantics of an edit predicts which side of that line it falls on —
+ only where it sits — which is exactly why an author cannot be expected to
+ work it out and the ratchet has to say it.
+ """
+ source=BUILD.read_text()
+ needle="# Queue 300D Item 2 refused this combination outright, because"
+ assert source.count(needle)==1, "the mutation site moved — re-aim it inside _main_futures_sql"
+ live=derive_map(source.replace(needle,needle+" (mutation probe)",1))
+ assert _moved_roots(live,frozen())==["_main_futures_sql"]
+ message=divergence_message(live,frozen())
+ assert "HASHED ROOT MOVED: _main_futures_sql" in message
+ assert "DISCARDS every banked unit" in message
+ assert "the in-flight bank survives" not in message
+def test_a_comment_outside_every_hashed_root_says_the_bank_survives():
+ """The other direction, so the warning above means something when it IS printed.
+
+ `_main_input_fingerprint`'s own docstring is not hashed by anything (it is not
+ a root, and hashing a function's source never covers its caller), yet editing
+ it moves `source_sha256` and reddens this ratchet. That is the case the
+ generator's comment-only correction hit, and the honest answer to it is
+ "regenerate, the bank is fine" — which the message could not say until the
+ per-root digests existed to rule the other branch out.
+ """
+ source=BUILD.read_text()
+ needle="Everything a carried phase output depends on, in one 32-char digest."
+ assert source.count(needle)==1, "the mutation site moved — re-aim it outside every hashed root"
+ live=derive_map(source.replace(needle,needle[:-1]+" (mutation probe).",1))
+ assert live!=frozen(), "the mutation did not move the artifact, so this proves nothing"
+ assert _moved_roots(live,frozen())==[]
+ message=divergence_message(live,frozen())
+ assert "HASHED ROOT MOVED" not in message
+ assert "the in-flight bank survives this change" in message
