@@ -221,6 +221,24 @@ def _squash(name: Optional[str]) -> str:
     return _NON_ALNUM.sub("", strip_diacritics(name).lower())
 
 
+team_name_fold_key = _squash
+"""The fold's own notion of "the same team name", exported for SELECTORS.
+
+This fold decides which event rows are one FIXTURE. A page's query decides
+which rows reach the fold at all — and those two answers have to share one
+notion of a team name or a surface admits a pair the fold would have collapsed,
+or (worse, #7929) never admits the row that carries the number.
+
+`routes/teams.py` is the reader of record: a club with several team rows
+(`Montreal Canadiens` 568, `Montréal Canadiens` 3706, `Montréal Canadiens`
+19692) had its schedule split across them, and the page's exact-string arm
+could reach only the spelling its URL resolved to.
+
+Exported as an ALIAS rather than reimplemented, so the selector and the fold
+cannot drift: there is one function, under two names, and changing the key
+changes both callers in the same edit.
+"""
+
 KALSHI_DATE_ONLY_SOURCE = "kalshi_ticker"
 """The `commence_time_source` that means "this time came out of a ticker".
 

@@ -11,7 +11,7 @@ from app.utils.event_rails import (
     recent_or_unreported_condition,
     upcoming_rail_condition,
 )
-from app.utils.event_twin_fold import fold_twin_events
+from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
 from app.utils.aggregation import compute_aggregate_probability
 from app.utils.lifecycle import served_event_status
 from app.utils.season_variant_team import (
@@ -123,6 +123,91 @@ def _fold_rail(rows: list, rail: str, team_slug: str) -> list:
     return rows[:EVENT_CARD_LIMIT]
 
 
+async def _club_row_identity(
+    db, team: Team, family_sport_ids: list
+) -> tuple[frozenset, frozenset]:
+    """Every team ROW that is this club, as (ids, names) for the event filter.
+
+    ## A club is not one row, and the page could only reach one of them (#7929)
+
+    `/team/montreal-canadiens` printed "vs Ottawa Senators · Sep 21 · W 3–2"
+    with no "we had them at X%", while the SAME game on the Senators page read
+    42%. Three team rows spell one club:
+
+        568    Montreal Canadiens    icehockey_nhl            espn_id 10
+        3706   Montréal Canadiens    icehockey_nhl            espn_id 10
+        19692  Montréal Canadiens    icehockey_nhl_preseason  espn_id NULL
+
+    The filter matched `home_team_id == 568` or the exact string
+    "Montreal Canadiens", so every row the providers spelled with the accent
+    was invisible to the page the URL resolves to. Measured on production
+    2026-09-22 over 09-01..10-22: the club's own page was missing FOUR of its
+    eight rows — both completed games' pre-match line (0.5108 and 0.5830, each
+    on the accented twin the fold never saw) and two upcoming fixtures
+    outright (Oct 3 at Pittsburgh, Oct 6 vs Carolina, both bound to 3706).
+
+    ## Why the key is the FOLD's key and not an identifier
+
+    The obvious anchor is `espn_id`, and it is POISONED for this: measured the
+    same day, 382 same-sport pairs share one `espn_id` while disagreeing on
+    name, and they include rows that are not one club — `New York Islanders`
+    (54) and `New Jersey` (12716) both carry espn_id 12, `Portland Timbers`
+    and `Portland Timbers 2` both carry 9723. Keying on it would put a rival's
+    and a reserve side's games on a club's page: a truth defect traded for a
+    missing caption. The preseason rows have no `espn_id` at all, so it could
+    not have reached this specimen anyway.
+
+    So the key is `team_name_fold_key` — the twin fold's OWN squash, imported
+    rather than reimplemented. It folds diacritics and punctuation and nothing
+    else, which is why it reads `Montréal Canadiens` as 568's club and still
+    reads `Portland Timbers 2`, `Columbus Crew 2` and `Borussia Dortmund (Res)`
+    as separate sides. It is also the key the fold downstream already uses to
+    decide which rows are one fixture, so a row this admits is a row that fold
+    can collapse — the two halves cannot drift, because they are one function.
+
+    ## Scope, cost and how it fails
+
+    Scoped to the team's own league FAMILY for #5491's reason: `Djurgardens IF`
+    (soccer) and `Djurgårdens IF` (ice hockey) fold alike and are not one
+    schedule. Measured over the same window, the same-family population is six
+    clubs — Montréal Canadiens, CF Montréal, Borussia Mönchengladbach,
+    CS Marítimo and two MMA fighters — so this is a narrow repair, not a
+    widening of the name fallback.
+
+    One extra query, `(id, name)` over the family: 11ms measured on the largest
+    family there is (tennis_wta, 1,563 rows) against a page that takes ~1.2s,
+    so it is not cached — a cache here would be state bought for 1% of a page.
+
+    Fails to TODAY'S ANSWER, loudly: on any error the club is just its own row,
+    which is exactly the behaviour before this repair. The rails are this
+    page's core (#1197 / #1239) and must not 500 for a widening.
+    """
+    club_ids = {team.id}
+    club_names = {team.name}
+    if not family_sport_ids:
+        return frozenset(club_ids), frozenset(club_names)
+    try:
+        key = team_name_fold_key(team.name)
+        if not key:
+            return frozenset(club_ids), frozenset(club_names)
+        rows = (
+            await db.execute(
+                select(Team.id, Team.name).where(Team.sport_id.in_(family_sport_ids))
+            )
+        ).all()
+        for row_id, row_name in rows:
+            if team_name_fold_key(row_name) == key:
+                club_ids.add(row_id)
+                club_names.add(row_name)
+    except Exception:
+        logger.exception(
+            "team page: club row identity failed for team %s; serving its own "
+            "row only",
+            team.id,
+        )
+    return frozenset(club_ids), frozenset(club_names)
+
+
 @router.get("/{identifier}")
 async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
     """Get a team page with upcoming/recent games, futures, and championship path."""
@@ -216,11 +301,8 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # not a league (#1798/#4945: every MLB club has a preseason row too), and a
     # tennis player registered under `tennis_atp_us_open` must keep their
     # `tennis_atp` matches.
-    name_arm = or_(
-        Event.home_team_name == team.name,
-        Event.away_team_name == team.name,
-    )
     team_family = league_family_identity(getattr(team.sport, "key", None))
+    family_sport_ids: list[int] = []
     if team_family is not None:
         family_sport_ids = [
             sport_id
@@ -229,6 +311,20 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             ).all()
             if league_family_identity(sport_key) == team_family
         ]
+
+    club_ids, club_names = await _club_row_identity(db, team, family_sport_ids)
+
+    # Sorted at the query boundary: a set's iteration order is not stable
+    # between processes, and an `IN` list that reorders is a different cache
+    # key for the same question. The frozensets stay sets for the membership
+    # tests in the card formatter, where order is nothing.
+    club_id_list, club_name_list = sorted(club_ids), sorted(club_names)
+
+    name_arm = or_(
+        Event.home_team_name.in_(club_name_list),
+        Event.away_team_name.in_(club_name_list),
+    )
+    if team_family is not None:
         # An empty list would exclude every unbound row, so only constrain when
         # the team's own sport resolved — `.in_([])` is a false predicate, and
         # failing OPEN here costs a stale card while failing closed costs a
@@ -244,8 +340,8 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             )
 
     base_event_filter = or_(
-        Event.home_team_id == team.id,
-        Event.away_team_id == team.id,
+        Event.home_team_id.in_(club_id_list),
+        Event.away_team_id.in_(club_id_list),
         name_arm,
     )
 
@@ -364,7 +460,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         )
     recent_rows = _fold_rail(_recent_raw, "recent", team.slug)
     upcoming_events, recent_events = await _folded_briefs(
-        db, team, upcoming_rows, recent_rows
+        db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
     )
     _mark("events")
 
@@ -469,7 +565,9 @@ def _format_team(team: Team) -> dict:
     }
 
 
-async def _folded_briefs(db, team: Team, *rails) -> list[list[dict]]:
+async def _folded_briefs(
+    db, team: Team, *rails, club_ids=None, club_names=None
+) -> list[list[dict]]:
     """Each rail's rows as briefs, with ONE twin fold across ALL of them (#5382).
 
     🔴 THE HALF THE FIRST PRESENTATION MISSED. Reading the canonical blend
@@ -520,6 +618,8 @@ async def _folded_briefs(db, team: Team, *rails) -> list[list[dict]]:
                     event, folded.get(int(event.id), event.win_probability_sources)
                 ),
                 team,
+                club_ids,
+                club_names,
             )
             for event in rail
         ]
@@ -527,10 +627,25 @@ async def _folded_briefs(db, team: Team, *rails) -> list[list[dict]]:
     ]
 
 
-def _format_event_brief(event: Event, team: Team) -> dict:
+def _format_event_brief(
+    event: Event, team: Team, club_ids=None, club_names=None
+) -> dict:
     """Compact event format for team page game lists."""
     sport = event.sport
-    is_home = (event.home_team_id == team.id) or (event.home_team_name == team.name)
+    # THE SIDE IS READ AGAINST THE WHOLE CLUB, NOT THE URL'S ROW (#7929).
+    #
+    # Once the filter admits a row bound to a sibling team row, asking
+    # `home_team_id == team.id` here answers the wrong question: Montréal's
+    # Oct 6 home game against Carolina is `home_team_id 3706`, so the card
+    # would have printed it as an AWAY fixture — a widening that repairs a
+    # missing card by mislabelling it is not a repair.
+    #
+    # The two defaults keep the pre-existing callers (the #5382 unit tests
+    # construct a team and an event and nothing else) reading exactly as they
+    # did, so the identity is an ADDITION to the question, never a replacement.
+    ids = club_ids if club_ids is not None else {team.id}
+    names = club_names if club_names is not None else {team.name}
+    is_home = (event.home_team_id in ids) or (event.home_team_name in names)
     opponent = event.away_team_name if is_home else event.home_team_name
 
     # #5382: this used to read `win_probability_sources["aggregate"]` — the same
