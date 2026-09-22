@@ -26,7 +26,7 @@ describe("derivePeriodBoundaries — stale prior-game contamination (L2-163)", (
       { timestamp: "2026-07-23T00:00:00Z", period: "Top 4th" },
     ];
 
-    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, undefined, periodMarkers);
+    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, periodMarkers);
 
     // Only the current game survives — the 5th (which only existed yesterday) is gone.
     const labels = boundaries.map((b) => b.label);
@@ -49,20 +49,40 @@ describe("derivePeriodBoundaries — stale prior-game contamination (L2-163)", (
       { timestamp: "2026-07-23T00:20:00Z", period: "Top 2nd" },
       { timestamp: "2026-07-23T00:40:00Z", period: "Top 3rd" },
     ];
-    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, undefined, periodMarkers);
+    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, periodMarkers);
     expect(boundaries.map((b) => b.label)).toEqual(["T1", "T2", "T3"]);
   });
 
-  test("first inning snaps to commence_time (T1/B1 recognized)", () => {
+  // #7901 REVERSED THIS TEST, AND ITS OWN COMMENT IS WHY.
+  //
+  // It read "First marker arrives a few min late (data lag)" and asserted the
+  // marker was therefore moved to `commence_time`. The premise was never
+  // checked against real games: measured over 60 completed events the move was
+  // 9.6–47.6 minutes, and on the NHL rows the period label carries a game clock
+  // ("19:57 - 1st Period") proving the period had just begun — so it was the
+  // GAME that was late, not the data. The assertion below is the old one
+  // inverted: the first marker keeps its own timestamp like every other.
+  test("the first inning keeps its observed timestamp — it is NOT moved to commence_time", () => {
     const periodMarkers = [
-      // First marker arrives a few min late (data lag).
       { timestamp: "2026-07-23T00:05:00Z", period: "Top 1st" },
       { timestamp: "2026-07-23T00:25:00Z", period: "Top 2nd" },
     ];
-    const commence = "2026-07-23T00:00:00Z";
-    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, commence, periodMarkers);
+    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, periodMarkers);
     const t1 = boundaries.find((b) => b.label === "T1")!;
-    expect(t1.timestamp).toBe(commence);
+    expect(t1.timestamp).toBe("2026-07-23T00:05:00Z");
+  });
+
+  // The second, unremarked arm of the same rule: the regex matched `B1` too, so
+  // a game first seen in the BOTTOM of the 1st had that marker moved to first
+  // pitch — a half-inning that by definition does not start there.
+  test("a stream first seen in the bottom of the 1st keeps B1 where it was seen", () => {
+    const periodMarkers = [
+      { timestamp: "2026-07-23T00:40:00Z", period: "Bottom 1st" },
+      { timestamp: "2026-07-23T01:00:00Z", period: "Top 2nd" },
+    ];
+    const boundaries = derivePeriodBoundaries(undefined, undefined, undefined, periodMarkers);
+    const b1 = boundaries.find((b) => b.label === "B1")!;
+    expect(b1.timestamp).toBe("2026-07-23T00:40:00Z");
   });
 });
 

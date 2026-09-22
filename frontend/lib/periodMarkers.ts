@@ -684,15 +684,42 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
  * Returns boundaries for period *transitions* (not the first period).
  * E.g., for a basketball game: returns boundaries for Q2, Q3, Q4 starts.
  *
- * @param commenceTime — ISO timestamp of game start. When provided, the first
- *   period boundary (e.g., Q1) uses this as its timestamp instead of the first
- *   data point, which may arrive late.
+ * EVERY BOUNDARY MEANS THE SAME THING: THE FIRST MOMENT WE OBSERVED THAT PERIOD
+ * (#7901). It used to mean that for all of them EXCEPT the first, which was
+ * rewritten to the SCHEDULED start by `applyCommenceTime` — "the first period
+ * boundary uses this instead of the first data point, which may arrive late".
+ *
+ * 🪤 That justification names the one circumstance in which the scheduled time
+ * is least defensible. "Our data arrived late" and "the game started late" are
+ * indistinguishable from inside this function, and the rule resolved the tie by
+ * asserting, as a fact on the page, the time nobody observed.
+ *
+ * MEASURED on 60 completed events (2026-09-21, `artifacts/ux-1430/sizing-7901.json`):
+ * the rewrite moved the first marker EARLIER by 9.6–47.6 minutes on real games —
+ * MLB 15316297 by 47.6, WNBA by 13.8–16.7, NHL by 9.6–13.6 — never later, and
+ * never toward evidence. The NHL rows are the proof that this is the game
+ * starting late rather than us watching late: their period labels carry the game
+ * clock ("19:57 - 1st Period" is three seconds in), so the period demonstrably
+ * had only just begun, ten minutes after the scheduled face-off.
+ *
+ * On 15316297 the page therefore said the top of the 1st began at 3:35 PM and
+ * that nothing happened for the next 47 minutes. Both game-state channels
+ * (`mlb`, `espn`) have no point at all before 23:21Z; the only series running
+ * across that window were Kalshi and Polymarket, which are market quotes and
+ * carry no `game_state` on any of their 2,324 points. There was no evidence of
+ * play, and the chart drew the claim anyway.
+ *
+ * Alex, 2026-09-14: scheduled kickoff/capture timestamps are not automatically
+ * actual start/finish; align state markers to evidenced times.
+ *
+ * The second arm of the same rule was worse and unremarked: the regex also
+ * matched `B1`, so a game we first saw in the BOTTOM of the 1st had that marker
+ * moved to first pitch — a half-inning that by definition does not start there.
  */
 export function derivePeriodBoundaries(
   espnHistory?: ESPNHistoryPoint[],
   winProbHistory?: Record<string, WinProbHistoryPoint[]>,
   scoringPlays?: ScoringPlay[],
-  commenceTime?: string,
   periodMarkers?: Array<{ timestamp: string; period: string }>,
   /** #4888: event sport key, so a bare period number can name its own unit. */
   sport?: string | null,
@@ -717,7 +744,7 @@ export function derivePeriodBoundaries(
     const boundaries = Array.from(firstSeen.entries())
       .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
       .map(([label, timestamp]) => ({ timestamp, label }));
-    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
+    if (boundaries.length > 0) return boundaries;
   }
 
   // Prefer win prob history — its timestamps are always present in chartData
@@ -726,47 +753,22 @@ export function derivePeriodBoundaries(
   // have matching entries in the chart data when win_prob_snapshots deduped them.
   if (winProbHistory) {
     const boundaries = deriveBoundariesFromWinProb(winProbHistory, sport);
-    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
+    if (boundaries.length > 0) return boundaries;
   }
 
   // Fallback to ESPN history (explicit period field, different table)
   if (espnHistory && espnHistory.length > 1) {
     const boundaries = deriveBoundariesFromEspn(espnHistory, sport);
-    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
+    if (boundaries.length > 0) return boundaries;
   }
 
   // Try scoring plays
   if (scoringPlays && scoringPlays.length > 1) {
     const boundaries = deriveBoundariesFromScoringPlays(scoringPlays, sport);
-    if (boundaries.length > 0) return applyCommenceTime(boundaries, commenceTime);
+    if (boundaries.length > 0) return boundaries;
   }
 
   return [];
-}
-
-/**
- * Post-process boundaries:
- * - Use commenceTime for the first period (Q1/P1/1H) since data may arrive late.
- * - Move "Final" to the last data point timestamp (not the first "Final" point).
- */
-function applyCommenceTime(
-  boundaries: PeriodBoundary[],
-  commenceTime?: string,
-): PeriodBoundary[] {
-  if (boundaries.length === 0) return boundaries;
-
-  const result = [...boundaries];
-
-  // Fix first period: use commenceTime if available
-  if (commenceTime) {
-    const first = result[0];
-    const isFirstPeriod = /^(Q1|P1|1H|1|R1|T1|B1)$/i.test(first.label);
-    if (isFirstPeriod) {
-      result[0] = { ...first, timestamp: commenceTime };
-    }
-  }
-
-  return result;
 }
 
 function deriveBoundariesFromEspn(history: ESPNHistoryPoint[], sport?: string | null): PeriodBoundary[] {

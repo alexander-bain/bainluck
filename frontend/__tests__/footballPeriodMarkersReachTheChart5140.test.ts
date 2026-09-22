@@ -13,6 +13,12 @@
  * normalise becomes a rule labelled with raw ESPN text — or, in the one case
  * worth fearing, a Q2 dragged back to kickoff by `applyCommenceTime`.
  *
+ * #7901 REMOVED `applyCommenceTime` ENTIRELY, so the case this suite feared is
+ * now structurally impossible rather than guarded — and the case it did NOT
+ * fear, a Q1 dragged back to kickoff, turned out to be the live defect. Both
+ * assertions below are kept: they now pin the absence of a rule rather than the
+ * correctness of its exception, which is the stronger of the two.
+ *
  * The payloads below are the BEFORE and AFTER of the two specimens on the issue,
  * as production serves them and as the fixed route serves them.
  */
@@ -45,17 +51,23 @@ const PATRIOTS_SEAHAWKS_AFTER = [
   { timestamp: "2026-09-10T02:36:55+00:00", period: "4th Quarter" },
 ];
 
-const draw = (
-  markers: Array<{ timestamp: string; period: string }>,
-  commence: string,
-) =>
-  derivePeriodBoundaries(undefined, undefined, undefined, commence, markers, NFL);
+const draw = (markers: Array<{ timestamp: string; period: string }>) =>
+  derivePeriodBoundaries(undefined, undefined, undefined, markers, NFL);
 
 describe("#5140 — corrected football markers reach the chart", () => {
   it("draws Q1 HT Q3 Q4 from ESPN's vocabulary, at the corrected times", () => {
-    const drawn = draw(CHIEFS_BRONCOS_AFTER, CHIEFS_BRONCOS_COMMENCE);
+    const drawn = draw(CHIEFS_BRONCOS_AFTER);
 
     expect(drawn.map((b) => b.label)).toEqual(["Q1", "Q2", "HT", "Q3", "Q4"]);
+    // #7901: Q1 stands where it was SEEN (00:17:12), not at kickoff (00:15:00).
+    // 2m12s is the ordinary, invisible end of the correction this suite's own
+    // specimen happens to sit at — the same rule moved MLB 15316297 by 47.6 min.
+    expect(drawn.find((b) => b.label === "Q1")!.timestamp).toBe(
+      "2026-09-15T00:17:12+00:00",
+    );
+    expect(drawn.find((b) => b.label === "Q1")!.timestamp).not.toBe(
+      CHIEFS_BRONCOS_COMMENCE,
+    );
     // The defect, in the one number a reader could see: Q2 was drawn at
     // 01:33:43Z — the quarter's only touchdown, 39 minutes after it began.
     expect(drawn.find((b) => b.label === "Q2")!.timestamp).toBe(
@@ -68,12 +80,11 @@ describe("#5140 — corrected football markers reach the chart", () => {
   });
 
   it("does not drag a leading Q2 back to kickoff when Q1 is absent", () => {
-    // The one live risk in serving fewer markers than before: `applyCommenceTime`
-    // rewrites the FIRST boundary to `commence_time`. It is guarded by a
-    // first-period label test, and 14780138's first marker is now Q2 — but the
-    // guard is the only thing standing between this fix and a Q2 at kickoff,
-    // which is the exact defect it is repairing.
-    const drawn = draw(PATRIOTS_SEAHAWKS_AFTER, PATRIOTS_SEAHAWKS_COMMENCE);
+    // The one live risk in serving fewer markers than before USED to be
+    // `applyCommenceTime` rewriting the FIRST boundary to `commence_time`,
+    // held off only by its first-period label test. #7901 removed the rewrite,
+    // so nothing can drag any leading marker to kickoff — this now pins that.
+    const drawn = draw(PATRIOTS_SEAHAWKS_AFTER);
 
     expect(drawn.map((b) => b.label)).toEqual(["Q2", "HT", "Q3", "Q4"]);
     expect(drawn[0].timestamp).toBe("2026-09-10T00:57:30+00:00");
@@ -83,7 +94,7 @@ describe("#5140 — corrected football markers reach the chart", () => {
   it("is a change the reader can see: the served payload stacks two quarters", () => {
     // Control on the BEFORE, so the assertions above are known to be measuring
     // the fix rather than agreeing with what was already drawn.
-    const drawn = draw(PATRIOTS_SEAHAWKS_BEFORE, PATRIOTS_SEAHAWKS_COMMENCE);
+    const drawn = draw(PATRIOTS_SEAHAWKS_BEFORE);
 
     expect(drawn.map((b) => b.label)).toEqual(["Q2", "Q3", "Q4"]);
     expect(drawn[0].timestamp).toBe(drawn[1].timestamp); // Q2 and Q3, one instant
@@ -102,8 +113,8 @@ describe("#5140 — corrected football markers reach the chart", () => {
       source: "win_prob",
     }));
 
-    expect(draw(withKeys, CHIEFS_BRONCOS_COMMENCE)).toEqual(
-      draw(CHIEFS_BRONCOS_AFTER, CHIEFS_BRONCOS_COMMENCE),
+    expect(draw(withKeys)).toEqual(
+      draw(CHIEFS_BRONCOS_AFTER),
     );
   });
 });

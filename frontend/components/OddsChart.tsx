@@ -1953,6 +1953,20 @@ export default function OddsChart({
          rows and looked healthy, and the only way to see that the missing one
          was HALFTIME is to read the names. */
       data-period-labels={filteredPeriodBoundaries.map((b) => b.label).join(",")}
+      /* #7901: WHEN each surviving label is drawn, in x order, as epoch ms.
+         The three channels above answer how many, on which row and under what
+         name — none of them can see a marker drawn at the WRONG INSTANT, which
+         is present, correctly named, correctly spelled and simply not where the
+         evidence puts it. `T1` stood 47 minutes left of its served timestamp on
+         a late-starting MLB game and every existing guard passed.
+
+         Reading it off the painted rule instead is not an option and not just
+         inconvenient: recharts draws no `<ReferenceLine>` without a viewport, so
+         a server render sees nothing, and in a browser the rule's x must be
+         inverted through the axis — which `tools/period-marker-position-7901.mjs`
+         does, and which needs the axis to be linear and its edge ticks to be
+         un-shifted. This is the timestamp the component actually handed recharts. */
+      data-period-times={filteredPeriodBoundaries.map((b) => parseISO(b.timestamp).getTime()).join(",")}
       /* #6987: the end-callout's printed string, on the wrapper, for the same
          reason as the two above — the label is drawn inside a recharts `shape`,
          which renders nothing without a viewport, so a guard reading the markup

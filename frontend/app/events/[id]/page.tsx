@@ -138,7 +138,6 @@ import {
   formatEventStartLabel,
   resolveProbability,
   computeSharedChartDomain,
-  computeRealStartTime,
   computeLastChartPoint,
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
@@ -856,26 +855,28 @@ export default function EventPage({ params }: EventPageProps) {
     servedHistory?.pre_window_omitted,
   ]);
 
-  // Compute real game start time from livescores data (see eventKeyStats.ts)
-  const realStartTime = useMemo(
-    () => computeRealStartTime(event?.commence_time, historyData),
-    [event?.commence_time, historyData?.score_history, historyData?.espn_history, historyData?.win_prob_history],
-  );
-
-  // Derive period boundaries from history data for chart annotations
+  // Derive period boundaries from history data for chart annotations.
+  //
+  // #7901: this used to pass a `realStartTime` here, so the FIRST boundary was
+  // redrawn at the (estimated) game start rather than at the moment it was
+  // observed. `computeRealStartTime` could never detect a late start anyway —
+  // it minimised over every `win_prob_history` series, and Kalshi/Polymarket
+  // quotes begin days before first pitch, so its "is the earliest live reading
+  // more than 3 minutes after the nominal start?" test was answered by a market
+  // price and always said no. It is removed; every marker now stands at its own
+  // evidenced time. See `derivePeriodBoundaries`.
   const periodBoundaries = useMemo(() => {
     return derivePeriodBoundaries(
       historyData?.espn_history,
       historyData?.win_prob_history,
       historyData?.scoring_plays,
-      realStartTime,
       historyData?.period_markers,
       // #4888: ESPN's box-score fallback serves bare digits ("3"), which the
       // chart drew as an unlabelled dashed rule. The sport is what turns that
       // into "Q3" — see BARE_PERIOD_UNIT in lib/periodMarkers.ts.
       event?.sport,
     );
-  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, realStartTime, historyData?.period_markers, event?.sport]);
+  }, [historyData?.espn_history, historyData?.win_prob_history, historyData?.scoring_plays, historyData?.period_markers, event?.sport]);
 
   // Shared chart domain (see eventKeyStats.ts)
   const sharedChartDomain = useMemo(

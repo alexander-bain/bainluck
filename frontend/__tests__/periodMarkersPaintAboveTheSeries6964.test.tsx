@@ -106,7 +106,6 @@ function boundaries() {
     undefined,
     undefined,
     undefined,
-    WIRE.commence_time,
     WIRE.period_markers,
     SPORT
   );

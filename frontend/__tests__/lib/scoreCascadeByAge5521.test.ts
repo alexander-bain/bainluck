@@ -21,12 +21,18 @@
  * (more frequent updates) over event SWR"*), an empirical claim about relative
  * freshness with nothing re-checking it at runtime.
  *
- * The findable part is that `computeRealStartTime`, forty lines up in the same
- * file, documents ITS priority as *"StatPal score_history > ESPN >
+ * The findable part is that `computeRealStartTime`, then forty lines up in the
+ * same file, documented ITS priority as *"StatPal score_history > ESPN >
  * win_prob_history"*. Two helpers in one file ordered the same arms differently,
  * and the reader got the loser. **When a helper resolves one value from several
  * arms, ask whether it ranks by SOURCE or by RECENCY — and whether a sibling in
  * the same file answers differently.**
+ *
+ * (#7901 removed that sibling, and found its documented priority was never
+ * implemented at all: it took a flat `min` over the three arrays. So the honest
+ * form of the lesson is stronger — the sibling did not rank the arms
+ * DIFFERENTLY, it did not rank them at all, and its docstring said otherwise.
+ * Ask the code, not the comment, which arm wins.)
  *
  * ═══ WHY A SINGLE-ARM FIXTURE CANNOT SEE THIS ═══
  *

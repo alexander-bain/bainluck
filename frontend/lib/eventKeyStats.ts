@@ -1936,49 +1936,6 @@ export function defaultChartTimeRange(
 }
 
 // ---------------------------------------------------------------------------
-// Real start time computation
-// ---------------------------------------------------------------------------
-
-/**
- * Compute the real game start time from livescores data.
- *
- * Priority: StatPal score_history > ESPN > win_prob_history.
- * If the earliest live data point is >3 min later than nominal commence_time,
- * use the livescores timestamp instead.
- */
-export function computeRealStartTime(
-  commenceTime: string | undefined,
-  historyData: EventHistoryResponse | null | undefined,
-): string | undefined {
-  if (!commenceTime) return undefined;
-  const nominalMs = new Date(commenceTime).getTime();
-
-  let earliestLive = Infinity;
-
-  if (historyData?.score_history?.length) {
-    const first = new Date(historyData.score_history[0].timestamp).getTime();
-    if (first < earliestLive) earliestLive = first;
-  }
-  if (historyData?.espn_history?.length) {
-    const first = new Date(historyData.espn_history[0].timestamp).getTime();
-    if (first < earliestLive) earliestLive = first;
-  }
-  if (historyData?.win_prob_history) {
-    for (const points of Object.values(historyData.win_prob_history)) {
-      if (points.length > 0) {
-        const first = new Date(points[0].timestamp).getTime();
-        if (first < earliestLive) earliestLive = first;
-      }
-    }
-  }
-
-  if (earliestLive !== Infinity && earliestLive > nominalMs + 3 * 60 * 1000) {
-    return new Date(earliestLive).toISOString();
-  }
-  return commenceTime;
-}
-
-// ---------------------------------------------------------------------------
 // Last chart point computation
 // ---------------------------------------------------------------------------
 
@@ -2241,10 +2198,16 @@ export function computeLastChartPoint(
   //
   // `espn_history` was the only series this cascade read. `score_history` — the
   // StatPal `score_snapshots` series, in the SAME payload — was never consulted
-  // at all, and the sibling helper forty lines up (`computeRealStartTime`)
-  // documents its own priority as *"StatPal score_history > ESPN > win_prob"*.
-  // One helper in this file called that array the most authoritative and the one
-  // picking the number a reader sees did not look at it.
+  // at all, and a sibling helper in this file (`computeRealStartTime`, removed
+  // in #7901) documented its own priority as *"StatPal score_history > ESPN >
+  // win_prob"*. One helper in this file called that array the most authoritative
+  // and the one picking the number a reader sees did not look at it.
+  //
+  // #7901 POSTSCRIPT: that sibling never implemented the priority it documented
+  // — it took a flat `min` over all three arrays, so the ordering the comment
+  // above leans on was prose only. The lesson survives its source and gets
+  // sharper: a stated priority is a claim about code, and this one was false in
+  // the same file that cited it.
   //
   // Production 15304937 (Athletics v Mariners, MLB, 06:02Z): `espn_history[-1]`
   // at 04:50:54Z said 4–5, `score_history[-1]` at 04:55:24Z said 6–5, and the
