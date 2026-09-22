@@ -77,11 +77,92 @@ INDIVIDUAL_STROKE_PLAY_MARKET_TYPES: Final[frozenset[str]] = frozenset({
 })
 
 
+# ── THE PAIR THAT LEADS THE CARD ────────────────────────────────────────────
+# Withholding the phantoms is only half the repair. `/golf`'s card component
+# enters its cup renderer on `_isCupEvent(t) && t.golfers.length === 2` and reads
+# its hero out of `golfers[0]` — it never looks at `h2h_matchups`
+# (`frontend/components/TournamentCard.tsx:59,224`). So a team match-play card
+# served with `golfers: []` and Team USA v Team World sitting in `h2h_matchups`
+# renders as a bare title: the phantom is gone and nothing has replaced it.
+# CERT-3289 blocked exactly that shape. The team pair has to be IN the contract
+# the card reads.
+#
+# Which matchup is the team one is not a position — during a cup the same list
+# carries the singles (Scheffler v Im), and `routes/golf.py` sorts h2h matchups
+# by CLOSENESS, so a lopsided 81.5/14.5 team market sorts last behind every
+# tight singles pairing. Taking `h2h_matchups[0]` would put a golfer back at the
+# top of the card by a different road.
+#
+# So the sides are matched against a closed allowlist of team names. That is the
+# safety property, and it is the mirror of `withhold_individual_market`'s: this
+# predicate can only ever promote a pair whose BOTH sides name a team, so it can
+# fail to find the team market and it can never promote a person.
+_TEAM_SIDE_PREFIX_RE: Final[re.Pattern[str]] = re.compile(r"^team\s+", re.I)
+
+TEAM_SIDE_NAMES: Final[frozenset[str]] = frozenset({
+    # Presidents Cup — Kalshi writes "Team USA" / "Team World"; DataGolf and the
+    # tour's own materials say "International".
+    "usa", "us", "united states", "america",
+    "world", "international", "rest of the world",
+    # Ryder Cup (and the Solheim Cup, whose sides are the same two).
+    "europe",
+    # Walker Cup. Not reachable from `TEAM_MATCH_PLAY_KEYS` today, and listed
+    # because the frontend's `_isCupEvent` already names walker/solheim: the day
+    # a key is added there, the promotion works rather than silently serving a
+    # titles-only card. A name in this set does nothing on its own — it is only
+    # ever consulted for a tournament that is already team match play.
+    "great britain and ireland", "gb and i",
+})
+
+
 def is_team_match_play_key(tournament_key: str | None) -> bool:
     """True when a `routes/golf.py` tournament key names a team match-play event."""
     if not tournament_key:
         return False
     return tournament_key.strip().lower() in TEAM_MATCH_PLAY_KEYS
+
+
+def normalize_team_side_name(name: str | None) -> str:
+    """Fold a served outcome name to the form `TEAM_SIDE_NAMES` is keyed in.
+
+    Drops the optional "Team " prefix, periods (`U.S.A.` → `usa`) and spells `&`
+    so one spelling of each side is stored. Returns `""` for an absent name,
+    which is not in the set, so an empty name can never match a team.
+    """
+    if not name:
+        return ""
+    folded = name.strip().lower().replace(".", "").replace("&", " and ")
+    folded = _TEAM_SIDE_PREFIX_RE.sub("", folded)
+    return re.sub(r"\s+", " ", folded).strip()
+
+
+def is_team_side_name(name: str | None) -> bool:
+    """True when a served outcome name names one of a cup's two SIDES, not a player."""
+    return normalize_team_side_name(name) in TEAM_SIDE_NAMES
+
+
+def select_team_side_matchup(matchups: list[dict] | None) -> dict | None:
+    """The h2h matchup that is the cup itself, or `None`.
+
+    Both sides must name a team and they must name DIFFERENT teams — a pair that
+    folds to one side ("USA" v "Team USA") is a data defect, and leading the card
+    with a 50/50 of one team against itself would be a worse reading than the
+    phantom it replaced.
+
+    Order within the list is not consulted: see the module note above for why
+    position is the wrong key.
+    """
+    for matchup in matchups or []:
+        if not isinstance(matchup, dict):
+            continue
+        side_a = (matchup.get("golfer_a") or {}).get("name")
+        side_b = (matchup.get("golfer_b") or {}).get("name")
+        if not (is_team_side_name(side_a) and is_team_side_name(side_b)):
+            continue
+        if normalize_team_side_name(side_a) == normalize_team_side_name(side_b):
+            continue
+        return matchup
+    return None
 
 
 def is_team_match_play_name(event_name: str | None) -> bool:

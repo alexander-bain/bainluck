@@ -31,6 +31,7 @@ from app.utils.golf_evolution_market import (
 from app.utils.odds_math import probability_to_american
 from app.utils.golf_event_format import (  # #7985
     is_team_match_play_key,
+    select_team_side_matchup,
     withhold_individual_market,
 )
 from app.utils.golf_membership import (
@@ -2212,6 +2213,69 @@ def _build_tournament_entry(
     }
 
 
+def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
+    """Lead a team match-play card with its two teams. (#7985)
+
+    The withhold upstream takes the phantom individual field off the Presidents
+    Cup card. This is what replaces it. The card component enters its cup
+    renderer on `golfers.length === 2` and reads its hero from `golfers[0]`; it
+    never reads `h2h_matchups`. So the event's real market — Kalshi's Team USA
+    81.5% v Team World 14.5% — has to be moved into `golfers` to be rendered at
+    all. Without this the fix trades "led by a golfer who is not in the event"
+    for "a title with nothing under it", which is what CERT-3289 blocked.
+
+    Runs after h2h matchups are attached (they are routed late) and before
+    `_drop_contentless_team_cards`, so a card that gets its teams here is no
+    longer contentless and survives on them.
+
+    Only ever fills a card that has NO golfers, so it cannot displace a real
+    field, and `select_team_side_matchup` only ever returns a pair whose two
+    sides both name teams, so it cannot put a person back at the top of the
+    card. Returns the number of cards led.
+    """
+    promoted = 0
+    for t in tournaments:
+        if not is_team_match_play_key(t.get("key")) or t.get("golfers"):
+            continue
+        matchup = select_team_side_matchup(t.get("h2h_matchups"))
+        if not matchup:
+            continue
+
+        # Shaped exactly like `_build_tournament_entry`'s golfers, because the
+        # card, the feed serializer and the movers loop all read that shape and
+        # a short entry would KeyError one of them. `movement_24h=None` is a
+        # statement, not a placeholder: the h2h entry carries no 24h basis, and
+        # None is how this payload already says "no movement to report" — it is
+        # what keeps these two out of `biggest_movers`, where a team is not a
+        # mover. `golfer_a` is the higher probability by `_build_h2h_entry`'s
+        # own construction, so rank follows the list.
+        sides = [
+            {
+                "name": matchup[slot]["name"],
+                "probability": matchup[slot]["probability"],
+                "movement_24h": None,
+                "movement_is_dated": False,
+                "sources": {matchup.get("source") or "unknown": matchup[slot]["probability"]},
+                "opening_probability": None,
+                "rank": rank,
+            }
+            for rank, slot in enumerate(("golfer_a", "golfer_b"), start=1)
+        ]
+        t["golfers"] = sides
+        # The two teams ARE the whole field of a team match-play card. Keeping
+        # `_all_golfers` in step matters because it is what the 132-entry field
+        # in the filing was measured on.
+        t["_all_golfers"] = list(sides)
+        promoted += 1
+        logger.info(
+            "Golf #7985: leading team match-play card '%s' with %s %.1f%% v %s %.1f%%",
+            t.get("name") or t.get("key"),
+            sides[0]["name"], sides[0]["probability"] * 100,
+            sides[1]["name"], sides[1]["probability"] * 100,
+        )
+    return promoted
+
+
 def _drop_contentless_team_cards(tournaments: list[dict]) -> list[dict]:
     """Drop a team match-play card that ended up with nothing to show. (#7985)
 
@@ -2766,6 +2830,10 @@ async def get_golf(
             deduped.append(m)
         deduped.sort(key=lambda m: abs(m["golfer_a"]["probability"] - m["golfer_b"]["probability"]))
         t["h2h_matchups"] = deduped
+
+    # #7985: the team pair reaches the card contract here — h2h matchups are
+    # attached just above, and the drop below must see the card it leads.
+    _promote_team_matchup_to_card(tournaments)
 
     # #7985: the other half of keeping an empty team match-play card alive.
     tournaments = _drop_contentless_team_cards(tournaments)
