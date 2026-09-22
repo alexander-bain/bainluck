@@ -667,7 +667,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // on every settled field that never graded one. `layout.tsx` adopted it under #6079
   // and this page did not, which is the whole of why the unfurl title was right about
   // the Vuelta while the page it links to was wrong.
-  const gradedChampion = gradedWinner(market.outcomes, leader, market.status);
+  // #7906 — `market_type` is passed so a board that graded MANY winners (72 of the
+  // 163 golfers on this page's own specimen made the cut) crowns none of them,
+  // while a cumulative ladder — the one shape whose plural grades are the design —
+  // still names its rung. See the helper's block comment.
+  const gradedChampion = gradedWinner(market.outcomes, leader, market.status, market.market_type);
   // #6301 — A SETTLED FIELD WITH NO WINNER NAMES NOBODY.
   //
   // `pickHeroOutcome` answers "which row does this surface feature", and on a

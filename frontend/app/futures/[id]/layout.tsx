@@ -142,7 +142,12 @@ export async function generateMetadata({
   // row happened to be expensive when trading stopped: production 05:36Z,
   // `/futures/61000391` served "No won - … Game 4 Winner" beside its own picture's
   // grey RESOLVED pill. `gradedWinner` is the one test all three surfaces use.
-  const winnerName = leaderLabel(gradedWinner(outcomes, leader, market.status));
+  // #7906 — the shape is handed over for the same reason the page hands it over:
+  // an og:title reading "Ludvig Aberg won - BMW PGA Championship - Make the Cut"
+  // is the same false claim as the hero's, and it travels further.
+  const winnerName = leaderLabel(
+    gradedWinner(outcomes, leader, market.status, market.market_type),
+  );
 
   const titleText = futuresTitleText({
     marketName: market.name,
