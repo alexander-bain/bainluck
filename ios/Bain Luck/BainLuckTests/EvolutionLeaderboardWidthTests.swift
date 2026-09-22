@@ -124,7 +124,8 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     ) -> EvolutionLeaderboardRow {
         EvolutionLeaderboardRow(
             position: position, outcome: outcome, color: .red,
-            isSelected: true, isHighlighted: true, columns: columns)
+            isSelected: true, isHighlighted: true, columns: columns,
+            renderedPercent: nil)
     }
 
     // MARK: - The acceptance: every probability fits its column, in full
@@ -139,7 +140,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     func testEveryProbabilityFitsItsColumnAtOrdinaryTypeSizes() {
         for size in [DynamicTypeSize.large, .xxxLarge] {
             for outcomes in [productionShapedOutcomes(), extremeOutcomes(), untradedOutcomes()] {
-                let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size)
+                let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size, renderedPercents: [])
                 for outcome in outcomes {
                     let label = EvolutionLeaderboardGeometry.probLabel(
                         (outcome.currentProbability ?? 0) * 100)
@@ -164,7 +165,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     func testEveryDeltaFitsItsColumnAtOrdinaryTypeSizes() {
         for size in [DynamicTypeSize.large, .xxxLarge] {
             for outcomes in [productionShapedOutcomes(), extremeOutcomes(), untradedOutcomes()] {
-                let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size)
+                let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size, renderedPercents: [])
                 let change = try! XCTUnwrap(columns.change)
                 for outcome in outcomes {
                     let label = EvolutionLeaderboardGeometry.changeLabel(
@@ -211,7 +212,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// change that stops the number wrapping.
     func testTheNumericPairIsNarrowerThanTheFixedPairOnAProductionShapedBoard() {
         let columns = EvolutionLeaderboardGeometry.columns(
-            for: productionShapedOutcomes(), at: .large)
+            for: productionShapedOutcomes(), at: .large, renderedPercents: [])
         XCTAssertLessThan(
             columns.total, EvolutionLeaderboardGeometry.legacyPairWidth,
             "the name must not pay for the fix on today's data")
@@ -230,7 +231,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// `-100%` would buy the 9.6pt back and was not taken, because a wrap fix that
     /// quietly re-rounds a published number is two changes wearing one issue.
     func testTheExtremeBoardCostsTheNameUnderTenPoints() {
-        let columns = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large)
+        let columns = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large, renderedPercents: [])
         XCTAssertLessThanOrEqual(
             columns.total, EvolutionLeaderboardGeometry.legacyPairWidth + 10)
         XCTAssertGreaterThan(
@@ -244,8 +245,8 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// `-100.0%`. A pair of literals would make these equal.
     func testColumnsAreSizedToTheStringsThisRenderDraws() {
         let quiet = EvolutionLeaderboardGeometry.columns(
-            for: productionShapedOutcomes(), at: .large)
-        let extreme = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large)
+            for: productionShapedOutcomes(), at: .large, renderedPercents: [])
+        let extreme = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large, renderedPercents: [])
         XCTAssertLessThan(quiet.prob, extreme.prob)
         XCTAssertLessThan(try! XCTUnwrap(quiet.change), try! XCTUnwrap(extreme.change))
     }
@@ -258,7 +259,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     func testTheDeltaColumnIsDroppedAtAccessibilitySizes() {
         for size in [DynamicTypeSize.accessibility1, .accessibility3, .accessibility5] {
             let columns = EvolutionLeaderboardGeometry.columns(
-                for: productionShapedOutcomes(), at: size)
+                for: productionShapedOutcomes(), at: size, renderedPercents: [])
             XCTAssertNil(columns.change, "at \(size)")
             XCTAssertFalse(columns.drawsChange, "at \(size)")
         }
@@ -267,7 +268,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
         for size in [DynamicTypeSize.large, .xLarge, .xxLarge, .xxxLarge] {
             XCTAssertNotNil(
                 EvolutionLeaderboardGeometry.columns(
-                    for: productionShapedOutcomes(), at: size).change,
+                    for: productionShapedOutcomes(), at: size, renderedPercents: []).change,
                 "at \(size)")
         }
     }
@@ -278,7 +279,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     func testTheNameIsBetterOffAtAccessibilitySizesThanItWasBefore() {
         for size in [DynamicTypeSize.accessibility1, .accessibility2, .accessibility3] {
             let columns = EvolutionLeaderboardGeometry.columns(
-                for: productionShapedOutcomes(), at: size)
+                for: productionShapedOutcomes(), at: size, renderedPercents: [])
             XCTAssertLessThan(
                 columns.total, EvolutionLeaderboardGeometry.legacyPairWidth, "at \(size)")
         }
@@ -293,7 +294,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// come and delete.
     func testTheKnownResidueAtTheLargestAccessibilitySizeIsStillTrue() {
         let columns = EvolutionLeaderboardGeometry.columns(
-            for: productionShapedOutcomes(), at: .accessibility5)
+            for: productionShapedOutcomes(), at: .accessibility5, renderedPercents: [])
         XCTAssertGreaterThan(columns.total, EvolutionLeaderboardGeometry.legacyPairWidth)
     }
 
@@ -347,7 +348,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     func testTheShippedRowIsOneLineAtEveryPhoneWidth() {
         for size in [DynamicTypeSize.large, .xxxLarge] {
             let outcomes = extremeOutcomes()
-            let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size)
+            let columns = EvolutionLeaderboardGeometry.columns(for: outcomes, at: size, renderedPercents: [])
             let unwrappable = height(
                 of: row(outcomes[0], columns: columns), width: unconstrained, at: size)
             for width in [narrowPhone, standardPhone] {
@@ -363,7 +364,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// it takes the same `Columns` value. This checks the construction holds after
     /// layout: header and row put their trailing edges in the same place.
     func testTheHeaderIsTheSameHeightRegardlessOfWidthToo() {
-        let columns = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large)
+        let columns = EvolutionLeaderboardGeometry.columns(for: extremeOutcomes(), at: .large, renderedPercents: [])
         let unwrappable = height(
             of: EvolutionLeaderboardHeader(columns: columns), width: unconstrained)
         for width in [narrowPhone, standardPhone] {
@@ -388,7 +389,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// width it asks for grows by 50. A literal does not move.
     func testTheRowAndHeaderTakeTheirWidthsFromTheModel() {
         let outcomes = extremeOutcomes()
-        let base = EvolutionLeaderboardGeometry.columns(for: outcomes, at: .large)
+        let base = EvolutionLeaderboardGeometry.columns(for: outcomes, at: .large, renderedPercents: [])
         let widened = EvolutionLeaderboardGeometry.Columns(
             prob: base.prob + 20, change: try! XCTUnwrap(base.change) + 30)
 
@@ -410,7 +411,7 @@ final class EvolutionLeaderboardWidthTests: XCTestCase {
     /// where the reader's name could be.
     func testADroppedDeltaColumnCostsTheRowNothing() {
         let outcomes = extremeOutcomes()
-        let base = EvolutionLeaderboardGeometry.columns(for: outcomes, at: .large)
+        let base = EvolutionLeaderboardGeometry.columns(for: outcomes, at: .large, renderedPercents: [])
         let dropped = EvolutionLeaderboardGeometry.Columns(prob: base.prob, change: nil)
         let saved = idealWidth(of: row(outcomes[0], columns: base))
             - idealWidth(of: row(outcomes[0], columns: dropped))

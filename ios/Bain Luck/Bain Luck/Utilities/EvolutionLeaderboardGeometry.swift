@@ -109,9 +109,34 @@ enum EvolutionLeaderboardGeometry {
     /// a probability we do not have is not a probability of zero, and the backend
     /// serialises "no price" and "priced at exactly zero" identically as `null`.
     /// A MEASURED zero still prints `0%` (#5899 pins it).
-    static func probLabel(_ pct: Double?) -> String {
+    ///
+    /// 🔴 #8109 — THIS TABLE PRINTED `93%` AND `8%` FOR ONE TWO-OUTCOME MARKET.
+    /// `61993906` served `No 0.925 / Yes 0.075`, an exact complement quoted on the
+    /// venues' half-cent grid, so BOTH sides landed on the `.5` boundary at once
+    /// and a rule that rounds each outcome on its own rounded both up. Measured on
+    /// production 2026-09-22: **7,362 open two-outcome complement markets print a
+    /// sum other than 100 here — 7,102 at 101, 173 at 99, 549 of them tier 1.**
+    /// Both directions, because unlike the game strip neither side is derived.
+    ///
+    /// `renderedPercent` overrides the INTEGER, not the rule — the same bargain
+    /// `percentNumber` strikes for the hero (#8097, UX-P114). A caller holding the
+    /// card-level decision (#2060, `renderedCardPercents`) passes it here rather
+    /// than rounding a second time.
+    ///
+    /// ⚠️ **THE `<1%` RULE STILL BEATS ANY CARD-LEVEL INTEGER, and that is why the
+    /// guard runs FIRST.** #5899 pinned `probLabel(0.05) == "0.1%"` because the
+    /// page said `0%` on the hero and `0.1%` in this table for one outcome the
+    /// venue was still pricing. A complement pair at `0.995 / 0.005` decides
+    /// `[100, 0]`, and taking that integer would print `0%` for a priced outcome —
+    /// trading a true claim for a tidy sum. So a sub-one-percent value keeps its
+    /// decimal and that pair reads `100%` / `0.5%`, which does not add to 100 and
+    /// is the honest answer. It is a claim about the VALUE, not about which
+    /// arithmetic produced the integer.
+    static func probLabel(_ pct: Double?, renderedPercent: Int? = nil) -> String {
         guard let pct else { return absentProbabilityMarker }
-        return pct < 1 && pct > 0 ? String(format: "%.1f%%", pct) : "\(Int(pct.rounded()))%"
+        if pct < 1 && pct > 0 { return String(format: "%.1f%%", pct) }
+        if let renderedPercent { return "\(renderedPercent)%" }
+        return "\(Int(pct.rounded()))%"
     }
 
     /// The sign is drawn here and the magnitude comes from `deltaPointsNumber`, so
@@ -150,8 +175,16 @@ enum EvolutionLeaderboardGeometry {
     /// Spoken form of the price, for the same reason: `absentProbabilityMarker` is
     /// an em dash, which a screen reader says as nothing at all, so a row would
     /// name a participant and then state no number. Said in words instead.
-    static func spokenProb(_ pct: Double?) -> String {
-        pct == nil ? "probability not available" : probLabel(pct)
+    ///
+    /// The card-level decision comes along (#8109). A VoiceOver reader hearing
+    /// "8%" off a row the screen draws as `7%` is the same defect the sighted
+    /// reader was just spared, and #7285 already established that this row's three
+    /// readers each decide for themselves — which is precisely why the override
+    /// has to be handed to each of them rather than assumed to travel.
+    static func spokenProb(_ pct: Double?, renderedPercent: Int? = nil) -> String {
+        pct == nil
+            ? "probability not available"
+            : probLabel(pct, renderedPercent: renderedPercent)
     }
 
     // MARK: - Fonts
@@ -248,15 +281,78 @@ enum EvolutionLeaderboardGeometry {
 
     /// The same thing from the model the view holds, so the header, the rows and
     /// the suite all size against one list of outcomes.
+    ///
+    /// `renderedPercents` is positional against `outcomes` and is REQUIRED, with no
+    /// `nil` default, deliberately. #4373's whole invariant is that the measured
+    /// string and the drawn string are one call; once the drawn string can be
+    /// overridden, a caller that sizes without the override is that defect back —
+    /// a board holding a decided `100%` measured as `99%` clips a digit. A default
+    /// would make forgetting it silent, and a feeder that quietly goes dead is the
+    /// survivor #8097's battery caught. Here it is a compile error instead. Pass
+    /// `[]` to mean "no card-level decision", which is what every width test wants.
     static func columns(
-        for outcomes: [TimelineOutcomeMeta], at typeSize: DynamicTypeSize = .large
+        for outcomes: [TimelineOutcomeMeta],
+        at typeSize: DynamicTypeSize = .large,
+        renderedPercents: [Int?]
     ) -> Columns {
         // The optional is carried into the label, not coalesced before it: the
         // measured string and the drawn string are one call (see above), and since
         // #7285 the drawn string for a null is a dash, not `0%`.
         columns(
-            probs: outcomes.map { probLabel($0.currentProbability.map { $0 * 100 }) },
+            probs: outcomes.enumerated().map { index, outcome in
+                probLabel(
+                    outcome.currentProbability.map { $0 * 100 },
+                    renderedPercent: renderedPercents.indices.contains(index)
+                        ? renderedPercents[index] : nil)
+            },
             changes: outcomes.map { changeLabel($0.probabilityChange24h.map { $0 * 100 }) },
             typeSize: typeSize)
+    }
+
+    // MARK: - The card-level decision (#8109)
+
+    /// One whole percent per outcome for the WHOLE SERVED FIELD, positional
+    /// against `served` — the card half of `contracts/rendered_percent.json`
+    /// (#2060) applied to this table.
+    ///
+    /// ## It is taken over the SERVED field, never over the rows on screen
+    ///
+    /// `EvolutionChartView` draws a SUBSET: it filters `Field` out and truncates to
+    /// the reader's `Top 5 / 10 / 20` chip. Deciding over that subset would let a
+    /// control whose job is to hide rows REPRICE the ones it leaves — the same
+    /// mistake in a different costume to the one #8097 refused for the sort
+    /// control, and a worse one, because a filtered subset can also become a
+    /// complement pair that the served field never was. A three-outcome market at
+    /// `A 0.55 / B 0.44 / Field 0.01` displays two rows summing to 0.99, lands
+    /// inside the contract's band, and would be "corrected" to 55/45 — inventing a
+    /// point that belongs to an outcome the reader can see named in the chart.
+    /// Measured on production 2026-09-22 that population is **0 markets today**,
+    /// which is a fact about today and not a property of the construction; taking
+    /// the decision over the served field means it never needs to be re-measured.
+    ///
+    /// ## Ordered by probability, not by arrival
+    ///
+    /// `renderedCardPercents` treats index 0 as the headline — the side that keeps
+    /// its own number, so the derived point lands on the side nobody is quoting.
+    /// The endpoint happens to serve descending today, but if it ever served
+    /// ascending the rule would silently keep the UNDERDOG exact and move the
+    /// favourite, which is the one outcome of this fix nobody would notice. So the
+    /// order is established here rather than inherited. Ties break on served index
+    /// for determinism; as in #8097 a tied pair renders 50/50 either way, so that
+    /// tie-break buys stability and not a different number.
+    static func renderedPercents(forServedField served: [TimelineOutcomeMeta]) -> [Int?] {
+        let headlineOrder = served.indices.sorted { a, b in
+            let lhs = served[a].currentProbability ?? -1
+            let rhs = served[b].currentProbability ?? -1
+            if lhs != rhs { return lhs > rhs }
+            return a < b
+        }
+        let printed = renderedCardPercents(headlineOrder.map { served[$0].currentProbability })
+        var byServedIndex = [Int?](repeating: nil, count: served.count)
+        for (slot, servedIndex) in headlineOrder.enumerated()
+        where printed.indices.contains(slot) {
+            byServedIndex[servedIndex] = printed[slot]
+        }
+        return byServedIndex
     }
 }

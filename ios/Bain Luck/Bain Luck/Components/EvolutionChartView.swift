@@ -450,11 +450,32 @@ struct EvolutionChartView: View {
 
     // MARK: - Computed
 
-    private var displayedOutcomes: [TimelineOutcomeMeta] {
+    /// The rows this render draws, each carrying WHERE IN THE SERVED FIELD it came
+    /// from.
+    ///
+    /// #8109: the percent a row prints is decided once over the whole served field
+    /// and looked up positionally, so the index has to survive the two things this
+    /// property does to the list — dropping `Field` and truncating to the reader's
+    /// `Top N` chip. Carrying it is what stops the lookup being keyed on `name`,
+    /// which is this table's identity everywhere else (`selectedNames`, the
+    /// `ForEach`, `colorForOutcome`) and is one served duplicate away from handing
+    /// two rows one number.
+    private var displayedRows: [(servedIndex: Int, outcome: TimelineOutcomeMeta)] {
         guard let data else { return [] }
-        let filtered = data.outcomes.filter { $0.name != "Field" }
+        let filtered = data.outcomes.enumerated()
+            .filter { $0.element.name != "Field" }
+            .map { (servedIndex: $0.offset, outcome: $0.element) }
         if topFilter >= filtered.count { return filtered }
         return Array(filtered.prefix(topFilter))
+    }
+
+    private var displayedOutcomes: [TimelineOutcomeMeta] { displayedRows.map(\.outcome) }
+
+    /// The card-level decision, taken ONCE over `data.outcomes` — the whole served
+    /// field, not the rows on screen. See `EvolutionLeaderboardGeometry
+    /// .renderedPercents(forServedField:)` for why the distinction is the fix.
+    private var servedRenderedPercents: [Int?] {
+        EvolutionLeaderboardGeometry.renderedPercents(forServedField: data?.outcomes ?? [])
     }
 
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }
@@ -1031,15 +1052,25 @@ struct EvolutionChartView: View {
         // #4373 — sized ONCE, here, off the outcomes this render is about to draw,
         // and handed to the header and every row. Two callers measuring separately
         // is how a header stops sitting over its own column.
+        // #8109 — the strings the rows will draw, resolved BEFORE the measurement,
+        // because the measured string and the drawn string have to be one call
+        // (#4373). A column sized on `99%` under a row drawing a decided `100%`
+        // clips a digit, which is this file's original defect wearing the new fix.
+        let rows = displayedRows
+        let percents = rows.map { row -> Int? in
+            servedRenderedPercents.indices.contains(row.servedIndex)
+                ? servedRenderedPercents[row.servedIndex] : nil
+        }
         let columns = EvolutionLeaderboardGeometry.columns(
-            for: displayedOutcomes, at: dynamicTypeSize)
+            for: rows.map(\.outcome), at: dynamicTypeSize, renderedPercents: percents)
 
         return VStack(spacing: 0) {
             EvolutionLeaderboardHeader(columns: columns)
 
             Divider()
 
-            ForEach(Array(displayedOutcomes.enumerated()), id: \.element.name) { index, outcome in
+            ForEach(Array(rows.enumerated()), id: \.element.outcome.name) { index, row in
+                let outcome = row.outcome
                 let isSelected = effectiveSelected.contains(outcome.name)
                 let isHighlighted = highlightedName == nil || highlightedName == outcome.name
                 let color = colorForOutcome(name: outcome.name, index: index)
@@ -1053,7 +1084,8 @@ struct EvolutionChartView: View {
                         color: color,
                         isSelected: isSelected,
                         isHighlighted: isHighlighted,
-                        columns: columns)
+                        columns: columns,
+                        renderedPercent: percents[index])
                 }
                 .buttonStyle(.plain)
                 .simultaneousGesture(
@@ -1065,7 +1097,7 @@ struct EvolutionChartView: View {
                         }
                 )
 
-                if index < displayedOutcomes.count - 1 {
+                if index < rows.count - 1 {
                     Divider().padding(.leading, 40)
                 }
             }
@@ -1154,6 +1186,14 @@ struct EvolutionLeaderboardRow: View {
     let isHighlighted: Bool
     let columns: EvolutionLeaderboardGeometry.Columns
 
+    /// The whole percent this row's card decided for this outcome (#8109), or
+    /// `nil` where there is no card-level decision to make. No default: a row that
+    /// forgets to ask for the decision is the defect, and a defaulted `nil` is how
+    /// that comes back silently — #8097's battery caught exactly that survivor,
+    /// every renderer correctly wired while the thing feeding them handed out
+    /// nothing.
+    let renderedPercent: Int?
+
     /// 🔴 #7285 — BOTH OF THESE COALESCED TO ZERO, and the row then had no way to
     /// tell "we have no number" from "the number is zero". The dash it drew was
     /// right by luck; the sentence it SPOKE — "unchanged over 24 hours" — was a
@@ -1208,7 +1248,8 @@ struct EvolutionLeaderboardRow: View {
 
             Spacer()
 
-            Text(EvolutionLeaderboardGeometry.probLabel(probPct))
+            Text(EvolutionLeaderboardGeometry.probLabel(
+                probPct, renderedPercent: renderedPercent))
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .monospacedDigit()
@@ -1235,7 +1276,7 @@ struct EvolutionLeaderboardRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(position). \(outcome.name), "
-            + "\(EvolutionLeaderboardGeometry.spokenProb(probPct)), "
+            + "\(EvolutionLeaderboardGeometry.spokenProb(probPct, renderedPercent: renderedPercent)), "
             + EvolutionLeaderboardGeometry.spokenChange(changePct))
     }
 }
