@@ -420,9 +420,10 @@ class TestTheSettleStatementsReachTheServer:
         ))
         await session.commit()
 
+        params = {"event_id": IN_WINDOW, "since": swapped_at,
+                   "expected": 0.7, "eps": 5e-4}
         moved = (await session.execute(
-            text(RESTAMP_SNAPSHOTS_SQL),
-            {"ids": [IN_WINDOW], "since": swapped_at},
+            text(RESTAMP_SNAPSHOTS_SQL), params
         )).rowcount
         await session.commit()
         assert moved == 1, "the bound is not filtering — an unbounded re-swap"
@@ -436,6 +437,58 @@ class TestTheSettleStatementsReachTheServer:
         assert [float(r["h"]) for r in rows] == [
             pytest.approx(0.2), pytest.approx(0.7),
         ], "the pre-swap snapshot was transposed a second time"
+
+        # ── CERT-3301's follow-up: THE SECOND EXECUTION MUST BE A NO-OP ──────
+        #
+        # The settle loop runs this again next round against the SAME lower
+        # bound, so a statement bounded only by time re-reads the row it just
+        # corrected and flips it straight back. This arm is the whole reason the
+        # value predicate exists, and it can only be proven on a server.
+        again = (await session.execute(
+            text(RESTAMP_SNAPSHOTS_SQL), params
+        )).rowcount
+        await session.commit()
+        assert again == 0, (
+            "the second round re-inverted a snapshot the first round repaired"
+        )
+        rows = (await session.execute(
+            text("SELECT home_win_probability AS h FROM win_prob_snapshots"
+                 " WHERE event_id = :i ORDER BY captured_at"),
+            {"i": IN_WINDOW},
+        )).mappings().all()
+        assert [float(r["h"]) for r in rows] == [
+            pytest.approx(0.2), pytest.approx(0.7),
+        ]
+
+    async def test_a_snapshot_at_a_moved_price_is_left_alone(self, session):
+        """Fail-closed, same direction as the JSONB re-stamp.
+
+        A post-swap snapshot whose price is neither `expected` nor its inversion
+        is a price move, a mis-linked market or a faulty replica — three things,
+        none of them a transposition. The statement must decline it rather than
+        flip it on the strength of the timestamp alone.
+        """
+        from sqlalchemy import text
+
+        from app.models.models import WinProbSnapshot
+        from scripts.repair_polymarket_event_orientation import (
+            RESTAMP_SNAPSHOTS_SQL,
+        )
+
+        swapped_at = datetime.now(timezone.utc)
+        session.add(WinProbSnapshot(
+            event_id=IN_WINDOW, source="polymarket",
+            captured_at=swapped_at + timedelta(seconds=10),
+            home_win_probability=0.44, away_win_probability=0.56,
+        ))
+        await session.commit()
+
+        moved = (await session.execute(text(RESTAMP_SNAPSHOTS_SQL), {
+            "event_id": IN_WINDOW, "since": swapped_at,
+            "expected": 0.7, "eps": 5e-4,
+        })).rowcount
+        await session.commit()
+        assert moved == 0, "a moved price was transposed as if it were inverted"
 
     async def test_the_backup_table_takes_a_run_id_and_scopes_the_undo(
         self, session

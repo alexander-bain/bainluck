@@ -506,10 +506,82 @@ def test_the_snapshot_re_stamp_is_bounded_by_the_swap_instant():
     assert "home_win_probability = away_win_probability" in stmt
 
 
+def test_the_snapshot_re_stamp_only_touches_an_inverted_row():
+    """CERT-3301's follow-up: a time bound alone RE-INVERTS on the second round.
+
+    The lower bound is the swap's commit instant and never moves, so round 2
+    re-reads every snapshot round 1 already corrected and flips it back. The
+    loop would oscillate a row it had already fixed. The value predicate is what
+    makes the statement idempotent: a snapshot already holding `expected` does
+    not match, so a second execution is a no-op.
+    """
+    source = REPAIR_PATH.read_text()
+    stmt = source.split("RESTAMP_SNAPSHOTS_SQL = ")[1].split('"""')[1]
+    assert "1 - cast(:expected AS numeric)" in stmt, (
+        "without the inversion predicate this re-swaps on every round"
+    )
+    assert ":event_id" in stmt and "ANY(:ids)" not in stmt, (
+        "the predicate needs one event's own expected value, so it is per-event"
+    )
+
+
+def test_the_settle_loop_re_stamps_snapshots_per_event_with_that_events_value():
+    """A shared `expected` across the reverted set would flip the wrong rows.
+
+    Two events reverting in the same round carry two different prices. Passing
+    one event's expectation to the other's snapshots is how a fail-closed
+    predicate quietly starts matching rows it was written to refuse.
+    """
+    import asyncio as _asyncio
+
+    repair = _load_repair()
+    ids = [111, 222]
+    expected_by_event = {111: 0.545, 222: 0.235}
+    seen = []
+
+    class _Result:
+        def __init__(self, rows=None):
+            self._rows = rows or []
+            self.rowcount = len(self._rows)
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "win_prob_snapshots" in sql:
+                seen.append((params["event_id"], params["expected"]))
+            if "jsonb_set" in sql or "win_prob_snapshots" in sql:
+                return _Result()
+            return _Result([{"id": i, "value": 1.0 - expected_by_event[i]}
+                            for i in ids])
+
+        async def commit(self):
+            pass
+
+    async def _writer(session, event_ids):
+        return dict(expected_by_event)
+
+    repair.writer_expectation = _writer
+    _asyncio.run(repair.settle(
+        _Session(), ids, datetime(2026, 9, 22, tzinfo=timezone.utc),
+        rounds=2, wait_s=0,
+    ))
+
+    assert sorted(seen) == sorted(expected_by_event.items()), (
+        f"snapshot re-stamps were {seen} — each event must be passed its own "
+        f"expected value"
+    )
+
+
 @pytest.mark.parametrize("name,expected_binds", [
     ("RESTAMP_SQL", {"value", "event_id"}),
     ("STORED_SQL", {"ids"}),
-    ("RESTAMP_SNAPSHOTS_SQL", {"ids", "since"}),
+    ("RESTAMP_SNAPSHOTS_SQL", {"event_id", "since", "expected", "eps"}),
 ])
 def test_every_settle_statement_actually_binds_its_parameters(
     name, expected_binds

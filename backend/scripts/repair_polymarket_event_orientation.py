@@ -303,12 +303,43 @@ WHERE id = :event_id
 #: every snapshot for the event would invert those, so the settle stage bounds
 #: itself by `captured_at` (trap 5: the JSONB's own `updated_at` is the MARKET's
 #: timestamp and cannot witness a write).
+#: 🔴 IDEMPOTENT BY VALUE, NOT BY WATERMARK (CERT-3301's follow-up).
+#:
+#: A time bound alone is not enough and the second round is where it breaks. The
+#: lower bound is the SWAP's commit instant and it does not move, so round 2
+#: re-reads every snapshot round 1 already corrected: the racing writer adds S2
+#: (wrong), the statement transposes S1 *and* S2, and S1 — repaired one round
+#: ago — is inverted straight back. The settle loop would then oscillate a
+#: snapshot it had already fixed, which is the same "re-swapping inverts what
+#: the swap already fixed" failure the time bound was added to prevent, one
+#: level up.
+#:
+#: So the predicate is the one the rest of this stage already uses: a row is
+#: touched ONLY when it carries exactly the inversion of what the writer would
+#: say right now. A snapshot already holding `expected` does not match and is
+#: left alone, so running this twice is a no-op the second time — idempotence by
+#: construction rather than by bookkeeping, which is what makes it safe inside a
+#: loop whose whole job is to run again.
+#:
+#: Fail-closed in the same direction, too: a snapshot at a price that has since
+#: MOVED matches neither arm and is not written. That is a disagreement this
+#: script does not understand, and the rule above it is that those get reported,
+#: never repaired.
+#:
+#: `captured_at >= :since` stays as a second bound. It is close to redundant —
+#: pre-swap history was already transposed by `SWAP_SNAPSHOTS_SQL` and so no
+#: longer looks inverted — but it costs nothing and keeps this statement
+#: incapable of reaching a row the swap did not touch.
 RESTAMP_SNAPSHOTS_SQL = """
 UPDATE win_prob_snapshots SET
     home_win_probability = away_win_probability,
     away_win_probability = home_win_probability
-WHERE event_id = ANY(:ids)
+WHERE event_id = :event_id
   AND captured_at >= :since
+  AND home_win_probability IS NOT NULL
+  AND away_win_probability IS NOT NULL
+  AND abs(home_win_probability - (1 - cast(:expected AS numeric)))
+      <= cast(:eps AS numeric)
 """
 
 
@@ -443,17 +474,20 @@ async def settle(session, ids: list[int], swapped_at, rounds: int,
                 continue
             break
 
+        snaps = 0
         for event_id in reverted:
             await session.execute(text(RESTAMP_SQL), {
                 "event_id": event_id, "value": expected[event_id],
             })
-        # The racing writer also laid down snapshots in the old orientation.
-        # Bounded by the swap's own commit instant so the ones the swap already
-        # transposed are left alone.
-        snaps = (await session.execute(
-            text(RESTAMP_SNAPSHOTS_SQL),
-            {"ids": reverted, "since": swapped_at},
-        )).rowcount
+            # The racing writer also laid down snapshots in the old
+            # orientation. Per event, because the predicate needs that event's
+            # own expected value — see RESTAMP_SNAPSHOTS_SQL for why a bare
+            # time bound re-inverts what the previous round repaired.
+            snaps += (await session.execute(
+                text(RESTAMP_SNAPSHOTS_SQL),
+                {"event_id": event_id, "since": swapped_at,
+                 "expected": expected[event_id], "eps": SETTLE_EPSILON},
+            )).rowcount
         await session.commit()
         print(f"   re-stamped {len(reverted)} events and {snaps} snapshots "
               f"laid down since {swapped_at.isoformat()}")
