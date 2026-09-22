@@ -651,18 +651,81 @@ def stamp_parent_content_understanding(
     return metadata
 
 
+# Tags that name the FORM of a market, or a whole shelf of them, rather than its
+# SUBJECT. #7874: `_tags_to_category` returns on the first tag it recognises and
+# Polymarket lists tags in its own order, so a market's category was decided by
+# whichever of its tags the venue happened to print first. Read off Gamma
+# 2026-09-22, event 60182 "Nobel Peace Prize Winner 2026" is tagged
+#
+#     Awards, Politics, Geopolitics, World
+#
+# — `awards` maps to `entertainment`, so a field of humanitarian organisations
+# and dissidents wore a film clapperboard on page one while the three tags that
+# name its actual subject sat unread behind it. Nothing about the market was
+# ambiguous; the venue had said "Politics" out loud and position alone buried it.
+#
+# A weak tag is not ignored — it still decides the category when it is all a
+# market has, so an Oscars event tagged only `Awards` is still `entertainment`.
+# It just stops OUTRANKING a tag that names a subject.
+#
+# WHY THIS SET HAS EXACTLY ONE MEMBER. Replayed over the venue's own listings for
+# all 289 distinct Polymarket events behind our open `entertainment` markets
+# (2026-09-22, `artifacts/d394-7874/`), `awards` moves TWO of them and both are
+# unambiguous:
+#
+#     60182   Nobel Peace Prize Winner 2026   entertainment -> politics
+#     994443  Golden Boy 2026 Winner          entertainment -> soccer
+#
+# Golden Boy is a football award and #7874's own issue text had listed it as
+# genuinely entertainment; the venue tags it `Awards, Soccer, Sports`.
+#
+# `culture` was in this set until the replay was read rather than counted. It is
+# also a catch-all, and demoting it moves 40 more events — but they are a mixed
+# bag, not a fix: two Ebola markets go to `weather`, and "Will summer 2026 be
+# France's hottest summer on record?" goes to `tech`, because `Science` precedes
+# `Weather` in that event's tag list. Trading one wrong shelf for another wrong
+# shelf is not a ship. That is #7914, which needs a subject-tag ordering rule
+# this change deliberately does not invent.
+#
+# `world`, `news` and `global` are the map's other "Broad catch-alls" and were in
+# this set too. They move ZERO events. An entry that changes nothing is not a
+# conservative choice, it is an unmeasured claim, so they are out.
+#
+# Note what this is NOT. Remapping `awards` to `politics` would badge the Oscars
+# as politics; dropping the weak tag would drop an awards-only market to `other`.
+# Both are caught by the controls in
+# `tests/test_polymarket_awards_tag_precedence_7874.py`.
+#
+# The map already carries a `"nobel": "culture"` key and it is dead code for this
+# market: the keys are matched EXACTLY against tag labels, the venue tags this
+# event `Awards`, and no Polymarket tag is labelled "Nobel". A fix that leaned on
+# that key would have been inert — the tag the reader's badge came from is the
+# one the payload actually carries.
+_WEAK_TAGS = frozenset({"awards"})
+
+
 def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:
     """
     Map Polymarket tags to (internal_category, llm_sport_category).
 
+    Subject tags outrank the `_WEAK_TAGS` catch-alls no matter what order the
+    venue listed them in; within each of those two ranks, payload order still
+    breaks the tie.
+
     Returns:
         Tuple of (category for FuturesMarket.category, llm_sport_category)
     """
-    llm_sport_category = None
-
-    for tag in tags:
-        tag_lower = tag.lower().strip()
-        if tag_lower in _TAG_TO_CATEGORY:
+    # Two passes over the venue's list rather than one pass over a re-sorted
+    # copy: sorting would also reorder the tags WITHIN each rank, and first-one-
+    # wins among equally specific tags is the behaviour every existing caller
+    # already depends on.
+    for allow_weak in (False, True):
+        for tag in tags:
+            tag_lower = tag.lower().strip()
+            if tag_lower not in _TAG_TO_CATEGORY:
+                continue
+            if not allow_weak and tag_lower in _WEAK_TAGS:
+                continue
             mapped = _TAG_TO_CATEGORY[tag_lower]
             if mapped in _SPORT_CATEGORIES:
                 return "championship", mapped
