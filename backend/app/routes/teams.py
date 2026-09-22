@@ -509,7 +509,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     _mark("championship")
 
     resp = {
-        "team": _format_team(team),
+        # `now` is the route's own clock (one read, at the top), so the record
+        # and the season descriptor beside it cannot disagree about the date.
+        "team": _format_team(team, now=now),
         "season": season_ctx,
         "upcoming_events": upcoming_events,
         "recent_events": recent_events,
@@ -537,7 +539,82 @@ def _league_slug_for_sport_key(sport_key: str | None) -> str | None:
     return _SPORT_KEY_TO_LEAGUE.get((sport_key or "").strip().lower())
 
 
-def _format_team(team: Team) -> dict:
+# ── #6266: a record must belong to the season the page declares ──────────────
+#
+# `teams.current_record` is a bare `String(20)` stamped by the ESPN sync when a
+# game completes (`utils/espn_helpers.py:921`), and `standings_data` carries no
+# season field of any kind. So neither the column nor the row can say WHICH
+# season a record describes, and a label ("2025-26 record") is not derivable
+# from stored state — lane1b/426 eliminated that option on #6266. What IS
+# derivable is whether the league has played a game of the season the page
+# names, and that is enough for the only honest answer left: print nothing
+# (notice 34 — leave the space empty rather than explain it).
+#
+# MEASURED on production 2026-09-22 over the four modelled leagues, with the two
+# in-season ones as the control:
+#
+#   nhl  offseason  43 rows carry a record. TWENTY are non-zero and they are
+#                   wrong in two different ways at once, which is why the
+#                   championship grid reads MIXED rather than uniformly stale.
+#                   Ten are EXHIBITION records stamped this week — Montreal
+#                   serves `2-0-0` built from the two games on its own payload,
+#                   Sep 19 at Toronto and Sep 21 vs Ottawa, September dates the
+#                   2026-27 season has not reached. Ten still hold last season's
+#                   finished 82 on a duplicate club row (`montreal-nhl`
+#                   `41-21-10`, `toronto-nhl` `32-35-14`), so one club is served
+#                   two seasons on two slugs. The remaining 23 have rolled over
+#                   to `0-0-0` and are already right.
+#   nba  offseason  34 rows, every one non-zero and every one a completed
+#                   season (`brooklyn-nets` `18-59`) under a page naming 2026-27.
+#   mlb  in_season  untouched — 31 rows, in progress and correct.
+#   nfl  in_season  untouched — 32 rows, week 3 and correct.
+#
+# So 77 pages change and 54 of them were printing a non-zero record for a season
+# with no games played. That is #6266's own control table reproduced exactly —
+# NBA and NHL wrong, MLB and NFL right — which is the check on the sizing.
+#
+# The StatPal board agrees independently: every NHL and NBA row reads `wins 0,
+# losses 0`, stamped the same morning. Two sources say zero games played and
+# only this column says otherwise.
+#
+# NOT `standings_shape.record_text`, which is the other consumer of this exact
+# column pair (`routes/events.py:25635`) and the obvious call site to route onto.
+# Simulated with the real helper over all 137 production rows carrying both
+# columns, same day: it moves 52 and FIVE GO THE WRONG WAY — Toronto's honest
+# `0-0-0` becomes last season's `32-36` — because its "fewer games means stale"
+# clause cannot tell a rollover to zero from a lag. Routing this call site there
+# would import a defect rather than retire one; recorded on #6266 for the hero.
+#
+# Deliberately narrow in three directions, so this withholds only what it can
+# demonstrate: a mid-season BREAK is not an offseason (February NHL games have
+# been played, so the All-Star band keeps its record); a league with no modelled
+# band falls through untouched, which includes `icehockey_nhl_preseason` — it is
+# not in `_SPORT_KEY_TO_LEAGUE`; and a failure in the calendar costs the hero its
+# record, never the page (this route is Priority #3, the rule two sections up).
+def _record_for_declared_season(team: Team, now: datetime | None = None) -> str | None:
+    record = team.current_record
+    if not record:
+        return None
+    sport = team.sport
+    league = _league_slug_for_sport_key(sport.key if sport else None)
+    if not league:
+        return record
+    try:
+        if season_windows.is_offseason(league, now):
+            return None
+    except Exception:  # noqa: BLE001 — a calendar edge may not cost a reader the page
+        # The team ID and not the slug, for the reason the invented-kickoff gate
+        # above gives: a log line carrying a path parameter is a
+        # `py/log-injection` finding that notice 32 refuses.
+        logger.exception(
+            "team page: season gate failed for team %s; serving the record "
+            "unfiltered",
+            getattr(team, "id", None),
+        )
+    return record
+
+
+def _format_team(team: Team, now: datetime | None = None) -> dict:
     sport = team.sport
     return {
         "id": team.id,
@@ -555,7 +632,8 @@ def _format_team(team: Team) -> dict:
         "secondary_color": team.secondary_color,
         "logo_small": team.logo_url_small,
         "logo_large": team.logo_url_large,
-        "record": team.current_record,
+        # #6266: withheld out of season — see `_record_for_declared_season`.
+        "record": _record_for_declared_season(team, now),
         # `public_standings` drops write-dead keys (#4811): a pre-#4732
         # `conf_rank` is a division place wearing a conference label, and this
         # is the payload the team-page hero reads.
