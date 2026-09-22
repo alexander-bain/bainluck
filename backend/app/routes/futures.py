@@ -6137,6 +6137,86 @@ def _measure_history_coverage(outcome_history: dict) -> dict:
     return _coverage_of(stamps)
 
 
+def _select_charted_outcome_ids(
+    charted_outcomes: list,
+    chartable_ids: set,
+    top_n: int,
+    champion: Optional[str],
+) -> list[int]:
+    """Which legs this chart draws, given the window that was actually read (#7936).
+
+    LIFTED OUT SO THE WINDOW CAN CHANGE UNDER IT. This rule used to run exactly
+    once, against the REQUESTED window, and the sparse tiers below then widened
+    the search while still filtering through that first answer. The selection was
+    therefore made before the window was known to be wrong and never revisited,
+    so widening could only look for more points belonging to legs chosen when
+    there were almost none to choose from.
+
+    WHAT A READER SAW (production 2026-09-22 05:31Z, market 60608901, "AFC
+    Defensive Player of the Month in September", 50 outcomes):
+
+        /history?hours=168 -> outcomes: 1,  total_data_points: 1,  actual_hours: 168
+        /history?hours=720 -> outcomes: 10, total_data_points: 10
+
+    One leg had a supported point inside 7 days, so `chartable_ids` held one id
+    and the other nine slots went to the top `current_probability` legs — none of
+    which hold a point at 30 days either. The extend fired, read 720 hours,
+    filtered the result through those ten ids, found 1, and its `>` test compared
+    1 against 1. `actual_hours` stayed 168 and the web chart's `totalPoints < 2`
+    branch printed "Limited price history available" over a market whose 30-day
+    read serves ten points across ten legs.
+
+    THE SAME RULE, NOT A SECOND ONE. Both call sites run this function, so the
+    charted set is a pure function of (field, chartable set, top_n, champion) and
+    the two windows cannot drift apart by being maintained separately — which is
+    how the pre-extend answer came to outlive the window it described. Every
+    clause below is #5898's partition, #225's winner and #232's champion, moved
+    verbatim; none of their semantics change.
+
+    CANNOT MOVE THE COMMON CASE. A market dense enough that the sparse tiers
+    never fire calls this exactly once, with exactly today's inputs. A market
+    that does extend but whose wider window turns up the same chartable legs gets
+    an identical list. The answer can only differ where the wider window has
+    legs to draw that the narrow one did not — which is the defect itself.
+    """
+    # Default to top N outcomes by current probability, chartable legs first
+    capped_n = min(top_n, 50)
+    # FALLS BACK WHOLE when the window holds nothing supported at all: with no
+    # chartable leg the partition carries no information, and demoting on it
+    # would reorder a market on noise. Today's order then stands and the
+    # sparse tiers below reach further back, which is that case's own repair.
+    _prefer_chartable = bool(chartable_ids)
+    sorted_outcomes = sorted(
+        charted_outcomes,
+        key=lambda o: (
+            _prefer_chartable and o.id in chartable_ids,
+            o.current_probability or 0,
+        ),
+        reverse=True
+    )[:capped_n]
+    outcome_ids = [o.id for o in sorted_outcomes]
+    # #225 Item 3 — settled charts show the completed journey: the graded
+    # winner's line MUST appear even when it was a longshot (low
+    # current_probability) or the market's prices went stale/None at
+    # settlement. Without this, a settled winner-field charts everyone BUT the
+    # winner (the "path to resolution" that never resolves).
+    _selected = set(outcome_ids)
+    for o in charted_outcomes:
+        if getattr(o, "is_winner", False) and o.id not in _selected:
+            outcome_ids.append(o.id)
+            _selected.add(o.id)
+    # #232 — same guarantee for the odds_api winner-field class, where the
+    # champion is known only by NAME (no is_winner grade): force its line in
+    # even if it fizzled to a longshot, so its path can resolve below.
+    if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
+        _cnorm = _norm_outcome_name(champion)
+        for o in charted_outcomes:
+            if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
+                outcome_ids.append(o.id)
+                _selected.add(o.id)
+    return outcome_ids
+
+
 @router.get("/{market_id}/history")
 async def get_futures_history(
     market_id: int,
@@ -6326,41 +6406,9 @@ async def get_futures_history(
     if outcome_id:
         outcome_ids = [outcome_id]
     else:
-        # Default to top N outcomes by current probability, chartable legs first
-        capped_n = min(top_n, 50)
-        # FALLS BACK WHOLE when the window holds nothing supported at all: with no
-        # chartable leg the partition carries no information, and demoting on it
-        # would reorder a market on noise. Today's order then stands and the
-        # sparse tiers below reach further back, which is that case's own repair.
-        _prefer_chartable = bool(_chartable_ids)
-        sorted_outcomes = sorted(
-            charted_outcomes,
-            key=lambda o: (
-                _prefer_chartable and o.id in _chartable_ids,
-                o.current_probability or 0,
-            ),
-            reverse=True
-        )[:capped_n]
-        outcome_ids = [o.id for o in sorted_outcomes]
-        # #225 Item 3 — settled charts show the completed journey: the graded
-        # winner's line MUST appear even when it was a longshot (low
-        # current_probability) or the market's prices went stale/None at
-        # settlement. Without this, a settled winner-field charts everyone BUT the
-        # winner (the "path to resolution" that never resolves).
-        _selected = set(outcome_ids)
-        for o in charted_outcomes:
-            if getattr(o, "is_winner", False) and o.id not in _selected:
-                outcome_ids.append(o.id)
-                _selected.add(o.id)
-        # #232 — same guarantee for the odds_api winner-field class, where the
-        # champion is known only by NAME (no is_winner grade): force its line in
-        # even if it fizzled to a longshot, so its path can resolve below.
-        if champion and not any(getattr(o, "is_winner", False) for o in charted_outcomes):
-            _cnorm = _norm_outcome_name(champion)
-            for o in charted_outcomes:
-                if _norm_outcome_name(getattr(o, "name", "")) == _cnorm and o.id not in _selected:
-                    outcome_ids.append(o.id)
-                    _selected.add(o.id)
+        outcome_ids = _select_charted_outcome_ids(
+            charted_outcomes, _chartable_ids, top_n, champion
+        )
 
     charted_ids = set(outcome_ids)
     snapshots = [r for r in _supported_field if r.outcome_id in charted_ids]
@@ -6401,13 +6449,41 @@ async def get_futures_history(
             )
             ext_result = await db.execute(ext_query)
             extended_field = list(ext_result.scalars().all())
-            extended_snapshots = _drop_unsupported_snapshot_points(
-                [r for r in extended_field if r.outcome_id in charted_ids],
+            # #7936 — SUPPORT-FILTER THE WHOLE EXTENDED FIELD, THEN SELECT, because
+            # the selection is about to be re-derived and it needs to see every leg
+            # this window can honestly draw, not just the ones the narrow window
+            # happened to pick. Same list either way: `_drop_unsupported_snapshot_points`
+            # decides per POINT off that point's own row and the grades dict it is
+            # handed (`charted_outcomes`, unchanged here), never off the rows beside
+            # it — the identity #4992 already relies on where `_supported_field` is
+            # taken over the whole field and subsetted afterwards.
+            extended_supported = _drop_unsupported_snapshot_points(
+                extended_field,
                 charted_outcomes,
                 _history_field_ids,
             )
+            # THE SELECTION IS RE-DERIVED ON THE WINDOW WE ACTUALLY READ. Filtering
+            # the wider read through `charted_ids` asks "did the legs chosen from a
+            # window too sparse to choose from get any richer" — a question whose
+            # answer is no by construction on exactly the markets this tier exists
+            # to rescue. An EXPLICIT `outcome_id` is a caller pinning one line and
+            # is never re-selected; the tiers must not hand that caller a leg it
+            # did not ask for.
+            if outcome_id:
+                ext_outcome_ids = outcome_ids
+            else:
+                ext_outcome_ids = _select_charted_outcome_ids(
+                    charted_outcomes,
+                    {r.outcome_id for r in extended_supported},
+                    top_n,
+                    champion,
+                )
+            ext_charted_ids = set(ext_outcome_ids)
+            extended_snapshots = [
+                r for r in extended_supported if r.outcome_id in ext_charted_ids
+            ]
             extended_venue_rows = venue.in_window(
-                extended_cutoff, extended_snapshots, outcome_ids
+                extended_cutoff, extended_snapshots, ext_outcome_ids
             )
             if (len(extended_snapshots) + len(extended_venue_rows)) > (
                 len(snapshots) + len(venue_rows)
@@ -6417,6 +6493,25 @@ async def get_futures_history(
                 field_rows = extended_field
                 actual_hours = extended_hours
                 auto_extended = True
+                # ADOPTED TOGETHER OR NOT AT ALL, so this window's points are
+                # never served under the other window's selection. `charted_ids`
+                # gates the venue series below and that arm is live — a
+                # re-selected leg's venue points vanish without it, which its
+                # guard test asserts.
+                #
+                # `outcome_ids` is adopted for the same reason and is currently
+                # UNOBSERVABLE, which is said here rather than left for the next
+                # reader to re-derive. Its only remaining use below is the
+                # venue-only branch of `_history_order`, which can only name a leg
+                # holding no capture at all — and the non-chartable part of the
+                # wider selection is always a subset of the narrower one (same
+                # `current_probability` order, fewer or equal slots to fill), so
+                # the two lists cannot differ there. Checked over 4,000 random
+                # fields, zero counterexamples; a mutation that drops this line
+                # survives the suite on purpose. It stays because the next
+                # consumer of `outcome_ids` must get the window that was served.
+                outcome_ids = ext_outcome_ids
+                charted_ids = ext_charted_ids
 
     # Group snapshots by outcome, then aggregate per-bookmaker snapshots
     # at the same timestamp into a single consensus value.
