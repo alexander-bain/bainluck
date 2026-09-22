@@ -20,19 +20,31 @@ final class MarketMapLadderTests: XCTestCase {
     /// Every ladder label the app actually builds, from the production payloads
     /// of 2026-09-06.
     ///
-    /// `MarketMapView` builds them as `"\(abbr) +\(formatThreshold(margin))"`
-    /// for the margin maps and `"Over \(formatThreshold(threshold))"` for the
-    /// totals, where `abbr` comes from `TeamShortName.shortPair` — a tennis
-    /// SURNAME, which is where the length is. Nothing here is invented: these
-    /// are the events in the visible US Open and NFL windows.
+    /// `MarketMapView` builds them as
+    /// `MarketMapRail.marginThresholdLabel(teamAbbr:threshold:)` for the margin
+    /// maps and `"Over \(formatThreshold(threshold))"` for the totals, where
+    /// `abbr` comes from `TeamShortName.shortPair` — a tennis SURNAME, which is
+    /// where the length is. Nothing here is invented: these are the events in
+    /// the visible US Open and NFL windows.
+    ///
+    /// 🔴 **RE-SPELLED FOR #7905, AND THAT IS THE POINT OF THE CHANGE.** These
+    /// used to read `Sabalenka +5.5`. `by N+` is three characters longer, so
+    /// porting #2442's ruling to the phone moves the number this very test
+    /// measures — which is exactly the tension #3743 named when it declined to
+    /// ride the notation change ("cannot be made without moving the NFL labels
+    /// this issue forbids moving"). The column is re-sized against these, with
+    /// `testTheBarKeepsMoreThanHalfTheRowOnTheNarrowestCard` still holding the
+    /// other end. This is not a snapshot being refreshed to match the code
+    /// (notice 50): it is the population statement changing because what
+    /// production serves changed.
     private let productionLabels = [
         // Tennis — the long case, and the one that was photographed truncating.
-        "Sabalenka +5.5", "Townsend +5.5",
-        "Zandschulp +1.5", "Etcheverry +2.5", "Kalinskaya +1.5",
-        "Tsitsipas +2.5", "Khachanov +1.5", "Michelsen +2.5",
-        "Swiatek +1.5", "Zheng +1.5", "Kostyuk +1.5", "Noskova +1.5",
+        "Sabalenka by 5.5+", "Townsend by 5.5+",
+        "Zandschulp by 1.5+", "Etcheverry by 2.5+", "Kalinskaya by 1.5+",
+        "Tsitsipas by 2.5+", "Khachanov by 1.5+", "Michelsen by 2.5+",
+        "Swiatek by 1.5+", "Zheng by 1.5+", "Kostyuk by 1.5+", "Noskova by 1.5+",
         // NFL — abbreviations, and the widest totals rung.
-        "LAR +2.5", "SF +2.5", "NE +10.5", "Over 42.5",
+        "LAR by 2.5+", "SF by 2.5+", "NE by 10.5+", "Over 42.5",
     ]
 
     /// 🟢 THE FIX, and the instrument that sized it. If a label wants more room
