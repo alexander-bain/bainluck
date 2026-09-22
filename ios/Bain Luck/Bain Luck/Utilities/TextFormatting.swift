@@ -6,15 +6,18 @@ import Foundation
 /// regardless of how the source string was cased. Backend strings sometimes
 /// arrive `.capitalized` (e.g. "Rbc Canadian Open"), which garbles acronyms
 /// and brand names. `properTitleCase` restores them.
-nonisolated private let knownAcronyms: Set<String> = [
-    // Leagues / governing bodies
-    "PGA", "LPGA", "DP", "LIV", "NBA", "WNBA", "NHL", "MLB", "NFL",
-    "NCAA", "NCAAB", "NCAAF", "MLS", "UCL", "MMA", "UFC", "NASCAR",
-    "F1", "PGA", "US", "USA", "UK", "EU", "UAE", "ATP", "WTA",
+// #1930 — category acronyms come from the single shared authority
+// (contracts/category-acronyms.json, generated mirror `categoryAcronyms` in
+// CategoryAcronyms.generated.swift). Only platform-local extras live here, so
+// the two surfaces cannot drift: EPL/NPB/KBO and UEFA/FIFA/AFC/NFC reached
+// web first and now arrive here through the contract.
+nonisolated private let knownAcronyms: Set<String> = categoryAcronyms.union([
+    // Region codes that show up in tour and team names
+    "DP", "US", "USA", "UK", "EU", "UAE",
     // Brands / sponsors that show up in tournament names
     "RBC", "AT&T", "BMW", "FedEx", "TPC", "CJ", "WM", "3M", "ISCO",
     "RSM", "ZOZO", "AON", "KPMG", "PNC", "DSW", "TGL", "OCCUNET",
-]
+])
 
 /// Mixed-case brand tokens that must be preserved exactly when matched
 /// case-insensitively. Title casing or upper casing would otherwise garble them.
