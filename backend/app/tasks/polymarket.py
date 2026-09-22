@@ -4109,6 +4109,107 @@ def sunk_event_child_census(event) -> tuple[int, int]:
     return len(markets), priced
 
 
+# ── #7930: the venue stopped offering the question and we kept serving it ────
+#
+# `/events?id=` IS A LIST ENDPOINT AND IT HIDES ARCHIVED EVENTS. That single
+# fact is the whole defect. The batch read above cannot distinguish
+#
+#     (a) "Gamma has no such event"                      — a genuine absence
+#     (b) "Gamma has it and has stopped offering it"     — archived, the case
+#     (c) "the page was short / the id fell out"         — a read artifact
+#
+# because all three arrive as the same thing: an id missing from a 200. That is
+# gotcha #53 at the batch boundary, and the code above answered it the only way
+# it could — record, refuse, act on nothing.
+#
+# MEASURED ON THE VENUE, 2026-09-22 06:05Z (notice 26 — the venue's own API, by
+# direct address, not our mirror). 240 rows drawn from `_SUNK_POLY_WHERE`'s OWN
+# predicate, sampled BOTH ways so ordering could not fake the answer:
+#
+#     oldest-id first   120   71 offered   49 NOT OFFERED   0 absent (404)
+#     newest-id first   120   31 offered   88 NOT OFFERED   0 absent (404)   1 transport error
+#
+# **137 of 240 (57%) are off the board, and not one of the 240 was a 404.** So
+# the rows #7930's body called "absent from the venue" are not absent at all:
+# the venue still holds every one and has taken them off the board. The four
+# Brazil rows the issue named (871036/871037/871038/871045) read
+# `archived=true, active=false` on `/events/{id}` and `200 []` on
+# `/events?id=` — that contrast is the whole defect, and it is why the issue's
+# own shape A and shape B are ONE shape with two flag spellings.
+#
+# The bulk of the 137 are finished fixtures — European T20, KBO, CPBL, `Who
+# will Petr Yan fight next?` — sitting in our rows as live questions.
+#
+# REACH: the selector holds 9,531 rows today, so on this rate the pass has on
+# the order of 5,000 rows to settle, at ~600 ids/hour. Every one of those writes
+# moves in a single direction — a market the venue closed stops being served as
+# open — and the writer's branch is strictly tightening (it adds ways to be
+# `resolved` and removes none), so no row can be pushed ONTO a surface by this.
+#
+# THE DIRECT-ADDRESS READ IS A DIFFERENT QUESTION, NOT A RETRY. `/events/{id}`
+# answers 404 for an id Gamma does not have (verified against 999999999) and 200
+# with the full flag set for an archived one. So it separates (a) from (b) and
+# (c) POSITIVELY — the decision stops resting on an absence and starts resting on
+# a flag the venue published. `get_event_by_id` is the right client method for
+# it and the only one: it returns None for 404 ONLY and re-raises 429/5xx/timeout
+# (gotcha #36), which is exactly the distinction this arm is made of.
+#
+# AND THERE IS NO NEW WITHDRAWAL MECHANISM HERE, BECAUSE THE WRITER ALREADY HAS
+# ONE. `_process_event_batch` computes `_venue_open = sunk_event_is_open(event)`
+# and upserts `status="open" if _venue_open else "resolved"` with the `settled_at`
+# stamp in the same statement. It is already fed `closed=True` events by the
+# settled-sports tag sweep, so this is an established input shape and not a new
+# one. The recovery pass was DETECTING the case (`events_closed_at_venue`) and
+# then throwing the event away one line later — the row never reached the writer
+# that knew what to do with it. Sending it is the fix; inventing a second
+# vocabulary for "withdrawn" would have been a second copy of that rule.
+
+#: Ceiling on direct-address reads per pass. The batch read is 1 call per 20 ids
+#: and this arm is 1 call per id, so it is the expensive half and gets an
+#: explicit budget rather than the pass deadline as its only bound. 60 = three
+#: batches' worth of misses, comfortably above the miss rate a healthy pass sees
+#: and low enough that a Gamma-wide outage (every id missing) cannot turn one
+#: pass into 600 sequential requests.
+_SUNK_POLY_DIRECT_MAX = 60
+
+#: Pause between direct-address reads. The batch arm sleeps 0.3 s between its
+#: 20-id calls; this arm can issue 60 single-id calls in a row, so it takes the
+#: same courtesy at a third of the size. At the ceiling that is 6 s of a 240 s
+#: budget — cheap enough to be worth not being the caller Gamma rate-limits.
+_SUNK_POLY_DIRECT_PAUSE_S = 0.1
+
+
+def sunk_direct_verdict(found: bool, event) -> str:
+    """What a DIRECT-ADDRESS `/events/{id}` read says about one event. Pure.
+
+    ``found`` is ``get_event_by_id(...) is not None`` — False means Gamma
+    answered 404, and it answers 404 for nothing else (gotcha #36; the method's
+    own contract). ``event`` is the service's parse of that body, or None if it
+    would not parse. Transport failures never reach here: ``get_event_by_id``
+    re-raises them and the caller counts them without concluding anything, which
+    is the fail-closed half of this arm.
+
+    Four verdicts, and they are four different facts — never three plus a
+    default, because the two that must write nothing are the two a default would
+    swallow:
+
+    * ``"absent"``      — Gamma does not have this event (404). Recorded, acted
+      on by nothing: one channel's absence is not a fact about the market
+      (gotcha #53), and 0 of 240 sampled rows were this.
+    * ``"not_offered"`` — Gamma HAS it and :func:`sunk_event_is_open` says it is
+      off the board. The venue's own published flags, not an inference from
+      silence. This is the one the ship acts on.
+    * ``"offered"``     — the list read simply missed it; a normal recovery.
+    * ``"unparseable"`` — a 200 whose body is not an event we understand.
+      Concludes nothing, same as a transport error.
+    """
+    if not found:
+        return "absent"
+    if event is None or not getattr(event, "id", None):
+        return "unparseable"
+    return "offered" if sunk_event_is_open(event) else "not_offered"
+
+
 async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> dict:
     """#6758: re-read open Polymarket parents the discovery poll no longer reaches."""
     import asyncio
@@ -4133,7 +4234,20 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
         "batches_read": 0,
         "batches_unreadable": 0,
         "events_reached": 0,
+        # #7930: three counts where there was one, because they were three
+        # different facts sharing a name. `events_absent_at_venue` used to mean
+        # "the LIST read did not return this id" and now means what it says —
+        # the direct-address channel answered 404. `events_missing_from_list` is
+        # the old number under an honest name, and is a question rather than a
+        # finding; `events_recovered_by_direct` is the part of it the list was
+        # simply wrong about.
+        "events_missing_from_list": 0,
         "events_absent_at_venue": 0,
+        "events_recovered_by_direct": 0,
+        "direct_reads": 0,
+        "direct_unreadable": 0,
+        "direct_unparseable": 0,
+        "direct_budget_hit": False,
         "events_closed_at_venue": 0,
         "events_fully_priced_at_venue": 0,
         "events_partially_priced_at_venue": 0,
@@ -4218,6 +4332,7 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
             work.append(ext)
 
     newly_refused: list[str] = []
+    direct_budget = _SUNK_POLY_DIRECT_MAX
     last_rotate_id_done = cursor
     service = PolymarketAPIService()
     try:
@@ -4252,18 +4367,71 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                     parsed[str(event.id)] = event
 
             to_write = []
-            for ext in chunk:
-                event = parsed.get(ext)
-                if event is None:
+            missing = [ext for ext in chunk if ext not in parsed]
+            stats["events_missing_from_list"] += len(missing)
+
+            # #7930: the list read hides archived events, so a miss is a
+            # QUESTION, not an answer. Ask the direct-address channel, which can
+            # tell 404 from "we have it and took it off the board".
+            for ext in missing:
+                if direct_budget <= 0:
+                    stats["direct_budget_hit"] = True
+                    break
+                if _time.monotonic() - started > budget:
+                    stats["deadline_hit"] = True
+                    break
+                if stats["direct_reads"]:
+                    await asyncio.sleep(_SUNK_POLY_DIRECT_PAUSE_S)
+                direct_budget -= 1
+                stats["direct_reads"] += 1
+                try:
+                    raw_one = await service.get_event_by_id(ext)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 429:
+                        # Same rule the batch arm follows: stop asking, keep the
+                        # cursor, conclude nothing about the ids not yet read.
+                        stats["rate_limited"] = True
+                        direct_budget = 0
+                        break
+                    stats["direct_unreadable"] += 1
+                    stats["errors"].append(f"direct {ext}: HTTP {exc.response.status_code}")
+                    continue
+                except Exception as exc:  # noqa: BLE001 — one id may not end the run
+                    stats["direct_unreadable"] += 1
+                    stats["errors"].append(f"direct {ext}: {str(exc)[:120]}")
+                    continue
+
+                one = service._parse_event(raw_one) if raw_one is not None else None
+                verdict = sunk_direct_verdict(raw_one is not None, one)
+                if verdict == "absent":
                     # Recorded, never acted on (gotcha #53): one absent read
                     # retires nothing. It is only kept out of the next passes.
                     stats["events_absent_at_venue"] += 1
                     newly_refused.append(ext)
+                elif verdict == "unparseable":
+                    # A 200 we cannot read is not a fact either. No refusal, so
+                    # the next pass meets it again.
+                    stats["direct_unparseable"] += 1
+                else:
+                    stats["events_recovered_by_direct"] += 1
+                    parsed[ext] = one
+
+            for ext in chunk:
+                event = parsed.get(ext)
+                if event is None:
                     continue
                 stats["events_reached"] += 1
                 if not sunk_event_is_open(event):
+                    # #7930: hand it to the writer instead of binning it. The
+                    # writer's own `_venue_open` branch stamps `status='resolved'`
+                    # and `settled_at` in one statement, which is what stops the
+                    # row being served as a live answer — and it is the SAME
+                    # predicate, so there is no second rule to drift. No refusal
+                    # is needed: the status write takes the row out of
+                    # `_SUNK_POLY_WHERE`'s own `status = 'open'` test, durably and
+                    # where SQL can see it, which a Redis refusal set cannot be.
                     stats["events_closed_at_venue"] += 1
-                    newly_refused.append(ext)
+                    to_write.append(event)
                     continue
                 n_children, n_priced = sunk_event_child_census(event)
                 stats["children_at_venue"] += n_children
@@ -4285,6 +4453,21 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                     FuturesOddsSnapshot, pg_insert, probability_to_american,
                     compute_market_tier,
                 )
+
+            # Advance only over a batch that was READ. An unreadable batch
+            # `continue`s above, so its rows are met again next lap at the
+            # latest; a 429 or the deadline leaves the cursor before them.
+            if stats["rate_limited"]:
+                # A 429 on the direct arm ends the pass like a 429 on the batch
+                # arm does, and on the same terms: "keep the cursor where it is,
+                # retry next pass". The chunk's writes above still stand —
+                # the batch payload behind them was a clean 200 and discarding
+                # it would make backing off cost us data we already hold — but
+                # the cursor must NOT advance, because the ids this chunk had
+                # not yet asked about were abandoned, not answered. Advancing
+                # would push them a full ~32-hour lap away for a reason that has
+                # nothing to do with them.
+                break
 
             # Advance only over a batch that was READ. An unreadable batch
             # `continue`s above, so its rows are met again next lap at the

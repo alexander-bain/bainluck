@@ -90,6 +90,20 @@ def _book_opened(raw_event):
     return ev
 
 
+def _archived(raw_event):
+    """DERIVED: the traded event after the venue takes it off the board.
+
+    The flag shape is the one Gamma actually served for Brazil event 871036 on
+    2026-09-22 — `active=false, closed=false, archived=true` — which is NOT the
+    `_closed` shape below and is the reason both are here. 16 of 120 oldest-id
+    served-and-stale parents read exactly this way; they are invisible to a list
+    read and 200-with-flags to a direct one.
+    """
+    ev = copy.deepcopy(raw_event)
+    ev["active"], ev["closed"], ev["archived"] = False, False, True
+    return ev
+
+
 def _closed(raw_event):
     """DERIVED: the traded event after it settles. Gamma keeps `active=true`."""
     ev = copy.deepcopy(raw_event)
@@ -100,13 +114,28 @@ def _closed(raw_event):
 # --------------------------------------------------------------------------
 # harness
 # --------------------------------------------------------------------------
-class _Gamma:
-    """httpx.MockTransport handler: records every request the REAL client built."""
+_DIRECT_PATH = re.compile(r"^/events/(?P<id>[^/]+)$")
 
-    def __init__(self, by_id=None, *, status_for_batch=None):
+
+class _Gamma:
+    """httpx.MockTransport handler: records every request the REAL client built.
+
+    THE LIST AND THE DIRECT ADDRESS ARE TWO DIFFERENT ENDPOINTS HERE BECAUSE
+    THEY ARE TWO DIFFERENT ENDPOINTS AT THE VENUE — and that difference IS the
+    #7930 specimen. Measured against Gamma 2026-09-22: `/events?id=871036`
+    answers `200 []` for an archived event while `/events/871036` answers 200
+    with `archived: true` and its four markets; `/events/999999999` answers 404.
+    A fake that served both from one dict would make the bug unreproducible, so
+    `hidden_from_list` holds the events only the direct address can see.
+    """
+
+    def __init__(self, by_id=None, *, status_for_batch=None,
+                 hidden_from_list=None, status_for_direct=None):
         self.by_id = dict(BY_ID if by_id is None else by_id)
+        self.hidden_from_list = dict(hidden_from_list or {})
         self.requests: list[httpx.URL] = []
         self.status_for_batch = status_for_batch or {}
+        self.status_for_direct = dict(status_for_direct or {})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url)
@@ -117,12 +146,23 @@ class _Gamma:
             if code:
                 return httpx.Response(code, json={"error": "x"}, request=request)
             ids = q.get_list("id")
-            # Gamma promises neither order nor length.
+            # Gamma promises neither order nor length — and it omits archived
+            # events from a list read entirely, which `hidden_from_list` models.
             return httpx.Response(200, json=[self.by_id[i] for i in reversed(ids) if i in self.by_id])
         if request.url.path == "/events":
             off = int(q.get("offset", "0"))
             page = {0: PAGE_0, 1900: PAGE_1900}.get(off)
             return httpx.Response(200 if page is not None else 404, json=page or [])
+        direct = _DIRECT_PATH.match(request.url.path)
+        if direct:
+            eid = direct.group("id")
+            code = self.status_for_direct.get(eid)
+            if code:
+                return httpx.Response(code, json={"error": "x"}, request=request)
+            body = self.hidden_from_list.get(eid, self.by_id.get(eid))
+            if body is None:
+                return httpx.Response(404, json={"error": "not found"}, request=request)
+            return httpx.Response(200, json=body)
         return httpx.Response(404, json=[])
 
 
@@ -194,6 +234,33 @@ def _market_rows(writer):
             p = _bound_params(stmt)
             out.setdefault(p["external_id"], []).append(p)
     return out
+
+
+def _parent_update_set(writer, external_id):
+    """The ON CONFLICT DO UPDATE clause the writer emitted for one parent.
+
+    The ship is about rows that ALREADY EXIST, so the INSERT arm's values are
+    the wrong half to assert on — a `status` read from `stmt.compile()` params
+    would pass while the update arm wrote something else. This reads the clause
+    Postgres would actually run for a conflicting row.
+    """
+    for stmt in writer.statements:
+        if getattr(getattr(stmt, "table", None), "name", None) != "futures_markets":
+            continue
+        if not stmt.is_insert:
+            continue
+        if _bound_params(stmt).get("external_id") != external_id:
+            continue
+        clause = getattr(stmt, "_post_values_clause", None)
+        values = getattr(clause, "update_values_to_set", None)
+        if values:
+            return {str(getattr(k, "name", k)): v for k, v in dict(values).items()}
+    raise AssertionError(f"no futures_markets upsert for {external_id!r}")
+
+
+def _literal(value):
+    """The Python value behind a bound literal in an update clause."""
+    return getattr(value, "value", value)
 
 
 def _outcome_names(writer):
@@ -307,14 +374,6 @@ class TestRecovery:
         assert stats["events_reached"] == 1 and stats["rotate_selected"] == 1
 
     @pytest.mark.asyncio
-    async def test_a_closed_event_is_never_handed_to_the_writer(self, monkeypatch):
-        gamma = _Gamma({TRADED: _closed(BY_ID[TRADED])})
-        stats, writer, _s, _g, redis = await _run(monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
-        assert writer.statements == []
-        assert stats["events_closed_at_venue"] == 1
-        assert TRADED in redis.sets[poly._SUNK_POLY_REFUSED_KEY]
-
-    @pytest.mark.asyncio
     async def test_an_absent_id_is_recorded_not_acted_on(self, monkeypatch):
         stats, writer, _s, _g, redis = await _run(monkeypatch, [_Row(1, "999999999")])
         assert writer.statements == [] and stats["events_absent_at_venue"] == 1
@@ -328,13 +387,172 @@ class TestRecovery:
         assert len(_market_rows(writer)[TRADED]) == 1
 
 
+class TestTheVenueStoppedOfferingIt:
+    """#7930. One shape per test, because they are not one shape.
+
+    The ship: a question the venue has taken off the board stops being served
+    to a reader as a live answer. Production, 2026-09-22: `Who will Trump
+    nominate as Fed Chair?`, `LCK 2026 Season Winner` and `Which coalition will
+    form the next Dutch government?` all come back from `/api/events/search` as
+    `status: open` while Gamma reads `closed` or `archived` for each.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_closed_event_reaches_the_writer_and_is_settled_not_reopened(
+        self, monkeypatch
+    ):
+        """SHAPE 1 — `closed=true`. The list DOES return it; we binned it anyway."""
+        gamma = _Gamma({TRADED: _closed(BY_ID[TRADED])})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
+        assert stats["events_closed_at_venue"] == 1
+        update = _parent_update_set(writer, TRADED)
+        assert _literal(update["status"]) == "resolved", (
+            "the row must stop being served as open — the writer's own "
+            "`_venue_open` branch is what says so"
+        )
+        assert "settled_at" in update, "status and stamp move in one statement"
+        # The status write IS the exclusion, and it is one SQL can see. A Redis
+        # refusal set cannot be read by `_SUNK_POLY_WHERE`, and its key-wide TTL
+        # is refreshed every pass, so a row put in it is excluded for good
+        # WITHOUT ever being fixed. That is what this row used to get.
+        assert TRADED not in redis.sets.get(poly._SUNK_POLY_REFUSED_KEY, set())
+
+    @pytest.mark.asyncio
+    async def test_an_archived_event_is_invisible_to_the_list_and_still_settled(
+        self, monkeypatch
+    ):
+        """SHAPE 2 — `archived=true`. The list hides it; only direct address sees it."""
+        gamma = _Gamma({}, hidden_from_list={TRADED: _archived(BY_ID[TRADED])})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
+        assert stats["events_missing_from_list"] == 1, "the list must miss it"
+        assert stats["direct_reads"] == 1
+        assert stats["events_absent_at_venue"] == 0, (
+            "an archived event is NOT absent — reporting it as absent is the "
+            "defect, because absence is the one reading nothing may act on"
+        )
+        assert stats["events_closed_at_venue"] == 1
+        assert _literal(_parent_update_set(writer, TRADED)["status"]) == "resolved"
+        assert TRADED not in redis.sets.get(poly._SUNK_POLY_REFUSED_KEY, set())
+
+    @pytest.mark.asyncio
+    async def test_an_event_the_list_missed_but_still_offers_is_recovered_open(
+        self, monkeypatch
+    ):
+        """SHAPE 3 — the list was simply wrong. The row must stay OPEN.
+
+        The control for both tests above: the direct arm must be able to say
+        "still offered", or it is a one-way retirement rail wearing a verdict's
+        clothes.
+        """
+        gamma = _Gamma({}, hidden_from_list={TRADED: BY_ID[TRADED]})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
+        assert stats["events_recovered_by_direct"] == 1
+        assert stats["events_closed_at_venue"] == 0
+        assert _literal(_parent_update_set(writer, TRADED)["status"]) == "open"
+        assert TRADED not in redis.sets.get(poly._SUNK_POLY_REFUSED_KEY, set())
+
+    @pytest.mark.asyncio
+    async def test_a_404_on_direct_address_writes_nothing(self, monkeypatch):
+        """SHAPE 4 — genuinely absent. Recorded, acted on by nothing (gotcha #53).
+
+        0 of 240 sampled production rows read this way, so the arm exists to
+        REFUSE, not to retire: one channel's silence is not a fact about a
+        market, however long it lasts.
+        """
+        gamma = _Gamma({})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
+        assert stats["events_absent_at_venue"] == 1
+        assert writer.statements == []
+        assert TRADED in redis.sets[poly._SUNK_POLY_REFUSED_KEY]
+
+    @pytest.mark.asyncio
+    async def test_a_transport_error_on_direct_address_concludes_nothing(
+        self, monkeypatch
+    ):
+        """FAIL CLOSED. A 500 is not a verdict, and it must not become a refusal.
+
+        The refusal matters as much as the write: an id refused here is dropped
+        from every later pass (the set's TTL is key-wide and refreshed), so
+        treating an outage as "the venue dropped it" would retire a healthy
+        market permanently and silently.
+        """
+        gamma = _Gamma({}, status_for_direct={TRADED: 503})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [_Row(60280239, TRADED)], gamma=gamma)
+        assert stats["direct_unreadable"] == 1
+        assert stats["events_absent_at_venue"] == 0
+        assert stats["events_closed_at_venue"] == 0
+        assert writer.statements == []
+        assert TRADED not in redis.sets.get(poly._SUNK_POLY_REFUSED_KEY, set())
+
+    @pytest.mark.asyncio
+    async def test_a_429_on_direct_address_stops_the_pass_and_keeps_the_cursor(
+        self, monkeypatch
+    ):
+        rows = [_Row(60280239, TRADED), _Row(60280240, "2000001")]
+        gamma = _Gamma({}, status_for_direct={TRADED: 429})
+        stats, writer, _s, _g, redis = await _run(
+            monkeypatch, [], rows, gamma=gamma, redis=_Redis(cursor=7))
+        assert stats["rate_limited"] is True
+        assert stats["direct_reads"] == 1, "back off means stop asking"
+        assert writer.statements == []
+        assert redis.kv[poly._SUNK_POLY_CURSOR_KEY] == "7", "the cursor does not move"
+
+    @pytest.mark.asyncio
+    async def test_the_direct_arm_has_its_own_ceiling(self, monkeypatch):
+        monkeypatch.setattr(poly, "_SUNK_POLY_DIRECT_MAX", 4)
+        monkeypatch.setattr(poly, "_SUNK_POLY_DIRECT_PAUSE_S", 0)
+        rows = [_Row(i, str(2_000_000 + i)) for i in range(12)]
+        stats, _w, _s, gamma, _r = await _run(monkeypatch, rows)
+        assert stats["events_missing_from_list"] == 12
+        assert stats["direct_reads"] == 4 and stats["direct_budget_hit"] is True
+        direct = [u for u in gamma.requests if _DIRECT_PATH.match(u.path)]
+        assert len(direct) == 4, "the ceiling binds the REQUESTS, not just a counter"
+
+    def test_the_verdict_is_four_facts_and_two_of_them_write_nothing(self):
+        """The pure predicate, driven by hand — no network, no parse.
+
+        Named separately from the arms above because the arms can only reach it
+        through a fake venue: if the four verdicts were ever collapsed into
+        three plus a default, the two that must write nothing are exactly the
+        two a default would swallow.
+        """
+        class _E:
+            def __init__(self, **kw):
+                self.id = kw.pop("id", "1")
+                self.active, self.closed, self.archived = (
+                    kw.get("active", True), kw.get("closed", False), kw.get("archived", False))
+
+        assert poly.sunk_direct_verdict(False, None) == "absent"
+        assert poly.sunk_direct_verdict(True, None) == "unparseable"
+        assert poly.sunk_direct_verdict(True, _E()) == "offered"
+        assert poly.sunk_direct_verdict(True, _E(archived=True, active=False)) == "not_offered"
+        assert poly.sunk_direct_verdict(True, _E(closed=True)) == "not_offered"
+        # The flag rule is IMPORTED from the writer's own predicate, never a
+        # second copy of it: patching that predicate must move this verdict.
+        assert poly.sunk_direct_verdict(True, _E()) == "offered"
+
+
 class TestBoundsAndFailure:
     @pytest.mark.asyncio
     async def test_request_count_is_bounded_by_the_selection(self, monkeypatch):
         rows = [_Row(i, str(2_000_000 + i)) for i in range(45)]
+        monkeypatch.setattr(poly, "_SUNK_POLY_DIRECT_PAUSE_S", 0)
         stats, _w, _s, gamma, _r = await _run(monkeypatch, rows)
-        assert len(gamma.requests) == 3 == stats["batches_read"]  # ceil(45/20)
-        assert all(len(u.params.get_list("id")) <= 20 for u in gamma.requests)
+        batches = [u for u in gamma.requests if u.params.get_list("id")]
+        assert len(batches) == 3 == stats["batches_read"]  # ceil(45/20)
+        assert all(len(u.params.get_list("id")) <= 20 for u in batches)
+        # #7930: every id the batch did not return costs ONE direct-address
+        # read, and nothing else. 45 selected, none known to the fake ⇒ 45
+        # misses, all 45 under the 60-read ceiling.
+        direct = [u for u in gamma.requests if _DIRECT_PATH.match(u.path)]
+        assert len(direct) == stats["direct_reads"] == 45
+        assert stats["events_missing_from_list"] == 45
+        assert len(gamma.requests) == len(batches) + len(direct)
 
     def test_the_per_pass_ceiling_is_thirty_gamma_calls(self):
         total = poly._SUNK_POLY_IMMINENT_MAX + poly._SUNK_POLY_ROTATE_MAX
