@@ -153,6 +153,7 @@ SLOW_SLOT_MS = 800_000
 #: back ON again within one test (see the fixture).
 _REAL_CONCLUSIVE = pcl.cancellation_is_conclusive
 _REAL_PACKING = sf.packing_split_factor
+_REAL_FROZEN = sf.bank_is_frozen
 
 #: Production's carried measurements at 2026-09-17T17:37:55Z, heavy v41, with
 #: the ring readable again after #6775. Both are real completions.
@@ -474,9 +475,9 @@ class _Run:
 def staged_beat_loop(monkeypatch):
     """Drive the REAL beat loop over one durable cursor. Returns a callable.
 
-    **Two independent refinement candidates now live in this loop**, and this
-    fixture holds a knob for each so that neither file that uses it can be
-    reading the other's mechanism by accident:
+    **Three independent refinement candidates now live in this loop**, and this
+    fixture holds a knob for each so that no file that uses it can be reading
+    another's mechanism by accident:
 
     * ``conclusive_splits`` — :func:`cancellation_is_conclusive`, the candidate
       THIS file measures. It cuts a slot on its first window-bounded
@@ -485,10 +486,18 @@ def staged_beat_loop(monkeypatch):
       (``test_calibration_a_slow_success_is_evidence_too_6599``). It cuts a slot
       that SUCCEEDS too slowly to pack two into a beat, and so fires on runs
       where nothing ever cancels.
+    * ``empty_bank_inversion`` — :func:`~app.utils.calibration_staged_futures.bank_is_frozen`,
+      CAL-P1338 (#8073). It does not cut anything itself; it reverses the order
+      ``attempt_order`` hands the beat when the generation has banked nothing and
+      more than one beat's worth of slots are struck, so a struck slot takes its
+      SECOND cancellation on the next beat instead of the sixty-fourth. It
+      therefore changes WHEN the other two candidates' triggers are reached, and
+      that is exactly why this file has to hold it down: a file measuring A
+      against no-A cannot also be measuring when A's trigger arrives.
 
-    Both default to LIVE, which is the loop production runs. A file that wants
-    one of them held down says so in ITS OWN ``drive`` fixture, once, where a
-    reader can see the regime — never per call site, and never by flipping a
+    All three default to LIVE, which is the loop production runs. A file that
+    wants one of them held down says so in ITS OWN ``drive`` fixture, once, where
+    a reader can see the regime — never per call site, and never by flipping a
     default that a sibling module imports (this fixture is imported across
     files, so a default is a cross-file coupling).
 
@@ -512,6 +521,7 @@ def staged_beat_loop(monkeypatch):
         carried=True,
         conclusive_splits=True,
         packing_splits=True,
+        empty_bank_inversion=True,
         transient=None,
         withdrawn=False,
         ring_readable=True,
@@ -562,6 +572,14 @@ def staged_beat_loop(monkeypatch):
             sf,
             "packing_split_factor",
             _REAL_PACKING if packing_splits else (lambda *_a, **_kw: 0),
+        )
+        # ``False`` is this predicate's own "not the frozen regime" answer, so
+        # the stub takes ``attempt_order`` down the plain ascending branch every
+        # beat before CAL-P1338 took — the BEFORE, not a test-only branch.
+        monkeypatch.setattr(
+            sf,
+            "bank_is_frozen",
+            _REAL_FROZEN if empty_bank_inversion else (lambda *_a, **_kw: False),
         )
 
         out = _Run()
@@ -672,7 +690,17 @@ def staged_beat_loop(monkeypatch):
 
 @pytest.fixture
 def drive(staged_beat_loop):
-    """THIS FILE's rig: the #6599 packing candidate is held OFF in BOTH arms.
+    """THIS FILE's rig: the OTHER TWO candidates are held OFF in BOTH arms.
+
+    The #6599 packing candidate, and — since CAL-P1338 (#8073) — the empty-bank
+    inversion. The second was added for the same reason as the first and the
+    reason is worth stating once more, because the inversion does not cut
+    anything and so does not look like a candidate: it changes the BEAT on which
+    a struck slot earns its second cancellation, and a majority of the numbers
+    below are beat positions. Left live it moves thirteen of them, none at an
+    invariant — every one at a count, a position, or a "nothing else cuts here"
+    premise, which is the same signature the packing candidate left when it
+    landed (measured, lat940; re-measured on the inversion, cal2743).
 
     Every measurement below is about ONE candidate —
     :func:`cancellation_is_conclusive` — and its control
@@ -702,6 +730,7 @@ def drive(staged_beat_loop):
 
     async def _isolated(**kwargs):
         kwargs.setdefault("packing_splits", False)
+        kwargs.setdefault("empty_bank_inversion", False)
         return await staged_beat_loop(**kwargs)
 
     return _isolated

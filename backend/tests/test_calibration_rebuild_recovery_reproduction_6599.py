@@ -40,6 +40,20 @@ WHAT IS REPRODUCED (all measured, none reasoned):
    Non-vacuity is measured, not asserted: replacing ``attempt_order`` with the
    pre-#6599 plan order kills all four of these tests.
 
+   **REPAIRED by CAL-P1338 (#8073), and section 0 now measures both arms.** The
+   law above is reproduced on the stubbed arm exactly as it always was, and the
+   repair is asserted beside it in the same test: with the inversion live the
+   first cut lands on **beat 3 at 8, 16 and 32 slots alike**, so the wait stops
+   scaling with the plan. What #8073 added to the diagnosis above is that the
+   ``N/2 + 1`` wait was not merely long, it was CLOSED — the other exit,
+   ``cancellation_is_conclusive``, declines whenever nothing has completed
+   (ruling 075), and at this granularity nothing ever does. Refinement needed a
+   completion and a completion needed refinement; production sat in it for six
+   consecutive beats banking zero. The inversion reverses the deferral only
+   while the bank is empty AND more than one beat's worth of slots are struck,
+   so CAL-P1301's own livelock specimen — two slow heads, 126 healthy slots
+   behind — keeps the ascending order that fixed it.
+
 1. ``test_the_build_grinds_to_completion_without_refinement_ever_running`` — the
    ADJACENT regime, kept because the two need DIFFERENT fixes and telling them
    apart is the whole diagnostic question. Here the beat ends on the WINDOW
@@ -114,6 +128,7 @@ VMS_PER_SLOT = 8
 #: The genuine repair predicate, captured at import so the BEFORE arm can be
 #: turned back ON again within one test (see the fixture).
 _REAL_PACKING = sf.packing_split_factor
+_REAL_FROZEN = sf.bank_is_frozen
 
 
 class _StatementCancelled(Exception):
@@ -324,6 +339,14 @@ def drive(monkeypatch):
     the defect on that arm and assert the repair on the live one, in the same
     test — the reproduction is preserved rather than refreshed from a tree that
     no longer has the defect in it (notice 50).
+
+    ``empty_bank_inversion=False`` is the SECOND before, on the same principle,
+    and section 0 now uses it the same way. CAL-P1338 (#8073) repairs the very
+    law section 0 reproduces, so leaving it live would have refreshed that
+    reproduction out of existence — the first cut lands on beat 3 at every plan
+    size and ``N/2 + 1`` becomes unobservable. The law is therefore still
+    measured on the stubbed arm, at the same 8 → 5 / 16 → 9 / 32 → 17 it was
+    always measured at, and the repair is asserted beside it in the same test.
     """
 
     async def _drive(
@@ -335,6 +358,7 @@ def drive(monkeypatch):
         window_ms=WINDOW_MS,
         beat_is_slow=False,
         packing_splits=True,
+        empty_bank_inversion=True,
     ):
         roster = _roster(buckets * VMS_PER_SLOT)
         slots = _slots(roster, buckets)
@@ -356,6 +380,15 @@ def drive(monkeypatch):
             sf,
             "packing_split_factor",
             _REAL_PACKING if packing_splits else (lambda *_a, **_kw: 0),
+        )
+        # ``empty_bank_inversion=False`` is the other BEFORE: CAL-P1338 (#8073)
+        # stubbed to its own "not the frozen regime" answer, which is
+        # ``attempt_order`` exactly as it stood when this file was written. Set
+        # both ways round on every call, for the leak reason above.
+        monkeypatch.setattr(
+            sf,
+            "bank_is_frozen",
+            _REAL_FROZEN if empty_bank_inversion else (lambda *_a, **_kw: False),
         )
 
         out = _Run()
@@ -443,7 +476,13 @@ class TestTheProductionRegimeBeatLevelSlowness:
         two entries longer than the beat before. The reorder changes WHICH two
         slots burn the budget, never THAT it is burned.
         """
-        run = await drive(buckets=16, slow_slots=0, max_beats=3, beat_is_slow=True)
+        run = await drive(
+            buckets=16,
+            slow_slots=0,
+            max_beats=3,
+            beat_is_slow=True,
+            empty_bank_inversion=False,
+        )
 
         assert run.per_beat_banked == [0, 0, 0], (
             "the production shape banks nothing at all; this rig must too, or it "
@@ -457,6 +496,34 @@ class TestTheProductionRegimeBeatLevelSlowness:
         assert run.per_beat_cancel_entries == [2, 4, 6], (
             "and each beat enrols two MORE slots into unit_cancels — which is the "
             "clock the split threshold is really running against"
+        )
+
+        # AND THE REPAIR, on the same population, in the same test (notice 50).
+        repaired = await drive(
+            buckets=16,
+            slow_slots=0,
+            max_beats=3,
+            beat_is_slow=True,
+            empty_bank_inversion=True,
+        )
+
+        assert repaired.per_beat_cancel_entries == [2, 4, 4], (
+            "with CAL-P1338 live the third beat re-attempts a slot already "
+            "carrying a strike instead of enrolling two untouched ones, so the "
+            "entry count STOPS climbing — that flat 4 is the whole mechanism"
+        )
+        assert repaired.first_split_beat == 3, (
+            "and the second strike it collects is the cut: beat 3, where the "
+            f"stubbed arm above reaches none in 3; got {repaired.first_split_beat}"
+        )
+        assert repaired.per_beat_cancelled == [2, 2, 2], (
+            "the budget is still burned in full every beat — the repair changes "
+            "WHICH slots spend it, never that it is spent, so this is not a "
+            "throughput claim"
+        )
+        assert repaired.per_beat_banked == [0, 0, 0], (
+            "and nothing banks inside three beats either: the cut is what makes "
+            "a unit small enough to finish LATER, it is not itself a completion"
         )
 
     @pytest.mark.asyncio
@@ -480,11 +547,32 @@ class TestTheProductionRegimeBeatLevelSlowness:
         """
         for buckets in (8, 16, 32):
             run = await drive(
-                buckets=buckets, slow_slots=0, max_beats=60, beat_is_slow=True
+                buckets=buckets,
+                slow_slots=0,
+                max_beats=60,
+                beat_is_slow=True,
+                empty_bank_inversion=False,
             )
             assert run.first_split_beat == buckets // 2 + 1, (
                 f"{buckets} units: first cut landed at beat {run.first_split_beat}, "
                 f"expected {buckets // 2 + 1} — one full pass at two slots a beat"
+            )
+
+            # AND THE REPAIR, same population, same test (notice 50). The law is
+            # not merely improved here, it stops being a law: the first cut lands
+            # on beat 3 at 8, 16 AND 32 slots, so the wait no longer scales with
+            # the plan at all. That is the number that matters at 128, where the
+            # stubbed arm predicts beat 65 against resets every ~15-16 beats.
+            repaired = await drive(
+                buckets=buckets,
+                slow_slots=0,
+                max_beats=60,
+                beat_is_slow=True,
+                empty_bank_inversion=True,
+            )
+            assert repaired.first_split_beat == 3, (
+                f"{buckets} units: with CAL-P1338 live the cut must land on beat "
+                f"3 regardless of N; got {repaired.first_split_beat}"
             )
 
     @pytest.mark.asyncio
@@ -508,9 +596,21 @@ class TestTheProductionRegimeBeatLevelSlowness:
 
         The control that follows this one stubs the carry back out and shows the
         old ``None``, so the difference cannot be read as anything else.
+
+        CAL-P1338 is held OFF across this test and its two controls. They measure
+        the CARRY, and the carry is only observable while the cut is far enough
+        away for an era to land inside the wait: with the inversion live all
+        three arms cut on beat 3, the ``None`` control included, so the triple
+        would agree perfectly and prove nothing. That is the inversion hiding
+        CAL-P1304's repair, not replacing it.
         """
         run = await drive(
-            buckets=16, slow_slots=0, max_beats=60, reset_every=5, beat_is_slow=True
+            buckets=16,
+            slow_slots=0,
+            max_beats=60,
+            reset_every=5,
+            beat_is_slow=True,
+            empty_bank_inversion=False,
         )
 
         assert run.first_split_beat == 9, (
@@ -532,11 +632,19 @@ class TestTheProductionRegimeBeatLevelSlowness:
         what the decoder did before, so this is the livelock exactly as
         CERT-3051 read it — and the only difference between the two tests is
         that one line.
+
+        CAL-P1338 held off for the reason given on the test above: live, this
+        control cuts on beat 3 and stops being a control.
         """
         monkeypatch.setattr(sf, "carry_refinement", lambda blank, raw: blank)
 
         run = await drive(
-            buckets=16, slow_slots=0, max_beats=60, reset_every=5, beat_is_slow=True
+            buckets=16,
+            slow_slots=0,
+            max_beats=60,
+            reset_every=5,
+            beat_is_slow=True,
+            empty_bank_inversion=False,
         )
 
         assert run.first_split_beat is None and run.max_split_count == 0, (
@@ -550,9 +658,17 @@ class TestTheProductionRegimeBeatLevelSlowness:
 
         Without this the test above shows only that the rig never splits. With
         it, the single difference is the invalidation period.
+
+        CAL-P1338 held off for the reason given two tests above: the invalidation
+        period is only a difference while the cut is far away.
         """
         run = await drive(
-            buckets=16, slow_slots=0, max_beats=60, reset_every=40, beat_is_slow=True
+            buckets=16,
+            slow_slots=0,
+            max_beats=60,
+            reset_every=40,
+            beat_is_slow=True,
+            empty_bank_inversion=False,
         )
 
         assert run.first_split_beat == 9, (
