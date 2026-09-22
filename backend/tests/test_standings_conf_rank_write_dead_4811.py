@@ -13,6 +13,7 @@ fixture that never had it, and would also pass against a serializer that
 dropped the standings blob entirely.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -103,7 +104,14 @@ class TestServingBoundaries:
     def test_team_page_payload_drops_it(self):
         from app.routes.teams import _format_team
 
-        out = _format_team(self._team(dict(STALE_ROW)))
+        # #6266 made this assertion's clock load-bearing and it had none: the
+        # team page now withholds an NHL record out of season, so the
+        # `38-24-11` line below passed from October to April and failed all
+        # summer, on a fixture that is not about the calendar at all. Anchored
+        # to a fixed in-season instant so it keeps testing `conf_rank`
+        # (gotcha #44 — offset first, never branch on the real date).
+        in_season = datetime(2026, 12, 1, 12, 0, tzinfo=timezone.utc)
+        out = _format_team(self._team(dict(STALE_ROW)), now=in_season)
         assert "conf_rank" not in out["standings"]
         # The hero still has something to print.
         assert out["standings"]["conference"] == "Eastern Conference"
