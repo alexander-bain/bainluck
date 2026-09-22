@@ -36,7 +36,14 @@ if (!baseUrl || !eventId || !outDir) {
   process.exit(2);
 }
 mkdirSync(outDir, { recursive: true });
-const URL = `${baseUrl.replace(/\/$/, '')}/events/${eventId}`;
+// 🪤 NOT `URL`. A module-level `const URL` SHADOWS the global `URL`
+// constructor for the whole file, so `new URL(...)` below becomes a call to a
+// string. It throws `TypeError: URL is not a constructor`, the nearest `catch`
+// swallows it, and the host check silently answers "not local" for every input
+// — including localhost. CodeQL saw it (`js/call-to-non-callable`); a unit check
+// of the predicate in isolation cannot, because the shadowing is the file's and
+// not the function's.
+const PAGE_URL = `${baseUrl.replace(/\/$/, '')}/events/${eventId}`;
 
 // Is the page itself served from this machine? Asked of the URL's HOST, parsed,
 // never of the URL as a string.
@@ -55,7 +62,7 @@ const URL = `${baseUrl.replace(/\/$/, '')}/events/${eventId}`;
 function isLoopbackBase(url) {
   let host;
   try {
-    host = new URL(url).hostname;
+    host = new globalThis.URL(url).hostname;
   } catch {
     return false;
   }
@@ -100,7 +107,17 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 // `curl` honours the proxy and works, so the API is fetched through it and the
 // response handed back to the page. The browser then needs no egress at all.
 if (LOCAL_PAGE) {
-  await page.route(/api\.bainluck\.com/, async (route) => {
+  // Matched on the parsed HOST, not a bare `/api\.bainluck\.com/`, which is
+  // unanchored and would also claim `https://evil.example/api.bainluck.com`
+  // (`js/regex/missing-regexp-anchor`). A route matcher that over-claims sends
+  // somebody else's request down the curl path and answers it with our JSON.
+  await page.route((u) => {
+    try {
+      return new globalThis.URL(u).hostname === 'api.bainluck.com';
+    } catch {
+      return false;
+    }
+  }, async (route) => {
     const url = route.request().url();
     try {
       const { stdout } = await execFileAsync(
@@ -124,7 +141,7 @@ if (LOCAL_PAGE) {
 
 // `networkidle` never arrives on a live page (it polls forever) — wait for the
 // chart itself, which is what every assertion here is about.
-await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
 try {
   await page.waitForSelector('.recharts-wrapper', { timeout: 45000 });
 } catch {
@@ -191,7 +208,7 @@ for (const chart of read) {
   chart.rowsPainted = byRow.size;
 }
 
-writeFileSync(`${outDir}/${tag}.json`, JSON.stringify({ url: URL, at: new Date().toISOString(), charts: read }, null, 2));
+writeFileSync(`${outDir}/${tag}.json`, JSON.stringify({ url: PAGE_URL, at: new Date().toISOString(), charts: read }, null, 2));
 for (const [i, c] of read.entries()) {
   console.log(`chart ${i}: labels=[${c.labels}] rows=[${c.rows}] painted=${c.painted.length} rowsPainted=${c.rowsPainted} overlaps=${JSON.stringify(c.overlaps)}`);
   console.log(`          captions: ${c.painted.map((p) => `${p.text}@${p.x},${p.y}`).join(' ')}`);
