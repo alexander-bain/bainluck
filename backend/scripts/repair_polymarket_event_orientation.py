@@ -80,12 +80,13 @@ import re
 import subprocess
 import sys
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text  # noqa: E402
 
+from app.utils.agent_origin import curl_args  # noqa: E402
 from app.utils.prediction_market_matching import (  # noqa: E402
     POLYMARKET_AWAY_FIRST_LEAGUES,
     polymarket_lists_away_first,
@@ -230,11 +231,20 @@ def espn_slate(path: str, yyyymmdd: str) -> list[dict]:
     curl, not urllib: ESPN 403s a bare urllib User-Agent, and an exception per
     fetch would have made an all-failing census print zero findings. The HTTP
     code is read, never inferred from a body that happens to parse.
+
+    Notice 39: the argv goes through `curl_args` even though ESPN is a third
+    party. `origin_headers` decides on `is_our_host` at RUNTIME and returns
+    nothing for a foreign host, so this splices an empty list and the request
+    on the wire is unchanged — but the static rule the guard enforces stays the
+    simple one (every outbound call goes through the carrier) rather than a
+    judgment call per site. A subprocess execs the curl BINARY, so rung 1's
+    shell function can never reach this call.
     """
     url = (f"https://site.api.espn.com/apis/site/v2/sports/{path}"
            f"/scoreboard?dates={yyyymmdd}&limit=200")
     out = subprocess.run(
-        ["curl", "-s", "--max-time", "30", "-w", "\n%{http_code}", url],
+        ["curl", *curl_args(url), "-s", "--max-time", "30",
+         "-w", "\n%{http_code}", url],
         capture_output=True, text=True,
     )
     if out.returncode != 0:
