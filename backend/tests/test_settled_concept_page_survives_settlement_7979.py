@@ -23,7 +23,7 @@ Both tests below are written to FAIL on the pre-fix code:
     before and after and prove nothing.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
