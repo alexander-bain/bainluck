@@ -14536,8 +14536,25 @@ _GENERIC_PLACE_QUALIFIERS = frozenset({
 # `rovers` (Blackburn/Bristol/Doncaster), `albion`, `wanderers`, `athletic`.
 # `fc`/`afc`/`sc` never reach here — the `len(short) >= 4` gate already drops
 # them, which is why "Barrow AFC" was never the leak on the page above.
+#
+# `real` MOVED 2026-09-22 (#8061), the same defect with the designator in FRONT.
+# Production, `/api/events/15011303/game-markets` (Real Sociedad 4–1 Real Betis,
+# finished): the page graded KYLIAN MBAPPÉ and JUDE BELLINGHAM under "WHAT HIT"
+# and offered `Real Madrid vs Real Sociedad: First Goalscorer`, `Chelsea vs Real
+# Sociedad: BTTS` and seven `Ajax vs Real Madrid: Total Goals` rows — a fixture
+# with NEITHER of this event's teams in it. Both sides of this match emit the
+# same bare `Real`, so the token cannot even tell the two of them apart:
+# `_team_name_patterns("Real Sociedad")` matches `"Real Betis"`.
+#
+#   real   | 0 outcome rows and 0 market rows are labelled `real` alone, and no
+#          | team row carries `real` as its name or abbreviation. The only short
+#          | label in the table containing the token is `REAL ID` (1 row, a
+#          | policy market, not a club). Every Real club keeps its full name and
+#          | its distinctive word — Real Madrid on `Real Madrid`/`Madrid`, Real
+#          | Sociedad on `Real Sociedad`/`Sociedad`, Real Salt Lake on `Real
+#          | Salt Lake`/`Real Salt`/`Salt`/`Lake`.              LOSS 0
 _CLUB_TYPE_DESIGNATORS = frozenset({
-    "united", "city", "town",
+    "united", "city", "town", "real",
 })
 
 #: The bare tokens `_team_name_patterns` will not emit, from both families.
@@ -14591,7 +14608,35 @@ def _team_name_patterns(full_name: str) -> list[str]:
         # "Los Angeles" from "Los Angeles Dodgers")
         # Kalshi uses city names as outcome labels ("Texas", "Houston", "Seattle")
         city = " ".join(parts[:-1])
-        if len(city) >= 4:
+        # #8061 — THE DESIGNATOR CAN BE IN FRONT, and then it is the city half
+        # rather than the mascot slot that emits it. "Leeds United" puts
+        # `United` in `parts[-1]`, which the gate above already refuses;
+        # "Real Sociedad" puts `Real` HERE, and this branch was ungated, so the
+        # #7858 fix never reached it. Gated for the SINGLE-WORD case only —
+        # "Kansas City" and "New York City" are multi-word city halves and must
+        # stay, which is the same line the >=3-word loop below draws.
+        #
+        # THIS GATE IS NOT SCOPED TO `real`, so it was measured on its own terms.
+        # It is the third and last site the two token families reach, and it is
+        # the only one where a two-word name's FIRST word lands — so it changes
+        # 33 teams that have nothing to do with #8061 (`West Ham`, `South Korea`,
+        # `Saint Etienne`, `Central Michigan`, `Northern Ireland`, ...) as well as
+        # the 15 `Real *` clubs. Measured over all 5,642 distinct production team
+        # names (`artifacts-lane1-600/measure_8061_reach.py`): 48 teams lose a
+        # bare pattern, 10 distinct tokens are dropped, and NO team is left
+        # without a distinctive pattern except `West Ham` and `Northern City`,
+        # whose second word is itself a designator.
+        #
+        # LOSS, measured on production rows rather than argued
+        # (`measure_8061_loss.py`, the route's own whole-token rule over every
+        # `futures_outcomes`/`futures_markets` label containing each token):
+        # **0 rows** across all 48 teams — every row the bare token reached is
+        # still reached by a surviving pattern, or was never that team's row.
+        # The control (`Texas Rangers` hypothetically losing `Texas`) reports
+        # 4,380, so the 0 is a measurement and not a dead instrument. Against
+        # that 0, the bare tokens were reaching 34,000+ distinct labels: `real`
+        # alone 8,202, `north` 5,485, `south` 5,248.
+        if len(city) >= 4 and city.lower() not in _NON_DISTINCTIVE_BARE_TOKENS:
             escaped_city = _escape_like(city)
             if escaped_city.lower() not in [p.lower() for p in patterns]:
                 patterns.append(escaped_city)
