@@ -1,0 +1,3 @@
+pills rendered BEFORE: 1  AFTER: 1
+pills that CAME BACK: 0 []
+window-restating pills still rendered: 0 []

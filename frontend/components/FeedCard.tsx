@@ -26,7 +26,7 @@ import EntityImage from "./EntityImage";
 import TournamentCard from "./TournamentCard";
 import { isNonSportsCategory, isInternationalSport, flagUrl, espnTeamLogoByName } from "@/lib/images";
 import { useAnalyticsContext } from "@/components/Analytics";
-import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel, stripCardTitleHead } from "@/components/discover/utils";
+import { feedContextSnippet, feedItemHasRenderableContent, resolvesLabel, formatConceptMovement, conceptDomainLabel, stripCardTitleHead, stripResolutionWindowClause } from "@/components/discover/utils";
 import { formatFinishedGameLabel, formatLiveClockLabel } from "@/lib/gameTimeLabel";
 import {
   SUSPENDED_LABEL,
@@ -1155,7 +1155,14 @@ function FuturesFeedCard({
   // two surfaces agree under notice 35 — a second copy of the preference order is
   // how they would drift apart again. No new copy is minted here: every candidate
   // is a string the backend already served.
-  const caption = feedContextSnippet(item);
+  //
+  // #7872 — and it is handed `resolvesText`, the eyebrow this card renders two
+  // rows above the caption, so the caption stops restating that same field as a
+  // vaguer window ("Closes in 5h" over "…; resolves within a day"). The argument
+  // is the string this component PRINTS, not the date it holds: the group/bundle
+  // row shares this chain and shows no eyebrow, so it passes none and keeps the
+  // clause as its only statement of when.
+  const caption = feedContextSnippet(item, resolvesText);
 
   // #4403 — the header pill renders only when it is not a restatement of the
   // sentence beneath it. Both strings come out of the same backend branch, so on
@@ -1179,7 +1186,23 @@ function FuturesFeedCard({
   // the only place on the card that says what moved. The seven `… resolves within a
   // month` badges measured beside it strip down to a sentence their own caption
   // already carries and are suppressed by the unchanged echo test.
-  const headlinePill = stripCardTitleHead(item.headline, data.name);
+  //
+  // #7872 — and the pill loses the same clause the caption just lost, or the
+  // change puts the duplicate BACK one row higher. MEASURED on the live payload
+  // (`GET /api/feed?limit=200`, 2026-09-21 23:15Z): with the caption stripped and
+  // the pill left alone, `Argentina Monthly Inflation - September` renders
+  // "1.9 to 2.1% leads; resolves within a month" as a pill over a caption reading
+  // "1.9 to 2.1% leads" — a pill #4403 had suppressed, re-admitted by the echo
+  // test because the caption no longer carries the words the pill added. The
+  // `item.reason` half of the test is the belt that holds this on most cards; on
+  // that one card the reason never says "within a month", so it did not. Pills
+  // rendered on the page: 1 before, 1 after — the property #6560's comment names
+  // (the pill can only lose ground, never gain it) is preserved by measurement,
+  // not by assertion.
+  const headlinePill = stripResolutionWindowClause(
+    stripCardTitleHead(item.headline, data.name),
+    resolvesText,
+  );
   const showHeadlinePill =
     Boolean(headlinePill) &&
     !headlineEchoesReason(headlinePill, caption) &&

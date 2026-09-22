@@ -39,7 +39,11 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 import FeedCard from "@/components/FeedCard";
-import { feedContextSnippet, stripCardTitleHead } from "@/components/discover/utils";
+import {
+  feedContextSnippet,
+  resolvesLabel,
+  stripCardTitleHead,
+} from "@/components/discover/utils";
 import type { FeedItem } from "@/lib/types";
 
 /**
@@ -218,9 +222,34 @@ describe("#6903 — the badge over a futures heading does not restate it", () =>
       // line, so every specimen must still caption something — and whatever it
       // captions must not open with the heading either (the truncated arm reaches
       // the reader through this string, not through the badge).
-      const caption = captionText(render(served));
-      expect(caption).toBeTruthy();
-      expect(opensWithHeading(caption!, served.name)).toBe(false);
+      //
+      // #7872 — with ONE exemption, and it is stated as a claim about the CARD so
+      // it cannot become a licence to delete. The Velo specimen's four doors carry
+      // nothing but "resolves within a month": strip the restated heading and the
+      // restated resolution and there is no claim left, because there never was a
+      // third one. The card does not go quiet about it — the eyebrow states the
+      // same field exactly, and more precisely than the caption ever did. So the
+      // assertion here is not "the caption may be empty"; it is "whatever the
+      // payload claimed, the reader can still read it on this card".
+      const html = render(served);
+      const caption = captionText(html);
+      if (caption) {
+        expect(opensWithHeading(caption, served.name)).toBe(false);
+        return;
+      }
+      // Empty caption: every door must have been the resolution window, and the
+      // card must print that same field exactly. Either half failing is a real
+      // deletion and this test fails, which is the property that matters.
+      const WINDOW = /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i;
+      for (const door of [served.context_summary, served.headline, served.reason]) {
+        expect(WINDOW.test(door)).toBe(true);
+      }
+      expect(html).toContain(
+        resolvesLabel(
+          (futuresItem(served).data as { resolution_date?: string | null })
+            .resolution_date,
+        ),
+      );
     },
   );
 

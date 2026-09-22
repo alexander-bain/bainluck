@@ -1,0 +1,86 @@
+FAIL __tests__/components/futuresBadgeRestatesHeading6903.test.tsx
+  ● Console
+
+    console.error
+      Warning: Each child in a list should have a unique "key" prop.
+      
+      Check the top-level render call using <div>. See https://reactjs.org/link/warning-keys for more information.
+          at div
+          at FuturesFeedCard (/Users/bain/bainluck-dev/discover/frontend/components/FeedCard.tsx:1054:3)
+          at FeedCard (/Users/bain/bainluck-dev/discover/frontend/components/FeedCard.tsx:50:36)
+
+      1386 |             the one that did not, and it cost three whole browse surfaces. */}
+      1387 |         {(data.top_outcomes?.length ?? 0) > 1 && (
+    > 1388 |           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
+           |           ^
+      1389 |             {/* #1526: leader-first before truncating — i === 0 is styled as
+      1390 |                 THE favorite below, so an unsorted slice bolds an also-ran. */}
+      1391 |             {printedOutcomes.map((outcome, i) => {
+
+      at printWarning (node_modules/react/cjs/react-jsx-runtime.development.js:87:30)
+      at error (node_modules/react/cjs/react-jsx-runtime.development.js:61:7)
+      at validateExplicitKey (node_modules/react/cjs/react-jsx-runtime.development.js:1078:5)
+      at validateChildKeys (node_modules/react/cjs/react-jsx-runtime.development.js:1105:11)
+      at jsxWithValidation (node_modules/react/cjs/react-jsx-runtime.development.js:1267:15)
+      at jsxWithValidationStatic (node_modules/react/cjs/react-jsx-runtime.development.js:1315:12)
+      at FuturesFeedCard (components/FeedCard.tsx:1388:11)
+      at renderWithHooks (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5662:16)
+      at renderIndeterminateComponent (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+      at renderNodeDestructive (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6091:14)
+      at renderIndeterminateComponent (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5790:7)
+      at renderElement (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+      at renderNodeDestructive (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6091:14)
+      at retryTask (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6543:5)
+      at performWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6591:7)
+      at node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6915:12
+      at scheduleWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:78:3)
+      at startWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6914:3)
+      at renderToStringImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6988:3)
+      at renderToStaticMarkup (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:7084:10)
+      at render (__tests__/components/futuresBadgeRestatesHeading6903.test.tsx:141:23)
+      at __tests__/components/futuresBadgeRestatesHeading6903.test.tsx:187:29
+
+  ● #6903 — the badge over a futures heading does not restate it › resolving-soon — the 7-card majority, heading with no `?` — the caption never loses a claim the payload carried
+
+    expect(received).toBeTruthy()
+
+    Received: ""
+
+      220 |       // the reader through this string, not through the badge).
+      221 |       const caption = captionText(render(served));
+    > 222 |       expect(caption).toBeTruthy();
+          |                       ^
+      223 |       expect(opensWithHeading(caption!, served.name)).toBe(false);
+      224 |     },
+      225 |   );
+
+      at __tests__/components/futuresBadgeRestatesHeading6903.test.tsx:222:23
+
+
+Summary of all failing tests
+FAIL __tests__/components/futuresBadgeRestatesHeading6903.test.tsx
+  ● #6903 — the badge over a futures heading does not restate it › resolving-soon — the 7-card majority, heading with no `?` — the caption never loses a claim the payload carried
+
+    expect(received).toBeTruthy()
+
+    Received: ""
+
+      220 |       // the reader through this string, not through the badge).
+      221 |       const caption = captionText(render(served));
+    > 222 |       expect(caption).toBeTruthy();
+          |                       ^
+      223 |       expect(opensWithHeading(caption!, served.name)).toBe(false);
+      224 |     },
+      225 |   );
+
+      at __tests__/components/futuresBadgeRestatesHeading6903.test.tsx:222:23
+
+
+Test Suites: 1 failed, 2 skipped, 988 passed, 989 of 991 total
+Tests:       1 failed, 7 skipped, 15272 passed, 15280 total
+Snapshots:   0 total
+Time:        112.019 s
+Ran all test suites.

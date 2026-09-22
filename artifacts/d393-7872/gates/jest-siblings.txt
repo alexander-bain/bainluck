@@ -1,0 +1,153 @@
+FAIL __tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx
+  ● Console
+
+    console.error
+      Warning: Each child in a list should have a unique "key" prop.
+      
+      Check the top-level render call using <div>. See https://reactjs.org/link/warning-keys for more information.
+          at div
+          at FuturesFeedCard (/Users/bain/bainluck-dev/discover/frontend/components/FeedCard.tsx:1054:3)
+          at FeedCard (/Users/bain/bainluck-dev/discover/frontend/components/FeedCard.tsx:50:36)
+
+      1386 |             the one that did not, and it cost three whole browse surfaces. */}
+      1387 |         {(data.top_outcomes?.length ?? 0) > 1 && (
+    > 1388 |           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
+           |           ^
+      1389 |             {/* #1526: leader-first before truncating — i === 0 is styled as
+      1390 |                 THE favorite below, so an unsorted slice bolds an also-ran. */}
+      1391 |             {printedOutcomes.map((outcome, i) => {
+
+      at printWarning (node_modules/react/cjs/react-jsx-runtime.development.js:87:30)
+      at error (node_modules/react/cjs/react-jsx-runtime.development.js:61:7)
+      at validateExplicitKey (node_modules/react/cjs/react-jsx-runtime.development.js:1078:5)
+      at validateChildKeys (node_modules/react/cjs/react-jsx-runtime.development.js:1105:11)
+      at jsxWithValidation (node_modules/react/cjs/react-jsx-runtime.development.js:1267:15)
+      at jsxWithValidationStatic (node_modules/react/cjs/react-jsx-runtime.development.js:1315:12)
+      at FuturesFeedCard (components/FeedCard.tsx:1388:11)
+      at renderWithHooks (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5662:16)
+      at renderIndeterminateComponent (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5736:15)
+      at renderElement (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+      at renderNodeDestructive (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6091:14)
+      at renderIndeterminateComponent (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5790:7)
+      at renderElement (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:5961:7)
+      at renderNodeDestructiveImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6119:11)
+      at renderNodeDestructive (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6091:14)
+      at retryTask (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6543:5)
+      at performWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6591:7)
+      at node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6915:12
+      at scheduleWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:78:3)
+      at startWork (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6914:3)
+      at renderToStringImpl (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:6988:3)
+      at renderToStaticMarkup (node_modules/react-dom/cjs/react-dom-server-legacy.node.development.js:7084:10)
+      at render (__tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:122:23)
+      at __tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:155:35
+
+  ● #6560 — the caption under the heading does not restate it › the clipped card's caption is short enough to finish its sentence
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "1+ holes-in-one leads; resolves within a month"
+    Received: "1+ holes-in-one leads"
+
+      167 |     const caption = captionText(render(holeInOne))!;
+      168 |     expect(caption.length).toBeLessThan(holeInOne.reason.length - 40);
+    > 169 |     expect(caption).toBe("1+ holes-in-one leads; resolves within a month");
+          |                     ^
+      170 |   });
+      171 |
+      172 |   test("NEGATIVE CONTROL — a headline that says something new is not dropped", () => {
+
+      at Object.<anonymous> (__tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:169:21)
+
+  ● #6560 — /sports resolves the caption the way Discover does (notice 35) › resolving-soon-template — the rendered caption IS the shared chain's answer
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Rory McIlroy leads at 7%; resolves within a week"
+    Received: "Rory McIlroy leads at 7%"
+
+      203 |     // Not "the same rule" — the same function. A second copy of the preference
+      204 |     // order is how the two surfaces drifted apart in the first place.
+    > 205 |     expect(captionText(render(served))).toBe(feedContextSnippet(futuresItem(served)));
+          |                                         ^
+      206 |   });
+      207 | });
+      208 |
+
+      at __tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:205:41
+
+  ● #6560 — /sports resolves the caption the way Discover does (notice 35) › resolves-within-template — the rendered caption IS the shared chain's answer
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "1+ holes-in-one leads; resolves within a month"
+    Received: "1+ holes-in-one leads"
+
+      203 |     // Not "the same rule" — the same function. A second copy of the preference
+      204 |     // order is how the two surfaces drifted apart in the first place.
+    > 205 |     expect(captionText(render(served))).toBe(feedContextSnippet(futuresItem(served)));
+          |                                         ^
+      206 |   });
+      207 | });
+      208 |
+
+      at __tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:205:41
+
+  ● #6560 — /sports resolves the caption the way Discover does (notice 35) › chance-template — the rendered caption IS the shared chain's answer
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "25% chance, resolves within a month"
+    Received: "25% chance"
+
+      203 |     // Not "the same rule" — the same function. A second copy of the preference
+      204 |     // order is how the two surfaces drifted apart in the first place.
+    > 205 |     expect(captionText(render(served))).toBe(feedContextSnippet(futuresItem(served)));
+          |                                         ^
+      206 |   });
+      207 | });
+      208 |
+
+      at __tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:205:41
+
+  ● #6560 — the pill still yields to the sentence beneath it (#4403 held) › a pill whose words the caption lacks still renders — the live Playoff card
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Resolving within a month"
+    Received: null
+
+      221 |     // and it is not dead.
+      222 |     const playoff = SERVED.find((s) => s.label === "chance-template")!;
+    > 223 |     expect(pillText(render(playoff))).toBe("Resolving within a month");
+          |                                       ^
+      224 |   });
+      225 |
+      226 |   test("the pill can never come BACK on a card where #4403 suppressed it", () => {
+
+      at Object.<anonymous> (__tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:223:39)
+
+  ● #6560 — the pill still yields to the sentence beneath it (#4403 held) › the pill can never come BACK on a card where #4403 suppressed it
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Rory McIlroy leads at 7%; resolves within a week"
+    Received: "Rory McIlroy leads at 7%"
+
+      232 |     const html = render(soon);
+      233 |     expect(pillText(html)).toBeNull();
+    > 234 |     expect(captionText(html)).toBe("Rory McIlroy leads at 7%; resolves within a week");
+          |                               ^
+      235 |   });
+      236 | });
+      237 |
+
+      at Object.<anonymous> (__tests__/components/sportsFuturesCaptionRestatesHeading6560.test.tsx:234:31)
+
+
+Test Suites: 1 failed, 3 passed, 4 total
+Tests:       6 failed, 76 passed, 82 total
+Snapshots:   0 total
+Time:        6.686 s
+Ran all test suites matching sportsFuturesCaptionRestatesHeading6560|resolvesLabelAuthority|discoverCardNoDollarVolume|rowAnswerLabel|headlineEcho.

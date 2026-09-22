@@ -1,0 +1,23 @@
+FAIL __tests__/components/futuresCaptionRestatesResolution7872.test.tsx
+  ● #7872 — CONTROL: a card with no eyebrow keeps every word › THE COMPACT ROW — a bundle member shows no eyebrow, so it keeps the clause
+
+    expect(received).toMatch(expected)
+
+    Expected pattern: /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:  "<span class=\"font-semibold text-text-secondary\" data-testid=\"compact-row-answer\">Leader</span><span class=\"text-text-muted\"> · </span><span class=\"text-text-muted\">Sudan&#x27;s Emergency Response Rooms leads</span>"
+
+      270 |     const m = html.match(/data-testid="compact-row-caption"[^>]*>([\s\S]*?)<\/div>/);
+      271 |     expect(m).toBeTruthy();
+    > 272 |     expect(m![1]).toMatch(WINDOW_CLAUSE);
+          |                   ^
+      273 |     // And the row really does print no eyebrow, so the clause is load-bearing.
+      274 |     expect(html).not.toContain(served.eyebrow);
+      275 |   });
+
+      at Object.<anonymous> (__tests__/components/futuresCaptionRestatesResolution7872.test.tsx:272:19)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 20 passed, 21 total
+Snapshots:   0 total
+Time:        0.862 s, estimated 2 s
+Ran all test suites matching futuresCaptionRestatesResolution7872.

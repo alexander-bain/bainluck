@@ -136,9 +136,13 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // unchanged for every card that is not an explicit negation pair.
   const leader = heroOutcome(data.top_outcomes);
   const prob = leader?.probability ?? null;
-  const contextSnippet = feedContextSnippet(item);
-  const expandedContext = feedExpandedContext(item);
   const resolveText = resolvesLabel(data.resolution_date);
+  // #7872 — the caption is told what this card's eyebrow already says, so it
+  // stops restating it as a vaguer window. All four variants below that render
+  // `contextSnippet` render `resolveText` beside it (the heatmap variant renders
+  // the eyebrow alone), so one component-level label is the honest answer here.
+  const contextSnippet = feedContextSnippet(item, resolveText);
+  const expandedContext = feedExpandedContext(item);
   const hasImage = !!data.image_url;
   // LAT-P191 (#1636, ruling on latency-022 = option b). Pure function of the
   // url and the measured raster width, so SSR and hydration agree; `null` means
