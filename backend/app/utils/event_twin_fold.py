@@ -166,7 +166,7 @@ from app.utils.kalshi_occurrence_start import (
 from app.utils.name_normalization import strip_diacritics
 from app.utils.proven_duplicates import merge_opening_line
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
-from app.utils.sport_keys import league_identity
+from app.utils.sport_keys import is_season_variant, league_identity
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +626,19 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         # the reason `keep` is: two hydrated rows can share a primary key.
         row_identities[id(event)] = key[1:]
 
+    # #7915 — BEFORE the soccer pass, and on the dict rather than the clusters,
+    # because it is the same SHAPE of step: the strict key's groups, merged where
+    # a licence this module can state covers them. It runs first only so the
+    # soccer pass keeps receiving a dict keyed exactly the way it expects; the
+    # two cannot interact, because a league with a season variant is never a
+    # soccer league and this pass fires on nothing else.
+    try:
+        groups = _merge_season_variant_kickoffs(groups)
+    except Exception:  # noqa: BLE001 — gotcha #42; the strict groups are today's
+        logger.exception(
+            "twin fold: season-variant merge failed; serving strict groups"
+        )
+
     # #5918 — the strict key has now grouped every pair that SPELLS its clubs the
     # same way. The soccer pass below is the only thing that can reach a pair
     # that NAMES them differently, and it runs on the groups rather than on the
@@ -766,6 +779,261 @@ def _merge_soccer_name_variants(groups: dict[tuple, list]) -> list[list]:
             continue
         position[target] = len(out)
         out.append(list(members))
+    return out
+
+
+SEASON_VARIANT_KICKOFF_DRIFT = timedelta(minutes=15)
+"""How far apart two providers may put ONE kick-off across a season-variant pair.
+
+#7915. Sized the way :data:`SOCCER_KICKOFF_DRIFT` is sized — from the measured
+band, placed in the empty space below the nearest population somebody else owns
+— and NOT inherited from the sibling pass in `search_fixture_dedup` (#7700),
+which bounds the same class at 30 minutes for a different reason. That module
+takes its bound from `event_registry._SAME_FIXTURE_MAX_SEPARATION`, the
+schedule-argued "no format starts two same-pair fixtures this close" constant.
+Here the nearest neighbour is closer: the docstring above records a 30-minute
+re-mint class that #5918 excluded on purpose, so 30 would sit ON a population
+this module already refuses rather than clear of it.
+
+MEASURED ON PRODUCTION 2026-09-21 23:5xZ over every season-variant row we hold —
+`icehockey_nhl_preseason` is the only such key with any event in 21 days, 15
+rows — joined to its `icehockey_nhl` parent on both club names within ±12h:
+
+    pairs found                    13
+    kick-off disagreement          5.00 min min, 9.45 min max, 8.5 min typical
+    parent carries `espn_id`       13 of 13
+    variant carries `espn_id`       0 of 13
+    scores agree                   12 of 13 (the 13th is LIVE — see below)
+
+Every observed pair is under ten minutes and the class has one shape: the
+ESPN-born row lands on the parent key on the hour, the Odds-API-born row lands
+on the variant key eight minutes later. Fifteen minutes is that reading plus
+margin for a slower ingest, chosen to sit in the empty band between 9.45 and the
+30-minute class rather than fitted to its own maximum.
+"""
+
+#: The statuses this pass will act on. A game IN PROGRESS is excluded, and the
+#: exclusion is MEASURED rather than cautious: of the 13 pairs above, 6 were live
+#: at the time of reading and the ONLY pair whose two rows disagreed about the
+#: score was one of them (`15316896`/`15312807`, Wild at Blackhawks). While a
+#: game is live the asymmetry this pass can read — which row wears the variant
+#: key — is outranked by one it cannot: which row's score is current. Folding
+#: then risks electing the stale copy and showing a wrong score as the only
+#: score, which is worse than showing the game twice. So a live twin stays
+#: double and belongs to the event graph (#2693), exactly as the sibling pass in
+#: `search_fixture_dedup` decided for the same population on the same day.
+_VARIANT_COLLAPSIBLE_STATUSES: frozenset = frozenset(
+    {"scheduled", "completed", "closed"}
+)
+
+
+def _variant_group_is_collapsible(members: list) -> bool:
+    """True when no row in the group is in a state this pass refuses to fold."""
+    return all(
+        str(getattr(member, "status", "") or "").strip().lower()
+        in _VARIANT_COLLAPSIBLE_STATUSES
+        for member in members
+    )
+
+
+def _group_has_season_variant(members: list) -> Optional[bool]:
+    """``True``/``False`` when every row in the group agrees, ``None`` when not.
+
+    A group is one strict key, so its rows already share a league and a minute —
+    but not necessarily a sport key, because :func:`league_identity` put the
+    parent and its variant in the SAME group whenever they also share a minute
+    (#2866, which is why the 47 NFL preseason pairs never reach this pass). Such
+    a group is already folded and has nothing to ask of a neighbour, so it
+    answers ``None`` and is skipped rather than being forced to one side of an
+    asymmetry it does not have. A THIRD row for that fixture, on the variant key
+    a few minutes off, therefore stays a second card — an unmeasured shape (no
+    production fixture holds three rows across these two keys today) left to the
+    event graph rather than folded on a guess.
+    ``test_a_group_that_already_holds_both_sides_is_left_alone`` pins it, so
+    changing it has to be a decision.
+
+    ``None`` is also the answer when the caller did not eager-load
+    ``Event.sport``. That branch is UNREACHABLE from :func:`fold_twin_events`
+    today, and it is kept as a precondition rather than sold as a guard: a row
+    whose sport is not in memory is absent from the identity map, so element 0
+    of its key falls back to the raw ``sport_id`` and can never equal the string
+    identity a loaded row carries — the two land in different buckets and are
+    never compared. Mutation-verified 2026-09-22: reading the missing key as the
+    PARENT instead changes no test, and the arm below that looks like it covers
+    this is really pinning the bucket.
+    """
+    seen = set()
+    for member in members:
+        sport_key = loaded_sport_key(member)
+        if not sport_key:
+            return None
+        seen.add(is_season_variant(sport_key))
+    if len(seen) != 1:
+        return None
+    return seen.pop()
+
+
+def _merge_season_variant_kickoffs(
+    groups: dict[tuple, list],
+) -> dict[tuple, list]:
+    """Merge a parent-league group with its season-variant twin a few minutes off.
+
+    #7915 — THE GAP BETWEEN PASS ONE AND PASS TWO, AND WHY NEITHER REACHES IT.
+    The strict key has been league-aware since #2866, so `icehockey_nhl` and
+    `icehockey_nhl_preseason` land in one group WHENEVER THEY SHARE A MINUTE —
+    that is what closed the 47 NFL preseason pairs, whose two providers both
+    store the hour exactly. NHL's two providers do not: measured 2026-09-21, all
+    13 live preseason pairs sit 5 to 9 minutes apart, so element 3 of the key
+    differs and the strict pass leaves them as two groups. The soccer pass below
+    is the only thing that widens the clock, and it is soccer-gated on purpose.
+    So a season-variant twin whose providers disagree by minutes falls between
+    the two, and `/api/teams/calgary-flames` served RECENT RESULTS as
+    "vs Seattle Kraken · L 2–4" twice, above a 0-0-0 record — the same fixture
+    as two cards, which is the bug this whole module exists to stop.
+
+    WHY THIS IS A SEPARATE PASS AND NOT A WIDER `SOCCER_KICKOFF_DRIFT`. Widening
+    that bound would reach the two populations its own docstring says it stays
+    clear of (the 30-minute re-mints #5918 refuses, the three-hour Kalshi rows
+    #5905 corrects) and would apply a token-subset name rule — the one that
+    cannot tell `Miami` from `Miami (OH)` — to leagues it was never measured on.
+    This pass instead keeps the strict key's EXACT squashed names and adds one
+    clause the soccer pass has no use for: the two groups must be asymmetric,
+    one wearing a season-variant key and the other its parent's.
+
+    THAT ASYMMETRY IS THE WHOLE LICENCE, AND IT IS ALSO THE BLAST RADIUS. Only a
+    league with a `*_preseason` / `*_summer_league` key can satisfy it, so this
+    pass is structurally unable to fire on any soccer row — no soccer key has a
+    season variant (:func:`_soccer_bucket_key` says so, and a guard asserts it) —
+    and therefore cannot disturb the populations measured above. Two rows sharing
+    a sport key are the symmetric case this module already refuses to guess
+    between, and they stay refused: nothing here looks at them.
+
+    Returns a dict so the soccer pass downstream still receives groups keyed the
+    way it expects. A merged group is filed under the key of its EARLIEST
+    KICK-OFF and takes the position of whichever of its members the strict key
+    made first, so a caller serving no season-variant row gets a dict that is
+    byte-identical to the one it gets today — the early return below makes that
+    the same object, not a copy of it.
+    """
+    buckets: dict[tuple, list[tuple]] = {}
+    for key in groups:
+        buckets.setdefault(_soccer_bucket_key(key), []).append(key)
+
+    merged_into: dict[tuple, tuple] = {}
+    for bucket_keys in buckets.values():
+        if len(bucket_keys) < 2:
+            continue
+        for cluster in _season_variant_clusters(bucket_keys, groups):
+            target = cluster[0]
+            for other in cluster[1:]:
+                merged_into[other] = target
+
+    if not merged_into:
+        return groups
+
+    out: dict[tuple, list] = {}
+    for key, members in groups.items():
+        target = merged_into.get(key, key)
+        if target in out:
+            out[target].extend(members)
+            continue
+        out[target] = list(members)
+    return out
+
+
+def _season_variant_clusters(
+    bucket_keys: list[tuple], groups: dict[tuple, list]
+) -> list[list]:
+    """Cliques of keys inside one bucket that are one fixture under this licence.
+
+    The clique refusal is the same safety :func:`_name_clusters` carries and it
+    is load-bearing for the same reason: the drift bound is NOT transitive, so
+    three groups at 0, 12 and 24 minutes must not become one card by standing
+    next to each other.
+
+    WHAT ACTUALLY REFUSES THAT CHAIN HERE IS THE ASYMMETRY, NOT THE CLOCK, and
+    saying so is the difference between a guard and a decoration. Parent and
+    variant are the only two sides there are, so any cluster of three or more
+    holds two groups on the SAME side; `same_fixture` refuses that pair, and the
+    whole cluster is discarded. A cluster that survives is therefore always
+    exactly two groups, and the sliding window below has already proved those
+    two are inside the bound. That is why the clock is expressed once, in the
+    window, and not a second time in the predicate.
+    """
+    collapsible = {}
+    variant = {}
+    for key in bucket_keys:
+        members = groups[key]
+        collapsible[key] = _variant_group_is_collapsible(members)
+        variant[key] = _group_has_season_variant(members)
+
+    eligible = [
+        key
+        for key in bucket_keys
+        if collapsible[key] and variant[key] is not None
+    ]
+    if len(eligible) < 2:
+        return []
+
+    def same_fixture(left: tuple, right: tuple) -> bool:
+        """The name and asymmetry halves. THE CLOCK IS NOT HERE, ON PURPOSE.
+
+        A copy of the drift bound in this predicate is unreachable, and it was
+        kept for one mutation round before being removed rather than guarded.
+        Two things make it dead: the window below never offers this function a
+        pair wider than the bound, and a cluster that SURVIVES is always exactly
+        two groups — any cluster of three or more must contain two groups on the
+        same side of the parent/variant asymmetry, which the first clause
+        refuses, so the clique test discards it whole before a clock question
+        could decide anything. Mutation-verified 2026-09-22: with the bound in
+        both places, deleting either copy alone changed no test, which is the
+        signature of a rule with two implementations rather than a rule with a
+        backstop. The window is now the single expression of it.
+        """
+        # The asymmetry first: it is a dict lookup, it is the clause that makes
+        # this pass legal at all, and it refuses most candidate pairs outright.
+        if variant[left] == variant[right]:
+            return False
+        # Elements 1 and 2 are the squashed away/home names the strict key
+        # already built, orientation kept. Equality, not a subset rule.
+        return left[1] == right[1] and left[2] == right[2]
+
+    ordered = sorted(eligible, key=lambda k: k[3])
+    parent = {key: key for key in ordered}
+
+    def find(key: tuple) -> tuple:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    # THE CLOCK RULE, EXPRESSED ONCE. `ordered` is ascending, so this break is
+    # not merely an optimisation that skips pairs already refused (which is what
+    # the soccer loop's identical shape is): it IS the drift bound for this pass.
+    # A second copy inside `same_fixture` was unreachable and was deleted rather
+    # than kept as a decoration — that function's docstring carries the proof.
+    for index, left in enumerate(ordered):
+        for right in ordered[index + 1 :]:
+            if right[3] - left[3] > SEASON_VARIANT_KICKOFF_DRIFT:
+                break
+            if same_fixture(left, right):
+                parent[find(right)] = find(left)
+
+    clusters: dict[tuple, list] = {}
+    for key in ordered:
+        clusters.setdefault(find(key), []).append(key)
+
+    out: list[list] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Clique or nothing — a merely connected chain is discarded whole.
+        if all(
+            same_fixture(left, right)
+            for i, left in enumerate(members)
+            for right in members[i + 1 :]
+        ):
+            out.append(members)
     return out
 
 
