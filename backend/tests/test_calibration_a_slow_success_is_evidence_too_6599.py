@@ -465,6 +465,32 @@ class TestTheBankIsPreserved:
 
         Asserted the strict way: every key banked before a cut is still banked,
         byte for byte and in order, after several more cuts.
+
+        **THE MUTANT THAT CONVICTS THIS IS A CALL-SITE MUTANT, and the obvious
+        one does not work.** Two independent locks protect the bank — the loop
+        ``continue``s past a banked chunk before the window check, and
+        ``refine_unit`` returns ``SPLIT_BANKED`` — so no SINGLE mutation can
+        reach the hazard. The tempting double mutation (neuter both locks in
+        place) leaves this test GREEN and reads as proof that it pins nothing.
+        It is not: severing the loop's skip also removes the ``done += 1``
+        beside it, so the build re-runs banked units forever, never publishes,
+        and the rig stalls before it can produce the state under test. *A mutant
+        destructive enough to stall the rig cannot convict a guard about what
+        the rig produces — it must break the property, not the machine that
+        exercises it.*
+
+        The faithful mutant is calibration/2736's proposed PLACEMENT: at the
+        decline, cut the slot that just COMPLETED rather than the one declined
+        (``chunk = [c for c in planned_order if cursor.has(c.key)][0]``).
+
+        * with ``refine_unit``'s refusal intact — logged ``refinement banked``,
+          no cut, this test PASSES and the two throughput tests fail. The
+          placement is **inert**, not dangerous.
+        * with the refusal also severed — this test FAILS on a real bank loss,
+          ``before: ['752a99293b3ed1a3'] / after: ['924f8bf47de95e44']``.
+
+        So the guard is live, and the difference between a cut that works and a
+        bank wipe is *which slot is cut*. Measured 2026-09-22 (lat939).
         """
         run_beat, bus = arena()
         roster = _roster()
