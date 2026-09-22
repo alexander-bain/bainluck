@@ -31,6 +31,16 @@
  *    arrives regardless of the thing it is supposed to be evidence FOR is a
  *    response shape, not a signal).
  *
+ * 3. (#8079, added from a production capture) A NETWORK THAT WENT AWAY IS NOT A
+ *    SERVER THAT SAID NO. Silence past the transport budget used to be terminal
+ *    whatever caused it, and since heartbeats rearm that budget, an outage
+ *    beginning late in a heartbeat cycle got barely 40s of grace: measured on a
+ *    live page, 41.9s of lost signal ended push permanently, and reconnecting
+ *    53s later opened nothing. The same run showed a 25s outage recovering
+ *    0.7s after the network returned — EventSource retries perfectly well on
+ *    its own, and the only thing that had stopped it was this controller
+ *    closing the handle. `tick()` now reads `readyState` to separate the two.
+ *
  * TIME IS A PARAMETER, NOT AN AMBIENT FACT. Everything schedules against `now()`
  * and is driven by `tick()`, so a test advances the clock rather than waiting on
  * one. No test in here branches on the wall clock (gotcha #44).
@@ -49,7 +59,11 @@ export interface LiveStreamFrame {
 export interface StreamHandle {
   addEventListener(type: string, listener: (event: unknown) => void): void;
   close(): void;
-  /** `EventSource.CLOSED` (2) once the browser has given up retrying. */
+  /**
+   * `EventSource.CONNECTING` (0) while the browser is retrying on its own,
+   * `OPEN` (1), `CLOSED` (2) once it has given up. The controller reads this to
+   * tell a transport that FAILED from one that was REFUSED — see `tick()`.
+   */
   readonly readyState: number;
 }
 
@@ -70,6 +84,23 @@ export interface LiveStreamDeps {
 export const SILENCE_TIMEOUT_MS = 60_000;
 
 /**
+ * How long a silent transport that is STILL RETRYING is given before the
+ * controller retires it for good.
+ *
+ * #8079 — silence alone used to be terminal, and because `lastMessageAt` is
+ * rearmed by heartbeats (every 20s), the budget was already part-spent when an
+ * outage began: measured on production, a page tolerated 41.9s before push
+ * ended for the rest of the page-view, and restoring the network 53s later
+ * reopened nothing. A reader in a tunnel is not a server refusing a connect.
+ *
+ * Long enough to outlast a tunnel, a lift or a backgrounded tab; short enough
+ * that a page left open against an unreachable server is not retrying all
+ * evening. Polling covers the whole window either way — this only decides
+ * whether push can come BACK.
+ */
+export const RETRY_GIVEUP_MS = 300_000;
+
+/**
  * Delivery silence. Longer than the transport budget on purpose: a genuinely
  * quiet market publishes nothing, and the right answer to "push has nothing to
  * say" is to resume the 32s poll while KEEPING the stream open — not to tear it
@@ -85,6 +116,7 @@ export const HEALTHY_STREAM_MS = 60_000;
 /** How often the owner should call `tick()`. */
 export const TICK_INTERVAL_MS = 5_000;
 
+const EVENT_SOURCE_CONNECTING = 0;
 const EVENT_SOURCE_CLOSED = 2;
 
 export interface LiveStreamController {
@@ -255,9 +287,27 @@ export function createLiveStreamController(
     }
     if (!handle) return;
 
-    // 1. TRANSPORT dead — no frames, no heartbeats, and no error event either.
-    //    Nothing will ever tell us; give up so the caller polls.
+    // 1. TRANSPORT silent — no frames and no heartbeats for longer than we are
+    //    willing to trust. Polling resumes either way; what the transport is
+    //    DOING about the silence decides whether this is terminal.
     if (at - lastMessageAt > SILENCE_TIMEOUT_MS) {
+      setDelivering(false);
+      // Still CONNECTING: EventSource is retrying by itself and may well
+      // succeed — this is a network that went away, not a server that said no,
+      // and the two used to be the same branch. Closing the handle here is what
+      // made a ~40s tunnel cost a reader push for the whole match (#8079): in
+      // the production capture a 25s outage recovered 0.7s after the network
+      // came back, while a 95s one reopened nothing, because by then this line
+      // had closed the only handle that would have.
+      //
+      // Bounded, so an unreachable server is not retried forever.
+      if (handle.readyState === EVENT_SOURCE_CONNECTING) {
+        if (at - lastMessageAt > RETRY_GIVEUP_MS) stop();
+        return;
+      }
+      // CLOSED (the browser gave up — a refused connect the server actually
+      // answered) or OPEN-but-silent (a half-open socket nothing is retrying).
+      // Neither will change on its own, so retire the stream as before.
       stop();
       return;
     }
