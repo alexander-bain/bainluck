@@ -54,12 +54,21 @@
 // ── SPECIMEN ─────────────────────────────────────────────────────────────────
 //
 // `GET /api/events/14780544/history`, captured 2026-09-21 while the page showed
-// the defect, verbatim: `artifacts/ux-1423/history.14780544.raw.json`.
+// the defect, committed VERBATIM as
+// `frontend/__tests__/fixtures/periodLabelOvertime.14780544.nfl-ot.json`
+// (same shape as #6882's `periodLabelStagger.14638444.nfl-final.json`).
+//
+// It is tracked rather than read from `artifacts/`, where it was first captured:
+// that directory is untracked, so the suite could only ever pass on the laptop
+// that took the capture and failed to start on CI. And it is a WIRE payload, not
+// a render, so nothing here may be re-captured from a tree that already carries
+// the fix — the defect is in these bytes and re-taking them would erase it.
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { spawnSync } from "child_process";
 
 import { AnalyticsProvider } from "@/components/Analytics";
 import OddsChart from "@/components/OddsChart";
@@ -74,7 +83,7 @@ import {
 
 const WIRE = JSON.parse(
   readFileSync(
-    join(__dirname, "../../artifacts/ux-1423/history.14780544.raw.json"),
+    join(__dirname, "fixtures/periodLabelOvertime.14780544.nfl-ot.json"),
     "utf8"
   )
 );
@@ -370,5 +379,56 @@ describe("#7876 — both charts read the rule at their call site", () => {
       name,
       hit: false,
     });
+  });
+});
+
+describe("#7876 — every file this suite reads travels with it", () => {
+  // THE GUARD FOR THE CLASS THAT COST THIS SUITE A RED CI.
+  //
+  // The first version of this file read its specimen out of the capture tree it
+  // was measured in, which is untracked. That is invisible to the author — the
+  // bytes are right there on the laptop — and invisible to a local jest run, a
+  // local build and a local typecheck. It surfaces only on a fresh checkout,
+  // where the suite does not fail an assertion but FAILS TO START: `ENOENT`,
+  // "Test suite failed to run", 989 other suites green around it.
+  //
+  // So the property asserted here is not "the file exists" — it existed all
+  // along. It is "git will hand this file to a machine that has never seen this
+  // laptop". That is the difference between the two, and it is the only form of
+  // this check that can fail in the place where the mistake is made.
+  const READS = [
+    "fixtures/periodLabelOvertime.14780544.nfl-ot.json",
+    "../components/OddsChart.tsx",
+    "../components/ScoreDifferentialChart.tsx",
+  ];
+
+  /** Tracked ⇒ a fresh clone has it. Spawns git rather than stat-ing, because
+   *  presence on this disk is exactly the thing that is not being asked. */
+  function isTracked(relativeToThisDir: string): boolean {
+    const abs = join(__dirname, relativeToThisDir);
+    const res = spawnSync("git", ["ls-files", "--error-unmatch", "--", abs], {
+      cwd: __dirname,
+      encoding: "utf8",
+    });
+    if (res.error) {
+      // Cannot verify ⇒ cannot pass. A guard that quietly skips when its
+      // instrument is missing is the same silence it exists to break.
+      throw new Error(`could not run git to check tracking: ${res.error.message}`);
+    }
+    return res.status === 0;
+  }
+
+  it.each(READS)("%s is tracked", (rel) => {
+    expect({ rel, tracked: isTracked(rel) }).toEqual({ rel, tracked: true });
+  });
+
+  it("and the predicate convicts the path this suite used to read — the control", () => {
+    // Without this arm, `isTracked` returning `true` unconditionally — a wrong
+    // `git` invocation, a swallowed non-zero status — would pass every arm above.
+    // This is the exact path the red run died on. It is present on the laptop
+    // that captured it and tracked by nothing, so it separates the two questions
+    // on the machine where they are easiest to confuse.
+    const capturedButNotCommitted = "../../artifacts/ux-1423/history.14780544.raw.json";
+    expect(isTracked(capturedButNotCommitted)).toBe(false);
   });
 });
