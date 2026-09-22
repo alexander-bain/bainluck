@@ -936,10 +936,42 @@ _EPIDEMIOLOGY_RE = re.compile(
     re.I,
 )
 
+# The CLIMATE-RECORD arm (#7914) is the second alternation below, and it is
+# scoped by a noun rather than left to the superlative alone.
+#
+# The hazard words above are all events — a hurricane, a wildfire, a drought.
+# A climate market often names no hazard at all: "Will summer 2026 be France's
+# hottest summer on record?" is a weather question whose only tell is a
+# superlative and a period. Measured 2026-09-22 on the two shelves this override
+# is allowed to correct, the bare superlatives `hottest|warmest|coldest|
+# wettest|driest|snowiest` match exactly THREE open markets and all three are
+# genuine climate questions wearing the wrong chip:
+#
+#     tech   September 2026 1st, 2nd, or 3rd hottest on record?
+#     tech   Where will 2026 rank among the hottest years on record?
+#     tech   Will summer 2026 be France's hottest summer on record?   (via #7914)
+#
+# THE NOUN IS REQUIRED ANYWAY, because that census is present-absence evidence
+# and not a class guard — the CERT-540 lesson. A superlative on its own is a
+# common English intensifier ("the hottest new AI startup", "the hottest stock",
+# "hottest toy of the holiday season") and every one of those would land on the
+# weather shelf. Requiring `on record` or a period noun within one word makes
+# the pattern say "a temperature extreme over a span of time", which is what a
+# climate-record market is and what an intensifier never is.
+#
+# The gap is DELIBERATELY ONE WORD, not two. At two, "Hottest album of summer?"
+# matches — the intervening "album of" is exactly the shape that makes the
+# superlative figurative. `test_the_climate_arm_refuses_a_figurative_superlative`
+# holds the bound.
 _WEATHER_HAZARD_RE = re.compile(
     r"\b(?:hurricane|tropical\s+storm|named\s+storm|tornado(?:es)?|"
     r"wildfire|blizzard|heat\s+wave|heatwave|"
-    r"snowfall|rainfall|drought)\b",
+    r"snowfall|rainfall|drought)\b"
+    r"|"
+    r"\b(?:hottest|warmest|coldest|wettest|driest|snowiest)\s+"
+    r"(?:\w+\s+){0,1}?"
+    r"(?:on\s+record|years?|summers?|winters?|springs?|autumns?|falls?"
+    r"|months?|days?|seasons?)\b",
     re.I,
 )
 
