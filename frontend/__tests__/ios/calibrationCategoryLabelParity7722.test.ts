@@ -34,7 +34,12 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
-import { categoryLabel, DISPLAY_NAMES } from "@/lib/calibrationCategories";
+import {
+  categoryLabel,
+  nicheCatLabel,
+  DISPLAY_NAMES,
+  SINGLE_WORD_COMPOUNDS,
+} from "@/lib/calibrationCategories";
 import { LEAGUE_DISPLAY } from "@/lib/sportCategories";
 
 const REPO = join(__dirname, "../../..");
@@ -212,5 +217,38 @@ describe("#7722 — the surfaces are keyed identically (#3557)", () => {
     expect(DISPLAY_NAMES["table_tennis"]).toBe("Table Tennis");
     expect(categoryLabel("table_tennis")).toBe("Table Tennis");
     expect(swiftDict(vm, "categoryDisplayNames")["table_tennis"]).toBe("Table Tennis");
+  });
+});
+
+/**
+ * #7894 — the single-word compounds, pinned the way #7894 asked for them:
+ * web's `SINGLE_WORD_COMPOUNDS` against the Swift `singleWordCompounds`, BOTH
+ * directions, so neither surface can add a spelling the other does not have.
+ *
+ * The app's copy is shared between the niche chip and the search/badge
+ * labeller, because the app printed "Aussierules" on the search tab too —
+ * under five rows reading "AFL" (native/296, production 2026-09-22).
+ */
+describe("#7894 — one word is spelled the same on both surfaces", () => {
+  it("web and the app hold the same compound map, both directions", () => {
+    const swift = swiftDict(sports, "singleWordCompounds");
+
+    expect(Object.keys(SINGLE_WORD_COMPOUNDS).length).toBeGreaterThanOrEqual(2);
+    expect(Object.keys(swift).length).toBe(Object.keys(SINGLE_WORD_COMPOUNDS).length);
+    expect(swift).toEqual(SINGLE_WORD_COMPOUNDS);
+  });
+
+  /**
+   * The output, not just the table — web's real labeller, so a refactor that
+   * keeps the map and stops consulting it is caught. The Swift twin of this
+   * assertion is `ASingleWordCategoryPrintsItsWords7894Tests`, which CI cannot
+   * run; this is the half that gates a deploy.
+   */
+  it("web's labeller consults it, and the app's two labellers are wired to it", () => {
+    for (const [key, words] of Object.entries(SINGLE_WORD_COMPOUNDS)) {
+      expect(nicheCatLabel(key)).toBe(words);
+    }
+    expect(niche).toContain("singleWordCompounds[raw]");
+    expect(sports).toContain("singleWordCompounds[key]");
   });
 });
