@@ -162,6 +162,7 @@ async def interestingness_side_by_side(
         _score_golf_tournaments,
         _suppress_zero_probability_cards,
         apply_discover_display_chain,
+        apply_pregame_record_caption,
         enrich_event_team_data,
     )
 
@@ -227,6 +228,9 @@ async def interestingness_side_by_side(
         # media, and the served population silently shrinks. See
         # `enrich_event_team_data`.
         await enrich_event_team_data(db, events_pool)
+        # #6567 — the served feed rewrites the bucket caption here, so a
+        # simulator that skipped it would report a card the page never shows.
+        apply_pregame_record_caption(events_pool)
         events_pool_meta = {
             "events_scored_once": True,
             "event_pct": SERVED_EVENT_PCT,

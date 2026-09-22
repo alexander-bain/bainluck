@@ -1754,6 +1754,93 @@ def generate_event_reason(
     return ""
 
 
+# ── The pregame caption that is the probability bar as prose (#6567) ──────────
+#
+# `get_highlight_label` answers "Close matchup" for every unsettled game whose
+# home price sits anywhere in [0.40, 0.60], and that string is the ONLY prose a
+# Discover game card prints (`discover/utils.ts:719` renders
+# `item.headline || item.reason`, and the pill is not drawn on the card). So the
+# caption restates, in three syllables, the coloured bar one line above it — and
+# it reads the same on a 47/53 as on a 60/40, a twenty-point band.
+#
+# Measured on production 2026-09-22 19:44Z, `/api/feed?limit=120`, cache MISS:
+# the three unsettled game cards on the page were slots 0, 1 and 2, home prices
+# 0.5279 / 0.56 / 0.54, and `Close matchup` was the only repeated headline in
+# 106 items.
+#
+# 🔴 THE LINE CANNOT SIMPLY BE YIELDED, which is this issue's own first-choice
+# acceptance (notice 34) and was measured shut from two directions before this
+# was written:
+#
+#   * yielding BOTH fields reds the Flow Sentinel — `has_specific_explanation`
+#     with an empty headline AND an empty reason is False, and
+#     `explanation-coverage@20` is a CLAUDE.md target the page meets today;
+#   * yielding the HEADLINE alone moves the defect one field left — the web
+#     chain falls through to `reason`, so the reader reads "Starting soon —
+#     close matchup" instead, and the monitor stays green over it.
+#
+# So the caption has to SAY something, and the payload already carries something
+# the card does not print: the two teams' season records. It states a fact the
+# bar cannot state, and it differs card to card by construction — which is the
+# acceptance clause the bucket label can never meet.
+#
+# ⚠️ `reason` AND `data.highlight.label` ARE BOTH LEFT BYTE-IDENTICAL, and that
+# is load-bearing rather than tidy. `reason` carries the `starting soon` why-now
+# marker and is what keeps `explanation-coverage@20` at 20/20; the LABEL is what
+# `_is_discover_event_demotion_exception` reads (`routes/feed.py`, retargeted off
+# the caption by T10-1 precisely so a truth fix to the caption could not move a
+# card's rank). Substituting only the caption is therefore ranking-neutral by
+# construction, not by measurement.
+#
+# FAIL TO TODAY'S COPY. Every unknown — a missing record, a missing
+# abbreviation, a record we cannot read as one — returns None and the caller
+# keeps the string it serves today. A caption is not worth inventing.
+
+#: The pregame bucket label this caption replaces. Named rather than spelled at
+#: the call site so the producer (`highlights.get_highlight_label`) and this
+#: consumer cannot drift apart silently.
+PREGAME_CLOSE_MATCHUP_LABEL = "Close matchup"
+
+#: A record as every North-American league writes it: `77-80`, or `12-4-3` where
+#: the sport has a third column (ties/OT). Anything else — a placeholder, a
+#: league table position, prose — is not a record and is not printed.
+_RECORD_RE = re.compile(r"^\d{1,3}-\d{1,3}(?:-\d{1,3})?$")
+
+
+def _record_clause(label: Optional[str], record: Optional[str]) -> Optional[str]:
+    """`TOR 77-80`, or None when either half is missing or unreadable."""
+    short = (label or "").strip()
+    rec = (record or "").strip()
+    if not short or not _RECORD_RE.match(rec):
+        return None
+    return f"{short} {rec}"
+
+
+def pregame_records_caption(
+    *,
+    away_label: Optional[str],
+    away_record: Optional[str],
+    home_label: Optional[str],
+    home_record: Optional[str],
+) -> Optional[str]:
+    """`TOR 77-80 · BAL 76-81` — the two seasons behind an unsettled game card.
+
+    AWAY FIRST, because the card's own heading is `{away_team} @ {home_team}`
+    (`EventCard.tsx`) and its bar draws the away price on the left. A caption in
+    the other order would make the reader map two crests onto two records
+    backwards, which is worse than the bucket label it replaces.
+
+    BOTH SIDES OR NEITHER. One record beside a nameless opponent is a comparison
+    with one arm, and the reader cannot tell whether the missing half is a bad
+    season or a missing row.
+    """
+    away = _record_clause(away_label, away_record)
+    home = _record_clause(home_label, home_record)
+    if not away or not home:
+        return None
+    return f"{away} · {home}"
+
+
 # ── Subject-verb agreement for the leader templates (#4700) ───────────────────
 #
 # "Los Angeles Dodgers leads at 30%" was slots 1 and 2 of the morning page. A

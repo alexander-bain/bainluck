@@ -183,6 +183,8 @@ from app.utils.feed_reasons import (
     generate_futures_reason,
     humanize_binary_outcome_name,
     humanize_outcome_names_for_feed,
+    pregame_records_caption,
+    PREGAME_CLOSE_MATCHUP_LABEL,
     # The one formatter for "a probability delta, said out loud" — imported
     # rather than re-derived so the golf card and the futures cards cannot
     # drift into calling the same number by two different units again.
@@ -2133,6 +2135,57 @@ async def enrich_event_team_data(db, feed_items: list[dict]) -> None:
                 d["home_team_data"] = _format_team_data(home_team)
             if away_team:
                 d["away_team_data"] = _format_team_data(away_team)
+
+
+#: Statuses whose caption this pass never touches. The pregame label is already
+#: exclusive to unsettled rows (`get_highlight_label` answers "Close game" while
+#: a game is live), so this is belt and braces rather than the gate — but a
+#: caption pass that could reach a final is one status rename away from printing
+#: two season records over a finished scoreline.
+_RECORD_CAPTION_EXCLUDED_STATUSES = frozenset({"live", "completed", "closed"})
+
+
+def apply_pregame_record_caption(feed_items: list[dict]) -> None:
+    """Replace the bar-as-prose pregame caption with the two teams' records (#6567).
+
+    MUST RUN AFTER :func:`enrich_event_team_data` and it is called immediately
+    after it: the records this reads are attached by that pass, and an earlier
+    call is not a weaker version of this one — it is a no-op that looks like a
+    shipped fix.
+
+    In place, and only ever over a caption this module put there itself: the
+    replacement fires when the card's own pill AND its caption are both the
+    bucket label, so a card that has already earned a specific sentence (a
+    rivalry tag, a line move, a live claim) is never overwritten.
+
+    Per item, because a feed pass that raises loses the whole page and this one
+    reads two nested dicts written by a different pass (gotcha #42).
+    """
+    for item in feed_items:
+        try:
+            if item.get("type") != "event":
+                continue
+            if item.get("headline") != PREGAME_CLOSE_MATCHUP_LABEL:
+                continue
+            data = item.get("data") or {}
+            if (data.get("highlight") or {}).get(
+                "label"
+            ) != PREGAME_CLOSE_MATCHUP_LABEL:
+                continue
+            if (data.get("status") or "") in _RECORD_CAPTION_EXCLUDED_STATUSES:
+                continue
+            away = data.get("away_team_data") or {}
+            home = data.get("home_team_data") or {}
+            caption = pregame_records_caption(
+                away_label=away.get("abbreviation"),
+                away_record=away.get("record"),
+                home_label=home.get("abbreviation"),
+                home_record=home.get("record"),
+            )
+            if caption:
+                item["headline"] = caption
+        except Exception:  # pragma: no cover - a caption never costs a page
+            logger.exception("Feed: pregame record caption failed for one item")
 
 
 def apply_discover_display_chain(
@@ -4629,6 +4682,9 @@ async def get_feed(
 
         # === ENRICH EVENTS WITH TEAM DATA ===
         await enrich_event_team_data(db, feed_items)
+        # #6567 — and immediately after it, because the records the caption
+        # prints are what that pass just attached.
+        apply_pregame_record_caption(feed_items)
         _previous_at = _record_feed_timing(
             _timings, _started_at, _previous_at, "team_enrichment"
         )
