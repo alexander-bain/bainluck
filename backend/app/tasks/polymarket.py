@@ -668,7 +668,7 @@ def stamp_parent_content_understanding(
 # market has, so an Oscars event tagged only `Awards` is still `entertainment`.
 # It just stops OUTRANKING a tag that names a subject.
 #
-# WHY THIS SET HAS EXACTLY ONE MEMBER. Replayed over the venue's own listings for
+# WHY EACH MEMBER IS IN. Replayed over the venue's own listings for
 # all 289 distinct Polymarket events behind our open `entertainment` markets
 # (2026-09-22, `artifacts/d394-7874/`), `awards` moves TWO of them and both are
 # unambiguous:
@@ -679,13 +679,45 @@ def stamp_parent_content_understanding(
 # Golden Boy is a football award and #7874's own issue text had listed it as
 # genuinely entertainment; the venue tags it `Awards, Soccer, Sports`.
 #
-# `culture` was in this set until the replay was read rather than counted. It is
-# also a catch-all, and demoting it moves 40 more events — but they are a mixed
-# bag, not a fix: two Ebola markets go to `weather`, and "Will summer 2026 be
-# France's hottest summer on record?" goes to `tech`, because `Science` precedes
-# `Weather` in that event's tag list. Trading one wrong shelf for another wrong
-# shelf is not a ship. That is #7914, which needs a subject-tag ordering rule
-# this change deliberately does not invent.
+# `culture` JOINED THIS SET IN #7914, after the three landings that held it out
+# were re-derived through the whole cascade instead of the tag map alone.
+#
+# #7874 held it out because demoting it moves 40 more events and three of them
+# looked wrong: two Ebola markets to `weather`, and France's hottest-summer
+# market to `tech`. Replayed over the SAME banked 42 rows with
+# `resolve_event_category` imported rather than `_tags_to_category` alone
+# (`artifacts/d396-7914/rederive_culture_cascade.py`), two of those three were
+# already handled by machinery that shipped long ago: arm 4 runs
+# `misfiled_subject` AFTER the tag map, `weather` is one of its epidemiology
+# sources since #4264, and `ebola` is in the pattern — so both Ebola events land
+# on `health`, which is the shelf #7914 said they belonged on. The tag map was
+# imported; the CASCADE AROUND IT WAS NOT, and that is the whole reason the
+# earlier sizing was wrong by two of three.
+#
+# The surviving one — France — is fixed in the same ship by the climate-record
+# arm of `_WEATHER_HAZARD_RE`, so no subject-tag ordering rule is needed after
+# all. With both in place the 40 moves read:
+#
+#     27  -> politics    17 plainly civic (5 Brazil election rows, the Mangione
+#                        trial, Hasan Piker arrested), 10 mention/tweet-volume
+#     6   -> tech        Doge-1, Millennium Prize, GTA 6 ... (France now weather)
+#     2   -> esports     Deadlock's release, MoistCr1TiKaL
+#     2   -> culture     Banksy on Instagram, Nara Smith
+#     2   -> health      both Ebola events, via arm 4
+#     1   -> economics   Costco's hotdog price
+#
+# THE ONE JUDGEMENT CALL, MADE DELIBERATELY: the 10 `Elon Musk # tweets` /
+# `Joe Rogan mentions` / `NYT front-page headlines` rows land on `politics`.
+# #7914 called this arguable and it is. It ships because the venue itself tags
+# every one of them `Politics`, because `entertainment` is not the more correct
+# answer, and because the risk it was held against was MEASURED rather than
+# assumed: those 10 events are 36 open markets against the politics shelf's
+# 7,422 (0.5%), their best `market_tier` is 2 where the shelf's is 1, and their
+# top 24h volume is 462,974 against the shelf's 3,976,818. They cannot headline
+# the page, and `/politics` renders every section at its cap out of pools in the
+# hundreds to thousands, so they displace nothing. Whether a mention/volume
+# market deserves a shelf of its own is a product question, filed separately
+# rather than answered by a tag map.
 #
 # `world`, `news` and `global` are the map's other "Broad catch-alls" and were in
 # this set too. They move ZERO events. An entry that changes nothing is not a
@@ -701,7 +733,7 @@ def stamp_parent_content_understanding(
 # event `Awards`, and no Polymarket tag is labelled "Nobel". A fix that leaned on
 # that key would have been inert — the tag the reader's badge came from is the
 # one the payload actually carries.
-_WEAK_TAGS = frozenset({"awards"})
+_WEAK_TAGS = frozenset({"awards", "culture"})
 
 
 def _tags_to_category(tags: list[str]) -> tuple[str, Optional[str]]:

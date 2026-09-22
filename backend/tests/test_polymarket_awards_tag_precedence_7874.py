@@ -54,20 +54,25 @@ def test_the_golden_boy_award_is_soccer_not_entertainment():
     assert (category, sport) == ("championship", "soccer")
 
 
-def test_culture_is_deliberately_not_weak():
-    """The scope line of this ship, pinned so a later widening is a decision.
+def test_culture_became_weak_in_7914_and_its_guards_moved_with_it():
+    """This ship's scope line, and the record of how it was answered.
 
-    `culture` is also a catch-all and demoting it moves 40 more events — but two
-    Ebola markets land on `weather` and France's hottest-summer market lands on
-    `tech`, because `Science` precedes `Weather` in its tag list. That is #7914,
-    and it needs a subject-tag ordering rule this change does not invent.
+    #7874 pinned `culture` OUT of `_WEAK_TAGS` with a test that failed if anyone
+    added it, because demoting it moved 40 more events and three looked wrong.
+    #7914 answered that: re-derived through the whole cascade rather than the tag
+    map alone, two of the three (both Ebola events) were already corrected to
+    `health` by arm 4, and the third (France's hottest summer) is fixed in the
+    same ship by the climate-record arm of `_WEATHER_HAZARD_RE`.
 
-    If someone adds `culture` to `_WEAK_TAGS` without that rule, this fails and
-    says why.
+    The scope pin is therefore DISCHARGED, not deleted, and this is what replaces
+    it: the assertion now runs the other way, so a revert of #7914 has to come
+    here and say so. The three landings themselves are guarded, with their
+    venue-read tag lists, in `test_polymarket_culture_tag_precedence_7914.py`.
     """
-    assert "culture" not in _WEAK_TAGS
-    assert _tags_to_category(["Culture", "Science"])[1] == "entertainment"
-    assert _tags_to_category(["Ebola", "Culture", "Weather", "Pandemics"])[1] == "entertainment"
+    assert "culture" in _WEAK_TAGS, "#7914 demoted `culture`; a revert must update this"
+    # The two catch-alls now rank together, and a subject tag still outranks both.
+    assert _tags_to_category(["Culture", "Science"])[1] == "tech"
+    assert _tags_to_category(["Awards", "Culture", "Politics"])[1] == "politics"
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +104,10 @@ def test_the_turner_prize_stays_entertainment():
 def test_time_person_of_the_year_stays_entertainment():
     """Event 528018, tagged `Culture, magazine, poty, Time POTY, Best of 2026`.
 
-    `culture` is not weak (see `test_culture_is_deliberately_not_weak`), so this
-    is unchanged for the plainest reason: nothing about it was touched.
+    Still entertainment after #7914 made `culture` weak, and for a reason worth
+    stating: none of `magazine`, `poty`, `Time POTY` or `Best of 2026` is a key
+    in the map, so both ranks fall through and the second pass returns `culture`
+    itself. A weak tag still decides when it is all a market has.
     """
     _, sport = _tags_to_category(["Culture", "magazine", "poty", "Time POTY", "Best of 2026"])
     assert sport == "entertainment"
