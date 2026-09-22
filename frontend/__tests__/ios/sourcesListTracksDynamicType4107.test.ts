@@ -238,7 +238,52 @@ describe.each([
    * table that is not on screen: the #4107 bug with an extra hop in it.
    */
   it("spends its own measurement on the shared row", () => {
-    expect(slice).toMatch(/sourceProbabilityRow\([\s\S]*?columns: columns\)/);
+    // #7926 — MATCHES THE SHAPE, NOT THE SPELLING. This was
+    // `/…columns: columns\)/`, where the closing paren was doing two jobs: the
+    // real one (this call receives the `Columns` this function computed) and an
+    // accidental one (`columns:` happens to be the LAST argument). Adding the
+    // stale-price mark to `bookmakerContent`'s call made `columns: columns` a
+    // middle argument, and the guard went red on a change that does not touch
+    // what it guards.
+    //
+    // Relaxing it to a bare `columns: columns` would have been one character
+    // shorter and would have half-neutered it: that also matches
+    // `columns: columnsFromSomewhereElse`, which is exactly the "stale or
+    // default value" #4233 wrote this assertion to catch. So the terminator is
+    // now "comma or close paren" — the argument must still END there, it simply
+    // no longer has to end the CALL.
+    expect(slice).toMatch(/sourceProbabilityRow\([\s\S]*?columns: columns\s*[,)]/);
+  });
+});
+
+/**
+ * #7926 — the stale-price mark, and the one property the Swift unit tests cannot
+ * reach.
+ *
+ * `AStaleSportsbookRowSaysHowOldItIs7926Tests` pins WHICH rows earn a mark, by
+ * calling `priceAgeMark()` directly. What it cannot see is the `body`: the row is
+ * also DIMMED when the mark exists, and a mutation that dropped the dimming — or
+ * worse, drove it from a second, independently-evaluated `SourceAge.isStale` call
+ * against a second `Date()` — would leave every unit test green while the page
+ * dimmed a different set of rows than it dated.
+ *
+ * So this is a source scan, for the reason every `__tests__/ios/*` file here is
+ * one: CI compiles no Swift, and this is the only gate that runs on every push.
+ */
+describe("#7926 bookmakerContent marks a stale price once and reads it twice", () => {
+  it("builds the mark from the row, in the loop", () => {
+    expect(bookmakerContent).toMatch(/let mark = row\.priceAgeMark\(\)/);
+  });
+
+  it("hands that same mark to the row it dims", () => {
+    // Both consumers name `mark`. If the opacity ever re-derived staleness for
+    // itself, this is the assertion that goes red.
+    expect(bookmakerContent).toMatch(/ageMark: mark/);
+    expect(bookmakerContent).toMatch(/\.opacity\(mark == nil \? 1 : 0\.6\)/);
+  });
+
+  it("does not ask the staleness rule a second time in the body", () => {
+    expect(bookmakerContent).not.toContain("SourceAge.isStale");
   });
 });
 

@@ -1526,18 +1526,31 @@ struct EventDetailView: View {
     /// did; `NamedBookmakerRow` does since #4406), so the two `if let`s this
     /// function used to hold could only ever draw the state the issue
     /// photographed: a label, and white space where the bar and the numbers go.
+    /// #7926 — `ageMark` is the optional second line under the label, and it is
+    /// nil on every caller that has no stamp to speak for. The mark goes INSIDE
+    /// the label's own fixed-width column rather than beside the numbers: the
+    /// column is measured from the label strings (`EventSourceLabelColumn`), so
+    /// anything added on the horizontal axis would either overflow a width this
+    /// row already computed or force the numbers to re-measure. The row is
+    /// already free to grow DOWNWARD — the label wraps to
+    /// `maximumLabelLines` under `fixedSize(horizontal: false, vertical: true)` —
+    /// so a second short line costs nothing the layout has not already budgeted.
     private func sourceProbabilityRow(
         label: String,
         font: Font,
         probabilities: (away: Double?, home: Double),
         colors: (away: Color, home: Color),
-        columns: EventSourceLabelColumn.Columns
+        columns: EventSourceLabelColumn.Columns,
+        ageMark: PriceAgeMarkView? = nil
     ) -> some View {
-        let labelText = Text(label)
-            .font(font)
-            .frame(width: columns.label, alignment: .leading)
-            .lineLimit(EventSourceLabelColumn.maximumLabelLines)
-            .fixedSize(horizontal: false, vertical: true)
+        let labelText = VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(font)
+                .lineLimit(EventSourceLabelColumn.maximumLabelLines)
+                .fixedSize(horizontal: false, vertical: true)
+            ageMark
+        }
+        .frame(width: columns.label, alignment: .leading)
 
         Group {
             switch columns.layout {
@@ -1695,6 +1708,34 @@ struct EventDetailView: View {
         /// The brand, resolved through `SourceLabels`. Never a raw key.
         let label: String
         let probabilities: (away: Double, home: Double)
+        /// When this book's price reached us — `bookmaker_odds[].captured_at`,
+        /// served on every priced row. Nil only where the payload omits it.
+        let capturedAt: String?
+
+        /// #7926 — THE WHOLE AGE DECISION FOR A SPORTSBOOK ROW, in a function a
+        /// test can reach rather than an expression inside a `body`. That is the
+        /// arrangement `FeedFuturesData.discoverPriceAgeMark` documents one file
+        /// over, and it exists for the same reason: the cadence here could
+        /// silently become `.futures` — which would hold the mark back for six
+        /// hours on a list restamped every two minutes, and hide exactly the rows
+        /// it is built to expose — while every assertion about `SourceAge` still
+        /// passed.
+        ///
+        /// `.live` is the bound because these rows ARE the surface
+        /// `SourceAge.liveStaleAfter` names in its own comment ("Sportsbook rows
+        /// and live blocks, restamped every 2 minutes by
+        /// `poll_live_prediction_markets`"), and it is web's `BookmakerTable`
+        /// threshold, so the two clients call the same books stale.
+        func priceAgeMark(
+            now: Date = Date(),
+            onReveal: ((String) -> Void)? = nil
+        ) -> PriceAgeMarkView? {
+            PriceAgeMarkView(
+                observedAt: capturedAt,
+                cadence: .live,
+                now: now,
+                onReveal: onReveal)
+        }
     }
 
     /// The book table's rows: named, in payload order, capped.
@@ -1731,6 +1772,27 @@ struct EventDetailView: View {
     /// — outside the window unseen. Filtering first draws all seven. Both
     /// orderings agree on every payload of ten or fewer, so only a fixture larger
     /// than the cap can tell them apart.
+    /// #7926 — AND THE ROW CARRIES ITS OWN AGE, because the reader cannot tell a
+    /// live price from a pre-game one by looking at it. Measured on this event
+    /// page during the 2026-09-21 NFL game `14780545` at Q3, 145 minutes after
+    /// kickoff: of twelve priced books, eight were 2–18 minutes old and read
+    /// 92–98%, while `betus`, `betanysports`, `lowvig` and `betonlineag` were
+    /// 140–146 minutes old and read 71–73% — the opening line (the event opened
+    /// 28% – 72%), never replaced. Two of the four were captured BEFORE kickoff.
+    /// They drew in the same weight and the same order as the live ones, and by
+    /// Q4 — with the page's own header reading "Rams 100%" — four of the seven
+    /// rows still told the reader the Giants were live at 27–29%.
+    ///
+    /// A STALE ROW IS MARKED, NOT DROPPED, which is what web's `BookmakerTable`
+    /// does and is the honest shape: this is a real price that a real book
+    /// stopped moving, so it keeps its row and gains its age. Dropping it would
+    /// also put this function's cap back in play for the wrong reason — the
+    /// naming filter and the price filter above earn their place by never
+    /// costing a reader a row they could have read (#4284, #4406), and a
+    /// freshness filter would do exactly that.
+    ///
+    /// The cap is untouched: `capturedAt` is carried, never filtered on, so the
+    /// ordering both comments above reason about is the same ordering as before.
     static func namedBookmakerRows(
         _ bookmakers: [BookmakerOdds], limit: Int = 10
     ) -> [NamedBookmakerRow] {
@@ -1740,7 +1802,11 @@ struct EventDetailView: View {
                       let label = SourceLabels.sportsbookName(for: key),
                       let probabilities = bookmakerProbabilities(bm)
                 else { return nil }
-                return NamedBookmakerRow(id: key, label: label, probabilities: probabilities)
+                return NamedBookmakerRow(
+                    id: key,
+                    label: label,
+                    probabilities: probabilities,
+                    capturedAt: bm.capturedAt)
             }
             .prefix(limit)
             .map { $0 }
@@ -1807,6 +1873,12 @@ struct EventDetailView: View {
             weight: .regular)
         return VStack(spacing: 0) {
             ForEach(rows) { row in
+                // #7926 — the mark is built ONCE and read twice: it decides both
+                // whether the age is drawn and whether the row is dimmed, so the
+                // two can never disagree about which books are stale. Asking
+                // `SourceAge.isStale` again here would be a second evaluation of
+                // the same rule against a second `Date()`.
+                let mark = row.priceAgeMark()
                 sourceProbabilityRow(
                     label: row.label,
                     font: .caption,
@@ -1815,7 +1887,12 @@ struct EventDetailView: View {
                         home: row.probabilities.home
                     ),
                     colors: colors,
-                    columns: columns)
+                    columns: columns,
+                    ageMark: mark)
+                    // Web's `BookmakerTable` draws a stale row at `opacity-60`.
+                    // The same value, so a book that looks secondary on one
+                    // client looks secondary on the other.
+                    .opacity(mark == nil ? 1 : 0.6)
             }
         }
         .padding(.vertical, 8)
