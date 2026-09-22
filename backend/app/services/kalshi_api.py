@@ -328,6 +328,42 @@ _SPORTS_SERIES_TICKERS = [
     "KXNFL", "KXNFLNFC", "KXNFLAFC",
     # Game winner (moneyline) — Kalshi retains settled events forever
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    # #1898: the golf/combat/tennis gap, fourth occurrence — this time WNBA.
+    # The capture sentinel had been filing `basketball_wnba/moneyline
+    # starved_class` since CAL-P063 (0.80 → 0.96 winner markets per game, and a
+    # game without a winner market is impossible). Two hypotheses were on the
+    # issue — misclassification, and Polymarket fixtures leaking onto
+    # `basketball_other` phantoms — and measurement rejected BOTH:
+    #
+    #   * every WNBA market we hold classifies `moneyline` correctly and is
+    #     linked to a `basketball_wnba` event; there are no leaked siblings, and
+    #     no Polymarket WNBA rows exist at all;
+    #   * of 338 WNBA fixtures this season, 28 hold ZERO linked markets — not a
+    #     wrong class, no row of any kind;
+    #   * every `KXWNBA*` series stopped writing at the same instant,
+    #     2026-09-19T18:49:29Z, while Kalshi ingest stayed healthy (NFL/NHL/MLB/
+    #     tennis all writing within the hour);
+    #   * measured at the venue 2026-09-22 (`/markets?series_ticker=KXWNBAGAME&
+    #     status=open`): Kalshi carried 24 open markets over 12 games, six of
+    #     them tipping within 48h and open since the 19th. We held `0` rows for
+    #     any `KXWNBA*-26SEP2[2-9]` ticker.
+    #
+    # The mechanism is this list's absence, exactly as recorded for golf (#163),
+    # combat (#173) and tennis (Q426): WNBA was never named here, so it depended
+    # entirely on the deadline-bounded main scan reaching its pages — the walk
+    # whose own report reads `wrapped: false`, `stop_reason: max_pages` on every
+    # beat. And it cannot be rescued by series DISCOVERY either: `KXWNBAGAME`
+    # carries the `GAME` heavy token, so `select_discovered_series` declines it
+    # `heavy_payload_shape` by construction. The hand list is the only channel
+    # this series has, which is why an omission here is total rather than
+    # intermittent. Stripped fetch + per-event backfill, same as its four
+    # siblings above; ~12 open events a night, nowhere near the #995 threshold.
+    #
+    # Scoped to the WINNER series on purpose. The ship is "every WNBA game page
+    # shows its winner market", the 45s reserve is already fully subscribed, and
+    # KXWNBASPREAD/TOTAL are the natural next widening once that headroom is
+    # measured — not something to spend tonight's budget on unmeasured.
+    "KXWNBAGAME",
     # Game-level (neg-risk, status=None — missed by unfiltered pagination)
     "KXNBASPREAD", "KXNBATOTAL", "KXNBATEAMTOTAL",
     "KXNBA1HSPREAD", "KXNBA1HTOTAL", "KXNBA1HWINNER",
@@ -600,6 +636,11 @@ def stripped_market_series() -> set:
 # a daily series at least fails intermittently.
 _ALWAYS_FETCH_SERIES = {
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+    # #1898: daily turnover, exactly like its four siblings above. Without
+    # membership here one stale WNBA event surfacing in the main scan satisfies
+    # the `any(startswith)` short-circuit and skips the whole slate — the
+    # difference between "some" and "all" is every game page.
+    "KXWNBAGAME",
     "KXATPMATCH", "KXWTAMATCH",
     "KXATPNATSTAGE", "KXWTANATSTAGE",
     "KXRAIN", "KXRAINWKND",
