@@ -382,6 +382,147 @@ describe("#7876 — both charts read the rule at their call site", () => {
   });
 });
 
+describe("#7876 — it is not an overtime bug: a regulation game loses HT at the whistle", () => {
+  // ── WHAT THE WALK SAW ──────────────────────────────────────────────────────
+  //
+  // Rams 28–6 Giants, `/events/14780545`, Monday night, photographed at 390px
+  // every 20 minutes on a page that was NEVER RELOADED (notice 42). The marker
+  // strip, frame by frame, straight out of `artifacts/ux-1426/mnf/*.json`:
+  //
+  //     02:01Z  cycle 5   Q2 HT Q3
+  //     02:21Z  cycle 6   Q2 HT Q3
+  //     02:41Z  cycle 7   Q2 HT Q3 Q4
+  //     03:01Z  cycle 8   Q2 HT Q3 Q4
+  //     03:22Z  FINAL     Q2    Q3 Q4      ← halftime gone
+  //     03:32Z  final+10  Q2    Q3 Q4      ← still gone, no reload
+  //
+  // This game never went to overtime. A reader watching the fourth quarter had
+  // the halftime boundary on the chart, looked up at the whistle, and it was
+  // gone — nothing they did, no page load in between.
+  //
+  // ── WHY THE ISSUE'S OWN ARITHMETIC MISSED IT ───────────────────────────────
+  //
+  // #7876 reasoned from a halftime of "structurally ~15 minutes", which puts the
+  // crossover at 15 / 0.07 = 214 min and therefore out of reach of a regulation
+  // game. But halftime is not a structural constant — it is an OBSERVED gap
+  // between two `espn_state` boundaries, and here it was 12 minutes. That moves
+  // the crossover to 12 / 0.07 = 171 min, which is an ordinary NFL broadcast:
+  //
+  //     span 166 min (cycle 8, live)   7% = 11.6 min  <  12 min gap  → HT kept
+  //     span 192 min (at the whistle)  7% = 13.5 min  >  12 min gap  → HT DELETED
+  //
+  // So the overtime specimen was the one that got noticed, not the boundary of
+  // the defect. Every NFL game whose observed halftime runs short of 7% of its
+  // finished span loses the marker, and the span only ever grows, so the loss
+  // always lands at or near the whistle — the moment the chart is most read.
+  //
+  // The arms below pin BOTH numbers, because a fix that kept this game's HT by
+  // lowering the constant would just relocate the cliff again.
+  const REG = JSON.parse(
+    readFileSync(
+      join(__dirname, "fixtures/periodLabelRegulation.14780545.nfl-final.json"),
+      "utf8"
+    )
+  );
+
+  const regBoundaries = () =>
+    derivePeriodBoundaries(
+      undefined,
+      undefined,
+      undefined,
+      REG.commence_time,
+      REG.period_markers,
+      SPORT
+    );
+
+  /** The pre-#7876 collapse, frozen verbatim — the same control the overtime
+   *  sweep uses, run against the regulation payload. */
+  function preUx7876(span: number): string[] {
+    const minSpacing = span * PERIOD_LABEL_MIN_SPACING_FRACTION;
+    const out: Array<{ timestamp: string; label: string }> = [];
+    for (const b of regBoundaries()) {
+      const t = new Date(b.timestamp).getTime();
+      if (out.length > 0) {
+        const prevT = new Date(out[out.length - 1].timestamp).getTime();
+        if (t - prevT < minSpacing) {
+          out[out.length - 1] = b;
+          continue;
+        }
+      }
+      out.push(b);
+    }
+    return out.map((x) => x.label);
+  }
+
+  const LIVE_SPAN = 166 * 60_000; // cycle 8, 03:01Z, HT on the page
+  const FINAL_SPAN = 192 * 60_000; // at the whistle, HT gone
+
+  it("this game has no overtime, and its halftime is 12 minutes, not 15", () => {
+    // The strawman guard for the whole block. If the fixture ever drifts to a
+    // payload with an `OT` marker or a 15-minute halftime, every assertion below
+    // becomes a restatement of the overtime case and proves nothing new.
+    const labels = regBoundaries().map((b) => b.label);
+    expect(labels).toEqual(["Q2", "HT", "Q3", "Q4"]);
+    expect(labels).not.toContain("OT");
+
+    const ts = regBoundaries().map((b) => new Date(b.timestamp).getTime());
+    expect(Math.round((ts[2] - ts[1]) / 60_000)).toBe(12);
+  });
+
+  it("the old rule reproduces the walk exactly — kept live, dropped at the whistle", () => {
+    // Not "the old rule is capable of dropping HT" — that was already known.
+    // This is the specific pair of spans the page passed through on Monday
+    // night, and the outputs are what the camera recorded at each of them.
+    expect(preUx7876(LIVE_SPAN)).toEqual(["Q2", "HT", "Q3", "Q4"]);
+    expect(preUx7876(FINAL_SPAN)).toEqual(["Q2", "Q3", "Q4"]);
+  });
+
+  it("the crossover sits inside regulation, which is the part #7876 understated", () => {
+    // 12 min / 7% = 171.4 min. Stated as the two sides of the boundary rather
+    // than as the quotient, so this fails if the constant or the gap moves.
+    expect(preUx7876(171 * 60_000)).toContain("HT");
+    expect(preUx7876(172 * 60_000)).not.toContain("HT");
+  });
+
+  it("the new rule keeps all four at every span this game passed through", () => {
+    for (const min of [120, 166, 172, 175, 192, 240, 300, 360]) {
+      expect(
+        placePeriodLabels(
+          collapseDuplicateTransitions(regBoundaries()),
+          min * 60_000
+        ).map((r) => r.label)
+      ).toEqual(["Q2", "HT", "Q3", "Q4"]);
+    }
+  });
+
+  it("and both charts draw HT on the real render of this payload", () => {
+    // The helper being right is not the ship, same as the overtime arms above.
+    const render = (Chart: unknown) =>
+      renderToStaticMarkup(
+        React.createElement(
+          AnalyticsProvider,
+          null,
+          React.createElement(Chart as never, {
+            history: REG.history,
+            homeTeam: REG.home_team,
+            awayTeam: REG.away_team,
+            commenceTime: REG.commence_time,
+            espnHistory: REG.espn_history,
+            winProbHistory: REG.win_prob_history,
+            scoreHistory: REG.score_history,
+            eventStatus: REG.status,
+            sportKey: SPORT,
+            periodBoundaries: regBoundaries(),
+          } as never)
+        )
+      );
+
+    for (const Chart of [OddsChart, ScoreDifferentialChart]) {
+      expect(labelNames(render(Chart))).toEqual(["Q2", "HT", "Q3", "Q4"]);
+    }
+  });
+});
+
 describe("#7876 — every file this suite reads travels with it", () => {
   // THE GUARD FOR THE CLASS THAT COST THIS SUITE A RED CI.
   //
@@ -398,6 +539,7 @@ describe("#7876 — every file this suite reads travels with it", () => {
   // this check that can fail in the place where the mistake is made.
   const READS = [
     "fixtures/periodLabelOvertime.14780544.nfl-ot.json",
+    "fixtures/periodLabelRegulation.14780545.nfl-final.json",
     "../components/OddsChart.tsx",
     "../components/ScoreDifferentialChart.tsx",
   ];
