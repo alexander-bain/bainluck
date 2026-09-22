@@ -326,6 +326,96 @@ class TestConjunctFourKeepsTheRowsTheShipIsFor:
         assert set(DRAWN_CONTEST_OUTCOMES) == set(_DRAW_TOKENS)
 
 
+class TestAnAsciiVenueNameStillNamesAnAccentedCompetitor:
+    """The venue writes `Frolunda HC`; we store `Frölunda HC`. #2591 rung 3.
+
+    These four are the ENTIRE convertible residual of the 563 reader-reachable
+    suspended rows, measured on production 2026-09-22 06:4xZ by replaying this
+    predicate over all 1,336 graded winning legs: supported 160 → 164,
+    **LOST 0**. None of the four has a completed twin carrying the score, so
+    without the fold nothing in the system ever finishes them.
+
+    The refusal half below is the load-bearing half. An accent fold is the only
+    thing being bought: every other way of failing to match a name — an
+    abbreviation, an acronym, a nickname, an unorientable ``Yes`` — must keep
+    failing closed, because conjunct 4's whole job is to not end a match it
+    cannot orient.
+    """
+
+    #: (venue's settled answer, our home, our away) — real production rows.
+    ASCII_AGAINST_ACCENTED = [
+        ("Frolunda HC", "Frölunda HC", "Växjö Lakers"),
+        ("Malmo Redhawks", "HV71", "Malmö Redhawks"),
+        ("Porin Assat", "Ässät", "Kiekko-Espoo"),
+        ("Oulun Karpat", "Kärpät", "Sport"),
+    ]
+
+    @pytest.mark.parametrize("winner,home,away", ASCII_AGAINST_ACCENTED)
+    def test_the_fold_lets_the_settlement_through(self, winner, home, away):
+        assert winning_outcome_names_a_competitor(winner, home, away) is True
+
+    @pytest.mark.parametrize("winner,home,away", ASCII_AGAINST_ACCENTED)
+    def test_without_the_fold_every_one_of_them_is_stranded(
+        self, winner, home, away, monkeypatch
+    ):
+        """The mutation, run in-suite rather than trusted.
+
+        Sever the fold and each row must go back to being refused. A test that
+        stays green with ``_fold_diacritics`` neutered is asserting something
+        the normaliser already did, not the fix.
+        """
+        import app.utils.event_completion as ec
+
+        monkeypatch.setattr(ec, "_fold_diacritics", lambda text: text)
+        assert ec.winning_outcome_names_a_competitor(winner, home, away) is False
+
+    @pytest.mark.parametrize("winner,home,away", [
+        # An abbreviation is not an accent. (`15304466`, and that event already
+        # has a completed twin `15306772` 30-20 — it is #7345/#2693's, not ours.)
+        ("San Jose St.", "San Jose State Spartans", "Cal Poly Mustangs"),
+        # Nor is an acronym. (`15312459`.)
+        ("United Arab Emirates", "Malaysia", "UAE"),
+        # Nor is a bare-matchup market answering `Yes` — nothing orients it, and
+        # twelve of the residual look exactly like this. (`15313488`.)
+        ("Yes", "Ässät", "Kiekko-Espoo"),
+    ])
+    def test_the_fold_buys_nothing_but_accents(self, winner, home, away):
+        assert winning_outcome_names_a_competitor(winner, home, away) is False
+
+    def test_the_fold_does_not_reopen_the_live_mlb_game(self):
+        """Conjunct 4's own specimen, re-asserted through the new code path."""
+        assert winning_outcome_names_a_competitor("NRFI", *NRFI_SIDES) is False
+
+    def test_the_fold_does_not_break_the_both_sides_fail_safe(self):
+        assert winning_outcome_names_a_competitor(
+            "Växjö", "Växjö Lakers", "Vaxjo Lakers HC"
+        ) is False
+
+    def test_it_folds_accents_and_is_not_a_transliterator(self):
+        """`ß` is deliberately left alone — NFKD does not decompose it, and
+        mapping it to `ss` would be a policy call wearing a normaliser's coat.
+        """
+        from app.utils.event_completion import _fold_diacritics
+
+        assert _fold_diacritics("Frölunda Ässät Kärpät") == "Frolunda Assat Karpat"
+        assert _fold_diacritics("Weiß") == "Weiß"
+        assert _fold_diacritics("") == ""
+
+    def test_the_fold_is_not_in_the_shared_normaliser(self):
+        """The architectural constraint, pinned so a later tidy-up cannot
+        silently move it.
+
+        ``normalize_team_text`` is reached by ``resolve_team_side``, whose
+        readers include ``prediction_market_matching`` — the market→event
+        LINKAGE path. Folding there would widen the matcher as a side effect of
+        an event-completion fix. If someone moves the fold into the shared
+        helper, this goes red and says why it was kept local.
+        """
+        from app.utils.team_side import normalize_team_text
+
+        assert normalize_team_text("Frölunda HC") == "frölunda hc"
+
+
 class TestOnlyTheVenueMaySpeak:
     """Tier 3 and nothing else — ruling 038's invariant read from this side."""
 

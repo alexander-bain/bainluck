@@ -1090,6 +1090,53 @@ FULL_CONTEST_WINNER_CLASS = "moneyline"
 DRAWN_CONTEST_OUTCOMES = frozenset({"draw", "tie"})
 
 
+def _fold_diacritics(text: str) -> str:
+    """``frölunda`` → ``frolunda``. Accent-blind comparison, and NOTHING else.
+
+    🔴 LOCAL, NOT IN :func:`~app.utils.team_side.normalize_team_text`, and that is
+    the whole of the design. The shared normaliser now has THREE readers through
+    :func:`~app.utils.team_side.resolve_team_side` —
+    ``tasks.prediction_market_matching`` (which decides market→event LINKAGE),
+    ``final_score_margin`` and ``period_window_grade`` — one more than the
+    docstring below still names. Folding there would widen the matcher, and this
+    module already refused that trade once for the containment rule: *one arm's
+    problem does not get solved in a helper other readers depend on.* So the fold
+    is applied on the way INTO this predicate's own comparison and reaches
+    nothing else. ``normalize_team_text`` is still the normaliser; this is a
+    second pure pass layered on top of it, never a replacement.
+
+    WHY IT IS NEEDED, measured (production 2026-09-22 06:4xZ, the 563
+    reader-reachable suspended rows of #2591). The venue routinely writes an
+    ASCII name against the accented one we store, and whole-token containment
+    then fails on a settlement that is plainly correct:
+
+        Frölunda HC     ← venue settled `Frolunda HC`
+        Malmö Redhawks  ← venue settled `Malmo Redhawks`
+        Ässät           ← venue settled `Porin Assat`   {assat} ⊆ {porin, assat}
+        Kärpät          ← venue settled `Oulun Karpat`  {karpat} ⊆ {oulun, karpat}
+
+    Four stranded rows, none of which has a completed twin carrying the score, so
+    nothing else in the system will ever finish them. They are the ENTIRE
+    convertible residual of that population — the other refusals are an
+    abbreviation (``San Jose St.``), an acronym (``UAE``), twelve bare-matchup
+    markets answering ``Yes`` and ~51 derivative-only settlements, and every one
+    of those SHOULD keep failing closed.
+
+    ⚠️ It folds accents and stops. It is deliberately NOT a transliterator: ``ß``
+    is left alone rather than mapped to ``ss`` (NFKD does not decompose it), and
+    no abbreviation, acronym or nickname is touched. Widening it to catch
+    ``UAE``/``United Arab Emirates`` would be a policy change wearing a
+    normaliser's clothes, and conjunct 4's fail-closed rule is what keeps an
+    unorientable row off the board.
+    """
+    import unicodedata
+
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(ch)
+    )
+
+
 def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_name) -> bool:
     """Does the settled leg answer with a PARTICIPANT, or a drawn contest?
 
@@ -1132,11 +1179,15 @@ def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_n
 
     The test here is WHOLE-TOKEN containment in either direction, normalised by
     :func:`~app.utils.team_side.normalize_team_text` (shared, because it is a
-    pure normaliser and carries no policy):
+    pure normaliser and carries no policy) and then by :func:`_fold_diacritics`
+    (local, because the shared one's other readers include the MATCHER — see that
+    function for why the fold does not live beside the normaliser):
 
     * ``{martin, manzano} ⊆ {juan, cruz, martin, manzano}`` — the venue's fuller
       name names our competitor. Accept.
     * ``{detroit} ⊆ {detroit, tigers}`` — a short name for a long one. Accept.
+    * ``{karpat} ⊆ {oulun, karpat}`` — the venue writes ASCII for ``Kärpät``.
+      Accept, and only the fold makes it reachable.
     * ``{nrfi}`` meets neither side in either direction. Refuse.
 
     **Exactly one side may match**, which is :func:`resolve_team_side`'s
@@ -1153,7 +1204,13 @@ def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_n
     """
     from app.utils.team_side import normalize_team_text
 
-    answer = set(normalize_team_text(outcome_name).split())
+    def _tokens(text):
+        # Fold AFTER normalising, never before: `normalize_team_text` is the
+        # punctuation/case pass and `_fold_diacritics` is the accent pass, and
+        # composing them in this order means neither has to know about the other.
+        return set(_fold_diacritics(normalize_team_text(text)).split())
+
+    answer = _tokens(outcome_name)
     if not answer:
         return False
     if answer <= DRAWN_CONTEST_OUTCOMES:
@@ -1161,7 +1218,7 @@ def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_n
 
     sides_named = 0
     for side_name in (home_team_name, away_team_name):
-        side = set(normalize_team_text(side_name).split())
+        side = _tokens(side_name)
         if side and (side <= answer or answer <= side):
             sides_named += 1
     return sides_named == 1
