@@ -161,6 +161,9 @@ async def _work(session, **params):
         # CAL-P1124: absent means "the whole population", so every test written
         # before the cohort filter existed keeps selecting what it selected.
         "min_harm": None,
+        # #7980: same contract as min_harm above — absent is the whole
+        # population, NOT the past-dated half of it.
+        "future_only": None,
     }
     args.update(params)
     return (await session.execute(text(rail._WORK_SQL), args)).all()
@@ -590,6 +593,95 @@ async def _mixed_population(session):
     )
 
     return [oldest, middle, oneleg, recent, future]
+
+
+async def test_the_future_cohort_reaches_the_rows_the_sort_strands(pg_session):
+    """#7980, against the real driver and the real planner.
+
+    ``_mixed_population`` returns its members in ``resolution_date`` order and
+    ``future`` is LAST — not as a quirk of the fixture but as the contract: the
+    floor admits future-dated markets and ``ORDER BY resolution_date ASC`` puts
+    every one of them behind every past-dated row. CAL-P057 measured that at
+    3,913 markets, ~48% of the Kalshi backlog, and declined to fix it by
+    re-sorting.
+
+    So the assertions are in pairs. The default walk must still see the whole
+    population WITH the future row stranded at the end (the behaviour that is
+    deliberately unchanged), and the cohort must select exactly the row that
+    stranding hides — while the sort, the floor and every other predicate go on
+    meaning what they meant.
+    """
+    oldest, middle, oneleg, recent, future = await _mixed_population(pg_session)
+
+    default = [r.market_id for r in await _work(pg_session, lim=50)]
+    assert default == [oldest, middle, oneleg, recent, future], (
+        "the default walk must be untouched — this change is a selector, not a "
+        "re-sort, and a re-sort would invalidate every banked keyset cursor"
+    )
+    assert default[-1] == future, (
+        "anti-vacuity: if the future row did not sort last there would be "
+        "nothing for the cohort to rescue and the test below would prove nothing"
+    )
+
+    cohort = [r.market_id for r in await _work(pg_session, lim=50, future_only=True)]
+    assert cohort == [future], (
+        "?future_only=true must select exactly the future-dated members — these "
+        "are the rows a reader is looking at (an open market quoted at 41.5% "
+        "whose chart plunges to 0%) and the ones the venue can still answer"
+    )
+
+    # A NULL bind is an omitted query param, and gotcha #53's rule is that it
+    # must degrade to the WHOLE population — an empty page on this rail reads as
+    # "the cohort is drained", which is the most dangerous thing it could say.
+    assert [
+        r.market_id for r in await _work(pg_session, lim=50, future_only=None)
+    ] == default
+    assert [
+        r.market_id for r in await _work(pg_session, lim=50, future_only=False)
+    ] == default
+
+
+async def test_the_future_cohort_composes_with_the_cursor_and_the_shard(pg_session):
+    """A selector that only works on an unparameterised call is not a selector.
+
+    Every call after the first carries a keyset, and the refusal this rail's
+    ``?sport=`` hint once gave was advice that did not work — so the cohort is
+    proved against both the cursor and the shard rather than alone.
+    """
+    _, _, _, _, far = await _mixed_population(pg_session)
+    # NEARER than `far`: the fixture's future member resolves in 9 days, this one
+    # in 3. The cohort inherits the rail's ASC sort, so `near` comes FIRST — the
+    # cohort reorders nothing, which is the property under test and the one that
+    # is easy to get backwards when "future" is read as "later".
+    near = await _seed_market(
+        pg_session, ext="KXWORK-FUT2", days_ago=-3, sport="hockey"
+    )
+
+    cohort = [r.market_id for r in await _work(pg_session, lim=50, future_only=True)]
+    assert cohort == [near, far], (
+        "the cohort is still oldest-first: nearest resolution date first, the "
+        "same ORDER BY the whole population walks under"
+    )
+
+    sharded = [
+        r.market_id
+        for r in await _work(pg_session, lim=50, future_only=True, sport="hockey")
+    ]
+    assert sharded == [near], "the cohort ANDs with the shard, it does not replace it"
+
+    page_one = await _work(pg_session, lim=1, future_only=True)
+    assert [r.market_id for r in page_one] == [near]
+    resumed = [
+        r.market_id
+        for r in await _work(
+            pg_session,
+            lim=50,
+            future_only=True,
+            after_date=page_one[0].resolution_date,
+            after_id=page_one[0].market_id,
+        )
+    ]
+    assert resumed == [far], "the keyset resumes INSIDE the cohort"
 
 
 async def test_the_lateral_rewrite_selects_exactly_what_the_grouped_form_did(
