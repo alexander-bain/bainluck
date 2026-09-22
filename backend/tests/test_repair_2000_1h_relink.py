@@ -723,13 +723,14 @@ class _RestoreSession(_FakeSession):
         update_rowcount=1,
         **kw,
     ):
-        super().__init__(**kw)
-        self.backup_exists = exists
+        # Handed to the base rather than re-assigned after it: overwriting an
+        # inherited attribute works but reads as a bug (CodeQL
+        # `py/overwritten-inherited-attribute`), and the base already takes both.
+        super().__init__(backup_exists=exists, update_rowcount=update_rowcount, **kw)
         self._now = now_eid
         self._was = was_eid
         self._unbacked = unbacked
         self._missing = missing
-        self.update_rowcount = update_rowcount
 
     async def execute(self, stmt, params=None):
         sql = " ".join(str(stmt).split())
