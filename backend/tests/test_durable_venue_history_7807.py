@@ -35,7 +35,28 @@ from app.tasks import generic_market_history_fill as fill
 from app.utils import durable_state
 from app.utils import generic_market_history as gmh
 
-NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
+#: #8041 — ANCHORED TO THE REAL CLOCK, NEVER A LITERAL DATE (gotcha #44).
+#
+# This was `datetime(2026, 9, 21, 12, 0, 0)`, and on 2026-09-22 at exactly
+# **14:00:00Z** it took master red for every lane. The arithmetic is the whole
+# story: `test_a_durable_hit_is_put_back_in_front_of_the_next_reader` builds a
+# bank at `NOW - 10h` = 09-21 02:00Z, `fill.CACHE_TTL_SECONDS` is 36h, so the
+# bank's declared life ended 09-22 14:00Z. Past that instant the serve path
+# CORRECTLY declines to re-cache an expired bank, `rc.sets` is empty, and
+# `assert len(rc.sets) == 1` fails `0 == 1`. The app was right and the fixture
+# had rotted. Master's tip passed CI at 14:11Z and the next PR failed at 14:25Z
+# on an unrelated diff — a literal date does not fail when it is written, it
+# fails on a date nobody chose.
+#
+# Every other use in this file is an OFFSET FROM `NOW` on both sides (the
+# `CACHE_TTL ± 1s` boundaries, the 4/8-day pair, the 30h envelope), so moving
+# the anchor keeps each relationship exactly as its author wrote it and makes
+# all of them ages-from-now instead of ages-from-a-day-in-2026.
+#
+# NOT truncated to the hour: gotcha #44 is "offset FIRST, then truncate", and
+# truncating the anchor that every test then offsets FROM is the truncate-first
+# order the rule forbids — it reintroduces a boundary the tests would sit near.
+NOW = datetime.now(timezone.utc)
 
 
 def _market(source="kalshi", market_id=1, external_id="KXQ-26", status="open"):
