@@ -38,7 +38,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | pm-ungraded-loss | pm-ungraded-loss-restore
              | kalshi-series-tag-category
              | polymarket-club-noun-category | kalshi-club-noun-category
-             | kalshi-venue-topic-badges }
+             | kalshi-venue-topic-badges
+             | kalshi-venue-sport-correction }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -77,7 +78,12 @@ transactional session and RETURNS its own before/after census in the response bo
      2026-09-10, CAL-P1088, adding the two pm-ungraded-loss entries in the
      commit that registered them. Re-synced again 2026-09-19, live/409, adding
      the two polymarket-single-leg-label entries in the commit that registered
-     them.)
+     them. Re-synced again 2026-09-22, authority/974, adding
+     kalshi-venue-sport-correction — NOT in the commit that registered it. The
+     focused D40 gates were green (the two registry guards live in files that
+     change was nowhere near, exactly as in the lane1b/116b entry above), CI
+     failed three of four shards on them, and that is the second time this
+     comment has earned its keep rather than decorated the file.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
@@ -667,6 +673,26 @@ _REPAIRS = {
     # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
     "kalshi-venue-topic-badges": (
         "app.tasks.repair_kalshi_venue_topic_badges",
+        "repair",
+    ),
+    # #8029 (authority/974): the SPORT-TO-SPORT half the rail above measured and
+    # declined by name ("a REPAIR moving a row between two sports is not this
+    # issue and has not been measured"). It is measured now: paging that rail's
+    # `status_scope=open` population to exhaustion returns 25 candidates, of
+    # which exactly ONE carries a venue verdict naming a different sport —
+    # `109401`, MrBeast's ECU NIL donation, stored `baseball` because a
+    # pre-#5637 ingest read "University **athletics**" as the Oakland A's.
+    #
+    # Its warrant is narrower than the sibling's: the destination must be the
+    # word the VENUE PUBLISHED as its series tag, and the shipped cascade must
+    # answer that same word, so a name guess can never be overwritten with
+    # another name guess. Enumerated bound, five refusing gates, writes
+    # `llm_sport_category` only.
+    #
+    # D51: `restore_sql` travels with the plan, built from RETURNING on apply.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "kalshi-venue-sport-correction": (
+        "app.tasks.repair_kalshi_venue_sport_correction",
         "repair",
     ),
     # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
