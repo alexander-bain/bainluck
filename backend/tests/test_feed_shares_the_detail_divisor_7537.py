@@ -448,13 +448,37 @@ class TestTheTwoSurfacesDateTheBoardFromTheSameSet:
             and isinstance(node.func, ast.Name)
             and node.func.id == "stale_observation_keys"
         ]
-        assert len(calls) == 1, f"expected one detail call, found {len(calls)}"
+        # KEYED ON THE DETAIL'S OWN ARGUMENT, NOT ON BEING THE ONLY CALLER
+        # (#7747). This asserted `len(calls) == 1` until `/history` began asking
+        # the same withheld-leg question, so the chart could refuse the #23
+        # squeeze on the same boards the detail page refuses it on. A second
+        # honest caller is not this guard's defect; a NARROWED population is.
+        # The detail's call is the one over `sorted_outcomes`.
+        detail = [
+            c
+            for c in calls
+            if c.args
+            and isinstance(c.args[0], ast.GeneratorExp)
+            and isinstance(c.args[0].generators[0].iter, ast.Name)
+            and c.args[0].generators[0].iter.id == "sorted_outcomes"
+        ]
+        assert len(detail) == 1, f"expected one detail call, found {len(detail)}"
 
-        (arg,) = calls[0].args
+        (arg,) = detail[0].args
         assert isinstance(arg, ast.GeneratorExp)
         (comp,) = arg.generators
         assert isinstance(comp.iter, ast.Name) and comp.iter.id == "sorted_outcomes"
         assert comp.ifs == [], "detail narrowed the population it dates the board from"
+
+        # Every OTHER caller owes the same promise, so a future surface cannot
+        # date a board off a filtered population just by not being the detail.
+        for call in calls:
+            (other,) = call.args
+            assert isinstance(other, ast.GeneratorExp)
+            assert other.generators[0].ifs == [], (
+                "a stale_observation_keys caller narrowed the population it "
+                "dates the board from"
+            )
 
 
 class TestOurOwnOutageCannotBlankACard:

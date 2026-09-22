@@ -6185,6 +6185,48 @@ async def get_futures_history(
         market.outcomes, lambda o: o.external_id
     )
 
+    # #7747 — #7103'S GATE, WHICH THIS SIDE OF THE PAGE NEVER GOT. The detail
+    # serializer passes `field_complete=prices_withheld == 0` into the same two
+    # display steps this route runs through `devigged_consensus_by_time`, and
+    # its comment says the hub "moves with it" because gating one surface and
+    # not the other "would divide the same board by two different numbers". The
+    # chart was not in that enumeration. So `/futures/61308736` served Jannik
+    # Sinner at 0.315 in the hero and in his own All Outcomes row, and 0.203 in
+    # the Probability Trend directly beneath them, both stamped
+    # 2026-09-22T03:50:54Z: 32% over a line at 20%, one screen at 390px. 0.740
+    # of the 1.555 divisor was Jakub Mensik, the single leg the page had just
+    # declined to price.
+    #
+    # THE SAME SET FROM THE SAME TWO CALLS the serializer makes, never a second
+    # predicate: a re-derivation here would be free to answer differently from
+    # the page this has to agree with, which is the whole defect.
+    #
+    # NOT `_drop_unsupported_snapshot_points` BELOW, WHICH ANSWERS A DIFFERENT
+    # QUESTION, and the difference was measured rather than assumed. #5898
+    # refuses individual chart POINTS on the snapshot columns and it correctly
+    # KEEPS Mensik's — his `last_price` is positive, which is that predicate's
+    # rule 2. The detail withheld him on `volume_24h`, a column no snapshot row
+    # carries. A gate sourced from the point filter would have left this board
+    # exactly as it was, and the first draft of this fix did.
+    #
+    # PER BOARD, NOT PER INSTANT. The squeeze is a change of SCALE, so squeezing
+    # some instants of one line and not others draws the scale change as a price
+    # MOVE — the class `futures_history_basis` exists to close, reintroduced by
+    # the fix for it.
+    #
+    # HERE, BEFORE THE SNAPSHOT READS, so the one query this can cost is not
+    # interleaved with the auto-extend tiers that re-ask for a wider window.
+    # Most boards never reach it: the predicate screens on the outcome rows
+    # already in memory and only survivors cost a trade read.
+    _withheld_ids = await _unsupported_price_outcome_ids(db, market)
+    if getattr(market, "status", None) == "open":
+        from app.utils.market_staleness import stale_observation_keys
+
+        _withheld_ids = _withheld_ids | stale_observation_keys(
+            (o.id, o.last_updated) for o in market.outcomes
+        )
+    _field_complete = not _withheld_ids
+
     # #7546 — THE SELECTION IS MADE BELOW, AFTER THE FIELD READ, AND NOT HERE.
     # It has no business being here any more: #4992 widened the snapshot query to
     # the whole field, so the read no longer depends on which legs are charted,
@@ -6434,6 +6476,7 @@ async def get_futures_history(
     devigged = devigged_consensus_by_time(
         raw_by_time,
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
+        field_complete=_field_complete,
     )
 
     # Counted as the series is BUILT, not off `outcome_time_groups` above, and

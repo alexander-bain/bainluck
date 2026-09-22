@@ -184,6 +184,15 @@ class _Session:
     without this file having to know how many tiers ran. They get the same rows
     back, so no tier can improve on the initial window and the selection under
     test is the one the assertions describe.
+
+    THE SECOND ENTRY IS EMPTY, AND IS NOT A SNAPSHOT READ (#7747): the handler
+    now asks `_unsupported_price_outcome_ids` whether this board withholds a
+    leg, before any snapshot read, so the chart can refuse the #23 squeeze on
+    the same boards the detail page refuses it on. An empty answer means "no
+    trade rows found", which fails OPEN — nothing is withheld — so this board is
+    field-complete and every assertion below is about the selection it was
+    always about. It sits SECOND rather than last precisely so the repeat above
+    still belongs to the snapshot query.
     """
 
     def __init__(self, *results):
@@ -286,7 +295,7 @@ class TestTheReaderGetsTheContenderInsteadOfTheEmptySlot:
     async def test_the_two_slots_go_to_the_two_legs_that_can_draw(self, board):
         market, rows = board
         payload = await _history(
-            _Session(_Result(value=market), _Result(rows=rows)), top_n=2
+            _Session(_Result(value=market), _Result(rows=()), _Result(rows=rows)), top_n=2
         )
         served = _served(payload)
 
@@ -305,7 +314,7 @@ class TestTheReaderGetsTheContenderInsteadOfTheEmptySlot:
         """Widening the board must not smuggle a refused point onto the chart."""
         market, rows = board
         payload = await _history(
-            _Session(_Result(value=market), _Result(rows=rows)), top_n=10
+            _Session(_Result(value=market), _Result(rows=()), _Result(rows=rows)), top_n=10
         )
         served = _served(payload)
         # With slots to spare Bairstow may be selected — it simply has nothing
@@ -332,7 +341,7 @@ class TestTheCommonCaseCannotMove:
         rows.sort(key=lambda r: r.captured_at)
 
         payload = await _history(
-            _Session(_Result(value=market), _Result(rows=rows)), top_n=1
+            _Session(_Result(value=market), _Result(rows=()), _Result(rows=rows)), top_n=1
         )
         served = _served(payload)
         assert _GUILLAMOUNDEGUY_ID in served
@@ -352,7 +361,7 @@ class TestTheCommonCaseCannotMove:
         rows.sort(key=lambda r: r.captured_at)
 
         payload = await _history(
-            _Session(_Result(value=market), _Result(rows=rows)), top_n=1
+            _Session(_Result(value=market), _Result(rows=()), _Result(rows=rows)), top_n=1
         )
         # Nothing draws either way; what matters is that the highest-priced leg
         # is still the one selected, exactly as today.
