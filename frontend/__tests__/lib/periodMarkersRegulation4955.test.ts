@@ -177,7 +177,6 @@ describe("#4955 a bare period number is completed only inside regulation", () =>
       undefined,
       undefined,
       undefined,
-      undefined,
       markers,
       "americanfootball_nfl",
     );
@@ -190,7 +189,6 @@ describe("#4955 a bare period number is completed only inside regulation", () =>
       { timestamp: "2026-09-11T00:30:00Z", period: "2" },
     ];
     const boundaries = derivePeriodBoundaries(
-      undefined,
       undefined,
       undefined,
       undefined,

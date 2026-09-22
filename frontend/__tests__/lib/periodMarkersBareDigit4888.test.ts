@@ -154,7 +154,6 @@ describe("#4888 a bare period number names its own unit", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       served,
       "americanfootball_nfl",
     );
@@ -169,7 +168,6 @@ describe("#4888 a bare period number names its own unit", () => {
       { timestamp: "2026-09-10T02:44:55.073599+00:00", period: "4" },
     ];
     const boundaries = derivePeriodBoundaries(
-      undefined,
       undefined,
       undefined,
       undefined,

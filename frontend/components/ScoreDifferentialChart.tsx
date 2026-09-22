@@ -936,6 +936,14 @@ export default function ScoreDifferentialChart({
          rows and looked healthy, and the only way to see that the missing one
          was HALFTIME is to read the names. */
       data-period-labels={filteredPeriodBoundaries.map((b) => b.label).join(",")}
+      /* #7901: WHEN each surviving label is drawn, in x order, as epoch ms —
+         the same channel as OddsChart's, opened for the same reason and kept in
+         step with it deliberately. Both charts consume ONE `periodBoundaries`
+         prop (`page.tsx` derives it once), so a misplaced first marker appears
+         on both; a channel on only one of them would make half the defect
+         invisible, which is the trap #6658/latency-467 recorded for the spacing
+         rule. Measured on 15316297: both charts drew `T1` at commence. */
+      data-period-times={filteredPeriodBoundaries.map((b) => parseISO(b.timestamp).getTime()).join(",")}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">

@@ -161,7 +161,6 @@ function boundaries(s: Specimen) {
     undefined,
     undefined,
     undefined,
-    s.wire.commence_time,
     s.wire.period_markers,
     s.sport
   );

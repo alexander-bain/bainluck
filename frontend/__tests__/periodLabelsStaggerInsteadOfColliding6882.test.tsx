@@ -124,7 +124,6 @@ function boundaries() {
     undefined,
     undefined,
     undefined,
-    WIRE.commence_time,
     WIRE.period_markers,
     SPORT
   );
@@ -425,7 +424,6 @@ describe("#6882 — what it does to a sport that is not football", () => {
       undefined,
       undefined,
       undefined,
-      MLB.commence_time,
       MLB.period_markers,
       "baseball_mlb"
     );
@@ -478,7 +476,7 @@ describe("#6882 — what it does to a sport that is not football", () => {
     const now = placePeriodLabels(kept, span);
     const before = preUx7876(
       derivePeriodBoundaries(
-        undefined, undefined, undefined, MLB.commence_time, MLB.period_markers, "baseball_mlb",
+        undefined, undefined, undefined, MLB.period_markers, "baseball_mlb",
       ),
       span,
     );

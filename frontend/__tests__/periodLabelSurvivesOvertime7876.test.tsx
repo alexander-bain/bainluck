@@ -95,7 +95,6 @@ function boundaries() {
     undefined,
     undefined,
     undefined,
-    WIRE.commence_time,
     WIRE.period_markers,
     SPORT
   );
@@ -430,7 +429,6 @@ describe("#7876 — it is not an overtime bug: a regulation game loses HT at the
       undefined,
       undefined,
       undefined,
-      REG.commence_time,
       REG.period_markers,
       SPORT
     );
