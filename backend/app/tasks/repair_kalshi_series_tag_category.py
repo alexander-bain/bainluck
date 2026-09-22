@@ -84,10 +84,20 @@ hides a rail quietly doing nothing (gotcha #53).
    (`Olympics`, `Television`, `Table Tennis`), or the series carries no tag, or
    there is no such series (404). Falling through is the safe failure; a guess
    is not.
+
+   ONE ANSWER IS NOT A GAP IN OUR MAPS BUT A VERDICT: the tag `Other`, the
+   venue's own "none of the above", published in the same slot it publishes a
+   sport. #7900 found the single row where that mattered and
+   :func:`_honest_blank_target` reads it, under two fences the census measured.
+   It proposes only the blank, never a sport, and gate 5 still decides. Every
+   other unresolved tag — and silence — refuses here exactly as before.
 5. `cascade_disagrees` — the venue's tag resolves to X but the SHIPPED cascade,
    given that tag, does not answer X. Something above step 1b spoke (the IPO
    rule, say). **This is the gate that makes the predicate safe rather than
    merely narrow** — the same role gate 2 plays in the enumerated sibling rails.
+   It is also the whole safety half of gate 4's honest-blank path: that path
+   proposes, this one disposes, and a row the venue declines but a name rule
+   still calls a sport keeps its badge.
 6. `already_correct` — the stored value is what the venue says. Counted, not
    written. On a healthy repeat pass this is where the whole population lands.
 
@@ -297,6 +307,78 @@ def _population_predicate():
         FuturesMarket.llm_sport_category.isnot(None),
         FuturesMarket.llm_sport_category != "other",
     )
+
+
+#: The venue's own "none of the above". Kalshi publishes this as a SERIES TAG in
+#: the same slot it publishes a sport, so it is an answer, not a silence — which
+#: is the whole distinction :func:`_honest_blank_target` turns on. Compared
+#: case-insensitively and stripped, the way `series_tag_to_category` reads a tag.
+VENUE_DECLINES_A_SPORT = "Other"
+
+#: What `llm_sport_category` reads when nothing names a sport. Not a sport word:
+#: it is #1888's door, the one value a later poll with better evidence is allowed
+#: to overwrite, which is why writing it is self-correcting and writing a guess
+#: is not.
+HONEST_BLANK = "other"
+
+
+def _honest_blank_target(tag: Optional[str], stored: Optional[str]) -> Optional[str]:
+    """``HONEST_BLANK`` when the venue itself declined a sport, else ``None``.
+
+    #7900'S RESIDUAL, AND WHY IT NEEDED A RULE RATHER THAN A ROW
+    ============================================================
+
+    `KXSTEELBRIDGE-27` ("2027 Steel Bridge National Champion", a student
+    engineering contest) is stored `football`. Kalshi tags that series literally
+    `["Other"]`, so `series_tag_to_category` returns None, so gate 4 refused it —
+    and the poller cannot move it either, because #1888's
+    `coalesce(nullif(existing, HONEST_BLANK), new)` never overwrites a value that
+    is not already the blank. Nothing in the system could reach the row.
+
+    The gap was never the classifier. Replayed on the venue's real reply, the
+    SHIPPED cascade answers `HONEST_BLANK` for this row today: the badge is a
+    stale write from before step 1b existed, frozen in place. The rail derived
+    its target from the tag alone while its safety gate asked the cascade, so the
+    one row where the cascade had a confident answer and the tag did not was the
+    one row it declined.
+
+    TWO FENCES, AND THE CENSUS SAYS WHAT EACH SAVED (2026-09-21, all 10,103 open
+    non-blank Kalshi rows; 7,827 unmapped, venue asked for all 146 series behind
+    the 430 whose stored badge is a sport and whose cascade answers the blank):
+
+    1. THE TAG IS EXACTLY ``VENUE_DECLINES_A_SPORT``. Every other unresolved tag
+       is the venue NAMING something we do not model, which is different in kind:
+       `Olympics`, `Cities`, `Table Tennis` are real answers and the badge beside
+       them may well be right. Fence saved the 11 `KXCITYCHAMPS-*` rows, whose
+       tag is `Cities`. NO TAG AT ALL stays refused by the caller's `not target`
+       and is not silence we may read as declination — the census found
+       `KXHONEYDEUCE` (`tennis`, and notice 40 says that is correct) and six
+       Fantasy Football rows (`football`, correct) sitting in exactly that state.
+
+    2. THE STORED BADGE IS ONE THIS RAIL COULD ITSELF HAVE WRITTEN — derived from
+       the same map `series_tag_to_category` resolves into, never a list here.
+       The rail may correct a badge inside its own vocabulary; it may not evict a
+       row from a vocabulary it does not own. Fence saved `KXSUMOWIN-26JGSSEP`
+       (stored `sumo`) and two `KXTFWORLDRECORD-26*` track-and-field rows (stored
+       `olympics`) — three rows the venue also tags `Other`, whose badges are
+       right and strictly more informative than the blank.
+
+    What is left after both fences, on the whole live population, is one row: the
+    Steel Bridge contest, which calibration/2723 measured serving 52 payload and
+    24 reader occurrences across the 74 upcoming NFL and NCAAF pages.
+
+    This returns only a PROPOSAL. Gate 5 — the cascade gate every other row
+    passes through — is what decides it, and it refuses unless the shipped
+    cascade, given this same tag, also answers the blank. So a row the venue
+    declines but a name rule still calls a sport keeps its badge.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    if (tag or "").strip().lower() != VENUE_DECLINES_A_SPORT.lower():
+        return None
+    if stored not in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()):
+        return None
+    return HONEST_BLANK
 
 
 def _parse_after_date(raw: Any):
@@ -681,6 +763,8 @@ async def repair(
 
         target = series_tag_to_category(result.tag)
         if not target:
+            target = _honest_blank_target(result.tag, row.llm_sport_category)
+        if not target:
             _refuse("no_usable_tag")
             examined += 1
             next_cursor = _cursor_for(row)
@@ -689,6 +773,10 @@ async def repair(
         # THE GATE THAT MAKES THE PREDICATE SAFE. The venue's tag resolves to
         # `target`, but the shipped cascade is what ingest actually runs, and
         # something above step 1b may legitimately override it.
+        #
+        # It is also the entire safety half of the honest-blank path above: that
+        # path proposes the blank and this line is what decides it, by asking the
+        # same question it asks every other row. Nothing new judges a sport.
         verdict = _categorize_kalshi_market(
             row.name or "", None, row.external_id, series_tag=result.tag
         )
@@ -718,7 +806,14 @@ async def repair(
         # The event this market hangs off is a ghost CANDIDATE — decided later,
         # in one query, by evidence this loop does not have. The venue's answer
         # travels with it so the event arm never re-derives a sport.
-        if row.event_id is not None:
+        #
+        # 🔴 A HONEST-BLANK target is not an answer about sport and must never
+        # enter that arm. `_plan_ghost_events` compares the blank against a
+        # counterpart's sport prefix, which can never equal it, so every such row
+        # would land in `counterpart_wrong_sport` — a refusal that reads as
+        # evidence weighed when in fact nothing was asked. The arm RETIRES EVENTS
+        # a reader can see; it is told only what the venue actually named.
+        if row.event_id is not None and target != HONEST_BLANK:
             target_by_event[row.event_id] = target
         examined += 1
         next_cursor = _cursor_for(row)

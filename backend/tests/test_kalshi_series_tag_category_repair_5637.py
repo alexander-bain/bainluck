@@ -1367,3 +1367,237 @@ async def test_a_failed_link_receipt_cannot_cost_the_census_or_the_undo(
     assert errs[0]["event_id"] == _GHOST_EVENT_ID
     assert errs[0]["markets"] == [_REDBLACKS_ID]
     assert "ValueError" in errs[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# #7900 — the venue's own "none of the above", and the two fences around it.
+#
+# The residual left open when #7900 shipped: `KXSTEELBRIDGE-27` ("2027 Steel
+# Bridge National Champion", a student engineering contest) is stored `football`
+# and reaches the upcoming NFL and NCAAF pages — 52 payload and 24 reader
+# occurrences across 74 pages, measured by calibration/2723 on 2026-09-21.
+# Nothing could move it: gate 4 refused because the tag resolves to no sport,
+# and the poller's `coalesce(nullif(existing, 'other'), new)` never overwrites a
+# badge that is not already the blank.
+#
+# Every specimen below is a real production row read on 2026-09-21, and each
+# fence test is the row the census says that fence saved.
+# ---------------------------------------------------------------------------
+
+#: The residual itself. Kalshi tags this series literally `["Other"]`.
+_BRIDGE_ID = 61461617
+_BRIDGE_NAME = "2027 Steel Bridge National Champion"
+_BRIDGE_TICKER = "KXSTEELBRIDGE-27"
+
+#: Fence 1's specimen: the venue NAMED something, just not a sport we model.
+_CITY_NAME = "Boston Sports: Championships before Jul 1, 2030"
+_CITY_TICKER = "KXCITYCHAMPS-BOS30JUL01CPRB"
+
+#: Fence 2's specimen: also tagged `Other`, and its badge is RIGHT — and is a
+#: word this rail's own vocabulary does not contain, so it is not the rail's to
+#: overwrite with something less informative.
+_SUMO_NAME = "Tokyo Grand Sumo September Tournament Makuuchi"
+_SUMO_TICKER = "KXSUMOWIN-26JGSSEP"
+
+
+def _bridge_row(stored="football", event_id=None):
+    return _Row(
+        _BRIDGE_ID, _BRIDGE_NAME, "kalshi", _BRIDGE_TICKER, stored, event_id=event_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_venue_declining_a_sport_converges_the_frozen_badge_7900(
+    monkeypatch,
+):
+    """THE SHIP. The only row in the live population this rule reaches.
+
+    Tagged `Other` by the venue and answered `other` by the SHIPPED cascade —
+    two independent refusals — while the stored badge says `football` and puts a
+    bridge-building contest on the NFL page. The cascade is the real one here,
+    not a stub: only the venue lookup is faked.
+    """
+    out, _ = await _plan(
+        [_bridge_row()], {_BRIDGE_TICKER: _result(tag="Other")}, monkeypatch
+    )
+
+    assert [p["id"] for p in out["planned"]] == [_BRIDGE_ID], (
+        f"the residual must converge; refused={out['refused']}"
+    )
+    plan = out["planned"][0]
+    assert plan["before"] == "football", "the D51 undo must name the value it replaced"
+    assert plan["after"] == rail.HONEST_BLANK
+    assert plan["venue_tag"] == "Other"
+    assert out["refused"] == {}
+
+
+@pytest.mark.asyncio
+async def test_the_blank_is_the_one_value_a_later_poll_may_overwrite_7900():
+    """WHY WRITING THE BLANK IS SAFE WHERE WRITING A GUESS IS NOT.
+
+    Read off `app/tasks/kalshi.py`'s own upsert rather than asserted here, so
+    that if #1888's door is ever narrowed this rail stops claiming a
+    self-correcting write it no longer has.
+    """
+    source = pathlib.Path(
+        rail.__file__.replace("repair_kalshi_series_tag_category.py", "kalshi.py")
+    ).read_text()
+    assert f'nullif(FuturesMarket.llm_sport_category, "{rail.HONEST_BLANK}")' in source, (
+        "the poller no longer exempts the value this rail writes, so the write "
+        "is no longer upgradable by better evidence — re-derive before shipping"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_tag_naming_something_unmodelled_is_still_a_fall_through_7900(
+    monkeypatch,
+):
+    """FENCE 1. `Cities` is the venue answering, not the venue declining.
+
+    The 11 live `KXCITYCHAMPS-*` rows this saves are badged `motorsports`, which
+    is wrong — but a tag we do not model is a gap in OUR maps, and reading it as
+    the venue's "none of the above" would be this rail inventing a judgement it
+    is built not to have.
+    """
+    row = _Row(999_900, _CITY_NAME, "kalshi", _CITY_TICKER, "motorsports")
+    out, _ = await _plan([row], {_CITY_TICKER: _result(tag="Cities")}, monkeypatch)
+
+    assert out["planned"] == []
+    assert out["refused"] == {"no_usable_tag": 1}
+    assert row.llm_sport_category == "motorsports", "the badge must be untouched"
+
+
+@pytest.mark.asyncio
+async def test_silence_from_the_venue_is_not_a_declination_7900(monkeypatch):
+    """FENCE 1, the other half — and the one with the most to lose.
+
+    A series carrying no tag at all (or a 404) says nothing. The census found
+    `KXHONEYDEUCE-01JAN27` in exactly this state, stored `tennis`, which notice
+    40 says is CORRECT — the Honey Deuce is a US Open market. Six Fantasy
+    Football rows sit beside it, stored `football`, also correct. Reading
+    silence as declination would blank all seven.
+    """
+    row = _Row(999_901, "Number of Honey Deuces sold at the US Open", "kalshi",
+               "KXHONEYDEUCE-01JAN27", "tennis")
+    out, _ = await _plan([row], {"KXHONEYDEUCE-01JAN27": _result(tag=None)}, monkeypatch)
+
+    assert out["planned"] == []
+    assert out["refused"] == {"no_usable_tag": 1}
+    assert row.llm_sport_category == "tennis"
+
+
+@pytest.mark.asyncio
+async def test_the_rail_may_not_evict_a_badge_from_a_vocabulary_it_does_not_own_7900(
+    monkeypatch,
+):
+    """FENCE 2. Tagged `Other`, and the badge is right anyway.
+
+    `sumo` is not a value `series_tag_to_category` can return, so it did not come
+    from this rail's evidence and is not this rail's to replace — and the blank
+    would be strictly less informative than the truth. The two live
+    `KXTFWORLDRECORD-26*` rows (stored `olympics`) are the same case.
+    """
+    row = _Row(999_902, _SUMO_NAME, "kalshi", _SUMO_TICKER, "sumo")
+    out, _ = await _plan([row], {_SUMO_TICKER: _result(tag="Other")}, monkeypatch)
+
+    assert out["planned"] == []
+    assert out["refused"] == {"no_usable_tag": 1}
+    assert row.llm_sport_category == "sumo"
+
+    # The control that makes the fence a fence rather than a coincidence: the
+    # SAME tag, the same rail, a badge that IS in the vocabulary — and it moves.
+    moved, _ = await _plan(
+        [_bridge_row()], {_BRIDGE_TICKER: _result(tag="Other")}, monkeypatch
+    )
+    assert len(moved["planned"]) == 1, (
+        "if this also refuses, the test above is passing for the wrong reason"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_cascade_still_decides_when_a_name_names_a_sport_7900(monkeypatch):
+    """GATE 5 IS UNCHANGED, and it is the whole safety half.
+
+    Same venue declination, but a name the shipped cascade reads as a sport. The
+    proposal must lose: a badge is only blanked when nothing anywhere names a
+    sport.
+    """
+    row = _Row(999_903, "Ottawa Redblacks vs Toronto Argonauts: Total Points",
+               "kalshi", _REDBLACKS_TICKER, "basketball")
+    out, _ = await _plan([row], {_REDBLACKS_TICKER: _result(tag="Other")}, monkeypatch)
+
+    assert out["planned"] == []
+    assert out["refused"] == {"cascade_disagrees": 1}, (
+        "the cascade reads a football fixture here, so the blank must be refused "
+        "by gate 5 — not accepted, and not refused as a missing tag"
+    )
+    assert row.llm_sport_category == "basketball"
+
+
+@pytest.mark.asyncio
+async def test_a_blank_target_never_reaches_the_event_retiring_arm_7900(monkeypatch):
+    """THE ARM THAT DELETES THINGS A READER CAN SEE IS NEVER TOLD THE BLANK.
+
+    `_plan_ghost_events` compares its target against a counterpart's SPORT, so a
+    blank could never retire anything — but it would still be counted under
+    `counterpart_wrong_sport`, a refusal that reads as evidence weighed when
+    nothing was asked. The arm is told only what the venue actually named.
+    """
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+    out, _ = await _plan_with_ghosts(
+        [_bridge_row(event_id=_GHOST_EVENT_ID)],
+        {_BRIDGE_TICKER: _result(tag="Other")},
+        [ghost],
+        monkeypatch,
+    )
+
+    assert len(out["planned"]) == 1, "control: the market half still converges"
+    assert out["ghost_events_planned"] == []
+    assert out["ghost_events_refused"] == {}, (
+        "an empty refusal map is the proof the arm was never entered; a leaked "
+        f"blank shows up here as a counted refusal — got {out['ghost_events_refused']}"
+    )
+
+    # And the control, on the same ghost and the same session: a target the venue
+    # DID name enters the arm and is judged. Without this the assertion above
+    # passes on any plumbing that happens to be broken.
+    named, _ = await _plan_with_ghosts(
+        [_redblacks_market()],
+        {_REDBLACKS_TICKER: _result(tag="Football")},
+        [ghost],
+        monkeypatch,
+    )
+    assert len(named["ghost_events_planned"]) == 1
+
+
+def test_the_honest_blank_helper_names_no_sport_and_derives_its_vocabulary_7900():
+    """The #7900 path must not become the second classifier the rail forbids.
+
+    `test_the_rail_has_no_sport_vocabulary_of_its_own` already scans the module,
+    so this asserts the positive: the fence is computed from the shipped map at
+    call time, so a sport added to `sport_keys.py` widens it with no edit here.
+    """
+    from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
+
+    assert rail._honest_blank_target("Other", "football") == rail.HONEST_BLANK
+    assert rail._honest_blank_target("  oThEr ", "football") == rail.HONEST_BLANK, (
+        "the tag is the venue's free text; compare it the way the maps do"
+    )
+    assert rail._honest_blank_target("Cities", "football") is None
+    assert rail._honest_blank_target(None, "football") is None
+    assert rail._honest_blank_target("Other", None) is None
+
+    # Every category the rail can WRITE is a category it may also correct — the
+    # symmetry is the rule, so it is asserted over the whole map rather than on
+    # one example.
+    for category in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()):
+        assert rail._honest_blank_target("Other", category) == rail.HONEST_BLANK, (
+            f"{category} is writable by this rail but not correctable by it"
+        )
+    assert rail.HONEST_BLANK not in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()), (
+        "the blank has become a sport word; the fences no longer mean what they say"
+    )
