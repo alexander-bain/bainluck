@@ -1109,10 +1109,20 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           over the Strait of Hormuz. `thresholdLadderTitle` refuses any scope
           key as a heading and prints the payload's own `group_title` only when
           it says something this page's `<h1>` does not. */}
+      {/* #8019 — and when BOTH are refused the rungs name their own subject.
+          This board draws one ladder per NFL team and every rung reads `≥ N`,
+          so without the fourth argument the reader meets 32 unlabelled stacks,
+          two of them identical. The outcome names are the only place the team
+          survives. */}
       {thresholdEntries.map(([stem, outcomes]) => (
         <QuantityGroup
           key={stem}
-          title={thresholdLadderTitle(stem, groupData?.group_title, market.name)}
+          title={thresholdLadderTitle(
+            stem,
+            groupData?.group_title,
+            market.name,
+            outcomes.map((o) => o.name),
+          )}
           rungs={buildThresholdRungs(outcomes)}
         />
       ))}

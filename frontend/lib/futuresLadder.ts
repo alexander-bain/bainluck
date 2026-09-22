@@ -317,6 +317,65 @@ function sameHeading(a: string, b: string | null | undefined): boolean {
   return a.trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 }
 
+/** The two refusals of #7398, applied to whatever we are about to print. */
+function printableHeading(
+  candidate: string,
+  pageTitle: string | null | undefined,
+): string | undefined {
+  const c = candidate.trim();
+  if (!c) return undefined;
+  if (isThresholdScopeKey(c)) return undefined;
+  if (sameHeading(c, pageTitle)) return undefined;
+  return c;
+}
+
+/**
+ * ── #8019: THE RUNGS NAME THEIR OWN SUBJECT ──
+ *
+ * #7398 correctly refuses a scope key as a heading, and correctly answers "no
+ * heading at all" when the only alternative echoes the page's `<h1>`. That
+ * answer is right for ONE ladder on a page. It is wrong for thirty-two:
+ * `/futures/58728338` ("Pro Football: Team Wins in First 8 Weeks") draws 32
+ * consecutive `≥ 1 / ≥ 2 / ≥ 3` stacks, two of them identical, and nothing on
+ * the page says which team any of them is about — while every outcome name in
+ * the payload begins `Buffalo: `, `Pittsburgh: `, `Cleveland: `.
+ *
+ * So when the key and the group title have both been refused, the LAST place to
+ * look is the rungs themselves: if every outcome name in this group carries the
+ * same `"<subject>: "` prefix, that subject is what distinguishes this ladder
+ * from its siblings, and it is the heading. It goes through the same two
+ * refusals — a subject is not exempt from them.
+ *
+ * WHY THIS IS A FALLBACK AND NOT A PREFERENCE. It only ever fills a heading
+ * that would otherwise be blank, so no ladder that reads correctly today can
+ * change. Measured on production 2026-09-22: over a random 40 grouped markets,
+ * 11 ladder groups derive no subject and are untouched; over the 9 open boards
+ * whose outcomes are all `"<x>: <rung>"`, 217 of 217 ladder groups derive one
+ * (longest "Deportivo De La Coruna", 22 chars — these are subjects, not prose).
+ *
+ * The subject is served verbatim. `/futures/58728387` prefixes two of its
+ * groups `New York J: ` and `New York G: `, so those cards will read "New York
+ * J" and "New York G" — Kalshi's own truncation, filed separately, and still
+ * strictly more than the nothing a reader gets today.
+ */
+export function ladderSubjectHeading(
+  outcomeNames: readonly (string | null | undefined)[] | undefined,
+): string | undefined {
+  if (!outcomeNames || outcomeNames.length === 0) return undefined;
+  let subject: string | undefined;
+  for (const name of outcomeNames) {
+    const at = (name ?? "").indexOf(": ");
+    // `at <= 0` covers both "no separator" and a name that OPENS with it, which
+    // would make the subject empty.
+    if (at <= 0) return undefined;
+    const candidate = (name ?? "").slice(0, at).trim();
+    if (!candidate) return undefined;
+    if (subject === undefined) subject = candidate;
+    else if (subject !== candidate) return undefined;
+  }
+  return subject;
+}
+
 /**
  * The reader-facing heading for one threshold ladder, or `undefined` for none
  * (`QuantityGroup`'s `title` is optional — omitted means no title row).
@@ -325,14 +384,13 @@ export function thresholdLadderTitle(
   scopeKey: string,
   groupTitle: string | null | undefined,
   pageTitle: string | null | undefined,
+  outcomeNames?: readonly (string | null | undefined)[],
 ): string | undefined {
-  const candidate = (
-    isThresholdScopeKey(scopeKey) ? groupTitle ?? "" : scopeKey
-  ).trim();
-  if (!candidate) return undefined;
-  if (isThresholdScopeKey(candidate)) return undefined;
-  if (sameHeading(candidate, pageTitle)) return undefined;
-  return candidate;
+  const candidate = isThresholdScopeKey(scopeKey) ? groupTitle ?? "" : scopeKey;
+  return (
+    printableHeading(candidate, pageTitle) ??
+    printableHeading(ladderSubjectHeading(outcomeNames) ?? "", pageTitle)
+  );
 }
 
 /**
