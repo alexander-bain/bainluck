@@ -220,6 +220,25 @@ def _read_longdated_cursor(rc) -> str:
     return raw.decode() if isinstance(raw, bytes) else (raw or "")
 
 
+#: Band 5's budget (#7870). 50, the same as band 4, and the arithmetic is the
+#: reason rather than the symmetry: the population is **736 tickers** (measured
+#: 2026-09-21), so 50 a cycle at 48 cycles/day sweeps the whole of it in ~15
+#: cycles, about 7.5 hours, and the cost is a fixed 50 `GET /events/{ticker}`
+#: per cycle whatever the population does.
+_STATUS_SYNC_MAX_TICKERS = 50
+
+#: Band 5's cursor key. Its OWN, for gotcha #34's reason — three bands now walk
+#: the same alphabet over different populations, and a shared key would have
+#: each one skipping every ticker the others had just passed.
+_STATUS_SYNC_CURSOR_KEY = "bainluck:kalshi_winner_status_sync_cursor"
+
+
+def _read_status_sync_cursor(rc) -> str:
+    """Band 5's cursor, decoded. Same contract as `_read_longdated_cursor`."""
+    raw = rc.get(_STATUS_SYNC_CURSOR_KEY)
+    return raw.decode() if isinstance(raw, bytes) else (raw or "")
+
+
 def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     """Split a cycle's ticker budget into (recency band, alphabetical tail band).
 
@@ -619,6 +638,114 @@ async def _select_kalshi_early_settled_longdated_tickers(
     return [r[0] for r in rows.all()]
 
 
+async def _select_kalshi_status_sync_tickers(
+    session, limit: int, cursor: str
+) -> list[str]:
+    """Band 5 — WE HOLD THE VENUE'S ANSWER AND OUR STATUS STILL SAYS OTHERWISE.
+
+    #7870. Bands 1-4 all decide membership on whether a market needs GRADING.
+    This one exists because grading and status are two different claims, and
+    #7857 is the case where the first landed and the second did not: the legs
+    carry the venue's verdict, `futures_markets.status` still reads `open`, and
+    the frontend gates every settled affordance on that column (`gradedWinner()`
+    returns null unless `status === "resolved"`). So the page reads LIVE over a
+    question we have already answered, and no band is coming.
+
+    WHY NO BAND IS COMING — this is the whole argument, and each half is one
+    clause of one other band:
+
+      * bands 1 and 2 require `fm.status = 'resolved'`, which is the very thing
+        that is wrong with these rows. Asking them to fix it is circular.
+      * bands 3 and 4 require `NOT EXISTS (fo.is_winner IS TRUE)` — correctly,
+        since their job is to fetch an answer we lack. The instant one of them
+        succeeds, the market it just graded leaves their population for ever.
+
+    So this band is the EXACT COMPLEMENT of both pairs, on one clause each, and
+    is therefore disjoint from all four by construction (gotcha #34): `status <>
+    'resolved'` against bands 1/2, `EXISTS (an authoritative winner)` against
+    bands 3/4. It takes no ticker any other band would have taken, and it has
+    its own budget and its own cursor so it cannot spend theirs.
+
+    THE SPECIMEN, AND WHY THE FIRST ATTEMPT AT #7870 COULD NOT REACH IT.
+    Market 112815 `FEDHIKE` "Next Fed rate hike?" is served at `/futures/112815`
+    as a 95% hero with a live chart over a question Kalshi finalized on
+    2026-09-16. #7857's band 4 graded its three rungs — and in doing so moved it
+    out of band 4. By the time the status write shipped, production read
+    `status='open'`, 6 legs, 3 winners, all `api_settlement`, and NO SELECTOR IN
+    THE PRODUCT COULD NAME IT. The status write was correct and unreachable; a
+    test that stubs the selectors and force-feeds the ticker cannot see that,
+    which is exactly what CERT-3263 blocked the first presentation for.
+
+    MEASURED BEFORE BUILDING, at the venue (notice 26/27), 2026-09-21 — a
+    CENSUS of the band's whole population, not a sample, because "flip status in
+    bulk" is a serve-time change and `status` filters feed, search and the
+    category pages. All **736** members probed on
+    `GET /events/{ticker}?with_nested_markets=true`, zero errors:
+
+      * **13 all-terminal** → the band asks, the venue confirms, the row flips.
+        `FEDHIKE` is one of them, and so are four finished WNBA season win
+        totals (`KXWNBAWINS-26{GS,MIN,NY,TOR}`), the Rays' (`KXMLBWINS-TB-26`),
+        Hurricane Karina's category, two Drake YouTube-views markets and the
+        `KXJUSTICEDEMWIN-26NOV03` / `KXDSAWINS-26NOV03` pair — every one of them
+        a page reading live over a settled question right now.
+      * **298 mixed** → correctly HELD. This is the population's dominant shape
+        and the reason the band is safe: a settled rung on a live ladder
+        (`KXNFLWINSWEEK-26W8`, 62 finalized + 180 active) is an ordinary,
+        correct `open` market and `all_terminal` refuses it.
+      * **425 empty** → correctly HELD. The venue answers 200 with no markets
+        and `all_terminal([])` is False on purpose: an absence is not a
+        settlement (gotcha #53).
+
+    A gate that fires on 13 of 736 and holds 723 is discriminating, which is the
+    property worth having; the 13 is the smaller half of the claim.
+
+    WHY THE OBVIOUS NARROWER POPULATION IS WORSE, banked so nobody re-derives
+    it: "every leg authoritatively graded" sounds tighter and is not — it is
+    1,160 rows of which ZERO of 69 probed were terminal at the venue, because
+    `api_settlement` legs are written by the CAL-P1004 fabricator shape on
+    markets the venue still calls `active` (`KXMIDTERMMOV-FLSEND`). One
+    authoritative WINNER is the signal; a count of graded legs is not.
+
+    ORDERED BY CURSOR, NOT BY DATE, AND HERE THE REASON IS STRONGER THAN BAND
+    4's. A member leaves this population only when its status flips, and the
+    census says 723 of 736 will never flip — the venue has not finished them. A
+    date sort would therefore re-probe the same permanent head every cycle, for
+    ever, and the 13 rows that need the work would be reached only if they
+    happened to sort early. Band 2 solved this shape for the 71k-ticker tail
+    with an alphabetical cursor; this is that pattern, on its own Redis key.
+
+    `AUTHORITATIVE_SOURCES_SQL` is imported rather than retyped so this band can
+    never drift from the tier-3 set the four bands above test against.
+
+    This band SELECTS; it does not write. The status write stays where it is, at
+    the end of the per-ticker loop, behind `kms.all_terminal(...)` on the
+    venue's own nested statuses — so the venue remains the only thing that can
+    settle a market, and this band only decides who gets asked.
+    """
+    if limit <= 0:
+        return []
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id
+            FROM futures_markets fm
+            WHERE fm.source = 'kalshi'
+              AND fm.status <> 'resolved'
+              AND fm.external_id > :cursor
+              AND EXISTS (
+                  SELECT 1 FROM futures_outcomes fo
+                  WHERE fo.market_id = fm.id
+                    AND fo.is_winner IS TRUE
+                    AND COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+              )
+            GROUP BY fm.external_id
+            ORDER BY fm.external_id ASC
+            LIMIT :limit
+        """),
+        {"limit": limit, "cursor": cursor},
+    )
+    return [r[0] for r in rows.all()]
+
+
 #: Phase 0c-repair's promotion, hoisted to module level so a test can execute
 #: THE SHIPPED STATEMENT (#4745, CAL-P1086).
 #:
@@ -970,6 +1097,17 @@ async def _backfill_kalshi_winners(
         "tail_selected": 0,
         "early_selected": 0,
         "longdated_selected": 0,
+        # #7870 band 5 — how many rows this cycle asked about BECAUSE their
+        # status disagreed with their own grades. Its own counter for the same
+        # reason `status_resolved` has one: a cycle that selected nothing here
+        # and a cycle that selected 50 and confirmed none of them are different
+        # states, and the grading counters cannot tell them apart.
+        "status_sync_selected": 0,
+        # #7870 — markets this pass flipped to 'resolved' because the venue
+        # reported every market in the event terminal. Its OWN counter, never
+        # folded into winners/losers: the grade and the status are two different
+        # claims and #7857 is the case where one landed without the other.
+        "status_resolved": 0,
         "errors": [],
     }
 
@@ -1012,6 +1150,17 @@ async def _backfill_kalshi_winners(
         longdated_tickers = await _select_kalshi_early_settled_longdated_tickers(
             session, _EARLY_SETTLED_LONGDATED_MAX_TICKERS, _longdated_cursor
         )
+        # #7870 — band 5, the rows where the GRADE landed and the STATUS did
+        # not. Own budget and own cursor for gotcha #34's reason, exactly as
+        # band 4 has; it is disjoint from bands 1/2 by `status <> 'resolved'`
+        # and from bands 3/4 by requiring the authoritative winner they refuse,
+        # so it can take a ticker from none of them. It runs in the fast lane
+        # too: its cost is a fixed `_STATUS_SYNC_MAX_TICKERS` lookups whatever
+        # the population does, which is what the cursor buys.
+        _status_sync_cursor = _read_status_sync_cursor(_rc)
+        status_sync_tickers = await _select_kalshi_status_sync_tickers(
+            session, _STATUS_SYNC_MAX_TICKERS, _status_sync_cursor
+        )
     fresh_set = set(fresh_tickers)
 
     # Band 4's cursor advances on band 4 alone, and WRAPS when the sweep runs dry
@@ -1036,6 +1185,23 @@ async def _backfill_kalshi_winners(
             "Kalshi winner backfill: long-dated cursor wrapped, will restart next run"
         )
 
+    # Band 5's cursor, on band 5 alone, wrapping for band 4's reason: its
+    # statement runs on every cycle of both lanes, so an empty result here is
+    # MEASURED rather than structural — it means the walk genuinely reached the
+    # end of the population — and without the wrap the band would ask about the
+    # alphabetical tail for ever and never revisit a market the venue settles
+    # later. (Band 2's identical-looking branch is guarded by `_use_tail_cursor`
+    # precisely because its statement does NOT run in the fast lane, so its
+    # emptiness is assumed; see the docstring there. This band deliberately does
+    # not consult that flag.)
+    if status_sync_tickers:
+        _rc.setex(_STATUS_SYNC_CURSOR_KEY, 86400 * 14, status_sync_tickers[-1])
+    elif _status_sync_cursor:
+        _rc.delete(_STATUS_SYNC_CURSOR_KEY)
+        logger.info(
+            "Kalshi winner backfill: status-sync cursor wrapped, will restart next run"
+        )
+
     # The cursor advances on the TAIL band alone. A recency ticker can sort
     # anywhere in the alphabet, so letting one set the cursor would skip every
     # tail ticker between here and there — the reach bug this ship exists to fix,
@@ -1054,12 +1220,20 @@ async def _backfill_kalshi_winners(
     stats["tail_selected"] = len(tail_tickers)
     stats["early_selected"] = len(early_tickers)
     stats["longdated_selected"] = len(longdated_tickers)
+    stats["status_sync_selected"] = len(status_sync_tickers)
 
     tickers = fresh_tickers + [t for t in tail_tickers if t not in fresh_set]
     _selected = set(tickers)
     tickers += [t for t in early_tickers if t not in _selected]
     _selected = set(tickers)
     tickers += [t for t in longdated_tickers if t not in _selected]
+    # The de-dup is belt-and-braces, not the disjointness argument: band 5 is
+    # disjoint from all four above by its WHERE clause (see its docstring), and
+    # this line would be a no-op even if it were deleted. It is here because
+    # every other band has it and a reader should not have to wonder why one
+    # band is different.
+    _selected = set(tickers)
+    tickers += [t for t in status_sync_tickers if t not in _selected]
 
     if not tickers:
         logger.info("Kalshi winner backfill: nothing to do")
@@ -1262,6 +1436,100 @@ async def _backfill_kalshi_winners(
                                         }
                                     )
 
+                    # --- #7870: THE GRADE IS NOT THE STATUS ---
+                    #
+                    # The legs above are now graded, and for a reader that is
+                    # still not a settled market. The whole frontend gates every
+                    # settled affordance on `market.status` — `gradedWinner()`
+                    # returns null unless `status === "resolved"` — and that gate
+                    # is correct and is deliberately NOT loosened here: a stray
+                    # `is_winner` must never let a live market claim a result.
+                    # So the status has to follow the grade, from the same read.
+                    #
+                    # WHY THIS ROW NEEDS US. `futures_markets.status` is written
+                    # to 'resolved' by two rails and #7857's specimen escapes
+                    # both. `_poll_kalshi_markets` derives it from exactly this
+                    # rule (`all_terminal(m.status for m in event.markets)`) on
+                    # every poll — but polling is keyed on the SERIES, and when
+                    # Kalshi RETIRES a series into a successor
+                    # (`FEDHIKE` → `KXFEDHIKE`) `/markets?series_ticker=FEDHIKE`
+                    # returns 0 markets in every status, so the poller goes dark
+                    # on rows the venue has already answered (gotcha #33, one
+                    # step on). The resolution-window sweep (CAL-P1019 / #2722)
+                    # fires on `resolution_date`, which for that specimen is
+                    # 2028-01-01. The grader's door, meanwhile, was never shut:
+                    # `GET /events/FEDHIKE` answers 200 with three `finalized`
+                    # markets, and we are holding that answer right now.
+                    #
+                    # SO THIS IS NOT A NEW POLICY — IT IS THE POLLER'S OWN RULE,
+                    # REACHING THE ROWS THE POLLER CANNOT SEE. `all_terminal` is
+                    # imported, not retyped, so the two can never drift; if
+                    # `closed`'s known false positive (#1818 — terminal, but no
+                    # result yet) is ever removed from `TERMINAL_STATUSES`, both
+                    # call sites move together.
+                    #
+                    # MEASURED BEFORE BUILDING, at the venue (notice 26/27), on
+                    # 2026-09-21 — because "flip status in bulk" is a serve-time
+                    # change and `status` filters feed, search and the category
+                    # pages. 173 Kalshi events read live:
+                    #   * two random strata of our open-with-a-graded-leg
+                    #     population — 52 and 69 readable events — produced
+                    #     **0** flips. The gate does not blanket-flip: those
+                    #     markets are genuinely mid-flight (a settled rung on a
+                    #     live ladder is the common shape, e.g.
+                    #     `KXYTVIEWSW-ARI26SEP20`, 4 finalized + 11 active).
+                    #   * the 13 open markets already past their own
+                    #     `resolution_date` — a census, not a sample — produced
+                    #     **12**, every one of them fully `finalized` at the
+                    #     venue and reading LIVE on the site: finished ITF
+                    #     tennis matches, Rainbow Six games, and the day's
+                    #     gold/silver/copper/brent/natgas settlement ladders.
+                    #     The 13th (`KXT20MATCH-…`, 2 × `active`) was correctly
+                    #     held.
+                    # A gate that fires on 12 of 13 overdue rows and 0 of 121
+                    # mid-flight ones is discriminating, which is the property
+                    # worth having — the count is the smaller half of that.
+                    #
+                    # KNOWN RESIDUAL, NAMED RATHER THAN PAPERED OVER: an event
+                    # the venue has otherwise finished but whose last leg is
+                    # `inactive` (listed, never traded) is NOT all-terminal and
+                    # does not flip — measured on `KXPGATOP20-BICA26` and
+                    # `KXPGATOP5-BICA26`, 133 `finalized` + 1 `inactive` each.
+                    # Widening `TERMINAL_STATUSES` to admit `inactive` is the
+                    # wrong repair (it is the normal state of an unstarted
+                    # market, 622 of 2,000 in the #1818 probe) and would need
+                    # its own census. Filed, not fixed here.
+                    #
+                    # An event with NO markets cannot reach this branch:
+                    # `all_terminal([])` is False on purpose — an absence is not
+                    # a settlement (gotcha #53) — and 31 of the tickers probed
+                    # above answered 200 with an empty market list, which is
+                    # exactly the shape that rule exists for.
+                    if not dry_run and kms.all_terminal(
+                        m.get("status") for m in nested
+                    ):
+                        resolved = await session.execute(
+                            update(FuturesMarket)
+                            .where(
+                                FuturesMarket.source == "kalshi",
+                                FuturesMarket.external_id == event_ticker,
+                                FuturesMarket.status != "resolved",
+                            )
+                            .values(
+                                status="resolved",
+                                # COALESCE, not NOW(): a market that was resolved
+                                # once, reopened by a poll and is being resolved
+                                # again keeps the first stamp. LINKLOSS-02 couples
+                                # the stamp to the status in one statement for the
+                                # same reason.
+                                settled_at=func.coalesce(
+                                    FuturesMarket.settled_at, func.now()
+                                ),
+                            )
+                        )
+                        if resolved.rowcount > 0:
+                            stats["status_resolved"] += resolved.rowcount
+
                 if not dry_run:
                     await session.commit()
 
@@ -1283,7 +1551,9 @@ async def _backfill_kalshi_winners(
     logger.info(
         "Kalshi winner backfill: %d queried, %d found, %d api_miss, "
         "%d winners, %d losers, %d not_found, %d errors "
-        "(just-settled band: %d selected, %d outcomes graded)",
+        "(just-settled band: %d selected, %d outcomes graded; "
+        "status-sync band: %d selected; "
+        "%d market(s) flipped to resolved)",
         stats["tickers_queried"],
         stats["events_found"],
         stats["api_miss"],
@@ -1293,6 +1563,16 @@ async def _backfill_kalshi_winners(
         len(stats["errors"]),
         stats["fresh_selected"],
         stats["fresh_graded"],
+        # #7870 band 5: the selection count is the half that proves the band is
+        # ARMED. `status_resolved` alone cannot — it reads 0 both when the band
+        # asked about 50 rows the venue has not finished (correct, the common
+        # case: 723 of 736 by census) and when the band selected nothing at all
+        # (broken). Two counters, because they are two different questions.
+        stats["status_sync_selected"],
+        # #7870: on its own, because a pass that graded legs and flipped nothing
+        # is exactly the #7857 failure — the grade landing while the page stays
+        # live — and the winners/losers counters cannot tell it apart.
+        stats["status_resolved"],
     )
     return stats
 
