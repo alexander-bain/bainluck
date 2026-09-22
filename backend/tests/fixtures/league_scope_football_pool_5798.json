@@ -1,0 +1,1575 @@
+{
+ "captured_utc": "2026-09-21T22:5xZ",
+ "source": "production db-query: market_tier BETWEEN 1 AND 4, (status=open OR NULL), llm_sport_category=football",
+ "row_count": 392,
+ "markets": [
+  {
+   "name": "2026 CFL Grey Cup Champion",
+   "external_id": "KXGREYCUP-26"
+  },
+  {
+   "name": "2027 Pro Football Champion",
+   "external_id": "KXSB-27"
+  },
+  {
+   "name": "2027 Steel Bridge National Champion",
+   "external_id": "KXSTEELBRIDGE-27"
+  },
+  {
+   "name": "AAC Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26AAC"
+  },
+  {
+   "name": "ACC Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-ACC26"
+  },
+  {
+   "name": "AFC Championship Matchup",
+   "external_id": "KXNFLMATCHUP-27AFC"
+  },
+  {
+   "name": "AFC Championship Winner",
+   "external_id": "KXNFLAFCCHAMP-27"
+  },
+  {
+   "name": "AFC East Division Winner",
+   "external_id": "KXNFLAFCEAST-27"
+  },
+  {
+   "name": "AFC East: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27AFCEAST"
+  },
+  {
+   "name": "AFC East: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27AFCEAST"
+  },
+  {
+   "name": "AFC North Division Winner",
+   "external_id": "KXNFLAFCNORTH-27"
+  },
+  {
+   "name": "AFC North: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27AFCNORTH"
+  },
+  {
+   "name": "AFC North: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27AFCNORTH"
+  },
+  {
+   "name": "AFC Offensive Player of the Month in September",
+   "external_id": "KXNFLPOTM-SEP26AFCOFFENSE"
+  },
+  {
+   "name": "AFC South Division Winner",
+   "external_id": "KXNFLAFCSOUTH-27"
+  },
+  {
+   "name": "AFC South: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27AFCSOUTH"
+  },
+  {
+   "name": "AFC South: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27AFCSOUTH"
+  },
+  {
+   "name": "AFC West Division Winner",
+   "external_id": "KXNFLAFCWEST-27"
+  },
+  {
+   "name": "AFC West: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27AFCWEST"
+  },
+  {
+   "name": "AFC West: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27AFCWEST"
+  },
+  {
+   "name": "AP College Football Player of the Year Winner",
+   "external_id": "KXNCAAFAWARD-26APPOY"
+  },
+  {
+   "name": "Bear Bryant Coach of the Year Winner",
+   "external_id": "KXNCAAFCOTY-27"
+  },
+  {
+   "name": "Bednarik Award Finalists",
+   "external_id": "KXNCAAFAWARDFIN-26BEDN"
+  },
+  {
+   "name": "Bednarik Award Winner",
+   "external_id": "KXNCAAFAWARD-26BEDN"
+  },
+  {
+   "name": "Big 12 Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26BIG12"
+  },
+  {
+   "name": "Big Ten Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26BIGTEN"
+  },
+  {
+   "name": "Big Ten Regular Season Champion",
+   "external_id": "KXNCAAMBBIGTENREG-27"
+  },
+  {
+   "name": "Biletnikoff Award Finalists",
+   "external_id": "KXNCAAFAWARDFIN-26BILE"
+  },
+  {
+   "name": "Biletnikoff Award Winner",
+   "external_id": "KXNCAAFAWARD-26BILE"
+  },
+  {
+   "name": "Boise St. vs Western Michigan",
+   "external_id": "KXNCAAFGAME-26SEP26BSUWMU"
+  },
+  {
+   "name": "Bronko Nagurski Trophy Winner",
+   "external_id": "KXNCAAFAWARD-26BRON"
+  },
+  {
+   "name": "Broyles Award Winner",
+   "external_id": "KXNCAAFAWARD-26BROY"
+  },
+  {
+   "name": "Butkus Award Winner",
+   "external_id": "KXNCAAFAWARD-26BUTK"
+  },
+  {
+   "name": "Cal Poly vs Eastern Washington",
+   "external_id": "KXNCAAFGAME-26SEP26CPEWU"
+  },
+  {
+   "name": "Central Arkansas vs Florida St.",
+   "external_id": "KXNCAAFGAME-26SEP26CARKFSU"
+  },
+  {
+   "name": "Central Michigan vs Miami (FL)",
+   "external_id": "KXNCAAFGAME-26SEP26CMUMIA"
+  },
+  {
+   "name": "Class of Heisman Trophy Winner",
+   "external_id": "KXHEISMANSPECIAL-26CLASS"
+  },
+  {
+   "name": "Coach of the Year Winner?",
+   "external_id": "KXNFLCOTY-27"
+  },
+  {
+   "name": "College Football AAC Championship Game Qualifiers",
+   "external_id": "KXNCAAFAACQUAL-26"
+  },
+  {
+   "name": "College Football AAC Championship Winner",
+   "external_id": "KXNCAAFAAC-26"
+  },
+  {
+   "name": "College Football ACC Championship Game Qualifiers",
+   "external_id": "KXNCAAFACCQUAL-26"
+  },
+  {
+   "name": "College Football ACC Championship Winner",
+   "external_id": "KXNCAAFACC-26"
+  },
+  {
+   "name": "College Football Big 12 Championship Game Qualifiers",
+   "external_id": "KXNCAAFB12QUAL-26"
+  },
+  {
+   "name": "College Football Big 12 Championship Winner",
+   "external_id": "KXNCAAFB12-26"
+  },
+  {
+   "name": "College Football Big Ten Championship Game Qualifiers",
+   "external_id": "KXNCAAFB10QUAL-26"
+  },
+  {
+   "name": "College Football Big Ten Championship Winner",
+   "external_id": "KXNCAAFB10-26"
+  },
+  {
+   "name": "College Football Conference USA Championship Game Qualifiers",
+   "external_id": "KXNCAAFCUSAQUAL-26"
+  },
+  {
+   "name": "College Football Conference USA Championship Winner",
+   "external_id": "KXNCAAFCUSA-26"
+  },
+  {
+   "name": "College Football FCS National Championship Winner",
+   "external_id": "KXNCAAFFCS-27"
+  },
+  {
+   "name": "College Football MAC Championship Game Qualifiers",
+   "external_id": "KXNCAAFMACQUAL-26"
+  },
+  {
+   "name": "College Football MAC Championship Winner",
+   "external_id": "KXNCAAFMAC-26"
+  },
+  {
+   "name": "College Football Mountain West Championship Game Qualifiers",
+   "external_id": "KXNCAAFMWCQUAL-26"
+  },
+  {
+   "name": "College Football Mountain West Championship Winner",
+   "external_id": "KXNCAAFMWC-26"
+  },
+  {
+   "name": "College Football National Championship Qualifiers",
+   "external_id": "KXNCAAFFINALIST-27"
+  },
+  {
+   "name": "College Football National Championship Winner",
+   "external_id": "KXNCAAF-27"
+  },
+  {
+   "name": "College Football Pac-12 Championship Game Qualifiers",
+   "external_id": "KXNCAAFPAC12QUAL-26"
+  },
+  {
+   "name": "College Football Pac-12 Championship Winner",
+   "external_id": "KXNCAAFPAC12-26"
+  },
+  {
+   "name": "College Football Playoff Qualifiers",
+   "external_id": "KXNCAAFPLAYOFF-26"
+  },
+  {
+   "name": "College Football SEC Championship Game Qualifiers",
+   "external_id": "KXNCAAFSECQ-26"
+  },
+  {
+   "name": "College Football SEC Championship Winner",
+   "external_id": "KXNCAAFSEC-26"
+  },
+  {
+   "name": "College Football Sun Belt Championship Game Qualifiers",
+   "external_id": "KXNCAAFSBELTQUAL-26"
+  },
+  {
+   "name": "College Football Sun Belt Championship Winner",
+   "external_id": "KXNCAAFSBELT-26"
+  },
+  {
+   "name": "College Football: Teams to leave their Conference",
+   "external_id": "KXNCAAFCONFLEAVE-27"
+  },
+  {
+   "name": "Comeback Player of the Year Winner?",
+   "external_id": "KXNFLCPOTY-27"
+  },
+  {
+   "name": "Conference of Heisman Trophy Winner",
+   "external_id": "KXHEISMANSPECIAL-26CONF"
+  },
+  {
+   "name": "Conference to Win the National Championship",
+   "external_id": "KXNCAAFCONF-26"
+  },
+  {
+   "name": "Conference USA Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26CUSA"
+  },
+  {
+   "name": "Davey O'Brien Award Winner",
+   "external_id": "KXNCAAFAWARD-26DAVE"
+  },
+  {
+   "name": "Defensive Player of the Year Finalists",
+   "external_id": "KXNFLAWARDFIN-27DPOY"
+  },
+  {
+   "name": "Defensive Player of the Year Winner?",
+   "external_id": "KXNFLDPOTY-27"
+  },
+  {
+   "name": "Defensive Player to be a Heisman Trophy Finalist",
+   "external_id": "KXHEISMANFINSPECIAL-26DEF"
+  },
+  {
+   "name": "Defensive Rookie of the Month in September",
+   "external_id": "KXNFLROTM-SEP26DEFENSE"
+  },
+  {
+   "name": "Defensive Rookie of the Year Winner?",
+   "external_id": "KXNFLDROTY-27"
+  },
+  {
+   "name": "Division I: Passing Touchdowns Leader",
+   "external_id": "KXNCAAFLEADER-26PASSTD"
+  },
+  {
+   "name": "Division I: Passing Yards Leader",
+   "external_id": "KXNCAAFLEADER-26PASSYDS"
+  },
+  {
+   "name": "Division I: Receiving Yards Leader",
+   "external_id": "KXNCAAFLEADER-26RECYDS"
+  },
+  {
+   "name": "Division I: Rushing Yards Leader",
+   "external_id": "KXNCAAFLEADER-26RSHYDS"
+  },
+  {
+   "name": "Division with the Least Total Wins",
+   "external_id": "KXNFLDIVLEASTWINS-27"
+  },
+  {
+   "name": "Division with the Most Total Wins",
+   "external_id": "KXNFLDIVMOSTWINS-27"
+  },
+  {
+   "name": "Doak Walker Award Winner",
+   "external_id": "KXNCAAFAWARD-26DOAK"
+  },
+  {
+   "name": "Eastern Illinois vs South Dakota St.",
+   "external_id": "KXNCAAFGAME-26SEP26EIUSDST"
+  },
+  {
+   "name": "Eddie Robinson Award Winner",
+   "external_id": "KXNCAAFAWARD-26EDDI"
+  },
+  {
+   "name": "Florida Atlantic vs Louisiana-Monroe",
+   "external_id": "KXNCAAFGAME-26SEP26FAUULM"
+  },
+  {
+   "name": "Group of Six or FCS Player to be a Heisman Trophy Finalist",
+   "external_id": "KXHEISMANFINSPECIAL-26G6FCS"
+  },
+  {
+   "name": "Heisman Trophy Finalists",
+   "external_id": "KXHEISMANFINALIST-26"
+  },
+  {
+   "name": "Heisman Trophy Winner",
+   "external_id": "KXHEISMAN-27"
+  },
+  {
+   "name": "Heisman Trophy Winner to win National Championship",
+   "external_id": "KXHEISMANSPECIAL-26CHAMP"
+  },
+  {
+   "name": "Highest Scoring Fantasy Game by a Rookie",
+   "external_id": "KXNFLFFHIGHSCORE-27ROOK"
+  },
+  {
+   "name": "Jim Thorpe Award Winner",
+   "external_id": "KXNCAAFAWARD-26JIMT"
+  },
+  {
+   "name": "John Mackey Award Winner",
+   "external_id": "KXNCAAFAWARD-26JOHN"
+  },
+  {
+   "name": "Lindenwood vs Eastern Michigan",
+   "external_id": "KXNCAAFGAME-26SEP26LINWEMU"
+  },
+  {
+   "name": "Lou Groza Award Winner",
+   "external_id": "KXNCAAFAWARD-26LOUG"
+  },
+  {
+   "name": "LSU to beat Texas in regular season and National Championship",
+   "external_id": "KXNCAAFLSUTEX2X-27"
+  },
+  {
+   "name": "MAC Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26MAC"
+  },
+  {
+   "name": "Maxwell Award Finalists",
+   "external_id": "KXNCAAFAWARDFIN-26MAXW"
+  },
+  {
+   "name": "Maxwell Award Winner",
+   "external_id": "KXNCAAFAWARD-26MAXW"
+  },
+  {
+   "name": "Mercyhurst vs Western Kentucky",
+   "external_id": "KXNCAAFGAME-26SEP26MHUWKU"
+  },
+  {
+   "name": "Mountain West Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26MW"
+  },
+  {
+   "name": "MVP Finalists",
+   "external_id": "KXNFLAWARDFIN-27MVP"
+  },
+  {
+   "name": "MVP Winner?",
+   "external_id": "KXNFLMVP-27"
+  },
+  {
+   "name": "NCAAF Championship Winner",
+   "external_id": "americanfootball_ncaaf_championship_winner"
+  },
+  {
+   "name": "NCAA Football 2026 ACC Conference: Winner",
+   "external_id": "779030"
+  },
+  {
+   "name": "NCAA Football 2026 American Conference: Winner",
+   "external_id": "778727"
+  },
+  {
+   "name": "NCAA Football 2026 American CUSA Conference: Winner",
+   "external_id": "779027"
+  },
+  {
+   "name": "NCAA Football 2026 Big 12 Conference: Winner",
+   "external_id": "779029"
+  },
+  {
+   "name": "NCAA Football 2026 Big Ten Conference: Winner",
+   "external_id": "779028"
+  },
+  {
+   "name": "NCAA Football: 2026 Heisman Award Winner",
+   "external_id": "778992"
+  },
+  {
+   "name": "NCAA Football 2026 MAC Conference: Winner",
+   "external_id": "779026"
+  },
+  {
+   "name": "NCAA Football 2026 Mountain West Conference: Winner",
+   "external_id": "779025"
+  },
+  {
+   "name": "NCAA Football 2026 PAC-12 Conference: Winner",
+   "external_id": "779017"
+  },
+  {
+   "name": "NCAA Football 2026 SEC Conference: Winner",
+   "external_id": "779013"
+  },
+  {
+   "name": "NCAA Football 2026 Sun Belt Conference: Winner",
+   "external_id": "779010"
+  },
+  {
+   "name": "NCAA Football: 2027 National Champion",
+   "external_id": "357914"
+  },
+  {
+   "name": "NCAA Football: Class of Heisman Winner",
+   "external_id": "796722"
+  },
+  {
+   "name": "NCAA Football: Conference of Heisman Winner",
+   "external_id": "801462"
+  },
+  {
+   "name": "NCAA Football: Conference to Win National Championship",
+   "external_id": "779008"
+  },
+  {
+   "name": "NCAA Football: Team to make College Football Playoffs",
+   "external_id": "948140"
+  },
+  {
+   "name": "NCAA Football: Team to Make National Championship",
+   "external_id": "801515"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 ACC Championship Game",
+   "external_id": "956319"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 American Conference Championship Game",
+   "external_id": "956323"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 Big 12 Championship Game",
+   "external_id": "956321"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 Big Ten Championship Game",
+   "external_id": "956320"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 Conference USA Championship Game",
+   "external_id": "956324"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 MAC Championship Game",
+   "external_id": "956325"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 Mountain West Championship Game",
+   "external_id": "956326"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 PAC-12 Championship Game",
+   "external_id": "956327"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 SEC Championship Game",
+   "external_id": "956322"
+  },
+  {
+   "name": "NCAA Football: Team to Qualify for 2026 Sun Belt Championship Game",
+   "external_id": "956328"
+  },
+  {
+   "name": "New York J and New York G: Both Make the Playoffs",
+   "external_id": "KXNFLPLAYOFFC-27NYJNYG"
+  },
+  {
+   "name": "NFC Championship Matchup",
+   "external_id": "KXNFLMATCHUP-27NFC"
+  },
+  {
+   "name": "NFC Championship Winner",
+   "external_id": "KXNFLNFCCHAMP-27"
+  },
+  {
+   "name": "NFC East Division Winner",
+   "external_id": "KXNFLNFCEAST-27"
+  },
+  {
+   "name": "NFC East: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27NFCEAST"
+  },
+  {
+   "name": "NFC East: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27NFCEAST"
+  },
+  {
+   "name": "NFC North Division Winner",
+   "external_id": "KXNFLNFCNORTH-27"
+  },
+  {
+   "name": "NFC North: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27NFCNORTH"
+  },
+  {
+   "name": "NFC North: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27NFCNORTH"
+  },
+  {
+   "name": "NFC Offensive Player of the Month in September",
+   "external_id": "KXNFLPOTM-SEP26NFCOFFENSE"
+  },
+  {
+   "name": "NFC South Division Winner",
+   "external_id": "KXNFLNFCSOUTH-27"
+  },
+  {
+   "name": "NFC South: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27NFCSOUTH"
+  },
+  {
+   "name": "NFC South: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27NFCSOUTH"
+  },
+  {
+   "name": "NFC West Division Winner",
+   "external_id": "KXNFLNFCWEST-27"
+  },
+  {
+   "name": "NFC West: Exact Order",
+   "external_id": "KXNFLDIVISIONORDER-27NFCWEST"
+  },
+  {
+   "name": "NFC West: Total Wins",
+   "external_id": "KXNFLDIVISIONWINS-27NFCWEST"
+  },
+  {
+   "name": "NFL Conference Championship Qualifiers",
+   "external_id": "KXNFLROUNDQUAL-27CONF"
+  },
+  {
+   "name": "NFL Super Bowl Winner",
+   "external_id": "americanfootball_nfl_super_bowl_winner"
+  },
+  {
+   "name": "North Carolina Central vs East Carolina",
+   "external_id": "KXNCAAFGAME-26SEP26NCCUECU"
+  },
+  {
+   "name": "Notre Dame Football to Join a Conference before the 2027-28 Season",
+   "external_id": "KXNDJOINCONF-27"
+  },
+  {
+   "name": "Offensive Player of the Year Finalists",
+   "external_id": "KXNFLAWARDFIN-27OPOY"
+  },
+  {
+   "name": "Offensive Player of the Year Winner?",
+   "external_id": "KXNFLOPOTY-27"
+  },
+  {
+   "name": "Offensive Rookie of the Month in September",
+   "external_id": "KXNFLROTM-SEP26OFFENSE"
+  },
+  {
+   "name": "Offensive Rookie of the Year Winner?",
+   "external_id": "KXNFLOROTY-27"
+  },
+  {
+   "name": "Outland Trophy Winner",
+   "external_id": "KXNCAAFAWARD-26OUTL"
+  },
+  {
+   "name": "Pac-12 Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26PAC12"
+  },
+  {
+   "name": "Paul Hornung Award Winner",
+   "external_id": "KXNCAAFAWARD-26PAUL"
+  },
+  {
+   "name": "Pro Football: 2026-27 AFC #1 Seed",
+   "external_id": "962594"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Coach of the Year Winner",
+   "external_id": "741438"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Comeback Player of the Year Winner",
+   "external_id": "741439"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Defensive Player of the Year Winner",
+   "external_id": "741441"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Defensive Rookie of the Year Winner",
+   "external_id": "741436"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Offensive Player of the Year Winner",
+   "external_id": "741440"
+  },
+  {
+   "name": "Pro Football: 2026-27 AP Offensive Rookie of the Year Winner",
+   "external_id": "741437"
+  },
+  {
+   "name": "Pro Football: 2026-27 NFC #1 Seed",
+   "external_id": "962593"
+  },
+  {
+   "name": "Pro Football: 2026 MVP Winner",
+   "external_id": "315364"
+  },
+  {
+   "name": "Pro Football: 2027 AFC Champion ",
+   "external_id": "203722"
+  },
+  {
+   "name": "Pro Football: 2027 Champion",
+   "external_id": "202857"
+  },
+  {
+   "name": "Pro Football: 2027 NFC Champion ",
+   "external_id": "203716"
+  },
+  {
+   "name": "Pro Football: AFC #1 Seed",
+   "external_id": "KXNFL1SEED-AFC26"
+  },
+  {
+   "name": "Pro Football: AFC East Champion",
+   "external_id": "232598"
+  },
+  {
+   "name": "Pro Football: AFC North Champion",
+   "external_id": "232603"
+  },
+  {
+   "name": "Pro Football: AFC South Champion",
+   "external_id": "232605"
+  },
+  {
+   "name": "Pro Football: AFC Team to advance to Divisional Round",
+   "external_id": "956266"
+  },
+  {
+   "name": "Pro Football: AFC West Champion",
+   "external_id": "232614"
+  },
+  {
+   "name": "Pro Football Championship Game Matchup",
+   "external_id": "KXNFLMATCHUP-27SB"
+  },
+  {
+   "name": "Pro Football Championship Halftime Show: Performers",
+   "external_id": "KXPERFORMSUPERBOWL-27B"
+  },
+  {
+   "name": "Pro Football Championship MVP?",
+   "external_id": "KXNFLSBMVP-26"
+  },
+  {
+   "name": "Pro Football: NFC #1 Seed",
+   "external_id": "KXNFL1SEED-NFC26"
+  },
+  {
+   "name": "Pro Football: NFC East Champion",
+   "external_id": "232617"
+  },
+  {
+   "name": "Pro Football: NFC North Champion",
+   "external_id": "232622"
+  },
+  {
+   "name": "Pro Football: NFC South Champion",
+   "external_id": "232642"
+  },
+  {
+   "name": "Pro Football: NFC Team to advance to Divisional Round",
+   "external_id": "956267"
+  },
+  {
+   "name": "Pro Football: NFC West Champion  ",
+   "external_id": "232647"
+  },
+  {
+   "name": "Pro Football Playoff Qualifiers",
+   "external_id": "KXNFLPLAYOFF-27"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #2 Seed",
+   "external_id": "KXNFLSEED-27AFC2"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #3 Seed",
+   "external_id": "KXNFLSEED-27AFC3"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #4 Seed",
+   "external_id": "KXNFLSEED-27AFC4"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #5 Seed",
+   "external_id": "KXNFLSEED-27AFC5"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #6 Seed",
+   "external_id": "KXNFLSEED-27AFC6"
+  },
+  {
+   "name": "Pro Football Playoffs: AFC #7 Seed",
+   "external_id": "KXNFLSEED-27AFC7"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #2 Seed",
+   "external_id": "KXNFLSEED-27NFC2"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #3 Seed",
+   "external_id": "KXNFLSEED-27NFC3"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #4 Seed",
+   "external_id": "KXNFLSEED-27NFC4"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #5 Seed",
+   "external_id": "KXNFLSEED-27NFC5"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #6 Seed",
+   "external_id": "KXNFLSEED-27NFC6"
+  },
+  {
+   "name": "Pro Football Playoffs: NFC #7 Seed",
+   "external_id": "KXNFLSEED-27NFC7"
+  },
+  {
+   "name": "Pro Football Teams to go Undefeated in their Division",
+   "external_id": "KXNFLDIVUNDEFEATED-27"
+  },
+  {
+   "name": "Pro Football: Team to advance to AFC Championship Game",
+   "external_id": "956268"
+  },
+  {
+   "name": "Pro Football: Team to advance to NFC Championship Game",
+   "external_id": "956269"
+  },
+  {
+   "name": "Pro Football: Team to Make Postseason",
+   "external_id": "448179"
+  },
+  {
+   "name": "Protector of the Year Winner?",
+   "external_id": "KXNFLPROOTY-27"
+  },
+  {
+   "name": "Ray Guy Award Winner",
+   "external_id": "KXNCAAFAWARD-26RAYG"
+  },
+  {
+   "name": "Rimington Trophy Winner",
+   "external_id": "KXNCAAFAWARD-26RIMI"
+  },
+  {
+   "name": "SEC Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26SEC"
+  },
+  {
+   "name": "Sun Belt Conference Championship Matchup",
+   "external_id": "KXNCAAFCONFMATCHUP-26SBELT"
+  },
+  {
+   "name": "Titled Tuesday Winner: September 15",
+   "external_id": "988911"
+  },
+  {
+   "name": "Titled Tuesday Winner: September 22",
+   "external_id": "1028708"
+  },
+  {
+   "name": "Top Fantasy Rookie",
+   "external_id": "KXNFLFFLEADER-27ROOK"
+  },
+  {
+   "name": "Top Fantasy Rookie QB",
+   "external_id": "KXNFLFFLEADER-27ROOKQB"
+  },
+  {
+   "name": "Top Fantasy Rookie RB",
+   "external_id": "KXNFLFFLEADER-27ROOKRB"
+  },
+  {
+   "name": "Top Fantasy Rookie TE",
+   "external_id": "KXNFLFFLEADER-27ROOKTE"
+  },
+  {
+   "name": "Top Fantasy Rookie WR",
+   "external_id": "KXNFLFFLEADER-27ROOKWR"
+  },
+  {
+   "name": "Walter Camp Award Winner",
+   "external_id": "KXNCAAFAWARD-26WALT"
+  },
+  {
+   "name": "Walter Payton Man of the Year Award Winner?",
+   "external_id": "KXNFLWPMOTY-27"
+  },
+  {
+   "name": "Western Carolina vs East Tennessee St.",
+   "external_id": "KXNCAAFGAME-26SEP26WCUETSU"
+  },
+  {
+   "name": "Western Illinois vs North Alabama",
+   "external_id": "KXNCAAFGAME-26SEP26WIUUNA"
+  },
+  {
+   "name": "Western Kentucky vs New Mexico St.",
+   "external_id": "KXNCAAFGAME-26OCT01WKUNMSU"
+  },
+  {
+   "name": "West Florida vs Southeast Missouri St.",
+   "external_id": "KXNCAAFGAME-26SEP26UWFLSEMO"
+  },
+  {
+   "name": "Who will host the 2031 Pro Football Championship?",
+   "external_id": "KXSBHOST-2031"
+  },
+  {
+   "name": "Will Alabama Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x17aec450a7e46e52071a1c3f9d157230571a1c43a0426f641159d09e12e741c2"
+  },
+  {
+   "name": "Will Alabama Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x198ceb8063491aa0b31b69101909a8f58dcc70e18ab7637224742604c6680d3c"
+  },
+  {
+   "name": "Will Arizona Cardinals advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x6cac856d53f9befd2af40be9ac81d6734159fd8be4024edc80d924530ca3e6d6"
+  },
+  {
+   "name": "Will Arizona Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x38214adf815930ae4cae1117bcb3617417457f7edc7d9aacabdb73d3f7345a26"
+  },
+  {
+   "name": "Will Arizona Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xeec461cd419d809ed3334f48fc57f92a1755b373a107e695a904856e8dfe826d"
+  },
+  {
+   "name": "Will Arizona St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xe74482dbca4e4cdf94650d930266d39438b4e136fb3693315bbe13b425384951"
+  },
+  {
+   "name": "Will Arizona St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x928cb73eeaf935278bbba18bfc6603e8855b87d1d7035e667d2797c5de10f998"
+  },
+  {
+   "name": "Will Arkansas Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x71dbd94ac2cd38b9fe2950054070f80a7b6d55bc9f92378e613f054c6d3e8de4"
+  },
+  {
+   "name": "Will Arkansas Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x02667d811a99ba5454a483ffa9f5bdce4245d6ce80f93c7adeda866d4cf8d708"
+  },
+  {
+   "name": "Will a team from Texas win the 2027 College Football National Championship?",
+   "external_id": "965600"
+  },
+  {
+   "name": "Will a team from Texas win the 2027 Pro Football Championship?",
+   "external_id": "965599"
+  },
+  {
+   "name": "Will a team from Texas win the 2027 Pro Football Championship or the 2027 College Football National Championship?",
+   "external_id": "965601"
+  },
+  {
+   "name": "Will Atlanta Falcons advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x4f055b2a266affefbb79554bc425e3ba0a88ff741e9a381c9d8268c19a7cb128"
+  },
+  {
+   "name": "Will Auburn Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xca16f18b5eb7010d8cb2d46afdc939e5eb279269017d63601fae4b3a86e6d429"
+  },
+  {
+   "name": "Will Auburn Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x96e88ee1207d66a35b52cbe3b2f27883a4be2c6eab919f97d83a7b84e2fe7178"
+  },
+  {
+   "name": "Will Baltimore Ravens advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x7119a14a220e771588126274459fb6cc49e72ff75e1326612a7c1a770cf10cf7"
+  },
+  {
+   "name": "Will Baylor Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xe09291c84aeeb615c7a8671b6ff334735bea4cd25880f968d97bd765b25b76ae"
+  },
+  {
+   "name": "Will Baylor Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xd735ffcdadff125e4671eee575db262f342b73078b6d974512722f63be171b57"
+  },
+  {
+   "name": "Will Bowling Green Falcons advance to the 2026 MAC Championship Game?",
+   "external_id": "0x72392126c005da0653de92256f8977b849ea29c5411899799fe04a4bdd1b6858"
+  },
+  {
+   "name": "Will Buffalo Bills advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x43840b54fab4aa035fd7c72936ae5ebabbd4542986e37073a83dbbd551ffe904"
+  },
+  {
+   "name": "Will BYU Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x3848d32bfdd1dbc0e754253eb08605efbb53a7d2120139219e6dbe980aa6251a"
+  },
+  {
+   "name": "Will BYU Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x646d6d1ce605480f5bdcb69c9aade39bb40823457b58e7f32275c3f29257236f"
+  },
+  {
+   "name": "Will California Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x4aff28b53da0d690dde4095ef3f8b315458a4417a5947fa101aed2e7bd8e2421"
+  },
+  {
+   "name": "Will California Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xf2169393ff141fdb6c7258c2734c43de61b179bad1ef7dbab2900266d3483753"
+  },
+  {
+   "name": "Will Carolina Panthers advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x0687b2e4feeec859ebb3080cc40cd4e187e48261b8751e63073b57dacdacfe0d"
+  },
+  {
+   "name": "Will Chicago Bears advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x35700b4149eb7f6a8ddb2383c4876f9710429d49da3849f42e8ed2e72f179ec2"
+  },
+  {
+   "name": "Will Cincinnati Bengals advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xd505ab4a1792c38554a5dae70b12f53eb575b67b17ef2c3761b75e632d5b1794"
+  },
+  {
+   "name": "Will Clemson Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xeffbe8020673da101446567cda47556d74f9090376aa5f27fbcd87e04ab41165"
+  },
+  {
+   "name": "Will Clemson Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xf7798d8222cbd50dcfe759149f23fab55071bb31eed86184ccaeca7ebd6f6cd7"
+  },
+  {
+   "name": "Will Cleveland Browns advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xa5ab619b2bd5081ef3a357a531c2af81f6480404b5b5855c360f2a73b6ee7b37"
+  },
+  {
+   "name": "Will Colorado Buffaloes advance to the 2026 Big 12 Championship Game?",
+   "external_id": "0x1aa56b3061fc107e82880ac64ea43e065253023fa6bcd706edb5658d7198e382"
+  },
+  {
+   "name": "Will Dallas Cowboys advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x7ed8020661dbccf6d1d58113fb0a20b53450d63605ddab10649df254c0845e95"
+  },
+  {
+   "name": "Will Denver Broncos advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xe01696de7f9bde305be7332957107c087ad56745d3671b570eae0c3fcb4c5e4f"
+  },
+  {
+   "name": "Will Detroit Lions advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xc0008c1399ba78a7daeaf489a5f8cb87c2199ed96b4d977fb1e217926a98aca4"
+  },
+  {
+   "name": "Will Florida Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x07800fba11b4a40639a802a9972473d877c4f21f14eed69362d5e2932a260f23"
+  },
+  {
+   "name": "Will Florida Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x06f1f495fd6488373291299a0858317924a11b6b121996be120573e2e13230fb"
+  },
+  {
+   "name": "Will Florida St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xcbe67c1fdcf00b9f0db53a2012c9226da0cd7b6901917b9838c54603a7d7f62d"
+  },
+  {
+   "name": "Will Florida St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xeaedf027b923518d1a6a188d3eb4263acb9463778567715eaa7b4cb9feabd3f2"
+  },
+  {
+   "name": "Will Georgia Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x1ec77640b06856dd2bcbf2de5a314a054503f20785b00fb88a03681f1f4a71f7"
+  },
+  {
+   "name": "Will Georgia Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x6023d745e06ada7c2343a10e5f0890a4cb06f124528f0988a94e3b3058102670"
+  },
+  {
+   "name": "Will Georgia Tech Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xea6de66fa5dff09cfaa5a17ecc1a963f4e36964e81541e81ce2921bad7853eb7"
+  },
+  {
+   "name": "Will Georgia Tech Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x3016f57011e33d3de72e813ab78e76e0d756a6dbb30b70a4c37441868ea05b28"
+  },
+  {
+   "name": "Will Green Bay Packers advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xae09812a72989162df505ea58e58940e11ca0b8214601a5bbf061eeb3e9c0e22"
+  },
+  {
+   "name": "Will Houston Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x0715b157d85d1314c4e47fc1794e22e85b7bb5645c384b37f9d34facb649e0ad"
+  },
+  {
+   "name": "Will Houston Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xac2e03f5c9ad81c3cb83d579befa7d20b366639826093e6e94bfe1c8bd176264"
+  },
+  {
+   "name": "Will Houston Texans advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x5f40a61cec88b4a7d4fcb86ed4a1e5bbaae166d4f3f654d0149838ef85575107"
+  },
+  {
+   "name": "Will Illinois Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x9ad988d61c10fd0077406f3b294c4ffbc789313f6a3e5cd8da081659b6e490f2"
+  },
+  {
+   "name": "Will Illinois Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x8d50df4bff17cbbb4117eedca44a9af27a1e8c5defe40b50c338a8532c0ef7d7"
+  },
+  {
+   "name": "Will Indiana Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xcb7da7751a33fa8441c6ced9273f43d0eb712cb9d1fec8400608a736da46a949"
+  },
+  {
+   "name": "Will Indiana Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x03625787cb91c73a3b1595022f62195f38e14e0638d1dd08127cda8594532ae6"
+  },
+  {
+   "name": "Will Indianapolis Colts advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x1870b6975ba0b9c14327e0ff9d538925b0c5484ced650c6fb4603975d29b5b9d"
+  },
+  {
+   "name": "Will Iowa Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x1a90e1ae99808eb52c206d9a79a9375ae7b597c28e32b51a4669c4e488baebeb"
+  },
+  {
+   "name": "Will Iowa Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x43e834155dd79ccc94eb66b7d533e6f25a3ff8cf979d9deb520af3e3667bb9d3"
+  },
+  {
+   "name": "Will Jacksonville Jaguars advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xea20df3ecc41695736cae909b979f3306a0cc68257794a6b88fc83fcd269d9bd"
+  },
+  {
+   "name": "Will James Madison Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xfc581444ec00612de531aa0ccad08544af2256c119c402012e4c55becd80c1f2"
+  },
+  {
+   "name": "Will James Madison Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x692f06bb251effe7c1c8e89b9e90ba9dc589f1f17235447e42f36f8fc2bc31bb"
+  },
+  {
+   "name": "Will Kansas City Chiefs advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x5126caee6185baa50d8f2acec50de6ccbdd75858ad9a121b319a83b8c61fdc20"
+  },
+  {
+   "name": "Will Kansas St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x6fc82ea337a7f0cd688d3ab28dfd957998d51c00903eb505eb82cd612d167ea0"
+  },
+  {
+   "name": "Will Kansas St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x7a8d6bc08290bf9c6e6744354aaba03c03a9332edc5addd7cbcd9e077663d9dd"
+  },
+  {
+   "name": "Will Kentucky Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x76938a3ad1c32917f14142f669de113deb111b4e86d3d4b55f29c8433d9ea0d7"
+  },
+  {
+   "name": "Will Kentucky Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xceb21c1fecaabd79f3f48d679da33927ff73cc2b3f1f5dd8c48864514df77b1c"
+  },
+  {
+   "name": "Will Las Vegas Raiders advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xfa7d46ebbaf44750573e2b3dc995a02b3262f70ed15f373a34a14e774b2b3663"
+  },
+  {
+   "name": "Will Los Angeles Chargers advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x79a1e05d0015b2aea5438f87d96fb6d1ead9548e9cfc658a3e0a9e240139643e"
+  },
+  {
+   "name": "Will Los Angeles Rams advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x225c3942792d6e1a500ca2ca94773644fc06ca28c3b2e75762893356bc04b662"
+  },
+  {
+   "name": "Will Louisiana Ragin' Cajuns advance to the 2026 Sun Belt Championship Game?",
+   "external_id": "0xfc84ed8f7497a14754971e62b95e3dbb5838d67122eb27381a58ff39be9bd14a"
+  },
+  {
+   "name": "Will Louisiana Tech Bulldogs advance to the 2026 Sun Belt Championship Game?",
+   "external_id": "0xe71d2e8da5d523ecea308312c9abdc8bfdb32a00228400d67777ba123ee71d25"
+  },
+  {
+   "name": "Will Louisville Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x9f0536bc6a63b4ca147a06c6cb74984f8f693eee88136a7e29427323ec13dafb"
+  },
+  {
+   "name": "Will Louisville Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xab5132ce5bd6bc1f38d53cc9aba992bc4490e9863e48bb30543cf956b26d204f"
+  },
+  {
+   "name": "Will LSU Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x68842fdc59a829e4f6c14ec992893163b74dc4f25228e3bfc62188ae9a332bdf"
+  },
+  {
+   "name": "Will LSU Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xe2a48c94dba94876c205ee3cf2a901bd7ec4ca8d3732154dff4aee9926eca8d7"
+  },
+  {
+   "name": "Will Miami Dolphins advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xc608094206b854170a1baa51c69234d835ce99302a449b6a067b22e97650ba3e"
+  },
+  {
+   "name": "Will Miami (FL) Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x8832a487fb20acba1e75eb263b9220df43962d7ecee0f9d2f75f602c80a00a28"
+  },
+  {
+   "name": "Will Miami (FL) Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xd25bb26bd2ca8429d2342776d46c9992eddfe08eb7ffab52290003394b1ebdaf"
+  },
+  {
+   "name": "Will Miami (OH) Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x6c61da8a304201ff42fe15432ce33ed5dc8581f19612a336dafa049e92c82546"
+  },
+  {
+   "name": "Will Miami (OH) Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x38c879ba81e0475d0ed6249a5d65d392e8c4ba1d86c60f6ba7b63bfb38f2460d"
+  },
+  {
+   "name": "Will Michigan Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xb4e5045af392d810191d0c52abc57514ad9bfa44970ebf1447b0eb8e743fb24e"
+  },
+  {
+   "name": "Will Michigan Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xa33e13c130c397dc09655d6bcbddb3b04276ee305bfb4a6c6a7db00f6b45f778"
+  },
+  {
+   "name": "Will Minnesota Vikings advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x7036e1cfa8f7561532d52ed42a789d810ea3e352a02807cd01aa355697c810fb"
+  },
+  {
+   "name": "Will Missouri Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x54f77fbc99515dd055e4a04f0b7f3c9902d9799d09f517e2a4f5a7b213e3e755"
+  },
+  {
+   "name": "Will Missouri Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xaecf64117c720d7b495560713179b7eccd0ca90156691c68ac37206e2b729e21"
+  },
+  {
+   "name": "Will New England Patriots advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x136f301190ba9bc8cb8a1f607a7ab4fc81f0af3d316631a66c9dce0eda105a3d"
+  },
+  {
+   "name": "Will New Orleans Saints advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x250889060b06206331c8590a97ae88b37709d92fc2885cb2f01ea19e4fd415a0"
+  },
+  {
+   "name": "Will New York Giants advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x8b27994cc75931ebbfb33dea6bae23de79fe98d3cc1ed991b43765a34b953a7b"
+  },
+  {
+   "name": "Will New York Jets advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xce66bcc3ae00de4ee843253c121c6c6047ca25915e773d6a73b8746b7fcb211b"
+  },
+  {
+   "name": "Will North Carolina St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x1691ae8aee15d582dbf95666f7680ae9e1ed3e2b1ae450024ee7cc75a7902ffd"
+  },
+  {
+   "name": "Will North Carolina St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x6e44df0334d1ba8bae53ee219afded4d4426c0d3a63e0c4e3eaf72d0919fbc29"
+  },
+  {
+   "name": "Will North Texas Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x1ab5ab5b60f7feb9d2ac2b01acda3e050117fbc95e1f16f27e7fc2b76ce36e57"
+  },
+  {
+   "name": "Will North Texas Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x54b34fcf4545a29f3aca97a40a97c5151f566a176b0f25ce1b4f43804ef148a7"
+  },
+  {
+   "name": "Will Notre Dame Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xe2470aa1902b3fe47de1ef4679f3a79bba0442a67c80233c0809926232ac35f9"
+  },
+  {
+   "name": "Will Notre Dame Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x4fd433717764353debb15b9c9410561ed1a54457dad1228c34962857352f8406"
+  },
+  {
+   "name": "Will Ohio St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x32e3b8b91c9ad807098e80b083f64fc27e3c98477a3115831bd3d0e25630eeb3"
+  },
+  {
+   "name": "Will Ohio St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x5070412deee16e67a4ffd6cb02b6d9532c3248648d46c03c44e108f4eed38567"
+  },
+  {
+   "name": "Will Oklahoma Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x62ae9b72dc00dd051ad3ed494ad1149921b0a54182d7af1b868a821386ffb3ff"
+  },
+  {
+   "name": "Will Oklahoma Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x661787a55a2d5944726f60c292c46432e087f5978dbaeaba4b3ae1a17f1e154e"
+  },
+  {
+   "name": "Will Oklahoma St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xa5a5bd23d8c2d3b2d3be3a73b601207d88e78b94ece13d1a63b7559b3bbe59bc"
+  },
+  {
+   "name": "Will Oklahoma St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xea0104ab22d14c5297e363620d4c44998b98f30a28295264e294ebcbae7e702b"
+  },
+  {
+   "name": "Will Ole Miss Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xa5aee4b0a0499efe8f903a0cf9b96cf9cedebf827eb6b45aa290d0befb98cd24"
+  },
+  {
+   "name": "Will Ole Miss Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x35def2abb77835592678d99271a4f776cc5539bb0232df0bdc80df5728539780"
+  },
+  {
+   "name": "Will Oregon Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xc3fadecd259a3aa4ed0a0b7f345b475e12e665b207197e79ea08f58c229647d4"
+  },
+  {
+   "name": "Will Oregon Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xb1367ce89c5b70509fac841c5f66414b0d1bd74d7b8b6dc5beefe3f563204402"
+  },
+  {
+   "name": "Will Penn St. Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x6e388bedcd20ad95721b1d75e8bdbe8777502fde856263a1256e17e9117fadcc"
+  },
+  {
+   "name": "Will Penn St. Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x3ed6d08a3793b6483078827f2c7a46d68d1dc7268b6d014bc2db6f489dda5023"
+  },
+  {
+   "name": "Will Pittsburgh Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x246cc50f8de6df4cfd9d2b3abfdff114afb476678f77611beab741f1b9bd4681"
+  },
+  {
+   "name": "Will Pittsburgh Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x81195293b7b33ed20f731d391e591a25868e342737ab7f86221d36eca990c6b8"
+  },
+  {
+   "name": "Will Pittsburgh Steelers advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x2a70d95b1beb2eaa6d2f1327af2c97b1cabc1775640e36a14c303eec260776f6"
+  },
+  {
+   "name": "Will Sam Houston Bearkats advance to the 2026 Conference USA Championship Game?",
+   "external_id": "0xebeac93d22d15b9149e64fd42986ee3d493dea13924b316f0f12630900e91602"
+  },
+  {
+   "name": "Will San Francisco 49ers advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x3a3fa159dd4f5cc5d93746183b492cbc7779bc3fc859f8cf0e4fc59ee887ad63"
+  },
+  {
+   "name": "Will Seattle Seahawks advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x7a0c6e84bbc017d05cd8929195e022faf574a689805f95e3e0bd8e6e23270382"
+  },
+  {
+   "name": "Will SMU Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x61e0140dc6379ff67ec2bea16270d91c2debb9ec23f0c5bfc8263490ee8ac3c4"
+  },
+  {
+   "name": "Will SMU Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x8b7879351febd27c99a832259b8aa27f9e7e367e40ebed844e5cccbb28508f69"
+  },
+  {
+   "name": "Will South Carolina Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xaf0969aca4cd82c1f630cd97a57d24de28f8460df91c77c44f6da54de5234e7b"
+  },
+  {
+   "name": "Will South Carolina Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xa6d4b8eb368ed99d2bfcc57bf7abccfa070eac4e06ecc0f0b2a82b3c0b31ca8e"
+  },
+  {
+   "name": "Will Tampa Bay Buccaneers advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0xe2620acd9df2c1486a100d7453807be9bec0ddcec5fa3afa00355a547f97bb1f"
+  },
+  {
+   "name": "Will TCU Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x33bb7aeef031e4347368111eaa26a69d404fca1ca3dbed96516ff669c9ca5de5"
+  },
+  {
+   "name": "Will TCU Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x579ac64f64f7b420ed947070fb969b47fb33b8e8b117434e9233abbddbfa969c"
+  },
+  {
+   "name": "Will Tennessee Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x5ce9b5b44abe03b7e8c13de398f8270c31dcf5d663959562da98d307599bd632"
+  },
+  {
+   "name": "Will Tennessee Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x3772a044a29f69ee7bdc1b1e9432132e3b72b78483e4dbd7e4686d1886c6f1e0"
+  },
+  {
+   "name": "Will Tennessee Titans advance to the AFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x7d17a04b74d3b44a65e09480b0d0e0490aa6312c00eae097dd448649dd466794"
+  },
+  {
+   "name": "Will Texas A&M Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x32fb7c1c0bbc12adf1735f10bef8dbc82b4ab405ed956e5c588e2dc7bc27c055"
+  },
+  {
+   "name": "Will Texas A&M Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xd514585aee096fe59c91f0b709b5616eb3ea11378318aa2ec12cbb5ba873f5de"
+  },
+  {
+   "name": "Will Texas Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xd53ff0b707b39ed987ccbbe0950a8e126606e2c6ac3047051ccb1a5976cf71dd"
+  },
+  {
+   "name": "Will Texas Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xe7324d51ca53021552b631566f6602190271dc529a86005de4b306f1f4d349e4"
+  },
+  {
+   "name": "Will Texas Tech Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x6ba0643477d1ede89be3ec9925b52f772546e3fb7be9a3a0c6e8bfb8a2f02642"
+  },
+  {
+   "name": "Will Texas Tech Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x82fb275b6d63f79b0a6c555dd9fbb63d70bdb765448b7f38d87c72f5734391ba"
+  },
+  {
+   "name": "Will the 2027 Pro Football Championship be headlined by a woman?",
+   "external_id": "587767"
+  },
+  {
+   "name": "Will the Arizona Cardinals make the 2027 NFL Playoffs?",
+   "external_id": "0xb40f8cb30971bd8e9d0d464223a81a9ba78afe63907b0449461a850206341770"
+  },
+  {
+   "name": "Will the Atlanta Falcons make the 2027 NFL Playoffs?",
+   "external_id": "0xd57c527e557d62eed53b02390815865db57d0f5e8a7236ea3d3e37042419a691"
+  },
+  {
+   "name": "Will the Baltimore Ravens make the 2027 NFL Playoffs?",
+   "external_id": "0xc022132e7e7c1ccf5e49ee72493dc4819cd35ae03a92ad88afdc1953558c1f50"
+  },
+  {
+   "name": "Will the Buffalo Bills make the 2027 NFL Playoffs?",
+   "external_id": "0x7de3db72ddafe22afbf3afee94ec44dbc6d4500acd586cc65342b4a077714c92"
+  },
+  {
+   "name": "Will the Carolina Panthers make the 2027 NFL Playoffs?",
+   "external_id": "0x410c219fabb53ea3514946d00200674c208175cbbe6483a2536ddb2394dc946a"
+  },
+  {
+   "name": "Will the Chicago Bears make the 2027 NFL Playoffs?",
+   "external_id": "0xe1a2ad6d39ed8d61812f1a67f94699f503f68d31639bc601aed980778c5868ff"
+  },
+  {
+   "name": "Will the Cincinnati Bengals make the 2027 NFL Playoffs?",
+   "external_id": "0x28317f30c28fd7553aadf3d7355c3f6358789db279942a27ddbba3f86a732a8f"
+  },
+  {
+   "name": "Will the Cleveland Browns make the 2027 NFL Playoffs?",
+   "external_id": "0x4de1be18b910f6846f7828c5b6a807a0f69b491829638cb45fbbc484dbf88f6d"
+  },
+  {
+   "name": "Will the Dallas Cowboys make the 2027 NFL Playoffs?",
+   "external_id": "0x46e4fb8f97c4a3cda3d02b069f3d4bc57dbea84a48967abd2b93f62be9a025a4"
+  },
+  {
+   "name": "Will the Denver Broncos make the 2027 NFL Playoffs?",
+   "external_id": "0xcdd00fd62a690de9a9ddc8eda4713549b3389d3e8e665556ce25057eba8406d1"
+  },
+  {
+   "name": "Will the Detroit Lions make the 2027 NFL Playoffs?",
+   "external_id": "0xed4d9132cbccc21e09a4ffa6bee71bd3e2298eb3c52f8f62b44ffad6ef2cd563"
+  },
+  {
+   "name": "Will the Green Bay Packers make the 2027 NFL Playoffs?",
+   "external_id": "0xea2ff6381abf8edcf408951db027d21047c94c47845f9c1dbfe2932d4f4e73ac"
+  },
+  {
+   "name": "Will the Houston Texans make the 2027 NFL Playoffs?",
+   "external_id": "0x1e92e65aa1b4caf804120f8c001df3a1d26496c125dcd7f35669151a495d1964"
+  },
+  {
+   "name": "Will the Indianapolis Colts make the 2027 NFL Playoffs?",
+   "external_id": "0xeacd5a9d7eb8b5aca2d2ccc6afa607293f75e0a42f2915c966048352bafbb08c"
+  },
+  {
+   "name": "Will the Jacksonville Jaguars make the 2027 NFL Playoffs?",
+   "external_id": "0xa4407ce2e2fb00c9f55dee9176a4559193bffdbf0fafba68dfe1e2941a9cd655"
+  },
+  {
+   "name": "Will the Kansas City Chiefs make the 2027 NFL Playoffs?",
+   "external_id": "0x69071867a0bb26aeca05430242be9da7e75045a5e41b4be81b1814961f56c18b"
+  },
+  {
+   "name": "Will the Las Vegas Raiders make the 2027 NFL Playoffs?",
+   "external_id": "0x53bbdde2bff0255be814d3779de1e2b3cb55383defda7af65a76a171cfd3e64b"
+  },
+  {
+   "name": "Will the Los Angeles Chargers make the 2027 NFL Playoffs?",
+   "external_id": "0xd9b658991d8acba6c82ab4f2d33ea9de7e9e059ad6b68d0a2e673cab87e2f207"
+  },
+  {
+   "name": "Will the Los Angeles Rams make the 2027 NFL Playoffs?",
+   "external_id": "0x6ea9c59bb08605e9cccc61e81179ebf9c143cd53118be37255f902ebcf0fde79"
+  },
+  {
+   "name": "Will the Miami Dolphins make the 2027 NFL Playoffs?",
+   "external_id": "0xd601788b919536fa18c2eca1c77dd55babc1438c2f16b199d212149fc6924893"
+  },
+  {
+   "name": "Will the Minnesota Vikings make the 2027 NFL Playoffs?",
+   "external_id": "0xe13c836b13959b8822fbb75c1cfea9a80f58e2f769698c5d005e7686e4d724bd"
+  },
+  {
+   "name": "Will the New England Patriots make the 2027 NFL Playoffs?",
+   "external_id": "0xfeaf50793f1d125964b36cad5c33127f779972a5b4e581c80332fe775df40f66"
+  },
+  {
+   "name": "Will the New Orleans Saints make the 2027 NFL Playoffs?",
+   "external_id": "0x1d3b17cdd7c67c3a3118c28eeccf9b18473b7f45b8494d9d9bacb1c8a8a6b057"
+  },
+  {
+   "name": "Will the New York Giants make the 2027 NFL Playoffs?",
+   "external_id": "0x25045cd357a17544a37412283d57f6a468a87290a8aa4f9cae7f8417927d52b9"
+  },
+  {
+   "name": "Will the New York Jets make the 2027 NFL Playoffs?",
+   "external_id": "0xb6406584d4dd10b1f6cb8c4142dc25169eb0dc731dfe7ba2870a31982e69ac15"
+  },
+  {
+   "name": "Will the Philadelphia Eagles make the 2027 NFL Playoffs?",
+   "external_id": "0xc34e624ece456a7229acf02489cbc515e5ece24bcb8c7b615ee33849181a15e7"
+  },
+  {
+   "name": "Will the Pittsburgh Steelers make the 2027 NFL Playoffs?",
+   "external_id": "0x729b39716329938c019c4a64fe40254ee424950874b24def6c11a811be1c6776"
+  },
+  {
+   "name": "Will the San Francisco 49ers make the 2027 NFL Playoffs?",
+   "external_id": "0xb331b9017ac0a9c144f7f05e544a36a84537df33b2699d6d385dee96578b9639"
+  },
+  {
+   "name": "Will the Seattle Seahawks make the 2027 NFL Playoffs?",
+   "external_id": "0xf37d2da41926cff57597ef43476919c9f3335ec9f750434d8a6797b8756fb0ed"
+  },
+  {
+   "name": "Will the Tampa Bay Buccaneers make the 2027 NFL Playoffs?",
+   "external_id": "0xe13b12c876d6f949658e0a8380f61a669f4c4f91cdaa4a62e81d90a93f8b7ae3"
+  },
+  {
+   "name": "Will the Tennessee Titans make the 2027 NFL Playoffs?",
+   "external_id": "0x6329bf3ecfc5173d681a134f819ba3e4346b962c269871f7b311db39a4c63069"
+  },
+  {
+   "name": "Will the Washington Commanders make the 2027 NFL Playoffs?",
+   "external_id": "0xc3bdf4caa937776e894dd0357dc441ed57cd764ebc5f5ca8f2ec1a5edb58c832"
+  },
+  {
+   "name": "Will Troy Trojans advance to the 2026 Sun Belt Championship Game?",
+   "external_id": "0x73e419c8fa8d64dda714629660f9e6d35450ff04cf63d9edb7417c329bb03115"
+  },
+  {
+   "name": "Will Tulane Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xfc7c44d40bcfef532d210f40a5b7e460eac1469ff2215026fe10ae0141459e93"
+  },
+  {
+   "name": "Will Tulane Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xa64850fa3322cc14f6f77f97a7a957dfcf47d235128bd3d9c704db6c88aa5e76"
+  },
+  {
+   "name": "Will USC Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x86b4289470909222cc9f77640ac3f6bb0ee51cde58dd2c48f45924ecebe7bf6d"
+  },
+  {
+   "name": "Will USC Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x0b2a3cb8b3ee308b174270d6b32367f2b66e95fd4203a9912f72dd6e05cdf430"
+  },
+  {
+   "name": "Will Utah Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xf567be9c022f43f3415c749d22480c1f6e41fa190f2fbb8b7e69248049cecc30"
+  },
+  {
+   "name": "Will Utah Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x1cc18b754748c556de2d1f17531e453751e712d766dc1c54736961d061b432a9"
+  },
+  {
+   "name": "Will Vanderbilt Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xf9b22df8cdf4be041f077c9c8e751449e607ef2889254ee04005831acf470971"
+  },
+  {
+   "name": "Will Vanderbilt Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x4adf88071436fe9ca6251bbbdb1b3d51f520cfa4064c4a6c976a7f5025bba426"
+  },
+  {
+   "name": "Will Virginia Make the 2026-27 CFB Playoffs?",
+   "external_id": "0x4f552a3e292a048dd37af562e4672fdef1509216ca5c0241ffb5039b703d681b"
+  },
+  {
+   "name": "Will Virginia Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xc1dbf323e7058c3e893b7fe35d6e888c5a367af963a93411d839bf8ba6b07483"
+  },
+  {
+   "name": "Will Virginia Tech Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xd61898dca3926a0f5af160d4820e3ffc5fffe68e7fab0fea05aea0c96ada8d4d"
+  },
+  {
+   "name": "Will Virginia Tech Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0x72e520fefba3843fee1c7a0e81d8df3f39de61f7ff7825cb4fda6941cc98e9b9"
+  },
+  {
+   "name": "Will Washington Commanders advance to the NFC Championship Game in the 2027 NFL Playoffs?",
+   "external_id": "0x0e3f84b318b2246ab29620fe31a8a0f9a571a7427a127aa78bf9b061d5f4391b"
+  },
+  {
+   "name": "Will Washington Make the 2026-27 CFB Playoffs?",
+   "external_id": "0xccaa456b22ca7f890494c3dc26db45077d83a90743adcb2fa82cb85fdf6b9769"
+  },
+  {
+   "name": "Will Washington Make the 2027 College Football Playoff National Championship Game?",
+   "external_id": "0xfa63388be97f609b766a03d0ecab4987e1adf1ae7b8f9cf836615a50d7216285"
+  },
+  {
+   "name": "Will Western Kentucky Hilltoppers advance to the 2026 Conference USA Championship Game?",
+   "external_id": "0x85d50c1853cd83cfd3f0c39d1520208dd1a883f61ccc759a442d3883a5dda4a0"
+  }
+ ]
+}

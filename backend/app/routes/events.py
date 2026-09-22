@@ -20697,6 +20697,17 @@ def resolve_binary_matchup_outcome_name(outcome_name: str, market_name: str) -> 
     return f"{side.strip()} Win"
 
 
+#: How many season-long markets ONE tier may contribute to an event page. This is
+#: a real ceiling, not a safety valve: measured 2026-09-21 on `llm_sport_category
+#: ='football'`, tier 1 held 107 rows and tier 4 held 131, so 38 markets were being
+#: silently cut — and because the order is `market_tier, id`, the cut is the newest
+#: tail. Thirty-four of those 38 were the college rows a college reader wants
+#: ("Will Alabama Make the 2026-27 CFB Playoffs?"), crowded out by NFL markets that
+#: `league_scope` now refuses. Anything that widens this pool again must re-read
+#: that census before assuming the cap is slack.
+SEASON_TIER_CAP = 100
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -20842,6 +20853,22 @@ async def _build_related_futures(
         rf_status_filter,
         or_(*sport_filters),
     ]
+    # #5798: the five arms above are OR'd, and the two that ARE narrowed to this
+    # exact league constrain nothing because the two wide ones re-admit the same
+    # rows — so an NFL future reaches a college game's pool and
+    # `_team_name_patterns` then picks Jacksonville out of it for South Alabama's
+    # Jaguars. This refuses a market that carries the SIBLING league's mark and
+    # not this league's own. It belongs here, in the query rather than as a
+    # post-filter, because the per-tier cap of 100 below is already cutting 38
+    # markets and most of them are the college rows a college reader wants.
+    # Why the obvious alternatives are inert or harmful: `utils/league_scope.py`.
+    from app.utils import league_scope as _league_scope
+
+    _league_exclusion = _league_scope.exclusion_condition(
+        event_sport_key, FuturesMarket.name, FuturesMarket.external_id
+    )
+    if _league_exclusion is not None:
+        base_season_filters.append(_league_exclusion)
     if event_is_finished:
         recency_cutoff = datetime.now(timezone.utc) - timedelta(days=90)
         base_season_filters.append(FuturesMarket.updated_at >= recency_cutoff)
@@ -20887,7 +20914,7 @@ async def _build_related_futures(
         for row in _tier_rows:
             tier = row.market_tier or 4
             _tier_counts[tier] = _tier_counts.get(tier, 0) + 1
-            if _tier_counts[tier] <= 100:
+            if _tier_counts[tier] <= SEASON_TIER_CAP:
                 season_market_ids.append(row.id)
         if not debug:
             _smd.write(event_sport_key, event_is_finished, season_market_ids)
