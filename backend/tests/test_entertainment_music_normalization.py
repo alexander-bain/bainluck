@@ -24,6 +24,7 @@ these tests pin is the simple one:
 """
 
 import io
+import itertools
 import tokenize
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,10 +38,19 @@ from app.routes.entertainment import _build_music
 # ---------------------------------------------------------------------------
 
 
+#: #8083 gave `_market_row` a per-outcome refusal, so an outcome fake now needs
+#: the `id` the real column has. Counted rather than hashed: distinct ids keep
+#: the fake honest about being distinct rows.
+_OUTCOME_IDS = itertools.count(1)
+
+
 def _outcome(name: str, prob: float, delta: float = 0.0):
     """`prob` here is the RAW 0-1 probability, as stored on FuturesOutcome."""
     return SimpleNamespace(
-        name=name, current_probability=prob, probability_change_24h=delta
+        id=next(_OUTCOME_IDS),
+        name=name,
+        current_probability=prob,
+        probability_change_24h=delta,
     )
 
 

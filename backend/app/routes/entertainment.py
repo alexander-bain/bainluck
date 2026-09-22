@@ -32,6 +32,10 @@ from app.utils.cross_source_matching import (
     source as _source,
 )
 from app.utils.market_staleness import should_exclude_from_featured
+# #8083 — THE FOURTH CALLER OF ONE HELPER, never a second spelling of it.
+# Same import direction `events.py` and `league_futures.py` already take;
+# `futures.py` imports none of the themed routes, so this closes no loop.
+from app.routes.futures import _withheld_price_outcome_ids
 
 logger = logging.getLogger(__name__)
 
@@ -169,11 +173,23 @@ def _classify_kind(market: FuturesMarket, outcome_count: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
+def _market_row(
+    market: FuturesMarket,
+    max_outcomes: int = 3,
+    withheld_ids: frozenset[int] | set[int] = frozenset(),
+) -> dict | None:
     """Enriched market row with all available fields.
 
-    Returns None for a market this page holds no probability for at all —
-    see the refusal below.
+    Returns None for a market this page holds no SERVABLE probability for at
+    all — see the refusal below.
+
+    ``withheld_ids`` is the caller's ``_withheld_price_outcome_ids`` union for
+    this page's markets (#8083). It is a defaulted frozenset rather than a
+    required argument on purpose: every one of this module's eleven call sites
+    is inside a SYNC builder, and the helper is async, so the ids are computed
+    once in :func:`get_entertainment` and threaded down. An omitted argument
+    therefore degrades to the pre-#8083 behaviour — which is why the guard test
+    asserts the wiring at the ROUTE, not just this function.
     """
     outcomes = _clean_outcomes(market.outcomes)
     outcomes = sorted(
@@ -209,7 +225,30 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
     # **420 have never held a single `futures_odds_snapshots` row**. There is no
     # price to recover and none is being hidden. `outcome_count` is unaffected;
     # a market that gets its first price returns on the next build.
-    if not any(o.current_probability is not None for o in outcomes):
+    #
+    # #8083 — AND A RUNG WE REFUSE TO SERVE ON ITS OWN PAGE IS NOT A RUNG HERE.
+    #
+    # The two refusals above turn on `current_probability IS NULL`. Withholding
+    # is a SERVE-TIME decision layered on a column that stays non-null, so
+    # reading the column directly bypassed it entirely and this page published
+    # prices `/api/futures/{id}` withholds in the same minute: *Who will win The
+    # Bachelorette Season 22* printed `Doug 93%` off a ladder whose 22 legs the
+    # detail route serves as 22 nulls (`prices_withheld: 22`), and tapping the
+    # card landed on "No prices in the last 30 days" with no outcomes at all.
+    #
+    # A withheld leg is treated as an ABSENT price, not a zero — the same
+    # reading #6255 gave a NULL rung, for the same reason: we are not saying the
+    # market priced it at nothing, we are saying we will not stand behind the
+    # number. That makes the composition with both rails above exact rather than
+    # additive, and it is why the market-level refusal now reads `priced`: a
+    # market whose every priced leg is withheld holds nothing servable, so the
+    # card is withdrawn rather than published with a fabricated headline.
+    priced = [
+        o
+        for o in outcomes
+        if o.current_probability is not None and o.id not in withheld_ids
+    ]
+    if not priced:
         return None
     # #6255 — A RUNG WE HOLD NO PRICE FOR IS NOT A RUNG AT 0%.
     #
@@ -230,7 +269,6 @@ def _market_row(market: FuturesMarket, max_outcomes: int = 3) -> dict | None:
     #
     # `outcome_count` keeps reading the full list — the filter drops rungs from
     # the SLICE, never from the ladder's arity.
-    priced = [o for o in outcomes if o.current_probability is not None]
     top = priced[:max_outcomes]
     outcome_count = len(outcomes)
     return {
@@ -414,9 +452,12 @@ def _group_threshold_markets(markets: list[dict]) -> tuple[list[dict], list[dict
 # Cross-source matching — find markets on both Kalshi & Polymarket
 # ---------------------------------------------------------------------------
 
-def _cross_source_row_fn(market: FuturesMarket) -> dict | None:
+def _cross_source_row_fn(
+    market: FuturesMarket,
+    withheld_ids: frozenset[int] | set[int] = frozenset(),
+) -> dict | None:
     """Build a row for cross-source matching (entertainment-specific)."""
-    row = _market_row(market)
+    row = _market_row(market, withheld_ids=withheld_ids)
     if not row or not _is_interesting(row):
         return None
     row["theme"] = _classify_theme(market)
@@ -518,10 +559,14 @@ def _build_trending(all_rows: list[dict], limit: int = 5) -> list[dict]:
 # Section builders
 # ---------------------------------------------------------------------------
 
-def _build_list(markets: list, limit: int = 12) -> list[dict]:
+def _build_list(
+    markets: list,
+    limit: int = 12,
+    withheld_ids: frozenset[int] | set[int] = frozenset(),
+) -> list[dict]:
     rows = []
     for m in markets:
-        row = _market_row(m)
+        row = _market_row(m, withheld_ids=withheld_ids)
         if row and _is_interesting(row):
             rows.append(row)
     rows.sort(key=_by_uncertainty)
@@ -568,7 +613,9 @@ def _distinct_served_market_ids(*sections) -> set:
     return found
 
 
-def _build_music(themed: dict) -> dict:
+def _build_music(
+    themed: dict, withheld_ids: frozenset[int] | set[int] = frozenset()
+) -> dict:
     music_markets = themed.get("music", [])
     all_rows = []
     spotify_race = []
@@ -580,13 +627,13 @@ def _build_music(themed: dict) -> dict:
     for m in music_markets:
         kind = _classify_kind(m, len(_clean_outcomes(m.outcomes)))
         if kind == "spotify":
-            row = _market_row(m, max_outcomes=8)
+            row = _market_row(m, max_outcomes=8, withheld_ids=withheld_ids)
         elif kind == "billboard":
-            row = _market_row(m, max_outcomes=8)
+            row = _market_row(m, max_outcomes=8, withheld_ids=withheld_ids)
         elif kind in ("multi",):
-            row = _market_row(m, max_outcomes=6)
+            row = _market_row(m, max_outcomes=6, withheld_ids=withheld_ids)
         else:
-            row = _market_row(m)
+            row = _market_row(m, withheld_ids=withheld_ids)
         if not row or not _is_interesting(row):
             continue
         all_rows.append(row)
@@ -645,7 +692,9 @@ def _build_music(themed: dict) -> dict:
     }
 
 
-def _build_movies_tv(themed: dict) -> dict:
+def _build_movies_tv(
+    themed: dict, withheld_ids: frozenset[int] | set[int] = frozenset()
+) -> dict:
     movies = themed.get("movies", [])
     tv = themed.get("tv_streaming", [])
     combined = movies + tv
@@ -658,11 +707,11 @@ def _build_movies_tv(themed: dict) -> dict:
     for m in combined:
         kind = _classify_kind(m, len(_clean_outcomes(m.outcomes)))
         if kind in ("rt", "boxoffice"):
-            row = _market_row(m, max_outcomes=8)
+            row = _market_row(m, max_outcomes=8, withheld_ids=withheld_ids)
         elif kind == "reality":
-            row = _market_row(m, max_outcomes=6)
+            row = _market_row(m, max_outcomes=6, withheld_ids=withheld_ids)
         else:
-            row = _market_row(m)
+            row = _market_row(m, withheld_ids=withheld_ids)
         if not row or not _is_interesting(row):
             continue
         if kind == "rt":
@@ -699,7 +748,9 @@ def _build_movies_tv(themed: dict) -> dict:
     }
 
 
-def _build_cultural(themed: dict) -> list[dict]:
+def _build_cultural(
+    themed: dict, withheld_ids: frozenset[int] | set[int] = frozenset()
+) -> list[dict]:
     """Awards + celebrity + viral + other → cultural moments feed."""
     cultural_markets = (
         themed.get("awards", [])
@@ -709,7 +760,7 @@ def _build_cultural(themed: dict) -> list[dict]:
     )
     rows = []
     for m in cultural_markets:
-        row = _market_row(m)
+        row = _market_row(m, withheld_ids=withheld_ids)
         if row and _is_interesting(row):
             rows.append(row)
     rows.sort(key=_by_uncertainty)
@@ -839,19 +890,45 @@ async def get_entertainment(db: AsyncSession):
         spotlight_eligible.append(m)
         themed[theme].append(m)
 
+    # #8083 — THE REFUSAL RAIL, ASKED ONCE FOR THE WHOLE PAGE.
+    #
+    # `_withheld_price_outcome_ids` is async and per-market; all eleven
+    # `_market_row` call sites below are inside SYNC builders. So the union is
+    # taken here and threaded down as a flat set — outcome ids are globally
+    # unique, so one set answers for every market without a per-market mapping.
+    #
+    # PLACED BELOW THE SKIP, which is #7016's rule and the reason this is
+    # affordable: the loop above has already dropped everything
+    # `should_exclude_from_featured` rejects, and `featured_eligible` is the
+    # exact superset of what reaches a builder (`spotlight_eligible` and every
+    # `themed` bucket are subsets of it). A market this page never renders
+    # never pays a query.
+    #
+    # COST. This endpoint is Redis-cached and precomputed hourly, so the bill
+    # lands on the precompute task rather than on a reader — a strictly better
+    # budget than the hub route that already runs this per market. Two of the
+    # five arms are pure in-memory passes over `market.outcomes`, already loaded
+    # by the `selectinload` above; the others screen on those same in-memory
+    # columns before reaching the snapshot table. If this page ever does feel
+    # it, the answer is #7016's — batch the queries across the page, never drop
+    # an arm and re-open the split.
+    withheld_ids: set[int] = set()
+    for m in featured_eligible:
+        withheld_ids |= await _withheld_price_outcome_ids(db, m)
+
     # Build all enriched rows for trending scoring
     all_rows = []
     for m in featured_eligible:
-        row = _market_row(m)
+        row = _market_row(m, withheld_ids=withheld_ids)
         if row and _is_interesting(row):
             all_rows.append(row)
 
     trending = _build_trending(all_rows)
-    music = _build_music(themed)
-    movies_tv = _build_movies_tv(themed)
-    cultural_moments = _build_cultural(themed)
+    music = _build_music(themed, withheld_ids)
+    movies_tv = _build_movies_tv(themed, withheld_ids)
+    cultural_moments = _build_cultural(themed, withheld_ids)
     tech_culture_markets = _build_list(
-        themed.get("social_media", []), 15
+        themed.get("social_media", []), 15, withheld_ids
     )
 
     # Cross-source spotlight — fed the set this page ACCEPTED, not `all_markets`
@@ -859,7 +936,10 @@ async def get_entertainment(db: AsyncSession):
     # in a theme section must not reappear as its headline source disagreement.
     # UX-P194-1 / CERT-540.
     cross_source = find_cross_source_markets(
-        list(spotlight_eligible), market_row_fn=_cross_source_row_fn
+        list(spotlight_eligible),
+        # #8083: `find_cross_source_markets` calls this with the market alone,
+        # so the page's withheld union is bound here rather than passed.
+        market_row_fn=lambda m: _cross_source_row_fn(m, withheld_ids),
     )
 
     themes = {

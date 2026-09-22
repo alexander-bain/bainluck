@@ -27,6 +27,7 @@ so ``test_a_publishable_hook_survives`` is the control — a policy-2, fresh,
 leader-unchanged hook must come through this serializer UNCHANGED.
 """
 
+import itertools
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -46,8 +47,13 @@ _BIG_BROTHER_HOOK = (
 )
 
 
+#: #8083: `_market_row` now reads `o.id` for the per-outcome price refusal.
+_OUTCOME_IDS = itertools.count(1)
+
+
 def _outcome(name, prob):
     return SimpleNamespace(
+        id=next(_OUTCOME_IDS),
         name=name,
         current_probability=prob,
         probability_change_24h=0.01,

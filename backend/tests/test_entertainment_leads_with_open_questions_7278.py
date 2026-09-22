@@ -56,9 +56,13 @@ to kill them, and the note in the first of those records why the obvious version
 of that assertion is blind.
 """
 
+import itertools
 from types import SimpleNamespace
 
 import pytest
+
+#: #8083: `_market_row` reads `o.id` for the per-outcome price refusal.
+_OUTCOME_IDS = itertools.count(1)
 
 from app.routes.entertainment import (
     _build_cultural,
@@ -86,7 +90,9 @@ def _market(name: str, prob: float, *, volume_24h=None, outcome_count: int = 1):
     The remaining outcomes split what is left of the book, which keeps the
     ladder a plausible one and `outcome_count` honest.
     """
+    # #8083: `_market_row` reads `o.id` for the per-outcome price refusal.
     leader = SimpleNamespace(
+        id=next(_OUTCOME_IDS),
         name=f"{name} — yes",
         current_probability=prob / 100.0,
         probability_change_24h=0.0,
@@ -94,6 +100,7 @@ def _market(name: str, prob: float, *, volume_24h=None, outcome_count: int = 1):
     others = max(outcome_count - 1, 0)
     rest = [
         SimpleNamespace(
+            id=next(_OUTCOME_IDS),
             name=f"{name} — other {i}",
             # Strictly below the leader, so `priced[0]` is the leader.
             current_probability=min(prob, (100 - prob) / others) / 100.0,
