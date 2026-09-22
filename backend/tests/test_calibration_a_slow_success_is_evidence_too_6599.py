@@ -40,6 +40,14 @@ from app.utils.calibration_phase_ledger import (
     PhasePlan,
 )
 
+# Section 5 only. The sibling control file owns the rig whose census clause this
+# mechanism reddened, and the clause has to be restated against THAT rig or it
+# is a different measurement. Importing ``drive`` registers it as a fixture here.
+from tests.test_calibration_oversized_slot_is_cut_on_its_proof_6599 import (  # noqa: E501,F401
+    _transient,
+    drive,
+)
+
 #: 8 slots over 1,024 virtual questions — 128 to a slot on average.
 #:
 #: **1,024 and not 64, and the reason is a measurement.** ``bucket_of`` hashes,
@@ -630,3 +638,164 @@ class TestThePackingFactor:
         after, outcome = sf.refine_unit(cursor, chunk, factor=2)
         assert outcome == sf.SPLIT_TOO_DEEP
         assert after is cursor
+
+
+# =============================================================================
+# 5. THE TRUTH CLAUSE — a cut nobody intended must not change a number
+# =============================================================================
+
+
+class TestTheCutDoesNotChangeAPublishedNumber:
+    """🔴 **This class exists because the guard that used to cover it is RED.**
+
+    The sibling control file
+    ``test_calibration_oversized_slot_is_cut_on_its_proof_6599`` owns the only
+    census-equality assertions in this area —
+    ``test_publication_after_a_false_cut_still_equals_a_fresh_computation`` and
+    ``test_a_false_positive_inside_the_population_the_candidate_is_for``. This
+    mechanism reddens both, and it reddens each of them at a clause that sits
+    BEFORE the census comparison (``once.splits == 1``; an exact beat tuple).
+    So the comparison no longer runs, and the tree stopped proving the TRUTH
+    property without any test reporting the loss — precisely the shape gotcha
+    #53 names, one level up: the guard's absence looks exactly like a pass.
+
+    Nothing in the rest of THIS file asserted it either: sections 1-4 measure
+    throughput, the bank and the arithmetic. So the clause is restated here,
+    against the control file's own rig and its own single-pass reference, and
+    it is the clause that decides whether the mechanism is shippable at all —
+    a build that publishes a different curve because a slot was partitioned is
+    not a slower ship, it is a wrong one.
+
+    Imported rather than reimplemented: a hand-built second rig would be
+    measuring a fake against a fake (and the disturbance in that rig is keyed
+    on the PARENT slot's questions, so it follows them into the children —
+    which is the part a re-implementation gets wrong).
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_census_reached_through_a_packing_cut_equals_a_fresh_pass(
+        self, drive
+    ):
+        fresh = await drive(buckets=8, max_beats=1, window_ms=50_000_000)
+        once = await drive(buckets=8, max_beats=60, transient=_transient())
+        forever = await drive(
+            buckets=8, max_beats=40, transient=_transient(beats=range(1, 41))
+        )
+
+        assert fresh.completed_at == 1 and fresh.splits == 0, (
+            "the reference must be one uncut pass; "
+            f"beats={fresh.completed_at} splits={fresh.splits}"
+        )
+        assert (once.splits, forever.splits) == (2, 3), (
+            "both arms must go through a cut, or this compares uncut runs — "
+            f"got {once.splits} / {forever.splits}"
+        )
+        assert once.census == fresh.census
+        assert forever.census == fresh.census
+
+    @pytest.mark.asyncio
+    async def test_it_holds_in_the_mixed_population_and_loses_no_banked_work(
+        self, drive
+    ):
+        """Four slots that cannot fit, one healthy slot having a bad beat.
+
+        The arm with ``conclusive_splits=False`` is no longer an uncut control
+        — this mechanism cuts there too — so it is read here for what it still
+        proves: both arms publish the fresh census, and neither banks less.
+        """
+        disturbed = _transient(slot=4)
+        cand = await drive(
+            buckets=8, oversized_slots=4, max_beats=120, transient=disturbed
+        )
+        base = await drive(
+            buckets=8,
+            oversized_slots=4,
+            max_beats=120,
+            transient=disturbed,
+            conclusive_splits=False,
+        )
+        fresh = await drive(
+            buckets=8, oversized_slots=4, max_beats=1, window_ms=50_000_000
+        )
+
+        assert cand.max_banked >= base.max_banked, (
+            f"no banked work is lost; {cand.max_banked} < {base.max_banked}"
+        )
+        assert cand.census == fresh.census
+        assert base.census == fresh.census
+
+    @pytest.mark.asyncio
+    async def test_the_cascade_is_still_bounded_when_a_disturbance_never_lifts(
+        self, drive
+    ):
+        """The other clause the red control stopped evaluating.
+
+        ``test_the_refinement_is_bounded_even_when_the_disturbance_never_lifts``
+        fails on its ``splits == 1`` count, so its three following clauses never
+        run. The count was never the property — the property is that the
+        children absorb the disturbance their parent could not, and the build
+        still publishes.
+        """
+        forty = _transient(beats=range(1, 41))
+        cand = await drive(buckets=8, max_beats=40, transient=forty)
+
+        assert cand.completed_at is not None, "the disturbed build still publishes"
+        assert cand.per_beat_cancelled[1:] == [0] * (
+            len(cand.per_beat_cancelled) - 1
+        ), (
+            "the children must stop cancelling once cut, or the bound is the "
+            f"beat ceiling rather than the policy; got {cand.per_beat_cancelled}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_conclusive_gauge_stays_a_reading_about_cancellations(
+        self, drive
+    ):
+        """``staged:unit_cancel_conclusive`` must not learn to mean "a cut".
+
+        The two ``TestTheConclusiveReadIsLegibleOnItsOwn`` tests this mechanism
+        reddens both fail on ``first_split_beat is None`` — a regime clause —
+        leaving their gotcha #53 invariant unevaluated: the gauge follows the
+        PREDICATE, not any cut. A packing cut writes its own
+        ``staged:unit_packing_*`` names and must write none of these.
+        """
+        base = await drive(
+            buckets=16, oversized_slots=16, max_beats=3, conclusive_splits=False
+        )
+        scraps = await drive(buckets=8, oversized_slots=0, slow_slots=8, max_beats=3)
+
+        assert base.first_split_beat == 1 and scraps.first_split_beat == 1, (
+            "both arms are cut by THIS mechanism — if they are not, the two "
+            "assertions below are about nothing"
+        )
+        assert all(not beat for beat in base.per_beat_conclusive), (
+            f"got {base.per_beat_conclusive}"
+        )
+        assert all(not beat for beat in scraps.per_beat_conclusive), (
+            f"got {scraps.per_beat_conclusive}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_two_inertness_controls_keep_their_invariant_half(self, drive):
+        """1336's counterexample classes, split into the two things they say.
+
+        ``TestTheCandidateIsInertWhereOrderingWasRefuted`` asserts four things
+        of a healthy and a slow-but-completable tail: same completion beat,
+        same per-beat bank, and ``splits == 0``. The first three are the
+        invariant — an ordering candidate could not hold them — and they hold
+        here. The fourth is the regime: it says "in this tree nothing cuts a
+        slot that never cancelled", which is the sentence #6599 exists to
+        falsify. Recorded so the two halves are never again read as one.
+        """
+        for kwargs in ({"buckets": 16}, {"buckets": 8, "slow_slots": 8}):
+            cand = await drive(max_beats=40, **kwargs)
+            base = await drive(max_beats=40, conclusive_splits=False, **kwargs)
+
+            assert base.completed_at is not None, "the control must actually finish"
+            assert cand.completed_at == base.completed_at, kwargs
+            assert cand.per_beat_banked == base.per_beat_banked, kwargs
+            assert cand.splits > 0 and base.splits > 0, (
+                f"{kwargs}: and both arms ARE cut now — candidate {cand.splits} / "
+                f"control {base.splits} — which is the regime half, stated so "
+                "it is a measurement rather than a silent difference"
+            )
