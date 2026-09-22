@@ -343,6 +343,10 @@ def test_the_rail_uses_the_siblings_venue_doors_by_identity():
     assert rail._fetch_event is sibling._fetch_event
     assert rail._fetch_series is sibling._fetch_series
     assert rail.WRITE_TIMEOUT_MS is sibling.WRITE_TIMEOUT_MS
+    assert rail.VENUE_PAUSE is sibling.VENUE_PAUSE
+    # The per-call timeout is NOT imported: this rail issues no raw HTTP call,
+    # so it has no use for one, and `_fetch_event`/`_fetch_series` carry it by
+    # identity already. CodeQL called the import unused and was right.
 
 
 def test_the_rail_is_registered_and_named_once():

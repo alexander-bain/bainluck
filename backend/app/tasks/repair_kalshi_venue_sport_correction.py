@@ -120,7 +120,6 @@ from sqlalchemy import text
 # limit), and a second hand-rolled copy here would be the drift this import
 # exists to prevent. A guard test asserts the identity.
 from app.tasks.repair_kalshi_venue_topic_badges import (
-    FETCH_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for the guard test
     VENUE_PAUSE,
     WRITE_TIMEOUT_MS,
     _fetch_event,
