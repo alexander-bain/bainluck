@@ -97,6 +97,7 @@ from app.utils.hero_probability import resolve_hero
 # which asks the settled question on its own account. The hero cascade itself
 # left with #3903 — see `utils/hero_probability`.
 from app.utils.settled_hero import resolve_settled_hero
+from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import venue_settlement_is_askable
 from app.utils.venue_settlement_reader import attach_venue_settlement
@@ -19204,10 +19205,23 @@ async def _build_game_markets(
             # instead of other_markets.
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
-                if prob is None:
+                # #8044 — a leg whose price #7987 WITHDREW keeps its row and
+                # loses only its number, the way #7537/#7747/#8011 all present a
+                # withheld price; dropping it served 25 of 28 runners on the
+                # *1st Touchdown* board. The predicate owns which legs qualify
+                # and why both of its conditions are load-bearing.
+                #
+                # The two player-prop rescues below are unreachable without a
+                # number — both compute `1.0 - prob` — so a withheld leg falls
+                # through to `other_markets`, whose `probability` is already
+                # nullable and whose grade fields already return "no verdict"
+                # for an unsourced row (`_settled_grade_fields`, #4788).
+                if prob is None and not priceless_leg_keeps_its_row(
+                    o, event_is_finished=event_is_finished
+                ):
                     continue
                 # Check if outcome looks like a player prop: "PlayerName: N+"
-                if _PLAYER_OUTCOME_RE.match(o.name):
+                if prob is not None and _PLAYER_OUTCOME_RE.match(o.name):
                     threshold = _extract_threshold(o.name)
                     if threshold is not None:
                         name_lower = o.name.lower().strip()
@@ -19250,7 +19264,8 @@ async def _build_game_markets(
                 # market name still matches `_PLAYER_PROP_RE` on "Points" and is
                 # still not a lone-stat-word team market (#5133 defect A).
                 if (
-                    _PLAYER_PROP_RE.search(market.name)
+                    prob is not None
+                    and _PLAYER_PROP_RE.search(market.name)
                     and not _is_team_stat_market(market.name)
                     and not _is_scoring_race_market(market.name)
                 ):
