@@ -108,6 +108,61 @@ def is_quiet(league: str, now: datetime | None = None) -> bool:
     return league_phase(league, now) in ("offseason", "break")
 
 
+def season_start(league: str, now: datetime | None = None) -> datetime | None:
+    """UTC midnight on/after which a played game belongs to the season a page is
+    describing NOW. ``None`` for unknown, continuous, or unmodelled leagues.
+
+    #7051. The phase helpers above answer "is anybody playing today"; this one
+    answers the different question a past-results rail asks — *which* season the
+    game in front of me belongs to. The 2026 NFL preseason is the case: 51 rows
+    filed under ``americanfootball_nfl`` itself, so every filter keyed on the
+    sport key passes them through as ordinary season games, and 36 of the 100
+    cards on the 32 NFL team pages were August exhibitions sitting under a record
+    that (correctly) excludes them.
+
+    **The rule is "the latest in-season start that has already happened"**, taken
+    against ``now.year`` and then ``now.year - 1``. Stated that way it is right in
+    all four phases and needs no special case for the wrap leagues: on 2026-09-22
+    the NFL floor is 2026-09-04 (the season being played), the NHL floor is
+    **2025**-10-04 — last October's, because this one has not arrived — so the
+    September exhibitions an NHL rail is currently carrying are ADMITTED. A naive
+    month/day comparison would have excluded January-to-April for every league
+    whose season crosses the new year, which is the trap this shape avoids.
+
+    ⚠️ **The bands are deliberately a few days INSIDE the true schedule edges**
+    (see ``_LEAGUE_BANDS``), which is the safe direction for an alarm and the
+    unsafe one for a floor: a league whose real opener fell *before* its band
+    start would lose real results off the rail. Checked against the schedule we
+    actually hold, 2026-09-22 — the NBA's first ``basketball_nba`` game is
+    ``2026-10-20 19:00Z`` against a ``(10, 20)`` band, i.e. later than the floor
+    by nineteen hours, and every NHL game after ``(10, 4)`` is post-opener. The
+    floor is midnight UTC rather than the band's own clock precisely so that
+    opening night clears it. Re-check this when a band moves.
+
+    Fails OPEN in every direction it can fail: an unmodelled league, a league
+    with no ``in_season`` band, and an impossible date all return ``None``, which
+    a caller spends as "filter nothing".
+    """
+    slug = (league or "").strip().lower()
+    if slug in _CONTINUOUS:
+        return None
+    bands = _LEAGUE_BANDS.get(slug)
+    if not bands:
+        return None
+    start = next((md for phase, md, _ in bands if phase == "in_season"), None)
+    if start is None:
+        return None
+    dt = _now(now)
+    for year in (dt.year, dt.year - 1):
+        try:
+            candidate = datetime(year, start[0], start[1], tzinfo=timezone.utc)
+        except ValueError:  # a Feb-29 band in a non-leap year
+            continue
+        if candidate <= dt:
+            return candidate
+    return None
+
+
 # Human phase labels for a season descriptor (team-page truth: every number
 # declares its season). Keyed by the phase() return value above.
 _PHASE_LABELS: dict[str, str] = {
