@@ -291,3 +291,244 @@ class TestTheCandidateQueryReachesTheServer:
         # wrong spellings fail in two distinguishable ways, so neither arm can be
         # satisfied by the other's defect.
         assert 'syntax error at or near ":"' in str(caught.value)
+
+
+@needs_postgres
+class TestTheSettleStatementsReachTheServer:
+    """The settle stage hands the server three MORE statements.
+
+    Same gap, same cost. The unit guards prove SQLAlchemy binds the parameters;
+    only a server proves the SQL parses and does what the sentence says. The
+    repair's first apply was reverted inside 22 seconds by a writer it could not
+    see, and the stage that answers that must not itself be inert.
+    """
+
+    async def test_the_stored_read_prepares_and_reads_the_source(self, session):
+        from sqlalchemy import text
+
+        from scripts.repair_polymarket_event_orientation import STORED_SQL
+
+        await session.execute(
+            text("UPDATE events SET win_probability_sources = "
+                 "'{\"polymarket\": {\"value\": 0.455}}'::jsonb WHERE id = :i"),
+            {"i": IN_WINDOW},
+        )
+        await session.commit()
+        rows = (await session.execute(
+            text(STORED_SQL), {"ids": [IN_WINDOW, FAR_FUTURE]}
+        )).mappings().all()
+        by_id = {r["id"]: r["value"] for r in rows}
+        assert by_id[IN_WINDOW] == pytest.approx(0.455)
+        # The row with no polymarket leg reads None, not 0.0 — the difference
+        # between "we hold nothing" and "we hold zero" is a whole verdict.
+        assert by_id[FAR_FUTURE] is None
+
+    async def test_the_restamp_writes_only_the_polymarket_value(self, session):
+        """It must move `polymarket.value` and leave every sibling source alone.
+
+        A `jsonb_set` on the wrong path, or one that replaces the object, would
+        take out the blend's other legs — a repair for one source quietly
+        deleting the others.
+        """
+        from sqlalchemy import text
+
+        from scripts.repair_polymarket_event_orientation import (
+            RESTAMP_SQL,
+            STORED_SQL,
+        )
+
+        await session.execute(
+            text("UPDATE events SET win_probability_sources = '{"
+                 "\"polymarket\": {\"value\": 0.455, \"scope\": \"keep-me\"}, "
+                 "\"kalshi\": {\"value\": 0.61}}'::jsonb WHERE id = :i"),
+            {"i": IN_WINDOW},
+        )
+        await session.commit()
+
+        await session.execute(
+            text(RESTAMP_SQL), {"event_id": IN_WINDOW, "value": 0.545}
+        )
+        await session.commit()
+
+        after = (await session.execute(
+            text("SELECT win_probability_sources AS s FROM events WHERE id = :i"),
+            {"i": IN_WINDOW},
+        )).mappings().one()["s"]
+        assert after["polymarket"]["value"] == pytest.approx(0.545)
+        assert after["polymarket"]["scope"] == "keep-me", (
+            "the re-stamp replaced the source object instead of its value"
+        )
+        assert after["kalshi"]["value"] == pytest.approx(0.61), (
+            "the re-stamp reached a source this repair does not transpose"
+        )
+        stored = (await session.execute(
+            text(STORED_SQL), {"ids": [IN_WINDOW]}
+        )).mappings().one()["value"]
+        assert stored == pytest.approx(0.545)
+
+    async def test_a_row_with_no_polymarket_leg_is_not_given_one(self, session):
+        """The `WHERE` is load-bearing: `jsonb_set` on an absent parent is a
+        no-op, but on a NULL column it would null the whole thing, and on a row
+        with other sources it would MINT a polymarket leg that no market backs —
+        the #1163 phantom, created by the repair itself."""
+        from sqlalchemy import text
+
+        from scripts.repair_polymarket_event_orientation import RESTAMP_SQL
+
+        await session.execute(
+            text("UPDATE events SET win_probability_sources = "
+                 "'{\"kalshi\": {\"value\": 0.61}}'::jsonb WHERE id = :i"),
+            {"i": FAR_FUTURE},
+        )
+        await session.commit()
+        result = await session.execute(
+            text(RESTAMP_SQL), {"event_id": FAR_FUTURE, "value": 0.545}
+        )
+        await session.commit()
+        assert result.rowcount == 0
+        after = (await session.execute(
+            text("SELECT win_probability_sources AS s FROM events WHERE id = :i"),
+            {"i": FAR_FUTURE},
+        )).mappings().one()["s"]
+        assert "polymarket" not in after
+        assert after["kalshi"]["value"] == pytest.approx(0.61)
+
+    async def test_the_snapshot_restamp_is_bounded_by_captured_at(self, session):
+        """Only the snapshots laid down AFTER the swap may be transposed.
+
+        The ones the swap itself already fixed must be left alone; re-swapping
+        them undoes the first half of the repair. This arm seeds one snapshot on
+        each side of the boundary and asserts exactly one moves.
+        """
+        from sqlalchemy import text
+
+        from app.models.models import WinProbSnapshot
+        from scripts.repair_polymarket_event_orientation import (
+            RESTAMP_SNAPSHOTS_SQL,
+        )
+
+        swapped_at = datetime.now(timezone.utc)
+        session.add(WinProbSnapshot(
+            event_id=IN_WINDOW, source="polymarket",
+            captured_at=swapped_at - timedelta(minutes=5),
+            home_win_probability=0.2, away_win_probability=0.8,
+        ))
+        session.add(WinProbSnapshot(
+            event_id=IN_WINDOW, source="polymarket",
+            captured_at=swapped_at + timedelta(seconds=10),
+            home_win_probability=0.3, away_win_probability=0.7,
+        ))
+        await session.commit()
+
+        params = {"event_id": IN_WINDOW, "since": swapped_at,
+                   "expected": 0.7, "eps": 5e-4}
+        moved = (await session.execute(
+            text(RESTAMP_SNAPSHOTS_SQL), params
+        )).rowcount
+        await session.commit()
+        assert moved == 1, "the bound is not filtering — an unbounded re-swap"
+
+        rows = (await session.execute(
+            text("SELECT captured_at, home_win_probability AS h"
+                 " FROM win_prob_snapshots WHERE event_id = :i"
+                 " ORDER BY captured_at"),
+            {"i": IN_WINDOW},
+        )).mappings().all()
+        assert [float(r["h"]) for r in rows] == [
+            pytest.approx(0.2), pytest.approx(0.7),
+        ], "the pre-swap snapshot was transposed a second time"
+
+        # ── CERT-3301's follow-up: THE SECOND EXECUTION MUST BE A NO-OP ──────
+        #
+        # The settle loop runs this again next round against the SAME lower
+        # bound, so a statement bounded only by time re-reads the row it just
+        # corrected and flips it straight back. This arm is the whole reason the
+        # value predicate exists, and it can only be proven on a server.
+        again = (await session.execute(
+            text(RESTAMP_SNAPSHOTS_SQL), params
+        )).rowcount
+        await session.commit()
+        assert again == 0, (
+            "the second round re-inverted a snapshot the first round repaired"
+        )
+        rows = (await session.execute(
+            text("SELECT home_win_probability AS h FROM win_prob_snapshots"
+                 " WHERE event_id = :i ORDER BY captured_at"),
+            {"i": IN_WINDOW},
+        )).mappings().all()
+        assert [float(r["h"]) for r in rows] == [
+            pytest.approx(0.2), pytest.approx(0.7),
+        ]
+
+    async def test_a_snapshot_at_a_moved_price_is_left_alone(self, session):
+        """Fail-closed, same direction as the JSONB re-stamp.
+
+        A post-swap snapshot whose price is neither `expected` nor its inversion
+        is a price move, a mis-linked market or a faulty replica — three things,
+        none of them a transposition. The statement must decline it rather than
+        flip it on the strength of the timestamp alone.
+        """
+        from sqlalchemy import text
+
+        from app.models.models import WinProbSnapshot
+        from scripts.repair_polymarket_event_orientation import (
+            RESTAMP_SNAPSHOTS_SQL,
+        )
+
+        swapped_at = datetime.now(timezone.utc)
+        session.add(WinProbSnapshot(
+            event_id=IN_WINDOW, source="polymarket",
+            captured_at=swapped_at + timedelta(seconds=10),
+            home_win_probability=0.44, away_win_probability=0.56,
+        ))
+        await session.commit()
+
+        moved = (await session.execute(text(RESTAMP_SNAPSHOTS_SQL), {
+            "event_id": IN_WINDOW, "since": swapped_at,
+            "expected": 0.7, "eps": 5e-4,
+        })).rowcount
+        await session.commit()
+        assert moved == 0, "a moved price was transposed as if it were inverted"
+
+    async def test_the_backup_table_takes_a_run_id_and_scopes_the_undo(
+        self, session
+    ):
+        """Two applies must leave two recoverable runs, not one ambiguous pile.
+
+        The shipped table has no `run_id`, so this also exercises the
+        `ADD COLUMN IF NOT EXISTS` upgrade against a server: the fixture creates
+        nothing, the first statement creates the old shape, the second carries
+        it forward.
+        """
+        from sqlalchemy import text
+
+        from scripts.repair_polymarket_event_orientation import BACKUP_TABLE
+
+        await session.execute(text(
+            f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} ("
+            " event_id bigint, home_team_name text, away_team_name text,"
+            " home_team_id bigint, away_team_id bigint,"
+            " win_probability_sources jsonb,"
+            " backed_up_at timestamptz DEFAULT now())"
+        ))
+        await session.execute(text(
+            f"ALTER TABLE {BACKUP_TABLE} ADD COLUMN IF NOT EXISTS run_id text"
+        ))
+        for run, home in (("run-a", "A"), ("run-b", "B")):
+            await session.execute(text(
+                f"INSERT INTO {BACKUP_TABLE} (event_id, home_team_name, run_id)"
+                " VALUES (:e, :h, :r)"
+            ), {"e": IN_WINDOW, "h": home, "r": run})
+        await session.commit()
+
+        # The unscoped restore is ambiguous — two rows for one event.
+        both = (await session.execute(text(
+            f"SELECT count(*) FROM {BACKUP_TABLE} WHERE event_id = :e"
+        ), {"e": IN_WINDOW})).scalar_one()
+        assert both == 2
+
+        scoped = (await session.execute(text(
+            f"SELECT home_team_name FROM {BACKUP_TABLE}"
+            " WHERE event_id = :e AND run_id = :r"
+        ), {"e": IN_WINDOW, "r": "run-a"})).scalars().all()
+        assert scoped == ["A"], "the run scope does not disambiguate the undo"

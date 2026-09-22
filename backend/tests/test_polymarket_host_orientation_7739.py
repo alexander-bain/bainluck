@@ -371,5 +371,269 @@ def test_the_swap_moves_the_price_with_the_names():
 def test_the_backup_carries_the_probabilities_it_rewrites():
     """A backup of the names alone cannot undo a transposition of the prices."""
     source = REPAIR_PATH.read_text()
-    create = source.split(f"CREATE TABLE IF NOT EXISTS {{BACKUP_TABLE}} (")[1]
+    create = source.split("CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} (")[1]
     assert "win_probability_sources jsonb" in create.split(")")[0]
+
+
+# --------------------------------------------------------------------------
+# The settle stage
+#
+# The repair's first production apply committed 30 rows, exited 0, and had 20 of
+# them reverted by `live_blend_refresh` within 22 seconds — a read-then-write
+# race no one-shot repair can win. These guards pin the stage that answers it.
+# --------------------------------------------------------------------------
+
+
+def test_both_prices_absent_is_uncorroborated_not_settled():
+    """Trap 3, and the whole reason this is not a `==` comparison.
+
+    A row with no stored value and a source that says nothing LOOKS like
+    agreement to any equality test. It is the absence of evidence, and counting
+    it as a repaired row would have this stage report a clean run over a cohort
+    it never verified.
+    """
+    repair = _load_repair()
+    assert repair.classify_settlement(None, None) == "UNPRICED"
+
+
+def test_the_two_absences_are_not_the_same_verdict():
+    """`stored is None` and `expected is None` fail in opposite directions.
+
+    One is a row the writer has an opinion about and we hold nothing for —
+    minting it here would be publishing a number, not repairing one. The other
+    is a source that should be RETIRED, which is a different defect with a
+    different owner. Collapsing them is how a repair starts writing outside its
+    own scope.
+    """
+    repair = _load_repair()
+    assert repair.classify_settlement(None, 0.62) == "NOT-YET-WRITTEN"
+    assert repair.classify_settlement(0.62, None) == "SOURCE-WOULD-RETIRE"
+
+
+def test_only_the_inversion_signature_is_re_stamped():
+    """A disagreement this stage does not understand must never be written.
+
+    `0.455` against a writer saying `0.545` is the race, and is repaired. `0.455`
+    against a writer saying `0.700` is a price move, a mis-linked market, or a
+    faulty replica — three different things, none of them a transposition. The
+    fail-closed verdict is what stops the settle loop laundering any of them
+    into a confident write.
+    """
+    repair = _load_repair()
+    assert repair.classify_settlement(0.455, 0.545) == "REVERTED"
+    assert repair.classify_settlement(0.455, 0.700) == "UNEXPECTED"
+    assert repair.classify_settlement(0.455, 0.455) == "SETTLED"
+
+
+def test_a_coin_flip_row_settles_rather_than_re_stamping_forever():
+    """At p = 0.5, `p` and `1 - p` are the same number.
+
+    SETTLED must win the tie. Were REVERTED tested first, such a row would be
+    re-stamped with the value it already holds on every single round — a write
+    that changes nothing, reported as a repair, for as long as the loop runs.
+    """
+    repair = _load_repair()
+    assert repair.classify_settlement(0.5, 0.5) == "SETTLED"
+
+
+def test_the_last_settle_round_never_writes():
+    """The asymmetry IS the stage; without it the verdict proves nothing.
+
+    A check taken straight after a write only says the write happened. This
+    loop's final round waits out another writer cycle and then only READS, so a
+    clean exit means the value survived the writer rather than that it was
+    written recently. The guard drives four rounds with a writer that reverts
+    every single time and asserts exactly three re-stamps.
+    """
+    import asyncio as _asyncio
+
+    repair = _load_repair()
+    rounds, ids = 4, [111, 222]
+    restamps, commits = [], []
+
+    class _Result:
+        def __init__(self, rows=None):
+            self._rows = rows or []
+            self.rowcount = len(self._rows)
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "jsonb_set" in sql:
+                restamps.append(params["event_id"])
+                return _Result()
+            if "win_prob_snapshots" in sql:
+                return _Result()
+            return _Result([{"id": i, "value": 0.455} for i in ids])
+
+        async def commit(self):
+            commits.append(1)
+
+    async def _always_reverted(session, event_ids):
+        return {i: 0.545 for i in event_ids}
+
+    repair.writer_expectation = _always_reverted
+    verdicts, tally = _asyncio.run(repair.settle(
+        _Session(), ids, datetime(2026, 9, 22, tzinfo=timezone.utc),
+        rounds=rounds, wait_s=0,
+    ))
+
+    assert len(restamps) == (rounds - 1) * len(ids), (
+        f"{len(restamps)} re-stamps over {rounds} rounds — the final round "
+        f"must read only"
+    )
+    assert tally["REVERTED"] == len(ids)
+    assert set(verdicts.values()) == {"REVERTED"}
+
+
+def test_the_snapshot_re_stamp_is_bounded_by_the_swap_instant():
+    """Re-swapping every snapshot would invert the ones the swap already fixed.
+
+    The settle stage only owns the snapshots the racing writer laid down AFTER
+    the commit, so the statement must carry a `captured_at` lower bound. An
+    unbounded version passes every row-count assertion and silently undoes the
+    first half of the repair.
+    """
+    source = REPAIR_PATH.read_text()
+    stmt = source.split("RESTAMP_SNAPSHOTS_SQL = ")[1].split('"""')[1]
+    assert "captured_at >= :since" in stmt
+    assert "home_win_probability = away_win_probability" in stmt
+
+
+def test_the_snapshot_re_stamp_only_touches_an_inverted_row():
+    """CERT-3301's follow-up: a time bound alone RE-INVERTS on the second round.
+
+    The lower bound is the swap's commit instant and never moves, so round 2
+    re-reads every snapshot round 1 already corrected and flips it back. The
+    loop would oscillate a row it had already fixed. The value predicate is what
+    makes the statement idempotent: a snapshot already holding `expected` does
+    not match, so a second execution is a no-op.
+    """
+    source = REPAIR_PATH.read_text()
+    stmt = source.split("RESTAMP_SNAPSHOTS_SQL = ")[1].split('"""')[1]
+    assert "1 - cast(:expected AS numeric)" in stmt, (
+        "without the inversion predicate this re-swaps on every round"
+    )
+    assert ":event_id" in stmt and "ANY(:ids)" not in stmt, (
+        "the predicate needs one event's own expected value, so it is per-event"
+    )
+
+
+def test_the_settle_loop_re_stamps_snapshots_per_event_with_that_events_value():
+    """A shared `expected` across the reverted set would flip the wrong rows.
+
+    Two events reverting in the same round carry two different prices. Passing
+    one event's expectation to the other's snapshots is how a fail-closed
+    predicate quietly starts matching rows it was written to refuse.
+    """
+    import asyncio as _asyncio
+
+    repair = _load_repair()
+    ids = [111, 222]
+    expected_by_event = {111: 0.545, 222: 0.235}
+    seen = []
+
+    class _Result:
+        def __init__(self, rows=None):
+            self._rows = rows or []
+            self.rowcount = len(self._rows)
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "win_prob_snapshots" in sql:
+                seen.append((params["event_id"], params["expected"]))
+            if "jsonb_set" in sql or "win_prob_snapshots" in sql:
+                return _Result()
+            return _Result([{"id": i, "value": 1.0 - expected_by_event[i]}
+                            for i in ids])
+
+        async def commit(self):
+            pass
+
+    async def _writer(session, event_ids):
+        return dict(expected_by_event)
+
+    repair.writer_expectation = _writer
+    _asyncio.run(repair.settle(
+        _Session(), ids, datetime(2026, 9, 22, tzinfo=timezone.utc),
+        rounds=2, wait_s=0,
+    ))
+
+    assert sorted(seen) == sorted(expected_by_event.items()), (
+        f"snapshot re-stamps were {seen} — each event must be passed its own "
+        f"expected value"
+    )
+
+
+@pytest.mark.parametrize("name,expected_binds", [
+    ("RESTAMP_SQL", {"value", "event_id"}),
+    ("STORED_SQL", {"ids"}),
+    ("RESTAMP_SNAPSHOTS_SQL", {"event_id", "since", "expected", "eps"}),
+])
+def test_every_settle_statement_actually_binds_its_parameters(
+    name, expected_binds
+):
+    """The trap that made this script's first production invocation inert.
+
+    SQLAlchemy's bind regex refuses a colon preceded by a colon, so `:value::int`
+    is not a bind at all: the literal text is emitted and the statement compiles
+    with an EMPTY bind list. It reads correct, it passes any assertion about the
+    SQL string, and it dies in the server's parser.
+
+    So the guard asks the COMPILER, not the text. A `::` next to a bind makes the
+    parameter vanish from `bindparams` and this fails; a `::` cast on an
+    expression — `(... ->> 'value')::float`, which is fine and is deliberately
+    still here — does not. A source-scanning version of this test flagged the
+    second and would have pushed a correct statement into being rewritten.
+    """
+    from sqlalchemy import text as _text
+
+    repair = _load_repair()
+    stmt = _text(getattr(repair, name))
+    assert set(stmt._bindparams) == expected_binds, (
+        f"{name} compiles with binds {set(stmt._bindparams)}, expected "
+        f"{expected_binds} — a `::` beside a bind swallows the parameter"
+    )
+
+
+def test_a_single_settle_round_is_refused():
+    """One round would write and never check, which is the shipped defect."""
+    source = REPAIR_PATH.read_text()
+    assert "--settle-rounds" in source
+    assert "args.settle_rounds < 2" in source
+
+
+def test_the_backup_is_scoped_to_one_run():
+    """Trap 1 — the undo went nondeterministic on the second apply.
+
+    `CREATE TABLE IF NOT EXISTS` plus an unconditional `INSERT` appends, so a
+    second run leaves two rows per `event_id` and the printed restore picks an
+    arbitrary one. Every apply stamps a `run_id` and the restore is scoped to
+    it, so the rollback stays deterministic however many times this is run.
+    """
+    source = REPAIR_PATH.read_text()
+    assert "ADD COLUMN IF NOT EXISTS run_id text" in source
+    assert "run_id = uuid.uuid4().hex" in source
+    # Both halves of the printed restore — the events join AND the snapshot id
+    # set — must carry the scope; scoping one of them is still ambiguous.
+    #
+    # Named individually rather than counted. A `count("run_id") >= 3` over
+    # `split(...)[1]` reads to the END OF THE FILE, where the failure report
+    # mentions the run id twice more, so deleting the events scope entirely
+    # still cleared the threshold. The mutation survived and the guard looked
+    # fine.
+    assert "AND b.run_id = '{run_id}'" in source, "events restore is unscoped"
+    assert "WHERE run_id = '{run_id}'" in source, "snapshot restore is unscoped"

@@ -2914,7 +2914,7 @@ jobs:
             exit 1
           fi
 
-      - name: "#7739 the orientation repair can select its own candidates (real Postgres)"
+      - name: "#7739 the orientation repair can select its own candidates, and settle its own write (real Postgres)"
         # Same class as #7354 directly above, eleven days later, in a different
         # script. `CANDIDATE_SQL` shipped with `interval :horizon_days`, and
         # INTERVAL is a type constructor whose operand must be a literal, so
@@ -2951,10 +2951,13 @@ jobs:
             echo "::error::#7739 candidate-query gate collected NOTHING"
             exit 1
           fi
-          # 9 in the delivered gate. A short count means an arm was deleted or
-          # renamed out of collection, which pytest reports as success.
-          if ! grep -qE "9 passed" /tmp/candidate7739.txt; then
-            echo "::error::#7739 candidate-query gate did not report 9 passed"
+          # 15 in the delivered gate: 9 for the candidate query, plus 6 for the
+          # SETTLE statements the repair gained after its first apply was
+          # reverted inside 22 seconds by `live_blend_refresh`. A short count
+          # means an arm was deleted or renamed out of collection, which pytest
+          # reports as success.
+          if ! grep -qE "15 passed" /tmp/candidate7739.txt; then
+            echo "::error::#7739 candidate-query gate did not report 15 passed"
             exit 1
           fi
 
