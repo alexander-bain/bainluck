@@ -23,6 +23,7 @@ from sqlalchemy import func as sa_func, select, and_, null, or_, update
 
 from app.tasks.base import get_task_session
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
+from app.utils.golf_event_format import is_team_match_play_name  # #7985
 from app.utils.market_settlement import settled_values
 from app.utils.price_change_stamp import price_changed_at_value  # #2024, #4958
 
@@ -358,6 +359,47 @@ async def _poll_datagolf_markets() -> dict:
                     if not players:
                         logger.info("DataGolf: no pre-tournament data for tour=%s", tour)
                         stats["debug"][tour] = "no_pre_tournament_data"
+                        continue
+
+                    # ── #7985: an event's FORMAT decides which markets can exist ──
+                    # Every type in MARKET_TYPES presupposes a cut and an
+                    # individual champion. A team match-play event — the
+                    # Presidents Cup, the Ryder Cup — has neither, so minting
+                    # them does not produce mispriced markets, it produces
+                    # markets for questions the event cannot answer. Measured on
+                    # the Presidents Cup (2026-09-24, Medinah): DataGolf returned
+                    # a 132-player field for a 24-player team event and we minted
+                    # all five types from it, which put "6.1% Jackson Koivun,
+                    # Leader" at the top of /golf's PGA Tour card while Kalshi's
+                    # real Team USA 81.5% v Team World 14.5% sat unled in the
+                    # same payload.
+                    #
+                    # Skipped at the MINT, not filtered at the serve, because a
+                    # market that cannot be right is not a display problem. The
+                    # serve path withholds the rows this guard was too late for;
+                    # both read `app/utils/golf_event_format.py` so the class is
+                    # defined in one place.
+                    #
+                    # DELIBERATELY placed AFTER the in-play window block above,
+                    # not before it. Moving it earlier would also stop this tour
+                    # raising `INPLAY_WINDOW_KEY`, which reads like a free saving
+                    # — no markets to write, so why wake the 90s beat — and is
+                    # not one: that flag also drives live LEADERBOARD coverage,
+                    # and the Presidents Cup is a marquee event whose live scores
+                    # a reader wants whether or not we carry a market for it.
+                    # This ship is about which markets exist, not about going
+                    # dark on the event. The cost of the later placement is one
+                    # schedule fetch per beat cycle during a team-event week,
+                    # which is the cheaper of the two mistakes.
+                    if is_team_match_play_name(current_event.event_name):
+                        logger.info(
+                            "DataGolf: %s is team match play — minting no "
+                            "individual stroke-play markets (tour=%s event=%s)",
+                            current_event.event_name, tour, current_event.event_id,
+                        )
+                        stats["debug"][f"{tour}_team_match_play_skip"] = (
+                            f"{current_event.event_name} ({current_event.event_id})"
+                        )
                         continue
 
                     # 3. Upsert FuturesMarket + FuturesOutcome + Snapshot per market type
@@ -801,6 +843,25 @@ async def _poll_datagolf_live() -> dict:
                                 if t.status and t.status != "completed":
                                     current_event = t
                                     break
+                            # #7985: same format guard as the hourly poll. This
+                            # path matters MORE, not less: it reopens
+                            # (`status = "open"`) markets it finds as well as
+                            # creating them, so without this it would resurrect
+                            # the very Presidents Cup rows the hourly guard
+                            # stopped minting, every time the beat found no open
+                            # datagolf market for the tour — which, for a team
+                            # match-play week, is now always.
+                            if current_event and is_team_match_play_name(
+                                current_event.event_name
+                            ):
+                                logger.info(
+                                    "DataGolf live: %s is team match play — not "
+                                    "creating or reopening individual stroke-play "
+                                    "markets (tour=%s)",
+                                    current_event.event_name, tour,
+                                )
+                                current_event = None
+
                             if current_event:
                                 for market_type, category in MARKET_TYPES:
                                     ext_id = _external_id(tour, current_event.event_id, market_type)
