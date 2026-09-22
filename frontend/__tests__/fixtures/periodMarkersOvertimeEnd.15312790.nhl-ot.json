@@ -1,0 +1,519 @@
+{
+ "event_id": 15312790,
+ "sport": "icehockey_nhl",
+ "status": "completed",
+ "commence_time": "2026-09-21T23:00:00+00:00",
+ "completed_at": "2026-09-22T02:01:58.980527+00:00",
+ "period_markers": [
+  {
+   "timestamp": "2026-09-21T23:13:33.183933+00:00",
+   "period": "19:57 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:16:33.192465+00:00",
+   "period": "19:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:18:33.381353+00:00",
+   "period": "18:31 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:19:33.210297+00:00",
+   "period": "17:31 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:22:33.214999+00:00",
+   "period": "16:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:24:33.228362+00:00",
+   "period": "15:17 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:26:33.204138+00:00",
+   "period": "14:44 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:27:33.223102+00:00",
+   "period": "14:22 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:30:33.202663+00:00",
+   "period": "13:40 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:33:33.221061+00:00",
+   "period": "12:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:36:33.236595+00:00",
+   "period": "10:55 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:54:33.238064+00:00",
+   "period": "0:06 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:55:33.230189+00:00",
+   "period": "End of 1st Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:03:49.465913+00:00",
+   "period": "20:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:14:49.494374+00:00",
+   "period": "19:25 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:16:49.518308+00:00",
+   "period": "18:56 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:17:49.668560+00:00",
+   "period": "18:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:18:49.517808+00:00",
+   "period": "17:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:20:49.516954+00:00",
+   "period": "16:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:21:49.540718+00:00",
+   "period": "14:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:23:49.685682+00:00",
+   "period": "14:05 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:24:49.530255+00:00",
+   "period": "13:23 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:27:49.554457+00:00",
+   "period": "12:35 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:29:49.781721+00:00",
+   "period": "11:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:32:49.554074+00:00",
+   "period": "10:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:42:49.539629+00:00",
+   "period": "3:49 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:51:52.048687+00:00",
+   "period": "0:12 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:06:49.571967+00:00",
+   "period": "20:00 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:10:49.647468+00:00",
+   "period": "19:36 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:11:49.741322+00:00",
+   "period": "18:55 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:12:49.541085+00:00",
+   "period": "18:40 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:13:49.557538+00:00",
+   "period": "17:27 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:18:49.555877+00:00",
+   "period": "14:19 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:20:49.560536+00:00",
+   "period": "13:06 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:57:49.933346+00:00",
+   "period": "End of OT"
+  }
+ ],
+ "espn_history": [
+  {
+   "timestamp": "2026-09-21T23:13:33.183933+00:00",
+   "period": "19:57 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:16:33.192465+00:00",
+   "period": "19:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:18:33.381353+00:00",
+   "period": "18:31 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:19:33.210297+00:00",
+   "period": "17:31 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:22:33.214999+00:00",
+   "period": "16:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:24:33.228362+00:00",
+   "period": "15:17 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:26:33.204138+00:00",
+   "period": "14:44 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:27:33.223102+00:00",
+   "period": "14:22 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:30:33.202663+00:00",
+   "period": "13:40 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:33:33.221061+00:00",
+   "period": "12:00 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:36:33.236595+00:00",
+   "period": "10:55 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:54:33.238064+00:00",
+   "period": "0:06 - 1st Period"
+  },
+  {
+   "timestamp": "2026-09-21T23:55:33.230189+00:00",
+   "period": "End of 1st Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:03:49.465913+00:00",
+   "period": "20:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:14:49.494374+00:00",
+   "period": "19:25 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:16:49.518308+00:00",
+   "period": "18:56 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:17:49.668560+00:00",
+   "period": "18:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:18:49.517808+00:00",
+   "period": "17:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:20:49.516954+00:00",
+   "period": "16:00 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:21:49.540718+00:00",
+   "period": "14:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:23:49.685682+00:00",
+   "period": "14:05 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:24:49.530255+00:00",
+   "period": "13:23 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:27:49.554457+00:00",
+   "period": "12:35 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:29:49.781721+00:00",
+   "period": "11:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:32:49.554074+00:00",
+   "period": "10:50 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:42:49.539629+00:00",
+   "period": "3:49 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T00:51:52.048687+00:00",
+   "period": "0:12 - 2nd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:06:49.571967+00:00",
+   "period": "20:00 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:10:49.647468+00:00",
+   "period": "19:36 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:11:49.741322+00:00",
+   "period": "18:55 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:12:49.541085+00:00",
+   "period": "18:40 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:13:49.557538+00:00",
+   "period": "17:27 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:18:49.555877+00:00",
+   "period": "14:19 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:20:49.560536+00:00",
+   "period": "13:06 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:33:49.601925+00:00",
+   "period": "13:06 - 3rd Period"
+  },
+  {
+   "timestamp": "2026-09-22T01:57:49.933346+00:00",
+   "period": "End of OT"
+  },
+  {
+   "timestamp": "2026-09-22T02:01:00+00:00",
+   "period": "Final"
+  }
+ ],
+ "win_prob_history": {
+  "stat_model": [
+   {
+    "timestamp": "2026-09-21T23:13:33.183933+00:00",
+    "game_state": {
+     "period": "19:57 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:16:33.192465+00:00",
+    "game_state": {
+     "period": "19:00 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:18:33.381353+00:00",
+    "game_state": {
+     "period": "18:31 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:19:33.210297+00:00",
+    "game_state": {
+     "period": "17:31 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:22:33.214999+00:00",
+    "game_state": {
+     "period": "16:00 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:24:33.228362+00:00",
+    "game_state": {
+     "period": "15:17 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:26:33.204138+00:00",
+    "game_state": {
+     "period": "14:44 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:27:33.223102+00:00",
+    "game_state": {
+     "period": "14:22 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:30:33.202663+00:00",
+    "game_state": {
+     "period": "13:40 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:33:33.221061+00:00",
+    "game_state": {
+     "period": "12:00 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:36:33.236595+00:00",
+    "game_state": {
+     "period": "10:55 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:54:33.238064+00:00",
+    "game_state": {
+     "period": "0:06 - 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-21T23:55:33.230189+00:00",
+    "game_state": {
+     "period": "End of 1st Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:03:49.465913+00:00",
+    "game_state": {
+     "period": "20:00 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:14:49.494374+00:00",
+    "game_state": {
+     "period": "19:25 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:16:49.518308+00:00",
+    "game_state": {
+     "period": "18:56 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:17:49.668560+00:00",
+    "game_state": {
+     "period": "18:00 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:18:49.517808+00:00",
+    "game_state": {
+     "period": "17:00 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:20:49.516954+00:00",
+    "game_state": {
+     "period": "16:00 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:21:49.540718+00:00",
+    "game_state": {
+     "period": "14:50 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:23:49.685682+00:00",
+    "game_state": {
+     "period": "14:05 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:24:49.530255+00:00",
+    "game_state": {
+     "period": "13:23 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:27:49.554457+00:00",
+    "game_state": {
+     "period": "12:35 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:29:49.781721+00:00",
+    "game_state": {
+     "period": "11:50 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:32:49.554074+00:00",
+    "game_state": {
+     "period": "10:50 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:42:49.539629+00:00",
+    "game_state": {
+     "period": "3:49 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T00:51:52.048687+00:00",
+    "game_state": {
+     "period": "0:12 - 2nd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:06:49.571967+00:00",
+    "game_state": {
+     "period": "20:00 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:10:49.647468+00:00",
+    "game_state": {
+     "period": "19:36 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:11:49.741322+00:00",
+    "game_state": {
+     "period": "18:55 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:12:49.541085+00:00",
+    "game_state": {
+     "period": "18:40 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:13:49.557538+00:00",
+    "game_state": {
+     "period": "17:27 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:18:49.555877+00:00",
+    "game_state": {
+     "period": "14:19 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:20:49.560536+00:00",
+    "game_state": {
+     "period": "13:06 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:33:49.601925+00:00",
+    "game_state": {
+     "period": "13:06 - 3rd Period"
+    }
+   },
+   {
+    "timestamp": "2026-09-22T01:57:49.933346+00:00",
+    "game_state": {
+     "period": "End of OT"
+    }
+   }
+  ]
+ }
+}
