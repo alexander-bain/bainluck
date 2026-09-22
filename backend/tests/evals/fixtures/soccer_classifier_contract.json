@@ -29,7 +29,6 @@
     {"id":"poison-draw-dropped","name":"Arsenal vs Chelsea","external_id":null,"sport":"soccer_epl","semantic_kind":"whole_game_winner","expected_class":"moneyline","outcome_shape":"three_way_home_draw_away","draw_preserved":false,"expected_refusals":["SOCCER_DRAW_CONTRACT_LOST"]}
   ],
   "expected_current_mismatch_ids": [
-    "soccer-btts",
     "soccer-first-half-winner",
     "soccer-player-container",
     "esports-map-two-winner",

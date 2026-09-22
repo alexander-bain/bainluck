@@ -109,9 +109,30 @@ _PLAYER_PROP_RE = re.compile(
 )
 
 # Team-scoped derivative props ("team total", first-to-score, innings, NRFI).
+#
+# BTTS ("both teams to score") is a both-sides game derivative, not a player
+# prop: the `_PLAYER_PROP_RE` "to score" arm caught the Polymarket suffix
+# (": Both Teams to Score" -> player_prop, frozen as the `soccer-btts` known
+# mismatch) while the Kalshi ": BTTS" suffix fell through to "other" and
+# tripped the capture ceiling (#2127).
+#
+# 🔴 THE VOCABULARY IS READ OFF THE NAME, NEVER OFF THE TICKER. A ticker arm
+# (`"btts" in external_id -> team_prop`, mirroring the spread/total arm below)
+# looks like the obvious companion and is measured WRONG: `btts` is not a
+# series token, it is a substring that real GAME tickers hit inside their
+# team-code suffix. Of 10,833 Kalshi rows whose ticker contains "btts",
+# 10,830 also carry it in the NAME and 3 do not — and all 3 of those are
+# basketball MONEYLINES (`KXBSLGAME-26MAR220830MBBTTS`,
+# `KXEUROCUPGAME-26APR031300JLBTTS`, `KXBSLGAME-26APR181100YMBTTS`), where
+# "…MBBTTS" is the team pair, not a market kind. A ticker arm therefore buys
+# zero genuine BTTS rows and costs three real game winners their moneyline
+# class — which four consumers key on. The name arm carries no such risk:
+# 34,865 rows name BTTS and 0 of them sit on a `*GAME-` ticker.
+# (Measured on production 2026-09-22; guard: test_btts_vocabulary_2127.py.)
 _TEAM_PROP_RE = re.compile(
     r"(?:\bteam total\b|\bfirst to score\b|\binning\b|\bnrfi\b|\bfirst (?:run|goal|point)\b|"
-    r"\brace to \d+\b|\bwhich half\b|\bhighest scoring\b)",
+    r"\brace to \d+\b|\bwhich half\b|\bhighest scoring\b|"
+    r"\bboth teams (?:to )?score\b|\bbtts\b)",
     re.IGNORECASE,
 )
 
