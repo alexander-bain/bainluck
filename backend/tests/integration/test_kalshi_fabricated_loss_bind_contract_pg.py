@@ -648,20 +648,29 @@ async def test_the_future_cohort_composes_with_the_cursor_and_the_shard(pg_sessi
     ``?sport=`` hint once gave was advice that did not work — so the cohort is
     proved against both the cursor and the shard rather than alone.
     """
-    _, _, _, _, future = await _mixed_population(pg_session)
-    await _seed_market(pg_session, ext="KXWORK-FUT2", days_ago=-3, sport="hockey")
+    _, _, _, _, far = await _mixed_population(pg_session)
+    # NEARER than `far`: the fixture's future member resolves in 9 days, this one
+    # in 3. The cohort inherits the rail's ASC sort, so `near` comes FIRST — the
+    # cohort reorders nothing, which is the property under test and the one that
+    # is easy to get backwards when "future" is read as "later".
+    near = await _seed_market(
+        pg_session, ext="KXWORK-FUT2", days_ago=-3, sport="hockey"
+    )
 
-    both = [r.market_id for r in await _work(pg_session, lim=50, future_only=True)]
-    assert len(both) == 2, "two future-dated members now exist"
+    cohort = [r.market_id for r in await _work(pg_session, lim=50, future_only=True)]
+    assert cohort == [near, far], (
+        "the cohort is still oldest-first: nearest resolution date first, the "
+        "same ORDER BY the whole population walks under"
+    )
 
     sharded = [
         r.market_id
         for r in await _work(pg_session, lim=50, future_only=True, sport="hockey")
     ]
-    assert sharded == [both[1]], "the cohort ANDs with the shard, it does not replace it"
+    assert sharded == [near], "the cohort ANDs with the shard, it does not replace it"
 
     page_one = await _work(pg_session, lim=1, future_only=True)
-    assert [r.market_id for r in page_one] == [future]
+    assert [r.market_id for r in page_one] == [near]
     resumed = [
         r.market_id
         for r in await _work(
@@ -672,7 +681,7 @@ async def test_the_future_cohort_composes_with_the_cursor_and_the_shard(pg_sessi
             after_id=page_one[0].market_id,
         )
     ]
-    assert resumed == both[1:], "the keyset resumes INSIDE the cohort"
+    assert resumed == [far], "the keyset resumes INSIDE the cohort"
 
 
 async def test_the_lateral_rewrite_selects_exactly_what_the_grouped_form_did(
