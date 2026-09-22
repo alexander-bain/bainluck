@@ -3395,7 +3395,13 @@ jobs:
           # 124 minutes apart, which is what a 1-minute tier reports on a market
           # that traded twice, and it is the only arm that fails when the tier
           # label does not survive the bank.
-          EXPECTED = 50
+          # 51 with #7807's acceptance step: B14b stages the same real eviction
+          # as B14 but puts the WEB reader on the fallback, and requires the
+          # durable-serve receipt to describe the response that reader returned.
+          # B14's own last two lines are why that receipt has to exist — the
+          # fallback rehydrates Redis, so the next read says `cache` and no
+          # sampler can ever see that the durable tier paid.
+          EXPECTED = 51
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

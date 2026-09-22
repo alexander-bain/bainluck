@@ -43,8 +43,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -1258,6 +1259,103 @@ def test_B14_an_evicted_bank_is_served_from_the_durable_tier_without_asking_the_
         "its declared life, never a fresh one"
     )
     assert _timeline()["venue_history"]["tier"] == "cache"
+
+
+@contextmanager
+def _receipts():
+    """Every durable-serve receipt the app writes inside the block, parsed.
+
+    A handler on the receipt's own logger rather than `caplog`, and the logger's
+    LEVEL IS NOT TOUCHED: the whole point of the level the receipt is written at
+    is that it survives an app with no logging configuration, and a capture that
+    lowers the level would pass with a receipt production can never see.
+    """
+    from app.utils.durable_venue_receipt import RECEIPT_MARKER
+
+    written: list[dict] = []
+
+    class _Catch(logging.Handler):
+        def emit(self, record):
+            message = record.getMessage()
+            if message.startswith(RECEIPT_MARKER):
+                written.append(json.loads(message[len(RECEIPT_MARKER):].strip()))
+
+    lg = logging.getLogger("app.utils.durable_venue_receipt")
+    handler = _Catch()
+    lg.addHandler(handler)
+    try:
+        yield written
+    finally:
+        lg.removeHandler(handler)
+
+
+def test_B14b_the_durable_serve_writes_a_receipt_naming_the_bank_it_served(
+    venue, broker
+):
+    """#7807 acceptance — the fallback in B14, written down as it happens.
+
+    WHY THE RECEIPT EXISTS AT ALL, and why it is proved HERE and not on a double.
+    A durable serve erases its own evidence: B14's last two lines are the proof —
+    the recovered bank is put back in front of the next reader, so the very next
+    read says `cache` again, and the payload was identical to a warm one to begin
+    with. Nothing sampled afterwards can tell that the durable tier ever paid.
+    Only the reader that took the fallback knows, at the instant it takes it.
+
+    So this is the same staged eviction as B14 — a real `DEL` of the bank's key
+    on a real Redis, which is exactly what `allkeys-lru` did to it in production
+    — and the assertion is that the line the reader wrote describes the response
+    the reader returned. `/history` goes FIRST here, where B14 reads the phone
+    first; that is the only difference, and it is what puts the web reader on the
+    durable tier instead of on B14's rehydrated cache.
+    """
+    from app.utils.generic_market_history import cache_key
+
+    _seed_specimen()
+    _, _, warm_t, warm_h = _cold_then_warm(broker)
+    assert warm_h["venue_history"]["tier"] == "cache", "Redis is still the fast tier"
+    warm_points = _in_week(_history_points(warm_h))
+    asked = len(venue.provider_requests())
+
+    # ── the eviction, and nothing else (see B14 on why this is not an assert) ─
+    evicted = _redis().delete(cache_key(MARKET_ID))
+    assert evicted == 1, "the bank was not in Redis to begin with"
+
+    with _receipts() as written:
+        after_h = _history()
+        rehydrated_h = _history()
+
+    block = after_h["venue_history"]
+    assert block["tier"] == "durable", "the web reader did not take the fallback"
+    assert rehydrated_h["venue_history"]["tier"] == "cache", (
+        "the second read is the reason a sampler can never see this: the "
+        "fallback already put the bank back in front of it"
+    )
+
+    # ── ONE line, for the ONE read that fell back ───────────────────────────
+    assert len(written) == 1, (
+        f"expected exactly one receipt for one durable serve, got {written}"
+    )
+    receipt = written[0]
+    assert receipt["success"] is True
+    assert receipt["market_id"] == MARKET_ID
+    assert receipt["surface"] == "futures_history"
+    assert receipt["tier"] == "durable"
+
+    # ── and it describes THIS response, not a plausible one ─────────────────
+    assert receipt["state"] == block["state"] == "warm"
+    assert receipt["built_at"] == block["built_at"], "a different bank"
+    assert receipt["points_served"] == block["points_served"] > 0
+    assert receipt["outcomes_served"] == block["outcomes_served"] > 0
+    assert receipt["scale_refused"] is None
+    assert receipt["unsupported_points_withheld"] == block["unsupported_points_withheld"]
+
+    # ── the payload it describes is the chart B1 proved, recovered whole ─────
+    assert _in_week(_history_points(after_h)) == warm_points, "a different chart"
+    _assert_named_contract(_timeline(), after_h)
+    assert len(venue.provider_requests()) == asked, (
+        "writing the receipt must not cost an outbound venue request"
+    )
+    assert broker.calls == [], "nor a fill"
 
 
 def test_B15_a_durable_bank_past_its_declared_life_is_not_served(venue, broker):

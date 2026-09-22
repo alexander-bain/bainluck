@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.futures_market_snapshot import dated_movement_points
@@ -6349,6 +6350,17 @@ async def get_futures_history(
     if venue.applicable:
         response["venue_history"] = venue.describe(
             venue_rows_served, scale_refused=venue_scale_refusal
+        )
+        # #7807 acceptance — write down a durable-tier serve at the instant it
+        # happens. It cannot be sampled for afterwards: the fallback rehydrates
+        # Redis, so the next read says `cache` and the payload is identical
+        # either way. Fires ONLY when the durable tier answered, reads every
+        # field off the block above, and can neither raise nor change what is
+        # returned (see `app/utils/durable_venue_receipt`).
+        log_durable_venue_serve(
+            response["venue_history"],
+            market_id=market_id,
+            surface="futures_history",
         )
 
     return response
