@@ -233,3 +233,53 @@ def settled_price_values(is_winner: bool) -> dict:
         "current_probability": 1.0 if is_winner else 0.0,
         "current_american_odds": None,
     }
+
+
+def priceless_leg_keeps_its_row(outcome, *, event_is_finished: bool) -> bool:
+    """Does a leg with no price still deserve its row on the board? (#8044)
+
+    THE SERVE-SIDE OTHER HALF OF THIS MODULE. The withdrawal above is a WRITER:
+    it correctly takes the fossil price off a leg the venue answered on a number
+    (#7987). The residue it leaves is a row whose `current_probability` is NULL,
+    and `/api/events/{id}/game-markets` dropped exactly those rows before they
+    could reach the payload. So the write was right and the reader lost the row:
+    *1st Touchdown* on event 14780545 served **25 of 28** runners, and Puka
+    Nacua, Jordan Whittington and CJ Daniels were absent rather than shown
+    without a number. A reader cannot tell a scratched runner from a quietly
+    dropped one, and every adjacent ship in this area — #7537, #7747, #8011 —
+    keeps the row and removes only the number.
+
+    ** BOTH CONDITIONS ARE LOAD-BEARING, and each was measured on production
+    2026-09-22 over the trailing 30 days. ** 14,743 priceless legs sit on 586
+    finished events; serving all of them would not repair a board, it would
+    rewrite one.
+
+    * **`opening_probability is not None` — "we HAD a price and withdrew it".**
+      That is the statement the restored row makes. A leg that never carried a
+      price is not withheld, it is UNLISTED, and showing it is new content
+      rather than a repaired row: **11,327 of the 14,743** are that cohort and
+      stay hidden. All three specimens carry one (0.100 / 0.020 / 0.015), which
+      is what makes them separable at all.
+    * **`event_is_finished` — the dropped-row guard predates #7987** and is
+      reached by live boards too, where a priceless leg has never been shown.
+      The **1,814** once-priced-now-null legs on unfinished events are
+      deliberately out of scope: a live board's missing number is a liveness
+      question, not a settled-rendering one, and this ship may not answer it by
+      introducing rows to a surface that never carried them.
+
+    A leg that HAS a price is not this predicate's business and returns False —
+    the caller reaches it only when the price is absent, and answering True for
+    a priced leg would state something this function has not checked.
+
+    THE ROW CARRIES NO VERDICT WITH IT. These legs have `resolution_source`
+    NULL, so `_settled_grade_fields` already returns `is_winner: None` and the
+    renderer prints no verdict (#4788) — restoring the row cannot crown or bury
+    anybody. The payload's `probability` is already nullable, so the row arrives
+    as a name with no number, which is the presentation this class has
+    everywhere else.
+    """
+    if getattr(outcome, "current_probability", None) is not None:
+        return False
+    if not event_is_finished:
+        return False
+    return getattr(outcome, "opening_probability", None) is not None
