@@ -727,9 +727,30 @@ export interface LabeledRow {
 
 export interface MergedOutcome {
   label: string;
-  prob: number;
+  /**
+   * The price the contributing rows agree on — or `null` when NOBODY QUOTED
+   * THIS OUTCOME (#8067).
+   *
+   * The wire serves `probability: null` for a leg whose price the venue
+   * withdrew, and this field was a bare `number` fed by `probability ?? 0`, so
+   * "no price" and "priced at zero" arrived at the renderer as the same fact.
+   * On the settled `/events/14780545` 1st Touchdown board that printed
+   * `CJ Daniels — last quote 0%`: a runner nobody was pricing, rendered as a
+   * runner the market gave no chance.
+   *
+   * `null` is not a value the renderer can round; it is the absence of one, and
+   * `OutcomeBar` answers it with the row's name and no number at all.
+   */
+  prob: number | null;
   source: string;
-  /** How many wire rows agreed on this price. Drives the `Nx` badge. */
+  /**
+   * How many wire rows agreed on this price. Drives the `Nx` badge.
+   *
+   * #8067: rows that carried NO price are not counted when any row did — they
+   * agreed to nothing. When no row quoted there is no price to have agreed on,
+   * and the count falls back to the rows themselves so the badge keeps meaning
+   * "venues holding this outcome" rather than dropping to zero.
+   */
   sourceCount: number;
   /**
    * When we last saw this outcome's price — the OLDEST observation among the
@@ -844,8 +865,34 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
 
   for (const label of order) {
     const group = byLabel.get(label) as LabeledRow[];
-    const probs = group.map((r) => r.probability ?? 0);
-    const spread = Math.max(...probs) - Math.min(...probs);
+    /* ── #8067: A ROW NOBODY QUOTED ABSTAINS; IT DOES NOT VOTE ZERO ───────────
+       This was `group.map((r) => r.probability ?? 0)`, feeding BOTH the
+       agreement test and the merged price, and the coercion was wrong in each.
+
+       The price it produced is the defect Alex can see: on the settled
+       `/events/14780545` 1st Touchdown board, CJ Daniels, Puka Nacua and
+       Jordan Whittington are served `probability: null` — the venue withdrew
+       their price — and no grade either, so #6138's verdict path cannot speak
+       for them and they fell through to the price. The page said `last quote
+       0%` about three runners nobody had priced. `null` and `0` are different
+       facts and stop being the same one here, at the only line that conflated
+       them.
+
+       The agreement test is the same mistake facing the other way, and it is
+       fixed in the same breath rather than left for the next reader: a null row
+       beside a quoted 0.62 spread 0.62 and WITHHELD the label, so an outcome
+       one venue was actively pricing vanished off the card because a second
+       venue had stopped. Silence is not disagreement — exactly as an ungraded
+       row abstains from the grade merge below rather than reading as a loss
+       (#4788). Measured 0 of 184 `other` rows in that state on the specimen
+       page, so this arm is forward-looking; it is here because the line it
+       lives on is the one being corrected, and half a correction leaves the
+       coercion in the file for the population that does hit it. */
+    const quoted = group
+      .map((r) => r.probability)
+      .filter((p): p is number => p != null);
+    const spread =
+      quoted.length > 0 ? Math.max(...quoted) - Math.min(...quoted) : 0;
 
     if (spread > AGREEMENT_TOLERANCE + TOLERANCE_EPSILON) {
       withheld += 1;
@@ -887,9 +934,13 @@ export function mergeOutcomes(rows: LabeledRow[]): OutcomeMergeResult {
     const grade = distinctWinners.size === 1 ? gradedRows[0] : null;
     outcomes.push({
       label,
-      prob: probs[0],
+      // The first row that actually carried a price, and `null` when none did.
+      // Every quoted row agrees within tolerance by the time we are here, so
+      // "the first" is the same number as any other — but it must come from the
+      // quoted rows and not from `group[0]`, whose price may be the absent one.
+      prob: quoted.length > 0 ? quoted[0] : null,
       source: group[0].source || "unknown",
-      sourceCount: group.length,
+      sourceCount: quoted.length > 0 ? quoted.length : group.length,
       ...(carried != null ? { setNumber: carried } : {}),
       ...(carriedParts != null ? { winnerParts: carriedParts } : {}),
       ...(oldest !== null ? { observedAt: oldest } : {}),
@@ -925,9 +976,10 @@ export interface MarketSection {
   renderedOutcomes: number;
   /**
    * Of those, the ones that still print a PERCENTAGE — i.e. the rows that have
-   * no `result` to state instead. #3752: the settled section note promises the
-   * reader a last quote, and on a settled tennis page most rows deliberately
-   * refuse to show one, so the promise has to be counted rather than assumed.
+   * no `result` to state instead and a price to state at all (#8067). #3752:
+   * the settled section note promises the reader a last quote, and on a settled
+   * tennis page most rows deliberately refuse to show one, so the promise has
+   * to be counted rather than assumed.
    *
    * Counted here, off the same array the renderer maps over, so it cannot
    * disagree with the screen. Not conditioned on the event being settled: a
@@ -1481,7 +1533,18 @@ export function buildMarketSection(
             const seq = (sequence.get(a.label) as number) - (sequence.get(b.label) as number);
             if (seq !== 0) return seq;
           }
-          if (b.prob !== a.prob) return b.prob - a.prob;
+          // #8067. A row nobody quoted has no place in a price order, so it
+          // sinks below every priced row — but above a STRUCK one, which is the
+          // stronger statement and is already sorted out above. Said explicitly
+          // rather than left to `b.prob - a.prob`, which would coerce the
+          // absence to 0 and put the row in the one position that reads as a
+          // price ("last, because it was worth nothing"). Two unpriced rows
+          // fall through to the label tiebreak below, as two equal prices do.
+          const quotedOrder = Number(b.prob != null) - Number(a.prob != null);
+          if (quotedOrder !== 0) return quotedOrder;
+          if (a.prob != null && b.prob != null && b.prob !== a.prob) {
+            return b.prob - a.prob;
+          }
           // Equal prices must not leave the order to the wire. Set 1 and Set 3
           // were BOTH 0.565, so the tie fell through to `Array.sort`'s
           // stability and the payload decided — and the payload reorders on
@@ -1496,7 +1559,12 @@ export function buildMarketSection(
       // A row with a `result` renders the result and no number (`OutcomeBar`
       // returns before the percentage in both its remaining branches only when
       // there is none), so it is not a quote the header may promise.
-      quotedOutcomes += outcomes.filter((o) => !o.result).length;
+      //
+      // #8067 adds the second way a row shows no number: nobody quoted it. The
+      // counter's own note says it exists because the promise has to be counted
+      // rather than assumed, and a row rendering its name and nothing else is
+      // exactly the row a count of quotes may not include.
+      quotedOutcomes += outcomes.filter((o) => !o.result && o.prob != null).length;
       categoryWithheld += merged.withheld;
       return { name, outcomes, withheld: merged.withheld };
     });

@@ -132,6 +132,12 @@ function outcomeVerdict(
  * an age mark to be ABOUT, and counting it would make a card of eight graded
  * rows plus one live one read as "mixed" — moving the card's stamp to the wrong
  * place, which is the exact failure the denominator note below warns against.
+ *
+ * #8067 adds the fourth, for the same reason one step further back: a row the
+ * venue never quoted has no price at all, so it cannot be a LIVE one. It still
+ * carries an `observed_at` — that is when we looked, not when anyone priced it
+ * — so leaving it in the denominator would let a row with no price decide
+ * whether the card may speak for its rows.
  */
 function isLivePriced(
   outcome: MarketCard["outcomes"][0],
@@ -139,6 +145,7 @@ function isLivePriced(
 ): boolean {
   if (outcome.result) return false;
   if (outcomeVerdict(outcome, settled) !== null) return false;
+  if (outcome.prob === null) return false;
   return !(settled || outcome.decided === true);
 }
 
@@ -178,10 +185,15 @@ function OutcomeBar({
   // rounds with `renderedPercent` internally, so the CONTRACT is untouched and
   // every row that is not on a boundary prints exactly what it printed before.
   //
-  // The `?? 0` it replaces was dead: `mergeOutcomes` writes `probability ?? 0`,
-  // so `prob` is always a finite number by the time it reaches here, and a wire
-  // `null` arrives as a genuine 0 that still prints `0%` through both paths.
-  const percentText = formatProbabilityPercent(outcome.prob);
+  // The `?? 0` it replaces was dead: `mergeOutcomes` wrote `probability ?? 0`,
+  // so `prob` was always a finite number by the time it reached here, and a wire
+  // `null` arrived as a genuine 0 that still printed `0%` through both paths.
+  //
+  // #8067 ENDED THAT UPSTREAM. `prob` is now `number | null` and the absence
+  // survives the merge, so this line formats a price only when there is one —
+  // and the branch below is what a reader sees when there is not.
+  const percentText =
+    outcome.prob === null ? null : formatProbabilityPercent(outcome.prob);
   // A finished GAME settles every row; a finished SET settles only the rows
   // that asked about it. Both end in the same render, because both are the same
   // statement to a reader: this number stopped being a chance.
@@ -243,6 +255,42 @@ function OutcomeBar({
         >
           {verdict === "won" ? "Won" : "Lost"}
         </span>
+      </div>
+    );
+  }
+
+  /* ── #8067: NOBODY QUOTED THIS ROW, SO THE ROW QUOTES NOTHING ──────────────
+     On the settled `/events/14780545` 1st Touchdown board (production
+     `0896cf4e`, 19:49Z 2026-09-22) three runners read:
+
+         CJ Daniels                            last quote 0%
+
+     The venue had WITHDRAWN their prices — `probability: null` on the wire,
+     with no grade beside it — and `mergeOutcomes`' `?? 0` turned "no price"
+     into a number. On a *1st Touchdown* board `0%` reads as "this player had no
+     chance", which is a claim the market never made about CJ Daniels; it is the
+     one number that is worse than saying nothing. #6138 fixed 73 rows of this
+     shape by giving them a VERDICT, which is the better answer whenever there
+     is one — hence this branch sitting BELOW it — and #8044 then restored the
+     withheld legs to the payload, creating the population with no verdict to
+     fall back on.
+
+     The row keeps its name and shows nothing. Not a dash, not "no price", not a
+     parenthetical: notice 34's remedy for a number we cannot show honestly is
+     to leave the space empty rather than explain the emptiness. And no bar —
+     the bar is a picture of a quantity, so a zero-width one is the same false
+     zero drawn instead of written (#5984 is the proof a reader takes the bar
+     in first).
+
+     ABOVE `frozen`, because this is true in both states: a live board can have
+     a leg nobody is pricing, and `last quote` would be a second lie on top of
+     the first (there was no quote to be last). */
+  if (outcome.prob === null) {
+    return (
+      <div className="flex items-baseline gap-2 text-xs" data-testid="special-markets-no-price">
+        <div className={`flex-1 ${rank === 0 ? "font-semibold" : "text-text-secondary"}`}>
+          {outcome.label}
+        </div>
       </div>
     );
   }

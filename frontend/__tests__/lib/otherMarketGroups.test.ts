@@ -159,7 +159,13 @@ describe("buildMarketSection — grouping (gap K11)", () => {
     const section = buildMarketSection(rows);
     const homeRuns = section.categories[0].cards.find((c) => c.name === "Home Runs")!;
     const probs = homeRuns.outcomes.map((o) => o.prob);
-    expect([...probs].sort((a, b) => b - a)).toEqual(probs);
+    // #8067 made `prob` nullable — a row nobody quoted carries no price — so
+    // the fixture's own premise is asserted rather than assumed before the
+    // order is read: every row here IS priced, and a null creeping in would
+    // make the comparison below meaningless instead of failing.
+    expect(probs.every((p) => p !== null)).toBe(true);
+    const priced = probs as number[];
+    expect([...priced].sort((a, b) => b - a)).toEqual(priced);
   });
 });
 
