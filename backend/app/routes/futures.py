@@ -7967,7 +7967,10 @@ def _format_market_detail(
     # mutually-exclusive boards: 758 carry at least one such leg, 100 of those
     # are squeezed today and change what a reader sees (48 stop being squeezed
     # at all, 52 are squeezed less), and 0 have every leg stale.
-    if getattr(market, "status", None) == "open":
+    _board_status = getattr(market, "status", None)
+    _board_verdict = _board_has_a_verdict(sorted_outcomes)
+
+    if _board_status == "open":
         withheld = withheld | stale_observation_keys(
             (o.id, o.last_updated) for o in sorted_outcomes
         )
@@ -8023,11 +8026,80 @@ def _format_market_detail(
         # the truth here; this rule has no business moving it.
         #
         # Measured 2026-09-22 over the 31,716 open priced boards: 970 qualify.
+
+    # 🔴 #2077 — AND THE `status == "open"` GATE ABOVE IS THE REASON A MARKET
+    # THAT SETTLED EIGHT WEEKS AGO STILL PRINTS A COIN FLIP.
+    #
+    # WHAT A READER SEES, TODAY, ON PRODUCTION. `/futures/56916563` (*Mia Ristic
+    # vs. Viola Turini: Total Sets O/U 2.5*) resolved **2026-07-31** and serves
+    # `status: "resolved"` with `Under 0.5` and no winner on either leg — a
+    # settled tennis prop rendering as a live 50/50, **53 days later**. Its two
+    # siblings `…64` and `…65` are identical. That is a standing-ruling-2
+    # violation (*settled means settled*) on the surface that heroes one number.
+    #
+    # WHY THE GATE ABOVE CANNOT CATCH IT, AND WHY THAT IS NOT A BUG IN THE GATE.
+    # Both rules above are deliberately OPEN-ONLY, and both state the reason in
+    # the same words: *a settled board is a RESULT, and a result shows what
+    # ran*. That is correct — `/futures/413`'s "Jalen Brunson 99%" is the Finals
+    # MVP ANSWER and blanking it would erase a result. But the justification
+    # PRESUPPOSES A VERDICT. On a board nobody ever graded there is no result to
+    # show, and the number being protected is not "what ran" — it is the last
+    # quote before the market died, wearing a settled badge.
+    #
+    # SO THIS ADDS NO NEW RULE AND NO NEW THRESHOLD. It lets the ungraded half
+    # of the settled population reach the rule that already exists, whose own
+    # `board_has_a_verdict` early-return (CERT-3298) is the exact discriminator
+    # the gate above is missing — and which is already computed here. Every
+    # settled board carrying a verdict is refused by that early-return, so
+    # `/futures/413` is untouched by construction rather than by a carve-out.
+    #
+    # THE SAFETY PROPERTIES ARE INHERITED, NOT RE-ARGUED. `unobserved_board_keys`
+    # fails open on every missing input, measures against the FLEET's newest
+    # observation rather than `now` (so a fleet-wide ingestion outage freezes the
+    # comparison and withholds nothing new), and withholds rather than drops — so
+    # the row keeps its place, its opening and its chart, and prints "-".
+    # Critically it is also inert on the CHART path, which passes no fleet stamp
+    # and therefore gets the empty set: `canonical_board` keeps every id and the
+    # plotted series are not reordered. That inertness is why this rides the
+    # existing rule instead of being a fourth spelling beside it.
+    #
+    # `stale_observation_keys` is deliberately NOT widened with it. That rule
+    # measures each leg against its own board's newest stamp, so on a dead board
+    # it is the SELECTIVE fail-open #8011 documents above — it would withhold
+    # some legs and certify the last-written ones, which is how this specimen
+    # already serves `prices_withheld: 1` with a lone surviving `Under 0.5`. A
+    # partially-priced settled board is the defect, not the repair.
+    #
+    # RESIDUAL, STATED RATHER THAN IMPLIED: the inherited threshold is
+    # `BOARD_UNOBSERVED_DAYS` (30), so a board ungraded for less than that keeps
+    # its price. That is deliberate — grading runs 6-hourly across ~35 phases,
+    # and a market that settled this morning is awaiting a grader, not dead. Its
+    # closing price is the most informative thing on the page. Measured on
+    # production 2026-09-22 (fingerprint `c91daa7ba85343b4`): of 108,222 boards
+    # resolved in the last 7 days, 100,686 carry a price and **26,649 of those
+    # carry no verdict** — that cohort ages into this rule rather than being
+    # blanked at settlement.
+    # ONE SOURCE OF TRUTH FOR "IS THERE A VERDICT", AND IT IS THE CALLEE'S.
+    # The first cut of this gate read `== "open" or ("resolved" and not
+    # _board_verdict)`. Mutation showed that clause is DEAD: dropping it changes
+    # no behaviour and no test, because `unobserved_board_keys` already returns
+    # the empty set on `board_has_a_verdict`. Two copies of one rule read as
+    # defence in depth and are indistinguishable from dead code until each is
+    # severed on its own, so the verdict test lives in exactly one place — the
+    # callee — and this gate now names only the thing the callee does NOT know:
+    # which statuses may be considered at all.
+    #
+    # NAMED, NOT INVERTED. `status` is exactly {open: 40,758, resolved:
+    # 1,112,815} on production (2026-09-22), so `not in` or an unconditional
+    # call would behave identically TODAY and would silently admit whatever
+    # status is added next. A new status should inherit today's behaviour and
+    # come back through this line deliberately.
+    if _board_status in ("open", "resolved"):
         withheld = withheld | unobserved_board_keys(
             ((o.id, o.last_updated) for o in sorted_outcomes),
             board_touched_at=getattr(market, "updated_at", None),
             fleet_newest_observation=fleet_newest_observation,
-            board_has_a_verdict=_board_has_a_verdict(sorted_outcomes),
+            board_has_a_verdict=_board_verdict,
         )
 
     prices_withheld = 0
