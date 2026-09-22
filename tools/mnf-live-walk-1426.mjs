@@ -132,6 +132,35 @@ async function shoot(page, tag, label) {
   } catch (e) { log(`  ${label}: SHOT FAILED ${String(e).slice(0, 140)}`); return null; }
 }
 
+/**
+ * Open the event page and wait until the chart is actually on it.
+ *
+ * 🔴 NOT `waitUntil: 'networkidle'`, AND THE REASON IS THIS TOOL'S WHOLE SUBJECT.
+ * A live event page never goes network-idle: it polls for score and price updates
+ * for as long as it is open, so there is always a request in flight. The first
+ * relaunch against Rams–Giants died on exactly that — `page.goto: Timeout 90000ms
+ * exceeded … waiting until "networkidle"` — 25 minutes into the game it was armed
+ * for, and it threw at the top level, so the walk ended before its first frame.
+ *
+ * The trap is that `networkidle` WORKS on a completed page, which is what every
+ * earlier smoke run used: the polling stops once the game is final, so the
+ * condition this tool can never satisfy is the one it only meets in production.
+ *
+ * So: wait for the DOM, then for the chart itself, which is the thing every frame
+ * is aimed at. A page that loads but never draws a chart is a FINDING, not a
+ * crash — it is logged and shot anyway, because an empty chart on a live game is
+ * precisely the sort of thing this walk exists to photograph.
+ */
+async function openPage(page) {
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  try {
+    await page.waitForSelector('.recharts-wrapper', { timeout: 45000 });
+  } catch {
+    log('  ⚠️  no .recharts-wrapper within 45s of load — shooting the page as it stands');
+  }
+  await page.waitForTimeout(2500);
+}
+
 /** A fresh reader, in its OWN throwaway browser, that cannot take the walk down with it: a failed
  *  load costs one frame, never the held page — the only thing here that cannot be re-created. */
 async function freshShot(tag, label) {
@@ -139,8 +168,7 @@ async function freshShot(tag, label) {
   try {
     b = await chromium.launch({ headless: true, args });
     const fr = await b.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
-    await fr.goto(URL, { waitUntil: 'networkidle', timeout: 90000 });
-    await fr.waitForTimeout(2500);
+    await openPage(fr);
     await dismissConsent(fr);
     await shoot(fr, tag, label);
   } catch (e) {
@@ -161,9 +189,44 @@ const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 const args = ['--no-sandbox', '--single-process', '--disable-gpu', '--disable-crashpad', '--disable-dev-shm-usage'];
 if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>');
 
+// 🔴 THE KICKOFF WAIT POLLS THE WALL CLOCK; IT IS NOT ONE LONG SLEEP. Measured
+// on the 2026-09-21 Rams–Giants walk, which is why this reads the way it does.
+// Armed at 21:56Z for a 00:05Z kickoff, it computed 129 minutes and slept. At
+// 00:36Z — 160 minutes of wall clock later — it had still not woken: the process
+// was alive, `ps` showed it sleeping on 0.27s of CPU, and the log's last line was
+// still the one it wrote when it was armed. `setTimeout` runs on a MONOTONIC
+// clock that does not advance while the laptop is suspended, and `pmset -g log`
+// showed ~31 minutes of Maintenance Sleep in the interval — including one
+// 898-second stretch — which is exactly how far behind the timer was.
+//
+// So a one-shot sleep silently converts "wake at kickoff" into "wake kickoff plus
+// however long this machine happened to nap", and the failure is invisible from
+// outside: the pid is alive and the log looks like a job still waiting its turn.
+// A walk armed hours ahead for a marquee game is exactly the case that suspends.
+//
+// Polling `Date.now()` in short hops cannot drift, because every hop re-reads the
+// wall clock. The 60s cap also bounds how late the first frame can be.
 if (kickoffISO) {
-  const wait = new Date(kickoffISO).getTime() - Date.now();
-  if (wait > 0) { log(`waiting ${Math.round(wait / 60000)} min for kickoff ${kickoffISO}`); await sleep(wait); }
+  const kickoffMs = new Date(kickoffISO).getTime();
+  if (Number.isNaN(kickoffMs)) {
+    console.error(`bad kickoff timestamp: ${kickoffISO}`);
+    process.exit(2);
+  }
+  if (kickoffMs > Date.now()) {
+    log(`waiting ${Math.round((kickoffMs - Date.now()) / 60000)} min for kickoff ${kickoffISO}`);
+    let lastReport = 0;
+    while (Date.now() < kickoffMs) {
+      await sleep(Math.min(60_000, kickoffMs - Date.now()));
+      // A heartbeat every 15 min, so "still waiting" and "wedged" stop looking
+      // identical from the outside — the whole reason this was found late.
+      const left = kickoffMs - Date.now();
+      if (left > 0 && Date.now() - lastReport >= 15 * 60_000) {
+        lastReport = Date.now();
+        log(`still waiting — ${Math.round(left / 60000)} min to kickoff`);
+      }
+    }
+    log(`kickoff reached (${Math.round((Date.now() - kickoffMs) / 1000)}s past ${kickoffISO})`);
+  }
 }
 
 const browser = await chromium.launch({ headless: true, args });
@@ -171,8 +234,7 @@ const browser = await chromium.launch({ headless: true, args });
 // THE HELD READER. Opened once. Never reloaded, never navigated, not even asked whether the game
 // ended — that question goes to the API.
 const held = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
-await held.goto(URL, { waitUntil: 'networkidle', timeout: 90000 });
-await held.waitForTimeout(2500);
+await openPage(held);
 const heldConsent = await dismissConsent(held);
 log(`HELD page opened at ${URL} (consent dismissed: ${heldConsent})`);
 
