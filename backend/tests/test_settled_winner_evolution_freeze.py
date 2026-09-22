@@ -1,13 +1,19 @@
 """Tests for the settled-means-settled evolution freeze (#1177, Queue #230).
 
-When a futures market has a graded champion (exactly one outcome with
-``is_winner=True``), the ``/{market_id}/history`` endpoint must resolve that
-champion's path-to-resolution line to 1.0 at settlement time — regardless of
-which source's snapshots were charted (odds_api can fizzle a settled winner to a
-longshot value while Kalshi resolves to ~1.0). This is what greens the
-Settled-Concept Sentinel's Check C (evolution resolves) generically, and it must
-fire even while the winner market is stuck ``status='open'`` (gotcha #33), so it
-keys on ``is_winner``, never on ``status``.
+When a futures market has a graded champion, the ``/{market_id}/history``
+endpoint must resolve that champion's path-to-resolution line to 1.0 at
+settlement time — regardless of which source's snapshots were charted (odds_api
+can fizzle a settled winner to a longshot value while Kalshi resolves to ~1.0).
+This is what greens the Settled-Concept Sentinel's Check C (evolution resolves)
+generically, and it must fire even while the winner market is stuck
+``status='open'`` (gotcha #33), so it keys on ``is_winner``, never on ``status``.
+
+"A champion" is ONE outcome with ``is_winner=True`` on a mutually-exclusive
+field, and EVERY graded winner on an independent one (#7921): a cumulative
+ladder settles several rungs YES and a golf cut settles dozens, and each of those
+is a completed journey owed its ending. Two winners on a MUTEX field stays a
+no-op — that is a contradiction, and stamping 1.0 on both would publish it as a
+settled result.
 """
 
 import pytest
@@ -27,13 +33,24 @@ def _make_outcome(oid, name, prob=0.5, is_winner=False):
     return o
 
 
-def _make_market(market_id=1, outcomes=None, resolution_date=None, metadata=None):
+def _make_market(
+    market_id=1,
+    outcomes=None,
+    resolution_date=None,
+    metadata=None,
+    mutually_exclusive=True,
+):
     m = MagicMock()
     m.id = market_id
     m.name = "Winner Market"
     m.market_metadata = metadata
     m.resolution_date = resolution_date
     m.outcomes = outcomes or []
+    # #7921 — SET EXPLICITLY. A bare MagicMock auto-creates this attribute as a
+    # truthy Mock, so leaving it unset would send every co-winner test down the
+    # "we do not know" arm while reading as though it had proven the
+    # mutually-exclusive one. Default True matches the column's own default.
+    m.mutually_exclusive = mutually_exclusive
     return m
 
 
@@ -195,11 +212,16 @@ class TestApplySettledWinnerFreeze:
         _apply_settled_winner_freeze(market, oh, {100: "Spain"}, champion_name="Portugal")
         assert oh[100]["history"][-1]["probability"] == 0.6  # unknown champ → no-op
 
-    def test_multiple_winners_is_noop(self):
-        """Ambiguous grade (two is_winner) — do not fabricate a single champion."""
+    def test_multiple_winners_on_a_mutex_field_is_noop(self):
+        """Two is_winner where only ONE is possible — a contradiction, not a grade.
+
+        #7921 narrowed this from "any two winners" to "two winners on a mutually
+        exclusive field". Freezing both to 1.0 here would publish a grading bug
+        as a settled result on the chart.
+        """
         a = _make_outcome(100, "A", prob=0.5, is_winner=True)
         b = _make_outcome(200, "B", prob=0.5, is_winner=True)
-        market = _make_market(outcomes=[a, b])
+        market = _make_market(outcomes=[a, b], mutually_exclusive=True)
         oh = {100: {"outcome_id": 100, "name": "A",
                     "history": _hist([("2026-01-01T00:00:00+00:00", 0.5)]),
                     "eliminated": False, "eliminated_at": None}}
@@ -216,6 +238,89 @@ class TestApplySettledWinnerFreeze:
         _apply_settled_winner_freeze(market, oh, {200: "France"}, outcome_id_filter=200)
         assert 100 not in oh  # champion not injected into a non-champion view
         assert oh[200]["history"][-1]["probability"] == 0.3
+
+
+class TestCoWinnersOnAnIndependentField:
+    """#7921 — several winners is the ANSWER on a non-mutex field, not an ambiguity.
+
+    `>= 75 wins` and `>= 80 wins` both settle YES on one cumulative ladder; 73
+    golfers make the cut. Measured on production 2026-09-22: 119,870 co-winner
+    markets carry `mutually_exclusive = false` and 8,162 of them hold a graded
+    winner still priced under 50%, while the same page's table already printed
+    "Won · Settled" beside that line.
+    """
+
+    def test_every_graded_winner_ends_at_the_win(self):
+        a = _make_outcome(100, ">= 75 wins", prob=0.98, is_winner=True)
+        b = _make_outcome(200, ">= 80 wins", prob=0.99, is_winner=True)
+        c = _make_outcome(300, ">= 105 wins", prob=0.0, is_winner=False)
+        market = _make_market(outcomes=[a, b, c], mutually_exclusive=False)
+        oh = {
+            100: {"outcome_id": 100, "name": ">= 75 wins",
+                  "history": _hist([("2026-01-01T00:00:00+00:00", 0.98)]),
+                  "eliminated": False, "eliminated_at": None},
+            200: {"outcome_id": 200, "name": ">= 80 wins",
+                  "history": _hist([("2026-01-01T00:00:00+00:00", 0.99)]),
+                  "eliminated": False, "eliminated_at": None},
+            300: {"outcome_id": 300, "name": ">= 105 wins",
+                  "history": _hist([("2026-01-01T00:00:00+00:00", 0.06)]),
+                  "eliminated": False, "eliminated_at": None},
+        }
+        _apply_settled_winner_freeze(market, oh, {100: ">= 75 wins", 200: ">= 80 wins", 300: ">= 105 wins"})
+        # BOTH winners resolve — the defect was that neither did.
+        assert oh[100]["history"][-1]["probability"] == 1.0
+        assert oh[200]["history"][-1]["probability"] == 1.0
+        assert oh[100]["history"][-1]["bookmaker"] == "settlement"
+        assert oh[200]["history"][-1]["bookmaker"] == "settlement"
+        # The UNGRADED rung is untouched: a loser's line still ends at its own
+        # last real value. Ending it at 0.0 is the LOST arm (#4597), deliberately
+        # not shipped here.
+        assert oh[300]["history"][-1]["probability"] == 0.06
+        assert len(oh[300]["history"]) == 1
+
+    def test_a_winner_with_no_charted_line_is_not_synthesized(self):
+        """Synthesis stays a SINGLE-champion affordance.
+
+        A 73-winner golf cut would otherwise inject 73 brand-new one-point series
+        into a chart nobody asked to redraw. The defect is a drawn line ending in
+        the wrong place, not a missing line.
+        """
+        a = _make_outcome(100, "Made the cut A", prob=0.41, is_winner=True)
+        b = _make_outcome(200, "Made the cut B", prob=0.38, is_winner=True)
+        market = _make_market(outcomes=[a, b], mutually_exclusive=False)
+        oh = {100: {"outcome_id": 100, "name": "Made the cut A",
+                    "history": _hist([("2026-01-01T00:00:00+00:00", 0.41)]),
+                    "eliminated": False, "eliminated_at": None}}
+        _apply_settled_winner_freeze(market, oh, {100: "Made the cut A", 200: "Made the cut B"})
+        assert oh[100]["history"][-1]["probability"] == 1.0
+        assert 200 not in oh  # no new series conjured onto the chart
+
+    def test_unknown_mutual_exclusivity_fails_closed(self):
+        """Never measured => treated as mutex => no-op. Unknown is not licence."""
+        a = _make_outcome(100, "A", prob=0.5, is_winner=True)
+        b = _make_outcome(200, "B", prob=0.5, is_winner=True)
+        market = _make_market(outcomes=[a, b], mutually_exclusive=None)
+        oh = {100: {"outcome_id": 100, "name": "A",
+                    "history": _hist([("2026-01-01T00:00:00+00:00", 0.5)]),
+                    "eliminated": False, "eliminated_at": None}}
+        _apply_settled_winner_freeze(market, oh, {100: "A"})
+        assert oh[100]["history"][-1]["probability"] == 0.5
+
+    def test_a_filtered_view_still_only_gets_the_outcome_it_asked_for(self):
+        a = _make_outcome(100, "A", prob=0.4, is_winner=True)
+        b = _make_outcome(200, "B", prob=0.45, is_winner=True)
+        market = _make_market(outcomes=[a, b], mutually_exclusive=False)
+        oh = {
+            100: {"outcome_id": 100, "name": "A",
+                  "history": _hist([("2026-01-01T00:00:00+00:00", 0.4)]),
+                  "eliminated": False, "eliminated_at": None},
+            200: {"outcome_id": 200, "name": "B",
+                  "history": _hist([("2026-01-01T00:00:00+00:00", 0.45)]),
+                  "eliminated": False, "eliminated_at": None},
+        }
+        _apply_settled_winner_freeze(market, oh, {100: "A", 200: "B"}, outcome_id_filter=200)
+        assert oh[200]["history"][-1]["probability"] == 1.0
+        assert oh[100]["history"][-1]["probability"] == 0.4  # untouched
 
 
 class TestHistoryEndpointFreeze:

@@ -99,7 +99,7 @@ def _outcome(oid, name, prob=0.5, is_winner=False):
     return o
 
 
-def _market(outcomes, resolution_date=None, settled_at=None):
+def _market(outcomes, resolution_date=None, settled_at=None, mutually_exclusive=True):
     m = MagicMock()
     m.id = 58675941
     m.name = "Vuelta a Espana 2026: Winner"
@@ -107,6 +107,11 @@ def _market(outcomes, resolution_date=None, settled_at=None):
     m.resolution_date = resolution_date
     m.settled_at = settled_at
     m.outcomes = outcomes
+    # #7921 — SET EXPLICITLY, because a bare MagicMock auto-creates this
+    # attribute as a truthy Mock. The co-winner gate reads it, and an unset
+    # attribute would make these tests pass down the "we do not know" arm while
+    # reading as if they had exercised the mutually-exclusive one.
+    m.mutually_exclusive = mutually_exclusive
     return m
 
 
@@ -463,10 +468,18 @@ class TestControlsThatMustHoldBothSidesOfThisChange:
         assert oh[2]["history"][-1]["probability"] == 0.30
         assert len(oh[2]["history"]) == 1
 
-    def test_co_winners_are_still_a_no_op(self):
+    def test_co_winners_on_a_mutex_field_are_still_a_no_op(self):
+        """Two winners where only one is possible is a CONTRADICTION (#7921).
+
+        A stamped terminal 1.0 on both legs would publish that contradiction as a
+        settled result. This market is a single-winner cycling race, so the
+        no-op is the whole point.
+        """
         a = _outcome(1, "A", is_winner=True)
         b = _outcome(2, "B", is_winner=True)
-        market = _market([a, b], resolution_date=NOW + timedelta(days=6))
+        market = _market(
+            [a, b], resolution_date=NOW + timedelta(days=6), mutually_exclusive=True
+        )
         oh = {1: _series(1, "A", [(NOW - timedelta(days=2), 0.5)])}
         _apply_settled_winner_freeze(market, oh, {1: "A", 2: "B"})
         assert len(oh[1]["history"]) == 1

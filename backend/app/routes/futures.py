@@ -116,10 +116,15 @@ def _apply_settled_winner_freeze(
 ):
     """Settled-means-settled evolution freeze (#1177, Queue #230/#232).
 
-    When a market has a graded champion — exactly one outcome with
-    ``is_winner=True`` — the champion's path-to-resolution line MUST end at 1.0
-    at settlement time, regardless of which source's snapshots we happened to
-    chart. odds_api can fizzle to a longshot value on a settled field (Spain
+    When a market has a graded champion, that champion's path-to-resolution line
+    MUST end at 1.0 at settlement time, regardless of which source's snapshots we
+    happened to chart.
+
+    "A champion" is ONE outcome with ``is_winner=True`` on a mutually-exclusive
+    field, and EVERY graded winner on an independent one (#7921) — a cumulative
+    ladder settles several rungs YES and a golf cut settles dozens, and each of
+    those is a completed journey that must end at its win. The mutex case with
+    two winners remains a no-op; see ``_co_winners_are_legitimate``. odds_api can fizzle to a longshot value on a settled field (Spain
     0.587 on the World Cup, Ryan Fox on the Open) while Kalshi resolves to ~1.0;
     #225 Item 3 already forces the winner's OUTCOME into the chart, but its LINE
     still ends wherever the charted source left it. This resolves the ending.
@@ -157,20 +162,49 @@ def _apply_settled_winner_freeze(
     measurement that keeps ``settled_at`` OUT of first place.
     """
     winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
-    champ = None
+    champs = []
+    # Synthesizing a line the chart did not draw is a SINGLE-champion affordance:
+    # a market's one champion must be visible even with no snapshots. It is not
+    # extended to co-winners — see `_co_winners_are_legitimate`.
+    allow_synthesis = True
     if len(winners) == 1:
-        champ = winners[0]  # graded grade always wins (co-winners fall through → no-op)
+        champs = [winners[0]]  # a graded grade always wins
+    elif len(winners) >= 2:
+        # #7921 — CO-WINNERS ARE THE NORM, NOT AN AMBIGUITY, ON AN INDEPENDENT
+        # FIELD. 73 golfers make the cut; `>= 75 wins` and `>= 80 wins` both
+        # settle YES on one cumulative ladder. This used to be a blanket no-op
+        # ("co-winners fall through"), which left EVERY graded winner on 119,870
+        # markets ending at a stale mid-price — 8,162 of them below 50% — while
+        # the same page's own table already printed "Won · Settled" beside it.
+        # The chart contradicted the verdict its own page had published.
+        #
+        # 🔴 The discriminator is NOT new and is NOT derived here: it is the
+        # stored `futures_markets.mutually_exclusive` column that
+        # `repair_kalshi_fabricated_loss` and `backfill_winners` already use for
+        # exactly this question (two YES legs on a mutex field is a genuine
+        # contradiction; on an independent field it is the answer). Deriving a
+        # second opinion from names or outcome counts here is how the two halves
+        # drift into disagreeing about the same market.
+        if _co_winners_are_legitimate(market):
+            champs = winners
+            allow_synthesis = False
+        # A mutex field with two winners is a CONTRADICTION, not a settlement:
+        # it stays a no-op, because fabricating a terminal 1.0 on both legs would
+        # publish the contradiction as truth. That population (1,404 markets) is
+        # the fabricated-loss repair's, not this read path's.
     elif not winners and champion_name:
         norm = _norm_outcome_name(champion_name)
         named = [o for o in (market.outcomes or []) if _norm_outcome_name(getattr(o, "name", "")) == norm]
         if len(named) == 1:
-            champ = named[0]
-    if champ is None:
-        return  # freeze only a single, unambiguous champion
-    # When the caller filtered to a single non-champion outcome, do not inject the
-    # champion's line into a view that didn't ask for it.
-    if outcome_id_filter is not None and outcome_id_filter != champ.id:
-        return
+            champs = [named[0]]
+    if not champs:
+        return  # nothing unambiguously graded to freeze
+    # When the caller filtered to a single outcome, do not inject any OTHER
+    # outcome's line into a view that didn't ask for it.
+    if outcome_id_filter is not None:
+        champs = [c for c in champs if c.id == outcome_id_filter]
+        if not champs:
+            return
 
     now = datetime.now(timezone.utc)
     # #6360: the last REAL point anywhere on this chart — the second witness in
@@ -183,6 +217,33 @@ def _apply_settled_winner_freeze(
         now=now,
     )
 
+    for champ in champs:
+        _freeze_one_winner_line(
+            champ,
+            outcome_history,
+            outcome_names,
+            settle_ts,
+            allow_synthesis=allow_synthesis,
+        )
+
+
+def _co_winners_are_legitimate(market) -> bool:
+    """Is a field where SEVERAL outcomes may truthfully be graded winners?
+
+    #7921. Strict ``is False`` on purpose — this FAILS CLOSED. A missing
+    attribute, ``None`` (never measured), or a test double that auto-creates a
+    truthy attribute all read as "we do not know", and an unknown field is
+    treated as mutually exclusive so the freeze stays a no-op. The cost of
+    failing open is publishing a grading contradiction as a settled result on a
+    chart, which is exactly what the single-champion gate existed to prevent.
+    """
+    return getattr(market, "mutually_exclusive", None) is False
+
+
+def _freeze_one_winner_line(
+    champ, outcome_history, outcome_names, settle_ts, *, allow_synthesis: bool
+):
+    """End ONE graded winner's charted line at 1.0. See the caller's docstring."""
     entry = outcome_history.get(champ.id)
     if entry and entry.get("history"):
         last = entry["history"][-1]
@@ -214,7 +275,7 @@ def _apply_settled_winner_freeze(
         )
         entry["eliminated"] = False
         entry["eliminated_at"] = None
-    else:
+    elif allow_synthesis:
         # Champion carried no charted snapshots at all — synthesize a minimal
         # terminal resolve point so the winner line exists and resolves.
         outcome_history[champ.id] = {
