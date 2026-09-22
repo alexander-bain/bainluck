@@ -6,6 +6,69 @@ import SwiftUI
 // the Discover card came to be the one futures hero that never drew its photo
 // (#4111). See `FuturesHero`.
 
+// MARK: - The card's percents
+
+/// The whole percents a Discover futures card prints for its outcomes, decided
+/// ONCE for the card — `renderedCardPercents`, native's arm of
+/// `contracts/rendered_percent.json`.
+///
+/// ## Why the card had to stop rounding each row on its own
+///
+/// This card formatted every row with its own bare `Int((p * 100).rounded())`,
+/// so a two-outcome market whose sides are an exact complement printed a sum of
+/// 101 whenever both landed on the `.5` grid the venues quote on — the defect
+/// #2060 clause (1) names ("must render p and 100−p"). `renderedCardPercents`
+/// was written for exactly that and had **no call sites anywhere in the app
+/// target**: the rule existed, contract-tested, and nothing called it. This is
+/// the wiring, not a second copy of the rule.
+///
+/// (Deliberately not spelling that scope as a directory glob. `PriceAgeMarkTests`
+/// source-scans this file, and its comment stripper treats a slash-star pair as
+/// the start of a block comment wherever it appears — including inside a glob, or
+/// inside prose describing one — then discards everything after it when no
+/// closing pair follows. It fails closed, so the cost is a puzzling red rather
+/// than a blind guard, but do not reintroduce that glyph in this file.)
+///
+/// Measured on production 2026-09-22, `GET /api/feed?limit=50&offset=0&event_pct=0.15`
+/// (the phone's own query): **3 of the 39 futures cards on page one** printed 101
+/// — "Will Dallas Stars advance…?" at 60/41, "Will Florida Panthers advance…?"
+/// at 54/47, "Will Anthropic's valuation hit (HIGH) $3.0T…?" at 76/25. Across the
+/// database, 6,609 of 17,583 open two-outcome mutually-exclusive markets sit on
+/// that boundary today.
+///
+/// Passing the WHOLE outcome list (not the three rows the card draws) is
+/// deliberate: a card's sum is a property of its market, and the pair rule is
+/// gated on the two values summing into the complement band, so a market whose
+/// top two rows merely look like a pair is left alone. A field of three or more
+/// renders exactly as before — #2088's `card_sum_reason` sentence, not this
+/// function, is what explains those.
+nonisolated func discoverFuturesCardPercents(_ outcomes: [FeedFuturesOutcome]) -> [Int?] {
+    renderedCardPercents(outcomes.map(\.probability))
+}
+
+/// The exact string one outcome row prints. `?? 0` preserves what the row
+/// printed before for an unpriced outcome, which was `"0%"`.
+nonisolated func discoverFuturesCardPercentLabel(_ percent: Int?) -> String {
+    "\(percent ?? 0)%"
+}
+
+/// The rows the SHARE IMAGE is handed — the card's whole served field, nils and
+/// all.
+///
+/// A file-scope function rather than one line inside `renderedShareImage()`,
+/// because that line WAS the defect and a line inside a private view method is a
+/// line no test can reach. The share battery proved the point: with the rule
+/// stated inline and guarded only by a source scan for the exact old spelling, a
+/// mutant that re-filtered the field in slightly different words **survived** —
+/// the scan was aimed at one phrasing of a defect rather than at its behaviour.
+/// Same argument as ``ShareableFuturesCardView/printedFuturesPercents`` makes on
+/// the other side of the call.
+nonisolated func discoverFuturesShareRows(
+    _ outcomes: [FeedFuturesOutcome]
+) -> [(name: String, probability: Double?)] {
+    outcomes.map { ($0.name, $0.probability) }
+}
+
 // MARK: - Futures Card
 
 struct NativeFuturesDiscoverCard: View {
@@ -44,8 +107,19 @@ struct NativeFuturesDiscoverCard: View {
         data.topOutcomes?.first
     }
 
-    private var leaderProbability: Double {
-        leader?.probability ?? 0
+    /// The whole percents this card prints, decided ONCE for the whole card.
+    ///
+    /// Every number on this card — the hero numeral, each outcome row, the share
+    /// sentence — is one answer to one question, so they are rounded as one
+    /// decision (`discoverFuturesCardPercents` below).
+    private var renderedPercents: [Int?] {
+        discoverFuturesCardPercents(data.topOutcomes ?? [])
+    }
+
+    /// The hero's number. `?? 0` preserves the previous behaviour for a card with
+    /// no leader or an unpriced one, which printed `0`.
+    private var leaderRenderedPercent: Int {
+        (renderedPercents.first ?? nil) ?? 0
     }
 
     private var shareURL: URL {
@@ -53,8 +127,8 @@ struct NativeFuturesDiscoverCard: View {
     }
 
     private var shareMessage: String {
-        if let leader, let prob = leader.probability {
-            return "\(leader.name) at \(Int((prob * 100).rounded()))% — \(data.name) on Bain Luck"
+        if let leader, leader.probability != nil {
+            return "\(leader.name) at \(leaderRenderedPercent)% — \(data.name) on Bain Luck"
         }
         return "\(data.name) on Bain Luck"
     }
@@ -162,7 +236,7 @@ struct NativeFuturesDiscoverCard: View {
                         // metrics against black-weight numerals, so it was
                         // the first glyph to lose width under compression.
                         HStack(alignment: .firstTextBaseline, spacing: 0) {
-                            Text("\(Int((leaderProbability * 100).rounded()))")
+                            Text("\(leaderRenderedPercent)")
                                 .font(.system(size: heroNumeralSize, weight: .black).monospacedDigit())
                             Text("%")
                                 .font(.system(size: heroNumeralSize, weight: .black))
@@ -210,9 +284,14 @@ struct NativeFuturesDiscoverCard: View {
                 }
 
                 if let outcomes = data.topOutcomes, outcomes.count > 1 {
+                    let percents = renderedPercents
                     VStack(spacing: 7) {
                         ForEach(Array(outcomes.prefix(3).enumerated()), id: \.element.id) { idx, outcome in
-                            outcomeRow(outcome, isLeader: idx == 0)
+                            outcomeRow(
+                                outcome,
+                                isLeader: idx == 0,
+                                percent: percents.indices.contains(idx) ? percents[idx] : nil
+                            )
                         }
                     }
                 }
@@ -324,7 +403,11 @@ struct NativeFuturesDiscoverCard: View {
         FuturesHeroBackground(imageURL: data.imageUrl, category: data.llmSportCategory)
     }
 
-    private func outcomeRow(_ outcome: FeedFuturesOutcome, isLeader: Bool) -> some View {
+    private func outcomeRow(
+        _ outcome: FeedFuturesOutcome,
+        isLeader: Bool,
+        percent: Int?
+    ) -> some View {
         HStack(spacing: 8) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
@@ -343,21 +426,25 @@ struct NativeFuturesDiscoverCard: View {
             }
             .frame(height: 7)
 
-            Text("\(Int(((outcome.probability ?? 0) * 100).rounded()))%")
+            Text(discoverFuturesCardPercentLabel(percent))
                 .font(.caption.weight(.bold).monospacedDigit())
                 .frame(width: 34, alignment: .trailing)
         }
     }
 
+    /// #2874 — the image is handed the card's WHOLE served field, nils and all.
+    ///
+    /// It used to `compactMap` the unpriced outcomes away, which was two defects in
+    /// one line: the image then rounded each surviving row on its own (so a
+    /// complement pair printed 101 in the picture that leaves the app), and a
+    /// three-outcome market with one unpriced side arrived as a two-outcome list —
+    /// the exact shape `renderedCardPercents` normalises — so the two surfaces
+    /// could not even be made to agree by rounding them the same way.
     private func renderedShareImage() -> PlatformImage? {
-        let outcomes: [(name: String, probability: Double)] = (data.topOutcomes ?? []).compactMap { outcome in
-            guard let probability = outcome.probability else { return nil }
-            return (outcome.name, probability)
-        }
+        let outcomes = discoverFuturesShareRows(data.topOutcomes ?? [])
         return ShareCardRenderer.renderFuturesCard(
             marketName: data.name,
             leaderName: leader?.name ?? "",
-            probability: leaderProbability,
             category: data.llmSportCategory ?? data.sportName ?? "Market",
             hookDescription: data.hookDescription,
             outcomes: outcomes

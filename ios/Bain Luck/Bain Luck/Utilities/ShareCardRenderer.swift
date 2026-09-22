@@ -39,10 +39,51 @@ private let shareCardDefaultGradient: (Color, Color) = (
 struct ShareableFuturesCardView: View {
     let marketName: String
     let leaderName: String
-    let probability: Double
     let category: String
     let hookDescription: String?
-    let outcomes: [(name: String, probability: Double)]
+    /// The card's whole served field, nils and all — **not** the rows the image
+    /// happens to draw (#2874). See ``printedFuturesPercents``.
+    let outcomes: [(name: String, probability: Double?)]
+
+    /// The whole percents this image prints, asked with the SAME list the card
+    /// asked with — `renderedCardPercents`, one decision for the whole card.
+    ///
+    /// 🔴 **IT ASKS THE CARD'S QUESTION, IT DOES NOT COPY THE CARD'S ANSWER**, for
+    /// the reason `printedPercents` states two hundred lines down: a rule
+    /// re-stated here — even a correct one — is a copy that can drift, and an
+    /// already-rounded `Int` handed in is an answer whose provenance no test can
+    /// check. Same function, same list, so disagreeing is structurally impossible.
+    ///
+    /// **The list must be the WHOLE served field.** `renderedCardPercents` fires
+    /// its pair rule only on a two-outcome field summing into the complement band,
+    /// so a caller that filtered its unpriced outcomes out first could hand a
+    /// three-outcome market in as a pair and print a normalisation the card never
+    /// applied. The caller used to `compactMap` exactly that away; the probability
+    /// is optional here so it no longer can.
+    ///
+    /// A `nil` percent prints `0%` — the string the card's own row prints for an
+    /// unpriced outcome (`discoverFuturesCardPercentLabel`). The image agreeing
+    /// with the card is the whole point, including where both are austere.
+    static func printedFuturesPercents(_ outcomes: [(name: String, probability: Double?)]) -> [Int?] {
+        renderedCardPercents(outcomes.map(\.probability))
+    }
+
+    /// The row percents, and the hero's. **Internal rather than private on
+    /// purpose**: a `some View` is unreachable from XCTest here, so if these two
+    /// derived values are not assertable a mutant that empties either of them
+    /// survives every behavioural test in the suite and puts the defect straight
+    /// back on screen. `printedFuturesPercents` being static is the same argument
+    /// one level down (#7998's ``printedPercents``, #4044's ``eyebrow``).
+    var rowPercents: [Int?] {
+        Self.printedFuturesPercents(outcomes)
+    }
+
+    /// The hero numeral. Derived from the same list rather than passed in: the
+    /// leader is `outcomes[0]` on both surfaces, and a separate `probability`
+    /// parameter was how this image printed 60 beside a card printing 59.
+    var heroPercent: Int? {
+        rowPercents.first ?? nil
+    }
 
     private var gradient: (Color, Color) {
         shareCardGradients[category.lowercased()] ?? shareCardDefaultGradient
@@ -115,7 +156,7 @@ struct ShareableFuturesCardView: View {
 
                     Spacer(minLength: 16)
 
-                    Text("\(Int((probability * 100).rounded()))%")
+                    Text(discoverFuturesCardPercentLabel(heroPercent))
                         .font(.system(size: 64, weight: .black).monospacedDigit())
                         .foregroundStyle(.white)
                         .shadow(color: .black.opacity(0.30), radius: 10, x: 0, y: 4)
@@ -149,11 +190,13 @@ struct ShareableFuturesCardView: View {
                 }
 
                 if outcomes.count > 1 {
+                    let printed = rowPercents
                     VStack(spacing: 8) {
                         ForEach(Array(outcomes.prefix(3).enumerated()), id: \.offset) { idx, outcome in
                             shareableOutcomeRow(
                                 name: outcome.name,
                                 probability: outcome.probability,
+                                percent: printed.indices.contains(idx) ? printed[idx] : nil,
                                 isLeader: idx == 0
                             )
                         }
@@ -179,7 +222,15 @@ struct ShareableFuturesCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 
-    private func shareableOutcomeRow(name: String, probability: Double, isLeader: Bool) -> some View {
+    /// `probability` still draws the BAR — the bar is a length, not a printed
+    /// number, and rounding it to the whole percent would move it by up to half a
+    /// point for no reader benefit. `percent` is the only thing printed.
+    private func shareableOutcomeRow(
+        name: String,
+        probability: Double?,
+        percent: Int?,
+        isLeader: Bool
+    ) -> some View {
         HStack(spacing: 8) {
             Text(name)
                 .font(.system(size: 13, weight: isLeader ? .semibold : .regular))
@@ -195,12 +246,12 @@ struct ShareableFuturesCardView: View {
                         .fill(isLeader
                               ? Color(red: 0.20, green: 0.40, blue: 0.85)
                               : Color(red: 0.70, green: 0.70, blue: 0.75))
-                        .frame(width: max(3, geo.size.width * probability))
+                        .frame(width: max(3, geo.size.width * (probability ?? 0)))
                 }
             }
             .frame(height: 7)
 
-            Text("\(Int((probability * 100).rounded()))%")
+            Text(discoverFuturesCardPercentLabel(percent))
                 .font(.system(size: 13, weight: .bold).monospacedDigit())
                 .foregroundStyle(Color(red: 0.15, green: 0.15, blue: 0.18))
                 .frame(width: 36, alignment: .trailing)
@@ -513,18 +564,22 @@ struct ShareableEventCardView: View {
 enum ShareCardRenderer {
 
     /// Render a futures Discover card as a shareable image.
+    ///
+    /// #2874 — there is no `probability:` parameter and `outcomes` has no default.
+    /// Both omissions are the point, and they are the same one #7998 made on the
+    /// event card: the hero numeral and every row are now read out of this one
+    /// list, so a caller cannot hand the image a number the card did not print,
+    /// and a caller who forgets the field cannot quietly get an image with no rows.
     static func renderFuturesCard(
         marketName: String,
         leaderName: String,
-        probability: Double,
         category: String,
         hookDescription: String?,
-        outcomes: [(name: String, probability: Double)] = []
+        outcomes: [(name: String, probability: Double?)]
     ) -> PlatformImage? {
         let view = ShareableFuturesCardView(
             marketName: marketName,
             leaderName: leaderName,
-            probability: probability,
             category: category,
             hookDescription: hookDescription,
             outcomes: outcomes
