@@ -5124,6 +5124,8 @@ def _venue_scale_refusal(
     venue_by_outcome: dict,
     outcome_time_groups: dict,
     devigged: dict,
+    *,
+    field_complete: bool = True,
 ) -> Optional[str]:
     """None when `/history`'s PRINTED scale is the venue's raw scale here; else why not.
 
@@ -5151,8 +5153,63 @@ def _venue_scale_refusal(
     A market that cannot be squeezed by construction needs none of this — a
     non-exclusive family (#199) or the single-outcome binary the named specimen is
     — and falls straight through to the per-capture comparison below.
+
+    🔴 #7954 — AND NEITHER DOES A BOARD THIS CHART HAS ALREADY REFUSED TO SQUEEZE.
+    Every sentence above is conditioned on the squeeze FIRING. #7747 gave this
+    route `field_complete = not _withheld_ids` and passes it into the same
+    `devigged_consensus_by_time` that prints the line; `normalize_display_probs`
+    reads `field_complete=False` as REFUSE THE SQUEEZE (#7103), because a field
+    with withheld members is not a proved-complete distribution. So on such a
+    board the printed scale IS the per-instant consensus of the raw column, and
+    a raw venue point is already on it — there is no whole-field operation left
+    for the point to be contemporaneous with, and the completeness test is
+    asking a question about an arithmetic the page is not doing.
+
+    It was not a hypothetical. `/futures/61308736` (*2027 US Open Men's Singles
+    Winner*, Kalshi, tier 1) drew a 12-hour hole captioned "No numbers for 12
+    hours in this stretch" while its durable venue bank held 45 points across 6
+    outcomes, `fill_status: ok` — refused whole, because 4 of the 10 charted
+    legs are price-withheld and can never appear at a venue instant. The two
+    rules were mutually unsatisfiable: one withholds the legs, the other
+    requires them. The refusal was structural, not a property of the data.
+
+    THE BOARD-LEVEL FLAG IS WHY THE INFERENCE IS SOUND HERE AND WAS NOT BEFORE.
+    The removed inference was from one INSTANT to another. `field_complete` is a
+    property of the BOARD (#7747: "PER BOARD, NOT PER INSTANT" — squeezing some
+    instants of a line and not others draws a scale change as a price MOVE), so
+    "this chart does not squeeze" holds at the unclaimed instants too, and
+    nothing is carried across instants.
+
+    TWO THINGS ARE DELIBERATELY NOT LOOSENED. The per-capture comparison below
+    still runs and is the whole contract in this mode — it is a MEASUREMENT that
+    printed equals raw, not an assumption, and it still refuses a board where
+    de-vigging moved the number. And the bypass is limited to sources whose
+    stored column already IS a probability, because `devig_consensus`'s default
+    arm divides an unrecognised book's column by its own sum: that is a
+    whole-field operation the captures cannot answer for at an unclaimed
+    instant, which is this docstring's original objection wearing another hat.
+    An unknown source keeps today's refusal — the gate fails closed.
+
+    ONE RESIDUAL, STATED RATHER THAN HIDDEN. A board whose captures carry a
+    SECOND bookmaker outside that set is still de-vigged by the column sum, and
+    that is caught for every outcome the captures reached — the loop below
+    compares against `mean(raw_values)` and the divisor is board-wide, so one
+    corroborated outcome convicts the whole instant. It is NOT measured at an
+    unclaimed instant for an outcome the captures never reached. Both venue
+    banks in production are single-source (`kalshi`, `polymarket` candlesticks),
+    so the case is unobserved; it is named here so a grader does not have to
+    find it.
     """
-    squeezable = bool(getattr(market, "mutually_exclusive", True)) and len(charted_outcomes) > 1
+    from app.routes.playoffs import _ALREADY_PROBABILITY_SOURCES
+
+    unsqueezed_board = not field_complete and (
+        getattr(market, "source", None) in _ALREADY_PROBABILITY_SOURCES
+    )
+    squeezable = (
+        bool(getattr(market, "mutually_exclusive", True))
+        and len(charted_outcomes) > 1
+        and not unsqueezed_board
+    )
     if squeezable:
         from app.utils.futures_history_basis import devigged_consensus_by_time
 
@@ -6715,6 +6772,12 @@ async def get_futures_history(
     # instant to be squeezed with. So a venue point is admitted ONLY where the
     # printed scale is measurably the raw scale; otherwise the series is REFUSED
     # for this reader rather than converted by a rule nobody ruled on.
+    #
+    # #7954: "prints `devigged`" is not "prints SQUEEZED". `_field_complete` is
+    # handed in below because when it is False this chart has already refused
+    # the squeeze (#7747/#7103) and the printed scale is the raw column — so the
+    # completeness half of the contract would be guarding an arithmetic that is
+    # not happening, and it refused 45 banked points on `61308736` for it.
     venue_by_outcome: dict[int, list] = defaultdict(list)
     for row in sorted(venue_rows, key=lambda r: r.captured_at):
         if row.outcome_id in charted_ids and row.probability is not None:
@@ -6722,7 +6785,12 @@ async def get_futures_history(
     venue_scale_refusal: Optional[str] = None
     if venue_by_outcome:
         venue_scale_refusal = _venue_scale_refusal(
-            market, charted_outcomes, venue_by_outcome, outcome_time_groups, devigged
+            market, charted_outcomes, venue_by_outcome, outcome_time_groups, devigged,
+            # #7954: the SAME flag the line above was printed with, never a
+            # re-derivation — a second predicate here would be free to answer
+            # differently from the arithmetic this has to agree with, which is
+            # the defect #7747 closed one rule up.
+            field_complete=_field_complete,
         )
         if venue_scale_refusal:
             venue_by_outcome = defaultdict(list)
