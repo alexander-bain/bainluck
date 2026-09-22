@@ -125,6 +125,44 @@ func formatProbabilityOrDash(_ value: Double?, renderedPercent: Int? = nil) -> S
     return formatProbability(value, renderedPercent: renderedPercent)
 }
 
+/// The two strings ONE two-sided row prints, rounded as a single decision.
+///
+/// #7984. `formatProbability`'s note above says a card printing two sides of one
+/// question decides both percents together — and the event page's two source
+/// lists were the callers that did not. `sourceContent` derives its away side as
+/// an exact complement (`1 - homeProbability`), then drew the pair through two
+/// independent `formatProbability` calls, so a venue quoting on the half-percent
+/// grid put BOTH sides on `.5` and half-up rounded both up. Polymarket `0.585`
+/// printed `42% 59%` on event 15316315, photographed at
+/// `artifacts-native-020/n293-live-wta.png`, directly under a Sportsbooks row
+/// reading `3% 97%`.
+///
+/// Measured over 408 production events the same day: **122 of 332** source rows
+/// that print a numeric pair summed to 101, on 113 distinct events, plus 6 of 557
+/// bookmaker rows. Every failure is 101 and none is 99, which is the signature of
+/// both sides rounding up rather than of a data fault.
+///
+/// 🔴 **THE STRINGS, NOT THE INTEGERS.** `EventSourceLabelColumn` sizes the
+/// numeric column from the strings the rows will actually print (#4208, #5271), so
+/// the sizing pass and the draw pass have to ask ONE function or the column is
+/// measured against text no row draws. Returning the formatted pair — rather than
+/// the two `Int`s — is what makes that impossible to get wrong at a call site.
+///
+/// Pairing is `renderedDuelPercents`' decision, not this function's: it is gated on
+/// ``isComplementPair``, so a bookmaker pair that is not a complement (the away
+/// price is SERVED there, #5271) and a row whose away side is withheld entirely on
+/// a draw-priced sport both render exactly as they do today.
+func duelProbabilityStrings(
+    away: Double?,
+    home: Double
+) -> (away: String, home: String) {
+    let pair = renderedDuelPercents(away: away, home: home)
+    return (
+        formatProbabilityOrDash(away, renderedPercent: pair[0]),
+        formatProbability(home, renderedPercent: pair[1])
+    )
+}
+
 /// Format a future date as a compact countdown: "2h 15m", "35m", "3d 5h".
 ///
 /// #7019 — `now` is a parameter, and it defaults so no existing caller moves.

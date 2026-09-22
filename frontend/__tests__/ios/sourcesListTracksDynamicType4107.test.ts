@@ -114,7 +114,8 @@ describe("#4233 there is exactly one row builder and both lists use it", () => {
     expect(sourceRow).toContain("columns.layout");
     expect(sourceRow).toContain("probabilityBarAndNumbers(");
     expect(barAndNumbers).toContain("ProbabilityBar(");
-    expect(barAndNumbers).toContain("formatProbability(");
+    // #7984 — the pair is one decision now; the landmark moved with it.
+    expect(barAndNumbers).toContain("duelProbabilityStrings(");
   });
 
   it("both lists delegate to it", () => {
@@ -156,7 +157,7 @@ describe("#4107 the Sources list label column", () => {
   it("slices the function that actually sizes the source rows", () => {
     expect(sourceContent.length).toBeGreaterThan(400);
     expect(sourceContent).toContain("entry.label");
-    expect(sourceContent).toContain("formatProbability(");
+    expect(sourceContent).toContain("duelProbabilityStrings(");
     expect(sourceContent).toContain("EventSourceLabelColumn.columns(");
   });
 
@@ -211,7 +212,7 @@ describe.each([
 ])("#4107 %s sizes its label column against ink", (name, slice) => {
   it("sliced the right function", () => {
     expect(slice.length).toBeGreaterThan(400);
-    expect(slice).toContain("formatProbability(");
+    expect(slice).toContain("duelProbabilityStrings(");
     expect(slice).toContain("sourceProbabilityRow(");
   });
 
@@ -422,7 +423,13 @@ describe.each([
   it("hands the model the strings it will actually print", () => {
     const call = slice.slice(slice.indexOf("EventSourceLabelColumn.columns("));
     expect(call).toContain("values:");
-    expect(call.slice(0, call.indexOf("availableWidth:"))).toContain("formatProbability(");
+    // #7984 — the strings the rows print are now produced by the joint
+    // decision, so THAT is what the `values:` array must be built from. A
+    // `values:` still calling the scalar formatter would size the column
+    // against text no row draws.
+    expect(call.slice(0, call.indexOf("availableWidth:"))).toContain(
+      "duelProbabilityStrings("
+    );
   });
 });
 
@@ -464,10 +471,10 @@ describe("#4208 the books column measures the rows it actually draws", () => {
     // sized on "47%" while the row prints "—" is unrepresentable rather than
     // merely tested for.
     expect(bookmakerContent).toContain(
-      "formatProbabilityOrDash(printable(row)?.away)"
+      "away: printable(row)?.away, home: row.probabilities.home"
     );
     expect(bookmakerContent).toContain("away: printable(row)?.away");
-    expect(bookmakerContent).toContain("formatProbability(row.probabilities.home)");
+    expect(bookmakerContent).toContain("duelProbabilityStrings(");
     expect(bookmakerContent).toContain("home: row.probabilities.home");
     // One definition feeding both halves — two would let them drift apart with
     // both pins above still green.
