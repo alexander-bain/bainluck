@@ -352,8 +352,15 @@ async def test_the_old_gate_would_have_thrown_on_the_same_beat(staged_env, monke
     no longer costs the beat its verdict.
     """
     runner, db = staged_env(window_ms=250, unit_cost_ms=100)
+    # ``**_sizes`` absorbs CAL-P1335's (#6868) candidate/reference question
+    # counts. The stub is deliberately the OLD predicate — ``remaining > 0``,
+    # the pre-CAL-P038 gate — so it must keep ignoring every input the real one
+    # has grown, and a signature that merely tracked the real function would
+    # stop being the old gate the moment the real one changed.
     monkeypatch.setattr(
-        pc, "_unit_fits_in_window", lambda remaining, worst, prior=0.0: remaining > 0
+        pc,
+        "_unit_fits_in_window",
+        lambda remaining, worst, prior=0.0, **_sizes: remaining > 0,
     )
 
     await _run(runner, db)
