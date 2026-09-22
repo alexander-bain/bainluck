@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { API_URL } from '@/lib/api';
-import { rememberLiveChartFrame, type LiveChartPoint } from '@/lib/liveChartHistory';
+import { rememberLiveChartFrame, type LiveChartFrame } from '@/lib/liveChartHistory';
 import {
   TICK_INTERVAL_MS,
   createLiveStreamController,
@@ -42,8 +42,13 @@ interface UseLiveEventStreamResult {
   frame: LiveFrame | null;
   /** True only while push is DELIVERING. Callers gate polling on this. */
   connected: boolean;
-  /** Actual publications received for this event while the page is open. */
-  chartPoints: LiveChartPoint[];
+  /**
+   * Actual publications received for this event while the page is open: the
+   * blend each one stamped, and the venue reading behind it (#8066's
+   * remainder — a single-source page has no blend line, so the frame has to
+   * reach the source's own series or the chart waits for the 32 s poll).
+   */
+  chartPoints: LiveChartFrame[];
 }
 
 export function useLiveEventStream(
@@ -53,7 +58,7 @@ export function useLiveEventStream(
   const [frame, setFrame] = useState<LiveFrame | null>(null);
   const [connected, setConnected] = useState(false);
   const [{ chartEventId, points }, setChart] = useState<{
-    chartEventId: number | undefined; points: LiveChartPoint[];
+    chartEventId: number | undefined; points: LiveChartFrame[];
   }>({ chartEventId: eventId, points: [] });
   // A ref so the controller's callbacks never close over a stale setter.
   const mounted = useRef(true);

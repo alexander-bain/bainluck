@@ -26,8 +26,13 @@ describe("#920 actual published observations reach the main chart", () => {
     expect(result.aggregate_line.map(p=>p.timestamp)).toEqual([0,5,10,15,20].map(t));
   });
   it("keeps distinct unchanged observations and zero; invents no in-between points", () => {
+    // The buffer also carries the venue reading behind each blend (#8066's
+    // remainder — see pushReachesTheSourceLineWithNoServedBlend8066). Stated
+    // here rather than loosened to `objectContaining`: the whole point of this
+    // case is that the buffer holds EXACTLY the two observations it received.
+    const src = { source: "kalshi", source_probability: .65 };
     const points = rememberLiveChartFrame(rememberLiveChartFrame([],frame(5,0),42),frame(55,0),42);
-    expect(points).toEqual([{timestamp:t(5),home_probability:0},{timestamp:t(55),home_probability:0}]);
+    expect(points).toEqual([{timestamp:t(5),home_probability:0,...src},{timestamp:t(55),home_probability:0,...src}]);
   });
   it("sorts late observations without duplicate timestamps and preserves persisted values on overlap", () => {
     let points = rememberLiveChartFrame([],frame(15,.7),42);
