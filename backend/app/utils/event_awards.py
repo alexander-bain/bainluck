@@ -301,11 +301,20 @@ class AwardsEventAdapter:
         # All of this ceremony's markets. The KX ticker stem is unambiguous, so
         # match on it directly (no llm_sport_category filter needed) — this also
         # catches any mis-categorized ones.
+        #
+        # #7979: settled editions are INCLUDED. An `status == "open"` filter here
+        # deleted the page at the exact moment the ceremony became a result: the
+        # 2026 Emmys are 55 markets, every one of them `resolved` and none `open`,
+        # so the query returned nothing, `build_event` returned None, and the route
+        # 404'd into a reader-facing "Event not found" (HTTP 200, so no health
+        # counter saw it). Same predicate as `SoccerEventAdapter`, whose settled
+        # World Cup 2026 concept serves today. The edition gate below (`_in_edition`
+        # on the 2-digit year) is what keeps a prior edition out, not the status.
         q = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
             .where(
-                FuturesMarket.status == "open",
+                FuturesMarket.status.in_(["open", "resolved", "closed", "settled"]),
                 FuturesMarket.external_id.ilike(f"%{cfg.ticker}%"),
             )
         )
