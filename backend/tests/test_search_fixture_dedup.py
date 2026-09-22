@@ -426,3 +426,309 @@ def test_the_dropdown_overfetches_so_the_collapse_cannot_empty_it():
         "the typeahead event fetch must be wider than the pool it fills, or a "
         "duplicate twin costs the dropdown a real suggestion"
     )
+
+
+# --- #7700: the season-variant pair ----------------------------------------
+#
+# Transcribed from production 2026-09-21. `GET /api/events/search?q=kraken`
+# returns nine rows, two of which are the same game: the ESPN-born
+# `icehockey_nhl` row (anchor, no markets) and the Odds-API-born
+# `icehockey_nhl_preseason` row (3 markets, 177–301 odds snapshots), eight
+# minutes apart, both `completed`, both 4-2, adjacent on page one.
+
+PRESEASON_TWINS = [
+    # (parent row, variant row) — every NHL preseason game in the 2026-09-20
+    # slate, from the table on #7700.
+    (
+        _FakeEvent(15312065, "New Jersey Devils", "New York Islanders",
+                   _at("2026-09-20T17:00:00"), "icehockey_nhl", "completed", 1, 2),
+        _FakeEvent(15316211, "New Jersey Devils", "New York Islanders",
+                   _at("2026-09-20T17:08:11"), "icehockey_nhl_preseason",
+                   "completed", 1, 2),
+    ),
+    (
+        _FakeEvent(15312208, "Anaheim Ducks", "San Jose Sharks",
+                   _at("2026-09-20T20:00:00"), "icehockey_nhl", "completed", 2, 6),
+        _FakeEvent(15316224, "Anaheim Ducks", "San Jose Sharks",
+                   _at("2026-09-20T20:08:32"), "icehockey_nhl_preseason",
+                   "completed", 2, 6),
+    ),
+    (
+        _FakeEvent(15312340, "Calgary Flames", "Seattle Kraken",
+                   _at("2026-09-21T00:00:00"), "icehockey_nhl", "completed", 2, 4),
+        _FakeEvent(15316214, "Calgary Flames", "Seattle Kraken",
+                   _at("2026-09-21T00:08:24"), "icehockey_nhl_preseason",
+                   "completed", 2, 4),
+    ),
+]
+
+
+def test_the_kraken_final_is_rendered_once_and_it_is_the_priced_row():
+    """#7700's repro: search `kraken`, see last night's Final listed twice."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    parent, variant = PRESEASON_TWINS[2]
+    kept, dropped = collapse_duplicate_fixtures([variant, parent])
+
+    assert dropped == 1
+    assert [e.id for e in kept] == [15316214], (
+        "the surviving row must be the season-variant one: its label is true "
+        "for a September exhibition and it is the copy carrying the prices"
+    )
+
+
+def test_every_preseason_twin_on_the_slate_collapses():
+    """Seven pairs on #7700's table; a reader should see seven games."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    page = [row for pair in PRESEASON_TWINS for row in pair]
+    kept, dropped = collapse_duplicate_fixtures(page)
+
+    assert dropped == len(PRESEASON_TWINS)
+    assert [e.id for e in kept] == [15316211, 15316224, 15316214]
+
+
+def test_two_rows_sharing_a_sport_key_are_still_left_alone():
+    """The rejection this pass sits beside, unchanged.
+
+    Two byte-identical league-sport rows at the same minute offer no grounds to
+    prefer either. The variant pass must not become a general league-sport
+    dominance rule by accident.
+    """
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    first = _FakeEvent(201, "New York Yankees", "Los Angeles Angels",
+                       _at("2026-09-01T23:05:00"), "baseball_mlb", "live", 1, 4)
+    second = _FakeEvent(202, "New York Yankees", "Los Angeles Angels",
+                        _at("2026-09-01T23:05:00"), "baseball_mlb", "live", 1, 4)
+
+    kept, dropped = collapse_duplicate_fixtures([first, second])
+    assert [e.id for e in kept] == [201, 202]
+    assert dropped == 0
+
+
+def test_two_variant_rows_are_left_alone():
+    """Symmetry is the whole gate — two preseason rows have no survivor rule."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    first = _FakeEvent(211, "Calgary Flames", "Seattle Kraken",
+                       _at("2026-09-21T00:00:00"), "icehockey_nhl_preseason",
+                       "completed", 2, 4)
+    second = _FakeEvent(212, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:08:24"), "icehockey_nhl_preseason",
+                        "completed", 2, 4)
+
+    kept, dropped = collapse_duplicate_fixtures([first, second])
+    assert [e.id for e in kept] == [211, 212]
+    assert dropped == 0
+
+
+def test_the_same_clubs_the_next_night_keep_both_rows():
+    """A preseason series plays the same opponent again — that is a fixture."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    tonight = _FakeEvent(221, "Calgary Flames", "Seattle Kraken",
+                         _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                         "completed", 2, 4)
+    tomorrow = _FakeEvent(222, "Calgary Flames", "Seattle Kraken",
+                          _at("2026-09-22T02:00:00"), "icehockey_nhl_preseason",
+                          "scheduled")
+
+    kept, dropped = collapse_duplicate_fixtures([tonight, tomorrow])
+    assert [e.id for e in kept] == [221, 222]
+    assert dropped == 0
+
+
+def test_a_thirty_one_minute_gap_is_two_fixtures():
+    """The bound is the rule; one minute past it the pass must not fire."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    parent = _FakeEvent(231, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                        "completed", 2, 4)
+    variant = _FakeEvent(232, "Calgary Flames", "Seattle Kraken",
+                         _at("2026-09-21T00:31:00"), "icehockey_nhl_preseason",
+                         "completed", 2, 4)
+
+    kept, dropped = collapse_duplicate_fixtures([parent, variant])
+    assert [e.id for e in kept] == [231, 232]
+    assert dropped == 0
+
+
+def test_the_scored_row_survives_even_when_it_is_the_parent():
+    """The result outranks the label: a scoreless variant never wins."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    parent = _FakeEvent(241, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                        "completed", 2, 4)
+    variant = _FakeEvent(242, "Calgary Flames", "Seattle Kraken",
+                         _at("2026-09-21T00:08:24"), "icehockey_nhl_preseason",
+                         "closed")
+
+    kept, dropped = collapse_duplicate_fixtures([parent, variant])
+    assert [e.id for e in kept] == [241], "the row with the result must survive"
+    assert dropped == 1
+
+
+def test_two_clubs_sharing_a_last_word_never_group():
+    """Grouping is on both FULL names, and this is why.
+
+    The ghost pass keys on the SURNAME because a tennis ghost carries nothing
+    else. In league sport the last word is a nickname two clubs can share:
+    `Chicago White Sox` and `Boston Red Sox` both end in "Sox", so a surname key
+    reads a Yankees home game against each of them as one fixture written twice
+    and deletes a real game.
+    """
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    regular = _FakeEvent(251, "New York Yankees", "Chicago White Sox",
+                         _at("2026-09-21T00:00:00"), "baseball_mlb",
+                         "completed", 4, 2)
+    spring = _FakeEvent(252, "New York Yankees", "Boston Red Sox",
+                        _at("2026-09-21T00:10:00"), "baseball_mlb_preseason",
+                        "scheduled")
+
+    kept, dropped = collapse_duplicate_fixtures([regular, spring])
+    assert [e.id for e in kept] == [251, 252]
+    assert dropped == 0
+
+
+def test_a_scoreless_twin_in_the_same_key_is_left_alone():
+    """The asymmetry gate, pinned.
+
+    Without it the pass degenerates into "the scored row beats the scoreless one
+    within half an hour", which is a general league-sport dominance rule this
+    module has already refused: two same-key rows are the event graph's problem,
+    not the renderer's. A variant/parent pair is the only asymmetry it may read.
+    """
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    scored = _FakeEvent(271, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                        "completed", 2, 4)
+    scoreless = _FakeEvent(272, "Calgary Flames", "Seattle Kraken",
+                           _at("2026-09-21T00:08:24"), "icehockey_nhl",
+                           "closed")
+
+    kept, dropped = collapse_duplicate_fixtures([scored, scoreless])
+    assert [e.id for e in kept] == [271, 272]
+    assert dropped == 0
+
+
+def test_different_leagues_never_pair_on_a_shared_suffix():
+    """`_preseason` is not an identity — the league has to match too."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    hockey = _FakeEvent(261, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                        "completed", 2, 4)
+    football = _FakeEvent(262, "Calgary Flames", "Seattle Kraken",
+                          _at("2026-09-21T00:08:00"),
+                          "americanfootball_nfl_preseason", "completed", 2, 4)
+
+    kept, dropped = collapse_duplicate_fixtures([hockey, football])
+    assert [e.id for e in kept] == [261, 262]
+    assert dropped == 0
+
+
+def test_two_leagues_in_one_family_never_pair():
+    """The group key is the LEAGUE, not the sport family.
+
+    A preseason friendly between an MLS club and a second-division side is one
+    match that two providers may file under two different leagues. Grouping on
+    the family ("soccer") would let this pass delete one of them on an
+    asymmetry it has no authority over: `sport_keys.league_identity` only ever
+    rules a SEASON VARIANT to be its parent league, and these are two leagues.
+    """
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    friendly = _FakeEvent(281, "Orlando City SC", "Tampa Bay Rowdies",
+                          _at("2026-02-14T00:00:00"), "soccer_mls_preseason",
+                          "completed", 1, 2)
+    second_division = _FakeEvent(282, "Orlando City SC", "Tampa Bay Rowdies",
+                                 _at("2026-02-14T00:10:00"),
+                                 "soccer_usl_championship", "scheduled")
+
+    kept, dropped = collapse_duplicate_fixtures([friendly, second_division])
+    assert [e.id for e in kept] == [281, 282]
+    assert dropped == 0
+
+
+def test_the_collapse_does_not_depend_on_page_order():
+    """A dedup whose answer moves with the caller's sort is a coin flip."""
+    from app.utils.search_fixture_dedup import duplicate_fixture_event_ids
+
+    page = [row for pair in PRESEASON_TWINS for row in pair]
+    forward = duplicate_fixture_event_ids(page)
+    backward = duplicate_fixture_event_ids(list(reversed(page)))
+
+    assert forward == backward == {15312065, 15312208, 15312340}
+
+
+def test_the_same_fixture_bound_matches_the_registrys():
+    """A copied constant that can drift is a defect with a delay fuse."""
+    from datetime import timedelta
+
+    from app.services.event_registry import _SAME_FIXTURE_MAX_SEPARATION
+    from app.utils.search_fixture_dedup import SAME_FIXTURE_MAX_SEPARATION_MINUTES
+
+    assert _SAME_FIXTURE_MAX_SEPARATION == timedelta(
+        minutes=SAME_FIXTURE_MAX_SEPARATION_MINUTES
+    ), (
+        "the renderer and the event graph disagree about how far apart two rows "
+        "can sit and still be one fixture — search would hide a real game, or "
+        "keep showing a twin the matcher already calls one"
+    )
+
+
+def test_a_live_twin_is_never_collapsed():
+    """Measured casualty, 2026-09-21: the parent is the faster score rail.
+
+    Rangers at Devils, 23:00Z: the ESPN-anchored `icehockey_nhl` row read 1-2
+    while its `icehockey_nhl_preseason` twin read 0-1 at the same instant.
+    Collapsing onto the variant would have shown a stale score as the only
+    score, so a game in progress is out of scope for this pass entirely.
+    """
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    espn = _FakeEvent(291, "New Jersey Devils", "New York Rangers",
+                      _at("2026-09-21T23:00:00"), "icehockey_nhl", "live", 2, 1)
+    odds = _FakeEvent(292, "New Jersey Devils", "New York Rangers",
+                      _at("2026-09-21T23:08:14"), "icehockey_nhl_preseason",
+                      "live", 1, 0)
+
+    kept, dropped = collapse_duplicate_fixtures([espn, odds])
+    assert [e.id for e in kept] == [291, 292]
+    assert dropped == 0
+
+
+def test_an_unknown_status_renders_both_rows():
+    """A pass that only ever HIDES fails open on a status it cannot read."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    parent = _FakeEvent(301, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-21T00:00:00"), "icehockey_nhl",
+                        "postponed", 2, 4)
+    variant = _FakeEvent(302, "Calgary Flames", "Seattle Kraken",
+                         _at("2026-09-21T00:08:24"), "icehockey_nhl_preseason",
+                         "postponed", 2, 4)
+
+    kept, dropped = collapse_duplicate_fixtures([parent, variant])
+    assert [e.id for e in kept] == [301, 302]
+    assert dropped == 0
+
+
+def test_an_upcoming_preseason_twin_collapses_onto_the_priced_row():
+    """Pre-game there is no score to go stale, and the prices are the point."""
+    from app.utils.search_fixture_dedup import collapse_duplicate_fixtures
+
+    parent = _FakeEvent(311, "Calgary Flames", "Seattle Kraken",
+                        _at("2026-09-25T01:40:00"), "icehockey_nhl", "scheduled")
+    variant = _FakeEvent(312, "Calgary Flames", "Seattle Kraken",
+                         _at("2026-09-25T01:48:00"), "icehockey_nhl_preseason",
+                         "scheduled")
+
+    kept, dropped = collapse_duplicate_fixtures([parent, variant])
+    assert [e.id for e in kept] == [312]
+    assert dropped == 1

@@ -51,6 +51,18 @@ Angels–Yankees rows, and a `St. Louis` / `St.Louis` pair at the same minute)
 but they are a DIFFERENT shape: equally specific, equally scored, so no
 dominance test can pick a survivor and none should try. Those belong to the
 event-graph drain, not to a renderer.
+
+AMENDED #7700 — THE ONE LEAGUE-SPORT PAIR THAT IS NOT SYMMETRIC. Everything
+above stands, including the refusal to guess between two rows that differ in
+nothing. A second, separate pass handles the one league-sport shape where the
+two rows are NOT interchangeable: when one wears a season-variant sport key
+(`icehockey_nhl_preseason`) and the other its parent league's
+(`icehockey_nhl`), `sport_keys.league_identity` already rules those are one
+league, and the asymmetry is readable off the row rather than guessed. That
+pass has its own bound (30 minutes, the same-fixture separation, not 36 hours),
+its own grouping (full names, not surnames) and its own survivor rule; it never
+fires on two rows that share a sport key, so none of the MLB pairs above move.
+See `SAME_FIXTURE_MAX_SEPARATION_MINUTES`.
 """
 
 from __future__ import annotations
@@ -59,6 +71,7 @@ import unicodedata
 from typing import Any, Iterable
 
 from app.utils.event_completion import commence_time_is_a_reported_start
+from app.utils.sport_keys import is_season_variant, league_identity
 
 # Observed pair-gap in the #2623 population runs to 23h (the ghost's start time
 # is a provider close-time, not a start time — gotcha #14). 36h keeps every
@@ -112,6 +125,100 @@ def is_individual_sport(sport_key: Any) -> bool:
     return str(sport_key).startswith(INDIVIDUAL_SPORT_PREFIXES)
 
 
+# #7700 — the SEASON-VARIANT pair, which is the one league-sport shape where a
+# survivor CAN be picked, and the reason the dominance pass above cannot do it.
+#
+# The rejection this sits beside is real and stands: two equally specific,
+# equally scored rows in the SAME sport key (the byte-identical Angels–Yankees
+# pair, the `St. Louis`/`St.Louis` pair) offer no grounds to prefer either, and
+# search must not guess. What makes the variant pair different is that the two
+# rows are not symmetric — one of them wears `<league>_preseason`, which
+# `sport_keys.league_identity` already rules is the SAME league as its parent
+# (#1798, #4945). That is an asymmetry the renderer can read off the row.
+#
+# Measured on production 2026-09-21, the whole NHL preseason is this shape —
+# every one of the 12 `icehockey_nhl_preseason` rows in a three-day window pairs
+# with an `icehockey_nhl` row for the same game, and `kraken` returns both, both
+# `completed`, both 4-2, eight minutes apart, adjacent on page one. The ESPN-born
+# parent row holds the anchor and ZERO markets; the Odds-API-born variant row
+# holds 3 markets and 177–301 odds snapshots. So the reader is shown the game
+# twice and the copy labelled plainly "NHL" is the one with nothing behind it.
+#
+# Per-sport-key shape, same window, same read: `americanfootball_nfl` 14/14 rows
+# carry BOTH provider ids, `baseball_mlb` 40/42, `americanfootball_ncaaf` 72/74 —
+# one row per game. `icehockey_nhl` reads 18 espn-only and the variant key 12
+# odds-only. The split key is the whole difference.
+#
+# This is NOT the drain and does not pretend to be: neither row absorbs the
+# other, nothing is deleted, and when the event graph finally joins them this
+# pass simply stops finding pairs (#2693, ruling 048's `ANCHORED_TWIN_UNSEEN`).
+SAME_FIXTURE_MAX_SEPARATION_MINUTES = 30
+
+#: Why 30 minutes and not the 36h window above: the wide window is for a GHOST
+#: whose start time is a provider stand-in, and it is safe there only because
+#: the pass is scoped to sports where the same two participants do not meet
+#: twice. League sport meets the same opponent on consecutive days as routine,
+#: so the bound here has to be the one that separates a twin from a real second
+#: fixture. `event_registry._SAME_FIXTURE_MAX_SEPARATION` is that bound, argued
+#: from the schedule rather than from taste (no format starts two same-pair
+#: fixtures within half an hour) and guarded there by a doubleheader test. The
+#: value is duplicated rather than imported because a utils module must not
+#: import a service; `tests/test_search_fixture_dedup.py` asserts the two agree,
+#: so the copy cannot drift silently — the same contract the individual-sport
+#: prefix list above already lives under.
+
+
+def _season_variant_pair(a: "_Row", b: "_Row") -> bool:
+    """True when one row wears a season-variant key and the other its parent's.
+
+    This is the ONLY clause here: that the two rows name the same league is
+    already carried by the group key, and a second copy of that test inside this
+    function is unreachable — mutation-verified, 2026-09-21, by replacing the
+    body with `return True` and watching every guard stay green. A redundant
+    check that no test can distinguish reads as protection and is not, so it is
+    gone rather than guarded.
+
+    Both directions of the asymmetry are required: two variant rows, or two
+    parent rows, are the symmetric case this pass deliberately leaves alone.
+    """
+    return is_season_variant(a.sport_key) != is_season_variant(b.sport_key)
+
+
+#: The statuses this pass will act on. A game IN PROGRESS is excluded, and that
+#: exclusion was MEASURED rather than reasoned: replaying the pass over 548
+#: served search rows on 2026-09-21 found three live pairs, and in one of them
+#: — Rangers at Devils, 23:00Z — the ESPN-anchored parent read 1-2 while the
+#: variant row read 0-1 at the same instant. The parent is the faster score rail
+#: during play. So while a game is live the asymmetry this pass CAN read (the
+#: label, and which row carries the prices) is outranked by one it CANNOT (which
+#: row's score is current), and hiding either copy would sometimes hide the true
+#: score. A live twin therefore stays double and belongs to the event graph
+#: (#2693) like every other shape this module refuses.
+#:
+#: Completed pairs agreed on the score in every measured case — 7 of 7 on the
+#: 2026-09-20 slate — which is why the Final, the case #7700 was filed for, is
+#: safe to collapse.
+_COLLAPSIBLE_STATUSES: frozenset = frozenset({"scheduled", "completed", "closed"})
+
+
+def _variant_survivor_rank(row: "_Row") -> tuple:
+    """Higher wins, and the two members of a variant pair can never tie.
+
+    The result comes first because a row that reports the score is strictly more
+    use to a reader than one that does not — that ordering is the existing
+    dominance rule's, unchanged.
+
+    The variant breaks the remaining tie, and the direction is deliberate.
+    `sport_keys.is_season_variant` tells callers choosing one row per league to
+    prefer the PARENT, but its reason is about TEAM rows (`standings_data` lives
+    on the parent club), which is a different question from which EVENT row to
+    render. Here the variant row is the one whose label is true — a September
+    exhibition is not an NHL regular-season game (#7051 is the same complaint
+    from the other side) — and, measured, it is also the row carrying the prices.
+    """
+    return (1 if row.scored else 0, 1 if is_season_variant(row.sport_key) else 0)
+
+
 def _normalize_name(value: Any) -> str:
     """Case-, accent- and whitespace-insensitive form of a participant name."""
     if not value:
@@ -163,7 +270,7 @@ class _Row:
 
     __slots__ = (
         "obj", "id", "home", "away", "commence_time", "scored", "sport_key",
-        "derived_start",
+        "derived_start", "status",
     )
 
     def __init__(self, obj: Any, sport_key: Any):
@@ -184,6 +291,7 @@ class _Row:
             getattr(obj, "home_score", None) is not None
             and getattr(obj, "away_score", None) is not None
         )
+        self.status = getattr(obj, "status", None)
         self.sport_key = sport_key
 
     @property
@@ -281,6 +389,71 @@ def _within_window(a: _Row, b: _Row) -> bool:
     return delta <= hours * 3600
 
 
+def _season_variant_duplicate_ids(rows: list["_Row"], dropped: set) -> None:
+    """#7700: add the losing half of every season-variant pair to `dropped`.
+
+    Grouped on the LEAGUE (so `icehockey_nhl_preseason` and `icehockey_nhl` land
+    together) and on both participants' FULL normalized names — not the surname
+    the ghost pass uses, because in league sport the surname is the city and
+    "Seattle Kraken" against "Seattle Storm" must never group.
+    """
+    groups: dict[tuple, list[_Row]] = {}
+    for row in rows:
+        if row.id is None or row.commence_time is None:
+            continue
+        # An unknown status is not collapsible either: this pass only ever
+        # HIDES, so the safe direction for anything it does not recognise is to
+        # render both rows.
+        if row.status not in _COLLAPSIBLE_STATUSES:
+            continue
+        home, away = _normalize_name(row.home), _normalize_name(row.away)
+        if not home or not away:
+            continue
+        identity = league_identity(row.sport_key)
+        if not identity:
+            continue
+        groups.setdefault((identity, frozenset((home, away))), []).append(row)
+
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        # Richest first, then by id, so the pass is order-independent for the
+        # same reason the dominance pass is: the caller's page order must not
+        # decide which row survives.
+        group.sort(key=lambda r: (_variant_survivor_rank(r), r.id), reverse=True)
+        for index, poorer in enumerate(group):
+            if poorer.id in dropped:
+                continue
+            for richer in group[:index]:
+                if richer.id in dropped:
+                    continue
+                if not _season_variant_pair(richer, poorer):
+                    continue
+                if not _within_same_fixture_separation(richer, poorer):
+                    continue
+                # No rank comparison here, and that is not an omission. The sort
+                # above puts `richer` first, and the asymmetry gate means the two
+                # members of a pair can never hold the same rank (they differ in
+                # the variant component by construction), so `richer` outranks
+                # `poorer` STRICTLY for every pair that reaches this line. A
+                # re-check was written, and mutation testing showed no guard
+                # could tell it from `pass` — unreachable protection reads as
+                # protection, so it is gone rather than kept for comfort.
+                dropped.add(poorer.id)
+                break
+
+
+def _within_same_fixture_separation(a: "_Row", b: "_Row") -> bool:
+    if a.commence_time is None or b.commence_time is None:
+        return False
+    try:
+        delta = abs((a.commence_time - b.commence_time).total_seconds())
+    except TypeError:
+        # Naive minus aware — see `_within_window`. Unknown gap => not a twin.
+        return False
+    return delta <= SAME_FIXTURE_MAX_SEPARATION_MINUTES * 60
+
+
 def duplicate_fixture_event_ids(events: Iterable[Any]) -> set:
     """Ids of rows that another row on the same page already renders, better.
 
@@ -318,6 +491,8 @@ def duplicate_fixture_event_ids(events: Iterable[Any]) -> set:
                 if _within_window(richer, poorer) and _dominates(richer, poorer):
                     dropped.add(poorer.id)
                     break
+
+    _season_variant_duplicate_ids(rows, dropped)
     return dropped
 
 
