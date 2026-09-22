@@ -88,6 +88,15 @@ import { eventSectionKey } from "@/lib/eventState";
  */
 export const LEAGUE_WINDOW_DAYS = 14;
 
+/** Keep the weekly football slate after Sunday (#3246).
+ * The API anchors this at UTC midnight. Other sports retain their current
+ * window: widening dense leagues needs pagination so past games cannot
+ * consume the shared 200-row limit ahead of upcoming fixtures.
+ */
+export function leagueResultsDays(sportKey: string): number {
+  return sportKey === "americanfootball_nfl" || sportKey === "americanfootball_ncaaf" ? 7 : 1;
+}
+
 /**
  * How soon a league's next game has to be for the fixed window to be believed.
  *
