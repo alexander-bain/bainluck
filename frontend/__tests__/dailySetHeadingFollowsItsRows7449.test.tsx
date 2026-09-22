@@ -330,7 +330,10 @@ describe("todaysSetIsAnswered", () => {
 
 describe("categoryLabel, moved out of the page so both call sites share one", () => {
   it("reads the sub-labels Alex saw", () => {
-    expect(categoryLabel({ category: "mlb" })).toBe("Mlb");
+    // #1930 — "Mlb" is what Alex saw, and it is the bug: the labeler was
+    // acronym-blind. MLB is the issue's own neighbour example, so the
+    // expectation is corrected, not the product weakened.
+    expect(categoryLabel({ category: "mlb" })).toBe("MLB");
     expect(categoryLabel({ category: "politics" })).toBe("Politics");
     expect(categoryLabel({ category: "soccer_spain_la_liga" })).toBe("Soccer Spain La Liga");
   });

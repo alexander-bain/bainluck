@@ -1,0 +1,31 @@
+// Code generated from contracts/category-acronyms.json by
+// scripts/generate_category_acronyms.py — do not edit by hand.
+// #1930: the single shared category-acronym list (web mirror).
+export const CATEGORY_ACRONYMS: readonly string[] = [
+  "AFC",
+  "ATP",
+  "EPL",
+  "F1",
+  "FIFA",
+  "KBO",
+  "LIV",
+  "LPGA",
+  "MLB",
+  "MLS",
+  "MMA",
+  "NASCAR",
+  "NBA",
+  "NCAA",
+  "NCAAB",
+  "NCAAF",
+  "NFC",
+  "NFL",
+  "NHL",
+  "NPB",
+  "PGA",
+  "UCL",
+  "UEFA",
+  "UFC",
+  "WNBA",
+  "WTA",
+];
