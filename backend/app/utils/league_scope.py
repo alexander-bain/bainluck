@@ -79,15 +79,48 @@ not a sample: the query limit is 1000):
 Every one of the 385 single-marked rows was read by hand and is genuinely the
 league its mark names.
 
-⚠️ THE SIX UNMARKED ROWS ARE A DIFFERENT BUG AND ARE DELIBERATELY NOT TOUCHED
-HERE. `llm_sport_category='football'` is carrying `2026 CFL Grey Cup Champion`,
-`2027 Steel Bridge National Champion` (a student engineering contest),
-`Big Ten Regular Season Champion` (`KXNCAAMBBIGTENREG-27`, men's basketball) and
-`Titled Tuesday Winner` ×2 (chess). Those reach both football pages today and
-still will. That is an upstream CLASSIFICATION defect, not a league-scope one, and
-teaching this module to guess at them would hide it. Filed as #5798's third
-finding. The sixth, `Notre Dame Football to Join a Conference`, is real college
-football that simply names no marker; it keeps its current reach on both pages.
+⚠️ THE UNMARKED ROWS ARE A DIFFERENT BUG AND ARE DELIBERATELY NOT TOUCHED HERE.
+They carry no league mark, so this module cannot see them; they are an upstream
+CLASSIFICATION defect and teaching this module to guess at them would hide it.
+Filed as #5798's third finding, which became #7900.
+
+🔴 THE LIST THIS PARAGRAPH USED TO CARRY WAS MOSTLY WRONG, and it is corrected
+here rather than deleted because it was the next reader's map for three days.
+It named six rows and asserted they "reach both football pages today and still
+will". #7900 put all of them to Kalshi's own `/series/{ticker}` (notice 26) and
+to the shipped `_categorize_kalshi_market`, and calibration/2723 measured reach
+across all 74 upcoming NFL+NCAAF pages. Both instruments agree the real count is
+TWO, and the sentence was false at serve time even when it was written:
+
+  * `2026 CFL Grey Cup Champion` — the VENUE tags it `Football`, and Canadian
+    football is football. Never a sport defect. If it should not sit beside
+    NCAAF that is a league question, and it is already answered elsewhere:
+    `_CFL_MARKET_RE` in `is_wrong_sport_leak` (#7851, `27f1f1e48`) refuses it at
+    serve time. Measured reach: zero.
+  * `Notre Dame Football to Join a Conference` — venue tags it `Football` too,
+    so the "admitted control" is confirmed by the venue rather than by our
+    judgement. It keeps its reach.
+  * `Titled Tuesday` ×2 (chess) — DID NOT REPRODUCE. Those rows are stored
+    `llm_sport_category='chess'`, not `football`. One has zero outcome rows and
+    the other's chess-player outcomes match no team pattern on any page. The
+    claim appears to have been read off a name, not off the column.
+  * `Big Ten Regular Season Champion` (`KXNCAAMBBIGTENREG-27`) — REAL, and
+    REPAIRED 2026-09-21. The venue tags it `Basketball`; the badge was a stale
+    write frozen by #1888's `coalesce(nullif(existing, 'other'), new)`, which
+    never overwrites a real tag, so no classifier change could ever have moved
+    it. `repair_kalshi_series_tag_category` moved it and its three tier-5
+    siblings to `basketball` (changed=4, drifted=0).
+  * `2027 Steel Bridge National Champion` (`KXSTEELBRIDGE-27`, a student
+    engineering contest) — REAL and STILL LIVE. This is the only row for which
+    the original sentence is still true. Kalshi tags the series literally
+    `Other`, so the shipped cascade returns `other`, and every repair rail in
+    that family declines to write `other` (`no_usable_tag`) because their gate
+    is "the venue names a DIFFERENT sport". Here the venue names NO sport. That
+    gap is #7900's residual and owes a census before it is closed.
+
+The lesson worth keeping: a row's stored badge is not the reason it reaches a
+page, and a DB-side claim is not a serve-time claim. Three of the six were
+already refused, already right, or not in this column at all.
 
 THE SECOND HALF OF THE SHIP, which is the larger reader win and is easy to miss.
 
