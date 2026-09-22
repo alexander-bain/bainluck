@@ -858,12 +858,44 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
   // Halftime
   if (/^half\s*time$/i.test(s) || s === "HT") return "HT";
 
-  // Overtime variants
-  if (/^(overtime|ot)$/i.test(s)) return "OT";
-  if (/^(\d+)\w*\s+overtime$/i.test(s)) {
-    const m = s.match(/^(\d+)/);
-    return m ? `OT${m[1]}` : "OT";
-  }
+  // Overtime variants: "Overtime" → "OT", "End of OT" → "/OT", "2nd Overtime" → "OT2"
+  //
+  // 🪤 #7992 — THIS WAS THE ONE PERIOD FAMILY THAT DROPPED `isEnd` ON THE FLOOR.
+  // `qMatch`, `pMatch` and `hMatch` below all honour it, so every other period
+  // type distinguishes its two edges with the `/` prefix; overtime returned the
+  // bare start label for both. `"End of OT"` and `"Overtime"` therefore
+  // normalized to the SAME string, and `derivePeriodBoundaries` dedups by exact
+  // label keeping the FIRST — so on a game carrying both, the end marker was
+  // absorbed silently and nothing was visible.
+  //
+  // `/events/15312790` is the case where that silence breaks: the NHL game has
+  // NO start-of-overtime marker at all — its only OT-ish row in any of the four
+  // channels is `End of OT` — so the absorbed duplicate was the ONLY `OT` on the
+  // chart, standing at 01:57:49Z, the moment overtime FINISHED, and reading like
+  // every other marker on the strip: the period began here.
+  //
+  // The dedup argument that made this look harmless is an argument about
+  // COLLISIONS, and it is silent on the singleton case — which is exactly where
+  // the wrong survivor wins by default.
+  if (/^(overtime|ot)$/i.test(s)) return isEnd ? "/OT" : "OT";
+
+  // Numbered overtimes, both spellings: "2nd Overtime" and the already-short
+  // "OT2". They are folded into ONE branch so the two cannot disagree about
+  // `isEnd` the way `"End 8"` and `"End of 8th Inning"` did in #7982 — the reach
+  // of a FORM is not the reach of the RULE, and that ship's own `"End 8"` arm
+  // (zero corpus occurrences, fixed anyway) is the precedent this follows.
+  //
+  // MEASURED: zero occurrences of either numbered end-form in ux/1433's
+  // 70-event / 7-sport corpus, so this arm changes no chart today. The 6 real
+  // `End of OT` rows — 3 NFL, 3 NHL — are all handled by the branch above.
+  //
+  // `OT\d?` is deliberately gone from the "already short" test near the end of
+  // this function: with `ot\d*` consumed here it would be unreachable there, and
+  // a live-looking branch that can never run is what misled two readers in
+  // #7982. The uppercase is preserved for the lowercase `"ot3"` input that test
+  // used to catch.
+  const otMatch = s.match(/^(?:(\d+)\w*\s+overtime|ot\s*(\d+))$/i);
+  if (otMatch) return `${isEnd ? "/" : ""}OT${otMatch[1] ?? otMatch[2]}`;
 
   // Quarter (basketball, football): "1st Quarter" → "Q1", "End of 1st Quarter" → "/Q1"
   const qMatch = s.match(/^(\d+)\w*\s+quarter$/i);
@@ -971,8 +1003,10 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
   const bare = s.match(/^(\d+)$/);
   if (bare) return isEnd ? "" : labelBarePeriod(bare[1], sport) ?? s;
 
-  // Already short like "Q1", "P2", "1H", "OT"
-  if (/^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$/i.test(s)) return s.toUpperCase();
+  // Already short like "Q1", "P2", "1H", "HT". Every overtime spelling — bare
+  // `OT` and numbered `OT2` alike — is consumed by the overtime branches above
+  // (#7992), so this alternation no longer names one.
+  if (/^(Q\d|P\d|\d+H|HT|\d+)$/i.test(s)) return s.toUpperCase();
 
   // Golf round labels: "R1", "R2", "R3", "R4", "PO" (playoff)
   if (/^R\d$/i.test(s)) return s.toUpperCase();
