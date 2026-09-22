@@ -14,6 +14,19 @@ final class TextFormattingTests: XCTestCase {
         XCTAssertEqual(toTitleCaseAcronymSafe("ufc"), "UFC")
     }
 
+    // #1930 — tokens that reached the web list first now arrive through the
+    // shared contract (CategoryAcronyms.generated.swift); a bare key must
+    // shout on native exactly as it does on web.
+    func testSharedCategoryAcronymsShout() {
+        XCTAssertEqual(toTitleCaseAcronymSafe("epl"), "EPL")
+        XCTAssertEqual(toTitleCaseAcronymSafe("npb"), "NPB")
+        XCTAssertEqual(toTitleCaseAcronymSafe("kbo"), "KBO")
+        XCTAssertEqual(toTitleCaseAcronymSafe("uefa"), "UEFA")
+        XCTAssertEqual(toTitleCaseAcronymSafe("fifa"), "FIFA")
+        XCTAssertEqual(toTitleCaseAcronymSafe("afc"), "AFC")
+        XCTAssertEqual(toTitleCaseAcronymSafe("nfc"), "NFC")
+    }
+
     func testUnderscoreKeysSplitAndTitleCase() {
         XCTAssertEqual(toTitleCaseAcronymSafe("pga_tour"), "PGA Tour")
         XCTAssertEqual(toTitleCaseAcronymSafe("horse_racing"), "Horse Racing")
