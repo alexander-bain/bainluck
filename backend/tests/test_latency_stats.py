@@ -41,6 +41,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.lib_buffered_redis import BufferedRedis
+
 from app.utils.latency_stats import (
     min_samples_for,
     parse_sample_member,
@@ -448,9 +450,12 @@ class TestWriteBound:
         from app.middleware import latency
 
         latency._request_counters.clear()
-        pipe = MagicMock()
-        redis = MagicMock()
-        redis.pipeline.return_value = pipe
+        # #1813: a buffered double, not a MagicMock pipe. A mock's call ledger
+        # exists before anything is published, so deleting the awaited
+        # `execute()` in `dispatch` left these assertions green. Here the
+        # member, the trims and the endpoint registration are observable only
+        # after the flush the middleware itself performs.
+        redis = BufferedRedis()
 
         request = MagicMock()
         request.url.path = "/api/feed"
@@ -463,22 +468,104 @@ class TestWriteBound:
         with patch.object(latency, "_get_redis", return_value=redis):
             await mw.dispatch(request, _call_next)
 
-        # The rank trim is present and keeps the NEWEST MAX_SAMPLES_PER_ENDPOINT.
-        pipe.zremrangebyrank.assert_called_once_with(
-            "latency:/api/feed", 0, -(latency.MAX_SAMPLES_PER_ENDPOINT + 1)
-        )
-        # The time-window trim is still there too — both bounds apply.
-        assert pipe.zremrangebyscore.called
-        # The cache bucket rides the existing member; no new key family.
-        member = list(pipe.zadd.call_args.args[1].keys())[0]
-        assert member.endswith(":miss")
-        assert redis.pipeline.call_count == 1
+        # The sample was published, carrying its cache bucket — no new key
+        # family for the bucket, it rides the existing member.
+        key = "latency:/api/feed"
+        members = list(redis.zsets.get(key, {}))
+        assert len(members) == 1
+        assert members[0].endswith(":miss")
+        # Both trims rode the same flush: the rank trim keeps the NEWEST
+        # MAX_SAMPLES_PER_ENDPOINT, and the time-window trim still applies.
+        queued = [c for c in redis.calls if c[0] in (
+            "zremrangebyrank", "zremrangebyscore")]
+        assert ("zremrangebyrank", key, 0,
+                -(latency.MAX_SAMPLES_PER_ENDPOINT + 1)) in queued
+        assert any(c[0] == "zremrangebyscore" and c[1] == key for c in queued)
+        # The endpoint was registered in the master set by the same flush.
+        assert "/api/feed" in redis.sets.get("latency:_endpoints", set())
+        assert redis.pipeline_count == 1
 
     def test_cap_is_comfortably_above_p99_requirement(self):
         from app.middleware.latency import MAX_SAMPLES_PER_ENDPOINT
         from app.utils.latency_stats import min_samples_for
 
         assert MAX_SAMPLES_PER_ENDPOINT >= min_samples_for(99) * 10
+
+
+class TestMissingFlushIsCaught:
+    """#1813: the two middleware installations used bare ``MagicMock`` pipes.
+
+    A mock records the call before anything is published, so deleting the
+    awaited ``execute()`` in ``LatencyMiddleware.dispatch`` left the
+    write-bound and endpoint-bucket contracts green. Queued sorted-set
+    writes, trims, expiry and endpoint-set membership must become observable
+    only after ``execute()`` — and a flush that fails before dispatch
+    (injected dead-connection fault — not a general rollback claim) must
+    publish nothing while still never breaking the request.
+    """
+
+    async def _dispatch_feed(self, redis):
+        from app.middleware import latency
+
+        latency._request_counters.clear()
+        request = MagicMock()
+        request.url.path = "/api/feed"
+        response = MagicMock(headers={"x-feed-cache": "miss"})
+
+        async def _call_next(_req):
+            return response
+
+        mw = latency.LatencyMiddleware(app=MagicMock())
+        with patch.object(latency, "_get_redis", return_value=redis):
+            out = await mw.dispatch(request, _call_next)
+        return out
+
+    def test_queued_latency_writes_are_invisible_until_execute(self):
+        redis = BufferedRedis()
+        pipe = redis.pipeline()
+        pipe.zadd("latency:/api/feed", {"1.0:5.0:miss": 1.0})
+        pipe.zremrangebyrank("latency:/api/feed", 0, -101)
+        pipe.expire("latency:/api/feed", 3660)
+        pipe.sadd("latency:_endpoints", "/api/feed")
+        assert redis.zsets == {}
+        assert redis.sets == {}
+        pipe.execute()
+        assert list(redis.zsets["latency:/api/feed"]) == ["1.0:5.0:miss"]
+        assert redis.sets["latency:_endpoints"] == {"/api/feed"}
+
+    @pytest.mark.asyncio
+    async def test_pre_dispatch_flush_failure_publishes_nothing_and_never_breaks_the_request(self):
+        redis = BufferedRedis()
+        redis.fail_all_executes = RuntimeError("redis down")
+        out = await self._dispatch_feed(redis)
+        assert out is not None
+        assert redis.zsets == {}
+        assert redis.sets == {}
+
+    @pytest.mark.asyncio
+    async def test_the_write_bound_contract_is_post_publication(self):
+        # The bound that matters is on the published sorted set, not on the
+        # calls that were queued toward it.
+        from app.middleware import latency
+
+        redis = BufferedRedis()
+        await self._dispatch_feed(redis)
+        members = redis.zsets.get("latency:/api/feed", {})
+        assert len(members) == 1
+        assert len(members) <= latency.MAX_SAMPLES_PER_ENDPOINT
+        assert any(m.endswith(":miss") for m in members)
+
+    def test_the_collapsed_bucket_is_what_was_published(self):
+        # `_keys_written` grades the queued calls; this grades the store they
+        # flushed into — 20 junk paths, one committed key.
+        from app.middleware.latency import UNMATCHED_BUCKET
+
+        keys = TestEndpointBucketIsBounded._keys_written(
+            [f"/api/junk-{i}/{i}" for i in range(20)])
+        assert set(keys) == {f"latency:{UNMATCHED_BUCKET}"}
+        committed = TestEndpointBucketIsBounded.last_redis.zsets
+        assert set(committed) == {f"latency:{UNMATCHED_BUCKET}"}
+        assert len(committed[f"latency:{UNMATCHED_BUCKET}"]) == 20
 
 
 # ---------------------------------------------------------------------------
@@ -515,9 +602,11 @@ class TestEndpointBucketIsBounded:
         def _event(event_id: int):
             return {"ok": event_id}
 
-        pipe = MagicMock()
-        redis = MagicMock()
-        redis.pipeline.return_value = pipe
+        # #1813: buffered, not a MagicMock pipe — the per-request keys below
+        # come from the queued-call ledger, while publication itself stays
+        # observable only through the committed stores.
+        redis = BufferedRedis()
+        TestEndpointBucketIsBounded.last_redis = redis
 
         latency._request_counters.clear()
         with patch.object(latency, "_get_redis", return_value=redis), \
@@ -526,7 +615,7 @@ class TestEndpointBucketIsBounded:
             for p in paths:
                 client.get(p)
 
-        return [c.args[0] for c in pipe.zadd.call_args_list]
+        return [c[1] for c in redis.calls if c[0] == "zadd"]
 
     def test_unmatched_paths_collapse_to_one_bucket(self):
         """20 distinct junk paths must not mint 20 Redis keys."""

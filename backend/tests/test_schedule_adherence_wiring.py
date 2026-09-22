@@ -13,6 +13,8 @@ written beside the counter; it is now the counter's own TTL. See
 
 import pytest
 
+from tests.lib_buffered_redis import BufferedRedis
+
 from app.routes.admin_celery import build_schedule_adherence
 from app.tasks import redis_state
 # The whole module, bound once. Importing it is also what connects the
@@ -23,19 +25,16 @@ from app.utils.schedule_adherence import adherence
 from app.tasks.redis_state import TASK_LABEL_MAP_KEY, TASK_METRICS_PREFIX
 
 
-class _Redis:
-    """Enough Redis for the metrics writer/reader, including lists."""
+class _Redis(BufferedRedis):
+    """Enough Redis for the metrics writer/reader, including lists.
 
-    def __init__(self):
-        self.strings = {}
-        self.hashes = {}
-        self.lists = {}
-        self.calls = []
-        #: key -> remaining TTL in seconds, modelling real Redis semantics:
-        #: a key absent from here but present in the store has NO expiry, which
-        #: `ttl()` reports as -1 and which LAT-P024 must read as unmeasurable
-        #: rather than as a fresh window.
-        self.ttls = {}
+    #1813: writes go through a buffered pipeline — queued ops stay invisible
+    until ``execute()``. The expiry fidelity from the LAT-P039 M19 repair is
+    preserved (``expire`` is modelled, not stubbed: a no-op double let the
+    removed-``expire`` mutant survive), and ``calls`` still records what the
+    client queued so call-shape assertions keep working. Publication is
+    observable only through the stores.
+    """
 
     # --- read -------------------------------------------------------------
     def get(self, key):
@@ -54,8 +53,8 @@ class _Redis:
     def hget(self, key, field):
         return self.hashes.get(key, {}).get(field.encode())
 
-    def lrange(self, key, start, end):
-        return list(self.lists.get(key, []))[start:end + 1]
+    # `lrange` is inherited from `BufferedRedis` (negative-end aware);
+    # no override — a local slice here once reintroduced the 0,-1 bug.
 
     def keys(self, _pattern):
         out = set(self.hashes) | {
@@ -63,65 +62,96 @@ class _Redis:
         }
         return [k.encode() for k in out]
 
-    # --- write ------------------------------------------------------------
-    def pipeline(self):
-        return self
-
-    def execute(self):
-        return []
-
-    def hset(self, key, field=None, value=None, mapping=None):
-        target = self.hashes.setdefault(key, {})
-        if mapping:
-            for f, v in mapping.items():
-                target[f.encode()] = str(v).encode()
-        if field is not None:
-            target[field.encode()] = str(value).encode()
-
-    def expire(self, key, ttl):
-        """Real EXPIRE sets the key's TTL. This used to only record the call.
-
-        LAT-P039 named the cost and Alex ruled it into the record: a test double
-        that cannot express the bug cannot catch it. `M19` — a mutant that
-        removed an `expire` — SURVIVED its first pass here, not because the
-        assertion was weak but because the fake had nothing for the mutation to
-        change. A no-op double does not make a test lenient, it makes the test
-        blind, and blind reads as green.
-
-        `self.calls` is kept as well, so tests that assert on the call itself
-        keep working; the TTL is now also applied so `ttl()` can observe it.
-        """
-        self.calls.append(("expire", key, ttl))
-        if key in self.strings or key in self.hashes or key in self.lists:
-            self.ttls[key] = ttl
-
-    def set(self, key, value, ex=None, nx=False):
-        if nx and key in self.strings:
-            return None
-        self.strings[key] = str(value).encode()
-        if ex is not None:
-            self.ttls[key] = ex
-        return True
-
-    def incr(self, key):
-        # Real INCR creates a missing key with NO expiry and never refreshes an
-        # existing one. Both halves matter here: the first is how a counter
-        # becomes an unbounded lifetime total, the second is what makes the TTL
-        # a trustworthy window start.
-        self.strings[key] = str(int(self.strings.get(key, b"0")) + 1).encode()
-
-    def lpush(self, key, value):
-        self.lists.setdefault(key, []).insert(0, str(value).encode())
-
-    def ltrim(self, key, start, end):
-        self.lists[key] = self.lists.get(key, [])[start:end + 1]
-
 
 @pytest.fixture
 def fake(monkeypatch):
     r = _Redis()
     monkeypatch.setattr(redis_state, "get_redis_client", lambda: r)
     return r
+
+
+class TestMissingFlushIsCaught:
+    """#1813: the double used to publish before ``execute()``.
+
+    Each metrics writer must publish only through its pipeline flush: with
+    every ``execute()`` failing before dispatch (injected dead-connection
+    fault — not a general rollback claim), none of ``record_task_started`` /
+    ``record_task_success`` / ``record_task_incomplete`` / ``record_task_failure``
+    may leave observable state — and a deleted ``pipe.execute()`` in any one
+    of them must turn that writer's state assertions red instead of staying
+    green against an eagerly-mutated store.
+    """
+
+    def test_lrange_negative_end_reads_through_the_tail(self, fake):
+        # The first revision sliced `[start:end + 1]`, so after publishing
+        # `lpush('tail', 'one')`, `lrange('tail', 0, -1)` returned `[]`.
+        pipe = fake.pipeline()
+        pipe.lpush("tail", "one")
+        pipe.lpush("tail", "two")
+        pipe.execute()
+        assert fake.lrange("tail", 0, -1) == [b"two", b"one"]
+        assert fake.lrange("tail", 0, -2) == [b"two"]
+        assert fake.lrange("tail", 1, -1) == [b"one"]
+
+    def test_ltrim_negative_end_keeps_through_the_tail(self, fake):
+        pipe = fake.pipeline()
+        pipe.lpush("t", "a")
+        pipe.lpush("t", "b")
+        pipe.lpush("t", "c")
+        pipe.execute()
+        keep = fake.pipeline()
+        keep.ltrim("t", 0, -1)
+        keep.execute()
+        assert fake.lrange("t", 0, -1) == [b"c", b"b", b"a"]
+        trim = fake.pipeline()
+        trim.ltrim("t", 0, -2)
+        trim.execute()
+        assert fake.lrange("t", 0, -1) == [b"c", b"b"]
+
+    def test_queued_writes_are_invisible_until_execute(self, fake):
+        pipe = fake.pipeline()
+        pipe.hset("h", mapping={"a": 1})
+        pipe.expire("h", 172800)
+        assert fake.hashes == {}
+        assert fake.ttl("h") == -2
+        pipe.execute()
+        assert fake.hashes["h"] == {b"a": b"1"}
+        assert fake.ttl("h") == 172800
+
+    def test_started_publishes_only_through_the_pipe(self, fake):
+        fake.fail_all_executes = RuntimeError("redis down")
+        redis_state.record_task_started("t")
+        assert fake.hashes == {}
+        assert fake.strings == {}
+
+    def test_a_flushed_start_is_published(self, fake):
+        # The positive half: a start stamps the hash AND bumps the counter,
+        # observably — so deleting this writer's flush turns THIS red.
+        redis_state.record_task_started("t")
+        assert b"last_started_at" in fake.hashes[f"{TASK_METRICS_PREFIX}:t"]
+        assert fake.strings[f"{TASK_METRICS_PREFIX}:t:starts"] == b"1"
+
+    def test_success_publishes_only_through_the_pipe(self, fake):
+        fake.fail_all_executes = RuntimeError("redis down")
+        redis_state.record_task_success("t", 100.0, {})
+        assert fake.hashes == {}
+        assert fake.strings == {}
+        assert fake.lists == {}
+
+    def test_incomplete_publishes_only_through_the_pipe(self, fake):
+        fake.fail_all_executes = RuntimeError("redis down")
+        redis_state.record_task_incomplete(
+            "t", 800.0, verdict="partial", verdict_reason="stopped")
+        assert fake.hashes == {}
+        assert fake.strings == {}
+        assert fake.lists == {}
+
+    def test_failure_publishes_only_through_the_pipe(self, fake):
+        fake.fail_all_executes = RuntimeError("redis down")
+        redis_state.record_task_failure("t", 900.0, "boom")
+        assert fake.hashes == {}
+        assert fake.strings == {}
+        assert fake.lists == {}
 
 
 class TestCounterWindowIsItsOwnTTL:
@@ -313,6 +343,9 @@ class TestDurationSampleCarriesItsOwnWindow:
         for ms, ts in samples:
             pipe = fake.pipeline()
             redis_state._push_duration(pipe, "t", ms, now_s=ts)
+            # The production writer flushes; without this the buffered pipe
+            # publishes nothing and the read below is empty (#1813).
+            pipe.execute()
         fake.hashes.setdefault(
             f"{TASK_METRICS_PREFIX}:t", {b"consecutive_failures": b"0"})
 
@@ -437,8 +470,10 @@ class TestDurationSampleCarriesItsOwnWindow:
         fake.lists[f"{TASK_METRICS_PREFIX}:t:durations"] = [b"900"]
         pipe = fake.pipeline()
         redis_state._push_duration(pipe, "t", 100, now_s=base)
+        pipe.execute()
         pipe2 = fake.pipeline()
         redis_state._push_duration(pipe2, "t", 200, now_s=base + 300)
+        pipe2.execute()
         fake.hashes.setdefault(
             f"{TASK_METRICS_PREFIX}:t", {b"consecutive_failures": b"0"})
         m = redis_state.get_task_metrics("t")
@@ -456,6 +491,7 @@ class TestDurationSampleCarriesItsOwnWindow:
         """
         pipe = fake.pipeline()
         redis_state._push_duration(pipe, "t", 100, now_s=1_786_500_000)
+        pipe.execute()
         key = f"{TASK_METRICS_PREFIX}:t:durations"
         assert fake.ttl(key) == redis_state.TASK_METRICS_TTL
 

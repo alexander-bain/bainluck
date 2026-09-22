@@ -51,46 +51,25 @@ from pathlib import Path
 
 import pytest
 
+from tests.lib_buffered_redis import BufferedRedis
+
 from app.routes.admin_celery import _delivery_age_s, build_schedule_adherence
 from app.tasks import redis_state
 from app.tasks.redis_state import TASK_DELIVERY_PREFIX, TASK_METRICS_PREFIX
 from app.utils.schedule_adherence import adherence, find_lapping
 
 
-class _Redis:
-    """Enough Redis for the delivery counter's write and read paths."""
+class _Redis(BufferedRedis):
+    """Enough Redis for the delivery counter's write and read paths.
 
-    def __init__(self):
-        self.strings = {}
-        self.ttls = {}
-
-    def pipeline(self):
-        return self
-
-    def execute(self):
-        return []
-
-    def set(self, key, value, ex=None, nx=False):
-        if nx and key in self.strings:
-            return None
-        self.strings[key] = str(value).encode()
-        if ex is not None:
-            self.ttls[key] = ex
-        return True
-
-    def incr(self, key):
-        # Real INCR creates a missing key with NO expiry and never refreshes an
-        # existing one — the second half is what makes the TTL a window start.
-        self.strings[key] = str(int(self.strings.get(key, b"0")) + 1).encode()
-
-    def expire(self, key, ttl):
-        # Modelled rather than stubbed. A no-op `expire` here let a mutation
-        # that slides the window on every increment survive the whole suite —
-        # and sliding the window IS the lifetime-counter bug LAT-P022 fixed
-        # (`successes_24h` never rolled because an hourly task kept pushing the
-        # TTL out). A test double that cannot express the bug cannot catch it.
-        if key in self.strings:
-            self.ttls[key] = ttl
+    #1813: writes go through a buffered pipeline — queued ops stay invisible
+    until ``execute()``, so a deleted flush fails the state assertions below
+    instead of passing against an eagerly-mutated store. Expiry fidelity is
+    unchanged from the LAT-P022 repair (``expire`` is still modelled: a no-op
+    ``expire`` let the window-sliding mutant survive, and sliding the window
+    IS the lifetime-counter bug — ``successes_24h`` never rolled because an
+    hourly task kept pushing the TTL out).
+    """
 
     def get(self, key):
         return self.strings.get(key)
@@ -110,6 +89,63 @@ def fake(monkeypatch):
     r = _Redis()
     monkeypatch.setattr(redis_state, "get_redis_client", lambda: r)
     return r
+
+
+class TestMissingFlushIsCaught:
+    """#1813: the double used to publish before ``execute()``.
+
+    Queued ``SET``/``INCR``/expiry writes must remain invisible until the pipe
+    is executed and must vanish when execution is omitted or fails before
+    dispatch (injected dead-connection fault — not a general rollback claim)
+    — otherwise a deleted ``pipe.execute()`` in ``record_task_delivery``
+    leaves every assertion above green while real Redis publishes nothing.
+    """
+
+    def test_queued_writes_are_invisible_until_execute(self, fake):
+        pipe = fake.pipeline()
+        pipe.set("k", 0, ex=86400, nx=True)
+        pipe.incr("k")
+        assert fake.strings == {}
+        assert fake.ttl("k") == -2
+        pipe.execute()
+        assert fake.strings["k"] == b"1"
+        assert fake.ttl("k") == 86400
+
+    def test_an_unexecuted_pipe_publishes_nothing(self, fake):
+        pipe = fake.pipeline()
+        pipe.set("k", 0, ex=86400, nx=True)
+        pipe.incr("k")
+        pipe.discard()
+        assert fake.strings == {}
+
+    def test_a_pre_dispatch_execute_failure_publishes_nothing(self, fake):
+        fake.fail_all_executes = RuntimeError("redis down")
+        # Best-effort by contract: the writer swallows the failure...
+        redis_state.record_task_delivery("app.tasks.x")
+        # ...but nothing was published.
+        assert fake.strings == {}
+
+    def test_set_nx_declines_when_the_key_exists_as_a_hash(self, fake):
+        # `SET NX` is cross-type in real Redis: a hash at `k` defeats it.
+        # The first revision of this double checked strings only and let the
+        # write through.
+        pipe = fake.pipeline()
+        pipe.hset("k", mapping={"f": "v"})
+        pipe.execute()
+        assert fake.hashes["k"] == {b"f": b"v"}
+        out = fake.pipeline()
+        out.set("k", "new", nx=True)
+        assert out.execute() == [None]
+        assert "k" not in fake.strings
+        assert fake.hashes["k"] == {b"f": b"v"}
+
+    def test_the_delivery_writer_publishes_only_through_the_pipe(self, fake):
+        # If ``record_task_delivery`` ever bypassed its pipeline with a direct
+        # client write, failing every execute would not stop it — and this
+        # would catch the bypass.
+        fake.fail_all_executes = RuntimeError("redis down")
+        redis_state.record_task_delivery("app.tasks.x")
+        assert f"{TASK_DELIVERY_PREFIX}:app.tasks.x" not in fake.strings
 
 
 # ---------------------------------------------------------------------------
