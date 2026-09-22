@@ -38,7 +38,8 @@ transactional session and RETURNS its own before/after census in the response bo
              | pm-ungraded-loss | pm-ungraded-loss-restore
              | kalshi-series-tag-category
              | polymarket-club-noun-category | kalshi-club-noun-category
-             | kalshi-venue-topic-badges }
+             | kalshi-venue-topic-badges
+             | kalshi-venue-sport-correction }
     (the registry below is authoritative; this list had already drifted two
      censuses behind it, so a reader who trusted it would have concluded a
      deployed rail did not exist — the same class of error as trusting a
@@ -77,7 +78,12 @@ transactional session and RETURNS its own before/after census in the response bo
      2026-09-10, CAL-P1088, adding the two pm-ungraded-loss entries in the
      commit that registered them. Re-synced again 2026-09-19, live/409, adding
      the two polymarket-single-leg-label entries in the commit that registered
-     them.)
+     them. Re-synced again 2026-09-22, authority/974, adding
+     kalshi-venue-sport-correction — NOT in the commit that registered it. The
+     focused D40 gates were green (the two registry guards live in files that
+     change was nowhere near, exactly as in the lane1b/116b entry above), CI
+     failed three of four shards on them, and that is the second time this
+     comment has earned its keep rather than decorated the file.)
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
