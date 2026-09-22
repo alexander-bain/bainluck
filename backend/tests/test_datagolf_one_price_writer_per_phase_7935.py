@@ -56,15 +56,19 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy.sql.dml import Update
 
+# The module, not the names: `DataGolfAPIService` is monkeypatched ON this
+# module (the task imports it at call time), so the same module is also where
+# the payload models are read from — one import form, not two.
 import app.services.datagolf_api as datagolf_api
 import app.tasks.base as task_base
 import app.tasks.datagolf as datagolf
 import app.tasks.redis_state as redis_state
 from app.models.models import FuturesMarket, FuturesOddsSnapshot, FuturesOutcome
-from app.services.datagolf_api import DataGolfPlayer, DataGolfTournament
+
+DataGolfPlayer = datagolf_api.DataGolfPlayer
+DataGolfTournament = datagolf_api.DataGolfTournament
 
 PGA_EVENT_ID = "2026136"
 EURO_EVENT_ID = "2026150"
