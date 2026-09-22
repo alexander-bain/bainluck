@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
+from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.futures_market_snapshot import dated_movement_points
@@ -5654,6 +5655,39 @@ async def get_probability_timeline(
             "current_probability": round(field_current, 6),
         })
 
+    # #7351 — ADDITIVE and only on a market whose venue publishes history.
+    # Built before the return rather than inside it so the receipt below and the
+    # `venue_history` key can be the SAME object: a receipt that described a
+    # second `describe()` call would be describing a different read.
+    venue_block = (
+        venue.describe(_venue_rows_served(venue_cells)) if venue.applicable else None
+    )
+    if venue_block is not None:
+        # #7807 acceptance, second call site — and the one that carries the
+        # PHONE. `APIClient.swift:929` fetches `/probability-timeline`; nothing
+        # native calls `/history`. Both readers go through the same
+        # `_load_generic_venue_history`, so either can be the FIRST to touch an
+        # evicted bank, and the first one takes the durable tier and rehydrates
+        # Redis for the other. With the receipt wired only into `/history`, a
+        # phone-first fallback wrote nothing and the `/history` read that
+        # followed it said `cache` — so the durable serve that actually happened
+        # left no record, which is the exact lost-evidence race this ship exists
+        # to remove. The surface is named distinctly so a reader of the log can
+        # tell WHICH door fell back.
+        # The LOADED ROW's id, not the route parameter. Same number — the row
+        # was fetched by that parameter — but a different provenance, and the
+        # provenance is the point: a route parameter is a user-provided value on
+        # the path to a log sink (`py/log-injection`, alert 2981, which named
+        # both routes' `market_id` as its sources). `market.id` is a column this
+        # request read back out of Postgres, so no caller-controlled value
+        # reaches the line at all. `_safe_ident` still narrows whatever it is
+        # handed; this removes the reason it would have to.
+        log_durable_venue_serve(
+            venue_block,
+            market_id=market.id,
+            surface="futures_probability_timeline",
+        )
+
     return {
         "market_id": market_id,
         "market_name": market.name,
@@ -5687,10 +5721,7 @@ async def get_probability_timeline(
         # Says what the venue-history seam contributed to THIS response, so the
         # coverage above can be read for what it is. Shipped clients ignore an
         # unknown key (`Decodable`); nothing above it changed shape.
-        **(
-            {"venue_history": venue.describe(_venue_rows_served(venue_cells))}
-            if venue.applicable else {}
-        ),
+        **({"venue_history": venue_block} if venue_block is not None else {}),
     }
 
 
@@ -6503,6 +6534,20 @@ async def get_futures_history(
     if venue.applicable:
         response["venue_history"] = venue.describe(
             venue_rows_served, scale_refused=venue_scale_refusal
+        )
+        # #7807 acceptance — write down a durable-tier serve at the instant it
+        # happens. It cannot be sampled for afterwards: the fallback rehydrates
+        # Redis, so the next read says `cache` and the payload is identical
+        # either way. Fires ONLY when the durable tier answered, reads every
+        # field off the block above, and can neither raise nor change what is
+        # returned (see `app/utils/durable_venue_receipt`).
+        # `market.id`, not `market_id` — see the same call in
+        # `get_probability_timeline`: the loaded row's column, so a route
+        # parameter never reaches a log sink.
+        log_durable_venue_serve(
+            response["venue_history"],
+            market_id=market.id,
+            surface="futures_history",
         )
 
     return response
