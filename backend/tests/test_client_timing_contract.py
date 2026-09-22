@@ -14,9 +14,6 @@ fields are stored MORE coarsely than GA gets them. A test that only checked
 so the load-bearing cases here are the hostile ones.
 """
 
-import pathlib
-import re
-
 import pytest
 
 from app.utils.client_timing_contract import (
@@ -422,29 +419,33 @@ def test_cache_status_domain_matches_its_producer():
     `unavailable` were real values silently dropped into an empty column.
     Parsing the writer's own call sites is what makes that a red test rather
     than a quiet data loss.
-    """
-    feed = pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
-    text = feed.read_text()
-    produced = set(re.findall(r'cache_status\s*=\s*"([a-z_]+)"', text))
-    produced |= set(re.findall(r'_set_feed_cache_status\([^,]+,\s*"([a-z_]+)"\)', text))
-    assert produced, "could not parse any cache_status producer — the regex rotted"
 
-    # #2143: `assert produced` catches TOTAL rot only. A refactor that moves
-    # SOME call sites off a string literal leaves this parsing the survivors —
-    # `missing` empty, test green, the moved value silently absent from the
-    # domain. Pin the floor the parse reaches today so partial rot is red. Same
-    # pin, same reason, in `test_bucket_allowlist_covers_everything_its_writer_emits`
-    # (`test_latency_stats.py`), which reads this same producer.
-    floor = {
-        "miss", "hit", "stale_hit", "error", "coalesced", "last_good",
-        "unavailable", "disabled", "disabled_debug", "disabled_reviewed_filter",
-    }
-    unparsed = floor - produced
-    assert not unparsed, (
-        f"the producer parse no longer reaches {sorted(unparsed)} — either feed.py "
-        "genuinely stopped writing them (update this pin in the same commit) or the "
-        "regex rotted and this guard is now vacuous"
+    #2143 SECOND PASS — the parse was itself the hole. This used a regex over
+    STRING LITERALS, so the four values `feed.py` writes through a variable
+    (`shared_hit`, `shared_stale_hit`, `page_base_hit`, `page_base_stale_hit`)
+    were never in `produced`, and the domain this compares against had been
+    built from that same regex — a set compared against itself. The floor pin
+    added with it catches values DISAPPEARING from a parse, never values the
+    parse never reached. Replaced by an AST resolver that must account for
+    every `cache_status=` argument or fail. Same resolver, same reason, in
+    `test_bucket_allowlist_covers_everything_its_writer_emits`
+    (`test_latency_stats.py`), which reads this same producer.
+    """
+    from tests.cache_status_producer import resolve_cache_status_domain
+
+    produced, unresolved, sites = resolve_cache_status_domain()
+
+    assert not unresolved, (
+        f"the producer AST resolver could not resolve {len(unresolved)} cache_status "
+        f"argument(s): {unresolved} — an argument this guard cannot read is an "
+        f"enum value that lands as a permanently-empty column, which is the "
+        f"failure CERT-1873 and #2143 both already paid for"
     )
+    assert sites >= 13, (
+        f"only {sites} cache_status call sites found (expected >=13) — treat a "
+        f"shrinking count as resolver rot until feed.py says otherwise"
+    )
+    assert produced, "resolved no cache_status producer at all — the AST walk rotted"
 
     missing = produced - _ENUM_DOMAINS["cache_status"]
     assert not missing, (

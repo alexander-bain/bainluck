@@ -214,54 +214,91 @@ class TestCacheBucket:
         pooled into one bucket whose members have different serve shapes and
         therefore incomparable latencies.
 
-        Restating the ten values here would reproduce the original defect one
-        layer down, so this parses the producer's own call sites — the same
-        authority, and the same regex, as
-        `test_cache_status_domain_matches_its_producer` in
+        Restating the values here would reproduce the original defect one layer
+        down, so this derives them from the producer's own call sites — the same
+        authority as `test_cache_status_domain_matches_its_producer` in
         `test_client_timing_contract.py`, which has guarded the COPY of this set
         since CERT-1873 while the original went unguarded.
+
+        #2143 SECOND PASS — THE DERIVATION USED TO BE THE DEFECT. Both guards
+        parsed the producer with a regex over STRING LITERALS, and the allowlist
+        was built from that same regex, so `produced - _CACHE_BUCKETS` was empty
+        BY CONSTRUCTION: the test compared a set against itself. Four values are
+        written through a variable (`_read_shared_feed_cache` returns
+        `shared_hit`/`shared_stale_hit`; `_pb_status` is
+        `page_base_hit`/`page_base_stale_hit`), the regex never saw them, and on
+        a release-pure window (2026-09-22 00:12Z) `other` was 43.2% of bucketed
+        `/api/feed` samples — up from 35.4%, with this test green over it.
+
+        The floor pin added in the first pass did not rescue it, and that is the
+        lesson worth keeping: a floor detects values DISAPPEARING from a parse,
+        never values the parse NEVER REACHED. So the parse is gone. The producer
+        is now read by AST, and anything the resolver cannot resolve is a
+        FAILURE rather than a silent omission — a derivation that cannot go
+        quietly incomplete cannot go quietly vacuous.
         """
-        import pathlib
-        import re
+        from tests.cache_status_producer import resolve_cache_status_domain
 
         from app.middleware.latency import _CACHE_BUCKETS
 
-        feed = pathlib.Path(__file__).resolve().parents[1] / "app" / "routes" / "feed.py"
-        text = feed.read_text()
-        produced = set(re.findall(r'cache_status\s*=\s*"([a-z_]+)"', text))
-        produced |= set(
-            re.findall(r'_set_feed_cache_status\([^,]+,\s*"([a-z_]+)"\)', text)
-        )
-        assert produced, "could not parse any cache_status producer — the regex rotted"
+        produced, unresolved, sites = resolve_cache_status_domain()
 
-        # A DERIVED GUARD GOES VACUOUS THE MOMENT ITS DERIVATION ROTS PARTWAY.
-        # `assert produced` only catches TOTAL rot: if a later refactor moves
-        # some call sites to a constant or an f-string, this regex keeps
-        # parsing the survivors, `missing` stays empty, and the test passes
-        # while the value it was written to catch sails into `other` — the
-        # #2143 defect again, now with a green test on top of it. So the
-        # derivation is pinned by the floor it is known to reach today
-        # (2026-09-21: exactly these ten, all written as `cache_status = "…"`).
-        # Removing a value from `feed.py` is legitimate and updates this pin
-        # deliberately; a value silently disappearing from the PARSE is the rot,
-        # and it is now red.
-        floor = {
-            "miss", "hit", "stale_hit", "error", "coalesced", "last_good",
-            "unavailable", "disabled", "disabled_debug",
-            "disabled_reviewed_filter",
-        }
-        unparsed = floor - produced
-        assert not unparsed, (
-            f"the producer parse no longer reaches {sorted(unparsed)} — either "
-            f"feed.py genuinely stopped writing them (update this pin in the "
-            f"same commit) or the regex rotted and this guard is now vacuous"
+        assert not unresolved, (
+            f"the producer AST resolver could not resolve {len(unresolved)} "
+            f"cache_status argument(s): {unresolved} — resolve them (extend the "
+            f"resolver) rather than letting them pass unseen, which is exactly "
+            f"how #2143's four missing values stayed invisible behind a green test"
         )
+        assert sites >= 13, (
+            f"only {sites} cache_status call sites found (expected >=13) — the "
+            f"resolver has stopped seeing the producer; treat as rot, not as a "
+            f"shrinking domain, until you have read feed.py and confirmed"
+        )
+        assert produced, "resolved no cache_status producer at all — the AST walk rotted"
 
         missing = produced - set(_CACHE_BUCKETS)
         assert not missing, (
             f"feed.py writes X-Feed-Cache values the latency rail cannot name: "
             f"{sorted(missing)} — they pool into `other`, and a pooled bucket "
             f"cannot grade a per-bucket latency claim (#2143)"
+        )
+
+    def test_the_producer_resolver_refuses_an_argument_it_cannot_resolve(self):
+        """The anti-vacuity property itself, asserted.
+
+        The guard above is only worth having if an UNRESOLVABLE `cache_status=`
+        argument is loud. Its predecessor's failure mode was silence: a value it
+        could not parse simply did not appear in `produced`, and the comparison
+        that followed was then trivially satisfied. Feed the resolver's
+        internals a call site whose argument comes from outside the module and
+        assert it is REPORTED, not dropped.
+        """
+        import ast
+
+        from tests.cache_status_producer import _Resolver
+
+        tree = ast.parse(
+            "import x\n"
+            "def _finalize_feed_response(**kw):\n"
+            "    pass\n"
+            "_v = x.something_opaque()\n"
+            "_finalize_feed_response(cache_status=_v)\n"
+        )
+        resolver = _Resolver(tree)
+        call = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and any(k.arg == "cache_status" for k in n.keywords)
+        ][0]
+        arg = [k for k in call.keywords if k.arg == "cache_status"][0].value
+
+        values, unresolved = resolver.resolve(arg)
+
+        assert values == set(), "invented a value it could not actually resolve"
+        assert unresolved, (
+            "an unresolvable cache_status argument produced NO complaint — the "
+            "resolver is back to failing silently, which is the #2143 defect"
         )
 
     def test_unknown_value_collapses_to_other(self):

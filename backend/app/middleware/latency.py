@@ -130,6 +130,34 @@ TIMING_SPLIT_ENABLED = os.getenv("TIMING_SPLIT_ENABLED", "1").strip().lower() no
 # Redis key — the explicit reason #1500 put it in the member in the first place.
 # The allowlist still fails closed: a value outside this set is still `other`,
 # so no caller-controlled string can mint a bucket.
+#
+# #2143 SECOND PASS — THE FIRST WIDENING MISSED THE VALUES THAT WERE ACTUALLY
+# IN `other`, AND THE GUARD COULD NOT SAY SO BECAUSE IT COMPARED A SET AGAINST
+# ITSELF. Measured on a release-pure window 2026-09-22 00:12Z (every sample
+# postdating the widening): `other` did not collapse, it ROSE — 32 of 74
+# bucketed `/api/feed` samples, 43.2%, against a stable 35.4%/36.8% on the
+# blind rail before. Only one of the six names added above ever appeared.
+#
+# The reason is that the ten names above are exactly the ten `feed.py` writes
+# as STRING LITERALS, and the producer also writes four values through a
+# variable: `_read_shared_feed_cache` returns `shared_hit`/`shared_stale_hit`,
+# and `_pb_status` is `page_base_hit`/`page_base_stale_hit`. `X-Feed-Cache` has
+# exactly one writer (`_set_feed_cache_status`), so that domain is closed and
+# these four were the ONLY possible members of `other` — consistent with the
+# measurement, which found `other` to be one coherent fast population (p50
+# 58.8 ms, 28.9-127.2 ms: slower than `hit` at 24 ms, far faster than `miss` at
+# 1414 ms) rather than the grab-bag its name implies.
+#
+# Both are cache HITS, and pooling them into `other` understates the hit share
+# while leaving 43% of the denominator unlabelled — so #2143's acceptance
+# ("miss p50 under 300 ms with the miss share unchanged or better") was still
+# ungradeable after the first pass, for the same reason it was ungradeable
+# before it.
+#
+# The guard that let this through is fixed with it: see
+# `test_bucket_allowlist_covers_everything_its_writer_emits`, which now reads
+# the producer by AST and REFUSES a `cache_status=` argument it cannot resolve,
+# rather than silently parsing only the literals.
 _CACHE_BUCKETS = frozenset(
     {
         "miss",
@@ -142,6 +170,15 @@ _CACHE_BUCKETS = frozenset(
         "disabled",
         "disabled_debug",
         "disabled_reviewed_filter",
+        # Written through a variable, never a literal — hence missed by the
+        # first pass. Kept distinct from `hit`/`stale_hit` for the same reason
+        # the others are: a cross-worker/page-base serve is a different SHAPE
+        # of hit from a local one, and merging them re-pools what this rail
+        # exists to separate.
+        "shared_hit",
+        "shared_stale_hit",
+        "page_base_hit",
+        "page_base_stale_hit",
     }
 )
 _BUCKET_OTHER = "other"

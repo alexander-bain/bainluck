@@ -155,6 +155,15 @@ _ENUM_DOMAINS: Dict[str, frozenset] = {
             "disabled",
             "disabled_debug",
             "disabled_reviewed_filter",
+            # #2143 second pass: written through a variable rather than a
+            # literal (`_read_shared_feed_cache`'s return, `_pb_status`), so
+            # the literal-only parse this domain was reconciled against could
+            # not see them. Measured 2026-09-22 00:12Z as ~43% of bucketed
+            # `/api/feed` samples, all of it sitting in `other`.
+            "shared_hit",
+            "shared_stale_hit",
+            "page_base_hit",
+            "page_base_stale_hit",
             "other",
             "none",
             "unknown",
