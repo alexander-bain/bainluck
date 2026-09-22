@@ -258,28 +258,46 @@ def test_a_missing_probability_cannot_sort_its_way_onto_the_card():
 def test_the_backend_cut_and_the_client_cut_are_the_same_number():
     """Two records of one capability, so ASSERT the gap rather than trust it.
 
-    `FuturesCard.tsx` decides how many rows a reader sees. This constant decides
-    which subjects may be named. If the client ever draws five rows and this
-    still says four, the gate silences a sentence about a row the reader CAN
-    see — a regression with no other alarm on it.
+    The client decides how many rows a reader sees. This constant decides which
+    subjects may be named. If the client ever draws five rows and this still says
+    four, the gate silences a sentence about a row the reader CAN see — a
+    regression with no other alarm on it.
+
+    🔴 #8025 MOVED THE CUT, AND WIDENED WHAT THIS GUARD IS WORTH. It used to read
+    `leaderFirstSlice(distributionRows, 4)` inside `FuturesCard.tsx`, which is the
+    Discover card only — and on `/sports`, `/categories/*` and `/my-stuff` the
+    browse card (`components/FeedCard.tsx`) drew THREE rows off `top_outcomes`
+    and had no board at all, so this constant was never true of those surfaces
+    and a sentence about row 4 was orphaned there by construction. The cut is now
+    `FUTURES_BOARD_ROW_LIMIT` in `lib/discover/futuresBoard.ts`, which both cards
+    read, so agreeing with it is agreeing with every surface.
     """
-    tsx = (
+    board_rule = (
         Path(__file__).resolve().parents[2]
         / "frontend"
-        / "components"
+        / "lib"
         / "discover"
-        / "FuturesCard.tsx"
+        / "futuresBoard.ts"
     )
-    source = tsx.read_text()
-    found = re.search(r"leaderFirstSlice\(\s*distributionRows\s*,\s*(\d+)\s*\)", source)
+    source = board_rule.read_text()
+    found = re.search(r"FUTURES_BOARD_ROW_LIMIT\s*=\s*(\d+)\s*;", source)
     assert found, (
-        "FuturesCard.tsx no longer slices distributionRows the way "
+        "futuresBoard.ts no longer declares FUTURES_BOARD_ROW_LIMIT the way "
         f"{Path(__file__).name} assumes — re-derive CARD_DRAWN_OUTCOME_ROWS "
         "against whatever replaced it"
     )
     assert int(found.group(1)) == CARD_DRAWN_OUTCOME_ROWS, (
         f"the card draws {found.group(1)} rows but the backend gate assumes "
         f"{CARD_DRAWN_OUTCOME_ROWS}"
+    )
+    # ...and the constant is what the slice actually takes. Reading the
+    # declaration alone would go on passing if the call site were edited back to
+    # a bare literal, which is the shape this file was already written against.
+    assert re.search(
+        r"leaderFirstSlice\(\s*priced\s*,\s*FUTURES_BOARD_ROW_LIMIT\s*\)", source
+    ), (
+        "futuresBoard.ts declares FUTURES_BOARD_ROW_LIMIT but no longer slices "
+        "by it — the cut and the constant have come apart"
     )
 
 

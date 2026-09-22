@@ -7,18 +7,19 @@ import type { FeedItem, FeedBundleData, FeedEventData, FeedFuturesData, FeedTour
 import { flattenFeedBundles } from "@/lib/feedSections";
 import { formatProbability } from "@/lib/api";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
-import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
+import { formatMovementPoints, formatProbabilityPercent, isRenderedMove } from "@/lib/probabilityDisplay";
 import { headlineEchoesReason } from "@/lib/headlineEcho";
 // `servedDuelPercents` for the CURRENT line (LAT-P120: prefer the server's own
 // rendered pair when it publishes one); `renderedDuelPercents` for the OPENING
 // line, where there is no served value to prefer — the three `opening_odds`
 // serializers publish two floats and no rendered percent, so the local contract
 // fallback IS the decision there rather than a stand-in for one (UX-P166).
-import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent } from "@/lib/renderedPercent";
+import { renderedDuelPercents, renderedCardPercents, cardSumReason, renderedLeaderPercent, renderedPercent } from "@/lib/renderedPercent";
 import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
+import { futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getSportLabel, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
@@ -1094,6 +1095,31 @@ function FuturesFeedCard({
   const fallbackPercents = renderedCardPercents(
     printedOutcomes.map((o) => o.probability)
   );
+  // ── #8025: THE FIELD THIS CARD USED TO THROW AWAY ────────────────────────────
+  //
+  // Everything above reads `top_outcomes`, which is three rows. The backend also
+  // serves `discover_card.distribution_outcomes` — the whole priced board — and
+  // this card contained no reference to it at all, while the Discover card drew
+  // it. `2027 IPL Champion` is a ten-team field with eight priced outcomes: on
+  // `/categories/cricket` it rendered as `Royal Challengers Bengaluru 22% ·
+  // Mumbai Indians 11% · Chennai Super Kings 10%` — three teams totalling 43%,
+  // with nothing saying seven more exist — and on `/discover` as a ranked board
+  // of four over "Field and 6 more outcomes". Same question, two answers,
+  // decided by which page the reader came in through.
+  //
+  // MEASURED, `GET /api/feed?limit=200` 2026-09-22 15:4xZ: 83 futures cards, of
+  // which 44 clear the board's bar. So this is the majority of the futures cards
+  // on `/sports` and `/categories/*`, not an edge case.
+  //
+  // The RULE is `lib/discover/futuresBoard.ts` — one module, both cards, so the
+  // two surfaces cannot disagree about which rows exist again. The TEMPLATE below
+  // stays this card's own: no rank digits (the name column is 180px here after
+  // #4245 rebalanced it, and a 1.25rem rank track would take 15% of it back, on a
+  // card that has never made the podium claim) and no per-row movement badge.
+  // Those are the Discover podium's grammar; this ship is about the rows and the
+  // remainder, and both are stated in the issue as the reader cost.
+  const board = futuresDistributionBoard(data);
+  const boardRemainder = board ? futuresBoardRemainderLabel(board) : null;
   const sumExplanation = cardSumExplanation(
     "card_sum_reason" in data
       ? data.card_sum_reason
@@ -1377,6 +1403,76 @@ function FuturesFeedCard({
           )}
         </div>
 
+        {/* #8025 — the board wins when the payload earns one. The `top_outcomes`
+            arm below is untouched and is still what every card that does not
+            clear the board's bar renders, so a market with no distribution draws
+            exactly what it draws today. */}
+        {board ? (
+          <div
+            className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5"
+            data-card-format="board"
+          >
+            {board.rows.map((row, i) => {
+              // The same rounding contract the hero above takes and the same one
+              // the Discover podium prints, so one outcome cannot read 87% in the
+              // rail and 86% in the row beneath it. Verified across the 44
+              // board-clearing cards on the live feed: 0 disagreements.
+              //
+              // #8033's pair repair rides on the same `board` object for the same
+              // reason: it landed on the Discover card while that card privately
+              // owned the board, and this card now draws the identical top two.
+              // Without it `Brazil Presidential Election` would print 60% over 41%
+              // here — 101% of a mutually exclusive race, refutable by adding two
+              // numbers — while /discover printed 60/40. `rendered` overrides the
+              // INTEGER, not the rule: UX-P046's boundary clamp still runs on the
+              // probability, and a `null` is "no override", not a decision.
+              const pct = formatProbabilityPercent(row.probability ?? 0, {
+                rendered: board.rowPercents[i],
+              });
+              return (
+                <div key={`${row.label}-${i}`} className="flex items-center gap-2">
+                  <span
+                    title={row.label}
+                    className={`text-[11px] flex-1 min-w-0 truncate ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
+                  >
+                    {row.label}
+                  </span>
+                  {/* #4245's column budget, unchanged: a fixed bar so every row
+                      on every card is the same instrument, and the name takes
+                      what is left. */}
+                  <div
+                    className="w-28 sm:w-44 shrink-0 h-1.5 rounded-full bg-surface-border overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={renderedPercent(row.probability) ?? undefined}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`${row.label} probability`}
+                  >
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
+                      style={{ width: `${(row.probability ?? 0) * 100}%` }}
+                    />
+                  </div>
+                  <span className="font-mono tabular-nums text-[11px] font-bold text-text-primary w-8 text-right">
+                    {pct}
+                  </span>
+                </div>
+              );
+            })}
+            {/* #6586's marker and #6586/#7844's sentence, both taken from the
+                shared module — this row is what tells the reader the other 57%
+                of the field exists at all, and it was the whole of #8025. */}
+            {boardRemainder && (
+              <div
+                data-row="field-remainder"
+                className="flex items-center text-[11px] text-text-muted"
+              >
+                <span className="truncate font-medium">{boardRemainder}</span>
+              </div>
+            )}
+          </div>
+        ) : null}
+
         {/* Top outcomes with probability bars */}
         {/* #2597: the optional read is the point. `top_outcomes` is REQUIRED on
             `FeedFuturesData`, so TypeScript could not see that the dispatcher's
@@ -1384,7 +1480,7 @@ function FuturesFeedCard({
             read on this card (`heroOutcome`, `leaderFirstSlice(... ?? [])`,
             `renderedLeaderPercent`) already tolerates a missing list. This was
             the one that did not, and it cost three whole browse surfaces. */}
-        {(data.top_outcomes?.length ?? 0) > 1 && (
+        {!board && (data.top_outcomes?.length ?? 0) > 1 && (
           <div className="mt-2 pt-2 border-t border-surface-border/50 space-y-1.5">
             {/* #1526: leader-first before truncating — i === 0 is styled as
                 THE favorite below, so an unsorted slice bolds an also-ran. */}
