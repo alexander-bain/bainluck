@@ -334,6 +334,90 @@ export function renderedFieldRowPercents(
   return values.map((v) => ((v as number) > 0 ? pair[taken++] : 0));
 }
 
+// ── TWO ROWS OF ONE RACE MAY NOT OWN MORE THAN THE RACE (#8033) ──────────────
+//
+// Production `/discover` at 390px, 2026-09-22: the **Brazil Presidential Election**
+// board printed `1 Flávio Bolsonaro 60% · 2 Luiz Inácio Lula da Silva 41%` — 101%
+// of a mutually exclusive race across its top two rows, which any reader refutes by
+// adding two numbers. Re-measured off `GET /api/feed?limit=200` at 17:00Z the same
+// day the raw legs were `0.5955 / 0.405`, a pair summing to **1.0005**: so **0.95 of
+// the point the reader sees is OURS** and 0.05 is the venue's over-round. `0.405`
+// lands exactly on the `.5` grid and rounds up, and `0.5955` rounds up beside it.
+//
+// WHY NOT THE OBVIOUS FIX. "Round the board once, largest remainders against its own
+// total" is the natural repair and it is measurably WRONG HERE: replayed over the 41
+// `outcome_distribution` boards in that pass it moves **23 boards and 25 rows to fix
+// one card**, because a board prints four rows out of a field of thirty-two and the
+// total of those four is not a number any reader can check. Nor is it always closer
+// to the data — `Presidents Cup` (raw `6.11 / 4.25 / 3.19 / 3.02`) is pushed from 4
+// to 5, three quarters of a point further from its own leg, to satisfy a sum nobody
+// can see. The claim a reader CAN check is the one #7844 half two already names: on
+// a field the route calls a race, exactly one row can win.
+//
+// THE RULE, and every clause of it is a refusal:
+//
+//   1. the field must be a RACE (`field_is_a_race`, taken off the venue's
+//      `mutually_exclusive` flag). On a coalition board 269% is the honest answer and
+//      scaling it would be the defect (#7844), so nothing fires there;
+//   2. the top two must be a COMPLEMENT PAIR by this contract's own predicate, so a
+//      `slice` can never manufacture a duel out of a long field (#2831). Two legs of a
+//      mutually exclusive race summing to 1.00 ± 0.01 ARE that race;
+//   3. their independent roundings must ALREADY exceed 100. A pair printing 99 or 100
+//      is not a defect and renders exactly as it does today;
+//   4. the LEADER NEVER MOVES. `renderedCardPercents` normalizes index 0 and is right
+//      to for a card that IS the pair; this board's leader is also the market's
+//      headline on surfaces that do not normalize (`renderedLeaderPercent` falls to
+//      plain rounding at arity 3+), so normalizing here would make one market print
+//      two different favourites. The leader keeps `renderedPercent`'s answer and only
+//      the second row is derived, as `100 - leader`;
+//   5. that derivation may move the row by at most ONE POINT — the rounding it is
+//      repairing. `0.505 / 0.505` prints 51/51 today; deriving 49 beneath a 51 would
+//      print two different numbers for two identical legs, and absorbing two points of
+//      venue over-round into one row is renormalization, not rounding (#7844). Such a
+//      pair is refused;
+//   6. the caller must be leader-first, and that is CHECKED rather than assumed: a
+//      list whose index 0 is not the larger leg is refused outright, because anchoring
+//      "the leader" on an unsorted list would derive the wrong row.
+//
+// Rows three and beyond are NEVER touched, so the field beneath the pair reads as it
+// does today, and the override is an INTEGER rather than a string: `probabilityParts`
+// still runs UX-P046's boundary rule on the PROBABILITY, so a live leg can never be
+// argued down to a flat `0%` by anything decided here.
+//
+// MEASURED over the same 41 boards: **1 board moves and 1 row moves**, it is the
+// specimen, the leader does not move, and no row below the pair moves.
+//
+// `null` at a position means "no override" — the caller keeps
+// `formatProbabilityPercent`'s own rounding — and never "checked and found fine".
+
+export function renderedRaceBoardPercents(
+  probabilities: Array<number | null | undefined> | null | undefined,
+  fieldIsARace: boolean,
+): Array<number | null> {
+  const values = probabilities ?? [];
+  const refuse: Array<number | null> = values.map(() => null);
+  if (!fieldIsARace || values.length < 2) return refuse;
+
+  const [first, second] = values;
+  if (!isComplementPair([first, second])) return refuse;
+  // Clause 6 — `isComplementPair` has already proved both are finite numbers.
+  if ((first as number) < (second as number)) return refuse;
+
+  const leader = renderedPercent(first as number);
+  const runnerUp = renderedPercent(second as number);
+  if (leader === null || runnerUp === null) return refuse;
+  if (leader + runnerUp <= 100) return refuse;
+
+  const derived = 100 - leader;
+  if (Math.abs(derived - runnerUp) > 1) return refuse;
+
+  return values.map((_value, index) => {
+    if (index === 0) return leader;
+    if (index === 1) return derived;
+    return null;
+  });
+}
+
 // ── The HEADLINE percent, so two surfaces cannot headline one market twice ───
 //
 // UX-P162. `renderedCardPercents` answers for a LIST; a card's hero prints ONE
