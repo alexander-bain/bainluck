@@ -243,6 +243,73 @@ function commit(dir, files, message) {
   return git(dir, "rev-parse", "HEAD");
 }
 
+/**
+ * Make ONE object unreadable in `repo` — the "partial clone with no tree"
+ * precondition the two fail-safe cases below are built on — without assuming
+ * WHERE git chose to keep it.
+ *
+ * Deleting the loose path was that assumption, and it threw ENOENT in CI (run
+ * 35752474488, job 106829862389, reported against PR #8047 which touches none
+ * of this): the arm died on the fixture line and never reached its decision
+ * assertion, so the guard it exists to defend went ungraded while the job read
+ * as somebody's product failure. Loose is what git USUALLY picks for a freshly
+ * written object; it is not a contract, and a packed copy answers `cat-file`
+ * exactly as well.
+ *
+ * The one repair that must NOT be made is tolerating the miss (`force: true`
+ * alone). The whole case is that the tree is GONE, so a cleanup that shrugs at
+ * a still-present object would let the arm go green while exercising the
+ * healthy path. So absence is asserted on both sides: the object has to read
+ * before, and it must not read after.
+ */
+function destroyObject(repo, sha) {
+  const readable = () =>
+    spawnSync("git", ["cat-file", "-e", sha], { cwd: repo }).status === 0;
+
+  assert.ok(
+    readable(),
+    `${sha} must exist before the case removes it, or the case proves nothing`
+  );
+
+  const loose = path.join(repo, ".git", "objects", sha.slice(0, 2), sha.slice(2));
+  fs.rmSync(loose, { force: true });
+
+  // Still readable => git is serving it from a pack. A pack is all-or-nothing,
+  // so the only way to drop one object out of it is to explode the packs back
+  // to loose storage and delete it there. Every OTHER object comes back, which
+  // is what keeps the two cheaper guards — the commit resolves, ancestry
+  // resolves — passing, so the case still grades the diff guard and not one of
+  // the ones in front of it.
+  if (readable()) {
+    const packDir = path.join(repo, ".git", "objects", "pack");
+    const packs = fs.existsSync(packDir)
+      ? fs
+          .readdirSync(packDir)
+          .filter((f) => f.endsWith(".pack"))
+          .map((f) => fs.readFileSync(path.join(packDir, f)))
+      : [];
+    assert.ok(
+      packs.length > 0,
+      `${sha} survived the loose delete but ${repo} has no pack to explode — ` +
+        "git is serving it from storage this helper does not know about"
+    );
+    // The whole directory, so a multi-pack-index or a .rev cannot keep serving
+    // what the packs no longer hold.
+    fs.rmSync(packDir, { recursive: true, force: true });
+    fs.mkdirSync(packDir, { recursive: true });
+    for (const body of packs) {
+      const res = spawnSync("git", ["unpack-objects", "-q"], { cwd: repo, input: body });
+      assert.strictEqual(res.status, 0, `git unpack-objects failed: ${res.stderr}`);
+    }
+    fs.rmSync(loose, { force: true });
+  }
+
+  assert.ok(
+    !readable(),
+    `${sha} still reads in ${repo}: this case cannot grade a missing tree while the tree is present`
+  );
+}
+
 const BASE_TREE = {
   "frontend/app/page.tsx": "export default function Page() { return null; }\n",
   "frontend/package.json": '{"name":"web"}\n',
@@ -634,13 +701,12 @@ describe("#7846 — a production build is skipped only when the live website is 
     // resolves, and `git diff` still cannot read the tree. An empty result from
     // a crashed diff is indistinguishable from "nothing changed" unless the exit
     // status is checked — and reading it as "nothing changed" would skip the
-    // build. Constructed by deleting the live commit's root tree object, which
-    // leaves the two cheaper guards passing.
+    // build. Constructed by destroying the live commit's root tree object,
+    // which leaves the two cheaper guards passing.
     const repo = makeRepo();
     const live = commit(repo, BASE_TREE, "base");
     const head = commit(repo, { "backend/app/main.py": "app = 1\n" }, "backend");
-    const tree = git(repo, "rev-parse", `${live}^{tree}`);
-    fs.rmSync(path.join(repo, ".git", "objects", tree.slice(0, 2), tree.slice(2)));
+    destroyObject(repo, git(repo, "rev-parse", `${live}^{tree}`));
 
     // The case only grades the diff guard if the two cheaper guards still pass.
     assert.strictEqual(
@@ -670,8 +736,7 @@ describe("#7846 — a production build is skipped only when the live website is 
     const c0 = commit(repo, BASE_TREE, "base");
     const live = commit(repo, { "backend/app/main.py": "app = 1\n" }, "backend");
     const head = commit(repo, { "backend/app/main.py": "app = 2\n" }, "more backend");
-    const tree = git(repo, "rev-parse", `${c0}^{tree}`);
-    fs.rmSync(path.join(repo, ".git", "objects", tree.slice(0, 2), tree.slice(2)));
+    destroyObject(repo, git(repo, "rev-parse", `${c0}^{tree}`));
 
     const run = decideVerbose(
       prodEnv(head, {
