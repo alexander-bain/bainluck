@@ -45,10 +45,19 @@ A poll that refuses to write prices is not a fix, it is an outage with good
 intentions: DataGolf covers some tours' events in-play and not others, and a
 tour inside its date window with NO live board would be frozen for four days
 with `last_updated` going stale. So the deferral is keyed on TWO per-tour
-signals — this event's own window AND `LIVE_KEY_PREFIX:{tour}`, which
-`_poll_datagolf_live` sets only when the in-play endpoint actually returned a
-board — and every test below runs its control: the same poll, one signal
-removed, must still write.
+signals — this event's own window AND proof that the beat is writing this tour —
+and every test below runs its control: the same poll, one signal removed, must
+still write.
+
+#7958 AMENDED THE SECOND SIGNAL, AND THESE TESTS' MEANING IS UNCHANGED. It was
+`LIVE_KEY_PREFIX:{tour}`, which the live poll raises as soon as the in-play
+endpoint returns a board — before the event-identity filter and before the
+commit — so a stale event-A board over event-B markets claimed the tour without
+writing to it and produced the very no-writer freeze described above. The signal
+is now `INPLAY_OWNER_KEY_PREFIX:{tour}` naming the event the beat actually
+committed prices for. Everything this file asserts is the same claim against the
+honest signal; `test_datagolf_inplay_owner_pinned_to_event_7958.py` owns the
+distinction itself.
 """
 
 from __future__ import annotations
@@ -72,6 +81,10 @@ DataGolfTournament = datagolf_api.DataGolfTournament
 
 PGA_EVENT_ID = "2026136"
 EURO_EVENT_ID = "2026150"
+
+#: The event each tour's fixture schedules, so `live_flags` can publish
+#: ownership of the same event the poll is about to consider (#7958).
+EVENT_IDS = {"pga": PGA_EVENT_ID, "euro": EURO_EVENT_ID}
 
 #: The graded value the 90s beat wrote for a player who has missed the cut.
 GRADED = 0.0
@@ -313,7 +326,26 @@ def _world(*, with_vanished: bool = False):
     return markets, outcomes, snapshots
 
 
-def _run(monkeypatch, *, tours, live_flags, with_vanished=False, newcomer=False):
+def _run(
+    monkeypatch,
+    *,
+    tours,
+    live_flags,
+    with_vanished=False,
+    newcomer=False,
+    owner_events=None,
+    extra_live_keys=(),
+):
+    """Drive the real `_poll_datagolf_markets` over the seeded world.
+
+    `live_flags` — tours the in-play beat owns, publishing ownership of each
+    tour's OWN event (the normal case, and what every test in this file wants).
+
+    `owner_events` / `extra_live_keys` — #7958's hooks: seed an arbitrary
+    ownership value, or the loose `LIVE_KEY_PREFIX` on its own. They exist so
+    that file can seed the states a stale board produces without re-deriving
+    this rig; nothing in this file passes them.
+    """
     markets, outcomes, snapshots = _world(with_vanished=with_vanished)
     session = _FakeSession(markets, outcomes, snapshots)
 
@@ -339,9 +371,23 @@ def _run(monkeypatch, *, tours, live_flags, with_vanished=False, newcomer=False)
         ]
 
     service = _FakeService(schedules, players)
-    redis = _FakeRedis({
-        f"{datagolf.LIVE_KEY_PREFIX}:{tour}": "1" for tour in live_flags
-    })
+    present: dict[str, object] = {}
+    for tour in live_flags:
+        # Both keys, because production sets both and a test that seeded only
+        # the one the deferral reads could not notice the day they diverge.
+        present[f"{datagolf.LIVE_KEY_PREFIX}:{tour}"] = "1"
+        # #7958: BYTES. `get_redis_client()` sets no `decode_responses`, so a
+        # real client answers with bytes; seeding `str` here would let a
+        # `r.get(k) == event_id` comparison pass the suite and never fire in
+        # production, which is the saw-tooth coming back under a green board.
+        present[f"{datagolf.INPLAY_OWNER_KEY_PREFIX}:{tour}"] = (
+            EVENT_IDS[tour].encode()
+        )
+    for tour in extra_live_keys:
+        present[f"{datagolf.LIVE_KEY_PREFIX}:{tour}"] = "1"
+    for tour, value in (owner_events or {}).items():
+        present[f"{datagolf.INPLAY_OWNER_KEY_PREFIX}:{tour}"] = value
+    redis = _FakeRedis(present)
 
     class _Ctx:
         async def __aenter__(self):
@@ -398,8 +444,8 @@ class TestTheBeatOwnsThePriceWhilePlayIsHappening:
     def test_the_SAME_poll_writes_when_no_beat_is_running(self, monkeypatch):
         """The control that makes the test above mean something.
 
-        Same tour, same in-play window, no `LIVE_KEY_PREFIX:pga` — so nothing
-        else is writing this board and the hourly poll must still be the
+        Same tour, same in-play window, no published ownership for pga — so
+        nothing else is writing this board and the hourly poll must still be the
         writer. A fix that keyed on the window alone would freeze every tour
         DataGolf does not cover in-play, for the length of its event.
         """
