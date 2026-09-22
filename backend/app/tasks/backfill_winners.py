@@ -242,6 +242,215 @@ def _read_status_sync_cursor(rc) -> str:
     return raw.decode() if isinstance(raw, bytes) else (raw or "")
 
 
+#: #8022 — how many empty-event rows a cycle may CONFIRM as purged. Band 5 asks
+#: about 50 tickers and ~58% of its population answers empty (425 of 736 in the
+#: 2026-09-21 census), so 25 covers a full cycle's empty bucket with headroom
+#: while bounding the extra cost at a fixed 2 calls each — the same "fixed cost
+#: whatever the population does" property the bands above buy with their budgets.
+_PURGE_CONFIRM_MAX_PROBES = 25
+
+#: Deliberately lower than the grader's own semaphore of 5, and the reason is a
+#: MEASUREMENT rather than caution: see `_resolve_purge_confirmed_markets`.
+_PURGE_CONFIRM_CONCURRENCY = 3
+
+
+async def _select_purge_confirmable_markets(
+    session, event_tickers: list[str]
+) -> list[tuple[str, str]]:
+    """Of these empty-event tickers, the ones where WE hold a complete verdict.
+
+    #8022. Returns `(event_ticker, winning_leg_ticker)` pairs. This is the
+    PRECONDITION half of the purge repair; the venue decides the rest.
+
+    A market qualifies only when our own row is internally unambiguous:
+
+      * **every** leg carries an authoritative resolution source — not merely the
+        winner. A market with one graded leg and five ungraded ones is a ladder
+        mid-flight, which is the ordinary shape band 5's docstring measured.
+      * **exactly one** leg is a winner, and that leg is authoritative too. Our
+        renderer picks the winner with `outcomes.find(o => o.is_winner)`, so a
+        two-winner row would settle the page onto whichever leg sorted first.
+
+    WHY THIS PREDICATE IS NOT ON ITS OWN A LICENCE TO FLIP, stated here because
+    it is exactly the trap band 5 already fell into and documented: "every leg
+    authoritatively graded" is 1,160 rows of which **0 of 69 probed were terminal
+    at the venue**, because the CAL-P1004 fabricator writes `api_settlement` onto
+    markets Kalshi still calls `active`. So this returns CANDIDATES. The caller
+    must get `Disposition.PURGED` from the venue for each one before anything is
+    written, and the two halves are deliberately in different functions so that
+    a future edit cannot quietly drop the second.
+
+    The winning leg's ticker is returned because it — not `fm.external_id` — is
+    what the venue's market channel can answer about. Our `external_id` is the
+    EVENT ticker (`KXGOVNYNOMR-26`), and `GET /markets/{event_ticker}` 404s for
+    every event that ever existed, which would make the market channel a constant
+    and strip the protocol of the very signal it exists to provide.
+    """
+    if not event_tickers:
+        return []
+    rows = await session.execute(
+        text("""
+            SELECT fm.external_id,
+                   MIN(fo.external_id) FILTER (WHERE fo.is_winner IS TRUE) AS win_ticker
+            FROM futures_markets fm
+            JOIN futures_outcomes fo ON fo.market_id = fm.id
+            WHERE fm.source = 'kalshi'
+              AND fm.status <> 'resolved'
+              AND fm.external_id = ANY(:tickers)
+            GROUP BY fm.id, fm.external_id
+            HAVING COUNT(*) FILTER (
+                       WHERE COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                   ) = COUNT(*)
+               AND COUNT(*) FILTER (WHERE fo.is_winner IS TRUE) = 1
+               AND COUNT(*) FILTER (
+                       WHERE fo.is_winner IS TRUE
+                         AND COALESCE(fo.resolution_source, '') IN """ + AUTHORITATIVE_SOURCES_SQL + """
+                   ) = 1
+               AND MIN(fo.external_id) FILTER (WHERE fo.is_winner IS TRUE) IS NOT NULL
+        """),
+        {"tickers": event_tickers},
+    )
+    return [(r[0], r[1]) for r in rows.all()]
+
+
+async def _resolve_purge_confirmed_markets(
+    candidates: list[tuple[str, str]], stats: dict
+) -> None:
+    """Flip a market to `resolved` when the venue has PURGED the question we answered.
+
+    #8022, the bucket band 5 names and holds. Its docstring says an event with no
+    markets is held because `all_terminal([])` is False — *an absence is not a
+    settlement* (gotcha #53) — and that refusal is correct and is NOT loosened
+    here. What follows is the second signal that same gotcha asks for.
+
+    THE READER-VISIBLE DEFECT. 355 markets (2026-09-22 census) carry a complete,
+    single-winner, venue-issued verdict and still render as live: the hero prints
+    a big `99%` instead of the winner, "Resolves Nov 3, 2027" fourteen months out,
+    and "Prices update every 1-2 hours" directly above a 60-day-old number — while
+    the SAME page, 900px down, already prints "Won" beside the winner. The
+    frontend gate (`isResolved = market.status === "resolved"`) is right; the
+    column it reads is stale. Iowa Democratic Governor nominee, New York
+    Republican Governor nominee, the 2026 primaries in twelve states, the AMAs,
+    the Tony Awards, the Sports Emmys.
+
+    🔴 WHY THIS MAY NOT KEY ON THE EMPTY EVENT READ, WHICH IS THE OBVIOUS REPAIR
+    AND IS CATASTROPHIC. Measured 2026-09-22 while sizing this fix: probing all
+    727 band-5 members on `GET /events/{t}?with_nested_markets=true` at
+    concurrency 6 returned **727 of 727 empty** — and the control proved that was
+    the instrument, not the population. `FEDHIKE` answered with 3 `finalized`
+    markets minutes earlier and 0 through the identical call; `KXGOVCA-26` went
+    from 2 markets to 0. **Kalshi expresses rate-limiting on that endpoint as a
+    well-formed HTTP 200 with `markets: []`, never a 429** — the byte-for-byte
+    shape of a retention purge. A rule of the form "empty ⇒ settled" would have
+    flipped the entire population to `resolved` the first time we were throttled.
+
+    SO THE PROTOCOL IS MARKET-CHANNEL-FIRST, and that is the whole safety
+    argument. `probe_kalshi` asks `GET /markets/{leg_ticker}` and consults the
+    event ONLY if the market 404s, so:
+
+        purged        market 404  -> event 200 `markets:[]`  -> PURGED   flip
+        still live    market 200, status active              -> OPEN_NO_SETTLEMENT
+        settled+kept  market 200, `result` set               -> SETTLED
+        throttled     market 429                             -> RATE_LIMITED
+        our id wrong  market 404  -> event 404               -> NOT_FOUND
+
+    A live market answers on the first channel, so a soft-block on the *events*
+    endpoint can never manufacture a `PURGED`. Only `PURGED` acts; every other
+    disposition holds, including the three retryable ones, which is why being
+    throttled costs this band a cycle rather than a population.
+    `_PURGE_CONFIRM_CONCURRENCY` is 3 for the same measurement: the throttle is
+    real and it is silent, so the band that depends on it stays well under it.
+
+    ⭐ THIS IS NOT A GRADING WRITE, and `Disposition.PURGED` deliberately does not
+    license one (`licenses_grading()` — read it before widening anything here).
+    No `is_winner` moves. The venue itself wrote these verdicts as
+    `api_settlement`; the only column that changes is `futures_markets.status`, a
+    LIFECYCLE claim being brought into line with a result we already hold and
+    already render. If a future change here wants to touch `is_winner`, that is a
+    different claim needing a different licence and `assert_grading_licensed` is
+    the function that says so.
+    """
+    if not candidates:
+        return
+    # Function-local for this module's own reason: `asyncio` is imported inside
+    # every async body here, not at module scope, and `settlement_probe` pulls in
+    # httpx — which the import-time smoke test (`test_startup.py`) should not have
+    # to carry for a band that may probe nothing all cycle.
+    import asyncio
+
+    from app.services.settlement_probe import make_client, probe_kalshi
+    from app.utils.settlement_truth import Disposition
+
+    # Seeded HERE, not only in the caller, and after the empty-candidate return
+    # above: once this rail has work, "held everything" must report a 0 rather than
+    # an absent key, or a throttled cycle is indistinguishable from a cycle that
+    # never ran (gotcha #53, the same rule this rail's whole protocol turns on).
+    # A caller with no candidates reports nothing, because there is nothing to say.
+    for _k in ("purge_probed", "purge_probe_errors", "status_resolved_purged"):
+        stats.setdefault(_k, 0)
+    stats["purge_candidates"] = stats.get("purge_candidates", 0) + len(candidates)
+    sem = asyncio.Semaphore(_PURGE_CONFIRM_CONCURRENCY)
+    client = make_client()
+    try:
+
+        async def _confirm(pair):
+            event_ticker, win_ticker = pair
+            async with sem:
+                try:
+                    outcome = await probe_kalshi(win_ticker, client)
+                except Exception as exc:  # gotcha #42: one bad probe, not the pass
+                    return event_ticker, None, str(exc)[:120]
+            return event_ticker, outcome, ""
+
+        results = await asyncio.gather(*[_confirm(p) for p in candidates])
+    finally:
+        await client.aclose()
+
+    confirmed = []
+    for event_ticker, outcome, err in results:
+        stats["purge_probed"] = stats.get("purge_probed", 0) + 1
+        if outcome is None:
+            stats["purge_probe_errors"] = stats.get("purge_probe_errors", 0) + 1
+            continue
+        # Every non-PURGED disposition is counted BY NAME rather than folded into
+        # one "held" number, because they mean opposite things and a cycle cannot
+        # otherwise tell "the venue says these are live" (working as intended)
+        # from "we were throttled for the whole cycle" (measured nothing).
+        if outcome.disposition is Disposition.PURGED:
+            confirmed.append(event_ticker)
+        else:
+            key = f"purge_held_{outcome.disposition.value}"
+            stats[key] = stats.get(key, 0) + 1
+
+    if not confirmed:
+        return
+
+    async with get_task_session() as session:
+        resolved = await session.execute(
+            update(FuturesMarket)
+            .where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.external_id.in_(confirmed),
+                FuturesMarket.status != "resolved",
+            )
+            .values(
+                status="resolved",
+                # COALESCE for the sibling write's reason: a market resolved once,
+                # reopened by a poll and resolved again keeps its FIRST stamp.
+                settled_at=func.coalesce(FuturesMarket.settled_at, func.now()),
+            )
+        )
+        await session.commit()
+    # Its OWN counter, never folded into `status_resolved`. That one means "the
+    # venue reported every market in this event terminal"; this one means "the
+    # venue has forgotten the market and we are standing on a verdict it gave us
+    # earlier". Two different claims with two different risks, and a single total
+    # would hide which rail moved a row.
+    stats["status_resolved_purged"] = (
+        stats.get("status_resolved_purged", 0) + resolved.rowcount
+    )
+
+
 def _fresh_settlement_budget(limit: int) -> tuple[int, int]:
     """Split a cycle's ticker budget into (recency band, alphabetical tail band).
 
@@ -1111,6 +1320,15 @@ async def _backfill_kalshi_winners(
         # folded into winners/losers: the grade and the status are two different
         # claims and #7857 is the case where one landed without the other.
         "status_resolved": 0,
+        # #8022 — the purge-confirm arm, pre-seeded for gotcha #53's reason: a
+        # cycle that found no empty-event candidates and a cycle whose every probe
+        # was throttled both write nothing, and an absent key would fuse them. The
+        # `purge_held_*` keys are deliberately NOT pre-seeded — they are named per
+        # disposition, so seeding them would invent dispositions nothing observed.
+        "purge_candidates": 0,
+        "purge_probed": 0,
+        "purge_probe_errors": 0,
+        "status_resolved_purged": 0,
         "errors": [],
     }
 
@@ -1260,6 +1478,10 @@ async def _backfill_kalshi_winners(
             async with sem:
                 return ticker, await service.get_event(ticker)
 
+        # #8022. Accumulated across batches, capped by `_PURGE_CONFIRM_MAX_PROBES`,
+        # and spent once after the loop — so the extra venue cost of this repair is
+        # a fixed ceiling per CYCLE, not per batch.
+        purge_candidates: list[str] = []
         batch_size = 100
         for batch_start in range(0, len(tickers), batch_size):
             batch = tickers[batch_start : batch_start + batch_size]
@@ -1581,6 +1803,19 @@ async def _backfill_kalshi_winners(
                         if resolved.rowcount > 0:
                             stats["status_resolved"] += resolved.rowcount
 
+                    # #8022 — the bucket the branch above holds. `all_terminal([])`
+                    # is False on purpose and stays that way; an empty read only
+                    # makes this row a CANDIDATE, and the venue's market channel
+                    # decides. Collected here and confirmed after the batch loop
+                    # so the probes share one client and one bounded semaphore
+                    # rather than firing inside the grader's own gather.
+                    if (
+                        not dry_run
+                        and not nested
+                        and len(purge_candidates) < _PURGE_CONFIRM_MAX_PROBES
+                    ):
+                        purge_candidates.append(event_ticker)
+
                 if not dry_run:
                     await session.commit()
 
@@ -1593,6 +1828,18 @@ async def _backfill_kalshi_winners(
                 stats["losers_set"],
             )
 
+        # #8022. Runs after the grading pass, on its own session, so a purge
+        # confirmation can neither hold the grader's transaction open nor lose a
+        # graded leg if a probe hangs. The SELECT is the precondition (our verdict
+        # is complete) and the probe is the licence (the venue has purged it);
+        # neither alone writes anything.
+        if purge_candidates:
+            async with get_task_session() as session:
+                confirmable = await _select_purge_confirmable_markets(
+                    session, purge_candidates
+                )
+            await _resolve_purge_confirmed_markets(confirmable, stats)
+
     except Exception as e:
         stats["errors"].append(str(e))
         logger.error("Kalshi winner backfill error: %s", e)
@@ -1604,7 +1851,8 @@ async def _backfill_kalshi_winners(
         "%d winners, %d losers, %d not_found, %d errors "
         "(just-settled band: %d selected, %d outcomes graded; "
         "status-sync band: %d selected; "
-        "%d market(s) flipped to resolved)",
+        "%d market(s) flipped to resolved; "
+        "purge-confirm: %d candidate(s), %d probed, %d confirmed purged)",
         stats["tickers_queried"],
         stats["events_found"],
         stats["api_miss"],
@@ -1624,6 +1872,13 @@ async def _backfill_kalshi_winners(
         # is exactly the #7857 failure — the grade landing while the page stays
         # live — and the winners/losers counters cannot tell it apart.
         stats["status_resolved"],
+        # #8022: all three, for the reason the two above are both printed. A
+        # `status_resolved_purged` of 0 means "no candidate", "the venue says our
+        # candidates are still live" and "every probe was throttled" alike, and
+        # only the pair of counts before it separates the three.
+        stats["purge_candidates"],
+        stats["purge_probed"],
+        stats["status_resolved_purged"],
     )
     return stats
 
