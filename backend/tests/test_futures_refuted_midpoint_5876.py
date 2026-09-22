@@ -481,7 +481,12 @@ class TestBothArmsLandInOneWithheldSet:
 
         seen = {}
 
-        def _fake_detail(_m, _b, withheld):
+        # `**_kw` so this fake tracks the real signature's keyword-only tail
+        # (#8011 added `fleet_newest_observation`). This test is about WHICH
+        # withheld ids reach the serializer, and a fake that has to be edited
+        # every time an unrelated keyword is added fails for a reason that is
+        # not the claim. The positional contract it does assert is unchanged.
+        def _fake_detail(_m, _b, withheld, **_kw):
             seen["withheld"] = withheld
             return {}
 

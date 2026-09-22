@@ -1026,6 +1026,251 @@ def stale_observation_keys(
     }
 
 
+#: How far behind THE FLEET a whole board may fall and still be read as a board
+#: we are currently observing (#8011).
+#:
+#: 🔴 A FOURTH CLOCK. The warnings over ``PRICES_STOPPED_DAYS`` and
+#: ``OBSERVATION_LAG_DAYS`` apply again, and this one is the easiest of the four
+#: to fold into its neighbour by accident, because it reads the SAME column as
+#: ``OBSERVATION_LAG_DAYS`` (``futures_outcomes.last_updated``). The difference
+#: is the REFERENCE, not the column:
+#:
+#:     OBSERVATION_LAG_DAYS  leg      vs  its own board's newest   (7 days)
+#:     BOARD_UNOBSERVED_DAYS board    vs  THE FLEET's newest       (30 days)
+#:
+#: One asks "were these legs observed together". This asks "is anyone observing
+#: this board at all, while the rest of the system is being written every
+#: minute". A board is its own reference for the first question and cannot be
+#: its own reference for the second — that is the whole of #8011.
+#:
+#: MEASURED, NOT FITTED. Production 2026-09-22, over the 31,716 open boards
+#: carrying at least one price. Boards whose PARENT poller stamp
+#: (``futures_markets.updated_at`` — "is the poller still visiting this row")
+#: sits more than X behind the fleet's newest observation:
+#:
+#:      > 7d  2992
+#:     > 14d  1147   <- cliff ends
+#:     > 21d  1069
+#:     > 30d  1017   <- chosen
+#:     > 45d   956
+#:     > 60d   704
+#:     > 90d   152
+#:
+#: The cliff is 7->14 days (1,845 boards, 264/day); from 14 to 45 the curve is
+#: flat (191 boards, 6.2/day). 30 sits in the middle of that plateau, 16 days
+#: clear of the cliff and 2.5x the largest lag measured on any board that hand
+#: inspection found still live (12.0 days).
+BOARD_UNOBSERVED_DAYS = 30
+
+
+def board_cannot_be_unobserved(
+    observations,
+    *,
+    board_touched_at,
+    now: datetime,
+    max_lag_days: float = BOARD_UNOBSERVED_DAYS,
+) -> bool:
+    """True when no possible fleet stamp could make this board unobserved (#8011).
+
+    A SOUND PREFILTER, AND DELIBERATELY NOT A SECOND RULE. Every observation is
+    in the past, so ``fleet_newest_observation <= now`` always, and therefore::
+
+        fleet - board_newest  <=  now - board_newest
+
+    If the right-hand side is already inside the floor, the left-hand side must
+    be too, and `unobserved_board_keys` is guaranteed to return the empty set.
+    The caller can skip the database read that would tell it so.
+
+    🔴 THIS IS THE ONE PLACE `now` APPEARS IN THIS SHIP, AND IT CAN ONLY EVER
+    SKIP WORK. It is an upper BOUND on the fleet stamp, never the comparison
+    that decides a withhold — `unobserved_board_keys` still makes that call and
+    still makes it against the fleet. The direction is what keeps the #7537
+    outage guarantee intact: during a fleet-wide stall `now - board_newest`
+    keeps growing, so this answers False, the read happens, and the real rule
+    correctly withholds nothing. A wall clock that can only say "don't bother
+    asking" cannot blank a board; one that says "withhold" can.
+
+    It exists because the alternative was worse. `/api/futures/{id}` has a
+    guarded query count (LAT-P127: two page loads, three executes, "a fourth
+    would mean the cache did not hold"), and an unconditional fleet read added
+    one per request. Rather than relax somebody else's latency guard, the read
+    now happens only for the ~8% of boards that could possibly qualify — 2,662
+    of the 31,716 open priced boards carry a leg stamp older than the floor.
+    """
+    touched = _as_utc(board_touched_at)
+    if touched is None:
+        return True
+
+    readable = [
+        stamp
+        for stamp in (_as_utc(value) for _key, value in observations)
+        if stamp is not None
+    ]
+    if not readable:
+        return True
+
+    cutoff_seconds = max_lag_days * 86400
+    if (now - max(readable)).total_seconds() <= cutoff_seconds:
+        return True
+    return (now - touched).total_seconds() <= cutoff_seconds
+
+
+def unobserved_board_keys(
+    observations,
+    *,
+    board_touched_at,
+    fleet_newest_observation,
+    board_has_a_verdict: bool = False,
+    max_lag_days: float = BOARD_UNOBSERVED_DAYS,
+) -> set:
+    """Every stamped key on a board the fleet has left behind (#8011).
+
+    ``observations`` is ``(key, stamp)`` per leg, as ``stale_observation_keys``
+    takes it. ``board_touched_at`` is the parent row's poller stamp
+    (``FuturesMarket.updated_at``). ``fleet_newest_observation`` is the newest
+    leg observation the system holds ANYWHERE. Returns every key whose stamp is
+    readable when the board qualifies, and the empty set otherwise.
+
+    ═══ WHAT A READER SAW ═══
+
+    ``/futures/10`` (*FIFA World Cup Winner*) heroed **59% Spain**, undated, for
+    a tournament decided on 2026-07-19. The page contradicted itself twice and
+    the hero was the only dishonest surface: the chart said *"Last number 64
+    days ago"*, the table said *"All Outcomes as of Jul 12"*, and the hero said
+    ``59%`` with nothing attached to it.
+
+    ═══ 🔴 WHY ``stale_observation_keys`` CERTIFIES THE DEADEST LEG AS THE FRESHEST ═══
+
+    That rule measures each leg against its own board's newest stamp, and its
+    docstring defends the choice correctly: if ingestion stalls for the whole
+    market every leg ages together, nothing is stale, **our own outage can never
+    blank a board**. On a board that died two months ago the newest stamp is
+    ITSELF two months old, so the rule withheld the 59 legs sitting behind
+    ``2026-07-19 20:30`` and certified the two legs HOLDING that stamp as fresh.
+    Those two are the last write before the market died. Renormalisation then
+    made the wreck look healthy: ``0.587142 + 0.412858 = 1.000000``.
+
+    So the failure is not fail-open, which is what that rule was built to do. It
+    is **selective** fail-open: most of a dead board blanked, the last gasp
+    promoted to the hero.
+
+    ═══ RELATIVE TO THE FLEET, NEVER TO ``now`` ═══
+
+    The fix cannot be an absolute age. Codex's standing objection to one holds
+    here exactly as it held for #7537: a wall-clock floor cannot tell a dead
+    board from a live board our ingestion has stopped reaching, and it converts
+    a multi-day outage into a fleet-wide blanking. So this measures one thing we
+    write against another thing we write. If futures ingestion stops fleet-wide,
+    ``fleet_newest_observation`` freezes with everything else, every lag stops
+    growing, and **no board is newly withheld** — the guarantee is structural,
+    the same property ``price_changed_at`` gives #7747, and it is not available
+    from any comparison against ``now``.
+
+    ═══ 🔴 TWO CLAUSES, AND EITHER ONE ALONE IS UNSOUND ═══
+
+    Both the board's newest LEG observation and its PARENT poller stamp must be
+    behind the fleet. Measured on production 2026-09-22, each clause alone
+    admits boards the other rejects, and in both directions the rejected board
+    is live:
+
+    * **Leg clause alone** admits live season-long props. *Will Tommy DeVito
+      finish as a top-12 QB* (31.4d), *Buccaneers 2026-27 regular season*
+      (41.9d), *Will Sabrina Carpenter release an album in 2026* (62.8d) — every
+      one of them a genuinely open question whose parent row was touched 12
+      days ago or less.
+    * **Parent clause alone** admits boards whose prices were written THIS
+      MINUTE. *Trump out as President by September 30?* carries a parent lag of
+      19.2 days and a leg lag of **0.2** days; *Will any CA state executives be
+      federally charged* reads 17.2 days against **0.0**. The parent row is
+      rewritten when a market ATTRIBUTE changes, not on every visit, so its
+      silence is not evidence about prices.
+
+    The conjunction separated all twelve hand-checked specimens, and the gap it
+    separated them by is not narrow: every board inspection found live carried a
+    parent lag of 12.0 days or less, every board inspection found finished
+    carried 64.7 days or more.
+
+    ═══ IT DOES NOT CLAIM THE VENUE STOPPED QUOTING — AND HERE THAT MATTERS ═══
+
+    Read at the venue on 2026-09-22, the admitted population is NOT uniformly
+    dead: five Polymarket boards in it were still ``active / acceptingOrders``,
+    one with **$2,178** of 24-hour volume. What every one of them shares is that
+    the number WE serve for it is unsourced, and where the venue could be read
+    it was also wrong — by 18 to 47 points:
+
+        board                         ours     venue book        24h vol
+        Anthropic best AI model       0.495    0.86 / 0.88       $288
+        Meta market cap $1.00-1.25T   0.475    0.002 / 0.008     $15
+        H200 index $5.50-$6.00        0.415    0.23 / 0.24       $72
+        North Korea tests = 1         0.295    0.015 / 0.047     $2,178
+
+    🔴 That is the opposite of the CERT-3242 finding one ship over, and the
+    distinction is the reason this rule is a repair rather than a regression.
+    There, the served price MATCHED the venue's live ask, so withholding
+    destroyed a correct number and the block was right. Here the served price
+    CONTRADICTS the venue by tens of points, so withholding removes a wrong one.
+    A grader checking this rule against the venue should expect to find live
+    books; the claim is about our evidence, not the venue's.
+
+    So, exactly as #7537 puts it: this returns the UNKNOWN set, and the caller
+    withholds a number it cannot source.
+
+    ═══ FAIL OPEN ON EVERY MISSING INPUT ═══
+
+    An unreadable ``fleet_newest_observation`` (the caller could not query it),
+    an unreadable ``board_touched_at``, or a board with no readable leg stamp
+    all yield the EMPTY set. No evidence is not evidence of death — the rule
+    ``prices_have_stopped`` and ``stale_observation_keys`` both already follow —
+    and here it also means a caller that cannot reach the database degrades to
+    exactly today's behaviour instead of blanking the site.
+
+    Legs whose own stamp is unreadable are left priced for the same reason, so
+    the set this returns is always a subset of the keys that carry a stamp.
+    """
+    # 🔴 A SETTLED BOARD IS A RESULT, AND `status` CANNOT TELL YOU IT IS SETTLED
+    # (CERT-3298). The first cut of this rule gated on `market.status == "open"`
+    # and stopped there, which reads as "unsettled" and is not: gotcha #33 —
+    # settled Kalshi markets stay `status='open'` in our database, because
+    # polling only ever sees open markets. Measured on production 2026-09-22,
+    # 444 of the 969 boards this predicate admits carry an evidenced verdict,
+    # and blanking them erases the result rather than an unsourced price.
+    # `/futures/413` is one: every leg wears `api_settlement`, so "Jalen Brunson
+    # 99%" is the Finals MVP ANSWER, not a fossil quote.
+    #
+    # The caller passes the shared semantics — `futures_liveness.leg_is_graded`,
+    # the same predicate #7387 and #4788 read — rather than a local `is_winner`
+    # test, because `is_winner` defaults to False and `ungradeable_result` is a
+    # retraction rather than a verdict. Board 10 is the specimen precisely
+    # because none of its 65 legs is graded: nobody ever settled it, it just
+    # stopped.
+    if board_has_a_verdict:
+        return set()
+
+    fleet = _as_utc(fleet_newest_observation)
+    if fleet is None:
+        return set()
+
+    touched = _as_utc(board_touched_at)
+    if touched is None:
+        return set()
+
+    stamps: dict = {}
+    for key, value in observations:
+        stamps[key] = _as_utc(value)
+
+    readable = [stamp for stamp in stamps.values() if stamp is not None]
+    if not readable:
+        return set()
+
+    cutoff_seconds = max_lag_days * 86400
+    if (fleet - max(readable)).total_seconds() <= cutoff_seconds:
+        return set()
+    if (fleet - touched).total_seconds() <= cutoff_seconds:
+        return set()
+
+    return {key for key, stamp in stamps.items() if stamp is not None}
+
+
 def is_probability_extreme(probability: float | None) -> bool:
     """True if the leader probability is at a dead extreme (<2% or >98%)."""
     if probability is None:
