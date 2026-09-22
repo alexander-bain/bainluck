@@ -1,0 +1,301 @@
+{
+  "_source": "production GET /api/futures/109257 + /history, captured 2026-09-22 by ux/1438 for #8016",
+  "id": 109257,
+  "name": "Who will Donald Trump meet in 2026?",
+  "status": "open",
+  "mutually_exclusive": false,
+  "outcomes": [
+    {
+      "id": 206769569,
+      "name": "Lionel Messi",
+      "probability": 1.0,
+      "opening_probability": 0.19,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1596001,
+      "name": "Claudia Sheinbaum",
+      "probability": 1.0,
+      "opening_probability": 0.8,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1596006,
+      "name": "Joe Rogan",
+      "probability": null,
+      "opening_probability": 0.715,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1595996,
+      "name": "Xi Jinping",
+      "probability": null,
+      "opening_probability": 0.955,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1596004,
+      "name": "Ahmed al-Sharaa",
+      "probability": null,
+      "opening_probability": 0.75,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1596011,
+      "name": "Mar\u00eda Corina Machado",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596008,
+      "name": "Volodymyr Zelenskyy",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596007,
+      "name": "Benjamin Netanyahu",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596009,
+      "name": "Elon Musk",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596012,
+      "name": "Javier Milei",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596005,
+      "name": "Zohran Mamdani",
+      "probability": null,
+      "opening_probability": 0.74,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 8456096,
+      "name": "Nayib Bukele",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 9614349,
+      "name": "Jos\u00e9 Antonio Kast",
+      "probability": null,
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 108078188,
+      "name": "Kevin Warsh",
+      "probability": null,
+      "opening_probability": 0.805,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1595997,
+      "name": "Mark Carney",
+      "probability": null,
+      "opening_probability": 0.915,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 9614350,
+      "name": "Nasry Asfura",
+      "probability": null,
+      "opening_probability": null,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 125743124,
+      "name": "Recep Tayyip Erdo\u011fan",
+      "probability": null,
+      "opening_probability": 0.645,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1596000,
+      "name": "Mark Zuckerberg",
+      "probability": null,
+      "opening_probability": 0.86,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 1595998,
+      "name": "Sam Altman",
+      "probability": null,
+      "opening_probability": 0.895,
+      "probability_change_24h": null,
+      "is_winner": true
+    },
+    {
+      "id": 210874634,
+      "name": "Andy Burnham",
+      "probability": 0.95,
+      "opening_probability": 0.9,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596010,
+      "name": "Jensen Huang",
+      "probability": null,
+      "opening_probability": 0.5,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596003,
+      "name": "Mohammed bin Salman",
+      "probability": 0.705,
+      "opening_probability": 0.76,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596002,
+      "name": "Vladimir Putin",
+      "probability": 0.585,
+      "opening_probability": 0.78,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 206769563,
+      "name": "Abelardo de la Espriella",
+      "probability": 0.555,
+      "opening_probability": 0.71,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596013,
+      "name": "Peter Thiel",
+      "probability": 0.34,
+      "opening_probability": 0.495,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596017,
+      "name": "Kim Jong Un",
+      "probability": 0.235,
+      "opening_probability": 0.34,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1595999,
+      "name": "Gavin Newsom",
+      "probability": 0.135,
+      "opening_probability": 0.87,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596015,
+      "name": "Reza Pahlavi",
+      "probability": 0.115,
+      "opening_probability": 0.445,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596018,
+      "name": "Tim Walz",
+      "probability": 0.0915,
+      "opening_probability": 0.27,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596014,
+      "name": "Pope Leo XIV",
+      "probability": 0.0795,
+      "opening_probability": 0.485,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596019,
+      "name": "Marjorie Taylor Greene",
+      "probability": 0.079,
+      "opening_probability": 0.265,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596016,
+      "name": "Jerome Powell",
+      "probability": 0.0675,
+      "opening_probability": 0.375,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 28637911,
+      "name": "Bill Clinton",
+      "probability": 0.061,
+      "opening_probability": 0.21,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 125743133,
+      "name": "Lai Ching-te",
+      "probability": 0.045,
+      "opening_probability": 0.165,
+      "probability_change_24h": null,
+      "is_winner": false
+    },
+    {
+      "id": 1596020,
+      "name": "Nicol\u00e1s Maduro",
+      "probability": 0.0395,
+      "opening_probability": 0.14,
+      "probability_change_24h": null,
+      "is_winner": false
+    }
+  ],
+  "history_outcome_ids": [
+    1596017,
+    210874634,
+    206769563,
+    1596013,
+    1596002,
+    1596003,
+    206769569,
+    1596001,
+    125743124,
+    1596004
+  ]
+}
