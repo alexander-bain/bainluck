@@ -513,3 +513,52 @@ RETENTION_BAND_SQL = f"""
           ELSE 'reachable'
         END
 """
+
+#: 🔴 #7980 — THE COHORT THE WALK COULD NOT REACH, EXPRESSED AS A SELECTOR AND
+#: NOT AS A SORT. ``_WORK_SQL``'s comment has carried this defect as a known,
+#: deliberately-unfixed ordering trap since CAL-P057 measured it on 2026-08-14:
+#: the floor ``resolution_date >= NOW() - purge_bound`` admits every FUTURE-dated
+#: market, and ``ORDER BY fm.resolution_date ASC`` sorts all of them behind every
+#: past-dated row, so "an operator draining this rail page by page will not reach
+#: them until the very end."
+#:
+#: Two things make that stranding worse than a queueing inconvenience:
+#:
+#: * the rows AHEAD of them are the ones the venue can no longer answer. Measured
+#:   2026-09-22 on the shipping rail, ``limit=10&min_harm=0.20`` returned
+#:   **10 of 10** markets at ``unexplained_absence`` — 86.0 days old, "empty
+#:   market list INSIDE the retention window". The walk spends its venue budget
+#:   on rows it is structurally unable to repair;
+#: * the future-dated rows are the cohort the venue WILL still answer, and they
+#:   are the ones a reader is looking at. #7980's specimens — a market quoted at
+#:   41.5% whose chart plunges to 0%, on legs resolving in 2029 and 2030 — are in
+#:   this cohort by construction, because a market that has not resolved is the
+#:   only kind that can be both graded and still trading.
+#:
+#: WHY NOT CHANGE THE ``ORDER BY``. CAL-P057 declined to, and its reason is the
+#: right one: this rail's correctness rests on its sort, that sort has already
+#: produced three separate ordering traps (CAL-P009, CAL-P057, C-CERT-1852), and
+#: gotcha #41's closing line is "ask what the ordering STARTS on." A re-sort also
+#: re-opens the keyset — the cursor names a position in an order, so changing the
+#: order invalidates every banked cursor. So this follows CAL-P1124 arm B's
+#: precedent instead: harm was wanted as an ordering and shipped as a THRESHOLD
+#: on the same probe, and the sort, the keyset and the band stayed
+#: character-for-character. This is the same move on the same column the band
+#: already bounds.
+#:
+#: NULL-transparent via ``IS NOT TRUE`` so an unfiltered walk is the WHOLE
+#: population and not an empty one (gotcha #53) — and a NULL bind, which is what
+#: an omitted query param sends, must degrade to "no cohort" rather than to a
+#: comparison that excludes every row. The CAST is the ``:sport`` lesson: asyncpg
+#: prepares with no parameter types and the FIRST occurrence fixes them, so the
+#: only occurrence of this parameter is a typed one.
+#:
+#: It is the ``future_date`` arm of :data:`RETENTION_BAND_SQL` character for
+#: character, and a guard test asserts that, so the census's banding and the
+#: walk's cohort cannot come to mean different things.
+FUTURE_DATE_COHORT_SQL = """
+    (
+      CAST(:future_only AS boolean) IS NOT TRUE
+      OR fm.resolution_date > NOW()
+    )
+"""
