@@ -554,9 +554,22 @@ async def test_the_route_withholds_both_specimens_and_keeps_everything_else():
     assert (
         "Manchester City vs Manchester United: Who Will Finish Higher" not in served
     ), f"a market trading until 2027 is still labelled settled: {payload['other']}"
-    assert "Manchester United vs Manchester City: BTTS" in served, (
+    # Keyed on `_market_id` and not on the heading, because the heading is a
+    # DISPLAY string and this assertion is about SURVIVAL. #2127 gave the BTTS
+    # family a reader-facing name ("Both teams to score" — the venue's own
+    # abbreviation is jargon a casual fan cannot expand), and when it did, this
+    # line failed with "a GRADED settled market lost its rows" while all of that
+    # market's rows were present and graded. A survival test that reads a label
+    # reports a rename as a data loss; the id is the thing that cannot be
+    # renamed. The other three assertions stay on the name: they are about which
+    # card a reader sees, which is exactly what a label is for.
+    assert 60482257 in {r["_market_id"] for r in payload["other"]}, (
         "a GRADED settled market lost its rows — this gate has reached the cohort "
         f"it must never touch: {payload['other']}"
+    )
+    assert "Both teams to score" in served, (
+        "the graded BTTS card is being served under the venue's abbreviation "
+        f"again, or not at all (#2127): {payload['other']}"
     )
     assert "Manchester United vs Manchester City: Team Corners" in served, (
         "a just-finished fixture's own book, still reading `open` because polling "

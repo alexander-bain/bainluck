@@ -14989,6 +14989,48 @@ def _is_scoring_race_market(name: str) -> bool:
 #: separation between a period market and the half-game aggregates #3951 pins.
 _SINGLE_INNING_RE = re.compile(r"\binning\b")
 
+#: Both-teams-to-score, in the two spellings the venues actually publish (#2127):
+#: Kalshi suffixes the abbreviation (`"Gijon vs Eldense: BTTS"`), Polymarket
+#: writes it out (`"Aruba vs. Antigua and Barbuda: Both Teams to Score"`).
+#:
+#: `btts` is word-anchored on purpose. Unanchored it is a substring, and the
+#: lesson this whole issue is built on — the ticker arm refused in
+#: `game_market_class.py` — is that an unanchored `btts` hits the trailing
+#: TEAM-CODE PAIR of real game tickers (`KXBSLGAME-26MAR220830MB|BTTS`, a
+#: basketball moneyline). The `\b` is what keeps a vocabulary word from
+#: matching an identifier fragment. Nothing here reads the ticker at all.
+_BTTS_RE = re.compile(r"\bbtts\b|\bboth teams to score\b")
+
+#: The half a BTTS market is scoped to, when it says so ("… in First Half").
+_BTTS_FIRST_HALF_RE = re.compile(r"\bfirst half\b|\b1st half\b")
+_BTTS_SECOND_HALF_RE = re.compile(r"\bsecond half\b|\b2nd half\b")
+
+
+def _btts_reader_facing_name(market_name: str) -> str:
+    """Say what a BTTS market asks, in words a first-time reader knows (#2127).
+
+    The venue's own string is an abbreviation ("Seattle vs Salt Lake: BTTS") or a
+    matchup restated ("Aruba vs. Antigua and Barbuda: Both Teams to Score"). The
+    matchup is already the page's heading, so repeating it buys nothing; the
+    abbreviation is the jargon notice 34 keeps off a reader's screen.
+
+    🔴 THE RETURNED NAME MUST NOT CONTAIN "vs", "at" or "@".
+    `resolve_binary_matchup_outcome_name` reads a matchup out of this very field
+    to rename a bare "Yes", and its guard is a colon in the TAIL — which a
+    rewritten name no longer has. Hand it "Seattle vs Salt Lake — Both teams to
+    score" and `_MONEYLINE_MATCHUP_RE` matches, "Yes" becomes "Seattle Win", and
+    this row is printing a fabricated winner: precisely the defect that function
+    was written to end, on 217 of the 299 rows it touched. Its docstring names
+    *Both Teams to Score* as the case. The subject-only name is what keeps the
+    truthful "Yes" truthful.
+    """
+    lower = market_name.lower()
+    if _BTTS_FIRST_HALF_RE.search(lower):
+        return "Both teams to score (1st half)"
+    if _BTTS_SECOND_HALF_RE.search(lower):
+        return "Both teams to score (2nd half)"
+    return "Both teams to score"
+
 #: A total of the WHOLE game that counts something other than the score (#3995).
 #:
 #: #3992 was the wrong SCOPE — an inning is a fraction of the contest. This is the
@@ -15785,6 +15827,21 @@ def _classify_game_market(name: str, external_id: Optional[str] = None) -> str:
     if _is_scoring_race_market(name):
         return "scoring_race"
 
+    # Both-teams-to-score is decided by its OWN name too, and for the reason the
+    # race above spells out — except here the "happening to contain no over/under
+    # token" luck has already run out (#2127). A BTTS market is a binary yes/no
+    # about BOTH sides scoring; it carries no line and names no player.
+    #
+    # 🔴 IT MUST SIT ABOVE THE over/under ARM, because that arm is a bare
+    # substring test and TEAM NAMES CONTAIN THESE WORDS. Measured 2026-09-22:
+    # of 18,680 BTTS rows, 68 carry "under" inside the name — Seattle So*under*s,
+    # S*under*land — and reached `game_total`, a market wearing the label of a
+    # QUANTITY IT DOES NOT PRICE. The remaining 18,612 fell to `other`. This is
+    # the same defect class as the ticker arm refused in `game_market_class.py`:
+    # a substring test on a name hits the CLUB, not the market kind.
+    if _BTTS_RE.search(lower):
+        return "btts"
+
     # Totals first — "Total Points" is a total, not a player prop
     if "total" in lower or "o/u" in lower:
         # ...but a NAMED PLAYER in front of the line makes it a player prop, which
@@ -15959,7 +16016,16 @@ _PM_PERIOD_SCOPES = frozenset({
 #: projection pool, and `extract_spread_threshold` can read a 14 out of it.
 #: A race prices the game's total and its margin equally little, so it is dropped
 #: at the market level like a period is.
-_PM_MARKET_PRICES_NEITHER_ARM = _PM_PERIOD_SCOPES | frozenset({"scoring_race"})
+#:
+#: `btts` joins it for the same reason and under the same #3948 discipline: a
+#: both-teams-to-score binary prices the game's total and its margin equally
+#: little. Naming it here is HARDENING, not a behaviour change — measured
+#: 2026-09-22, every BTTS row's outcomes are a bare "Yes"/"No" and its own name
+#: carries no digits, so `_extract_threshold` already returned None on both and
+#: nothing reached either pool. What changes is that it can no longer START
+#: contributing the day a venue adds a number to one of those strings, which is
+#: exactly the accident #3948 says not to leave the answer resting on.
+_PM_MARKET_PRICES_NEITHER_ARM = _PM_PERIOD_SCOPES | frozenset({"scoring_race", "btts"})
 
 #: `_classify_game_market` labels that are a different QUANTITY from the game's
 #: combined total, and so may never price one (#3921). Each is a measured
@@ -19388,7 +19454,14 @@ async def _build_game_markets(
                 if other_stays_silent:
                     continue
                 other_markets.append({
-                    "market_name": market.name,
+                    # #2127: a BTTS row is served under what it ASKS rather than
+                    # the venue's abbreviation. Every other market keeps its own
+                    # name — this is the one family whose published name is an
+                    # acronym a casual reader cannot expand.
+                    "market_name": (
+                        _btts_reader_facing_name(market.name)
+                        if market_type == "btts" else market.name
+                    ),
                     "outcome_name": o.name,
                     "observed_at": _observed(o),
                     "probability": round(prob, 4) if prob else None,
