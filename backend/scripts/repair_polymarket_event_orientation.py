@@ -123,9 +123,30 @@ WHERE other.event_id IS NULL
   AND e.espn_id IS NULL
   AND e.status IN ('scheduled', 'live')
   AND e.commence_time BETWEEN now() - interval '1 day'
-                          AND now() + interval :horizon_days * interval '1 day'
+                          AND now() + (cast(:horizon_days AS int) * interval '1 day')
 ORDER BY e.commence_time
 """
+# 🪤 `interval :horizon_days` is not parameterisable and never was. INTERVAL is a
+# type constructor whose operand must be a literal, so `interval $1` dies in the
+# PARSER — before binding, before types, before any row is considered:
+#
+#     asyncpg.exceptions.PostgresSyntaxError: syntax error at or near "$1"
+#
+# Measured on production 2026-09-22 (`run.3888`, 12:03Z, the first invocation
+# after the script reached the slug): exit 1 on the first statement, so no
+# argument to this script has ever selected a row. Every unit test passed
+# throughout, because none of them lets a server see the text — the same gap
+# #7354 shipped through, and `tests/integration/
+# test_repair_7739_candidate_sql_real_postgres.py` is the guard that closes it
+# here. The multiplication is the parameterisable form.
+#
+# 🪤 AND THE OBVIOUS FIX IS ALSO WRONG: `:horizon_days::int` is not a bind at all.
+# SQLAlchemy's bind regex refuses a colon preceded by a colon, so `::` swallows the
+# parameter and `text()` emits the literal `:horizon_days::int` — a SECOND syntax
+# error ("at or near \":\""), on a form that reads correct and compiles with an
+# EMPTY bind list. `cast(... AS int)` is the spelling that survives both the
+# SQLAlchemy layer and the server. Verified through SQLAlchemy+asyncpg against a
+# real PostgreSQL before this was committed, not reasoned about.
 
 # Every club in the measured leagues, read ONCE. Resolution then happens in
 # Python against `same_club`, which is the same rule the ESPN join uses.
