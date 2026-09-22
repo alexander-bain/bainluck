@@ -938,14 +938,81 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
 }
 
 /**
+ * A period's IDENTITY, with the end-marker prefix removed (#7917).
+ *
+ * `normalizePeriodLabel` emits `/Q1` for "End of 1st Quarter" and `Q1` for its
+ * start, and they are deliberately distinct LABELS. They are not distinct
+ * PERIODS: both are statements about Q1. The fill below needs the period, not
+ * the marker, or it treats a chart that already says `Q2` as one that is
+ * missing the end of Q1 and draws both — two rules one minute apart naming the
+ * same instant. Measured on the corpus: a fill keyed on the raw label imported
+ * `/Q1`, `/Q3` and `/Q4` and took `14780544` from 5 markers to 9.
+ */
+function periodIdentity(label: string): string {
+  return label.replace(/^\//, "");
+}
+
+/**
+ * The label shapes `normalizePeriodLabel` deliberately PRODUCES, and the only
+ * ones the fill below will import (#7917).
+ *
+ * 🪤 THIS EXISTS BECAUSE THE MORE PRINCIPLED-SOUNDING VERSION OF THE FIX WAS
+ * REFUTED BY MEASUREMENT. Folding all four sources together — the general form
+ * of "the cascade reads 'has ≥1 entry' as 'is complete'" — adds a rule labelled
+ * **`Final`** to 50 of 70 corpus events, in every sport, because ESPN's
+ * `period` field carries the game state at the end and `normalizePeriodLabel`'s
+ * last line is `return s` (#7960). The priority cascade was load-bearing in a
+ * way its comments never said: `period_markers` is a curated vocabulary and the
+ * raw sources are not.
+ *
+ * So the allowlist is the protection that lets the fill be narrow, and it FAILS
+ * SAFE BY CONSTRUCTION: an unrecognised shape is not filled, which is exactly
+ * today's behaviour. Missing a legitimate shape costs a hole we could have
+ * filled; admitting a junk one prints it on the chart.
+ */
+const FILLABLE_PERIOD_LABEL = /^\/?(?:Q\d+|P\d+|T\d+|B\d+|R\d+|\d+H|OT\d*|HT|PO|\d+)$/i;
+
+/**
+ * Fill the periods `primary` does not account for from `fallback` (#7917).
+ *
+ * `primary` stays authoritative for every period it names: nothing it supplies
+ * is moved, relabelled or dropped, so a chart whose markers are already
+ * complete is byte-identical after this. Only a period NO marker in `primary`
+ * mentions can be added, and it enters at its own evidenced timestamp.
+ */
+function fillMissingPeriods(
+  primary: PeriodBoundary[],
+  fallback: PeriodBoundary[],
+): PeriodBoundary[] {
+  const claimed = new Set(primary.map((b) => periodIdentity(b.label)));
+  const filled: PeriodBoundary[] = [];
+
+  for (const b of fallback) {
+    const id = periodIdentity(b.label);
+    if (claimed.has(id)) continue;
+    if (!FILLABLE_PERIOD_LABEL.test(b.label)) continue;
+    // Claim it here, not after the loop: the fallback holds `Q1` AND `/Q1`, and
+    // without this the end marker is admitted by the same hole the start just
+    // filled.
+    claimed.add(id);
+    filled.push(b);
+  }
+
+  if (filled.length === 0) return primary;
+
+  return [...primary, ...filled].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+}
+
+/**
  * Derive period boundary timestamps from available history data.
  * Tries sources in priority order:
  *   1. espnHistory (has explicit period field)
  *   2. winProbHistory game_state.period
  *   3. scoringPlays period field
  *
- * Returns boundaries for period *transitions* (not the first period).
- * E.g., for a basketball game: returns boundaries for Q2, Q3, Q4 starts.
+ * E.g., for a basketball game: returns boundaries for Q1, Q2, Q3, Q4 starts.
  *
  * EVERY BOUNDARY MEANS THE SAME THING: THE FIRST MOMENT WE OBSERVED THAT PERIOD
  * (#7901). It used to mean that for all of them EXCEPT the first, which was
@@ -978,6 +1045,36 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
  * The second arm of the same rule was worse and unremarked: the regex also
  * matched `B1`, so a game we first saw in the BOTTOM of the 1st had that marker
  * moved to first pitch — a half-inning that by definition does not start there.
+ *
+ * ── #7917: PRECEDENCE IS PER-PERIOD, NOT PER-SOURCE ──────────────────────────
+ *
+ * `period_markers` is a TRANSITIONS log and the three fallbacks are PERIOD
+ * OCCURRENCE logs. The first period is structurally unreachable in a
+ * transitions log — there is no observed transition *into* Q1 — and that is
+ * deliberate on the producer side (#5140, "absent, never kickoff"). So while
+ * this cascade early-returned on the first non-empty source, it was reading
+ * "this source has at least one entry" as "this source is complete", and the
+ * moment the backend recorded its first transition the chart threw away every
+ * marker the occurrence logs had supplied.
+ *
+ * A reader watching Giants @ Rams saw that happen under them on a page they
+ * never reloaded: `Q1` at 00:40Z, gone by 01:01Z (#7917's table).
+ *
+ * `period_markers` still wins every period it names — this is a fill, not a
+ * merge, and a chart whose markers are already complete does not move. MEASURED
+ * on 70 completed events across 7 sports (`artifacts/ux-1433/reach.json`):
+ * 20 change, ALL of them football (NFL 10/10, NCAAF 10/10), 19 gaining exactly
+ * `Q1` and one — `15311740`, drawing only `Q2 Q4` — gaining `Q1` and `Q3`,
+ * which is the general sparse-log case rather than the Q1 instance. MLB, NHL,
+ * WNBA, soccer and MMA are unchanged: their `period_markers` already names
+ * every period. Zero non-monotone sequences, zero label-packer evictions.
+ *
+ * Why this is now honest and was not when #7917 was filed: the issue's own
+ * §Why says the occurrence logs have their first boundary pinned to kickoff by
+ * `applyCommenceTime`. #7901 deleted that. A filled `Q1` therefore stands at
+ * the first moment Q1 was OBSERVED — 1–18 minutes after the nominal start on
+ * the corpus — which is the same kind of fact as every marker beside it, not a
+ * scheduled time asserted as an observed one.
  */
 export function derivePeriodBoundaries(
   espnHistory?: ESPNHistoryPoint[],
@@ -990,6 +1087,7 @@ export function derivePeriodBoundaries(
   // Top priority: backend-computed period markers from scoring_plays table.
   // These come from StatPal play-by-play and have period info on every play,
   // covering games where ESPN and win_prob_history have no period data.
+  let primary: PeriodBoundary[] = [];
   if (periodMarkers && periodMarkers.length > 0) {
     // Dedup by exact label (start "Q1" and end "/Q1" are distinct)
     const sorted = keepLatestSession(
@@ -1004,12 +1102,30 @@ export function derivePeriodBoundaries(
         firstSeen.set(label, m.timestamp);
       }
     }
-    const boundaries = Array.from(firstSeen.entries())
+    primary = Array.from(firstSeen.entries())
       .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
       .map(([label, timestamp]) => ({ timestamp, label }));
-    if (boundaries.length > 0) return boundaries;
   }
 
+  // The occurrence-log cascade, unchanged. It is still first-non-empty-wins
+  // among its three members: folding THOSE together as well is the variant the
+  // `FILLABLE_PERIOD_LABEL` docstring records as measured and rejected.
+  const fallback = deriveFallbackBoundaries(espnHistory, winProbHistory, scoringPlays, sport);
+
+  // #7917: `period_markers` cannot report the first period, so it does not get
+  // to silence a source that can. It keeps every period it names; the rest are
+  // filled at their own evidenced times.
+  if (primary.length > 0) return fillMissingPeriods(primary, fallback);
+
+  return fallback;
+}
+
+function deriveFallbackBoundaries(
+  espnHistory?: ESPNHistoryPoint[],
+  winProbHistory?: Record<string, WinProbHistoryPoint[]>,
+  scoringPlays?: ScoringPlay[],
+  sport?: string | null,
+): PeriodBoundary[] {
   // Prefer win prob history — its timestamps are always present in chartData
   // (added via ensurePoint), so ReferenceLine x values will match chart categories.
   // ESPN history timestamps come from a separate table (ESPNSnapshot) and may not
