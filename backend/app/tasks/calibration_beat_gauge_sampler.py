@@ -755,8 +755,43 @@ def row_stop_and_drop(row: Any) -> dict:
 #: that reads them moves" — which was right for the GAUGE. Its consequence was
 #: that the ring, which is what an operator actually reads, only ever carried the
 #: mixed one; this fixes the ring and leaves the gauge alone.
+#: 🔴 CAL-P1334 (#6868): ``rebuild_units_planned`` IS THE DENOMINATOR, AND THE
+#: RING PUBLISHED A NUMERATOR WITHOUT ONE FOR ITS WHOLE LIFE. ``units_banked:
+#: 107`` is not progress — it is progress only against the plan, and the plan
+#: GROWS: CAL-P1301 cuts a slot that cancelled into children, so production went
+#: 128 -> 202 planned units in the week the accuracy page sat at one snapshot.
+#: Measured off the live ring on 2026-09-22, the two numbers move in opposite
+#: directions: over the 41 hours to 09:36Z banked climbed 31 -> 107 while planned
+#: climbed 147 -> 202, so the REMAINING distance closed 116 -> 95 — a sixth of
+#: what the numerator alone reports. Every ETA posted on #6868 was therefore
+#: hand-sourced from ``full=true``'s ~200 KB raw gauge map by someone who knew
+#: the key's name, and one of them had to be retracted. The figure was in the row
+#: the whole time; nothing published it.
+#:
+#: WHY THIS ONE IS ADMITTED WHERE ``staged:units_cancelled`` IS REFUSED (the 🔴
+#: above), which is the question to ask of any new name here. The refusal is not
+#: about counters, it is about a key whose absence is the COMMON case: a beat
+#: that cancelled nothing never writes ``staged:units_cancelled``, so mapping it
+#: would flip ``rebuild_progress_measured`` false on every clean beat.
+#: ``staged:units_planned`` is written by ``_record_convergence_projection``
+#: BEFORE its ``ran_this_beat`` return, on the pass that always runs — the
+#: publish pass, or the rebuild pass that shares its ledger (#6599's
+#: ``rebuild_only=True`` call) — so a beat that banked nothing, ran nothing, or
+#: deferred its rebuild still writes it. Measured rather than argued: **168 of
+#: the 168 rows the live ring held on 2026-09-22 carry it**, across capture
+#: versions 3 and 4 and every terminal in the ring, and **zero** rows carry
+#: ``staged:units_banked`` without it.
+#:
+#: 🪤 NOT ``staged:units_planned_total``, which is the name the write site's own
+#: comment advertises and the obvious thing to reach for. It is a real gauge and
+#: it is the one ``_planned_unit_total`` reads, but :func:`select_gauges` has
+#: never captured it: **0 of 168 rows** carry it, so mapping it here would answer
+#: ``capture_did_not_retain`` on every row in the ring and publish nothing until
+#: a new sampler had run for a week. The captured name is the one that can be
+#: read today, and reading the ring's HISTORY is the point.
 REBUILD_PROGRESS_GAUGES: dict[str, str] = {
     "rebuild_units_banked": "staged:units_banked",
+    "rebuild_units_planned": "staged:units_planned",
     "rebuild_units_this_beat": "staged:units_completed_this_beat",
     "rebuild_units_ran_this_beat": "staged:units_this_beat",
     "rebuild_units_drifted": "staged:units_drifted",
@@ -784,7 +819,18 @@ REBUILD_PROGRESS_GAUGES: dict[str, str] = {
 #: beside :data:`DROP_AND_STOP_CAPTURE_VERSION` and does not belong here — the
 #: guard test asserts membership against the capture tuples so the set cannot
 #: quietly grow past what is captured.
-ALWAYS_CAPTURED_PROGRESS_GAUGES = frozenset({"staged:units_completed_this_beat"})
+#:
+#: CAL-P1334 (#6868) takes the same route for ``staged:units_planned``, and paid
+#: the same standard twice over. Source: it has been the FIRST entry of
+#: :data:`OPERATIONAL_GAUGES` since before the oldest row the ring can hold —
+#: ``git show`` of this module at ``263a5eccd`` (2026-09-14, the last commit
+#: before that row) carries it. Rows: 168 of the 168 the live ring held on
+#: 2026-09-22 carry it, spanning capture versions 3 and 4. So no row this reader
+#: can meet is old enough for its absence to be about the sampler, which is
+#: exactly what this set asserts and the only thing it asserts.
+ALWAYS_CAPTURED_PROGRESS_GAUGES = frozenset(
+    {"staged:units_completed_this_beat", "staged:units_planned"}
+)
 
 #: The units a beat RAN and did not bank, and the two gauges it is derived from.
 #:
@@ -857,8 +903,9 @@ def row_rebuild_progress(row: Any) -> dict:
     exists to refuse.
 
     No capture-version gate, deliberately, and the row is what makes that safe —
-    by two routes now, because CAL-P1047 added two gauges that take the second.
-    Five of the seven are in :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that
+    by two routes now, because CAL-P1047 added a gauge that takes the second and
+    CAL-P1334 added the denominator beside it. Five of the seven gauges are in
+    :data:`REQUIRED_DISCLOSURE_GAUGES`, so a capture that
     dropped one records it in ``gauges_missing_required`` at the time and this
     reads that list rather than assuming a floor — CERT-2051's lesson applied
     without inheriting its constant. The other two are in
@@ -867,6 +914,10 @@ def row_rebuild_progress(row: Any) -> dict:
     enough for their absence to be about the sampler. A gauge that satisfies
     NEITHER route would need a version floor of its own; the guard test refuses
     one that has neither.
+
+    The counts above are prose and prose drifts, so they are not the guard:
+    ``test_every_gauge_it_reads_is_licensed_by_one_of_the_two_routes`` derives
+    the split from the two sets themselves and fails on a name with neither.
     """
     row = row if isinstance(row, dict) else {}
     gauges = row.get("gauges")

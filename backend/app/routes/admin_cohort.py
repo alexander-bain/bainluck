@@ -684,6 +684,17 @@ async def calibration_beat_gauges(request: Request, limit: int = 24, full: bool 
     CAPTURE did not retain it. Those are different facts (gotcha #53) and neither
     is ever rendered as ``0``.
 
+    CAL-P1334 (#6868) adds ``rebuild_units_planned`` to that block — the
+    DENOMINATOR, which this endpoint published a numerator without for its whole
+    life. ``rebuild_units_banked: 107`` reads as progress and is not: the plan
+    grows as CAL-P1301 cuts cancelled slots into children (production: 128 → 202
+    units over the week the accuracy page sat on one snapshot), so the remaining
+    distance moved a sixth as far as the banked count suggests. It costs no new
+    capture — ``staged:units_planned`` is in :data:`OPERATIONAL_GAUGES` and was
+    on 168 of the ring's 168 rows when this shipped — so the whole retained week
+    becomes readable at once, which is the point: the question is not "how many
+    units" but "is the gap closing".
+
     The three ``units_*`` columns beside it still answer ``null`` on such a row and
     that is deliberate — they describe the SERVED census, whose age the beat
     genuinely does not know. Filling them from the builder's gauges would be
