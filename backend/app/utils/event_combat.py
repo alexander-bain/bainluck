@@ -557,7 +557,61 @@ def bout_roster_key(name: str | None):
     return (a, b) if a and b else None
 
 
-def bouts_are_one_fight(x, y) -> bool:
+#: Shortest token that may stand as an ABBREVIATION of a longer name (#7986).
+#: Five, from both ends: four admits "Hall" into "Marshall", and six rejects
+#: "Heili" — the live specimen this exists for.
+_BOUT_ABBREV_MIN_LEN = 5
+
+
+def _side_abbreviates(s, t) -> bool:
+    """Does one side's name token look like the other's, ABBREVIATED? #7986.
+
+    Kalshi shortens the mononym "Alatengheili" to "Heili", so the two venues'
+    token sets for that fighter are disjoint and :func:`bouts_are_one_fight`'s
+    equality test cannot see them as one man.
+
+    The relation is a SUFFIX, deliberately, and not containment. The hazard
+    class here is a longer DIFFERENT name that begins the same way — Brown
+    against Browning, Costa against Costabile, Nunes against Nunespaz, Silva
+    against Silveira — which is the PREFIX relation; measured against eight such
+    pairs, substring containment admits six of them and a suffix admits none.
+    An abbreviation keeps the tail; a different longer name shares the head.
+    """
+    for x in s:
+        for y in t:
+            short, long_ = (x, y) if len(x) < len(y) else (y, x)
+            if (
+                len(short) >= _BOUT_ABBREV_MIN_LEN
+                and short != long_
+                and long_.endswith(short)
+            ):
+                return True
+    return False
+
+
+def identifying_bout_tokens(keys) -> set[str]:
+    """Which of a card's name tokens point at ONE fighter slot. #7986.
+
+    A shared token is only evidence of one bout if it is not shared by several.
+    A card with two Silvas offers "silva" as an exact match between two bouts
+    that are not the same bout, and the abbreviation arm below would then need
+    only a loose second signal to merge them.
+
+    A card carries at most two venues, so a fighter priced by both reaches two
+    distinct bout-sides ("Castaneda" and "John Castaneda"); a token worn by two
+    different fighters reaches three or more. Counted over DISTINCT sides, so a
+    venue's parent row and its condition-id children — which repeat one title
+    verbatim — cannot inflate the count on their own.
+    """
+    sides = {frozenset(side) for key in keys if key for side in key}
+    counts: dict[str, int] = {}
+    for side in sides:
+        for token in side:
+            counts[token] = counts.get(token, 0) + 1
+    return {token for token, n in counts.items() if n <= 2}
+
+
+def bouts_are_one_fight(x, y, identifying=None) -> bool:
     """Do two :func:`bout_roster_key` values name the SAME fight?
 
     Both sides must match, under either pairing (the venues disagree on which
@@ -565,6 +619,31 @@ def bouts_are_one_fight(x, y) -> bool:
     Piwowarczyk vs. Emilio Quissua"), and the two sides must match on DIFFERENT
     evidence, so a single surname shared by both fighters of a bout ("Anderson
     Silva vs Thiago Silva") cannot satisfy the test by itself.
+
+    ``identifying`` opts into the ABBREVIATION arm (#7986) and is the set from
+    :func:`identifying_bout_tokens`. Absent — every caller that has no card to
+    take a census over, including :func:`fold_venue_scoped_tokens` — the arm is
+    off and this is exactly the test #7959 shipped.
+
+    The arm exists because Kalshi abbreviates a mononym: its "Fight Night:
+    Castaneda vs Heili" and Polymarket's "UFC Fight Night: Alatengheili vs. John
+    Castaneda" are one bout, and on 2026-09-22 the 26 Sep card was offered as
+    "12 fights" holding 11. Three clauses, each load-bearing:
+
+    * ONE side may match loosely, and only when the OTHER matched exactly. Two
+      loose sides is a name-similarity join, which is not identity evidence.
+    * the loose match is a SUFFIX, >= 5 characters (:func:`_side_abbreviates`).
+    * the exactly-matched token must IDENTIFY one fighter slot on the card
+      (:func:`identifying_bout_tokens`), so a common surname stops being
+      evidence. Without this, a Brazilian card carrying "Silva vs Alves" beside
+      "Anderson Silva vs. Renato Goncalves" merges two real bouts — "Alves" is a
+      true 5-character suffix of "Goncalves", exactly as "Heili" is of
+      "Alatengheili", and no test on name SHAPE can separate those two.
+
+    Deliberately NOT extended to :func:`fold_venue_scoped_tokens`: that join is
+    a cross-source identity claim over a whole card, it already carries 10
+    shared bouts on the live specimen, and loosening it buys nothing while
+    putting #4093's control (a second promotion on the same night) at risk.
     """
     if not x or not y:
         return False
@@ -572,6 +651,12 @@ def bouts_are_one_fight(x, y) -> bool:
     for p, q in ((y[0], y[1]), (y[1], y[0])):
         hit_a, hit_b = a & p, b & q
         if hit_a and hit_b and not (hit_a == hit_b and a & b):
+            return True
+        if identifying is None:
+            continue
+        if hit_a and not hit_b and (hit_a & identifying) and _side_abbreviates(b, q):
+            return True
+        if hit_b and not hit_a and (hit_b & identifying) and _side_abbreviates(a, p):
             return True
     return False
 
@@ -593,7 +678,14 @@ def count_distinct_bouts(fights) -> int:
     So rows are one bout when they share a group OR when their titles name the
     same two fighters (:func:`bouts_are_one_fight`). A row whose title does not
     parse keeps its group's identity, which is the behaviour it has today.
+
+    #7986: the card's own token census is taken FIRST and handed down, which is
+    what opts this caller into the abbreviation arm — whether a shared surname
+    is evidence is a question about the whole card, not about the pair of rows
+    in hand, so it cannot be asked from inside the comparison.
     """
+    keys = [k for k in (bout_roster_key(f.get("name")) for f in fights) if k]
+    identifying = identifying_bout_tokens(keys)
     reps: list[dict] = []
     for f in fights:
         key = bout_roster_key(f.get("name"))
@@ -603,7 +695,7 @@ def count_distinct_bouts(fights) -> int:
             if group is not None and group in rep["groups"]:
                 hit = rep
                 break
-            if key and rep["key"] and bouts_are_one_fight(key, rep["key"]):
+            if key and rep["key"] and bouts_are_one_fight(key, rep["key"], identifying):
                 hit = rep
                 break
         if hit is None:
