@@ -65,6 +65,18 @@ struct MarketMapView: View {
     /// one function that computes it.
     let absenceStatedAbove: Bool
 
+    /// #7943 — what each half was actually played to, so the four half maps can
+    /// state a RESULT the way the full-game cards above them already do.
+    ///
+    /// Passed in rather than derived here: the number comes from
+    /// `espn_history`, which this view is not given and should not be — the
+    /// page holds the history for the segment table already. Keeping the rule
+    /// in ``HalfScores`` also keeps it unit-testable without a view.
+    ///
+    /// Defaults to `.none`, which is exactly the old behaviour (no marker), so
+    /// a surface that renders a map without a history is unchanged.
+    var halfScores: HalfScores.Pair = .none
+
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// The ring drawn around every marker dot on a density rail.
@@ -801,7 +813,7 @@ struct MarketMapView: View {
     @ViewBuilder
     private var halfMarginMaps: some View {
         ForEach(halfMarginGroups) { group in
-            halfMarginCard(outcomes: group.outcomes, label: group.id)
+            halfMarginCard(outcomes: group.outcomes, label: group.id, half: group.half)
         }
     }
 
@@ -817,9 +829,9 @@ struct MarketMapView: View {
             spreads.filter { !isFullGameSpread($0.marketName) }
 
         return [
-            MapGroup(id: "1st half margin",
+            MapGroup(id: "1st half margin", half: .first,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "1H" }),
-            MapGroup(id: "2nd half margin",
+            MapGroup(id: "2nd half margin", half: .second,
                            outcomes: halfSpreads.filter { derivePeriod($0) == "2H" }),
         ].filter { !$0.outcomes.isEmpty }
     }
@@ -833,6 +845,8 @@ struct MarketMapView: View {
     /// totals halves so both can be counted without being rendered.
     private struct MapGroup: Identifiable {
         let id: String
+        /// #7943 — which half this is, as a value. `id` is display copy.
+        let half: GameHalf
         let outcomes: [GameMarketOutcome]
     }
 
@@ -843,9 +857,9 @@ struct MarketMapView: View {
             totals.filter { $0.outcomeName.contains(":") }
 
         return [
-            MapGroup(id: "1st half total map",
+            MapGroup(id: "1st half total map", half: .first,
                            outcomes: halfTotals.filter { derivePeriod($0) == "1H" }),
-            MapGroup(id: "2nd half total map",
+            MapGroup(id: "2nd half total map", half: .second,
                            outcomes: halfTotals.filter { derivePeriod($0) == "2H" }),
         ].filter { !extractTotalThresholds($0.outcomes).isEmpty }
     }
@@ -853,7 +867,7 @@ struct MarketMapView: View {
     @ViewBuilder
     private var halfTotalMaps: some View {
         ForEach(halfTotalGroups) { group in
-            halfTotalCard(outcomes: group.outcomes, label: group.id)
+            halfTotalCard(outcomes: group.outcomes, label: group.id, half: group.half)
         }
     }
 
@@ -865,7 +879,7 @@ struct MarketMapView: View {
         !totalMapIsEmptyChrome || !halfTotalGroups.isEmpty
     }
 
-    private func halfMarginCard(outcomes: [GameMarketOutcome], label: String) -> some View {
+    private func halfMarginCard(outcomes: [GameMarketOutcome], label: String, half: GameHalf) -> some View {
         // A half reads its OWN rungs and its own unit, exactly as #3509 made
         // the half totals cards do.
         let data = SpreadRungs.map(
@@ -904,6 +918,32 @@ struct MarketMapView: View {
             markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: pv)))
         }
 
+        // #7943 — THE RESULT. This card had no way to say what the half it names
+        // was played to, so on a Final game it drew a distribution and nothing
+        // else while the full-game margin card three cards up said `FINAL`.
+        //
+        // The half's OWN lifecycle decides the word, not the game's — which is
+        // the same thing #7639 had to reach on web. A first half is over the
+        // moment halftime is observed, so it says FINAL while the game is still
+        // being played; the second half only says it once the game is done.
+        //
+        // Gated on `scoreboardCounts` — the stricter of the two tests the
+        // full-game card uses, and the right one here: the alternative
+        // (`scoredHomeScore != nil`) would let a tennis scoreboard counting SETS
+        // mark a rail drawn in GAMES.
+        if scoreboardCounts(data.unit), let played = halfScores.score(half) {
+            let over = halfScores.isComplete(half)
+            markers.append(MapMarker(
+                id: over ? "final" : "actual",
+                value: Double(played.margin),
+                type: over ? .final_ : .actual,
+                label: over ? "FINAL" : "ACTUAL",
+                displayValue: MarketMapRail.exactMarginLabel(
+                    homeAbbr: hAbbr, awayAbbr: aAbbr, margin: Double(played.margin)
+                )
+            ))
+        }
+
         // #3642 — each end names its own bound, as on the full-game card above.
         let axisEnds = MarketMapRail.marginAxisEnds(bounds)
         return mapCard(
@@ -923,7 +963,7 @@ struct MarketMapView: View {
         )
     }
 
-    private func halfTotalCard(outcomes: [GameMarketOutcome], label: String) -> some View {
+    private func halfTotalCard(outcomes: [GameMarketOutcome], label: String, half: GameHalf) -> some View {
         let thresholds = extractTotalThresholds(outcomes)
         let allThresh = thresholds.map(\.threshold)
         // #3509 — a half map reads ITS OWN rungs, not the full map's and not
@@ -946,6 +986,22 @@ struct MarketMapView: View {
                current: thresholds.first(where: { abs($0.overProb - 0.5) < 0.1 })?.threshold
            ) {
             markers.append(MapMarker(id: "pre", value: ou, type: .pre, label: "PRE-GAME", displayValue: formatThreshold(ou)))
+        }
+
+        // #7943 — the result, exactly as on the half MARGIN card above, and in
+        // the full-game totals card's own words (`vocab.withUnit`, so it reads
+        // "17 points" and not a bare 17). `scoreboardCounts(mapUnit)` asks the
+        // question of THIS map's unit, which is what #3509 made the half maps
+        // parse for in the first place.
+        if scoreboardCounts(mapUnit), let played = halfScores.score(half) {
+            let over = halfScores.isComplete(half)
+            markers.append(MapMarker(
+                id: over ? "final" : "actual",
+                value: Double(played.total),
+                type: over ? .final_ : .actual,
+                label: over ? "FINAL" : "ACTUAL",
+                displayValue: vocab.withUnit("\(played.total)")
+            ))
         }
 
         // #3503 — `?? 90` / `?? 120` here were basketball half-points, the same

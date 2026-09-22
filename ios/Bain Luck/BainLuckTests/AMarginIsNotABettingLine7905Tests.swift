@@ -184,8 +184,12 @@ final class AMarginIsNotABettingLine7905Tests: XCTestCase {
             source.components(separatedBy: "MarketMapRail.projectedMarginLabel").count - 1, 2,
             "the full-game PROJECTION tile and the half PRE-GAME tile")
         XCTAssertEqual(
-            source.components(separatedBy: "MarketMapRail.exactMarginLabel").count - 1, 2,
-            "FINAL and ACTUAL")
+            source.components(separatedBy: "MarketMapRail.exactMarginLabel").count - 1, 3,
+            """
+            the full-game card's FINAL and ACTUAL, and (#7943) the half margin \
+            card's single result site, which picks the same two words from the \
+            half's own lifecycle
+            """)
     }
 
     // MARK: - Reading the source
