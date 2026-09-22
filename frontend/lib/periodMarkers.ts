@@ -649,8 +649,33 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
     return `${prefix}${iMatch[2]}`;
   }
 
-  // Plain ordinal inning: "3rd" -> "3" (sometimes ESPN just sends this)
-  const ordMatch = s.match(/^(\d+)(?:st|nd|rd|th)$/i);
+  // Plain ordinal inning: "3rd" -> "3" (sometimes ESPN just sends this), and
+  // #7960 — the same fact with the unit spelled out: "8th Inning" -> "8".
+  //
+  // 🪤 IT IS THE LAST LINE OF THIS FUNCTION THAT MAKES A MISSING BRANCH VISIBLE
+  // ON THE PAGE. `return s` is the right default for a label we do not
+  // recognise, so every unhandled shape reaches the chart VERBATIM rather than
+  // being dropped — which is why this one was not caught by anything counting
+  // markers. On `/events/15316384` the strip read `T5 B5 T6 T7 8th Inning`, and
+  // the odd one out was 57px wide on a 252px plot (23% of the chart) against
+  // 7–15px for every sibling, overlapping the column `T9` is drawn in. The
+  // defect is a WIDTH, so no guard that asks "is the label present and
+  // correctly spelled" can see it.
+  //
+  // IT RETURNS THE BARE NUMBER, NOT `T8`. The verbose form does not say which
+  // half-inning it is, and "8th Inning" is the whole inning. Inferring `Top`
+  // to make the label match its neighbours would be #7901 in miniature —
+  // asserting on the page a fact nobody observed, for tidiness. The bare number
+  // is also exactly what the plain-ordinal form above already yields, so the
+  // `1`, `4` and `8` already on that same chart are its precedent, not an
+  // inconsistency introduced here.
+  //
+  // The alternation is what keeps a BARE "8" out of this branch — it must carry
+  // an ordinal suffix or the unit or both. A bare number belongs to #4888's
+  // `labelBarePeriod` below, which completes it from the sport, and quietly
+  // swallowing it here would silently revert that. Anchored, so "8th Inning
+  // Stretch" stays unknown and falls through to `return s` as it should.
+  const ordMatch = s.match(/^(\d+)(?:(?:st|nd|rd|th)(?:\s+inning)?|\s+inning)$/i);
   if (ordMatch) return ordMatch[1];
 
   // #4888: a BARE number is the one member of the "already short" set below that
