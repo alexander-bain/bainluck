@@ -178,9 +178,6 @@ export default async function Image({ params }: { params: { id: string } }) {
     leader,
     status: market.status,
     hookDescription: market.hook_description,
-    // #7906 — the shape, so this picture declines a crown on exactly the boards
-    // the page and the title decline one on.
-    marketType: market.market_type,
   });
 
   const change = leader?.probability_change_24h;
