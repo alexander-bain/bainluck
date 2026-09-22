@@ -96,6 +96,11 @@ KIND_SHAPE = {
     "concept": ("concept", "concept"),
     "market": ("market", "futures"),
     "hub": ("hub", "hub"),
+    # `event` joined the shapes with the MC2 class (#1867): the MC1B LIMIT probe
+    # `red so` is answered by a TEAM, but its rivals are games, and an expected
+    # id the producer can mint (`event:<event_id>`, TYPE_MAP) must have a shape
+    # here or a future event-answered probe would read as an unmapped kind.
+    "event": ("event", "event"),
 }
 
 # (query, half, query_class, group_key, expected_entity_id, allowed_entity_ids,
@@ -503,6 +508,211 @@ DIACRITIC_ROWS: list[tuple[str, str, list[str], str, str, str]] = [
 DIACRITIC_CAPTURED_AT = "2026-08-14T00:00:00Z"
 
 
+# ---------------------------------------------------------------------------
+# THE MC3 (PARTIAL-TOKEN) AND MC2 (LAST-TOKEN PREFIX) CLASSES (#1867) — LAT-P061
+# ---------------------------------------------------------------------------
+#
+# WHY THESE CLASSES EXIST. §7 of `docs/search-scoring-spec.md` recorded two
+# blind spots and a table cell reading "NO" is not a queue, so #1867 made them
+# one. MC3 was the larger: `PARTIAL_MIN_COVERAGE` could be retuned in EITHER
+# direction and every number in §5 would be unchanged — a live ranking knob
+# whose whole range was invisible to the instrument. MC2 was graded only as a
+# side effect of probes aimed elsewhere, which catches a catastrophic break and
+# cannot grade a change. Under ruling 056 a null read on either class indicts
+# the INSTRUMENT, so neither could be tuned and read.
+#
+# ---- HOW THE SPECIMENS WERE FOUND, AND THE TWO INSTRUMENT FACTS IT COST -----
+#
+# Found, not predicted (#1861's `club kid` rule). Method: fetch the typeahead's
+# own `debug_evidence` echo per query, rebuild `Evidence` through the module's
+# OWN `evidence_from_wire`, and replay the REAL scorer, sweeping the knob across
+# 0.05..1.00 in twenty steps. Two facts fell out that a predicted set would have
+# encoded wrongly, and both are the reason the first candidate set was discarded:
+#
+#   1. **The route does not score the query. It scores `_q_identity`** —
+#      `parse_intent(q).subject`. Replaying the RAW query reproduces a DIFFERENT
+#      computation from production's. Measured: `who wins the us open` replayed
+#      raw looks like a beautiful two-sided discriminator (the Honey Deuce
+#      novelty market taking rank 1 off the tournament at the live default). On
+#      the SUBJECT `who us open` both candidates sit at coverage 0.667, the knob
+#      moves nothing, and production's own served order agrees with the subject
+#      replay. That probe would have asserted a defect production does not have.
+#      Every row below therefore carries the SUBJECT beside the query, and every
+#      one was accepted only after the subject replay reproduced production's
+#      served rank 1 exactly.
+#   2. **`new ya` is MC2, not MC1B** — measured against the real Yankees
+#      evidence, and live: 6 of 7 candidates score MC2. The MC1B boundary is
+#      real but it is narrower than it looks, because `_query_prefixes_an_owned_name`
+#      folds the whole string: `newya` is not a prefix of `newyorkyankees`. It is
+#      still the wrong MC2 probe, for a reason that has nothing to do with its
+#      class: muting MC2 does not move its top-1 (the whole set collapses
+#      together), so it grades nothing. Recorded because an earlier draft
+#      reached the right choice through the wrong reason.
+#
+# ---- WHAT MOVES TOP-1, STATED AS THE SHAPE A FUTURE PROBE MUST HAVE ---------
+#
+# A uniform lift is invisible to `entity_top_1` — the lesson #1861 paid for, and
+# it applies unchanged here: if every candidate crosses the threshold together,
+# the class moves and the ANSWER does not. So an MC3 probe needs the candidate
+# set to hold an INVERSION — some candidate with a BETTER `KIND_ORDER` rank at a
+# LOWER coverage than a rival — or a pair that ties on kind inside MC3 (ordered
+# by `within_tier`) and separates inside MC5 (ordered by `fragment_credit`).
+# Measured rarity: of ~45 real reader queries swept from `search_query_logs`,
+# two produced a knob-moving top-1.
+#
+# For MC2 there is no coverage knob — the class fires or it does not — so the
+# discrimination test is the class itself: raise `PREFIX_MIN_LEN` above the
+# specimen's last token and MC2 cannot fire, which is what a regression in that
+# branch looks like. A probe whose top-1 survives that grades nothing.
+#
+# ---- SPLIT: `canary`, per ruling 060 ---------------------------------------
+#
+# Same reasoning as the two classes above, and it is the issue's first
+# non-negotiable: the §5 ledger is written against 46 probes graded 44-wide.
+# `--split test` still reads 46/44 with this class in the file.
+#
+# ---- SHELF LIFE, CHOSEN AND RECORDED ---------------------------------------
+#
+# Six probes across THREE real-world groups (Masters / Oscars / Red Sox) so one
+# market's resolution cannot take the class with it. The Red Sox MC3 row is the
+# short-lived one — an ALCS-2026 market — and it is used anyway because it is
+# the only specimen found whose edge sits ABOVE the default at 0.75; when it
+# reads red for expiry rather than for tuning, re-specimen it. `valid_at`
+# carries the capture date, as the diacritic class does.
+#
+# (query, subject, expected_entity_id, allowed_entity_ids, edges, note)
+#
+# `edges` are the measured knob values at which top-1 CHANGES, as
+# (below, above) pairs of the sweep steps that bracket the change. An EMPTY
+# tuple is a LIMIT row and is load-bearing, not a gap: it records a shape the
+# knob provably cannot move, which is the issue's third non-negotiable.
+MC3_ROWS: list[tuple[str, str, str, list[str], tuple[tuple[float, float], ...], str]] = [
+    ("2027 the masters champion odds", "masters champion odds",
+     "market:61056094", ["concept:event:golf:the-masters", "market:4"],
+     ((0.30, 0.35), (0.65, 0.70)),
+     "THE DISCRIMINATING SPECIMEN, and the only one found that brackets the live default from "
+     "BOTH sides — which is what makes the knob gradeable rather than merely observable. On the "
+     "subject `masters champion odds` the market owns 2 of 3 tokens (0.667) and the concept `The "
+     "Masters` owns 1 (0.333). At the shipped 0.5 the market is MC3, the concept is MC5, and the "
+     "market leads — which is what production serves. Tune DOWN past 0.333 and the concept is "
+     "admitted to MC3, where `KIND_ORDER` puts event_concept (0) above futures (4), so THE ANSWER "
+     "CHANGES to the tournament. Tune UP past 0.667 and the market itself falls to MC5, where the "
+     "concept leads on kind again. A retune in either direction moves this probe; that sentence "
+     "is exactly what #1867 says nothing in the set could say. Verified on production 2026-09-22: "
+     "market 61056094 returns at rank 1, and the subject replay reproduces that rank 1."),
+    ("2027 champions league winner odds", "champions league winner odds",
+     "market:392",
+     ["market:31834253", "market:399", "market:60607783", "market:8641791"],
+     ((0.75, 0.80),),
+     "THE SECOND MECHANISM, which is why it earns a row rather than duplicating the one above. "
+     "There is no kind inversion here at all — all five candidates are futures (4), two at "
+     "coverage 0.75 and three at 0.5. Inside MC3 the tie is broken by `within_tier`, so market "
+     "392 leads. Tune past 0.75 and the whole cohort drops to MC5, where the key picks up "
+     "`fragment_credit` — and the answer becomes `Champions League Winner` (31834253). So an MC3 "
+     "change can move top-1 WITHOUT any candidate changing its class RELATIVE to another, purely "
+     "by changing which tiebreak is in force. A probe set holding only the row above would read "
+     "that whole mechanism as a null. Verified on production 2026-09-22."),
+    ("masters winner", "masters winner",
+     "market:4", ["concept:event:golf:the-masters", "market:61056094"],
+     (),
+     "THE LIMIT, and the issue's third non-negotiable: a probe set must encode what it CANNOT "
+     "separate. `Masters Tournament Winner` owns every token of this query, so it is MC1 — and "
+     "class comes first and is inviolable, so no value of `PARTIAL_MIN_COVERAGE` anywhere in "
+     "0.05..1.00 can lift an MC3 or MC5 candidate over it. Swept all twenty steps: top-1 is "
+     "market 4 at every one of them. This is the shape most real reader queries have (`masters "
+     "winner` is the 2nd most-typed multi-word query in `search_query_logs` at 191 hits), and it "
+     "is the measured reason MC3 coverage cannot be had by adding popular queries: the more "
+     "exactly the reader names the thing, the less the partial-token knob can reach them. A null "
+     "read on THIS probe after an MC3 retune is correct behaviour, not a blind instrument — which "
+     "is the distinction ruling 056 exists to let a reader draw. Verified 2026-09-22."),
+]
+
+# (query, subject, expected_entity_id, allowed_entity_ids, muted_top1, note)
+#
+# `muted_top1` is what rank 1 BECOMES when MC2 is prevented from firing
+# (`PREFIX_MIN_LEN` raised above the last token). `None` is a LIMIT row: MC2 is
+# present in the candidate set and decides nothing.
+MC2_ROWS: list[tuple[str, str, str, list[str], str | None, str]] = [
+    ("masters champ", "masters champ", "market:61056094",
+     ["concept:event:golf:the-masters", "market:4"],
+     "concept:event:golf:the-masters",
+     "THE DISCRIMINATING SPECIMEN for typeahead's defining behaviour — the user is still typing. "
+     "`masters` is a complete token and `champ` is a live prefix of `Champion`, while `masterschamp` "
+     "is not a prefix of any whole owned name, so MC1B (checked first) declines and this is "
+     "genuinely MC2. Mute the class and the answer changes from `2027 The Masters Champion` to the "
+     "`The Masters` concept, because the market drops to MC3 where event_concept outranks futures "
+     "on `KIND_ORDER`. That is a reader-visible difference: mid-word, the half-typed query stops "
+     "resolving to the market that answers it. Verified on production 2026-09-22: market 61056094 "
+     "at rank 1, subject replay agrees."),
+    ("oscar pictu", "oscar pictu", "market:6173044",
+     ["market:5165726", "market:57313556", "market:27988771", "market:109551",
+      "concept:event:awards:oscars"],
+     "concept:event:awards:oscars",
+     "THE SECOND SPECIMEN, and deliberately a WIDE one: five of six candidates score MC2 here "
+     "against one in the row above, so the two together separate 'MC2 decided between rivals' "
+     "from 'MC2 admitted a cohort'. Muting the class hands rank 1 to the `The Oscars` concept — "
+     "every Best Picture market falls to MC3 at once and loses on kind. LINEAGE NOTE, recorded "
+     "rather than left to be discovered: market 6173044 is also the outcome-evidence class's "
+     "expected answer (#1861), so these two classes share a real-world group and the 2027 Oscars "
+     "settling will age BOTH. That is why the other two MC2 rows anchor elsewhere. Verified on "
+     "production 2026-09-22."),
+    ("manchester unite", "manchester unite", "market:59164813",
+     ["market:61717598", "team:manchester-united", "event:15311086", "market:63014",
+      "market:60607626", "market:59693539"],
+     None,
+     "THE LIMIT, and the specific answer to #1867's Gap 2 — the reason MC2's incidental coverage "
+     "is NOT sufficient, stated as a probe instead of an argument. FOUR of the seven candidates "
+     "here ARE MC2, so a coverage table counting 'probes in whose candidate set MC2 appears' "
+     "would score this query as solid MC2 coverage. It is not: `manchesterunite` IS a prefix of "
+     "`manchesterunited`, MC1B is checked before MC2, and the top three rows are all MC1B — so "
+     "muting MC2 entirely leaves rank 1 exactly where it was. This is precisely the shape #1867 "
+     "means by 'graded only by accident': MC2 present in quantity, MC2 deciding nothing. It is "
+     "also the measured reason the two rows above had to be FOUND rather than counted — the "
+     "obvious mid-word queries are the ones MC1B has already claimed. Verified 2026-09-22."),
+]
+
+MC3_MC2_CAPTURED_AT = "2026-09-22T00:00:00Z"
+
+#: Real-world group per #1867 probe. Written as ONE map over both classes
+#: rather than per-row, because the property it encodes is cross-class: four
+#: groups over six probes is the durability claim, and a row added to either
+#: list without a decision here fails the lookup instead of silently minting a
+#: fifth group nobody chose.
+#:
+#: THESE KEYS WERE CHOSEN AGAINST A GUARD, AND THE GUARD WAS RIGHT. The first
+#: draft of this class keyed the Masters rows `concept:the-masters` and two
+#: rows `team:boston-red-sox`; `validate_registry` refused it with
+#: GROUP_SPLIT_LEAKAGE, because `team:boston-red-sox` is a `test` group and a
+#: subject shared across splits is a contaminated read. Two different fixes
+#: followed, and the distinction between them is the point:
+#:
+#:   * The Red Sox MC2 row was DROPPED, not renamed. Its expected answer was
+#:     `team:boston-red-sox-mlb` — the identical entity the `test` probe
+#:     `red sox` expects. That is one subject in two splits however it is
+#:     labelled, and a new key would have been an evasion. `manchester unite`
+#:     replaced it: same MC1B-limit shape, a group `test` does not hold.
+#:   * The Masters rows KEPT their specimens under a narrower key, because the
+#:     referents genuinely differ — `test`'s `masters` probe expects the
+#:     tournament CONCEPT, these expect its WINNER MARKETS — and because the
+#:     contamination the guard protects against was MEASURED ABSENT rather than
+#:     argued away: `masters`, `oscars`, `best picture`, `red sox` and `us open`
+#:     were each swept across all twenty values of `PARTIAL_MIN_COVERAGE` on
+#:     production evidence and top-1 does not move at any of them. Single-token
+#:     and fully-owned queries are MC0/MC1, and class order is inviolable, so
+#:     the knob these canary probes grade cannot reach them. If a future MC3
+#:     change ever DOES move one of those five, this note is falsified and the
+#:     keys must merge — that is the check to run, not a re-reading of this
+#:     paragraph.
+MC_GROUP_KEYS: dict[str, str] = {
+    "2027 the masters champion odds": "market:the-masters-winner",
+    "2027 champions league winner odds": "competition:uefa-champions-league",
+    "masters winner": "market:the-masters-winner",
+    "masters champ": "market:the-masters-winner",
+    "oscar pictu": "market:oscars-best-picture",
+    "manchester unite": "team:manchester-united",
+}
+
+
 def _slug(query: str) -> str:
     out = "".join(char if char.isalnum() else "-" for char in query.lower())
     while "--" in out:
@@ -587,6 +797,8 @@ def build_probes() -> list[dict[str, Any]]:
         })
     probes.extend(build_outcome_evidence_probes())
     probes.extend(build_diacritic_probes())
+    probes.extend(build_mc3_probes())
+    probes.extend(build_mc2_probes())
     return probes
 
 
@@ -774,6 +986,181 @@ def build_outcome_evidence_probes() -> list[dict[str, Any]]:
     return probes
 
 
+def _mc_probe(
+    *,
+    family: str,
+    query: str,
+    subject: str,
+    expected: str,
+    allowed: list[str],
+    note: str,
+    authority: str,
+    provenance: str,
+    group_key: str,
+    issue: str,
+) -> dict[str, Any]:
+    """One MC3/MC2 probe (#1867). Shared because the two classes differ only in
+    their family, their discrimination field and their prose — and a second
+    copy of this dict is a second place for the schema to drift."""
+
+    kind = expected.split(":", 1)[0]
+    surface, item_type = KIND_SHAPE[kind]
+    presentation = {"query": query}
+    return {
+        "identity": {
+            "probe_key": f"search-{family.replace('_', '-')}-{_slug(query)}-001",
+            "probe_version": 1,
+            "schema_version": SCHEMA_VERSION,
+            "surface": "search_typeahead",
+            "task_type": "search_entity",
+            "item_type": item_type,
+            "entity_ids": [expected, *allowed],
+            "gold_half": family,
+            "gold_family": family,
+        },
+        "evidence": {
+            "fixture_hash": fixture_sha256(presentation),
+            "hash_scope": "presentation/v1",
+            "source": (
+                f"LAT-P061 (#1867, rulings 056/060): {family} discrimination class, specimened "
+                "from the typeahead's own debug_evidence echo replayed through the real scorer"
+            ),
+            "provenance": (
+                f"{provenance} The ROUTE scores `parse_intent(q).subject` = {subject!r}, not the "
+                f"raw query, and this probe was accepted only after the subject replay reproduced "
+                f"production's own served rank 1. Verified against {EVIDENCE_SURFACE}"
+            ),
+            "captured_at": MC3_MC2_CAPTURED_AT,
+            "valid_at": MC3_MC2_CAPTURED_AT,
+            "license_usage_note": "internal product query set; queries name public competitions only",
+            "pii_redacted": True,
+        },
+        "oracle": {
+            "oracle_kind": "known_answer",
+            "label_schema": "search_entity/v1",
+            "label_schema_version": 1,
+            "authority": authority,
+            "evidence": note,
+            "adjudication_history": [],
+            "answer": {
+                "expected_entity_id": expected,
+                "allowed_entity_ids": list(allowed),
+                "expected_surfaces": [surface],
+                "expected_item_type": item_type,
+                "query_class": family,
+            },
+        },
+        "lifecycle": {
+            "state": "active",
+            "owner": "search-evals",
+            "difficulty": "discrimination",
+            "failure_family": "search-entity-top-1",
+            "issue_gotcha": issue,
+            "known_failure_status": "pass",
+        },
+        "audience_safety": {
+            "reviewer_audience": "engineer",
+            "kid_facing": False,
+            "guardian_safety_authority": None,
+            "privacy_sensitivity": "none",
+        },
+        "isolation": {
+            "split": "canary",
+            "real_world_group_key": group_key,
+            "contamination_lineage": [f"lineage:{family.replace('_', '-')}-v1:{group_key}"],
+            "prompt_version": None,
+            "model_version": None,
+            "scorer_version": "search-entity/v1",
+        },
+        "presentation": presentation,
+    }
+
+
+def build_mc3_probes() -> list[dict[str, Any]]:
+    """The MC3 (PARTIAL-TOKEN) class (#1867) — `canary` split.
+
+    The class this set was missing is: **a query whose answer changes when
+    `PARTIAL_MIN_COVERAGE` moves.** Two rows do that by two different
+    mechanisms, and the third records the shape that provably cannot — see the
+    block comment on ``MC3_ROWS`` for how each was measured.
+    """
+
+    probes: list[dict[str, Any]] = []
+    for query, subject, expected, allowed, edges, note in MC3_ROWS:
+        if edges:
+            where = ", ".join(f"between {lo} and {hi}" for lo, hi in edges)
+            provenance = (
+                f"MC3 partial-token half; top-1 CHANGES as PARTIAL_MIN_COVERAGE crosses {where} "
+                f"(swept 0.05..1.00 in twenty steps against the shipped 0.5)."
+            )
+        else:
+            provenance = (
+                "MC3 partial-token half, LIMIT row; top-1 is unchanged at every one of the twenty "
+                "swept values of PARTIAL_MIN_COVERAGE, because an MC1 candidate owns the query "
+                "and class order is inviolable."
+            )
+        probes.append(_mc_probe(
+            family="mc3_partial",
+            query=query,
+            subject=subject,
+            expected=expected,
+            allowed=allowed,
+            note=note,
+            authority=(
+                "product judgment: the reader named a competition and a market that answers it "
+                "exists, so the row that answers the question is the correct referent. Which of "
+                "the tournament's own surfaces ranks first is the ranking question this probe "
+                "grades, which is why the rivals are ALLOWED rather than wrong"
+            ),
+            provenance=provenance,
+            group_key=MC_GROUP_KEYS[query],
+            issue="#1867",
+        ))
+    return probes
+
+
+def build_mc2_probes() -> list[dict[str, Any]]:
+    """The MC2 (LAST-TOKEN PREFIX) class (#1867) — `canary` split.
+
+    MC2 has no knob, so the discrimination test is the class itself: mute it
+    (raise ``PREFIX_MIN_LEN`` above the specimen's last token) and see whether
+    the served answer moves. Two rows move; the third is the measured statement
+    that MC2's incidental coverage is NOT sufficient — #1867's Gap 2.
+    """
+
+    probes: list[dict[str, Any]] = []
+    for query, subject, expected, allowed, muted, note in MC2_ROWS:
+        if muted is not None:
+            provenance = (
+                f"MC2 last-token-prefix half; muting MC2 (PREFIX_MIN_LEN above the last token) "
+                f"moves top-1 to {muted}, so this probe grades the class rather than merely "
+                f"exercising it."
+            )
+        else:
+            provenance = (
+                "MC2 last-token-prefix half, LIMIT row; MC2 IS present in the candidate set and "
+                "top-1 does not move when it is muted, because MC1B is checked first and owns the "
+                "answer. This is the 'graded only by accident' shape #1867 names."
+            )
+        probes.append(_mc_probe(
+            family="mc2_prefix",
+            query=query,
+            subject=subject,
+            expected=expected,
+            allowed=allowed,
+            note=note,
+            authority=(
+                "product judgment: the reader is mid-word and the endpoint is called typeahead — "
+                "the correct answer is the row the finished query would resolve to, not a row "
+                "that merely shares a fragment"
+            ),
+            provenance=provenance,
+            group_key=MC_GROUP_KEYS[query],
+            issue="#1867",
+        ))
+    return probes
+
+
 def build_registry() -> dict[str, Any]:
     probes = build_probes()
     return {
@@ -793,16 +1180,21 @@ def build_registry() -> dict[str, Any]:
             "migrated": len(GOLD_ROWS),
             "outcome_evidence_probes": len(OUTCOME_EVIDENCE_ROWS),
             "diacritic_probes": len(DIACRITIC_ROWS),
+            "mc3_probes": len(MC3_ROWS),
+            "mc2_probes": len(MC2_ROWS),
             "split_counts": {
                 "test": len(GOLD_ROWS),
-                "canary": len(OUTCOME_EVIDENCE_ROWS) + len(DIACRITIC_ROWS),
+                "canary": (
+                    len(OUTCOME_EVIDENCE_ROWS) + len(DIACRITIC_ROWS)
+                    + len(MC3_ROWS) + len(MC2_ROWS)
+                ),
             },
             "split_note": (
                 "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is "
                 "written against — 46 probes graded 44-wide — and it MUST NOT grow without "
                 "restating every prior read. The outcome-evidence discrimination class "
-                "(ruling 056, #1861) and the diacritic-folding class (#1881, LAT-P058) are "
-                "therefore both in `canary`."
+                "(ruling 056, #1861), the diacritic-folding class (#1881, LAT-P058) and the "
+                "MC3/MC2 discrimination classes (#1867, LAT-P061) are therefore all in `canary`."
             ),
             "mc_candidates": sum(len(queries) for queries, _ in MC_CANDIDATES),
             "results_producer": "scripts/evals/search_results_producer.py",

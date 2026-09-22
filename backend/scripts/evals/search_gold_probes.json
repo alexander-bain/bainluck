@@ -7,11 +7,13 @@
     "migrated": 46,
     "outcome_evidence_probes": 5,
     "diacritic_probes": 3,
+    "mc3_probes": 3,
+    "mc2_probes": 3,
     "split_counts": {
       "test": 46,
-      "canary": 8
+      "canary": 14
     },
-    "split_note": "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is written against — 46 probes graded 44-wide — and it MUST NOT grow without restating every prior read. The outcome-evidence discrimination class (ruling 056, #1861) and the diacritic-folding class (#1881, LAT-P058) are therefore both in `canary`.",
+    "split_note": "`test` is the historical cohort the §5 ledger of docs/search-scoring-spec.md is written against — 46 probes graded 44-wide — and it MUST NOT grow without restating every prior read. The outcome-evidence discrimination class (ruling 056, #1861), the diacritic-folding class (#1881, LAT-P058) and the MC3/MC2 discrimination classes (#1867, LAT-P061) are therefore all in `canary`.",
     "mc_candidates": 27,
     "results_producer": "scripts/evals/search_results_producer.py",
     "fixture_hash_convention": "sha256 over the canonical JSON of presentation{} (hash_scope presentation/v1); validate_registry re-derives and enforces it"
@@ -3840,6 +3842,468 @@
       },
       "presentation": {
         "query": "koln"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc3-partial-2027-the-masters-champion-odds-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:61056094",
+          "concept:event:golf:the-masters",
+          "market:4"
+        ],
+        "gold_half": "mc3_partial",
+        "gold_family": "mc3_partial"
+      },
+      "evidence": {
+        "fixture_hash": "a97a2c833c46ac5f0672b32708fc3a194a5519bd883f4b705a5100f2d12fbb30",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc3_partial discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC3 partial-token half; top-1 CHANGES as PARTIAL_MIN_COVERAGE crosses between 0.3 and 0.35, between 0.65 and 0.7 (swept 0.05..1.00 in twenty steps against the shipped 0.5). The ROUTE scores `parse_intent(q).subject` = 'masters champion odds', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader named a competition and a market that answers it exists, so the row that answers the question is the correct referent. Which of the tournament's own surfaces ranks first is the ranking question this probe grades, which is why the rivals are ALLOWED rather than wrong",
+        "evidence": "THE DISCRIMINATING SPECIMEN, and the only one found that brackets the live default from BOTH sides — which is what makes the knob gradeable rather than merely observable. On the subject `masters champion odds` the market owns 2 of 3 tokens (0.667) and the concept `The Masters` owns 1 (0.333). At the shipped 0.5 the market is MC3, the concept is MC5, and the market leads — which is what production serves. Tune DOWN past 0.333 and the concept is admitted to MC3, where `KIND_ORDER` puts event_concept (0) above futures (4), so THE ANSWER CHANGES to the tournament. Tune UP past 0.667 and the market itself falls to MC5, where the concept leads on kind again. A retune in either direction moves this probe; that sentence is exactly what #1867 says nothing in the set could say. Verified on production 2026-09-22: market 61056094 returns at rank 1, and the subject replay reproduces that rank 1.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:61056094",
+          "allowed_entity_ids": [
+            "concept:event:golf:the-masters",
+            "market:4"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc3_partial"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:the-masters-winner",
+        "contamination_lineage": [
+          "lineage:mc3-partial-v1:market:the-masters-winner"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "2027 the masters champion odds"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc3-partial-2027-champions-league-winner-odds-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:392",
+          "market:31834253",
+          "market:399",
+          "market:60607783",
+          "market:8641791"
+        ],
+        "gold_half": "mc3_partial",
+        "gold_family": "mc3_partial"
+      },
+      "evidence": {
+        "fixture_hash": "ebd7ab42059e02aba5ca3761a3ed59b067abce645d56f235387a1c2e1e8fca8d",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc3_partial discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC3 partial-token half; top-1 CHANGES as PARTIAL_MIN_COVERAGE crosses between 0.75 and 0.8 (swept 0.05..1.00 in twenty steps against the shipped 0.5). The ROUTE scores `parse_intent(q).subject` = 'champions league winner odds', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader named a competition and a market that answers it exists, so the row that answers the question is the correct referent. Which of the tournament's own surfaces ranks first is the ranking question this probe grades, which is why the rivals are ALLOWED rather than wrong",
+        "evidence": "THE SECOND MECHANISM, which is why it earns a row rather than duplicating the one above. There is no kind inversion here at all — all five candidates are futures (4), two at coverage 0.75 and three at 0.5. Inside MC3 the tie is broken by `within_tier`, so market 392 leads. Tune past 0.75 and the whole cohort drops to MC5, where the key picks up `fragment_credit` — and the answer becomes `Champions League Winner` (31834253). So an MC3 change can move top-1 WITHOUT any candidate changing its class RELATIVE to another, purely by changing which tiebreak is in force. A probe set holding only the row above would read that whole mechanism as a null. Verified on production 2026-09-22.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:392",
+          "allowed_entity_ids": [
+            "market:31834253",
+            "market:399",
+            "market:60607783",
+            "market:8641791"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc3_partial"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "competition:uefa-champions-league",
+        "contamination_lineage": [
+          "lineage:mc3-partial-v1:competition:uefa-champions-league"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "2027 champions league winner odds"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc3-partial-masters-winner-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:4",
+          "concept:event:golf:the-masters",
+          "market:61056094"
+        ],
+        "gold_half": "mc3_partial",
+        "gold_family": "mc3_partial"
+      },
+      "evidence": {
+        "fixture_hash": "db987e67d490afcc08c67aa4949e72722986b2d27729c55e0f7d563596dec4e1",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc3_partial discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC3 partial-token half, LIMIT row; top-1 is unchanged at every one of the twenty swept values of PARTIAL_MIN_COVERAGE, because an MC1 candidate owns the query and class order is inviolable. The ROUTE scores `parse_intent(q).subject` = 'masters winner', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader named a competition and a market that answers it exists, so the row that answers the question is the correct referent. Which of the tournament's own surfaces ranks first is the ranking question this probe grades, which is why the rivals are ALLOWED rather than wrong",
+        "evidence": "THE LIMIT, and the issue's third non-negotiable: a probe set must encode what it CANNOT separate. `Masters Tournament Winner` owns every token of this query, so it is MC1 — and class comes first and is inviolable, so no value of `PARTIAL_MIN_COVERAGE` anywhere in 0.05..1.00 can lift an MC3 or MC5 candidate over it. Swept all twenty steps: top-1 is market 4 at every one of them. This is the shape most real reader queries have (`masters winner` is the 2nd most-typed multi-word query in `search_query_logs` at 191 hits), and it is the measured reason MC3 coverage cannot be had by adding popular queries: the more exactly the reader names the thing, the less the partial-token knob can reach them. A null read on THIS probe after an MC3 retune is correct behaviour, not a blind instrument — which is the distinction ruling 056 exists to let a reader draw. Verified 2026-09-22.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:4",
+          "allowed_entity_ids": [
+            "concept:event:golf:the-masters",
+            "market:61056094"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc3_partial"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:the-masters-winner",
+        "contamination_lineage": [
+          "lineage:mc3-partial-v1:market:the-masters-winner"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "masters winner"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc2-prefix-masters-champ-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:61056094",
+          "concept:event:golf:the-masters",
+          "market:4"
+        ],
+        "gold_half": "mc2_prefix",
+        "gold_family": "mc2_prefix"
+      },
+      "evidence": {
+        "fixture_hash": "89461bbe5871b85b67712fc18734295ff2a58d63e4e8f74433da379ff54cbca9",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc2_prefix discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC2 last-token-prefix half; muting MC2 (PREFIX_MIN_LEN above the last token) moves top-1 to concept:event:golf:the-masters, so this probe grades the class rather than merely exercising it. The ROUTE scores `parse_intent(q).subject` = 'masters champ', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader is mid-word and the endpoint is called typeahead — the correct answer is the row the finished query would resolve to, not a row that merely shares a fragment",
+        "evidence": "THE DISCRIMINATING SPECIMEN for typeahead's defining behaviour — the user is still typing. `masters` is a complete token and `champ` is a live prefix of `Champion`, while `masterschamp` is not a prefix of any whole owned name, so MC1B (checked first) declines and this is genuinely MC2. Mute the class and the answer changes from `2027 The Masters Champion` to the `The Masters` concept, because the market drops to MC3 where event_concept outranks futures on `KIND_ORDER`. That is a reader-visible difference: mid-word, the half-typed query stops resolving to the market that answers it. Verified on production 2026-09-22: market 61056094 at rank 1, subject replay agrees.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:61056094",
+          "allowed_entity_ids": [
+            "concept:event:golf:the-masters",
+            "market:4"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc2_prefix"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:the-masters-winner",
+        "contamination_lineage": [
+          "lineage:mc2-prefix-v1:market:the-masters-winner"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "masters champ"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc2-prefix-oscar-pictu-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:6173044",
+          "market:5165726",
+          "market:57313556",
+          "market:27988771",
+          "market:109551",
+          "concept:event:awards:oscars"
+        ],
+        "gold_half": "mc2_prefix",
+        "gold_family": "mc2_prefix"
+      },
+      "evidence": {
+        "fixture_hash": "3e132de367ab5db573b2cc0c7921b04301cb57f352979b8884badc5e990362e9",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc2_prefix discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC2 last-token-prefix half; muting MC2 (PREFIX_MIN_LEN above the last token) moves top-1 to concept:event:awards:oscars, so this probe grades the class rather than merely exercising it. The ROUTE scores `parse_intent(q).subject` = 'oscar pictu', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader is mid-word and the endpoint is called typeahead — the correct answer is the row the finished query would resolve to, not a row that merely shares a fragment",
+        "evidence": "THE SECOND SPECIMEN, and deliberately a WIDE one: five of six candidates score MC2 here against one in the row above, so the two together separate 'MC2 decided between rivals' from 'MC2 admitted a cohort'. Muting the class hands rank 1 to the `The Oscars` concept — every Best Picture market falls to MC3 at once and loses on kind. LINEAGE NOTE, recorded rather than left to be discovered: market 6173044 is also the outcome-evidence class's expected answer (#1861), so these two classes share a real-world group and the 2027 Oscars settling will age BOTH. That is why the other two MC2 rows anchor elsewhere. Verified on production 2026-09-22.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:6173044",
+          "allowed_entity_ids": [
+            "market:5165726",
+            "market:57313556",
+            "market:27988771",
+            "market:109551",
+            "concept:event:awards:oscars"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc2_prefix"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "market:oscars-best-picture",
+        "contamination_lineage": [
+          "lineage:mc2-prefix-v1:market:oscars-best-picture"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "oscar pictu"
+      }
+    },
+    {
+      "identity": {
+        "probe_key": "search-mc2-prefix-manchester-unite-001",
+        "probe_version": 1,
+        "schema_version": "probe-registry/v1",
+        "surface": "search_typeahead",
+        "task_type": "search_entity",
+        "item_type": "futures",
+        "entity_ids": [
+          "market:59164813",
+          "market:61717598",
+          "team:manchester-united",
+          "event:15311086",
+          "market:63014",
+          "market:60607626",
+          "market:59693539"
+        ],
+        "gold_half": "mc2_prefix",
+        "gold_family": "mc2_prefix"
+      },
+      "evidence": {
+        "fixture_hash": "a0d1cef388ab76b3e1fe7b03b9efe2daefd7819e3bc21e92335e0ac5bfaa015e",
+        "hash_scope": "presentation/v1",
+        "source": "LAT-P061 (#1867, rulings 056/060): mc2_prefix discrimination class, specimened from the typeahead's own debug_evidence echo replayed through the real scorer",
+        "provenance": "MC2 last-token-prefix half, LIMIT row; MC2 IS present in the candidate set and top-1 does not move when it is muted, because MC1B is checked first and owns the answer. This is the 'graded only by accident' shape #1867 names. The ROUTE scores `parse_intent(q).subject` = 'manchester unite', not the raw query, and this probe was accepted only after the subject replay reproduced production's own served rank 1. Verified against GET /api/events/typeahead on api.bainluck.com",
+        "captured_at": "2026-09-22T00:00:00Z",
+        "valid_at": "2026-09-22T00:00:00Z",
+        "license_usage_note": "internal product query set; queries name public competitions only",
+        "pii_redacted": true
+      },
+      "oracle": {
+        "oracle_kind": "known_answer",
+        "label_schema": "search_entity/v1",
+        "label_schema_version": 1,
+        "authority": "product judgment: the reader is mid-word and the endpoint is called typeahead — the correct answer is the row the finished query would resolve to, not a row that merely shares a fragment",
+        "evidence": "THE LIMIT, and the specific answer to #1867's Gap 2 — the reason MC2's incidental coverage is NOT sufficient, stated as a probe instead of an argument. FOUR of the seven candidates here ARE MC2, so a coverage table counting 'probes in whose candidate set MC2 appears' would score this query as solid MC2 coverage. It is not: `manchesterunite` IS a prefix of `manchesterunited`, MC1B is checked before MC2, and the top three rows are all MC1B — so muting MC2 entirely leaves rank 1 exactly where it was. This is precisely the shape #1867 means by 'graded only by accident': MC2 present in quantity, MC2 deciding nothing. It is also the measured reason the two rows above had to be FOUND rather than counted — the obvious mid-word queries are the ones MC1B has already claimed. Verified 2026-09-22.",
+        "adjudication_history": [],
+        "answer": {
+          "expected_entity_id": "market:59164813",
+          "allowed_entity_ids": [
+            "market:61717598",
+            "team:manchester-united",
+            "event:15311086",
+            "market:63014",
+            "market:60607626",
+            "market:59693539"
+          ],
+          "expected_surfaces": [
+            "market"
+          ],
+          "expected_item_type": "futures",
+          "query_class": "mc2_prefix"
+        }
+      },
+      "lifecycle": {
+        "state": "active",
+        "owner": "search-evals",
+        "difficulty": "discrimination",
+        "failure_family": "search-entity-top-1",
+        "issue_gotcha": "#1867",
+        "known_failure_status": "pass"
+      },
+      "audience_safety": {
+        "reviewer_audience": "engineer",
+        "kid_facing": false,
+        "guardian_safety_authority": null,
+        "privacy_sensitivity": "none"
+      },
+      "isolation": {
+        "split": "canary",
+        "real_world_group_key": "team:manchester-united",
+        "contamination_lineage": [
+          "lineage:mc2-prefix-v1:team:manchester-united"
+        ],
+        "prompt_version": null,
+        "model_version": null,
+        "scorer_version": "search-entity/v1"
+      },
+      "presentation": {
+        "query": "manchester unite"
       }
     }
   ]
