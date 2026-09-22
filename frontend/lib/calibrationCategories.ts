@@ -44,6 +44,11 @@ export const SPORT_KEY_MAP: Record<string, string> = {
   soccer_france_ligue_one: "soccer", soccer_uefa_europa_league: "soccer",
   mma_mixed_martial_arts: "mma", golf_pga: "golf", golf_lpga: "golf",
   cricket_ipl: "cricket", cricket_test_match: "cricket",
+  // #7913. A bare league acronym the payload never prefixed with its sport.
+  // Every other spelling of this league already folds one line above; this one
+  // reached the reader as its own parked chip beside a parent row carrying six
+  // figures of outcomes.
+  mlb: "baseball",
 };
 
 export const DISPLAY_NAMES: Record<string, string> = {
@@ -55,6 +60,16 @@ export const DISPLAY_NAMES: Record<string, string> = {
   motorsports: "Motorsports",
   // UX-P075 item (e), Alex 2026-08-13.
   table_tennis: "Table Tennis",
+  // #7913. A sport whose three payload keys — the bare sport, its college
+  // competition and its professional league — each sat below the publish bar
+  // alone and were shown to the reader three separate times as "not enough
+  // resolved outcomes yet", while together they clear it comfortably. Every
+  // comparable sport is already a key here, which is precisely why none of
+  // them fragments: `normalizeCat` rolls a compound key up when its base is a
+  // name in this map, so one entry folds the existing leagues and any the
+  // payload adds later. Named here rather than as two exact-key entries in
+  // SPORT_KEY_MAP so a fourth league cannot reintroduce the split.
+  lacrosse: "Lacrosse",
 };
 
 // ## UX-P189 — why this no longer routes through `getLeagueDisplay`
