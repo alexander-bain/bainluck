@@ -28,6 +28,7 @@ from app.models import (
     FuturesOddsSnapshot,
     FuturesOutcome,
     MatchingOverride,
+    Sport,
     Team,
 )
 from app.services import get_db
@@ -1882,11 +1883,50 @@ async def _get_team_metadata(
     if not team_names:
         return {}
 
-    # Build ILIKE conditions for each name
+    config = get_league_config(league_slug) if league_slug else None
+    scope_keys = {k for k in (config.sport_keys if config else []) if k}
+
+    # THE FETCH MUST BE A SUPERSET OF WHAT THE MATCHER CAN MATCH (#8084).
+    #
+    # The ILIKE below filters on `Team.name` RAW. Everything downstream matches
+    # on `_normalize_team_name`, which strips diacritics — and ILIKE does not.
+    # So `'%Atletico Madrid%'` never returned `Atlético Madrid`, the row never
+    # reached `loaded`, and `team_lookup[norm] = meta` — unconditional for a
+    # row's own name — had nothing to write. The matcher's diacritic tolerance
+    # was unreachable for precisely the clubs it exists for. Measured on
+    # production 2026-09-22: the grid's own SQL returned 0 candidate rows for
+    # `Atletico Madrid`, `Alaves`, `Deportivo De La Coruna` and `Malaga`, and 7
+    # for the ASCII control `Barcelona`, while all four rows exist carrying
+    # records and espn_ids. Five of twenty La Liga rows rendered as bare text.
+    #
+    # The same narrowness strands every ALIAS: `_secondary_claims` lets a row be
+    # keyed by its abbreviation or `alternate_names`, but a row whose only
+    # correspondence is an alias can never be fetched by a `name` filter, so
+    # that branch was dead for `Sporting CP`, `M´gladbach`, `Ohio St.` and
+    # friends — same line, non-Spanish symptom.
+    #
+    # So the SQL stops trying to decide and supplies a provable superset: the
+    # per-name ILIKEs (which still reach out-of-scope rows the config does not
+    # list — see the "preference, not a filter" paragraph above) OR every row
+    # whose sport the config asked for. Python then asks the real matcher, which
+    # is the arrangement the rest of this function already assumed it had.
+    #
+    # It is cheap because a league's scope is small — `soccer_spain_la_liga`
+    # holds 27 rows — and it needs no extension: `unaccent` is NOT installed on
+    # production, so an `unaccent(name) ILIKE unaccent(:pat)` fix would have
+    # required an attended extension install to buy strictly less.
+    #
+    # Widening the FETCH cannot widen the MATCH. Every admitted row still passes
+    # through `_rank`, `canonical_owners`, `_alias_may_claim` and `alias_winners`
+    # unchanged, so #7727 (a row wearing another school's crest) and #7761 (the
+    # wrong winner among claimants) keep their refusals — which is the direction
+    # that matters, a bare row being a far smaller harm than a wrong crest.
     conditions = []
     for name in team_names:
         escaped = name.replace("%", "\\%").replace("_", "\\_")
         conditions.append(Team.name.ilike(f"%{escaped}%"))
+    if scope_keys:
+        conditions.append(Team.sport.has(Sport.key.in_(scope_keys)))
 
     stmt = select(Team).options(selectinload(Team.sport))
     if len(conditions) > 1:
@@ -1896,9 +1936,6 @@ async def _get_team_metadata(
 
     result = await session.execute(stmt)
     loaded = list(result.scalars().all())
-
-    config = get_league_config(league_slug) if league_slug else None
-    scope_keys = {k for k in (config.sport_keys if config else []) if k}
 
     def _rank(team) -> tuple[int, int]:
         """Sort key: out-of-scope first, in-scope last, `id` ascending inside.
