@@ -22,7 +22,11 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 from app.utils.cross_source_matching import (
-    clean_outcomes as _clean_outcomes,
+    # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
+    # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
+    # already on the same market. Aliased so all of this file's existing call
+    # sites pass through it unchanged.
+    clean_and_dedupe_outcomes as _clean_outcomes,
     find_cross_source_markets,
     group_markets_by_group_id,
     is_resolved as _is_resolved,
