@@ -790,6 +790,48 @@ _QUALIFICATION_SPORT_KEYS: frozenset[str] = frozenset({
 # both (`Belmont Bruins` in `basketball_ncaab` and `basketball_wncaab`).
 _WOMENS_SPORT_KEY_MARKERS: tuple[str, ...] = ("_women", "wncaa")
 
+#: The women's leagues `_build_related_futures`'s gender gate names explicitly.
+#: `_WOMENS_SPORT_KEY_MARKERS` above cannot serve here: `basketball_wnba`
+#: contains neither `_women` nor `wncaa`, so a marker-only test silently reads
+#: the WNBA as a men's league. Kept as its own name rather than folded into the
+#: markers because the markers are a SUBSTRING rule that other call sites lean
+#: on, and widening them to catch `wnba` would also catch every `…wnba…` key a
+#: future provider invents without anyone having looked at it.
+_WOMENS_LEAGUE_SPORT_KEYS: frozenset[str] = frozenset({
+    "basketball_wnba",
+    "basketball_wncaab",
+})
+
+
+def _is_womens_league_key(sport_key: str | None) -> bool:
+    """Is this sport key a women's league? Pure.
+
+    Deliberately the same three clauses as the `is_womens` line inside
+    `_build_related_futures`, so the gate that arms the filter and the gate
+    that reads a club's league cannot disagree about what "women's" means.
+    `test_related_futures_league_unknown_8060.py` pins the two agreeing over a
+    table of keys rather than trusting this sentence.
+    """
+    key = (sport_key or "").lower()
+    return key in _WOMENS_LEAGUE_SPORT_KEYS or "_women" in key
+
+
+def _sport_key_names_no_league(sport_key: str | None) -> bool:
+    """Does this key identify a SPORT but no league within it? Pure.
+
+    `basketball_other`, `soccer_other`, `tennis_other` and eleven more — 72,421
+    production events as of 2026-09-22 — are the catch-all a sport falls into
+    when ingest could not place the fixture in a league. Every league-keyed
+    gate in `_build_related_futures` is a no-op on them by construction, which
+    is #8060: the WNBA game that showed a reader thirteen Raptors rows was
+    `basketball_other`, not `basketball_wnba`.
+
+    This is a question about the KEY, not a claim that the event is unplaceable
+    — the two clubs usually know their league perfectly well, which is what
+    `_both_clubs_are_womens_only` goes and asks.
+    """
+    return (sport_key or "").lower().endswith("_other")
+
 
 def _team_competition_rank(sport_key: str | None) -> int:
     """Rank a team row's COMPETITION for the same-name tiebreak. Pure.
@@ -20768,6 +20810,63 @@ def resolve_binary_matchup_outcome_name(outcome_name: str, market_name: str) -> 
 SEASON_TIER_CAP = 100
 
 
+async def _both_clubs_are_womens_only(
+    db: AsyncSession,
+    home_team_name: str,
+    away_team_name: str,
+    sport_prefix: str,
+) -> bool:
+    """Do BOTH of this event's clubs resolve, unanimously, to a women's league?
+
+    Used only when the event's own key names no league (#8060). Returns False
+    on every uncertainty — an unresolved name, a name that also holds a
+    non-women's row, a name from another sport — because the caller uses this
+    to ARM a refusal, and a refusal armed on a guess costs a reader rows they
+    should have seen. The three ways it says no are each load-bearing:
+
+    * **Either name unresolved.** 4,061 of the 4,374 names on production's
+      `basketball_other` events have no basketball team row at all.
+    * **A name that is not unanimous.** 238 do hold rows in both a men's and a
+      women's league — the same-school college collision that
+      `_WOMENS_SPORT_KEY_MARKERS` is written for. `Belmont Bruins` is in
+      `basketball_ncaab` and `basketball_wncaab`, and nothing in the name says
+      which one is playing tonight.
+    * **Only one side women's.** This is what keeps the two national sides out.
+      `Japan` and `Nigeria` each carry exactly one basketball row and it is
+      `basketball_wnba`, so alone either would arm the filter on a men's
+      international; all 34 of their `basketball_other` fixtures pair them
+      with names that resolve to no women's row, so demanding both sides drops
+      every one of them (measured: 0 of the 207 events this fires on).
+
+    Scoped to `sport_prefix` so a `soccer_other` event cannot be decided by a
+    basketball club that happens to share a city's name.
+    """
+    rows = (
+        await db.execute(
+            select(Team.name, Sport.key)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(
+                Team.name.in_([home_team_name, away_team_name]),
+                Sport.key.like(f"{sport_prefix}%"),
+            )
+        )
+    ).all()
+    if not rows:
+        return False
+
+    keys_by_name: dict[str, list[str]] = {}
+    for name, sport_key in rows:
+        keys_by_name.setdefault(name, []).append(sport_key)
+
+    for name in (home_team_name, away_team_name):
+        keys = keys_by_name.get(name)
+        if not keys:
+            return False
+        if not all(_is_womens_league_key(key) for key in keys):
+            return False
+    return True
+
+
 async def _build_related_futures(
     event_id: int,
     db: AsyncSession,
@@ -20854,10 +20953,71 @@ async def _build_related_futures(
         )
     compatible_sport_ids = [row.id for row in prefix_result.all()]
 
+    # #8060 — THE GENDER FILTER WAS NEVER MISSING HERE, IT WAS UNREACHABLE.
+    #
+    # Production 2026-09-22, `/events/15310072` (Connecticut Sun vs Toronto
+    # Tempo, WNBA): thirteen of the fourteen rows in the Tempo's season panel
+    # were the Toronto RAPTORS — "NBA Playoff Qualifiers 71%", "Atlantic
+    # Division Winner 13%" — and the Sun's panel offered "NEC Men's Conference
+    # Tournament Champion". A reader was told a WNBA club has a 71% chance of
+    # making the NBA playoffs.
+    #
+    # The cause is NOT the `%women%` filter below being one-directional; that
+    # filter is symmetric already and would have refused every one of those
+    # rows. It is that this event's sport key is `basketball_other`, so
+    # `is_womens` and `is_mens_specific` are BOTH false and the filter is never
+    # armed. The same key also sends the query down the generic branch above
+    # (`basketball%`, every basketball `sport_id`, all five Kalshi roots), so
+    # the candidate pool is every basketball future and `Toronto` — Kalshi's
+    # own label for the Raptors — whole-token-matches `Toronto Tempo`. No token
+    # rule can know the Raptors are not the Tempo; the refusal has to be on the
+    # league, and this event's row does not carry one.
+    #
+    # THE TEAMS DO. `Connecticut Sun` and `Toronto Tempo` are both
+    # `basketball_wnba` in `teams`. So when the event's key names no league,
+    # ask its two clubs. Measured on production over all 9,669
+    # `basketball_other` events (census in `artifacts-lane1-601/`):
+    #
+    #   names on those events          4,374   of which:
+    #     no basketball team row       4,061   -> never fires (unresolved)
+    #     MIXED men's + women's          238   -> never fires (see below)
+    #     none women's                    58   -> never fires
+    #     women's only                    17   -> the WNBA franchises
+    #   events where BOTH sides are women's-only            207  (11 upcoming)
+    #
+    # BOTH sides must resolve and both must be unanimous, and that is the whole
+    # safety argument rather than a tidiness preference. The 238 MIXED names
+    # are the college collision `_WOMENS_SPORT_KEY_MARKERS` already warns about
+    # — one school holds same-name rows in `basketball_ncaab` AND
+    # `basketball_wncaab` — and the only two non-franchise names in the 17 are
+    # the national sides `Japan` and `Nigeria`, each carrying a single
+    # `basketball_wnba` row. All 34 of their `basketball_other` fixtures pair
+    # them with other national names (China, Spain, France, ...) which resolve
+    # to no women's row, so requiring BOTH sides drops them: measured 0 of 207.
+    #
+    # This arms the EXISTING post-filter and nothing else. `ext_id_patterns`,
+    # `compatible_sport_ids` and `llm_category` are deliberately left alone, so
+    # the candidate pool, the per-tier cap and the shared
+    # `season_market_discovery` cache key are byte-identical to today — a
+    # narrowing there would strand rows the way #5798 documents, and this is a
+    # refusal, not a re-scope. Every event outside the 207 takes the same path
+    # it takes today.
+    womens_by_team = False
+    if (
+        not is_womens
+        and not is_mens_specific
+        and _sport_key_names_no_league(event_sport_key)
+        and event.home_team_name
+        and event.away_team_name
+    ):
+        womens_by_team = await _both_clubs_are_womens_only(
+            db, event.home_team_name, event.away_team_name, sport_prefix
+        )
+
     # Gender-aware llm_sport_category: women's basketball → only "women's basketball"
     # markets, not "basketball" generically
     gender_market_name_filter = None
-    if is_womens:
+    if is_womens or womens_by_team:
         gender_market_name_filter = "women"
     elif is_mens_specific:
         # For men's leagues, exclude markets with "women" or "WNBA" in name
