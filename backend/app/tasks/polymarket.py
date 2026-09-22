@@ -717,8 +717,26 @@ def stamp_parent_content_understanding(
 #
 # So France — the row half 2 was written for — does not move until #7930 lands.
 # Half 2 is still not inert: `Where will 2026 rank among the hottest years on
-# record?` (event 79905) was written 8 hours before this comment and moves from
-# the `tech` shelf on the next poll.
+# record?` (event 79905) moves from the `tech` shelf when its writer next runs.
+#
+# 🪤 THAT WRITER IS THE HOURLY HEAVY `recover_sunk_polymarket_events`, NOT THE
+# ORDINARY POLL, AND THE FIRST PRESENTATION OF THIS COMMENT SAID OTHERWISE.
+# `poll_polymarket_markets` is not in `HEAVY_TASKS`, which is the rule's home;
+# the question that matters is which scheduled task REWRITES THE ROW. Measured
+# on production 2026-09-22 04:10Z, both this row (market 113358) and #7874's
+# Nobel row (113129) carry `volume_updated_at` stamped 19:26:52Z / 19:27:03Z —
+# the `crontab(minute=26)` recovery sweep's signature, nine hours after the
+# :15 poll had last had its chance at them. Both match the recovery selector
+# (`_SUNK_POLY_WHERE`): polymarket, `status='open'`, a parent id, and
+# `volume_updated_at` older than `SUNK_POLY_STALE_HOURS`.
+#
+# The consequence for anyone paying an after-check on a row like this: it is
+# not hourly. Both sit in the ROTATE arm (resolution beyond the 14-day
+# imminent horizon), which walks 9,526 eligible rows 300 at a time behind a
+# cursor — a ~32-hour lap. They are reached in the first pass after the cursor
+# WRAPS, because only 120 and 223 eligible rows sort below them. A row still
+# reading its old category is the expected state for most of that lap; read
+# `volume_updated_at`, not the clock, before calling anything a regression.
 #
 # With both halves in place the 40 classifier moves read:
 #
