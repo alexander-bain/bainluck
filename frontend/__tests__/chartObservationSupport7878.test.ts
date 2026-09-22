@@ -121,7 +121,9 @@ describe("#7878 — delivery time is not observation time", () => {
     expect(watched.unsupported).toEqual([]);
     // Partial coverage shortens the hole rather than excusing it.
     const partly = judge([at(0), at(120), at(240, { observedUntilMs: START + 1_000_000 })], 9_000);
-    expect(partly.unsupported).toEqual([{ fromMs: START + 240_000, toMs: START + 9_000_000, kind: "trailing" }]);
+    expect(partly.unsupported).toEqual([{ fromMs: START + 1_000_000, toMs: START + 9_000_000, kind: "trailing" }]);
+    expect(bucketSupport(START + 900_000, partly).kind).toBe("supported");
+    expect(bucketSupport(START + 1_080_000, partly).kind).toBe("gap");
   });
 });
 

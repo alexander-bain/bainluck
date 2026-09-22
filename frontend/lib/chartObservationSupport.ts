@@ -173,7 +173,7 @@ export function classifySeriesSupport(
     if (holeStartMs < gameStart || toMs < gameStart) return; // pre-match: never judged
     const seconds = (toMs - holeStartMs) / 1000;
     if (seconds > boundS) {
-      unsupported.push({ fromMs: from.atMs, toMs, kind });
+      unsupported.push({ fromMs: holeStartMs, toMs, kind });
     }
   };
 
