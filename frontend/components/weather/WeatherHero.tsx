@@ -99,7 +99,18 @@ export default function WeatherHero() {
           </p>
 
           {/* Dots */}
-          {!loading && (
+          {/* #8024 — GUARDED ON THE THING BEING MAPPED, not on `loading`.
+              `loading` is `!items && !error`, so it is false in exactly two
+              states: items exist, and THE FETCH FAILED. `!loading` was standing
+              in for "items exist" and was true in the one state where they are
+              null, so `items.map` threw
+              `TypeError: Cannot read properties of null (reading 'map')` — and
+              because `app/weather/page.tsx` wraps all six sections in ONE
+              ErrorBoundary, that one throw replaced the entire page with
+              "Something went wrong" (docHeight 1201 at 390px).
+              The card to the right already handled `error && !items`; only the
+              dots inferred the state instead of asking for it. */}
+          {items && (
             <div className="flex gap-2">
               {items.map((_, i) => (
                 <button
