@@ -110,16 +110,37 @@ await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90_000 });
 emit({ kind: 'loaded', url });
 
 /**
- * What the reader can see. The chart's trailing caption ("2:44 PM  Brengle 68% — ...") is the
- * rendered right edge; the hero is the big percentage. Both are read as TEXT, so this stays
- * honest if the internals change — and it records `null` rather than guessing when a selector
- * finds nothing, so a dead probe cannot read as a frozen chart.
+ * What the reader can see.
+ *
+ * THE PRIMARY SIGNAL IS THE DRAWN PATH, not a caption. `recharts-line-curve` is the line
+ * itself: its vertex count and — the part that matters — the y of its LAST point. The main
+ * chart still buckets by minute, so a frame arriving inside the current minute does not add a
+ * vertex; it MOVES THE TAIL. A probe counting vertices alone would therefore miss the whole
+ * effect for up to a minute at a time and report the fix inert.
+ *
+ * 🪤 The trailing caption is kept as a secondary read and is NOT relied on: it parses on the
+ * tennis page and returns null on the soccer one (measured, 0/44 samples), because the caption's
+ * shape is per-sport. A probe that only read the caption would have called an actively pushing
+ * page frozen. `null` is always recorded as null — a selector that finds nothing never reads as
+ * a chart that did not move.
  */
 const sample = async () => {
   try {
     return await page.evaluate(() => {
       const text = (el) => (el && el.textContent || '').trim().replace(/\s+/g, ' ');
       const body = document.body.innerText || '';
+      // The plotted lines. `tail` is the last "x,y" the path draws.
+      const lines = Array.from(document.querySelectorAll('path.recharts-line-curve'))
+        .map((pa) => {
+          const d = pa.getAttribute('d') || '';
+          const pts = d.match(/-?\d+(\.\d+)?,-?\d+(\.\d+)?/g) || [];
+          return {
+            stroke: pa.getAttribute('stroke'),
+            verts: pts.length,
+            tail: pts.length ? pts[pts.length - 1] : null,
+          };
+        })
+        .filter((l) => l.verts > 1);
       // Trailing caption under the plot: a time, then the two names with percents.
       const cap = body.match(/(\d{1,2}:\d{2}\s?[AP]M)\s+([^\n]*?\d{1,3}%[^\n]*?\d{1,3}%)/);
       // The hero: the largest percent rendered near the top of the page.
@@ -128,6 +149,7 @@ const sample = async () => {
                parseFloat(getComputedStyle(e).fontSize) >= 30,
       );
       return {
+        lines,
         edge_time: cap ? cap[1] : null,
         edge_text: cap ? cap[2] : null,
         hero: heroEl ? Number(text(heroEl)) : null,
@@ -148,6 +170,11 @@ while (Date.now() / 1000 < deadline) {
   // Record every sample's raw state, and flag the transitions a grader counts.
   const row = { kind: 'sample', ...s };
   if (prev) {
+    // The verdict signal: did the DRAWN LINE change at all — a new vertex, or the tail moving
+    // inside the current minute bucket. Compared as a serialised shape so a line appearing or
+    // disappearing counts as a change rather than throwing.
+    const shape = (x) => JSON.stringify((x && x.lines) || []);
+    row.line_moved = shape(prev) !== shape(s);
     row.edge_moved = prev.edge_time !== s.edge_time || prev.edge_text !== s.edge_text;
     row.hero_moved = prev.hero !== s.hero;
     row.frames_delta = (s.frames ?? 0) - (prev.frames ?? 0);
