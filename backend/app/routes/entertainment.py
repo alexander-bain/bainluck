@@ -31,11 +31,18 @@ from app.utils.cross_source_matching import (
     is_resolved as _is_resolved,
     source as _source,
 )
-from app.utils.market_staleness import should_exclude_from_featured
+from app.utils.market_staleness import (
+    should_exclude_from_featured,
+    unobserved_board_keys,
+)
 # #8083 — THE FOURTH CALLER OF ONE HELPER, never a second spelling of it.
 # Same import direction `events.py` and `league_futures.py` already take;
 # `futures.py` imports none of the themed routes, so this closes no loop.
-from app.routes.futures import _withheld_price_outcome_ids
+from app.routes.futures import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    _withheld_price_outcome_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -912,9 +919,37 @@ async def get_entertainment(db: AsyncSession):
     # columns before reaching the snapshot table. If this page ever does feel
     # it, the answer is #7016's — batch the queries across the page, never drop
     # an arm and re-open the split.
+    #
+    # #8102 — AND THE HELPER IS FIVE ARMS WHILE THE PAGE A READER LANDS ON IS SIX.
+    #
+    # `_withheld_price_outcome_ids` composes five arms. The number the reader
+    # actually meets on `/futures/{id}` is that union PLUS #8011's
+    # unobserved-board arm, which `get_futures_market` adds outside the helper
+    # because `_format_market_detail` is sync and holds no session to read the
+    # fleet stamp with. So the helper is a strict SUBSET of the detail page's
+    # refusal, and #8083 — trusting it as "the" refusal — inherited the gap:
+    # measured on production at 22:26Z, five of 109 served markets still
+    # published a price their own detail page withheld, *Who will win The
+    # Bachelorette Season 22* among them, heroing `Doug 92.5` over a ladder
+    # served as 22 nulls.
+    #
+    # BOTH HELPERS ARE CALLED, NOT RE-SPELLED. The gate that makes the sixth arm
+    # affordable lives inside `_fleet_newest_observation` itself — it returns
+    # None without touching the database for any board that cannot qualify
+    # (~92% of them), and the read it does make is an Index Only Scan Backward
+    # measured at 0.042 ms. Re-implementing that gate here to "save" a call is
+    # exactly the second spelling #6993 exists to prevent, and it would be the
+    # same mistake #8083 made one level up.
     withheld_ids: set[int] = set()
     for m in featured_eligible:
         withheld_ids |= await _withheld_price_outcome_ids(db, m)
+        market_outcomes = getattr(m, "outcomes", None) or []
+        withheld_ids |= unobserved_board_keys(
+            ((o.id, o.last_updated) for o in market_outcomes),
+            board_touched_at=getattr(m, "updated_at", None),
+            fleet_newest_observation=await _fleet_newest_observation(db, m),
+            board_has_a_verdict=_board_has_a_verdict(market_outcomes),
+        )
 
     # Build all enriched rows for trending scoring
     all_rows = []

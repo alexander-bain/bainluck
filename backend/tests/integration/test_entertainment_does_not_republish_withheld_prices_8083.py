@@ -96,7 +96,16 @@ class _MockResult:
         return self._scalars.first()
 
 
-def _outcome(outcome_id, name, probability):
+def _outcome(outcome_id, name, probability, last_updated=None):
+    """A leg fake carrying every column the refusal rails actually read.
+
+    ``last_updated`` defaults to NOW, which keeps #8011's unobserved-board arm
+    (wired into this route by #8102) returning the empty set for these
+    fixtures — so the only thing withholding anything here stays the mocked
+    five-arm helper, and these assertions keep testing what they were written
+    to test. A fake that omits the column is not merely incomplete: the arm
+    reads it unguarded, exactly as a real ``FuturesOutcome`` always carries it.
+    """
     return SimpleNamespace(
         id=outcome_id,
         name=name,
@@ -105,6 +114,7 @@ def _outcome(outcome_id, name, probability):
         rank=1,
         is_winner=None,
         resolution_source=None,
+        last_updated=last_updated or datetime.now(timezone.utc),
     )
 
 

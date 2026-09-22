@@ -137,6 +137,10 @@ def _outcome(name, probability, *, outcome_id=1, rank=1):
         rank=rank,
         is_winner=None,
         resolution_source=None,
+        # #8102: #8011's unobserved-board arm reads this column unguarded, the
+        # way a real `FuturesOutcome` always carries it. NOW keeps the arm
+        # withholding nothing, so these contracts test what they were written for.
+        last_updated=datetime.now(timezone.utc),
     )
 
 
