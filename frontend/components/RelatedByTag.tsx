@@ -102,6 +102,23 @@ const MAX_FIELD_ROWS = 4;
 interface RelatedByTagProps {
   /** Tag queries to filter by, e.g. ["sport:basketball"] */
   tags: string[];
+  /**
+   * A WIDER query to use when `tags` matches nothing at all (#8093).
+   *
+   * A game page asks for its own league before its sport category, because a
+   * rail of NBA futures under `MORE BASKETBALL` on a WNBA fixture is the same
+   * wrong-league claim the season panel was filed for. But measured over 14
+   * leagues, the narrowed query returns ZERO on a Champions League tie and on
+   * every Grand Slam match page — those leagues carry no futures of their own —
+   * and taking the whole rail off a marquee page is a worse trade than the
+   * looser association it was showing.
+   *
+   * So this is a fallback, not a top-up: it is used only when the narrow query
+   * yields no renderable item, and it never dilutes a narrow result that has
+   * one. `undefined` (the futures page, which has no league to ask about)
+   * leaves the component exactly as it was.
+   */
+  fallbackTags?: string[];
   /** ID to exclude from results (current item) */
   excludeId?: number;
   /** Type to match for exclusion */
@@ -110,39 +127,74 @@ interface RelatedByTagProps {
   limit?: number;
   /** Section title */
   title?: string;
+  /**
+   * The heading to print when `fallbackTags` answered instead of `tags`.
+   *
+   * The heading travels with the scope that was actually served: a rail cannot
+   * say `More WNBA` over cards it drew from all of basketball. Defaults to
+   * `title`, so a caller that passes no fallback query never needs this.
+   */
+  fallbackTitle?: string;
 }
 
 export default function RelatedByTag({
   tags,
+  fallbackTags,
   excludeId,
   excludeType,
   limit = 6,
   title = "More Like This",
+  fallbackTitle,
 }: RelatedByTagProps) {
-  const { data, isLoading } = useSWR(
+  const { data } = useSWR(
     tags.length > 0 ? ["related-by-tag", ...tags] : null,
     () => fetchFeed({ limit: limit + 5, tags }),
     { refreshInterval: 60000 }
   );
 
-  if (!data || data.items.length === 0) return null;
+  /** The rows this section would draw for a response — the same filtering for
+      the narrow query and the wide one, so "the narrow query found nothing"
+      means what a reader would say it means rather than what the raw payload
+      length says. A response of four items that are all the current event, or
+      all of a type this component cannot draw, IS empty here. */
+  const usable = (response: typeof data) =>
+    (response?.items ?? [])
+      .filter((item) => RENDERABLE.has(item.type))
+      .filter((item) => {
+        if (excludeId === undefined) return true;
+        const id =
+          item.type === "event"
+            ? (item.data as FeedEventData).id
+            : item.type === "futures"
+            ? (item.data as FeedFuturesData).id
+            : null;
+        return !(item.type === excludeType && id === excludeId);
+      })
+      .slice(0, limit);
 
-  // Filter out the current item and limit
-  const items = data.items
-    .filter((item) => RENDERABLE.has(item.type))
-    .filter((item) => {
-      if (excludeId === undefined) return true;
-      const id =
-        item.type === "event"
-          ? (item.data as FeedEventData).id
-          : item.type === "futures"
-          ? (item.data as FeedFuturesData).id
-          : null;
-      return !(item.type === excludeType && id === excludeId);
-    })
-    .slice(0, limit);
+  const primary = usable(data);
+
+  /* The second request is made ONLY on a measured empty, and `data` being
+     undefined is "still loading", not "empty" — firing the wide query while the
+     narrow one is in flight would make every page pay two requests for a
+     fallback almost none of them use. Both hooks always run (a null key is how
+     SWR is told to stand down), so the hook order never varies. */
+  const needFallback =
+    data !== undefined &&
+    primary.length === 0 &&
+    (fallbackTags?.length ?? 0) > 0;
+
+  const { data: fallbackData } = useSWR(
+    needFallback ? ["related-by-tag", ...fallbackTags!] : null,
+    () => fetchFeed({ limit: limit + 5, tags: fallbackTags! }),
+    { refreshInterval: 60000 }
+  );
+
+  const items = primary.length > 0 ? primary : needFallback ? usable(fallbackData) : [];
 
   if (items.length === 0) return null;
+
+  const heading = primary.length > 0 ? title : fallbackTitle ?? title;
 
   return (
     <section className="mt-8" data-testid="related-by-tag" data-count={items.length}>
@@ -154,7 +206,7 @@ export default function RelatedByTag({
         className="mb-2 text-xs font-bold uppercase tracking-[0.07em] text-text-muted"
         data-testid="related-by-tag-heading"
       >
-        {title}
+        {heading}
         <span className="ml-1.5 font-normal normal-case tracking-normal">
           · {items.length}
         </span>

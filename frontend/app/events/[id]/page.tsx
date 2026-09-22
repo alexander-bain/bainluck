@@ -86,7 +86,8 @@ import ErrorMessage from "@/components/ErrorMessage";
 import { describeLoadFailure } from "@/lib/loadFailure";
 import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
-import { getLeagueDisplay, getCategoryForLeague } from "@/lib/sportCategories";
+import { getLeagueDisplay } from "@/lib/sportCategories";
+import { relatedRailQuery } from "@/lib/relatedRailQuery";
 import {
   completedSetsForTennis,
   decidedSetsWinnerFor,
@@ -2867,17 +2868,26 @@ export default function EventPage({ params }: EventPageProps) {
         );
       })()}
 
-      {/* Related by sport tag — cross-content discovery */}
-      {event.sport && (() => {
-        const cat = getCategoryForLeague(event.sport!);
-        return cat ? (
+      {/* Related by sport tag — cross-content discovery.
+
+          #8093: THIS ASKED FOR A CATEGORY AND A CATEGORY IS NOT A LEAGUE. A
+          WNBA fixture requested `sport:basketball` and was dealt three NBA
+          futures under a heading promising more of what it was looking at.
+          `relatedRailQuery` adds the `league:` tag the event's own payload
+          already carries, and keeps today's query as the fallback for the
+          leagues that have no content of their own. */}
+      {(() => {
+        const rail = relatedRailQuery(event.sport, event.event_tags);
+        return rail ? (
           <SectionErrorBoundary label="Related content" resetKey={event.id}>
             <RelatedByTag
-              tags={[`sport:${cat.key}`]}
+              tags={rail.tags}
+              fallbackTags={rail.fallbackTags}
               excludeId={event.id}
               excludeType="event"
               limit={4}
-              title={`More ${cat.name}`}
+              title={rail.title}
+              fallbackTitle={rail.fallbackTitle}
             />
           </SectionErrorBoundary>
         ) : null;
