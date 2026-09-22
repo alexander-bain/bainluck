@@ -60,20 +60,44 @@ function braceBody(source: string, open: number): string {
 }
 
 /**
- * Every `\(...)` expression inside a Swift interpolated string literal, with
- * the team-abbreviation term dropped — the two ends of an axis name different
- * teams on purpose, and that difference is not the one under test.
+ * One `axisLeft:`/`axisRight:` argument, in EITHER form this file has seen.
+ *
+ * #7905 moved the margin ends off string literals and onto
+ * `MarketMapRail.marginThresholdLabel(teamAbbr:threshold:)`, because the ladder
+ * beneath them was printing the banned `TEAM +N` and the two had to become one
+ * grammar. A matcher that only knew the literal form read the new source as
+ * "there are no margin axis labels" — which is precisely the deletion the
+ * positive half below exists to catch, reported as a pass on the negative half.
+ * So the shape is matched, not the spelling.
  */
-function interpolations(literal: string): string[] {
-  return [...literal.matchAll(/\\\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)]
-    .map((m) => m[1].trim())
-    .filter((expr) => !/^[ah]Abbr$/.test(expr));
+const AXIS_ARGUMENT = String.raw`("(?:[^"\\]|\\.)*"|[A-Za-z_][\w.]*\([^()]*(?:\([^()]*\)[^()]*)*\))`;
+
+/**
+ * The meaningful terms an axis end is computed from, with the team-abbreviation
+ * term dropped — the two ends of an axis name different teams on purpose, and
+ * that difference is not the one under test.
+ *
+ * A string literal yields its `\(...)` interpolations; a call yields its
+ * argument values. Both answer the one question the rule asks: *what number is
+ * this end built from?*
+ */
+function interpolations(argument: string): string[] {
+  const terms = argument.startsWith('"')
+    ? [...argument.matchAll(/\\\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
+    : (argument.match(/\(([\s\S]*)\)$/)?.[1] ?? "")
+        .split(",")
+        .map((arg) => arg.slice(arg.indexOf(":") + 1));
+  return terms
+    .map((expr) => expr.trim())
+    .filter((expr) => expr.length > 0 && !/^[ah]Abbr$/.test(expr));
 }
 
 /** Every `axisLeft:`/`axisRight:` pair passed to `mapCard`, in source order. */
 function axisPairs(text: string): { left: string; right: string }[] {
-  const lefts = [...text.matchAll(/\baxisLeft:\s*("(?:[^"\\]|\\.)*")/g)].map((m) => m[1]);
-  const rights = [...text.matchAll(/\baxisRight:\s*("(?:[^"\\]|\\.)*")/g)].map((m) => m[1]);
+  const lefts = [...text.matchAll(new RegExp(String.raw`\baxisLeft:\s*` + AXIS_ARGUMENT, "g"))]
+    .map((m) => m[1]);
+  const rights = [...text.matchAll(new RegExp(String.raw`\baxisRight:\s*` + AXIS_ARGUMENT, "g"))]
+    .map((m) => m[1]);
   expect(lefts).toHaveLength(rights.length);
   return lefts.map((left, i) => ({ left, right: rights[i] }));
 }
@@ -118,12 +142,18 @@ describe("#3642 — an axis end names its own bound", () => {
     expect(calls).toHaveLength(2);
 
     // …and every margin axis label is actually built from its result.
-    const marginEnds = [...text.matchAll(/\baxis(?:Left|Right):\s*("(?:[^"\\]|\\.)*")/g)]
+    //
+    // #7905: a margin end is now a `marginThresholdLabel` call rather than a
+    // ` by \(` literal, so both spellings count — the totals cards' own
+    // `"\(Int(rangeMin))"` ends match neither and stay out, as before.
+    const marginEnds = [
+      ...text.matchAll(new RegExp(String.raw`\baxis(?:Left|Right):\s*` + AXIS_ARGUMENT, "g")),
+    ]
       .map((m) => m[1])
-      .filter((literal) => / by \\\(/.test(literal));
+      .filter((argument) => / by \\\(/.test(argument) || /marginThresholdLabel\(/.test(argument));
     expect(marginEnds.length).toBe(4); // full game + halves, two ends each
-    for (const literal of marginEnds) {
-      expect(literal).toMatch(/axisEnds\.(left|right)/);
+    for (const argument of marginEnds) {
+      expect(argument).toMatch(/axisEnds\.(left|right)/);
     }
   });
 

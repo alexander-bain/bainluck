@@ -411,7 +411,9 @@ struct MarketMapView: View {
             } ?? 0 ..< Swift.min(ladderLimit, sorted.count)
             return window.map { i in
                 LadderRow(
-                    label: "\(abbr) +\(formatThreshold(lines[i]))",
+                    // #7905 — `by N+`, not `+N`. The side is already known here,
+                    // so this is the one margin label that names it itself.
+                    label: MarketMapRail.marginThresholdLabel(teamAbbr: abbr, threshold: lines[i]),
                     prob: sorted[i].probability,
                     color: color,
                     result: sideFinal.map {
@@ -451,13 +453,13 @@ struct MarketMapView: View {
             if let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
                 let margin = homeScoreValue - awayScoreValue
-                markers.append(MapMarker(id: "final", value: Double(margin), type: .final_, label: "FINAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
+                markers.append(MapMarker(id: "final", value: Double(margin), type: .final_, label: "FINAL", displayValue: MarketMapRail.exactMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: Double(margin))))
             }
         } else if isLive {
             if let homeScoreValue = scoredHomeScore,
                let awayScoreValue = scoredAwayScore {
                 let margin = homeScoreValue - awayScoreValue
-                markers.append(MapMarker(id: "actual", value: Double(margin), type: .actual, label: "ACTUAL", displayValue: "\(margin > 0 ? hAbbr : aAbbr) +\(abs(margin))"))
+                markers.append(MapMarker(id: "actual", value: Double(margin), type: .actual, label: "ACTUAL", displayValue: MarketMapRail.exactMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: Double(margin))))
             }
         }
         // #3885 — THE TILE IN THE ISSUE'S PHOTOGRAPH, and now ONE statement of
@@ -481,7 +483,7 @@ struct MarketMapView: View {
                 value: pv,
                 type: .proj,
                 label: "PROJECTION",
-                displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"
+                displayValue: MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: pv)
             ))
         }
 
@@ -528,9 +530,9 @@ struct MarketMapView: View {
             zeroPosition: zeroPos,
             leftRgb: awayRgb,
             rightRgb: homeRgb,
-            axisLeft: "\(aAbbr) by \(formatThreshold(axisEnds.left))+",
+            axisLeft: MarketMapRail.marginThresholdLabel(teamAbbr: aAbbr, threshold: axisEnds.left),
             axisMid: "Tie",
-            axisRight: "\(hAbbr) by \(formatThreshold(axisEnds.right))+",
+            axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers,
             ladder: ladder
         )
@@ -899,7 +901,7 @@ struct MarketMapView: View {
         // tile while the game is on. The rail and its distribution stay.
         if MarketMapRail.drawsPregameMarker(canStillBeGraded: canStillBeGraded),
            let pv = MarketMapRail.pregameLine(isLive: isLive, opening: nil, current: projValue) {
-            markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: "\(pv > 0 ? hAbbr : aAbbr) +\(String(format: "%.1f", abs(pv)))"))
+            markers.append(MapMarker(id: "pre", value: pv, type: .pre, label: "PRE-GAME", displayValue: MarketMapRail.projectedMarginLabel(homeAbbr: hAbbr, awayAbbr: aAbbr, margin: pv)))
         }
 
         // #3642 — each end names its own bound, as on the full-game card above.
@@ -914,9 +916,9 @@ struct MarketMapView: View {
             density: density, rangeMin: rangeMin, rangeMax: rangeMax,
             zeroPosition: zeroPos,
             leftRgb: resolveRGB(awayColor), rightRgb: resolveRGB(homeColor),
-            axisLeft: "\(aAbbr) by \(formatThreshold(axisEnds.left))+",
+            axisLeft: MarketMapRail.marginThresholdLabel(teamAbbr: aAbbr, threshold: axisEnds.left),
             axisMid: "Tie",
-            axisRight: "\(hAbbr) by \(formatThreshold(axisEnds.right))+",
+            axisRight: MarketMapRail.marginThresholdLabel(teamAbbr: hAbbr, threshold: axisEnds.right),
             markers: markers, ladder: []
         )
     }

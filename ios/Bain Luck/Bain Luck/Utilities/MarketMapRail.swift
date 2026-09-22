@@ -1314,6 +1314,89 @@ enum MarketMapRail {
         return wholeContest.isEmpty ? all : wholeContest
     }
 
+    // MARK: - One grammar for a margin (#7905, porting #2442 and #7380)
+
+    /// `LAR by 3.5+` — a MARGIN, not a handicap.
+    ///
+    /// Every margin label on the phone used to print `"\(abbr) +\(threshold)"`:
+    /// a competitor abbreviation followed by a signed number, which is a
+    /// betting line and nothing else. #2442's standing ruling bans gambling
+    /// price formats from the page — Alex counted `+4.5` first among the six he
+    /// found on one screen — and web answered it with `by N+`
+    /// (`marginLadderLabel`, `frontend/components/MarketMapSection.tsx`). The
+    /// phone never got the port, so the ruling has been broken on the flagship
+    /// page ever since.
+    ///
+    /// 🔴 **It is not only a notation preference — in that notation the number
+    /// beside it is false.** `LAR +3.5` reads, to anyone who knows spread
+    /// notation, as *the Rams getting 3.5 points*. The rung measures the
+    /// opposite: `LAR wins by MORE than 3.5`, which is exactly why
+    /// ``totalLadderResult(threshold:finalTotal:)`` grades it with `>=`.
+    /// Photographed live on 2026-09-21 (`artifacts-native-020/live-t2-margin.png`,
+    /// event 14780545, Rams a 10.5-point favourite): `LAR +1.5 — 81%`, where the
+    /// label as written is worth about 93%.
+    ///
+    /// The rail's own axis has always spelled this correctly — `LAR by 30.5+`,
+    /// sixty points above the ladder that contradicted it — so one card carried
+    /// both grammars at once. Every site now routes through here, which is the
+    /// only thing that keeps them from drifting apart a second time.
+    ///
+    /// #3743 saw this and declined to ride it: *"it is a copy change across all
+    /// sports … it wants its own decision, not a rider on this one."* This is
+    /// that decision, and web had already made it.
+    static func marginThresholdLabel(teamAbbr: String, threshold: Double) -> String {
+        "\(teamAbbr) by \(marginNumber(abs(threshold)))+"
+    }
+
+    /// `LAR by 10.5+` for the PROJECTION and PRE-GAME tiles, `Tied` at zero.
+    ///
+    /// Those tiles quote a COVER LINE — a handicap, not a measurement — so they
+    /// keep the `+` that ``exactMarginLabel(homeAbbr:awayAbbr:margin:)`` drops.
+    /// That split is #7380's, stated on web in the same words.
+    ///
+    /// 🔴 **The side is chosen HERE, from the sign, with zero owning its own
+    /// branch** — the call sites used to spell it `margin > 0 ? hAbbr : aAbbr`,
+    /// which is a two-way answer to a three-way question and sends a dead-level
+    /// game down the AWAY arm. That is ``sideFinalMargin(gameMargin:isHome:)``'s
+    /// lesson one card up: a side that a sign cannot name must not be resolved
+    /// by inspecting the sign.
+    static func projectedMarginLabel(homeAbbr: String, awayAbbr: String, margin: Double) -> String {
+        guard margin != 0 else { return tiedMarginLabel }
+        return marginThresholdLabel(teamAbbr: margin > 0 ? homeAbbr : awayAbbr, threshold: margin)
+    }
+
+    /// `LAR by 7` for ACTUAL and FINAL, `Tied` at zero.
+    ///
+    /// #7380: a margin that HAPPENED is stated, not thresholded. `by 7+` means
+    /// seven OR MORE, and a played margin has no more left in it — ACTUAL and
+    /// FINAL are the scoreboard, and a scoreboard is stated.
+    ///
+    /// The zero case is the one that was photographed. `ACTUAL NYG +0` sat over
+    /// a 0–0 Giants–Rams game on 2026-09-21: not merely the banned spelling but
+    /// a false claim, crediting a dead-level scoreboard to the away team
+    /// because `margin > 0` is false at zero. Nobody is ahead by nothing.
+    static func exactMarginLabel(homeAbbr: String, awayAbbr: String, margin: Double) -> String {
+        guard margin != 0 else { return tiedMarginLabel }
+        return "\(margin > 0 ? homeAbbr : awayAbbr) by \(marginNumber(abs(margin)))"
+    }
+
+    /// What a margin of zero is called, in one place, so the three sites that
+    /// can reach it cannot disagree about it.
+    static let tiedMarginLabel = "Tied"
+
+    /// A margin's number: whole where it is whole, one decimal where it is not.
+    ///
+    /// The same rule as the views' own `formatThreshold` and web's
+    /// `formatMargin`. The PROJECTION tiles used to reach for
+    /// `String(format: "%.1f", …)` unconditionally, so an even 10-point line
+    /// printed `+10.0` where the ladder beneath it printed `10`; routing both
+    /// through here settles that too.
+    private static func marginNumber(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0
+            ? "\(Int(value))"
+            : String(format: "%.1f", value)
+    }
+
     // MARK: - Reading a MARGIN ladder once the game is over
 
     /// The margin a SIDE won by, from the game's home-signed final margin.
