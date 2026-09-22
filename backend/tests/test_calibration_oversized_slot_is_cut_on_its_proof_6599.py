@@ -454,6 +454,18 @@ class _Run:
         #: it did not and only the declined slot was eligible, ``None`` when
         #: the sweep did not run. Read from ``staged:unit_packing_scope:*``.
         self.per_beat_packing_scope: list[str | None] = []
+        #: Per beat, ``outcome -> count`` for #6599's packing sweep, read from
+        #: ``staged:unit_packing_split:*``. The SCOPE gauge above says how wide
+        #: the sweep was allowed to be; this says what it then did with each
+        #: candidate, and the two are different facts — a sweep that reaches the
+        #: whole plan and refuses most of it looks identical, from the scope
+        #: gauge and from a split COUNT, to one that was never allowed to run.
+        self.per_beat_packing_outcomes: list[dict[str, int]] = []
+        #: Per beat, the refinement map's references (``"<buckets>:<index>"``).
+        #: The map's LENGTH is ``per_beat_splits``; these carry the partition
+        #: each entry sits at, which is the only way to see how DEEP the plan
+        #: has been cut rather than how many slots have been cut at all.
+        self.per_beat_split_refs: list[list[str]] = []
         #: The PUBLISHED census, present only on a run that completed.
         self.census: dict | None = None
 
@@ -622,6 +634,14 @@ def staged_beat_loop(monkeypatch):
                     None,
                 )
             )
+            out.per_beat_packing_outcomes.append(
+                {
+                    name.rsplit(":", 1)[1]: int(value)
+                    for name, value in runner.ledger.stages.items()
+                    if name.startswith("staged:unit_packing_split:")
+                }
+            )
+            out.per_beat_split_refs.append(sorted(splits))
             if learns:
                 # What production carries: the cost of the units THIS beat ran,
                 # so a plan whose units got cheaper is a plan the next beat's
