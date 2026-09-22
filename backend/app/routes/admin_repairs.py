@@ -81,9 +81,19 @@ transactional session and RETURNS its own before/after census in the response bo
 
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
-``population`` / ``probe`` / ``undo_identity`` / ``band`` / ``band_as_of`` also accept
-those as query params; the dispatcher passes through only what a given repair's
-signature names.
+``population`` / ``probe`` / ``undo_identity`` / ``band`` / ``band_as_of`` /
+``only_ids`` also accept those as query params; the dispatcher passes through only
+what a given repair's signature names.
+
+``only_ids`` (#7937, authority/957) is the reviewed-subset allowlist: the row ids,
+taken from a dry run's own plan, that an apply is allowed to write. A keyset cursor
+chooses where a scan STARTS and can neither stop it early nor exclude a row inside
+the page, so on a rail whose page is bounded by a venue budget one row the operator
+judges wrong blocks every correct row beside it. It narrows the PLAN — the dry run
+and the apply that follows it describe the same page — and never the scan, so the
+cursor is unaffected and a withheld row is reached again only by restarting the
+walk. It is a selector, not a verdict: it changes no judgment about any row it
+admits. ``kalshi-series-tag-category`` declares it today.
 
 ``undo_identity`` (lane1/084, D51) names ONE earlier apply's dated undo record
 and puts its rows back. It exists because Alex's D51 lets a lane apply a data
@@ -727,7 +737,12 @@ _REPAIRS = {
     # D51: every planned row carries its `before` and the payload carries a
     # runnable `restore_sql`, on the dry run as well as the apply.
     # Accepts ?after_date=&after_id= for keyset resumption; page until
-    # `scan_exhausted`. ATTENDED ONLY: never wire this to a beat.
+    # `scan_exhausted`. Also ?only_ids= (#7937), the reviewed-subset allowlist:
+    # this rail's page is bounded by the venue budget, not by anything an
+    # operator can reason about, so without it one row judged wrong strands every
+    # correct row sharing its page. It narrows the plan on the dry run and the
+    # apply identically and leaves the cursor alone.
+    # ATTENDED ONLY: never wire this to a beat.
     "kalshi-series-tag-category": (
         "app.tasks.repair_kalshi_series_tag_category",
         "repair",
@@ -1233,6 +1248,20 @@ async def run_repair(
                     "quietly became 'open' would report a complete pass over a "
                     "population the operator did not ask for.",
     ),
+    only_ids: str = Query(
+        None,
+        description="Comma-separated allowlist of the row ids an operator "
+                    "actually reviewed, for repairs whose page is bounded by a "
+                    "budget rather than by a reviewable boundary (#7937). A "
+                    "keyset cursor says where a scan STARTS and cannot exclude a "
+                    "row inside the page, so without this one row the operator "
+                    "judges wrong strands every correct row beside it. It "
+                    "narrows the PLAN, on the dry run identically to the apply, "
+                    "and never the scan — the cursor is unaffected and a "
+                    "withheld row is reached again only by restarting the walk. "
+                    "Omit it to act on the whole plan; an empty value is REFUSED "
+                    "rather than read as either extreme.",
+    ),
     undo_identity: str = Query(
         None,
         description="Put ONE earlier apply's rows back, for repairs that write a "
@@ -1279,6 +1308,7 @@ async def run_repair(
             ("expected_blank", expected_blank),
             ("population", population),
             ("status_scope", status_scope),
+            ("only_ids", only_ids),
             ("probe", probe),
             ("undo_identity", undo_identity),
         )
