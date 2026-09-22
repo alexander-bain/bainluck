@@ -359,7 +359,7 @@ async def test_endpoint_reports_null_not_a_false_p99():
     })
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     ep = out["endpoints"][0]
     assert ep["samples"] == 2
@@ -380,7 +380,7 @@ async def test_endpoint_splits_feed_by_cache_status():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     ep = out["endpoints"][0]
     buckets = ep["by_cache_status"]
@@ -399,7 +399,7 @@ async def test_endpoint_tolerates_legacy_members():
     r = _redis_with({"/api/events": [f"{i}.0:{10 + i}.0" for i in range(25)]})
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     ep = out["endpoints"][0]
     assert ep["n"] == 25
@@ -418,7 +418,7 @@ async def test_null_p95_does_not_sort_as_fast():
     })
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     assert out["endpoints"][0]["endpoint"] == "/api/slow_unknown"
 
@@ -432,7 +432,7 @@ async def test_endpoint_requires_admin_auth():
     with patch("app.routes.admin._check_admin_secret",
                side_effect=HTTPException(status_code=403, detail="no")):
         with pytest.raises(HTTPException) as exc:
-            await get_latency_stats(MagicMock(), None, 20)
+            await get_latency_stats(MagicMock(), None, 20, 60)
     assert exc.value.status_code == 403
 
 
@@ -612,7 +612,7 @@ async def test_payload_can_be_dated_from_its_own_contents():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     assert "generated_at" in out and out["generated_at"]
 
@@ -639,7 +639,7 @@ async def test_cache_buckets_account_for_every_sample():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     ep = out["endpoints"][0]
     assert ep["n"] == 13
@@ -666,7 +666,7 @@ async def test_completeness_reconciles_against_its_own_denominator():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     rec = out["endpoint_reconciliation"]
     assert rec["tracked"] == 5
@@ -687,7 +687,7 @@ async def test_always_sampled_endpoint_never_just_vanishes():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 20)
+        out = await get_latency_stats(MagicMock(), "s", 20, 60)
 
     feed = [e for e in out["endpoints"] if e["endpoint"] == "/api/feed"]
     assert len(feed) == 1
@@ -710,8 +710,242 @@ async def test_zero_row_survives_top_truncation():
 
     with patch("app.routes.admin._check_admin_secret", return_value=True), \
          patch("app.tasks.redis_state.get_redis_client", return_value=r):
-        out = await get_latency_stats(MagicMock(), "s", 3)   # top=3
+        out = await get_latency_stats(MagicMock(), "s", 3, 60)   # top=3
 
     names = [e["endpoint"] for e in out["endpoints"]]
     assert "/api/feed" in names
     assert out["endpoint_reconciliation"]["truncated_by_top"] == 7
+
+
+# ---------------------------------------------------------------------------
+# #2143 — the `minutes` window parameter
+#
+# The fixed 60-minute window made a deploy-free read unobtainable. A release
+# inside the window restarts dynos, so the samples that follow are cold and an
+# after-check reading them cannot separate "the fix did nothing" from "the
+# window contained a deploy". Measured over 19 consecutive intervals during desk
+# hours on 2026-09-21: 0 cleared 62 minutes, 4 cleared 32.
+#
+# ⚠️ `_redis_with` above IGNORES the `lo`/`hi` bounds it is handed — every test
+# written against it passes whatever the cutoff is. A window test built on it
+# would be VACUOUS. `_redis_honouring_scores` below is the same fake with the
+# lower bound actually applied, which is the whole point of these tests.
+# ---------------------------------------------------------------------------
+def _redis_honouring_scores(samples: dict[str, list[str]]):
+    """`_redis_with`, except ZRANGEBYSCORE applies the lower bound.
+
+    The route's cutoff arithmetic is the subject here, so a fake that returns
+    every member regardless of score cannot fail and must not be used.
+    """
+    r = MagicMock()
+    r.smembers.return_value = set(samples.keys())
+
+    def _zrangebyscore(key, lo, hi, withscores=False):
+        out = []
+        for m in samples[key.split("latency:", 1)[1]]:
+            score = float(m.split(":")[0])
+            if score < float(lo):
+                continue
+            out.append((m, score) if withscores else m)
+        return out
+
+    r.zrangebyscore.side_effect = _zrangebyscore
+    return r
+
+
+def _aged_feed_samples(now: float):
+    """25 samples 50 min old (slow) + 25 samples 5 min old (fast).
+
+    The two ages carry different latencies so a read can be attributed to a
+    window by its VALUES, not only by its count.
+    """
+    old = [f"{now - 50 * 60 + i}:{5000 + i}.0:miss" for i in range(25)]
+    recent = [f"{now - 5 * 60 + i}:{20 + i}.0:hit" for i in range(25)]
+    return {"/api/feed": old + recent}
+
+
+@pytest.mark.asyncio
+async def test_narrowing_the_window_excludes_the_older_samples():
+    """The decisive test: SAME fixture, two windows, different populations.
+
+    Reading only `minutes=30` would not prove the cutoff moved — it would also
+    pass against a fake that drops everything. The 60-minute read on the same
+    fixture is the control.
+    """
+    import time as _t
+
+    from app.routes.admin import get_latency_stats
+
+    now = _t.time()
+    r = _redis_honouring_scores(_aged_feed_samples(now))
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        hour = await get_latency_stats(MagicMock(), "s", 20, 60)
+        half = await get_latency_stats(MagicMock(), "s", 20, 30)
+
+    hour_feed = next(e for e in hour["endpoints"] if e["endpoint"] == "/api/feed")
+    half_feed = next(e for e in half["endpoints"] if e["endpoint"] == "/api/feed")
+
+    # Control: the hour sees both ages.
+    assert hour_feed["n"] == 50
+    assert set(hour_feed["by_cache_status"]) == {"hit", "miss"}
+
+    # Subject: 30 minutes excludes the 50-minute-old population entirely.
+    assert half_feed["n"] == 25
+    assert set(half_feed["by_cache_status"]) == {"hit"}
+    assert half_feed["max_ms"] < 100  # the 5000 ms miss tail is gone
+
+
+@pytest.mark.asyncio
+async def test_the_payload_states_the_window_it_actually_used():
+    """`window` was the frozen literal "1 hour". A 30-minute read carrying an
+    hourly title is the false-confidence shape this endpoint exists to refuse."""
+    import time as _t
+
+    from app.routes.admin import get_latency_stats
+
+    r = _redis_honouring_scores(_aged_feed_samples(_t.time()))
+
+    with patch("app.routes.admin._check_admin_secret", return_value=True), \
+         patch("app.tasks.redis_state.get_redis_client", return_value=r):
+        hour = await get_latency_stats(MagicMock(), "s", 20, 60)
+        half = await get_latency_stats(MagicMock(), "s", 20, 30)
+
+    assert hour["window"] == "1 hour"
+    assert hour["window_minutes"] == 60
+    assert half["window"] == "30 minutes"
+    assert half["window_minutes"] == 30
+    # A reader must be able to tell the two payloads apart on this field alone.
+    assert hour["window"] != half["window"]
+
+
+def _minutes_query():
+    """The declared `minutes` parameter, with its constraints.
+
+    A direct call cannot resolve a FastAPI default (that is why every test in
+    this file passes `top` explicitly), so the DEFAULT and the BOUNDS have to be
+    read off the declaration — which is the contract FastAPI actually enforces
+    — rather than inferred from a call that never exercises it.
+    """
+    import inspect
+
+    from app.routes.admin import get_latency_stats
+
+    q = inspect.signature(get_latency_stats).parameters["minutes"].default
+    bounds = {type(m).__name__.lower(): m for m in q.metadata}
+    return q, bounds
+
+
+def test_the_default_window_is_still_one_hour():
+    """Every existing caller omits `minutes`, so the default is their window."""
+    q, _ = _minutes_query()
+    assert q.default == 60
+
+
+def test_the_maximum_window_agrees_with_what_the_middleware_retains():
+    """A drift guard across TWO independent sources, not one parse twice.
+
+    The route's ceiling is declared on the Query; the retention is the
+    middleware's `WINDOW_SECONDS`. If someone raises retention and not the
+    ceiling, the endpoint silently refuses data that now exists; if they lower
+    retention, it accepts a window it cannot fill and reports the shortfall as
+    a quiet period. Neither is visible without this comparison.
+    """
+    from app.middleware.latency import WINDOW_SECONDS
+
+    _, bounds = _minutes_query()
+    assert bounds["le"].le == WINDOW_SECONDS // 60
+    # Refused above the ceiling, never clamped: serving 60 minutes to a caller
+    # who asked for 120 would label an hour of samples as two.
+    assert bounds["ge"].ge == 1
+
+
+def test_an_out_of_range_window_is_refused_by_the_real_stack():
+    """End-to-end proof of "refused, never clamped".
+
+    The bounds test above reads the DECLARATION; this one proves FastAPI
+    enforces it. Validation runs before the handler, so a bad `minutes` is a 422
+    regardless of the admin secret — and `minutes=30` reaching the auth check
+    (403) is the control proving the 422s are about the bound and not about
+    the parameter being rejected outright.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app, raise_server_exceptions=False)
+    assert c.get("/api/admin/latency-stats?minutes=120&secret=wrong").status_code == 422
+    assert c.get("/api/admin/latency-stats?minutes=0&secret=wrong").status_code == 422
+    assert c.get("/api/admin/latency-stats?minutes=30&secret=wrong").status_code == 403
+
+
+def _direct_call_sites():
+    """Every direct call to `get_latency_stats` in the suite, with its arg shape.
+
+    AST, not text: a regex over source would also match the name inside a
+    comment or a docstring, and the thing under test is the ARGUMENTS, which
+    only the parse can see.
+    """
+    import ast
+    from pathlib import Path
+
+    sites = []
+    for path in sorted(Path(__file__).parent.rglob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except SyntaxError:  # pragma: no cover - a broken file is another test's failure
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            # Both spellings reach the same function: a bare `get_latency_stats(...)`
+            # after a from-import, and `admin_mod.get_latency_stats(...)` after a
+            # module import. Missing the second is how this guard would go blind.
+            name = (
+                fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute)
+                else None
+            )
+            if name != "get_latency_stats":
+                continue
+            supplies_window = len(node.args) >= 4 or any(
+                kw.arg == "minutes" for kw in node.keywords
+            )
+            sites.append((path.name, node.lineno, supplies_window))
+    return sites
+
+
+def test_every_direct_caller_supplies_the_window():
+    """The regression this file shipped: a direct call that omits `minutes`.
+
+    A direct Python call does not go through FastAPI, so an omitted `minutes`
+    stays the `Query` object and the cutoff arithmetic raises
+    `TypeError: unsupported operand type(s) for *: 'Query' and 'int'`. Four
+    tests in `test_health_read_boundary.py` failed exactly this way: they pass
+    `top` by keyword and stop there.
+
+    `test_the_default_window_is_still_one_hour` cannot catch this — it reads the
+    DECLARATION, where the default is a perfectly good 60. Only the call sites
+    show it.
+    """
+    from pathlib import Path
+
+    sites = _direct_call_sites()
+
+    # Anti-vacuity, two ways. A parse that matched nothing would pass an empty
+    # `offenders` check silently.
+    assert len(sites) >= 15, f"the scan found only {len(sites)} call sites"
+    # The failing caller used the attribute spelling and lives in ANOTHER file.
+    # If the matcher only ever saw bare-name calls in this file, the guard would
+    # be blind to precisely the case that broke.
+    assert {f for f, _, _ in sites} - {Path(__file__).name}, (
+        "the scan reached no file but this one — the attribute spelling is unmatched"
+    )
+
+    offenders = [f"{f}:{ln}" for f, ln, ok in sites if not ok]
+    assert not offenders, (
+        "these call the route directly without `minutes`, so the Query default "
+        f"reaches the cutoff arithmetic: {offenders}"
+    )

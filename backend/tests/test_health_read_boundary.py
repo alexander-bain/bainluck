@@ -302,15 +302,18 @@ class TestLatencyRail:
     """C102: only the FIRST command was guarded; every per-endpoint
     ZRANGEBYSCORE ran outside the boundary."""
 
-    def _call(self, r=None, dead=False, top=50):
+    def _call(self, r=None, dead=False, top=50, minutes=60):
         import asyncio
 
         import app.routes.admin as admin_mod
 
         ctx = _dead_client() if dead else _patch_client(r)
         with _ADMIN_AUTH, ctx:
+            # `minutes` is passed explicitly for the same reason `top` is: a
+            # direct call bypasses FastAPI, so an omitted argument stays the
+            # `Query` object and the route's cutoff arithmetic raises TypeError.
             return asyncio.run(
-                admin_mod.get_latency_stats(MagicMock(), "s", top=top)
+                admin_mod.get_latency_stats(MagicMock(), "s", top=top, minutes=minutes)
             )
 
     def _sample(self, ms):

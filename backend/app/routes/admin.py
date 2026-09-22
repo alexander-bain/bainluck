@@ -574,8 +574,19 @@ async def get_latency_stats(
     request: Request,
     secret: str = Query(None, description="Admin secret for authorization"),
     top: int = Query(20, description="Number of slowest endpoints to return"),
+    minutes: int = Query(
+        60,
+        ge=1,
+        le=60,
+        description=(
+            "Window in minutes (1-60). 60 is both the default and the MAXIMUM: "
+            "LatencyMiddleware trims every sorted set to WINDOW_SECONDS (3600s), "
+            "so no older sample exists to read. Narrow it to read a stretch that "
+            "contains no deploy."
+        ),
+    ),
 ):
-    """Return p50/p95/p99 latency per endpoint from the last hour.
+    """Return p50/p95/p99 latency per endpoint from the last ``minutes``.
 
     Data comes from sampled request timings stored in Redis sorted sets
     by the LatencyMiddleware.
@@ -606,6 +617,24 @@ async def get_latency_stats(
       unexplained gap (r334 saw ``complete`` asserted over a 2-of-5 payload).
     * An explicit zero row for an always-sampled endpoint with no in-window
       samples, so "no traffic" is distinguishable from "the sampler broke".
+
+    #2143 — ``minutes`` exists because the fixed 60-minute window made a
+    deploy-free read unobtainable. A release inside the window contaminates the
+    sample (restarted dynos serve cold), so an after-check needs a window with
+    no release in it; measured over 19 consecutive intervals during desk hours
+    on 2026-09-21, **0 cleared 62 minutes while 4 cleared 32** — the hourly
+    merge cadence sits just under the requirement. Narrowing the window is the
+    only lever available, because the data to widen it does not exist.
+
+    Two properties keep a narrowed read honest, and both are load-bearing:
+
+    * **``minutes`` is bounded at 60 and REFUSED above it, never clamped.** The
+      middleware trims at ``WINDOW_SECONDS``; silently serving 60 minutes to a
+      caller who asked for 120 would label an hour of data as two.
+    * **The payload states the window it actually used** (``window_minutes``).
+      ``window`` was the frozen string ``"1 hour"``; left alone it would have
+      titled every 30-minute read as an hourly one, which is the precise
+      false-confidence failure the rest of this endpoint was rebuilt to remove.
     """
     _check_admin_secret(secret, request=request)
 
@@ -636,7 +665,8 @@ async def get_latency_stats(
         return {"endpoints": [], "note": "No latency data collected yet"}
 
     now = _time.time()
-    cutoff = now - 3600  # last hour only
+    window_seconds = minutes * 60
+    cutoff = now - window_seconds
     results = []
     # C102: the per-endpoint sorted-set read used to sit OUTSIDE the acquisition
     # guard above, so a connection dropped after a successful SMEMBERS turned the
@@ -820,7 +850,12 @@ async def get_latency_stats(
         # contents. An undated snapshot of two 1-sample rows is
         # indistinguishable from a broken rail.
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "window": "1 hour",
+        # #2143: this was the frozen literal "1 hour". A `minutes=30` read would
+        # then have carried an hourly title, and a later reader comparing it to
+        # a real hourly table could not have seen the difference.
+        "window": "1 hour" if minutes == 60 else f"{minutes} minutes",
+        "window_minutes": minutes,
+        "max_window_minutes": 60,
         "sample_rate": f"1/{os.getenv('LATENCY_SAMPLE_RATE', '10')}",
         "always_sampled_endpoints": sorted(_ALWAYS_SAMPLE),
         "percentile_method": "nearest-rank (ceil(pct/100 * n) - 1)",
