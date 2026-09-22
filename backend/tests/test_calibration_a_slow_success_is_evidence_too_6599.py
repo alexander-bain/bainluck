@@ -983,6 +983,108 @@ class TestTheCutIsThePlansAndNotOneSlots:
             f"whose partition is unknown: {blind.per_beat_splits}"
         )
 
+    @pytest.mark.asyncio
+    async def test_a_candidate_already_cut_finer_is_judged_at_its_own_granularity(
+        self, drive
+    ):
+        """Granularity. The reference is one slot's cost; the plan is not one slot.
+
+        ``unit_reference_ms`` is measured at ONE partition —
+        ``worst_unit_buckets``, the slot that produced it. A candidate already cut
+        k-fold finer holds 1/k of the questions and is expected to cost 1/k as
+        much, so the sweep scales the reference to each candidate's own
+        granularity before asking whether that candidate packs. **Without the
+        scaling every candidate is judged at the coarse reference's full cost,
+        the children of last beat's cuts are re-cut on evidence that was never
+        about them, and the plan walks itself down to single questions.**
+
+        The two provenance guards above cannot see this. They bound a sweep whose
+        candidates all sit at the reference's OWN partition, where the ratio is 1
+        and the arithmetic is a no-op — and that is the normal shape of a sweep,
+        because its candidates come off the same plan as the reference. So a
+        mutation deleting the scaling survives both of them, and survived the
+        whole suite when this mechanism was certified (CERT-3302, reported as the
+        nonblocking follow-up ``6599-KILL-GRANULARITY-RATIO-MUTANT`` rather than
+        left unstated). **A HETEROGENEOUS plan is what reaches it**, and this arm
+        builds one the way production does rather than by seeding a cursor.
+
+        ``conclusive_splits=False`` on the carried rig is the generator: beat one
+        names its partition and sweeps the remainder (15 slots, all to 32), then
+        six beats hold an ANONYMOUS carried reference and may cut only the one
+        slot they declined (the guard above) — which leaves those six sitting at
+        64 while the rest of the plan is still at 32. Beat eight names a
+        partition again and sweeps a plan that is now two granularities wide.
+        That is the specimen, and it is reached rather than constructed.
+
+        MEASURED at that beat, with the scaling and with it severed:
+
+        ============================  ==========  ==========
+        at the beat-8 plan sweep      scaled      severed
+        ============================  ==========  ==========
+        candidates cut                4           11
+        candidates refused as
+        already-packing               7           0
+        refinement entries            21 -> 25    21 -> 32
+        deepest partition, whole run  128         256
+        ============================  ==========  ==========
+
+        Seven of the eleven candidates are the finer ones, and scaled to their
+        own granularity every one of them already packs. Severing the divide
+        cuts all eleven — the four that were owed a cut and the seven that were
+        not — on evidence drawn from a slot twice their size, and the run ends
+        one whole partition deeper.
+        """
+        run = await drive(
+            buckets=16, slow_slots=16, max_beats=12, conclusive_splits=False
+        )
+
+        # The specimen has to BE heterogeneous or every assertion below is about
+        # a ratio of one. Read off the refinement map — the partitions the plan
+        # actually sits at — never off the knobs that were asked for.
+        plan_beats = [
+            index
+            for index, scope in enumerate(run.per_beat_packing_scope)
+            if scope == "plan"
+        ]
+        assert len(plan_beats) >= 2, (
+            "the run needs a plan-scoped sweep AFTER the opening one, or there is "
+            f"no beat at which a finer child can be a candidate: "
+            f"{run.per_beat_packing_scope}"
+        )
+        swept = plan_beats[1]
+        depths_before = {int(ref.split(":")[0]) for ref in run.per_beat_split_refs[swept - 1]}
+        assert len(depths_before) > 1, (
+            "the plan this beat sweeps must hold MORE THAN ONE partition, or the "
+            "granularity ratio is 1 and this guard is vacuous: "
+            f"{sorted(depths_before)} at beat {swept + 1}"
+        )
+
+        # The clause. A candidate finer than the reference is refused a cut
+        # because, scaled to its own granularity, it already packs — asserted as
+        # something that APPEARS rather than as a cut that fails to happen, so a
+        # run whose population churns cannot pass it by accident.
+        assert run.per_beat_packing_outcomes[swept].get("packs_already", 0) >= 1, (
+            "a candidate already cut finer than the reference must be judged at "
+            "ITS OWN granularity and refused, not re-cut on the coarse slot's "
+            f"cost: outcomes {run.per_beat_packing_outcomes[swept]} over "
+            f"partitions {sorted(depths_before)}"
+        )
+
+        # And what the refusal buys, over the whole run: the plan is not walked
+        # down to single questions. 128 with the scaling, 256 without it — and
+        # the ceiling itself is far above both, so this is the arithmetic
+        # holding rather than ``sanitize_refinements`` catching it.
+        deepest = max(
+            int(ref.split(":")[0])
+            for refs in run.per_beat_split_refs
+            for ref in refs
+        )
+        assert deepest <= 128, (
+            "severing the scaling re-cuts last beat's children every beat and "
+            f"the plan cascades: deepest partition {deepest}, ceiling "
+            f"{STAGED_UNIT_MAX_REFINEMENT_BUCKETS}"
+        )
+
 
 class TestTheShipAtTheSizeProductionRuns:
     """📈 **The number the ship is worth, measured where it is claimed.**
