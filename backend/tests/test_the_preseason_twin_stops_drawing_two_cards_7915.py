@@ -82,6 +82,8 @@ class _Row:
         sources=None,
         status="completed",
         load_sport=True,
+        opening_home=None,
+        opening_away=None,
     ):
         self.id = id
         # One sport row per key, the way production stores it.
@@ -96,6 +98,13 @@ class _Row:
         self.external_id = external_id
         self.win_probability_sources = sources
         self.status = status
+        # The PRE-MATCH line, which lives in these columns and has never been in
+        # the JSONB bag above (`merge_opening_line`'s docstring carries the
+        # measurement that established the difference). Present on the fixture
+        # because on THIS population it is the number the reader keeps or loses:
+        # see `test_the_surviving_card_keeps_the_only_pre_match_line_there_is`.
+        self.opening_home_probability = opening_home
+        self.opening_away_probability = opening_away
 
 
 def _flames_pair(**overrides):
@@ -142,6 +151,95 @@ def test_the_surviving_card_keeps_both_rows_venues():
     survivor = result.events[0]
     merged = result.merged_sources[survivor.id]
     assert set(merged) == {"espn", "stat_model", "betting"}
+
+
+def test_the_surviving_card_keeps_the_only_pre_match_line_there_is():
+    """🔴 THE FOLD ELECTS THE UNPRICED ROW ON THIS POPULATION, EVERY TIME.
+
+    The venue union above cannot reach this and the difference is the ship: the
+    card's "we had them at 56%" is served from the `Event.opening_*` COLUMNS by
+    `teams.py::_format_event_brief`, which has never read the JSONB bag. So the
+    number survives only because :func:`_carry_opening_line` runs.
+
+    WHY THIS ARM IS NOT A DUPLICATE OF THE SOCCER SUITE THAT ALREADY COVERS THAT
+    FUNCTION. #5853 wrote it for a population where which row held the line was
+    incidental. Here it is SYSTEMATIC and it points the wrong way: measured on
+    production 2026-09-21, the parent carries `espn_id` in 13 of 13 pairs and the
+    variant in 0 of 13, so `twin_identity_rank` elects the parent at rung 2 —
+    while the pre-match line is on the VARIANT. Measured on the specimen itself
+    at 2026-09-22 02:36Z, `/api/teams/calgary-flames` served
+    `15316214  pregame_win_probability 0.557` beside `15312340  null`.
+
+    So on every pair this pass folds, the elected survivor is the row with no
+    line, and without the carry the reader trades two cards for one card with no
+    percentage on it — a worse page than the bug. That is the regression #5918
+    was filed to refuse, and this pass is a new way to arrive at it.
+    """
+    parent = _Row(
+        15312340,
+        sport_key=NHL,
+        commence_time=PUCK_DROP,
+        espn_id="401879309",
+        sources={"espn": 0.55, "stat_model": 0.52},
+    )
+    variant = _Row(
+        15316214,
+        sport_key=NHL_PRE,
+        commence_time=PUCK_DROP + timedelta(minutes=8, seconds=24),
+        sources={"betting": 0.61},
+        # The production reading, and its two-way complement.
+        opening_home=0.557,
+        opening_away=0.443,
+    )
+
+    result = fold_twin_events([parent, variant])
+
+    survivor = result.events[0]
+    # The direction is asserted, not assumed: if the election ever flips to the
+    # priced row this arm must FAIL rather than quietly pass for a new reason.
+    assert survivor.id == 15312340, "the espn-anchored parent is the survivor"
+    assert result.dropped_ids == [15316214]
+
+    assert survivor.opening_home_probability == 0.557, (
+        "the survivor must carry the absorbed row's pre-match line, or the "
+        "Flames card prints one game once with no percentage on it"
+    )
+    assert survivor.opening_away_probability == 0.443, "a pair travels as a pair"
+    assert result.merged_opening[15312340] == (0.557, 0.443)
+
+
+def test_a_pre_match_line_the_survivor_already_has_is_never_overwritten():
+    """Gap-fill, not a blend: the carry may only supply, never replace.
+
+    `merge_opening_line`'s first clause, asserted on this population because
+    this pass is a new caller of it. A parent that DOES hold its own line keeps
+    it — otherwise the fold would state one provider's opening under another's,
+    and the two are medians taken at different moments over different
+    sportsbooks (#1841), so they need not even sum to 1.
+    """
+    parent = _Row(
+        15312340,
+        sport_key=NHL,
+        commence_time=PUCK_DROP,
+        espn_id="401879309",
+        opening_home=0.610,
+        opening_away=0.390,
+    )
+    variant = _Row(
+        15316214,
+        sport_key=NHL_PRE,
+        commence_time=PUCK_DROP + timedelta(minutes=8, seconds=24),
+        opening_home=0.557,
+        opening_away=0.443,
+    )
+
+    result = fold_twin_events([parent, variant])
+
+    survivor = result.events[0]
+    assert survivor.id == 15312340
+    assert survivor.opening_home_probability == 0.610, "its own line stands"
+    assert survivor.opening_away_probability == 0.390
+    assert 15312340 not in result.merged_opening, "nothing was supplied"
 
 
 def test_a_live_pair_is_left_as_two_cards():
