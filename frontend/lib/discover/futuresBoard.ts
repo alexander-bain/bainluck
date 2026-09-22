@@ -46,6 +46,7 @@
 
 import { leaderFirstSlice, printsAPercent } from "./leaderOrder";
 import { renderedRaceBoardPercents } from "@/lib/renderedPercent";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { FeedFuturesData } from "@/lib/types";
 
 /** One row of `discover_card.distribution_outcomes` as a card renders it. */
@@ -145,6 +146,65 @@ export function futuresDistributionBoard(data: FeedFuturesData): FuturesBoard | 
       card.field_is_a_race === true,
     ),
   };
+}
+
+/**
+ * #8112 — MAY THIS BOARD DRAW A LEADER AT ALL?
+ *
+ * ## The defect
+ *
+ * `2026-27 Stanley Cup® Finals Winner` prices Colorado Avalanche and Florida
+ * Panthers at `0.1031` each. Both rows print **10%**. The board gave one of them
+ * the rank digit `1`, `font-bold` and the `bg-accent-brand` bar, and the other
+ * `2`, `font-semibold` and a muted grey bar — a podium built on a dead heat,
+ * with which club stood on it decided by nothing (`leaderFirstSlice` is a STABLE
+ * sort, so it is whichever order the payload happened to arrive in).
+ *
+ * ## The rule already existed; it was wired to the copy and not to the paint
+ *
+ * #6187 is the same card and the same tie ("A futures card says 'Florida
+ * Panthers leads at 10%' above a board where the runner-up also reads 10%"). It
+ * shipped `lead_is_printable` (`app/utils/feed_reasons.py:1997`), which asks
+ * whether "a reader checking the board can see the lead the sentence asserts",
+ * and the backend obeys it today — this card's headline is `Colorado Avalanche
+ * at 10%` with no comparative, while its four siblings in the same edition all
+ * clear the gate and all say "leads". So the SENTENCE already refuses the claim
+ * that the BOARD then makes in bold and brand green. This function is that same
+ * question asked of the chrome.
+ *
+ * ## Competition ranking, on the PRINTED STRING
+ *
+ * Rows printing the same percentage as the row above share its rank; the next
+ * distinct row takes the position it actually occupies (1, 1, 3, 4). That keeps
+ * the remainder row's `rows.length + 1` correct with no special case, because
+ * competition ranking never renumbers the tail.
+ *
+ * The tie test is the string `formatProbabilityPercent` EMITS, not a second
+ * rounding of the probability. That is deliberate and load-bearing twice over:
+ * it is exactly what a reader can check by looking at two cells, and it is the
+ * same call the value cell makes with the same `rendered` override, so the
+ * chrome and the number can never disagree about whether two rows are level. A
+ * private `Math.round(p * 100)` here would be a second scale wearing the first
+ * one's name — it would miss `<1%` rows that print identically from different
+ * probabilities, and it would drift the moment #8033's override moved.
+ *
+ * FAILS CLOSED: a row that cannot print a percent (#6505) never shares a rank,
+ * so an unpriced row can neither become a co-leader nor absorb one.
+ *
+ * PURE: no I/O, no clock, no ambient state.
+ */
+export function boardRowRanks(board: FuturesBoard): number[] {
+  const printed = board.rows.map((row, index) =>
+    printsAPercent(row.probability)
+      ? formatProbabilityPercent(row.probability ?? 0, { rendered: board.rowPercents[index] })
+      : null,
+  );
+  const ranks: number[] = [];
+  printed.forEach((value, index) => {
+    const tiesWithRowAbove = index > 0 && value !== null && value === printed[index - 1];
+    ranks.push(tiesWithRowAbove ? ranks[index - 1] : index + 1);
+  });
+  return ranks;
 }
 
 /**

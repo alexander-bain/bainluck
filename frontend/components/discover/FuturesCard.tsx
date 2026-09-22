@@ -7,7 +7,7 @@ import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } f
 import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { printsAPercent } from "@/lib/discover/leaderOrder";
-import { futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
+import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
@@ -416,6 +416,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // /categories and 60/40 on /discover — the disagreement this ship exists to
     // end, reintroduced by the ship itself.
     const { rows: shownRows, remainingCount, fieldIsARace, rowPercents: racePairPercents } = board;
+    // #8112 — the podium is earned, not taken by index. Rows printing the same
+    // percentage share a rank, so a dead heat gets two co-leaders rather than an
+    // arbitrary winner; see `boardRowRanks` for why the tie test is the printed
+    // string. `index` still decides the KEY and the `rendered` lookup — those are
+    // positions in the list, not claims about it.
+    const rowRanks = boardRowRanks(board);
 
     // `data-card-format` added by the CERT-678 repair: this was the only one of
     // the four `<article>` roots with no marker, so a render-path test could not
@@ -509,6 +515,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                 // percentage drew different bars.
                 const width = Math.max(2, Math.round(probability * 100));
                 const displayName = compactOutcomeName(row.label);
+                // #8112 — shared by the digit, the weight and the bar colour, so
+                // the three marks that say "favourite" can never disagree with
+                // each other or with the percentage beside them.
+                const rank = rowRanks[index];
+                const leads = rank === 1;
                 return (
                   <div
                     key={`${row.label}-${index}`}
@@ -523,7 +534,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                         ordering and not a ranking claim: on a coalition board
                         "most likely to be in the next government" is true. */}
                     {fieldIsARace && (
-                      <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${index + 1} by probability`} aria-label={`Rank ${index + 1}`}>{index + 1}</span>
+                      <span className="font-mono text-xs font-semibold tabular-nums text-text-muted" title={`Rank ${rank} by probability`} aria-label={`Rank ${rank}`}>{rank}</span>
                     )}
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -535,12 +546,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                             the real pixel boundary, which a character count
                             cannot do across fonts, accents and the 390px
                             viewport. The full string stays on `title`. */}
-                        <span className={`min-w-0 truncate text-xs leading-tight text-text-primary ${index === 0 ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
+                        <span className={`min-w-0 truncate text-xs leading-tight text-text-primary ${leads ? "font-bold" : "font-semibold"}`} title={row.label}>{displayName}</span>
                         <MovementBadge m={row.movement} prob={row.probability} />
                       </div>
                       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-border">
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${index === 0 ? "bg-accent-brand" : "bg-text-muted/35"}`}
+                          className={`h-full rounded-full transition-all duration-500 ${leads ? "bg-accent-brand" : "bg-text-muted/35"}`}
                           style={{ width: `${width}%` }}
                         />
                       </div>

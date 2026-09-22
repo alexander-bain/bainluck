@@ -19,7 +19,7 @@ import { cardSumExplanation } from "@/lib/cardSum";
 import { eventPath } from "@/lib/eventKey";
 import { conceptDomainEmoji, conceptHeadlineBout } from "@/lib/eventConceptDisplay";
 import { leaderFirstSlice } from "@/lib/discover/leaderOrder";
-import { futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
+import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { getSportLabel, getEmojiForLeague, getEmojiForCategory, getNameForCategory } from "@/lib/sportCategories";
 import PersonalizedBadge from "./PersonalizedBadge";
@@ -1120,6 +1120,10 @@ function FuturesFeedCard({
   // remainder, and both are stated in the issue as the reader cost.
   const board = futuresDistributionBoard(data);
   const boardRemainder = board ? futuresBoardRemainderLabel(board) : null;
+  // #8112 — empty when there is no board, which is the same guard `boardRemainder`
+  // takes; the rows below only render inside `board &&`, so the index is always live
+  // where it is read.
+  const boardRanks = board ? boardRowRanks(board) : [];
   const sumExplanation = cardSumExplanation(
     "card_sum_reason" in data
       ? data.card_sum_reason
@@ -1429,11 +1433,19 @@ function FuturesFeedCard({
               const pct = formatProbabilityPercent(row.probability ?? 0, {
                 rendered: board.rowPercents[i],
               });
+              // #8112 — the crown comes off the shared board, not off `i`. This
+              // card has no rank digit, so the weight and the bar colour are the
+              // only two marks that say "favourite" here, and on a dead heat
+              // (Colorado / Florida, both 0.1031, both printing 10%) they went to
+              // whichever of two level rows the payload happened to list first.
+              // Same derivation the Discover podium reads, for the same reason
+              // #8025 moved the board itself: one board, one answer.
+              const leads = boardRanks[i] === 1;
               return (
                 <div key={`${row.label}-${i}`} className="flex items-center gap-2">
                   <span
                     title={row.label}
-                    className={`text-[11px] flex-1 min-w-0 truncate ${i === 0 ? "font-semibold text-text-primary" : "text-text-secondary"}`}
+                    className={`text-[11px] flex-1 min-w-0 truncate ${leads ? "font-semibold text-text-primary" : "text-text-secondary"}`}
                   >
                     {row.label}
                   </span>
@@ -1449,7 +1461,7 @@ function FuturesFeedCard({
                     aria-label={`${row.label} probability`}
                   >
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-accent-brand" : "bg-text-muted/30"}`}
+                      className={`h-full rounded-full transition-all duration-500 ${leads ? "bg-accent-brand" : "bg-text-muted/30"}`}
                       style={{ width: `${(row.probability ?? 0) * 100}%` }}
                     />
                   </div>
