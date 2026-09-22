@@ -173,6 +173,10 @@ def _market(*, market_id, name, probability=0.35, external_id=None,
                 rank=1,
                 is_winner=None,
                 resolution_source=None,
+                # #8102: #8011's unobserved-board arm reads this column
+                # unguarded, as a real `FuturesOutcome` always carries it. NOW
+                # keeps that arm withholding nothing here.
+                last_updated=datetime.now(timezone.utc),
             )
         ],
         market_metadata=None,
