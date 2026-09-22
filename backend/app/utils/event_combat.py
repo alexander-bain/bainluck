@@ -507,6 +507,187 @@ def title_bout_sides(name: str | None) -> tuple[str, str] | None:
     return sides
 
 
+#: Shortest name token that may serve as cross-venue evidence for one fighter.
+#: Four excludes the generational suffixes ("jr", "sr", "ii") that every second
+#: MMA name carries and that would otherwise match any two fighters — the reason
+#: :func:`player_key` (which takes the LAST token) is the wrong tool here: it
+#: keys "Norbert Növényi Jr." as ``jr``.
+_BOUT_TOKEN_MIN_LEN = 4
+
+
+def bout_sides_any(name: str | None) -> tuple[str, str] | None:
+    """The two fighters a bout title names, whether or not it carries a promotion.
+
+    :func:`title_bout_sides` requires the venue's ``"<promotion>: <A> vs <B>"``
+    shape. Kalshi writes that shape for a card fight ("Contender Series: Novenyi
+    Jr vs Haig") but not for a standalone one ("Lee Cutler vs Louis Greene"), and
+    the standalone form is exactly the row that decides whether a scoped card is a
+    twin — so the bare matchup needs a parse too.
+    """
+    sides = title_bout_sides(name)
+    if sides:
+        return sides
+    parts = _MATCHUP_RE.split(_TRAILING_PAREN_RE.sub("", name or ""))
+    if len(parts) != 2:
+        return None
+    a, b = (p.strip() for p in parts)
+    if not a or not b or _fighter_identity(a) == _fighter_identity(b):
+        return None
+    return a, b
+
+
+def _bout_side_tokens(name: str | None) -> set[str]:
+    """A fighter's name tokens usable as cross-venue evidence (len >= 4)."""
+    folded = re.sub(r"[^a-z0-9 ]", " ", strip_diacritics(name or "").lower())
+    return {t for t in folded.split() if len(t) >= _BOUT_TOKEN_MIN_LEN}
+
+
+def bout_roster_key(name: str | None):
+    """``(tokens_of_side_A, tokens_of_side_B)`` for a bout title, or None.
+
+    Token SETS rather than a folded name, because the two venues spell the same
+    fighter differently and neither spelling is canonical: Kalshi's "Novenyi Jr"
+    against Polymarket's "Norbert Növényi Jr.", "Dumont Viana" against "Norma
+    Dumont". Equality would match neither pair; a shared token matches both.
+    """
+    sides = bout_sides_any(name)
+    if not sides:
+        return None
+    a, b = _bout_side_tokens(sides[0]), _bout_side_tokens(sides[1])
+    return (a, b) if a and b else None
+
+
+def bouts_are_one_fight(x, y) -> bool:
+    """Do two :func:`bout_roster_key` values name the SAME fight?
+
+    Both sides must match, under either pairing (the venues disagree on which
+    fighter is named first — "Quissua vs Piwowarczyk" against "Damian
+    Piwowarczyk vs. Emilio Quissua"), and the two sides must match on DIFFERENT
+    evidence, so a single surname shared by both fighters of a bout ("Anderson
+    Silva vs Thiago Silva") cannot satisfy the test by itself.
+    """
+    if not x or not y:
+        return False
+    (a, b) = x
+    for p, q in ((y[0], y[1]), (y[1], y[0])):
+        hit_a, hit_b = a & p, b & q
+        if hit_a and hit_b and not (hit_a == hit_b and a & b):
+            return True
+    return False
+
+
+def count_distinct_bouts(fights) -> int:
+    """How many distinct BOUTS a card's rows describe.
+
+    ``group`` (:func:`venue_bout_group`) dedups a venue's own parent row against
+    its condition-id children, but it is per-venue by construction: a Kalshi row
+    is keyed by market id and a Polymarket row by Polymarket event id, so one
+    bout that BOTH venues price counts twice.
+
+    That is already wrong wherever the two venues meet — a numbered card unifies
+    onto the bare token (:func:`venue_card_token`), and on 2026-09-22 the feed
+    offered "UFC 332: Silva vs Cong · **26 fights**" while its own page rendered
+    **13**. #7959's fold makes the unnumbered cards meet too, so the count has to
+    stop being per-venue or the defect spreads with it.
+
+    So rows are one bout when they share a group OR when their titles name the
+    same two fighters (:func:`bouts_are_one_fight`). A row whose title does not
+    parse keeps its group's identity, which is the behaviour it has today.
+    """
+    reps: list[dict] = []
+    for f in fights:
+        key = bout_roster_key(f.get("name"))
+        group = f.get("group")
+        hit = None
+        for rep in reps:
+            if group is not None and group in rep["groups"]:
+                hit = rep
+                break
+            if key and rep["key"] and bouts_are_one_fight(key, rep["key"]):
+                hit = rep
+                break
+        if hit is None:
+            reps.append({"groups": {group}, "key": key})
+        else:
+            hit["groups"].add(group)
+            if hit["key"] is None:
+                hit["key"] = key
+    return len(reps)
+
+
+def fold_venue_scoped_tokens(rosters: dict[str, list]) -> dict[str, str]:
+    """Map a venue-SCOPED card token onto the BARE token of the same date when the
+    two hold the same fight card. #7959.
+
+    Kalshi stamps a card's identity into its ticker and lands on a bare date
+    token; Polymarket has none, so :func:`venue_card_token` scopes it by
+    promotion. For a NUMBERED card that function already unifies onto the bare
+    token, and the two venues meet. For an UNNUMBERED one they never do, and one
+    card is minted twice — on 2026-09-22 Discover page one spent two slots on
+    Dana White's Contender Series, as "Dana White's Contender Series · 5 fights"
+    (Polymarket) beside "Contender Series: Novenyi Jr vs Haig · 5 fights"
+    (Kalshi), the same five bouts at slightly different prices.
+
+    Neither token may simply give way. Bare-only re-opens #4093: the events table
+    carries a different promotion on the same date and a date-only key swallows
+    it. Scoped-only is the defect above. So the two are joined on EVIDENCE, which
+    is what :func:`token_scope` already specifies the join needs:
+
+        a scoped card never folds into another promotion's night, and never into
+        a bare date token — that join is a cross-source identity claim and needs
+        BOUT EVIDENCE, not an adjacent date.
+
+    The evidence is a SHARED BOUT — both fighters of one fight, under
+    :func:`bouts_are_one_fight`. One is sufficient and is the whole test: a bout
+    cannot be on two different cards the same night. Deliberately not weaker
+    signals:
+
+    * **the promotion name** fails on the live specimens — Kalshi says "Contender
+      Series" where Polymarket says "Dana White's Contender Series", and "Fight
+      Night" against "UFC Fight Night". Substring matching happens to join both
+      and is generic enough ("Fight Night") to join two real promotions.
+    * **a shared FIGHTER** is not a card: #4560 has fighters booked twice, and
+      one name can appear on two promotions' cards in a week.
+
+    Measured over every open combat market, 2026-09-22 (195 rows, both configs):
+    three scoped tokens sit beside a bare token of the same date. Two are twins
+    and fold (`26sep22danawhitescontenderseries` -> `26sep22`, 10 shared bouts;
+    `26sep26ufcfightnight` -> `26sep26`, 10 of 11); the third is the control —
+    boxing's `26sep26zuffaboxing11` (Pullen/Faretina, Cerda/Lewis, …) beside a
+    bare `26sep26` holding only "Lee Cutler vs Louis Greene", zero shared bouts,
+    REFUSED. That third pair is #4093's hazard in live data, and it is what a
+    date-only or promotion-name join would have merged.
+
+    ``rosters`` is ``{token: [bout title, ...]}``. The return is total, like
+    :func:`fold_rollover_tokens`, so callers never need a ``.get(token, token)``.
+    """
+    survivor: dict[str, str] = {t: t for t in rosters}
+    bare_by_date: dict[object, str] = {}
+    for token in rosters:
+        if token_scope(token):
+            continue
+        day = token_date(token)
+        if day is not None:
+            bare_by_date[day] = token
+
+    if not bare_by_date:
+        return survivor
+
+    keys = {
+        token: [k for k in (bout_roster_key(n) for n in names) if k]
+        for token, names in rosters.items()
+    }
+    for token in rosters:
+        if not token_scope(token):
+            continue
+        bare = bare_by_date.get(token_date(token))
+        if bare is None or not keys.get(token) or not keys.get(bare):
+            continue
+        if any(bouts_are_one_fight(x, y) for x in keys[token] for y in keys[bare]):
+            survivor[token] = bare
+    return survivor
+
+
 def venue_bout_is_priced(name: str | None, outcome_names) -> bool:
     """Are these two outcomes the two FIGHTERS this bout's title names?
 
@@ -1383,6 +1564,15 @@ def card_sport_label(
        :func:`list_card_concepts` — it is the policy, kept total on purpose,
        and it is reachable directly (the /event adapter hands us whatever the
        card's rows carry).
+
+       #7959 AMENDMENT: a card can now hold ticker rows AND venue promotions —
+       the venue fold joins a scoped card onto its Kalshi twin, so "one card
+       holds one promotion" is no longer true of the folded population. Tier 1
+       short-circuits on `ticker_fights` before the mixed arm is consulted, so
+       the mixed arm stays unreachable here and no folded card changes chip:
+       Dana White's Contender Series was "Combat" (venue half) beside "UFC"
+       (ticker half) and is "UFC" once, which is what tier 1 asserts — Kalshi
+       filed it in its `KXUFCFIGHT` series.
     3. **Schedule rows only**: the source's sport key says mixed martial arts
        and nothing at all about who promotes it -> ``cfg.schedule_label``.
        ``events_sport_keys`` spans ``mma_ufc`` AND ``mma_mixed_martial_arts``
@@ -1582,6 +1772,36 @@ async def _list_event_bouts(
     return bouts
 
 
+def _apply_token_fold(cards: dict, event_bouts: dict, survivor: dict) -> tuple:
+    """Re-key `cards` and `event_bouts` onto their surviving tokens.
+
+    Shared by both folds (#1712's midnight rollover and #7959's venue join) so a
+    token that survives one cannot be merged one way in the cards dict and
+    another in the bouts dict. A no-op when `survivor` is the identity.
+    """
+    if not any(t != s for t, s in survivor.items()):
+        return cards, event_bouts
+
+    folded_cards: dict[str, dict] = {}
+    for token, card in cards.items():
+        keep = survivor.get(token, token)
+        target = folded_cards.setdefault(
+            keep,
+            {"token": keep, "fights": [], "titles": [], "promotions": [], "ticker": 0},
+        )
+        target["fights"].extend(card["fights"])
+        target["titles"].extend(card["titles"])
+        target["promotions"].extend(card["promotions"])
+        target["ticker"] += card["ticker"]
+
+    folded_bouts: dict[str, list] = {}
+    for token, group in event_bouts.items():
+        folded_bouts.setdefault(survivor.get(token, token), []).extend(group)
+    for group in folded_bouts.values():
+        group.sort(key=bout_order_key)
+    return folded_cards, folded_bouts
+
+
 async def list_card_concepts(
     cfg: CombatSportConfig,
     db: AsyncSession,
@@ -1671,36 +1891,27 @@ async def list_card_concepts(
     # for why the venue's clock never widens a scheduled token) and applied to
     # both dicts, so a Kalshi fight and the events row for the same bout cannot
     # end up on different cards.
+    # #7959: unify a venue-scoped card with its Kalshi twin FIRST, on bout
+    # evidence — `fold_rollover_tokens` refuses that join by design (it is a
+    # cross-source identity claim, and an adjacent date is not evidence for it).
+    # Before the rollover fold, so a card that is both a twin and a
+    # midnight-crosser resolves its venue identity once and then folds as one
+    # card rather than as two halves of two cards.
+    cards, event_bouts = _apply_token_fold(
+        cards,
+        event_bouts,
+        fold_venue_scoped_tokens(
+            {t: [f["name"] for f in c["fights"]] for t, c in cards.items()}
+        ),
+    )
+
     _spans = card_span_by_token(
         {t: [f["commence"] for f in c["fights"]] for t, c in cards.items()},
         {t: [e.commence_time for e in group] for t, group in event_bouts.items()},
     )
-    _survivor = fold_rollover_tokens(_spans)
-    if any(t != s for t, s in _survivor.items()):
-        folded_cards: dict[str, dict] = {}
-        for token, card in cards.items():
-            keep = _survivor.get(token, token)
-            target = folded_cards.setdefault(
-                keep,
-                {
-                    "token": keep,
-                    "fights": [],
-                    "titles": [],
-                    "promotions": [],
-                    "ticker": 0,
-                },
-            )
-            target["fights"].extend(card["fights"])
-            target["titles"].extend(card["titles"])
-            target["promotions"].extend(card["promotions"])
-            target["ticker"] += card["ticker"]
-        cards = folded_cards
-        folded_bouts: dict[str, list] = {}
-        for token, group in event_bouts.items():
-            folded_bouts.setdefault(_survivor.get(token, token), []).extend(group)
-        for group in folded_bouts.values():
-            group.sort(key=bout_order_key)
-        event_bouts = folded_bouts
+    cards, event_bouts = _apply_token_fold(
+        cards, event_bouts, fold_rollover_tokens(_spans)
+    )
 
     concepts: list[dict] = []
     # The main event's start, carried forward from the scan that already read
@@ -1758,10 +1969,11 @@ async def list_card_concepts(
             # so a "latest bout" tiebreak would name the card after whichever row
             # sorted last. `fight_count` counts BOUTS, not rows — the venue
             # publishes a bout as a parent row plus condition-id children and both
-            # can be named as the matchup (`venue_bout_group`).
+            # can be named as the matchup (`venue_bout_group`), and since #7959 a
+            # bout both venues price is one bout too (`count_distinct_bouts`).
             kalshi["fights"].sort(key=_ct)
             main_id = None
-            fight_count = len({f["group"] for f in kalshi["fights"]})
+            fight_count = count_distinct_bouts(kalshi["fights"])
             name = max(set(kalshi["promotions"]), key=kalshi["promotions"].count)
             is_major = False
         elif kalshi and kalshi["fights"]:
@@ -1775,7 +1987,7 @@ async def list_card_concepts(
             label, is_major = card_label(cfg, main["name"], tuple(kalshi["titles"]))
             main_id = main["id"]
             main_event_commence[main_id] = main["commence"]
-            fight_count = len({f["group"] for f in kalshi["fights"]})
+            fight_count = count_distinct_bouts(kalshi["fights"])
             name = label or main["name"]
         else:
             # ONE main-event determination, shared with `_build_events_envelope`
@@ -1944,9 +2156,15 @@ class CombatEventAdapter:
         # note), so both build their spans through the one helper — including
         # its rule that a venue close time never widens a scheduled token.
         venue_times: dict[str, list] = {}
+        # #7959: the roster this card's rows name, for the venue fold below. Built
+        # over EVERY row that carries a token, with no outcome-count filter, so it
+        # is the same roster `list_card_concepts` folds on — a prop ("Will X win
+        # by KO?") simply does not parse as a bout and contributes nothing.
+        rosters: dict[str, list] = {}
         for m in markets:
             token = card_token(self.cfg, m.external_id)
             if token is not None:
+                rosters.setdefault(token, []).append(getattr(m, "name", None))
                 # A Kalshi row's `commence_time` is its CLOSE stamp, and only a
                 # two-sided row is a fight — the filter this branch has always had.
                 if len(m.outcomes or []) == 2:
@@ -1965,18 +2183,35 @@ class CombatEventAdapter:
             token = venue_card_token(self.cfg, getattr(m, "name", None), meta)
             if token is not None:
                 venue_times.setdefault(token, []).append(venue_fight_start(meta))
+                rosters.setdefault(token, []).append(getattr(m, "name", None))
 
-        survivor = fold_rollover_tokens(
-            card_span_by_token(
-                venue_times,
-                {
-                    token: [b.commence_time for b in group]
-                    for token, group in bouts_by_token.items()
-                },
+        # #7959: the venue join runs FIRST and on bout evidence, exactly as in
+        # `list_card_concepts` — the two must fold identically or the feed serves
+        # one card and the page behind it answers with half of it. Both dicts are
+        # re-keyed before the spans are taken, so the rollover fold asks its
+        # adjacency question of the unified card.
+        venue_survivor = fold_venue_scoped_tokens(rosters)
+        merged_times: dict[str, list] = {}
+        for token, times in venue_times.items():
+            merged_times.setdefault(venue_survivor.get(token, token), []).extend(times)
+        merged_bouts: dict[str, list] = {}
+        for token, group in bouts_by_token.items():
+            merged_bouts.setdefault(venue_survivor.get(token, token), []).extend(
+                b.commence_time for b in group
             )
-        )
-        root = survivor.get(target, target)
-        tokens = {t for t, s in survivor.items() if s == root}
+
+        rollover = fold_rollover_tokens(card_span_by_token(merged_times, merged_bouts))
+
+        def _root(token: str) -> str:
+            joined = venue_survivor.get(token, token)
+            return rollover.get(joined, joined)
+
+        root = _root(target)
+        tokens = {
+            t
+            for t in set(venue_survivor) | set(rollover) | set(bouts_by_token)
+            if _root(t) == root
+        }
         tokens.add(target)
         return tokens
 
