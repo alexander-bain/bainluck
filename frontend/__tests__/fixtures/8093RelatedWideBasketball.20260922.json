@@ -1,0 +1,1215 @@
+{
+ "items": [
+  {
+   "type": "futures",
+   "score": 59,
+   "reason": "Oklahoma City Thunder (22%) leads NBA: 2027 Champion",
+   "headline": "Oklahoma City Thunder leads at 22%",
+   "context_summary": "Oklahoma City Thunder leads at 22%",
+   "data": {
+    "id": 20569230,
+    "name": "NBA: 2027 Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-07-01T03:59:00+00:00",
+    "price_observed_at": "2026-09-22T18:50:26+00:00",
+    "top_outcomes": [
+     {
+      "id": 109193626,
+      "name": "Oklahoma City Thunder",
+      "probability": 0.215,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 22
+     },
+     {
+      "id": 109193627,
+      "name": "San Antonio Spurs",
+      "probability": 0.205,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 21
+     },
+     {
+      "id": 109193629,
+      "name": "New York Knicks",
+      "probability": 0.115,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 12
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": "basketball:NBA:championship:2026-27",
+    "group_id": "polymarket:478277",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Oklahoma City Thunder",
+       "probability": 0.215,
+       "movement": null
+      },
+      {
+       "label": "San Antonio Spurs",
+       "probability": 0.205,
+       "movement": null
+      },
+      {
+       "label": "New York Knicks",
+       "probability": 0.115,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia 76ers",
+       "probability": 0.1115,
+       "movement": null
+      },
+      {
+       "label": "Minnesota Timberwolves",
+       "probability": 0.0505,
+       "movement": null
+      },
+      {
+       "label": "Boston Celtics",
+       "probability": 0.045,
+       "movement": null
+      },
+      {
+       "label": "Miami Heat",
+       "probability": 0.0305,
+       "movement": null
+      },
+      {
+       "label": "Denver Nuggets",
+       "probability": 0.0305,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "sports",
+     "subtopic": "basketball",
+     "archetype": "other",
+     "audience_scope": "mainstream",
+     "salience_score": 4,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "market_tags": [
+     "category:championship",
+     "league:nba",
+     "market_status:open",
+     "source:polymarket",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "reason": "San Antonio Spurs (11%) lead NBA: 2026 NBA Cup Winner",
+   "headline": "San Antonio Spurs lead at 11%",
+   "context_summary": "San Antonio Spurs lead at 11%",
+   "data": {
+    "id": 59249431,
+    "name": "NBA: 2026 NBA Cup Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "price_observed_at": "2026-09-22T18:30:58+00:00",
+    "top_outcomes": [
+     {
+      "id": 220348445,
+      "name": "San Antonio Spurs",
+      "probability": 0.1105,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 11
+     },
+     {
+      "id": 220348444,
+      "name": "Oklahoma City Thunder",
+      "probability": 0.1025,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 10
+     },
+     {
+      "id": 220348446,
+      "name": "Philadelphia 76ers",
+      "probability": 0.0674,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 7
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": "basketball:NBA:championship:2025-26",
+    "group_id": "polymarket:877683",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "San Antonio Spurs",
+       "probability": 0.1105,
+       "movement": null
+      },
+      {
+       "label": "Oklahoma City Thunder",
+       "probability": 0.1025,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia 76ers",
+       "probability": 0.0674,
+       "movement": null
+      },
+      {
+       "label": "Detroit Pistons",
+       "probability": 0.0593,
+       "movement": null
+      },
+      {
+       "label": "Boston Celtics",
+       "probability": 0.0512,
+       "movement": null
+      },
+      {
+       "label": "New York Knicks",
+       "probability": 0.0485,
+       "movement": null
+      },
+      {
+       "label": "Toronto Raptors",
+       "probability": 0.0377,
+       "movement": null
+      },
+      {
+       "label": "Minnesota Timberwolves",
+       "probability": 0.0377,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/31036780/pexels-photo-31036780.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 627,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:nba",
+     "market_status:open",
+     "source:polymarket",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "reason": "Minnesota Lynx (49%) leads WNBA: 2026 Champion",
+   "headline": "Minnesota Lynx leads at 49%",
+   "context_summary": "Minnesota Lynx leads at 49%",
+   "data": {
+    "id": 9413479,
+    "name": "WNBA: 2026 Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-11-15T04:59:00+00:00",
+    "price_observed_at": "2026-09-22T21:50:21+00:00",
+    "top_outcomes": [
+     {
+      "id": 51753353,
+      "name": "Minnesota Lynx",
+      "probability": 0.485,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 49
+     },
+     {
+      "id": 51753360,
+      "name": "Golden State Valkyries",
+      "probability": 0.1175,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 12
+     },
+     {
+      "id": 51753355,
+      "name": "Las Vegas Aces",
+      "probability": 0.115,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 12
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 16,
+    "canonical_market_key": "basketball:WNBA:championship:2025-26",
+    "group_id": "polymarket:350828",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Minnesota Lynx",
+       "probability": 0.485,
+       "movement": null
+      },
+      {
+       "label": "Golden State Valkyries",
+       "probability": 0.1175,
+       "movement": null
+      },
+      {
+       "label": "Las Vegas Aces",
+       "probability": 0.115,
+       "movement": null
+      },
+      {
+       "label": "Atlanta Dream",
+       "probability": 0.105,
+       "movement": null
+      },
+      {
+       "label": "Indiana Fever",
+       "probability": 0.09,
+       "movement": null
+      },
+      {
+       "label": "New York Liberty",
+       "probability": 0.055,
+       "movement": null
+      },
+      {
+       "label": "Dallas Wings",
+       "probability": 0.0265,
+       "movement": null
+      },
+      {
+       "label": "Washington Mystics",
+       "probability": 0.018,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 8,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:wnba",
+     "market_status:open",
+     "source:polymarket",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 54,
+   "reason": "Oklahoma City Thunder is down 16.7 points since Feb 2 in NBA Championship Winner",
+   "headline": "Oklahoma City Thunder at 23%, down 16.7 points since Feb 2",
+   "context_summary": "Oklahoma City Thunder at 23%, down 16.7 points since Feb 2",
+   "data": {
+    "id": 2,
+    "name": "NBA Championship Winner",
+    "sport": "basketball_nba",
+    "sport_name": "NBA",
+    "llm_sport_category": "basketball",
+    "source": "odds_api",
+    "source_count": 2,
+    "sources": [
+     "odds_api",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": null,
+    "price_observed_at": "2026-09-22T20:30:02+00:00",
+    "top_outcomes": [
+     {
+      "id": 31,
+      "name": "Oklahoma City Thunder",
+      "probability": 0.232072,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 23
+     },
+     {
+      "id": 33,
+      "name": "San Antonio Spurs",
+      "probability": 0.228684,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 23
+     },
+     {
+      "id": 41,
+      "name": "Philadelphia 76ers",
+      "probability": 0.083246,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 8
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": "basketball:NBA:championship:",
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Oklahoma City Thunder",
+       "probability": 0.232072,
+       "movement": null
+      },
+      {
+       "label": "San Antonio Spurs",
+       "probability": 0.228684,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia 76ers",
+       "probability": 0.083246,
+       "movement": null
+      },
+      {
+       "label": "New York Knicks",
+       "probability": 0.080102,
+       "movement": null
+      },
+      {
+       "label": "Boston Celtics",
+       "probability": 0.051992,
+       "movement": null
+      },
+      {
+       "label": "Toronto Raptors",
+       "probability": 0.031157,
+       "movement": null
+      },
+      {
+       "label": "Minnesota Timberwolves",
+       "probability": 0.031041,
+       "movement": null
+      },
+      {
+       "label": "Denver Nuggets",
+       "probability": 0.030144,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/25561929/pexels-photo-25561929.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 467,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:nba",
+     "market_status:open",
+     "source:odds_api",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 53,
+   "reason": "Minnesota (46%) leads Women's Pro Basketball Champion",
+   "headline": "Minnesota leads at 46%",
+   "context_summary": "Minnesota leads at 46%",
+   "data": {
+    "id": 12046267,
+    "name": "Women's Pro Basketball Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-12-01T15:00:00+00:00",
+    "price_observed_at": "2026-09-22T21:50:42+00:00",
+    "top_outcomes": [
+     {
+      "id": 68804167,
+      "name": "Minnesota",
+      "probability": 0.455,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 46
+     },
+     {
+      "id": 68804166,
+      "name": "Atlanta",
+      "probability": 0.125,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 13
+     },
+     {
+      "id": 68804171,
+      "name": "Golden State",
+      "probability": 0.12,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 12
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 15,
+    "canonical_market_key": "basketball::championship:2028",
+    "group_id": "kalshi:KXWNBA-26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Minnesota",
+       "probability": 0.455,
+       "movement": null
+      },
+      {
+       "label": "Atlanta",
+       "probability": 0.125,
+       "movement": null
+      },
+      {
+       "label": "Golden State",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Las Vegas",
+       "probability": 0.12,
+       "movement": null
+      },
+      {
+       "label": "Indiana",
+       "probability": 0.075,
+       "movement": null
+      },
+      {
+       "label": "New York",
+       "probability": 0.055,
+       "movement": null
+      },
+      {
+       "label": "Washington",
+       "probability": 0.015,
+       "movement": null
+      },
+      {
+       "label": "Dallas",
+       "probability": 0.015,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 7,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/7005234/pexels-photo-7005234.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "sports",
+     "subtopic": "basketball",
+     "archetype": "other",
+     "audience_scope": "mainstream",
+     "salience_score": 3,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "South Carolina (24%) leads Women's 2027 College Basketball Champion",
+   "headline": "South Carolina leads at 24%",
+   "context_summary": "South Carolina leads at 24%",
+   "data": {
+    "id": 12337998,
+    "name": "Women's 2027 College Basketball Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-04-18T14:00:00+00:00",
+    "price_observed_at": "2026-09-22T19:52:53+00:00",
+    "top_outcomes": [
+     {
+      "id": 71083751,
+      "name": "South Carolina",
+      "probability": 0.2439,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 24
+     },
+     {
+      "id": 71083749,
+      "name": "UConn",
+      "probability": 0.204,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 20
+     },
+     {
+      "id": 71083757,
+      "name": "USC",
+      "probability": 0.1863,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 19
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 35,
+    "canonical_market_key": "basketball::championship:2027",
+    "group_id": "kalshi:KXWMARMAD-27",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "South Carolina",
+       "probability": 0.2439,
+       "movement": null
+      },
+      {
+       "label": "UConn",
+       "probability": 0.204,
+       "movement": null
+      },
+      {
+       "label": "USC",
+       "probability": 0.1863,
+       "movement": null
+      },
+      {
+       "label": "Texas",
+       "probability": 0.0665,
+       "movement": null
+      },
+      {
+       "label": "Michigan",
+       "probability": 0.0328,
+       "movement": null
+      },
+      {
+       "label": "UCLA",
+       "probability": 0.0328,
+       "movement": null
+      },
+      {
+       "label": "LSU",
+       "probability": 0.0284,
+       "movement": null
+      },
+      {
+       "label": "Duke",
+       "probability": 0.0284,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 27,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/30049751/pexels-photo-30049751.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 626,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "Cheryl Reeve (66%) leads Women's Pro Basketball Coach of the Year Winner",
+   "headline": "Cheryl Reeve leads at 66%",
+   "context_summary": "Cheryl Reeve leads at 66%",
+   "data": {
+    "id": 12573122,
+    "name": "Women's Pro Basketball Coach of the Year Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-12-31T15:00:00+00:00",
+    "price_observed_at": "2026-09-22T19:51:22+00:00",
+    "top_outcomes": [
+     {
+      "id": 73142838,
+      "name": "Cheryl Reeve",
+      "probability": 0.6559,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 66
+     },
+     {
+      "id": 73142831,
+      "name": "Natalie Nakase",
+      "probability": 0.1336,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 13
+     },
+     {
+      "id": 73142839,
+      "name": "Tie/Co-Winners",
+      "probability": 0.0405,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 4
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 16,
+    "canonical_market_key": "basketball::coy:2027",
+    "group_id": "kalshi:KXWNBACOY-26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Cheryl Reeve",
+       "probability": 0.6559,
+       "movement": null
+      },
+      {
+       "label": "Natalie Nakase",
+       "probability": 0.1336,
+       "movement": null
+      },
+      {
+       "label": "Tie/Co-Winners",
+       "probability": 0.0405,
+       "movement": null
+      },
+      {
+       "label": "Jose Fernandez",
+       "probability": 0.0243,
+       "movement": null
+      },
+      {
+       "label": "Sydney Johnson",
+       "probability": 0.0243,
+       "movement": null
+      },
+      {
+       "label": "Becky Hammon",
+       "probability": 0.0243,
+       "movement": null
+      },
+      {
+       "label": "Stephanie White",
+       "probability": 0.0243,
+       "movement": null
+      },
+      {
+       "label": "Rachid Meziane",
+       "probability": 0.0081,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 8,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/6766999/pexels-photo-6766999.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "Grand Canyon (28%) leads Men's Championship Game Qualifiers",
+   "headline": "Grand Canyon leads at 28%",
+   "context_summary": "Grand Canyon leads at 28%",
+   "data": {
+    "id": 13785914,
+    "name": "Men's Championship Game Qualifiers",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-04-18T14:00:00+00:00",
+    "price_observed_at": "2026-09-22T21:52:49+00:00",
+    "top_outcomes": [
+     {
+      "id": 84241017,
+      "name": "Grand Canyon",
+      "probability": 0.28,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 28
+     },
+     {
+      "id": 84240949,
+      "name": "Houston",
+      "probability": 0.22,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 22
+     },
+     {
+      "id": 84240951,
+      "name": "Texas Tech",
+      "probability": 0.2,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 20
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 112,
+    "canonical_market_key": "basketball::championship:2027",
+    "group_id": "kalshi:KXMARMADROUND-27T2",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Grand Canyon",
+       "probability": 0.28,
+       "movement": null
+      },
+      {
+       "label": "Houston",
+       "probability": 0.22,
+       "movement": null
+      },
+      {
+       "label": "Texas Tech",
+       "probability": 0.2,
+       "movement": null
+      },
+      {
+       "label": "Florida",
+       "probability": 0.195,
+       "movement": null
+      },
+      {
+       "label": "Kansas",
+       "probability": 0.19,
+       "movement": null
+      },
+      {
+       "label": "Miami (FL)",
+       "probability": 0.18,
+       "movement": null
+      },
+      {
+       "label": "Duke",
+       "probability": 0.18,
+       "movement": null
+      },
+      {
+       "label": "Virginia",
+       "probability": 0.17,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 104,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/20254633/pexels-photo-20254633.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 627,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "Florida (13%) leads Men's 2027 College Basketball Champion",
+   "headline": "Florida leads at 13%",
+   "context_summary": "Florida leads at 13%",
+   "data": {
+    "id": 9459614,
+    "name": "Men's 2027 College Basketball Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "basketball",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-04-13T14:00:00+00:00",
+    "price_observed_at": "2026-09-22T18:52:13+00:00",
+    "top_outcomes": [
+     {
+      "id": 52047494,
+      "name": "Florida",
+      "probability": 0.125,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 13
+     },
+     {
+      "id": 52047490,
+      "name": "Duke",
+      "probability": 0.115,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 12
+     },
+     {
+      "id": 52047504,
+      "name": "Illinois",
+      "probability": 0.058,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 6
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 73,
+    "canonical_market_key": "basketball::championship:2027",
+    "group_id": "kalshi:KXMARMAD-27",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Florida",
+       "probability": 0.125,
+       "movement": null
+      },
+      {
+       "label": "Duke",
+       "probability": 0.115,
+       "movement": null
+      },
+      {
+       "label": "Illinois",
+       "probability": 0.058,
+       "movement": null
+      },
+      {
+       "label": "UConn",
+       "probability": 0.0575,
+       "movement": null
+      },
+      {
+       "label": "Texas",
+       "probability": 0.0405,
+       "movement": null
+      },
+      {
+       "label": "Michigan St.",
+       "probability": 0.0395,
+       "movement": null
+      },
+      {
+       "label": "Houston",
+       "probability": 0.0315,
+       "movement": null
+      },
+      {
+       "label": "Arizona",
+       "probability": 0.0315,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 65,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/11211232/pexels-photo-11211232.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 508,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "market_status:open",
+     "source:kalshi",
+     "sport:basketball",
+     "tier:1"
+    ]
+   }
+  }
+ ],
+ "total": 24,
+ "limit": 9,
+ "offset": 0,
+ "has_more": true,
+ "edition": "8ccfdb96d8762aee",
+ "cache": {
+  "status": "miss",
+  "built_at": 1790115497.4252822,
+  "ttl_seconds": 60,
+  "stale_ttl_seconds": 300,
+  "live": false
+ }
+}
