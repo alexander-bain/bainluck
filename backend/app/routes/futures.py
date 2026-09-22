@@ -46,6 +46,7 @@ from app.utils.market_display_name import clean_market_display_name
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
+from app.utils.resolution_authority import CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 from app.utils.settlement_stamp import (
     last_charted_timestamp as _last_charted_timestamp,
     settled_point_timestamp,
@@ -112,7 +113,13 @@ def _norm_outcome_name(s) -> str:
 
 
 def _apply_settled_winner_freeze(
-    market, outcome_history, outcome_names, outcome_id_filter=None, champion_name=None
+    market,
+    outcome_history,
+    outcome_names,
+    outcome_id_filter=None,
+    champion_name=None,
+    *,
+    settle_ts=None,
 ):
     """Settled-means-settled evolution freeze (#1177, Queue #230/#232).
 
@@ -160,6 +167,13 @@ def _apply_settled_winner_freeze(
     ``app/utils/settlement_stamp.py`` holds the ladder that replaces it, the
     populations (8,773 markets on the clock arm, 593,549 unchanged) and the
     measurement that keeps ``settled_at`` OUT of first place.
+
+    ``settle_ts`` (#7927) lets the caller read that ladder ONCE for a chart that
+    has two freeze arms on it. It is not a convenience: the ladder's second
+    witness is the chart's last real point, so whichever arm ran second would
+    otherwise take the FIRST arm's synthesized point as its evidence — the
+    self-evidence trap ``last_charted_timestamp`` is annotated in red about.
+    Omit it and this function reads the ladder itself, exactly as before.
     """
     winners = [o for o in (market.outcomes or []) if getattr(o, "is_winner", False)]
     champs = []
@@ -206,16 +220,8 @@ def _apply_settled_winner_freeze(
         if not champs:
             return
 
-    now = datetime.now(timezone.utc)
-    # #6360: the last REAL point anywhere on this chart — the second witness in
-    # the ladder, read before the champion's own entry is touched so the
-    # synthesized point can never be its own evidence.
-    settle_ts, _settle_basis = settled_point_timestamp(
-        resolution_date=getattr(market, "resolution_date", None),
-        last_observed=_last_charted_timestamp(outcome_history),
-        settled_at=getattr(market, "settled_at", None),
-        now=now,
-    )
+    if settle_ts is None:
+        settle_ts = _settled_chart_stamp(market, outcome_history)
 
     for champ in champs:
         _freeze_one_winner_line(
@@ -225,6 +231,22 @@ def _apply_settled_winner_freeze(
             settle_ts,
             allow_synthesis=allow_synthesis,
         )
+
+
+def _settled_chart_stamp(market, outcome_history):
+    """When a synthesized settlement point on THIS chart is stamped (#6360).
+
+    One ladder, read once per chart, off the `outcome_history` as the series
+    builder left it. Both freeze arms take their stamp from here so a settled
+    board's winners and losers resolve at the SAME instant rather than a second
+    apart, and so neither arm's injected point can become the other's witness.
+    """
+    return settled_point_timestamp(
+        resolution_date=getattr(market, "resolution_date", None),
+        last_observed=_last_charted_timestamp(outcome_history),
+        settled_at=getattr(market, "settled_at", None),
+        now=datetime.now(timezone.utc),
+    )[0]
 
 
 def _co_winners_are_legitimate(market) -> bool:
@@ -292,6 +314,122 @@ def _freeze_one_winner_line(
             "eliminated": False,
             "eliminated_at": None,
         }
+
+
+def _apply_settled_loser_freeze(
+    market, outcome_history, settle_ts, outcome_id_filter=None
+):
+    """End an EVIDENCED graded loser's charted line at 0.0 (#7927).
+
+    The mirror of the winner freeze, and it exists for the same reason: "settled
+    means settled — charts show the completed journey". On
+    `BMW PGA Championship - Make the Cut`, Tommy Fleetwood and Jon Rahm both
+    MISSED the cut and both chart lines ended at **84%**, as the chart's final,
+    permanent word, while the same page's Final Results table printed the
+    opposite verdict beside it.
+
+    🔴 WHY A LOSS IS HARDER TO KEY THAN A WIN, AND WHAT THE KEY IS.
+    ``is_winner=True`` is self-evidencing: nothing writes it by accident. But
+    ``is_winner=False`` is also the COLUMN DEFAULT, so on its own it cannot tell
+    a graded NO from a row nobody ever graded — stamping 0.0 on the second would
+    publish "this did not happen" about a question still open. The discriminator
+    is ``resolution_source``, the field ``#4788``'s render rule already uses for
+    exactly this question (a row with ``resolution_source IS NULL`` prints no
+    verdict), and the SET is taken whole from
+    ``app/utils/resolution_authority.py`` rather than written out here.
+
+    ``CALIBRATION_TRUTH_ELIGIBLE_SOURCES`` is that set, and it is the right one
+    for a reason that is not its name. Its defining property — the one its own
+    module states — is *"the winner is established INDEPENDENTLY of the market's
+    own price"*, and that is precisely the property a permanent 0.0 on a price
+    chart needs. Reading the three exclusions it buys, in the order they would
+    have hurt:
+
+    * ``ungradeable_result`` is a RETRACTION, not a grade (CAL-P056/#1852): the
+      state of a leg whose stored loss the venue never actually declared. It
+      sits on ``is_winner=False`` rows priced at 0.995 — Alexander Zverev,
+      US Open champion, carried exactly that pair for hours (#6012). A
+      ``resolution_source IS NOT NULL`` key would have drawn the tournament
+      winner's line down to zero.
+    * ``settlement_sync`` and ``clean_resolution`` are price-derived: they set
+      ``is_winner = price >= 0.95``, so on a wide field EVERY other leg is a
+      "loser" by arithmetic on the very line being drawn. Grading a chart from
+      its own last point is circular, and it would fire on whole fields.
+    * the guess family (#754's poison class) asserts a loss with no cited
+      authority at all.
+
+    ``did_not_play`` and ``withdrew`` are excluded too, and that is a DECISION
+    rather than a side effect: a withdrawal is not a contest lost. The reader's
+    line should stop where the golfer stopped, not be carried to a zero that
+    claims he was beaten. (Both are tier-1 terminal sources, so the set above
+    already excludes them; the controls below pin it so a later widening of that
+    set cannot sweep them in silently.)
+
+    NO MARKET-LEVEL GATE, and that asymmetry with the winner arm is deliberate.
+    Two graded winners can be a CONTRADICTION, which is why that arm consults
+    ``mutually_exclusive``; a graded loss contradicts no sibling — every other
+    leg of a field may truthfully have lost. And like the winner arm it keys on
+    the grade, never on ``market.status``, so it still fires while a settled
+    Kalshi market is stuck ``status='open'`` (gotcha #33).
+
+    NEVER SYNTHESIZES. The winner arm may conjure a one-point line so a
+    market's champion is visible at all; there is no reader value in conjuring a
+    flat zero for a loser who was never drawn, and on this very market it would
+    inject 64 new series into a 74-line chart. Only an already-drawn line is
+    ended.
+
+    Read-side only (gotcha #21): appends a terminal CHART point and writes
+    nothing — not ``is_winner``, not a snapshot.
+    """
+    if settle_ts is None:
+        settle_ts = _settled_chart_stamp(market, outcome_history)
+    for outcome in market.outcomes or []:
+        if not _is_evidenced_loss(outcome):
+            continue
+        oid = getattr(outcome, "id", None)
+        if outcome_id_filter is not None and oid != outcome_id_filter:
+            continue
+        entry = outcome_history.get(oid)
+        if not entry or not entry.get("history"):
+            continue  # never synthesized — see the docstring
+        last = entry["history"][-1]
+        last_prob = last.get("probability")
+        # The charted source already converged to the loss; the line ends where
+        # it should and a second point would draw a flat tail nobody observed.
+        if last_prob is not None and last_prob <= 0.001:
+            continue
+        last_ts = None
+        try:
+            last_ts = datetime.fromisoformat(str(last.get("timestamp")))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            last_ts = None
+        term_ts = settle_ts
+        if last_ts is not None and term_ts <= last_ts:
+            term_ts = last_ts + timedelta(seconds=1)
+        entry["history"].append(
+            {
+                "timestamp": term_ts.isoformat(),
+                "probability": 0.0,
+                "american_odds": None,
+                "bookmaker": "settlement",
+            }
+        )
+
+
+def _is_evidenced_loss(outcome) -> bool:
+    """Is this outcome an EVIDENCED graded loser? (#7927 — see the caller.)
+
+    Strict ``is False`` on both halves, so this FAILS CLOSED. ``is_winner``
+    being ``None`` is UNKNOWN truth (the column is nullable on purpose) and a
+    ``MagicMock`` auto-attribute is a truthy Mock; both read as "not a graded
+    loss" and the freeze declines. An unclassified or absent
+    ``resolution_source`` declines for the same reason.
+    """
+    if getattr(outcome, "is_winner", None) is not False:
+        return False
+    return getattr(outcome, "resolution_source", None) in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 
 
 def _detect_round_boundaries_from_eliminations(outcome_histories, existing_boundaries):
@@ -6322,7 +6460,23 @@ async def get_futures_history(
     # detection (which reads real eliminations) so the injected terminal point
     # never perturbs boundary inference. Source-independent: fires on the
     # ``is_winner`` grade even while the winner market is stuck ``status='open'``.
-    _apply_settled_winner_freeze(market, outcome_history, outcome_names, outcome_id, champion)
+    #
+    # #7927 — BOTH ARMS, AND THE STAMP IS READ BEFORE EITHER OF THEM RUNS. The
+    # #6360 ladder's second witness is the chart's last real point, so an arm
+    # that read it after the other had appended would take a synthesized point
+    # as its evidence. Reading once here also means a settled board's winners
+    # and losers resolve at the same instant, not a second apart.
+    _settle_ts = _settled_chart_stamp(market, outcome_history)
+    _apply_settled_winner_freeze(
+        market, outcome_history, outcome_names, outcome_id, champion,
+        settle_ts=_settle_ts,
+    )
+    # And the mirror: a leg the grader says LOST ends at 0.0, not at the last
+    # price the field happened to be trading it at (two golfers who missed the
+    # BMW PGA cut had their lines end at 84%).
+    _apply_settled_loser_freeze(
+        market, outcome_history, _settle_ts, outcome_id_filter=outcome_id
+    )
 
     response: dict = {
         "market_id": market_id,
