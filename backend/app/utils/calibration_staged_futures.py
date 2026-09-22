@@ -100,7 +100,9 @@ from app.utils.calibration_phase_ledger import (
     MAIN_BUILD_TASK,
     REFUSE,
     RESUME,
+    STAGED_UNIT_MAX_CANCELLATIONS,
     STAGED_UNIT_MAX_REFINEMENT_BUCKETS,
+    STAGED_UNIT_SPLIT_AFTER,
     STAGED_UNIT_SPLIT_MAX_FACTOR,
     TERMINAL_PARTIAL,
     input_fingerprint,
@@ -2834,6 +2836,44 @@ def prune_unit_cancels(
     return replace(cursor, unit_cancels=kept)
 
 
+def bank_is_frozen(
+    cursor: StagedFuturesCursor | None, counts: Mapping[str, int]
+) -> bool:
+    """CAL-P1338 (#8073): is this generation in the closed loop, or merely young?
+
+    THE DISCRIMINATOR, and it is two clauses because one is not enough.
+
+    ``committed_units`` empty alone would also catch a build that is merely
+    YOUNG — two slow slots at the head and 126 healthy ones behind, which is
+    CAL-P1301's own specimen on its first beat — and re-aiming that build at its
+    struck slots spends the beat's two-cancellation budget on cuts instead of
+    banking the healthy tail. Measured: it banks 1 unit where deferral banks 6,
+    which is the livelock CAL-P1301 ended, reintroduced.
+
+    So the second clause asks how much evidence there is. One beat can strike at
+    most :data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_MAX_CANCELLATIONS`
+    slots, so MORE than that many struck slots with nothing banked means at least
+    two beats have now tried DIFFERENT slots and not one of them completed. That
+    is a statement about the PARTITION; two cancellations in a single beat is a
+    statement about two slots. Production's ring shows ten (``128:0``–``128:9``),
+    climbing by two a beat; a young build banks on its second beat and never
+    reaches three.
+
+    This is a named predicate rather than an expression inside
+    :func:`attempt_order` for the reason the other two refinement candidates in
+    this loop are — ``cancellation_is_conclusive`` and ``packing_split_factor``.
+    A test rig that measures one candidate has to be able to hold the others
+    down, and it can only hold down something it can name. ``staged_beat_loop``
+    carries a knob per candidate for exactly this; see that fixture's docstring
+    for why a per-call-site patch is not good enough.
+    """
+    return (
+        cursor is not None
+        and not cursor.committed_units
+        and len(counts) > STAGED_UNIT_MAX_CANCELLATIONS
+    )
+
+
 def attempt_order(
     chunks: Iterable[Any], cursor: StagedFuturesCursor
 ) -> tuple[Any, ...]:
@@ -2853,18 +2893,98 @@ def attempt_order(
 
     With no recorded cancellations this is the plan order unchanged, which is
     what every existing beat, test and cursor sees.
+
+    **CAL-P1338 (#8073): the deferral INVERTS while the bank is empty, because
+    its own premise is false there.** Deferring a struck slot is justified by
+    "spend the cancellation budget only once the work that can progress has
+    progressed" — and when this generation has banked NOTHING, no work has
+    progressed and none is going to. Ascending order then spreads one strike per
+    slot across the whole partition, and since
+    :data:`~app.utils.calibration_phase_ledger.STAGED_UNIT_SPLIT_AFTER` needs a
+    reproduction ON THE SAME SLOT, no slot reaches a second strike until every
+    slot holds a first: 128 slots at two cancellations a beat is 64 hourly beats
+    before the first refinement, and the refinement is the only thing that makes
+    a unit small enough to complete.
+
+    That wait is not a slow recovery, it is a closed loop, and production sat in
+    it: after the 12:36Z partition reset the ring shows slots ``128:0``–``128:9``
+    each holding exactly one strike, one pair per beat, ``no_unit_completed`` on
+    every beat and zero units banked for six consecutive beats. The other exit —
+    :func:`~app.utils.calibration_phase_ledger.cancellation_is_conclusive`'s
+    first-strike cut — is closed at the same time and for the same reason: it
+    returns False with no completed unit to outrun (ruling 075), so the regime
+    that needs it most is the one regime it declines in. Refinement needed a
+    completion; a completion needed refinement.
+
+    So while ``committed_units`` is empty, a slot carrying a strike is attempted
+    FIRST rather than last, and takes its second strike on the next beat instead
+    of the sixty-fourth. Three properties are deliberately kept:
+
+    * **The reproduction requirement is untouched.** Two cancellations of the
+      same slot still precede a cut; this changes only which beat the second one
+      lands on. ``STAGED_UNIT_SPLIT_AFTER`` is not weakened and no new slot is
+      cut on a single event.
+    * **A slot that cannot be cut is not hammered.** Once a slot reaches
+      ``STAGED_UNIT_SPLIT_AFTER`` it has had its chance — it either refined, or
+      :func:`refine_unit` refused it (``SPLIT_ATOMIC`` for a single ``vm_id``,
+      ``SPLIT_TOO_DEEP`` at the bucket ceiling) and re-attempting it forever
+      would livelock the build at zero exactly as surely as the wait does. Those
+      go to the BACK, behind the untried slots.
+    * **The healthy regime is byte-for-byte unchanged.** One banked unit makes
+      ``committed_units`` non-empty and restores ascending order, so the livelock
+      this function was written for — the two slowest slots at the head of a
+      plan that was banking 31 of 128 — keeps exactly the fix that ended it. The
+      two regimes are told apart by the one thing that distinguishes them: has
+      this generation banked anything at all.
+
+    This unblocks the loop rather than finishing the recovery: the first refined
+    slot's children are small enough to complete, and the first completion is
+    what re-arms ``cancellation_is_conclusive`` for every slot after it. Re-cutting
+    a whole partition that has proven it cannot complete a single unit is a
+    coarser question and is #8074, not this.
     """
     counts = cursor.unit_cancels if cursor else {}
-    return tuple(
-        sorted(
-            chunks,
-            key=lambda chunk: (
-                int(counts.get(slot_ref(chunk), 0)),
-                int(getattr(chunk, "buckets", 0) or 0),
-                int(getattr(chunk, "index", 0) or 0),
-            ),
+
+    def plan_key(chunk: Any) -> tuple[int, int]:
+        return (
+            int(getattr(chunk, "buckets", 0) or 0),
+            int(getattr(chunk, "index", 0) or 0),
         )
-    )
+
+    if not bank_is_frozen(cursor, counts):
+        return tuple(
+            sorted(
+                chunks,
+                key=lambda chunk: (int(counts.get(slot_ref(chunk), 0)), *plan_key(chunk)),
+            )
+        )
+
+    untried, struck, spent = [], [], []
+    for chunk in chunks:
+        seen = int(counts.get(slot_ref(chunk), 0))
+        if seen >= STAGED_UNIT_SPLIT_AFTER:
+            # Refined already, or refused by ``refine_unit`` and unrefinable —
+            # re-attempting it forever livelocks the build at zero exactly as
+            # surely as the wait does, so it goes behind everything.
+            spent.append(chunk)
+        elif seen:
+            struck.append(chunk)
+        else:
+            untried.append(chunk)
+
+    # Struck slots LEAD: each is one reproduction away from the cut that is the
+    # only thing able to make a unit small enough to finish, and in this regime
+    # an untried slot is not work that can progress — every one tried so far has
+    # cancelled.
+    struck.sort(key=plan_key)
+    # FINEST FIRST among the untried, so a refined slot's children — the only
+    # units in the plan made smaller, and so the only ones with a new chance of
+    # completing — are attempted before coarse slots that never have. With no
+    # refinement in force every chunk carries the same ``buckets`` and this is
+    # plan order.
+    untried.sort(key=lambda chunk: (-plan_key(chunk)[0], plan_key(chunk)[1]))
+    spent.sort(key=plan_key)
+    return (*struck, *untried, *spent)
 
 
 def is_complete(cursor: StagedFuturesCursor, chunks: Iterable[Any]) -> bool:
