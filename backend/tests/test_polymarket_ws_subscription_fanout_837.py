@@ -733,3 +733,114 @@ class TestCoverageIsCountedOnTheWire:
         assert stats["shards"] == len(_shard_asset_ids(assets))
         assert stats["assets_subscribed"] == len(assets)
         assert stats["shards_connected"] == stats["shards"]
+
+
+class TestTheCoverageNumberReachesAReader:
+    """#837 — the served count is EMITTED, not merely computed.
+
+    The fan-out counts, on the wire, how many distinct assets each shard was
+    actually served. Nothing read it: `assets_served` and `served_by_shard`
+    appeared in `PolymarketWebSocket.stats` and in no log line, no liveness
+    field and no endpoint, so across 236 KB of captured production logs the
+    number occurred zero times. A silently-served fraction was therefore still
+    unmeasurable from production — the exact condition #837 exists to end.
+
+    The sibling coverage WARNING does not close this: it fires only when a
+    shard serves LITERALLY ZERO while another streams. A shard served 3 assets
+    of 500 is the same defect, and is silent under that rule. Only the ratio
+    shows it, so the ratio is stated unconditionally.
+    """
+
+    def _blend(self):
+        return {"stamped": 1, "no_reading": 2, "throttled": 3, "errors": 0}
+
+    def _task_stats(self):
+        return {
+            "price_updates": 10,
+            "trade_updates": 4,
+            "resolutions": 0,
+            "errors": 0,
+        }
+
+    def test_the_served_ratio_is_in_the_line(self, caplog):
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        ws_stats = {
+            "messages": 99,
+            "shards": 8,
+            "shards_connected": 8,
+            "assets_subscribed": 3961,
+            "assets_served": 1204,
+        }
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), ws_stats, self._blend())
+
+        assert "served=1204/3961" in caplog.text
+        assert "shards=8/8" in caplog.text
+
+    def test_the_fraction_the_warning_cannot_see_is_visible_here(self, caplog):
+        """3 of 500 on a live shard: silent to `_coverage_loop`, loud here."""
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        ws_stats = {
+            "messages": 5,
+            "shards": 8,
+            "shards_connected": 8,
+            "assets_subscribed": 4000,
+            "assets_served": 3,
+        }
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), ws_stats, self._blend())
+
+        assert "served=3/4000" in caplog.text
+
+    def test_a_client_with_no_shards_prints_zero_rather_than_raising(self, caplog):
+        """The shadow consumer subscribes without shards and shares this line.
+
+        An exception in the stats loop kills the socket's only heartbeat, so
+        absent keys must degrade to 0.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), {}, self._blend())
+
+        assert "served=0/0" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_the_real_clients_numbers_are_what_gets_logged(
+        self, monkeypatch, caplog
+    ):
+        """Ties the two halves: the client's OWN stats, not a hand-built dict.
+
+        A test that only feeds a literal dict to the formatter would pass even
+        if the client stopped exposing the keys, which is half the defect.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        served_frames = [
+            json.dumps({"event_type": "best_bid_ask", "asset_id": a})
+            for a in _ids(1500)[:7]
+        ]
+
+        def connect(*args, **kwargs):
+            return _FakeSocket(served_frames, [])
+
+        monkeypatch.setattr("websockets.connect", connect, raising=False)
+
+        assets = _ids(1500)
+        ws = PolymarketWebSocket()
+        task = asyncio.create_task(ws.run(asset_ids=assets))
+        await asyncio.sleep(0.3)
+        stats = ws.stats
+        task.cancel()
+        with pytest.raises((asyncio.CancelledError, Exception)):
+            await task
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), stats, self._blend())
+
+        assert f"served={stats['assets_served']}/{len(assets)}" in caplog.text
+        assert stats["assets_served"] > 0, (
+            "the fake socket served assets, so the client must have counted them"
+        )
