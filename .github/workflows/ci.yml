@@ -3404,7 +3404,12 @@ jobs:
           # proof in the FIRST-READER ORDER PRODUCTION ACTUALLY RUNS: the phone
           # reads `/probability-timeline`, so it is the likelier door to take
           # the fallback, and the `/history` read after it reports `cache`.
-          EXPECTED = 52
+          # (B14b and B14c are one step and two tests, so that entry is 50 -> 52.)
+          # 53 with #7954's C4d: C4b's own fixture on a board whose squeeze has
+          # already been REFUSED (`field_complete=False`), where the bank C4b
+          # withholds is served raw. The two are a pair — C4b stays the control
+          # that the completeness rule is intact while the squeeze is running.
+          EXPECTED = 53
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/gmh-junit.xml").getroot()

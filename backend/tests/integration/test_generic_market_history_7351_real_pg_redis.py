@@ -518,7 +518,13 @@ async def _seed(markets: list[dict]):
                 s.add(m.FuturesOutcome(
                     id=o["id"], market_id=spec["id"], external_id=o["external_id"], name=o["name"],
                     current_probability=o["p"], opening_probability=o.get("open", o["p"]),
-                    rank=rank, is_winner=False, last_updated=FROZEN_NOW,
+                    rank=rank, is_winner=False,
+                    # #7954 — per-leg by default-preserving key, so a case can
+                    # seed the ONE shape `stale_observation_keys` withholds on
+                    # (a leg observed far behind its own board). Every existing
+                    # caller keeps the single shared stamp, which is what makes
+                    # their fields COMPLETE and their squeeze fire.
+                    last_updated=o.get("last_updated", FROZEN_NOW),
                 ))
                 await s.flush()
                 for captured_at, price in o.get("captures", []):
@@ -1713,6 +1719,70 @@ def test_C4b_an_exclusive_field_with_a_hole_at_the_venue_instant_is_refused(venu
     )
     assert all("provenance" not in p for e in hist["outcomes"] for p in e["history"])
     assert _timeline(FIELD_MARKET_ID)["venue_history"]["points_served"] == 11
+
+
+def _seed_field_with_a_withheld_leg(*, capture_scale: float = 1.0):
+    """C4b's exact market, with Dogwood observed nine days behind its own board.
+
+    That is the one shape `stale_observation_keys` withholds on, so the detail
+    page refuses Dogwood's price, `field_complete` goes False and #7103/#7747
+    REFUSE THE SQUEEZE for this chart. Nothing else moves: same ids, same
+    prices, same captures as `_seed_field`.
+    """
+    captured = [FROZEN_NOW - timedelta(hours=h) for h in (50, 26, 2)]
+    _arun(_seed([{
+        "id": FIELD_MARKET_ID, "source": "kalshi", "external_id": "KXFIELD-26",
+        "name": "Which tree wins?", "mutually_exclusive": True,
+        "outcomes": [{"id": oid, "external_id": f"KXFIELD-26-{sfx}", "name": name, "p": p,
+                      "last_updated": FROZEN_NOW - timedelta(days=9) if sfx == "D" else FROZEN_NOW,
+                      "captures": [(ts, round(p * capture_scale, 4)) for ts in captured]}
+                     for oid, sfx, name, p in FIELD],
+    }]))
+
+
+def test_C4d_a_board_this_chart_no_longer_squeezes_serves_the_bank_C4b_refuses(venue, broker):
+    """#7954 — C4b's bank, on a board whose squeeze has already been refused.
+
+    🔴 EVERY ARGUMENT C4/C4b MAKE IS CONDITIONED ON THE SQUEEZE FIRING. Once a
+    leg's price is withheld the chart prints the raw column (#7103/#7747), so
+    a raw venue point is already on the printed scale and the completeness test
+    is guarding an arithmetic the page is not doing. On production that made
+    the refusal STRUCTURAL rather than data-driven: `/futures/61308736` charts
+    10 legs whose bank can only ever hold 6, because the other 4 are exactly the
+    withheld ones — one rule removes the legs, the other demands them, and no
+    amount of venue data could satisfy both. 45 banked points sat under a
+    12-hour hole captioned "No numbers for 12 hours in this stretch".
+
+    The instants are NOT filtered per column here, and that is deliberate: with
+    the squeeze off there is no denominator to be whole, so Dogwood's missing
+    30h candle is simply a gap in Dogwood's line — the same thing a capture gap
+    already draws — and the other three keep their points.
+
+    The pairing is the proof. Identical fixture to C4b but for one stamp; C4b
+    stays RED-on-revert as the control that the squeeze's own rule is intact.
+    """
+    _seed_field_with_a_withheld_leg()
+    _field_venue_coherent(venue, omit=("D", 30))
+    _timeline(FIELD_MARKET_ID)
+    broker.run_enqueued()
+    hist = _history(FIELD_MARKET_ID)
+
+    assert hist["venue_history"]["state"] == "warm", (
+        "a board that no longer squeezes still refused its bank — the flag is "
+        "not reaching `_venue_scale_refusal` (#7954)"
+    )
+    assert not [r for r in hist["venue_history"].get("refusals", [])
+                if r.get("scope") == "reader"]
+    served = {e["name"]: {p["timestamp"]: p["probability"]
+                          for p in e["history"] if p.get("provenance") == "venue_history"}
+              for e in hist["outcomes"]}
+    for _oid, sfx, name, p in FIELD:
+        # Raw, unsqueezed, at the venue's own instant — the whole point.
+        assert served[name][_iso(_hours_ago(40))] == pytest.approx(p)
+        assert served[name][_iso(_hours_ago(12))] == pytest.approx(p)
+    # The hole is a hole in ONE line, not a refusal of the series.
+    assert _iso(_hours_ago(30)) not in served["Dogwood"]
+    assert served["Alder"][_iso(_hours_ago(30))] == pytest.approx(0.40)
 
 
 def test_C4c_an_exclusive_field_whose_venue_instants_carry_the_whole_field_is_served(venue, broker):
