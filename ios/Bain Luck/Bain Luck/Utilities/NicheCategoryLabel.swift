@@ -54,6 +54,13 @@ nonisolated func nicheCategoryLabel(_ raw: String) -> String {
     // shared vocabulary wins first; the chip-only names below fill the gaps.
     if let curated = leagueAcronyms[raw] ?? nicheLeagueNames[raw] { return curated }
 
+    // #7894 — before tokenizing, because the whole point is that there is no
+    // separator to tokenize on. Web consults its `SINGLE_WORD_COMPOUNDS` at
+    // exactly this point in `nicheCatLabel`, and the app's copy is shared with
+    // the search/badge labeller rather than local to this chip: the two
+    // surfaces printed the same wrong word for the same reason.
+    if let compound = singleWordCompounds[raw] { return compound }
+
     let tokens = raw.split(separator: "_").map(String.init).filter { !$0.isEmpty }
     guard !tokens.isEmpty else { return raw }
 
@@ -97,6 +104,15 @@ nonisolated func nicheCategoryLabel(_ raw: String) -> String {
 /// `aussierules` to the shared family map would fix the prefix and change every
 /// Discover badge and search row in the app for one calibration label, which is
 /// the trade #5780 already refused in the other direction.
+///
+/// #7894 amends the last sentence, and it is worth reading as a warning about
+/// the sentence rather than about the map. "It would change every search row"
+/// was written as a COST; measured, those rows were printing "Aussierules"
+/// themselves — the bare key is 162 production futures markets and a reader
+/// meets it on the search tab, not only on a parked accuracy chip. The fix is
+/// still not a family entry (that would drop `aussierules_afl`'s prefix, which
+/// the #7722 guard pins): it is `singleWordCompounds`, a whole-key spelling
+/// consulted by both labellers, so neither surface can spell it alone.
 private let nicheLeagueNames: [String: String] = [
     "icehockey_sweden_hockey_league": "SHL",
     "icehockey_sweden_allsvenskan": "Allsvenskan",

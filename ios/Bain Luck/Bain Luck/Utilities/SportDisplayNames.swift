@@ -39,6 +39,31 @@ let sportFamilyDisplayNames: [String: String] = [
     "rugbyleague": "Rugby", "rugbyunion": "Rugby", "esports": "Esports",
 ]
 
+/// Payload keys the upstream spells as ONE word, and the words they are.
+///
+/// #7894 — the Swift mirror of web's `SINGLE_WORD_COMPOUNDS`
+/// (`frontend/lib/calibrationCategories.ts`), consulted before anything
+/// tokenizes, because the whole point is that there is no separator to
+/// tokenize on. `aussierules` has no underscore, so the split is a no-op and
+/// the casing rule alone yields "Aussierules" — not a raw key and not
+/// lowercase, so it passes every rule either labeller enforces. That string is
+/// live on the SEARCH tab today: a "Brisbane Lions" search prints it on the
+/// Futures row directly under five event rows reading "AFL"
+/// (`artifacts/native-295/n295-search-brisbane-scrolled.png`, 2026-09-22;
+/// 162 `aussierules` futures markets in production, 1 `xgames`).
+///
+/// Deliberately its own map rather than entries in `sportFamilyDisplayNames`
+/// or the calibration page map: #7722's guard
+/// (`frontend/__tests__/ios/calibrationCategoryLabelParity7722.test.ts`) pins
+/// the absence of `aussierules` from BOTH, and for a real reason — a family
+/// entry would drop the prefix of `aussierules_afl` and a page-map entry would
+/// re-group the buckets the accuracy table counts. This map is a spelling
+/// opinion about a WHOLE key and reaches nothing else.
+let singleWordCompounds: [String: String] = [
+    "aussierules": "Aussie Rules",
+    "xgames": "X Games",
+]
+
 /// A sport key as a league label: "baseball_mlb" → "MLB".
 ///
 /// #5780 — the fallback used to be `key.components(separatedBy: "_").last?
@@ -84,6 +109,11 @@ func sportCategoryDisplayName(_ raw: String?) -> String {
     //    the one map (#5780): this used to call `sportDisplayName(for:)`, and a
     //    second copy of the same sixteen keys decided whether it did.
     if let acronym = leagueAcronyms[key] { return acronym }
+
+    // 2b. Keys the upstream spells as one word (#7894). Before the family test
+    //     and the title-caser below, both of which are token-shaped and can
+    //     therefore only ever hand back "Aussierules".
+    if let compound = singleWordCompounds[key] { return compound }
 
     // 3. Sport family (handles "_other" and bare sport families).
     let family = key.contains("_") ? String(key.split(separator: "_").first ?? "") : key
