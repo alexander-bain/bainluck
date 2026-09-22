@@ -386,11 +386,22 @@ def test_the_canary_split_never_grows_the_ledger_cohort():
     #   * the outcome-evidence class is still exactly its own size;
     #   * `canary` is the SUM of the declared classes, so a class cannot be added
     #     without also being declared in metadata.
-    diacritic_n = metadata.get("diacritic_probes", 0)
-    assert metadata["split_counts"] == {
-        "test": 46,
-        "canary": len(SPECIMENS) + diacritic_n,
-    }
+    #
+    # WIDENED for #1867 (LAT-P061), which added the MC3 and MC2 discrimination
+    # classes. The widening is deliberately toward the INVARIANT and away from
+    # the roster: the previous form named its sibling classes, so every valid
+    # new class failed this test and the fix was to come back and add a name.
+    # What actually matters is that `canary` is the SUM of the classes DECLARED
+    # in metadata — a class cannot then be added without being counted — and
+    # that `test` never moves. A future class adds its count to `declared_canary`
+    # and nothing else here changes.
+    declared_canary = (
+        len(SPECIMENS)
+        + metadata.get("diacritic_probes", 0)
+        + metadata.get("mc3_probes", 0)
+        + metadata.get("mc2_probes", 0)
+    )
+    assert metadata["split_counts"] == {"test": 46, "canary": declared_canary}
 
     test_split = [p for p in probes if p["isolation"]["split"] == "test"]
     canary = [p for p in probes if p["isolation"]["split"] == "canary"]
@@ -405,14 +416,12 @@ def test_the_canary_split_never_grows_the_ledger_cohort():
     ) == 44, "the 44-wide graded cohort changed size"
 
     families = {p["identity"]["gold_family"] for p in canary}
-    assert families <= {"outcome_evidence", "diacritic_folding"}, (
-        f"an undeclared probe class appeared in `canary`: {families}"
-    )
+    assert "outcome_evidence" in families
     outcome_canary = [
         p for p in canary if p["identity"]["gold_family"] == "outcome_evidence"
     ]
     assert len(outcome_canary) == len(SPECIMENS)
-    assert len(canary) == len(SPECIMENS) + diacritic_n
+    assert len(canary) == declared_canary
     assert all(p["lifecycle"]["difficulty"] == "discrimination" for p in canary)
     # No canary probe may leak into the `test` cohort's families either.
     assert not (families & {p["identity"]["gold_family"] for p in test_split})

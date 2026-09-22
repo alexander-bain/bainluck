@@ -639,8 +639,8 @@ is a queue item, not a footnote.
 |---|---|---|---|
 | **MC0** exact alias | a team's alias is withheld or restored | **YES** | `-42` (#1836) moved **+3**; five team probes turn on aliases the response strips |
 | **MC1** all tokens in own name | the name pool widens or narrows | **YES** | the majority of the 46 probes resolve here |
-| **MC2** last-token prefix | typeahead prefix behaviour | **partially** | no probe is *specifically* a prefix probe; the class is exercised only incidentally |
-| **MC3** partial tokens | coverage-threshold tuning | **NO probe isolates it** | untested class — the nearest is `full_question`, which conflates it with scaffolding-strip |
+| **MC2** last-token prefix | typeahead prefix behaviour | **YES** (#1867, 2026-09-22) | 3 `canary` probes; muting MC2 moves rank 1 on `masters champ` and `oscar pictu`. `manchester unite` is the LIMIT row — 4 of 7 candidates are MC2 and none of them decide |
+| **MC3** partial tokens | coverage-threshold tuning | **YES** (#1867, 2026-09-22) | 3 `canary` probes; `2027 the masters champion odds` moves at **both** edges around the shipped 0.5, `2027 champions league winner odds` at 0.75 by a different mechanism. `masters winner` is the LIMIT row |
 | **MC4** outcome-only | #1843's widening | **ONLY when the lift is unequal** | see below — this is the #1861 finding |
 | **MC5** fragment / fuzzy | the trigram floor | **indirectly** | graded only as the thing better classes must beat |
 | **UNRANKABLE** derived-only | #1846's provenance fix | **YES** | `us open`; projection **+1 → 39** registered pre-deploy |
@@ -663,14 +663,34 @@ measured against a frozen production capture in
 
 ### Consequences worth acting on
 
-1. **MC3 is genuinely ungraded.** Nothing in the set isolates partial-token
-   coverage, so `PARTIAL_MIN_COVERAGE` could be retuned in either direction and
-   every published number would be unchanged. That is the largest remaining
-   blind spot. **Filed as #1867** (LAT-P053) — a table cell reading "NO" is a
-   spec note, not a queue, which is why the filing was owed.
-2. **MC2 is graded only by accident.** Typeahead's defining behaviour — the user
-   is still typing — has no dedicated probe. **Also #1867.**
-3. **A null read is now interpretable.** Under ruling 056, "no movement" on a
+1. ~~**MC3 is genuinely ungraded.**~~ **CLOSED by #1867 (LAT-P061, 2026-09-22.)**
+   Three `canary` probes now isolate partial-token coverage. The sharp claim
+   that used to sit here — *`PARTIAL_MIN_COVERAGE` could be retuned in either
+   direction and every published number would be unchanged* — is no longer
+   true: `2027 the masters champion odds` changes its answer when the knob
+   crosses **0.333** (the tournament concept is admitted to MC3 and outranks the
+   market on `KIND_ORDER`) **and** when it crosses **0.667** (the market falls to
+   MC5 and loses the same way), so the shipped 0.5 is bracketed on both sides.
+2. ~~**MC2 is graded only by accident.**~~ **CLOSED by #1867.** Three `canary`
+   probes. MC2 has no knob, so the discrimination test is the class itself:
+   raise `PREFIX_MIN_LEN` above the specimen's last token and see whether the
+   served answer moves. It does, for `masters champ` and `oscar pictu`.
+3. **Both classes carry a LIMIT row, and they are not spare probes.** `masters
+   winner` cannot be moved by the MC3 knob at any of twenty swept values,
+   because an MC1 candidate owns the query and class order is inviolable.
+   `manchester unite` holds four MC2 candidates and grades none of them, because
+   MC1B is checked first. These encode what the classes **cannot** separate, so
+   a future null read can be attributed — which is the whole job of this table.
+4. **Two instrument facts the closing work measured, recorded because a probe
+   set built without them is wrong in a way that still passes.**
+   (a) The route scores `parse_intent(q).subject`, **not** the query — replaying
+   the raw query is a different computation, and it manufactures discriminators
+   that production does not have (`who wins the us open` is the worked example).
+   (b) `new ya` is **MC2, not MC1B**: `_query_prefixes_an_owned_name` folds the
+   whole string and `newya` does not prefix `newyorkyankees`. It is still a bad
+   MC2 probe, but for an unrelated reason — its set collapses uniformly when MC2
+   is muted, so it grades nothing.
+5. **A null read is now interpretable.** Under ruling 056, "no movement" on a
    class marked **NO** or **partially** above is a statement about the
    instrument. On a class marked **YES** it is a statement about the change.
    That distinction is the whole point of keeping this table.
@@ -683,6 +703,26 @@ denominator and silently make every prior read incomparable — a measurement
 defect committed while fixing one.
 `test_the_canary_split_never_grows_the_ledger_cohort` asserts the separation, so
 the ledger cannot be invalidated by a well-meant registry edit.
+
+The same applies to the MC3/MC2 classes: `canary` is now **14** probes across
+four families, `test` is still **46 graded 44-wide**, and the guard was widened
+toward the invariant rather than the roster — `canary` must equal the sum of the
+classes *declared in metadata*, so a class cannot be added without being
+counted. Its previous form named its sibling families, which made every valid
+new class a test failure whose only fix was to add a name.
+
+One judgment worth stating, because a guard refused the first draft of it.
+`validate_registry` rejects a `real_world_group_key` that spans splits, and the
+MC3/MC2 rows sit next to `test` probes on the same tournaments. The Red Sox MC2
+row was therefore **dropped, not renamed** — its expected answer was the exact
+entity the `test` probe `red sox` expects, and a fresh key would have been an
+evasion. The Masters rows kept a narrower key (the winner *markets*, not the
+tournament *concept*) only because the contamination was **measured absent**:
+`masters`, `oscars`, `best picture`, `red sox` and `us open` are each unmoved at
+all twenty swept values of `PARTIAL_MIN_COVERAGE`, since class order puts a
+fully-owned or single-token query out of the knob's reach.
+`test_the_neighbouring_test_probes_cannot_be_moved_by_this_knob` is that claim,
+and if it ever fails the keys must merge and the specimens must move.
 
 ---
 
