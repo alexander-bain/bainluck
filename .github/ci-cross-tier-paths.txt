@@ -114,3 +114,18 @@ frontend/lib/marketMapUtils.ts
 # resolves. Adding a league to this map is exactly the frontend-only edit the
 # classifier would otherwise send past the shard holding the parity test.
 frontend/lib/teamUrls.ts
+
+# #7985. `test_golf_team_match_play_has_no_individual_markets_7985.py` reads the
+# cup-renderer gate out of this component — `golfers.length === 2`, the
+# `const [teamA, teamB] = tournament.golfers` destructure, and the four tokens
+# `_isCupEvent` matches on. The Presidents Cup card has no individual field to
+# lead with (it is a 24-player team match-play event, and the five stroke-play
+# markets we minted for it are withheld), so the server PROMOTES Kalshi's
+# Team USA v Team World pair into `golfers` for the sole reason that this file
+# is what renders a two-side cup. Nothing else joins those halves. Narrowing the
+# gate to a different count, teaching it to read `h2h_matchups` instead, or
+# dropping a token from `_isCupEvent` is a frontend-only edit that would
+# otherwise be classified `frontend`, skip this shard, and silently return the
+# card to what CERT-3289 blocked: a bare title with two golfers under it that
+# nothing reads.
+frontend/components/TournamentCard.tsx
