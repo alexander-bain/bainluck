@@ -1049,6 +1049,211 @@ def play_resumes(status) -> bool:
     return status in RESUMABLE_STATUSES
 
 
+# ── RUNG 2: VENUE SETTLEMENT (#2591 / #7878, live/494) ───────────────────────
+#
+# ``EVENT-GRAPH-DOCTRINE`` §R declared this rung on 2026-09-02 and closed with
+# the sentence that is the whole reason this block exists:
+#
+#     "Rung 2 (venue settlement) is DECLARED here and not yet wired into either
+#      net."
+#
+# Nineteen days later it still was not, and the hole it leaves is the one a
+# reader sees. Rung 1 (the authority's status feed) does not cover ATP/WTA
+# challengers, Serie C, Ettan or CS2 — doctrine rule 8 names those as
+# venue-authority-of-last-resort — so nothing above rung 4 ever speaks about
+# them, and the only thing that can take the row off the live board is a wall
+# clock, which §R puts BELOW the lowest rung. Until that clock runs out — 3.0h
+# past the stored kickoff plus the arm's own 0.5h margin for a never-observed
+# tennis row, 6.0h for one something has reported on — the row keeps its LIVE
+# badge and, via ``_extend_win_prob_history_to_live_edge`` (#920), keeps growing
+# a synthesised flat line from the last real capture to *now*: the longer the
+# match has been over, the more confident the chart looks about it. And the
+# clock is measured from a kickoff these rows do not really have, so on the ones
+# whose stored start lands after the match it never runs out on time at all.
+#
+# MEASURED ON PRODUCTION 2026-09-21 22:0xZ, the slate that named it: **30**
+# ``status='live'`` events carried a ``resolved`` linked market; **25** carried
+# one this predicate accepts. Their venue settlements land 10 minutes to 3h18m
+# before the read — `15316478 Goffin vs Lajal` settled 17:50Z and was still
+# badged LIVE at 22:00Z, `15314994 Reveal vs. Pandaric` settled 17:19Z. Nine are
+# tennis, ten esports, six lower-league soccer. Not one carries an ``espn_id``.
+
+#: Our classifier's word for "this market decides who wins the contest".
+#: Spelled here rather than imported so the two modules cannot drift on the
+#: string; :func:`venue_settlement_ends_the_match` asserts the equality.
+FULL_CONTEST_WINNER_CLASS = "moneyline"
+
+#: A settled three-way contest answers with neither competitor. Same two tokens
+#: as ``market_shape._DRAW_TOKENS``; spelled here for the reason
+#: :data:`FULL_CONTEST_WINNER_CLASS` is, and asserted equal to that set by the
+#: suite so the two cannot drift into disagreeing about what a drawn match is.
+DRAWN_CONTEST_OUTCOMES = frozenset({"draw", "tie"})
+
+
+def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_name) -> bool:
+    """Does the settled leg answer with a PARTICIPANT, or a drawn contest?
+
+    🔴 THIS FUNCTION EXISTS BECAUSE THE SHIP WITHOUT IT SUSPENDED A LIVE MLB GAME,
+    and it was the author who found it, on production, before merge — CERT-3264's
+    own correction block records the miss in full.
+
+    :func:`classify_game_market_class` reads the market's NAME. That is enough to
+    refuse every derivative that announces itself there — ``… : Map 1`` lands
+    ``other``, ``… : Total Maps`` lands ``total``, ``… - Halftime Result`` lands
+    ``other``. It is not enough for a derivative published under a name
+    **identical to the bare matchup**, because then there is nothing in the name
+    to read. Measured on production 2026-09-22 00:1xZ: Kalshi market ``1028088``
+    is named exactly ``Washington Nationals vs. Detroit Tigers`` and settles
+    **NRFI** — no-run-first-inning. It classifies ``moneyline``, it is
+    ``resolved``, its winning leg is ``api_settlement``, and on the read it would
+    have ended event ``15316384`` — a Tigers/Nationals game then in the **Top of
+    the 7th at 9-0**, ESPN-anchored and still being scored. The venue publishes
+    the same question a second time, correctly named
+    (``Will there be a run scored in the first inning?: …``), and THAT one is
+    refused by the classifier. Only the bare-named twin gets through.
+
+    So the tell is not in the name; it is in the ANSWER. A market that decides
+    who wins a contest answers with one of the two competitors, or says the
+    contest was drawn. ``NRFI`` is neither, and neither is ``Over``, ``Yes``, a
+    scoreline or a player.
+
+    WHY NOT :func:`~app.utils.team_side.resolve_team_side`, which asks almost
+    exactly this. Because its containment is a PREFIX test, and it was replayed
+    over this arm's own served population before being rejected rather than
+    reasoned about: it refuses the MLB defect and **also refuses four of the
+    tennis rows this ship exists for** — the venue answers with a full name
+    (``Juan Cruz Martin Manzano``) where we store a surname (``Martin Manzano``),
+    which is a suffix, not a prefix. Widening that module was the other option
+    and is rejected too: its own docstring says its two readers
+    (``period_window_grade``, ``final_score_margin``) want the strict test
+    because both print a verdict under a club's name, so loosening it to rescue
+    this arm would move what those readers show. One arm's problem does not get
+    solved in a helper two other readers depend on.
+
+    The test here is WHOLE-TOKEN containment in either direction, normalised by
+    :func:`~app.utils.team_side.normalize_team_text` (shared, because it is a
+    pure normaliser and carries no policy):
+
+    * ``{martin, manzano} ⊆ {juan, cruz, martin, manzano}`` — the venue's fuller
+      name names our competitor. Accept.
+    * ``{detroit} ⊆ {detroit, tigers}`` — a short name for a long one. Accept.
+    * ``{nrfi}`` meets neither side in either direction. Refuse.
+
+    **Exactly one side may match**, which is :func:`resolve_team_side`'s
+    fail-safe kept rather than reinvented: ``"New York"`` on a Yankees/Mets
+    matchup names both sides and therefore names neither, and a row we cannot
+    orient is a row we do not end. Replayed over the 2026-09-22 00:3xZ slate this
+    keeps 8 of 9 genuine settlements (all four tennis, both esports, the soccer
+    winner and its draw) and loses exactly the NRFI row.
+
+    Failing CLOSED is the whole design. A settlement we decline costs the reader
+    nothing he is not already paying — the staleness arm reaches the row an hour
+    or two later, which is today's behaviour — while a settlement we accept
+    wrongly takes a game off the live board while it is being played.
+    """
+    from app.utils.team_side import normalize_team_text
+
+    answer = set(normalize_team_text(outcome_name).split())
+    if not answer:
+        return False
+    if answer <= DRAWN_CONTEST_OUTCOMES:
+        return True
+
+    sides_named = 0
+    for side_name in (home_team_name, away_team_name):
+        side = set(normalize_team_text(side_name).split())
+        if side and (side <= answer or answer <= side):
+            sides_named += 1
+    return sides_named == 1
+
+
+def venue_settlement_ends_the_match(
+    market_class, market_status, winner_resolution_source, outcome_names_a_competitor
+) -> bool:
+    """Has the venue PAID OUT on who wins this contest? (rung 2 of §R)
+
+    Four facts, and each one is load-bearing against a different way of being
+    wrong. Pure, so the net that spends it can be tested without a venue.
+
+    1. **The market decides the CONTEST, not a piece of it.** ``market_class``
+       comes from :func:`~app.utils.game_market_class.classify_game_market_class`
+       and must be exactly ``moneyline``.
+
+       🔴 THIS IS THE CONJUNCT THAT EARNS THE FUNCTION, and the production slate
+       proves it rather than the docstring asserting it. A tennis match carries
+       one settleable question, so "any resolved market" and "the winner market"
+       look like the same rule on the rows that motivated this. They are not the
+       same rule on the rows next to them: on 2026-09-21 `15315003` (Huskies
+       eSport vs. BIG Academy) settled ``Map 1`` at 19:14:45Z, ``Map 2`` at
+       20:06Z, ``Total Maps`` at 20:44Z and the match itself at **20:49:37Z**.
+       "Any resolved market" ends that match **1h35m early**, mid-play, with a
+       Final on screen while Map 2 is being played. `15315004` is 1h49m,
+       `15314994` 36m. Same class as #5432/#5311 — a derivative published as the
+       match result — and the same class ``content_understanding``'s
+       ``child_moneyline`` disagreement was written to catch at ingest.
+
+       The classifier's ordering does the work: team props, totals, spreads and
+       ticker-only tells are all taken BEFORE the bare-matchup winner catch, so
+       ``… : Map 1`` lands ``other`` and ``… : Total Maps`` lands ``total``.
+
+       ⚠️ AND IT ONLY REACHES DERIVATIVES THAT ANNOUNCE THEMSELVES IN THE NAME.
+       The paragraph above was written as though this conjunct were sufficient,
+       and it is not: a derivative published under a name IDENTICAL to the bare
+       matchup leaves the classifier nothing to read, and one of those ended a
+       live MLB game in review. That hole is conjunct 4's, not this one's.
+
+    2. **The venue closed the market.** ``resolved`` only. An ``open`` market
+       priced at 0.99 is a price, and §R rung 4 says a price may conclude
+       nothing — it is the same quote a venue will keep showing through a rain
+       delay and long after the players have left.
+
+    3. **Something with tier-3 authority wrote the winner.**
+       ``winner_resolution_source`` is the ``resolution_source`` of a leg
+       carrying ``is_winner IS TRUE``, and it must be
+       :func:`~app.utils.resolution_authority.is_authoritative` — the venue's own
+       settled result (``api_settlement``, the ``clob_*`` family,
+       ``datagolf_settlement``, ``settlement_sync``). All 33 graded legs on the
+       measured slate were ``api_settlement`` from ``kalshi``.
+
+       Tier 3 is the ONLY tier admitted here, and ruling 038 is why rather than
+       tidiness: no tier-3 member reads our own ``events`` columns, so this
+       predicate cannot end a match on a verdict we computed from the very row
+       we are about to overwrite. A tier-2 ``game_score`` grade is derived from
+       ``home_score``/``away_score``; admitting it would let a frozen mid-game
+       score settle the match it was frozen from, which is the CAL-P002 loop
+       live/048 removed from the net below.
+
+    4. **The settled leg answers with a PARTICIPANT.**
+       ``outcome_names_a_competitor`` is
+       :func:`winning_outcome_names_a_competitor` applied to the winning leg's
+       name and the event's two sides. It is passed in rather than computed here
+       so this function stays pure over scalars like its three siblings.
+
+       This is the conjunct conjunct 1 cannot cover, and it is here because the
+       ship without it suspended a live MLB game: Kalshi market ``1028088`` is
+       named exactly ``Washington Nationals vs. Detroit Tigers`` — so conjunct 1
+       reads ``moneyline`` — and settles **NRFI**. Conjuncts 2 and 3 pass it too:
+       the venue really did close it and really did grade it ``api_settlement``.
+       Every existing guard says yes, and the match was in the Top of the 7th.
+       A market that decides a contest answers with a competitor or with a draw;
+       ``NRFI`` is an answer to a different question wearing the match's name.
+
+    A ``None`` source (ungraded), a guess-family source and an unrecognised one
+    all answer False — :func:`~app.utils.resolution_authority.authority_tier`
+    fails safe to -1 for the unknown, so a source added without being classified
+    cannot end a match by being new.
+    """
+    from app.utils.resolution_authority import is_authoritative
+
+    if market_class != FULL_CONTEST_WINNER_CLASS:
+        return False
+    if market_status != "resolved":
+        return False
+    if not outcome_names_a_competitor:
+        return False
+    return is_authoritative(winner_resolution_source)
+
+
 # ── Which board day is the authority answering about? (#4652) ────────────────
 #
 #: ESPN files a fixture under the board day of its **Eastern** local start, and
@@ -1228,6 +1433,94 @@ LAST_POST_COMMENCE_SNAPSHOT_SQL = f"""
            AND (w.source IS NULL OR w.source NOT IN ({_VENUE_SOURCE_SQL_LIST}))
     ) x
     GROUP BY x.event_id
+"""
+
+
+# The candidate rows for :func:`venue_settlement_ends_the_match`, one per
+# (market, graded leg). The predicate is applied in Python because the
+# contest/derivative distinction is `classify_game_market_class`'s and that is a
+# recognizer, not a column — encoding a second copy of it in SQL is how the two
+# would come to disagree about `… : Map 1`.
+#
+# ``e.commence_time <= :now`` is NOT cosmetic and NOT the wall-clock gate this
+# rung is defined against. It fences off the ``FUTURE_SETTLED_STATUSES`` repair
+# three arms further down `_transition_event_statuses_impl`, which resets a
+# scoreless row in ANY of ``completed``/``closed``/``suspended`` — ``suspended``
+# was added to that set by #4114, so this arm's own write is in it — when the
+# row's kickoff is more than an hour in the FUTURE (#190). On this population
+# that is a live hazard rather than a hypothetical: these rows carry
+# `close_time`-as-`commence_time` provenance (gotcha #14), so their stored
+# kickoff routinely lands AFTER the venue's own settlement — `15315005` read
+# `commence_time 22:00Z` on 2026-09-21 against a market the venue settled at
+# 18:39Z. Without this line the two arms would trade such a row between
+# ``suspended`` and ``scheduled`` every sixty seconds.
+VENUE_SETTLED_GAME_MARKETS_SQL = """
+    SELECT e.id            AS event_id,
+           e.home_team_name AS home_team_name,
+           e.away_team_name AS away_team_name,
+           s.key           AS sport_key,
+           fm.name         AS market_name,
+           fm.external_id  AS market_external_id,
+           fm.status       AS market_status,
+           fo.name         AS winner_outcome_name,
+           fo.resolution_source AS winner_source
+      FROM events e
+      JOIN futures_markets fm ON fm.event_id = e.id
+      JOIN futures_outcomes fo ON fo.market_id = fm.id AND fo.is_winner IS TRUE
+      LEFT JOIN sports s ON s.id = e.sport_id
+     WHERE e.status = 'live'
+       AND e.commence_time <= :now
+       AND fm.status = 'resolved'
+"""
+
+
+# The write, as a compare-and-set rather than an ORM attribute assignment.
+# ``status = 'live'`` is repeated in the WHERE deliberately: the SELECT above
+# and this UPDATE are two statements, the net runs every 60 s, and the row in
+# between is one the authority may settle at any moment. A CAS makes "somebody
+# else got here first" a zero-rowcount no-op instead of a demotion of their
+# verdict. Core, not ORM, for the reason task code always is here (gotcha #4/#5)
+# — and because the subsequent staleness SELECT then cannot see these rows as
+# live, which is the same answer the explicit skip in that loop gives.
+#
+# ── IT WRITES THE SAME WORD THE STALENESS ARM DOES, AND THAT IS ARGUED ───────
+#
+# :data:`EVENT_SUSPENDED`, not ``closed``, even though rung 2 is entitled to
+# conclude more than silence is. The entitlement is not the question; what the
+# reader is served is, and that was MEASURED before choosing (production
+# 2026-09-21 22:4xZ, scoreless rows holding an ``api_settlement`` winner,
+# 7-day window):
+#
+#     suspended  1,757   ·   live  23   ·   scheduled  18   ·   closed  0
+#
+# `suspended` is where this whole population already lands an hour or two later,
+# by the staleness arm below, and the product renders it WELL: `suspended` is in
+# scope for `venue_settlement_is_askable`, so `/events/15316478` reads
+# **"Settled · Lajal wins"** off the venue's own grade. `closed` is explicitly
+# OUT of that scope ("the page calls it over and prints a Final"), and **zero**
+# rows in this population have ever been in it — so writing `closed` would put
+# 23 rows a day into a state nothing in the class has occupied, trading a named
+# winner for a bare Final on a row that carries no score to print.
+#
+# So the row keeps the word that describes OUR record — we hold no result of our
+# own — while the venue's grade beside it says who won. Both true, and the
+# reader meets the second one. Three more properties come free and all of them
+# are the conservative direction: nothing is graded or calibrated off a row with
+# NULL scores; `AUTHORITY_BACKFILL_STATUSES` still reaches it, so ESPN can fill
+# the result in later; and `play_resumes` still admits it, so the door back
+# stays open on a population whose stored kickoff we know to be unreliable.
+#
+# `completed_at` is deliberately absent from the SET for the same reason
+# `suspended` carries none anywhere else. See the arm in
+# `espn_sync._transition_event_statuses_impl`.
+#
+# No leading newline, unlike its neighbours: every fake session in the suite
+# dispatches a write with `sql.startswith("UPDATE")`, and an indented first line
+# reads to them as a SELECT they then answer positionally.
+SUSPEND_ON_VENUE_SETTLEMENT_SQL = f"""UPDATE events
+       SET status = '{EVENT_SUSPENDED}'
+     WHERE id = ANY(:event_ids)
+       AND status = 'live'
 """
 
 

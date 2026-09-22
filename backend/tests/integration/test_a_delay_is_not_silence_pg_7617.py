@@ -226,6 +226,12 @@ async def seeded():
             "events",
             "win_prob_snapshots",
             "futures_markets",
+            # live/494: the rung-2 arm (#2591) joins the graded legs, so the
+            # net cannot run without this one. The paragraph above said it
+            # would raise rather than pass quietly, and it did — in CI, on the
+            # first sha that added the join. Left as the record that the
+            # closure is a real dependency list and not a tidy-up.
+            "futures_outcomes",
         )
     ]
 

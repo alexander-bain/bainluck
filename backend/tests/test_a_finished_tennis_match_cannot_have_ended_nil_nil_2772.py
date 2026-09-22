@@ -349,6 +349,13 @@ class _Session:
         # value is re-observed onto the row it already wrote, so a reading
         # built from captured_at alone called a delayed game silent. A fake
         # that dispatches on the aggregate breaks every time it is corrected.
+        # live/494: the RUNG-2 candidate read, answered empty. Keyed on the
+        # alias the query selects, not on a position — this fake answers plain
+        # SELECTs by ORDER, so a new query that falls through to that queue does
+        # not fail, it silently hands one arm's rows to a different arm's
+        # question and every case below moves by one.
+        if "AS winner_source" in sql:
+            return SimpleNamespace(all=lambda: [])
         if "GROUP BY x.event_id" in sql:
             return SimpleNamespace(all=lambda: [])
         if sql.startswith("UPDATE"):

@@ -3930,6 +3930,127 @@ async def _transition_event_statuses_impl() -> dict:
             event.status = "live"
             stats["scheduled_to_live"] += 1
 
+        # --- live → suspended, ON THE VENUE'S WORD (rung 2 of §R) ---
+        #
+        # The rung `EVENT-GRAPH-DOCTRINE` §R declared on 2026-09-02 and left
+        # unwired. "Only an authority post or a venue settlement ends a match"
+        # is what the log line at the bottom of the next arm has been saying for
+        # nineteen days, and only the first half of it was ever true here.
+        #
+        # THE DIFFERENCE FROM THE ARM BELOW IS THE TRIGGER, NOT THE WRITE. This
+        # one has no clock. A settlement is a positive statement of record, so
+        # it needs no elapsed time to become evidence — and the rows it serves
+        # are exactly the ones a clock cannot reach in time, because their
+        # stored kickoff is a Kalshi `close_time` (gotcha #14) that lands AFTER
+        # the match. MEASURED, production 2026-09-21 22:40Z:
+        # `/events/15316500` (Manzano v Pieri) badged **LIVE with a 20-second
+        # refresh countdown**, hero **"No price"**, and a dead-flat 99% line
+        # drawn from 2:30 PM to **3:38 PM** — the read minute — on a match
+        # Kalshi settled at 1:40 PM. 67 minutes past a stored kickoff, against a
+        # 3.0h unobserved tennis bound: the staleness arm could not have touched
+        # it for another two hours, and #920's live edge grows the flat segment
+        # for every one of those minutes.
+        #
+        # WHAT IT DOES NOT DO, listed because each omission was a choice:
+        #
+        #   * It does not write `completed_at`. The venue settles a MARKET, and
+        #     a settlement clock is a market clock: on 20 of the 25 rows
+        #     measured that evening the settlement instant lands BEFORE our own
+        #     `commence_time`, so spending it as a game-end time would break the
+        #     `completed_at >= commence_time` invariant (gotcha #46) on most of
+        #     the population and hand the sentinel a matching-layer P1 that is
+        #     really a clock-provenance bug. NULL says what is true: the match
+        #     is over and nothing told us when.
+        #   * It does not grade the blend. That is the write CERT-752 removed
+        #     from the arm below, and its defect survives the change of
+        #     evidence: the grade was taken from `home_score`/`away_score`, and
+        #     these rows carry NULL scores, not results.
+        #   * It does not reach rows that are already `suspended`. 2,683 of them
+        #     carry a resolved market today; that is a repair over history with
+        #     its own blast radius, and this is a producer change — the same
+        #     line live/048 drew in the other direction.
+        #
+        # Why `suspended` rather than `closed`, measured rather than asserted:
+        # see `SUSPEND_ON_VENUE_SETTLEMENT_SQL`.
+        from sqlalchemy import text as _sql_text
+
+        from app.utils.event_completion import (
+            SUSPEND_ON_VENUE_SETTLEMENT_SQL,
+            VENUE_SETTLED_GAME_MARKETS_SQL,
+            venue_settlement_ends_the_match,
+            winning_outcome_names_a_competitor,
+        )
+        from app.utils.game_market_class import classify_game_market_class
+
+        stats["suspended_by_venue_settlement"] = 0
+        # Counted, not inferred from the difference: an event whose ONLY settled
+        # markets are derivatives is the near-miss this arm exists to refuse, so
+        # "we looked and declined" must be distinguishable from "we never
+        # looked" in the log (gotcha #53). It counts BOTH refusal shapes — the
+        # derivative conjunct 1 reads in the name, and the one only conjunct 4
+        # can see — so a rise here is the near-miss rate, not a fault. The
+        # 2026-09-21 22:0xZ slate read 5; re-measured 2026-09-22 00:3xZ after
+        # conjunct 4 landed it reads 1 of 9 candidate events (the NRFI row on
+        # 15316384), the population having churned between the two reads.
+        stats["held_derivative_settlement_only"] = 0
+        settled_event_ids: set[int] = set()
+
+        candidate_rows = (await session.execute(
+            _sql_text(VENUE_SETTLED_GAME_MARKETS_SQL), {"now": now}
+        )).all()
+        settling: dict = {}
+        looked_at: set = set()
+        for row in candidate_rows:
+            looked_at.add(row.event_id)
+            if venue_settlement_ends_the_match(
+                classify_game_market_class(
+                    row.market_name, row.market_external_id, row.sport_key
+                ),
+                row.market_status,
+                row.winner_source,
+                winning_outcome_names_a_competitor(
+                    row.winner_outcome_name, row.home_team_name, row.away_team_name
+                ),
+            ):
+                settling.setdefault(row.event_id, row)
+        stats["held_derivative_settlement_only"] = len(looked_at) - len(settling)
+
+        if settling:
+            settled_event_ids = set(settling)
+            result = await session.execute(
+                _sql_text(SUSPEND_ON_VENUE_SETTLEMENT_SQL),
+                {"event_ids": sorted(settled_event_ids)},
+            )
+            # The CAS's own rowcount, never `len(settling)`: the two differ by
+            # exactly the rows something with standing settled between the
+            # SELECT and the UPDATE, and that difference is the thing a reader
+            # of this counter would want to know about.
+            written = result.rowcount or 0
+            stats["suspended_by_venue_settlement"] = written
+            for row in settling.values():
+                # A RULING, not a receipt — the CAS may have matched fewer rows
+                # than this loop names, and the line below is where that is
+                # reported. A per-row "wrote it" that the write did not make
+                # true is the shape of log that sends a reader hunting.
+                logger.info(
+                    "live/494 ruled event %s (%s vs %s) off the live board on "
+                    "rung 2: the venue settled %r, its full-contest winner "
+                    "market, with a %s verdict. No completed_at (a settlement "
+                    "clock is a market clock, not a game-end time) and no "
+                    "blend grade (the scores are NULL, not a result); the "
+                    "venue's own grade is what the page prints.",
+                    row.event_id, row.home_team_name, row.away_team_name,
+                    row.market_name, row.winner_source,
+                )
+            if written != len(settling):
+                logger.info(
+                    "live/494 rung 2 ruled %d events off the live board and "
+                    "the compare-and-set wrote %d: the difference is rows "
+                    "something with standing settled between the read and the "
+                    "write, and their verdict stands.",
+                    len(settling), written,
+                )
+
         # --- live → suspended (fallback staleness) ---
         # For events that have been "live" longer than their sport's max
         # duration. This is a safety net; the primary mechanism is ESPN
@@ -4009,6 +4130,14 @@ async def _transition_event_statuses_impl() -> dict:
         stats["suspended_unobserved"] = 0
 
         for event in live_events:
+            # A row rung 2 already took off the board is not a stale live row.
+            # It lands in the same state, so double-handling it would not
+            # corrupt anything — it would MISCOUNT, attributing to a wall clock
+            # a transition a settlement made, and `live_to_suspended` is the
+            # number that says how often we are guessing (gotcha #5: a silent
+            # dependence on flush ordering is not a design).
+            if event.id in settled_event_ids:
+                continue
             sport_key = event.sport.key if event.sport else ""
             max_hours = SPORT_MAX_DURATIONS.get("default", 4.0)
             for prefix, duration in SPORT_MAX_DURATIONS.items():
