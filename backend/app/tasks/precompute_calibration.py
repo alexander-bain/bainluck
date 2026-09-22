@@ -5563,9 +5563,44 @@ STAGED_UNIT_WINDOW_SAFETY = 1.25
 
 
 def _unit_fits_in_window(
-    remaining_ms: int, worst_unit_ms: float, prior_unit_ms: float = 0.0
+    remaining_ms: int,
+    worst_unit_ms: float,
+    prior_unit_ms: float = 0.0,
+    *,
+    candidate_vms: int = 0,
+    worst_unit_vms: int = 0,
+    prior_unit_vms: float = 0.0,
 ) -> bool:
     """Whether another unit may be STARTED, not merely whether time remains.
+
+    **CAL-P1335 (#6868): the reference is rescaled to the CANDIDATE's size.**
+    Both references below are costs of some OTHER unit, and once
+    :func:`~app.utils.calibration_staged_futures.refine_unit` starts cutting
+    slots the plan stops being uniform — production carries 92 slots at
+    ``buckets=128`` beside 111 children cut 2x to 11x. Comparing a 1/11th-size
+    child against the cost of a whole 128-slot is a scale error, and it is the
+    one that stopped refinement paying: the build cuts a slot finer so more fit
+    in a window, then refuses the children on the strength of the parent. At
+    10:27Z on 2026-09-22 that was 1 unit banked per beat with 497,980 ms of
+    window left over and 94 unbanked children, none of which was asked its own
+    size.
+
+    The scale is the virtual-question count, because cost is essentially pure
+    ``scalable/B`` here — the two-point read at ``128:119`` / ``256:119``
+    (2026-09-19) puts the fixed per-unit prefix at **<= 14.2 s** against a
+    635 s child, and the constant above this function carries that measurement.
+    Halving the rows halves the time, so a candidate with half the questions is
+    expected to cost half as much, and that expectation is what the window has
+    to hold.
+
+    **Absent counts change nothing.** Every argument defaults to zero and a
+    reference with no size attached is used exactly as it is today, so a caller
+    that does not measure size gets the pre-CAL-P1335 predicate byte for byte.
+    "We cannot tell how big this unit is" must not read as "it is small".
+
+    **And the rescaling only ever WIDENS** — see the ``min`` below. This is a
+    pure widening of admission: every unit the size-blind fence admits is still
+    admitted, so nothing that runs today stops running.
 
     ``worst_unit_ms <= 0`` means this beat has not completed a unit yet.
     ``prior_unit_ms`` is CAL-P081's answer to that (#2052): the PREVIOUS beat's
@@ -5594,7 +5629,36 @@ def _unit_fits_in_window(
     """
     if remaining_ms <= 0:
         return False
-    reference = max(float(worst_unit_ms or 0.0), float(prior_unit_ms or 0.0))
+    worst = float(worst_unit_ms or 0.0)
+    prior = float(prior_unit_ms or 0.0)
+    if candidate_vms > 0:
+        # Rescaled INDEPENDENTLY, then maxed — the two references can describe
+        # units of different sizes, so converting each to its own per-question
+        # rate first is the only order that compares like with like. Maxing the
+        # raw millisecond figures and rescaling once would pick the bigger UNIT
+        # rather than the dearer QUESTION.
+        #
+        # ``min`` AND NOT THE PLAIN PRODUCT, and this clause is the one that
+        # keeps the change safe: **rescaling may only ever widen admission.**
+        # An above-average candidate rescales UP, and a unit refused at the
+        # START of a beat — when the window is the largest it will ever be —
+        # can never run at all: nothing later in the build makes it smaller,
+        # because the only thing that does (``refine_unit``) fires on a
+        # CANCELLATION, which needs the unit to have been admitted. So
+        # tightening does not defer a unit, it strands it, and the simulator in
+        # ``test_calibration_oversized_slot_is_cut_on_its_proof_6599`` says so
+        # out loud: the unclamped form banks every below-mean slot and then
+        # never publishes.
+        #
+        # Clamped, every unit today's fence admits is still admitted, the
+        # change is a pure widening, and the over-admission it can cause is the
+        # bounded one the build already recovers from (statement bound ->
+        # cancellation -> ``note_unit_cancelled`` -> ``refine_unit``).
+        if worst > 0 and worst_unit_vms > 0:
+            worst = min(worst, worst / worst_unit_vms * candidate_vms)
+        if prior > 0 and prior_unit_vms > 0:
+            prior = min(prior, prior / prior_unit_vms * candidate_vms)
+    reference = max(worst, prior)
     if reference <= 0:
         return True
     return remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY
@@ -5925,6 +5989,27 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         "staged:units_deferred",
         sum(1 for chunk in chunks if cursor.unit_cancels.get(slot_ref(chunk), 0)),
     )
+    # -- CAL-P1335 (#6868): the sizes the admission fence compares --------------
+    #
+    # ``prior_unit_ms`` is a MEAN over the units the previous beat completed, so
+    # the size it describes is the mean size of a planned unit. Taken from the
+    # CURRENT plan rather than a carried count, which is the conservative
+    # direction and not merely the convenient one: the plan only ever gets FINER
+    # (``refine_unit`` adds children, nothing merges them back), so this mean is
+    # <= the mean that was in force when the cost was measured, and dividing by
+    # the smaller number overstates the per-question rate. An error here refuses
+    # a unit that would have fitted; it never admits one that will not.
+    total_vms = sum(len(getattr(chunk, "vm_ids", ()) or ()) for chunk in chunks)
+    prior_unit_vms = (total_vms / len(chunks)) if chunks and total_vms else 0.0
+    # The size of the unit that set ``worst_unit_ms``, carried beside it for the
+    # same reason the cost is: a maximum with no size attached cannot be rescaled
+    # and silently keeps the old blind comparison.
+    worst_unit_vms = 0
+    # Units the fence passed over as too large for what is left of THIS window.
+    # Counted rather than logged per unit: the scan below can decline 90-odd
+    # candidates in a beat and a ledger row each would bury the beat's own story.
+    passed_over = 0
+    hit_deadline = False
     # D45(A): an EMPTY iterable, not a `break` inside the loop and not a `return`
     # above it. The loop body is untouched by this queue — every line of it still
     # runs, on the rebuild pass, exactly as it did — and Stage 3 below still gets
@@ -5934,22 +6019,47 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             done += 1
             continue
         remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
-        if not _unit_fits_in_window(remaining_ms, worst_unit_ms, prior_unit_ms):
+        if not _unit_fits_in_window(
+            remaining_ms,
+            worst_unit_ms,
+            prior_unit_ms,
+            candidate_vms=len(getattr(chunk, "vm_ids", ()) or ()),
+            worst_unit_vms=worst_unit_vms,
+            prior_unit_vms=prior_unit_vms,
+        ):
             # CAL-P038 (#1597): STOP BEFORE the window runs out, not after. The
             # two cases are recorded apart because they mean different things —
             # ``deadline`` is the window genuinely gone, ``unit_too_large`` is
             # time left that provably cannot hold a unit. An absent stage reads
             # as "fine" (gotcha #53), and this is the branch that decides whether
             # the beat ends honest or ends RED.
-            stop_reason = "deadline" if remaining_ms <= 0 else "unit_too_large"
-            runner.ledger.record_stage(f"staged:window_stop:{stop_reason}", 0)
-            runner.ledger.record_gauge("staged:window_left_ms", max(0, remaining_ms))
-            logger.info(
-                "calibration staged futures: out of window (%s) with %d/%d units "
-                "banked — %d ms left, worst unit %d ms",
-                stop_reason, done, len(chunks), max(0, remaining_ms), int(worst_unit_ms),
-            )
-            break
+            if remaining_ms <= 0:
+                hit_deadline = True
+                runner.ledger.record_stage("staged:window_stop:deadline", 0)
+                runner.ledger.record_gauge("staged:window_left_ms", 0)
+                logger.info(
+                    "calibration staged futures: out of window (deadline) with "
+                    "%d/%d units banked — worst unit %d ms",
+                    done, len(chunks), int(worst_unit_ms),
+                )
+                break
+            # CAL-P1335 (#6868): PASS OVER, do not break. ``unit_too_large`` is a
+            # statement about THIS candidate once the fence knows its size, and
+            # the plan is not uniform — the slots behind this one include children
+            # cut as fine as 1/11th. Breaking here threw the rest of the window
+            # away on the strength of the first slot the order happened to reach,
+            # which is how a beat ended with 497,980 ms unspent and 94 unbanked
+            # children it never asked about.
+            #
+            # The scan is bounded by the plan and costs no queries — every
+            # candidate it declines is declined by arithmetic on numbers already
+            # in hand. With no sizes to compare (the pre-CAL-P1335 case, and any
+            # beat before a slot is refined) every later candidate is measured
+            # against the same reference and declines identically, so the loop
+            # falls out of the bottom having banked exactly what a ``break``
+            # would have banked, and records the same stage below.
+            passed_over += 1
+            continue
         unit_started = time.monotonic()
         # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
         # previous unit's commit ended, so without this the next unit would run
@@ -6164,7 +6274,36 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         # worst is what the next unit might cost, and it is the next unit the
         # window has to hold. A mean-based bound admits exactly the above-average
         # unit that then gets cancelled.
-        worst_unit_ms = max(worst_unit_ms, unit_ms)
+        #
+        # CAL-P1335 (#6868): the SIZE moves with the cost, in one assignment, so
+        # the pair can never describe two different units. Recording the maximum
+        # here and the size somewhere else is how a rescaling fence ends up
+        # dividing one slot's milliseconds by another slot's question count.
+        if unit_ms >= worst_unit_ms:
+            worst_unit_ms = unit_ms
+            worst_unit_vms = len(getattr(chunk, "vm_ids", ()) or ())
+
+    # CAL-P1335 (#6868): the ``unit_too_large`` stop is recorded ONCE, here, and
+    # it now means what it always claimed to — the beat ended with window left
+    # that no REMAINING unit could fill, rather than window left that the first
+    # unit in the order could not fill. Recorded only when the scan actually
+    # declined something and the window did not run out, so the two stop reasons
+    # stay mutually exclusive and neither is ever absent when it applies (gotcha
+    # #53). ``staged:units_passed_over`` is the new number and the one that says
+    # whether rescaling is paying: it is the count of candidates this beat ruled
+    # too big for the time it had left.
+    if passed_over and not hit_deadline and not defer_rebuild:
+        remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
+        runner.ledger.record_stage("staged:window_stop:unit_too_large", 0)
+        runner.ledger.record_gauge("staged:window_left_ms", max(0, remaining_ms))
+        runner.ledger.record_gauge("staged:units_passed_over", passed_over)
+        logger.info(
+            "calibration staged futures: out of window (unit_too_large) with "
+            "%d/%d units banked — %d ms left, %d candidate(s) passed over, "
+            "worst unit %d ms across %d questions",
+            done, len(chunks), max(0, remaining_ms), passed_over,
+            int(worst_unit_ms), worst_unit_vms,
+        )
 
     if defer_rebuild:
         # NOT the projection. This pass ran no unit loop, so every input it takes
