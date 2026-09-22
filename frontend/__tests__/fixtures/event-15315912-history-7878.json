@@ -1,0 +1,1445 @@
+{
+ "_fixture_note": "REAL saved production payload: GET https://api.bainluck.com/api/events/15315912/history read 2026-09-22 ~16:13Z (Cascino/Feng v Costoulas/Gibson, tennis doubles, status suspended). #7878 web-half specimen: win_prob_history.kalshi has 199 points, an INTERIOR 73.6-min hole between 08:14:33Z and 09:28:12Z on 2026-09-21 (indices 79->80) with 118 points after it; next-largest in-game interval 4.0 min. time_domain.end is the read time, not an observation. Unmodified apart from this note.",
+ "event_id": 15315912,
+ "home_team": "Cascino / Feng",
+ "away_team": "Costoulas / Gibson",
+ "commence_time": "2026-09-21T06:00:00+00:00",
+ "completed_at": null,
+ "status": "suspended",
+ "time_domain": {
+  "start": "2026-09-20T08:42:34.689131+00:00",
+  "end": "2026-09-22T16:12:55.906583+00:00",
+  "is_live": false,
+  "min_window_seconds": 1800
+ },
+ "history": [],
+ "bookmaker_history": {},
+ "score_history": [],
+ "espn_history": [],
+ "win_prob_history": {
+  "kalshi": [
+   {
+    "timestamp": "2026-09-20T08:42:34.689131+00:00",
+    "home_probability": 0.435,
+    "away_probability": 0.565,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-20T13:28:58.874860+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T02:30:02.674486+00:00",
+    "home_probability": 0.445,
+    "away_probability": 0.555,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T02:46:41.115797+00:00",
+    "home_probability": 0.44,
+    "away_probability": 0.56,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T02:53:37.681041+00:00",
+    "home_probability": 0.445,
+    "away_probability": 0.555,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T03:00:02.655425+00:00",
+    "home_probability": 0.435,
+    "away_probability": 0.565,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T03:00:31.774681+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T03:57:56.549998+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T03:58:37.795128+00:00",
+    "home_probability": 0.355,
+    "away_probability": 0.645,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T04:00:03.523368+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T04:03:35.788337+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T04:26:35.995412+00:00",
+    "home_probability": 0.365,
+    "away_probability": 0.635,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T04:27:54.176023+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T04:33:54.678870+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:01:51.989679+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:03:52.163909+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:05:52.188184+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:07:52.829978+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:09:51.573052+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:11:52.339251+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:13:52.535945+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:15:53.023086+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:17:53.071998+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:19:53.592252+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:21:53.742365+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:23:53.539764+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:25:52.773387+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:27:52.721494+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:29:53.501902+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:31:53.948076+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:33:55.601668+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:35:54.197771+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:37:54.198114+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:39:53.590722+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:41:55.487360+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:43:55.935801+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:45:54.866363+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:47:16.488861+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:49:55.536772+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:51:55.551402+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:53:55.049994+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:55:55.821076+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:57:56.390782+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T06:59:54.922273+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:02:42.019281+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:04:40.227505+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:06:40.044008+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:08:40.588877+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:10:40.711235+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:12:40.212168+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:14:40.483670+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:16:40.764828+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:18:40.068112+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:20:40.306726+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:24:40.502812+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:26:39.985102+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:28:40.456980+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:30:40.330410+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:32:36.007280+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:34:35.894735+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:36:37.847753+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:38:37.674321+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:40:37.012036+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:42:36.978894+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:46:37.656659+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:48:37.627589+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:50:37.669902+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:52:37.855185+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:54:18.900718+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:56:37.008413+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T07:58:36.894365+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:00:43.041899+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:02:38.402920+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:04:33.082600+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:06:33.849109+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:08:33.559747+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:10:33.364324+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:11:18.483833+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:12:38.239099+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T08:14:33.775017+00:00",
+    "home_probability": 0.36,
+    "away_probability": 0.64,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:28:12.162071+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:28:38.391535+00:00",
+    "home_probability": 0.43,
+    "away_probability": 0.57,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:29:15.224676+00:00",
+    "home_probability": 0.435,
+    "away_probability": 0.565,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:30:17.420565+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:30:34.816222+00:00",
+    "home_probability": 0.43,
+    "away_probability": 0.57,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:30:45.059466+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:32:02.778067+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:32:31.129387+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:33:23.664336+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:34:17.844898+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:35:13.080462+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:35:37.252330+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:36:57.676329+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:37:49.363000+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:38:29.737738+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:39:08.906139+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:39:39.034117+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:40:50.774639+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:41:48.553410+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:42:27.356164+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:43:06.007857+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:44:01.965758+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:44:53.768562+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:45:19.991047+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:46:28.072704+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:46:38.961704+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:47:14.225218+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:48:21.277309+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:48:27.936373+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:49:17.889550+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:50:28.295022+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:50:35.896579+00:00",
+    "home_probability": 0.415,
+    "away_probability": 0.585,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:51:05.502822+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:51:41.691659+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:54:28.204990+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:56:27.948352+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T09:58:28.089173+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:00:37.137870+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:02:36.512944+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:04:36.287947+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:06:35.844595+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:08:27.920192+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:10:35.796201+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:12:36.212544+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:13:14.252814+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:14:35.942263+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:16:35.488018+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:17:12.411845+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:18:35.757969+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:20:36.630825+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:22:36.572526+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:23:28.569988+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:24:37.036617+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:26:36.132869+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:28:36.820984+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:30:35.926971+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:32:38.064535+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:34:34.110313+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:36:38.128959+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:38:37.498847+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:40:37.495365+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:42:36.922358+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:43:12.448235+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:46:24.092603+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:48:24.394014+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:50:24.351856+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:52:27.014512+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:52:51.808576+00:00",
+    "home_probability": 0.425,
+    "away_probability": 0.575,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:54:24.827445+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:56:26.108207+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T10:58:24.902142+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:00:24.934477+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:02:26.058859+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:04:25.635649+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:08:25.748278+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:10:28.801605+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:12:26.211090+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:13:13.383011+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:14:26.435524+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:16:26.203098+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:18:26.319097+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:20:26.345677+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:22:26.438437+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:24:26.204358+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:26:26.584922+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:28:27.025620+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:30:26.751420+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:32:26.602325+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:34:26.375235+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:36:24.891729+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:38:26.370868+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:40:24.687071+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:42:26.549158+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:43:14.504765+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:44:26.881256+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:46:26.293475+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:48:23.075745+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:50:25.268920+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:52:24.744147+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:54:26.866967+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:56:26.309057+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T11:58:26.206998+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:00:26.480671+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:02:31.571282+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:04:28.958572+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:06:28.934001+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:08:27.553946+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:10:29.654451+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:12:31.271143+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:13:14.553229+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:14:29.550402+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:16:32.714132+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:18:33.492167+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:20:33.386818+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:22:35.543349+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:24:34.302049+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:26:35.862381+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:28:34.036007+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   },
+   {
+    "timestamp": "2026-09-21T12:30:34.043537+00:00",
+    "home_probability": 0.42,
+    "away_probability": 0.58,
+    "draw_probability": null,
+    "game_state": null
+   }
+  ]
+ },
+ "win_prob_sources": {
+  "kalshi": {
+   "display_name": "Kalshi",
+   "type": "market",
+   "color": "#22c55e",
+   "dash_pattern": "8 4",
+   "description": "Win probability from Kalshi, a CFTC-regulated prediction market where real money is traded on event outcomes. Kalshi odds represent the consensus of market participants betting on game outcomes.",
+   "methodology": "The midpoint of the bid/ask spread for the 'Yes' contract on the game outcome market. Kalshi contracts settle at $1 if the event occurs and $0 otherwise, so the price directly represents the market's implied probability.",
+   "attribution_url": "https://kalshi.com",
+   "attribution_name": "Kalshi",
+   "snapshot_count": 199
+  }
+ },
+ "scoring_plays": [],
+ "moments": [],
+ "period_markers": [],
+ "aggregate_line": null,
+ "blend_edge_pinned": false,
+ "pre_window_omitted": false,
+ "pm_spread_data": {
+  "implied_spreads": {},
+  "implied_totals": {},
+  "projected_final": null
+ },
+ "points": 0,
+ "bookmaker_count": 0,
+ "snapshot_count": 0,
+ "espn_snapshot_count": 0,
+ "on_demand_backfill": null
+}

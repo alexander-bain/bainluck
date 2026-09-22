@@ -524,6 +524,22 @@ export interface WinProbHistoryPoint {
   away_probability: number | null;
   draw_probability?: number | null;
   game_state?: Record<string, unknown>;
+  /**
+   * #920 / #7878: the backend appends ONE synthetic point at "now" on a live
+   * game, carrying the source's last real value. It is a delivery time, not
+   * an observation — the chart must never read it as "the source reported
+   * this at that minute". Already on the wire; typed here so the consumer can
+   * tell it apart.
+   */
+  live_edge?: boolean;
+  /**
+   * #7878 producer contract (NOT served yet): the snapshot's `valid_until` —
+   * the last time the source was re-read and still quoted this value. When
+   * present, the interval up to it is observed by definition and the chart
+   * honours it before any cadence heuristic. `history` points already carry
+   * this field; `win_prob_history` points do not.
+   */
+  valid_until?: string | null;
 }
 
 export interface WinProbSourceMeta {
