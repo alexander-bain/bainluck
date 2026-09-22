@@ -378,6 +378,25 @@ class TestTheFrozenBuildRecoversInTheComposedLoop:
     it, the earlier refinement compounds instead of competing, and the build
     publishes 4 beats sooner at 16 slots and 13 sooner at 32. A cost measured in
     a rig missing one of production's three mechanisms is not production's cost.
+
+    **Read the ship on 128, not on 16.** Those two sizes are cheap, not
+    representative, and quoting them was how an earlier revision of this file
+    came to assert that 128 was hopeless — a guess about monotonicity that the
+    measurement below refutes. At production's own partition the inversion takes
+    publish from beat **230 to beat 167**, which is ~2.6 days of staleness off
+    the accuracy page. The 4-and-13 figures are the same effect seen through a
+    smaller plan; 63 is the one a reader should carry.
+
+    **Every number here is beats-to-publish in THIS rig, which is a relative
+    measure and not a production ETA.** The rig's population scales with the
+    plan (``_roster(buckets * VMS_PER_SLOT)``, every oversized slot a flat
+    ``OVERSIZED_SLOT_MS``), so a 128-slot run carries eight times the WORK of a
+    16-slot one rather than the same work cut finer. That is the right shape for
+    "N slots, each too big for the window", and it is what makes both-arms
+    comparisons at a fixed size sound — but it means no row here answers "how
+    many hours until production publishes". A claim of that kind needs a rig
+    that holds the corpus fixed while the granularity varies, which this one
+    cannot express.
     """
 
     @pytest.mark.asyncio
@@ -435,22 +454,100 @@ class TestTheFrozenBuildRecoversInTheComposedLoop:
         )
 
     @pytest.mark.asyncio
-    async def test_at_64_slots_neither_arm_publishes_and_the_cut_still_moves(
+    async def test_at_productions_own_128_slots_the_build_publishes_63_sooner(
         self, staged_beat_loop
     ):
-        """The honest edge, stated rather than left out of the parametrize.
+        """The claim at the ONE partition size production actually runs.
 
-        At 64 wholly oversized slots neither arm reaches a published census
-        inside 80 beats, so this ship does NOT claim to rescue every frozen
-        shape — what it claims is that the first refinement stops being a
-        function of the plan size, which is the thing that made 128 hopeless.
-        Production is at 128, above even this, and #8074 (re-cutting a partition
-        that has proven it cannot complete a unit) is the coarser half.
+        Sections above stop at 32 because they are cheap. That left the ship's
+        headline resting on sizes nobody runs, and an earlier revision of this
+        file went further and asserted the opposite of what is true here — it
+        read the 64-slot stall below, assumed beats-to-publish rises with the
+        plan, and wrote that 128 was "above even this" and hopeless. Measured,
+        it is not: **128 publishes in both arms**, and the inversion takes it
+        from beat 230 to beat 167.
+
+        Sixty-three hourly beats is ~2.6 days of staleness off the accuracy
+        page, at the size the ring showed after the 12:36Z partition reset. That
+        is the number this ship should be read on, and it is the reason the
+        monotonicity guess had to be replaced with a measurement rather than
+        argued about: the behaviour is NOT monotone in the plan size (see the
+        stall below, which sits at 64 and is gone again by 66).
+
+        The floor makes the result readable. A wholly oversized plan is
+        ``buckets`` slots of ``OVERSIZED_SLOT_MS`` against a window of
+        ``WINDOW_MS`` per beat, so no cutting strategy of any kind can publish
+        128 slots before ``ceil(128 * 1_400_000 / 1_350_000)`` = **133 beats**.
+        167 is 1.25x that floor; 230 is 1.73x. The inversion is not buying a
+        constant, it is buying back most of the distance to the arithmetic
+        limit — and a reader who finds 167 and calls it slow should compare it
+        against 133, not against zero.
+        """
+        deferred = await staged_beat_loop(
+            buckets=128,
+            oversized_slots=128,
+            max_beats=260,
+            withdrawn=True,
+            ring_readable=False,
+            empty_bank_inversion=False,
+        )
+        inverted = await staged_beat_loop(
+            buckets=128,
+            oversized_slots=128,
+            max_beats=260,
+            withdrawn=True,
+            ring_readable=False,
+            empty_bank_inversion=True,
+        )
+
+        assert (deferred.completed_at, inverted.completed_at) == (230, 167), (
+            "at production's 128 slots BOTH arms publish and the inversion is "
+            f"63 beats sooner — expected 230 then 167, got "
+            f"{deferred.completed_at} then {inverted.completed_at}. If the "
+            "first of these becomes None the plan stopped recovering at all; "
+            "that is a different defect from this one moving"
+        )
+        assert (deferred.first_split_beat, inverted.first_split_beat) == (65, 3), (
+            "and the first cut is what moves it: beat 65 is 128/2+1, beat 3 is "
+            f"not a function of 128 at all; got {deferred.first_split_beat} "
+            f"then {inverted.first_split_beat}"
+        )
+        assert inverted.completed_at < deferred.completed_at, (
+            "the direction is the claim at the only size production runs"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_64_slot_stall_is_in_BOTH_arms_so_it_is_not_this_ships(
+        self, staged_beat_loop
+    ):
+        """The honest gap — and the control proving this ship did not open it.
+
+        At 64 wholly oversized slots neither arm reaches a published census,
+        here inside 200 beats (3x its own 67-beat floor) and separately measured
+        to 1500. **Both arms**, which is the whole point of asserting it: the
+        stall is pre-existing, the deferral has it too, and this change neither
+        causes it nor rescues it. Without this control a later reader finding a
+        frozen 64-slot build would have CAL-P1338 as the obvious suspect.
+
+        It is also not "large plans are hard" — 56, 60, 62, 66, 80, 96, 112, 128
+        and 256 all publish at ~1.25x their floor with the inversion live. 64,
+        68 and 72 do not, in either arm. The measured mechanism is a SECOND
+        closed loop one level up from the one this ship opens: the packing sweep
+        only runs on a slot DECLINED for packing, and reaches plan scope only
+        when the reference came from a unit that beat actually ran. At 64 a
+        single unit banks on beat 5, the sweep never runs again
+        (``staged:unit_packing_scope`` absent on every later beat),
+        ``cancellation_is_conclusive`` has no completion to outrun, and the
+        refinement map freezes at five entries for 400+ beats. Two completions
+        are needed to widen the sweep and the regime produces one.
+
+        That is #8074 and it wants its own discriminator; it is recorded here
+        because the specimen is in hand, not because this ship addresses it.
         """
         deferred = await staged_beat_loop(
             buckets=64,
             oversized_slots=64,
-            max_beats=80,
+            max_beats=200,
             withdrawn=True,
             ring_readable=False,
             empty_bank_inversion=False,
@@ -458,20 +555,23 @@ class TestTheFrozenBuildRecoversInTheComposedLoop:
         inverted = await staged_beat_loop(
             buckets=64,
             oversized_slots=64,
-            max_beats=80,
+            max_beats=200,
             withdrawn=True,
             ring_readable=False,
             empty_bank_inversion=True,
         )
 
         assert deferred.completed_at is None and inverted.completed_at is None, (
-            "neither arm publishes at 64 in 80 beats — said plainly, because a "
-            "parametrize that stopped at 32 would have implied otherwise"
+            "the 64-slot stall must be present in BOTH arms — if the deferral "
+            "arm starts publishing here this control has stopped being a "
+            "control and the stall would read as this ship's regression; got "
+            f"{deferred.completed_at} then {inverted.completed_at}"
         )
         assert (deferred.first_split_beat, inverted.first_split_beat) == (33, 3), (
-            "and the wait is still what moves: beat 33 is 64/2+1, beat 3 is not "
-            "a function of 64 at all; got "
-            f"{deferred.first_split_beat} then {inverted.first_split_beat}"
+            "and the wait is still what moves, even where the build does not "
+            "go on to publish: beat 33 is 64/2+1, beat 3 is not a function of "
+            f"64 at all; got {deferred.first_split_beat} then "
+            f"{inverted.first_split_beat}"
         )
 
     @pytest.mark.asyncio
