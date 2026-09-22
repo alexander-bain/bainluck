@@ -43,6 +43,30 @@ therefore reads the market's full snapshot field for the charted timestamps —
 measured at 103 ms for the largest board in the table (market 3, NCAAB, 19,068
 rows over 168 h) — and slices the charted outcomes out of the result.
 
+#7103'S GATE TRAVELS WITH THEM, AND FOR ONE SESSION IT DID NOT (#7747). The
+detail serializer passes a THIRD argument these two steps need —
+``field_complete=prices_withheld == 0`` — because withholding a leg changes
+whether the squeeze FIRES, not merely what it divides by: once a leg's price is
+refused as UNKNOWN, the survivors' sum is no longer a proved distribution. This
+module ran the same two helpers without it, so on a board where the detail had
+refused a leg the hero printed RAW and the chart beneath it printed SQUEEZED.
+
+WHAT A READER SAW, AGAIN. `/futures/61308736` (*2027 US Open Men's Singles*)
+served Jannik Sinner at **0.315** in the hero and in his own All Outcomes row,
+and **0.203** in the Probability Trend directly below them, both stamped
+2026-09-22T03:50:54.864277Z — 32% over a line at 20%, one screen at 390px. The
+divisor was 1.555 and 0.740 of it was Jakub Mensik, the single leg the page had
+just declined to price (`yes_bid 0.0400` against `yes_ask 0.7400`, no 24-hour
+volume). So the refused leg was not merely still in the arithmetic: it WAS the
+arithmetic, pushing every honest line on the board down by a third.
+
+THE DETAIL ROUTE'S OWN #7103 COMMENT PREDICTED THIS AND DID NOT REACH IT. It
+says the hub "moves with it", because gating one surface and not the other
+"would divide the same board by two different numbers and manufacture exactly
+the detail-vs-hub disagreement #7016 closed" — and then enumerates the detail
+and the hub. The chart runs the same two steps through this module and was
+never in that enumeration.
+
 A MEASURED EQUIVALENCE, NOT AN ASSUMED ONE: reconstructed from production rows
 for market 7 at 2026-09-17T20:30:09Z, this returns Scheffler 0.130444 against
 the ``current_probability`` the live ingest path stored the same second,
@@ -63,6 +87,7 @@ def devigged_consensus_by_time(
     raw_by_time: Mapping[datetime, Mapping[str, Mapping[int, float]]],
     *,
     mutually_exclusive: bool = True,
+    field_complete: bool = True,
 ) -> dict[datetime, dict[int, float]]:
     """Return ``{captured_at: {outcome_id: probability}}`` on the PRINTED scale.
 
@@ -75,6 +100,13 @@ def devigged_consensus_by_time(
             the #23 squeeze. #199: a golf make-cut/top-N family is not a
             one-winner field and must not be squeezed — normalizing one squashed
             an honest 86% make-cut to ~1%.
+        field_complete: ``prices_withheld == 0`` on the board being charted,
+            forwarded to the #23 squeeze exactly as the detail serializer
+            forwards it. #7103's gate, which this module ran without until
+            #7747 — see the note above. PER BOARD, never per instant: the
+            squeeze is a change of SCALE, so applying it to some instants of
+            one line and not others renders as movement, which is the failure
+            this module exists to close.
 
     Returns:
         One entry per timestamp that produced a usable column. A timestamp whose
@@ -133,14 +165,20 @@ def devigged_consensus_by_time(
             continue
 
         # The #23 squeeze, run by the helper that owns its thresholds, over the
-        # whole field — the same list shape and the same argument the detail
-        # route passes. Carries `_key` because the helper may SHORTEN the list
-        # in place (#1201 strips a run of exact-0.5 untraded midpoints), so
-        # position cannot be trusted to survive the call.
+        # whole field — the same list shape and now ALL of the arguments the
+        # detail route passes (#7747: the missing one was `field_complete`, and
+        # this comment claimed a parity it did not have). Carries `_key` because
+        # the helper may SHORTEN the list in place (#1201 strips a run of
+        # exact-0.5 untraded midpoints), so position cannot be trusted to
+        # survive the call.
         entries = [
             {"_key": key, "probability": value} for key, value in consensus.items()
         ]
-        normalize_display_probs(entries, mutually_exclusive=mutually_exclusive)
+        normalize_display_probs(
+            entries,
+            mutually_exclusive=mutually_exclusive,
+            field_complete=field_complete,
+        )
 
         point = {entry["_key"]: entry["probability"] for entry in entries}
         if point:
