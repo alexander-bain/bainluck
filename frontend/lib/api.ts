@@ -382,12 +382,14 @@ export async function fetchEvents(params?: {
   sport?: string;
   status?: string;
   days?: number;
+  past_days?: number;
 }): Promise<EventsResponse> {
   const searchParams = new URLSearchParams();
 
   if (params?.sport) searchParams.set("sport", params.sport);
   if (params?.status) searchParams.set("status", params.status);
   if (params?.days) searchParams.set("days", params.days.toString());
+  if (params?.past_days !== undefined) searchParams.set("past_days", params.past_days.toString());
 
   const query = searchParams.toString();
   return apiFetch<EventsResponse>(`/api/events${query ? `?${query}` : ""}`);
