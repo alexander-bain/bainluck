@@ -196,6 +196,134 @@ DRAW_SENTENCE = "Draw"
 #: sized to the shape that actually occurs rather than to the grammar.
 _OUTCOME_IS_A_MATCHUP_RE = re.compile(r"\S\s+(?:vs\.?|v\.|@)\s+\S", re.IGNORECASE)
 
+#: The THIRD draw spelling: the verdict word with the matchup in parentheses,
+#: ``Draw (CD Tolima vs. América de Cali)``. :data:`DRAW_OUTCOME_NAMES` is
+#: normalised-exact, so this name is not a draw to it; and it then reaches
+#: :func:`_names_a_participant`, where the parenthetical trips
+#: :data:`_OUTCOME_IS_A_MATCHUP_RE` and is refused a second time. Two correct
+#: refusals compose into a page that is told nothing.
+#:
+#: MEASURED, production 2026-09-22, on the READERS' filter — every positive
+#: ``api_settlement`` grade (:func:`~app.utils.venue_settlement_reader.venue_grade_filters`)
+#: on the 1,784 scoreless ``suspended`` events with a kickoff in the last 7 days
+#: (8,003 legs):
+#:
+#:     ====================================  =====  =======================
+#:     graded outcome                        legs   verdict
+#:     ====================================  =====  =======================
+#:     bare ``Draw`` / ``Tie``, moneyline      83   already admitted
+#:     bare ``Draw`` / ``Tie``, derivative     19   refused (not full-scope)
+#:     ``Tie 1st Half``                        10   refused (not full-scope)
+#:     ``Draw (<matchup>)``                     9   THIS — 3 events gained
+#:     ``Reg Time: Tie``                        5   refused, see below
+#:     ``Decision / Draw / No Contest``         1   refused (not full-scope)
+#:     ====================================  =====  =======================
+#:
+#: All 9 sit on a market :func:`~app.utils.game_market_class.classify_game_market_class`
+#: calls ``moneyline``, **every parenthetical is a matchup**, and all 9 name
+#: their own event's two sides. 3 events rather than 9 because the other six are
+#: already answered by :func:`choose_settled_score`, which runs first.
+#:
+#: 🔴 SIZE THIS ON THE CONSUMER'S QUERY, NOT THE PRODUCER'S. The same scan
+#: without the ``resolution_source`` filter finds **77** legs of this shape and
+#: 47 events — because **68 of them are stamped ``clean_resolution``**, which
+#: ``backfill_winners`` derives from the market's own price
+#: (``is_winner = current_probability >= 0.95``). No reader can see those, and
+#: none should: settling from a price is the trap #7186's body names. The first
+#: sizing of this change used the producer-side filter and read 16× high.
+#:
+#: 🔴 ``Reg Time: Tie`` IS NOT THIS SHAPE AND MUST NOT JOIN IT. A regulation-time
+#: tie is a statement about 90 minutes, not about the match: the same fixture can
+#: be graded ``Reg Time: Tie`` and still have a winner after extra time or
+#: penalties. Publishing it as "Draw" would print a result the venue did not
+#: give. It stays refused, and it is listed here so the next reader knows the
+#: omission was chosen.
+#:
+#: 🔴 BOTH ANCHORS ARE LOAD-BEARING AND A MUTATION SWEEP IS WHAT ESTABLISHED
+#: THAT, because the first draft of this comment credited the wrong one.
+#: Polymarket cuts outcome names at 60 characters (the specimen in
+#: :data:`_OUTCOME_IS_A_MATCHUP_RE`), and there are two cuts, not one. A cut that
+#: lands INSIDE a team name is refused by the identity check in
+#: :func:`_names_a_draw` — that was the example this comment used, and relaxing
+#: ``\)`` to ``\)?`` does not change its answer. A cut that ate ONLY the closing
+#: parenthesis leaves both sides readable, passes the identity check, and is
+#: refused by the ``\)\s*$`` anchor alone. Refusing it is the conservative
+#: reading: a name we can see was cut is a name whose unseen tail we cannot
+#: vouch for, and the tail is where a qualifier would live.
+#:
+#: The LEADING ``^`` is load-bearing for the same reason in the other direction.
+#: ``Reg Time: Tie (A vs. B)`` and ``Tie 1st Half (A vs. B)`` would otherwise
+#: read as match draws AND pass the identity check, because the qualifier sits
+#: outside the parenthetical the check reads. 0 such legs today; the anchor is
+#: what keeps it that way when a venue writes one.
+_DRAW_WITH_MATCHUP_RE = re.compile(
+    r"^\s*(?:draw|tie)\s*\((?P<matchup>.+)\)\s*$", re.IGNORECASE
+)
+
+
+def _names_a_draw(
+    outcome_name: Optional[str],
+    home_team_name: Optional[str],
+    away_team_name: Optional[str],
+) -> bool:
+    """Did the venue grade THIS match a draw?
+
+    The bare spellings (:data:`DRAW_OUTCOME_NAMES`) and the parenthesised one
+    (:data:`_DRAW_WITH_MATCHUP_RE`), behind one name, because
+    :func:`choose_settled_winner` asks the question once and the answer is one
+    verdict either way.
+
+    🔴 THE PARENTHESISED FORM CARRIES AN IDENTITY CHECK AND THE BARE FORM
+    CANNOT, WHICH IS THE WHOLE REASON THE TWO ARMS DIFFER. Every other sentence
+    this module publishes is oriented by naming one of the two sides — that is
+    what :func:`_names_a_participant` does, and its match against our own row is
+    an identity check it gets for free. A draw names no side, so the bare form
+    has nothing to check and is admitted on the market's linkage alone. The
+    parenthesised form states which fixture the verdict is about, so it is
+    checked against the row we are about to print it on. Asking less of the more
+    informative string would be the wrong way round.
+
+    The test is :func:`~app.utils.prediction_market_matching._fuzzy_team_match`,
+    the same primitive :func:`_names_a_participant` orients with (#1951: one
+    containment rule, never a second copy written here). BOTH sides must be
+    present: one side is satisfied by a mis-linked derby, and the parenthetical
+    always carries both when it is this event's own.
+
+    🔴 IT IS INERT ON TODAY'S DATA — 77 of 77 pass, including the one row whose
+    spellings disagree (``Varazdin``/``Osijek`` against
+    ``NK Varaždin vs. NK Osijek``, admitted because the primitive folds
+    diacritics and club prefixes). It is kept anyway, and the distinction from
+    the ``completed_at`` gate that :func:`venue_settlement_is_askable` forbids
+    re-adding is real: that one could only ever refuse rows that were fine,
+    while this one refuses a specific wrong thing — a draw verdict attached to
+    a different fixture, which is the standing twin/ghost-attachment failure
+    class (#7186, #2693). An identity precondition before a frozen row acquires
+    a result is what #5881 (``a7ced42bc``) established as the bar and what
+    #7186's acceptance 2 asks for by name. ``TestADrawFromAnotherFixtureIsRefused``
+    is what stops it becoming a guard nobody can convict.
+    """
+    name = (outcome_name or "").strip()
+    if _normalise_segment(name) in DRAW_OUTCOME_NAMES:
+        return True
+    matched = _DRAW_WITH_MATCHUP_RE.match(name)
+    if matched is None:
+        return False
+
+    from app.utils.prediction_market_matching import _fuzzy_team_match
+
+    matchup = matched.group("matchup")
+    # No explicit empty-side refusal: `_fuzzy_team_match` answers False for a
+    # blank side, so a row missing a team name fails the AND on its own. A
+    # `if not home or not away` line here reads like a guard, survives every
+    # mutation because nothing can reach past it, and is the shape
+    # `venue_settlement_is_askable` forbids re-adding. The behaviour is pinned
+    # by `test_a_row_missing_a_side_name_cannot_be_checked_and_is_refused`,
+    # which convicts the PRIMITIVE if it ever starts admitting a blank.
+    return bool(
+        _fuzzy_team_match(matchup, (home_team_name or "").strip())
+        and _fuzzy_team_match(matchup, (away_team_name or "").strip())
+    )
+
 
 def _names_a_participant(
     outcome_name: Optional[str],
@@ -308,7 +436,9 @@ def choose_settled_winner(
     say so.
 
     🔴 A GRADED DRAW IS THE THIRD VERDICT, AND IT COMPETES IN THE SAME
-    DISAGREEMENT TEST (:data:`DRAW_OUTCOME_NAMES`). The set now holds SENTENCES
+    DISAGREEMENT TEST (:func:`_names_a_draw`, which holds both the bare
+    :data:`DRAW_OUTCOME_NAMES` spellings and the parenthesised
+    ``Draw (<matchup>)`` one). The set now holds SENTENCES
     rather than participants so that "the venue graded Tie" and "the venue
     graded Sturm Graz" land in one set and refuse each other — on a three-way
     moneyline those are contradictory claims about one match, and a draw
@@ -332,7 +462,7 @@ def choose_settled_winner(
             != "moneyline"
         ):
             continue
-        if _normalise_segment(outcome_name or "") in DRAW_OUTCOME_NAMES:
+        if _names_a_draw(outcome_name, home_team_name, away_team_name):
             verdicts.add(DRAW_SENTENCE)
             continue
         participant = _names_a_participant(
