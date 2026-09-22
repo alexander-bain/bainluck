@@ -5118,6 +5118,106 @@ class _GenericVenueHistory:
         return block
 
 
+def _venue_field_columns(
+    market: FuturesMarket, charted_outcomes: list, venue_by_outcome: dict,
+    *, field_complete: bool = True,
+) -> tuple[Optional[str], dict]:
+    """The venue's per-instant columns, plus the HOLE refusal if one has a gap.
+
+    Lifted out of `_venue_scale_refusal` so the sparsity gate in
+    `get_futures_history` can ask the structural half of the scale contract
+    WITHOUT paying for the de-vig half (#7936). One predicate, two callers: a
+    second copy would be free to answer differently from the reader it has to
+    agree with, and disagreement is the whole defect this seam exists to avoid.
+
+    🔴 #7954'S BYPASS IS INSIDE THIS FUNCTION, NOT BESIDE IT, and that is the
+    point of the extraction. The board that does not squeeze has no whole-field
+    operation for a venue point to be contemporaneous with, so it earns no hole
+    refusal — and a gate that did not know it would go on discounting a series
+    the reader draws. Both callers therefore pass `field_complete` and get the
+    same verdict; `_venue_scale_refusal`'s own docstring carries the reasoning.
+
+    The columns are returned alongside the verdict because the caller that needs
+    both would otherwise build them twice over the same rows.
+    """
+    from app.routes.playoffs import _ALREADY_PROBABILITY_SOURCES
+
+    unsqueezed_board = not field_complete and (
+        getattr(market, "source", None) in _ALREADY_PROBABILITY_SOURCES
+    )
+    squeezable = (
+        bool(getattr(market, "mutually_exclusive", True))
+        and len(charted_outcomes) > 1
+        and not unsqueezed_board
+    )
+    if not squeezable:
+        return None, {}
+    charted_ids = {int(o.id) for o in charted_outcomes}
+    venue_columns: dict[datetime, dict[int, float]] = defaultdict(dict)
+    for oid, rows in venue_by_outcome.items():
+        for row in rows:
+            venue_columns[row.captured_at][int(oid)] = float(row.probability)
+    for column in venue_columns.values():
+        if set(column) != charted_ids:
+            return "exclusive_field_incomplete_at_venue_instant", venue_columns
+    return None, venue_columns
+
+
+def _venue_points_countable_as_density(
+    market: FuturesMarket, charted_outcomes: list, venue_rows: list, charted_ids: set,
+    *, field_complete: bool = True,
+) -> int:
+    """How many venue rows the SPARSE-WINDOW gate may count. Zero when refused.
+
+    🔴 A REFUSED POINT IS NOT A POINT — #5898's rule, applied to the other kind of
+    row. `_EXTEND_TIERS` asks "does this window hold enough to draw", and #7351
+    answered it by adding admitted venue observations to the count. The word in
+    that comment is ADMITTED, and the code counted every row `in_window` returned
+    — including a series the reader was about to refuse WHOLE, three hundred lines
+    below, on `_venue_scale_refusal`.
+
+    WHAT A READER SAW. `/futures/60608901` served one point over one leg under its
+    default 7-day tab and printed "Limited price history available", while the
+    same route at `?hours=720` served ten points over ten legs. The extend that
+    #7936 re-aimed at that market never ran at all: its durable venue bank holds
+    170 observations inside the seven-day window, 93 of them on the single charted
+    leg, so `1 + 93 < 20` was false and the gate stayed shut. Every one of those 93
+    was then refused — `venue_history.points_served: 0`, reason
+    `exclusive_field_incomplete_at_venue_instant` — so the density that closed the
+    gate was never drawn. Measured on production 2026-09-22 07:4xZ over the six
+    markets of #7936's cohort: all six sparse, all six refused, none extending.
+
+    ONLY THE STRUCTURAL HALF OF THE CONTRACT IS ASKED, and deliberately. The hole
+    check is one pass over rows already in memory; the de-vig half costs a
+    `devigged_consensus_by_time` over every venue instant, and paying it here
+    would run it twice on every healthy market for a question the gate can answer
+    conservatively. So a series this admits may still be refused below — that is
+    today's behaviour, unchanged — and a series this refuses is one the reader is
+    certain to refuse. The error is one-directional and it is the safe direction:
+    this can leave a gate shut that should open, and can never open one that
+    should stay shut.
+
+    NOT A NEW RULE ABOUT WHICH POINTS ARE DRAWN. Nothing here admits, converts or
+    displaces a venue observation; the served series is untouched. This changes one
+    integer, in one comparison, about how wide a window to read.
+    """
+    if not venue_rows:
+        return 0
+    by_outcome: dict[int, list] = defaultdict(list)
+    for row in venue_rows:
+        if row.outcome_id in charted_ids and row.probability is not None:
+            by_outcome[row.outcome_id].append(row)
+    if not by_outcome:
+        return 0
+    hole, _columns = _venue_field_columns(
+        market, charted_outcomes, by_outcome, field_complete=field_complete
+    )
+    # The FULL row count when admitted, so the healthy path counts exactly what it
+    # counted before: `in_window` already filtered to the charted ids, and the
+    # regroup above exists to ask the hole question, never to re-filter the total.
+    return 0 if hole else len(venue_rows)
+
+
 def _venue_scale_refusal(
     market: FuturesMarket,
     charted_outcomes: list,
@@ -5200,27 +5300,17 @@ def _venue_scale_refusal(
     so the case is unobserved; it is named here so a grader does not have to
     find it.
     """
-    from app.routes.playoffs import _ALREADY_PROBABILITY_SOURCES
-
-    unsqueezed_board = not field_complete and (
-        getattr(market, "source", None) in _ALREADY_PROBABILITY_SOURCES
+    # The hole half, shared with the sparsity gate (#7936) so the two can never
+    # disagree about whether this series is servable. #7954's `field_complete`
+    # bypass lives inside it and travels to both callers with it.
+    hole, venue_columns = _venue_field_columns(
+        market, charted_outcomes, venue_by_outcome, field_complete=field_complete
     )
-    squeezable = (
-        bool(getattr(market, "mutually_exclusive", True))
-        and len(charted_outcomes) > 1
-        and not unsqueezed_board
-    )
-    if squeezable:
+    if hole:
+        return hole
+    if venue_columns:
         from app.utils.futures_history_basis import devigged_consensus_by_time
 
-        charted_ids = {int(o.id) for o in charted_outcomes}
-        venue_columns: dict[datetime, dict[int, float]] = defaultdict(dict)
-        for oid, rows in venue_by_outcome.items():
-            for row in rows:
-                venue_columns[row.captured_at][int(oid)] = float(row.probability)
-        for column in venue_columns.values():
-            if set(column) != charted_ids:
-                return "exclusive_field_incomplete_at_venue_instant"
         venue_printed = devigged_consensus_by_time(
             {at: {market.source: col} for at, col in venue_columns.items()},
             mutually_exclusive=True,
@@ -6603,6 +6693,16 @@ async def get_futures_history(
         market, charted_outcomes, _history_field_ids, db
     )
     venue_rows = venue.in_window(cutoff, snapshots, outcome_ids)
+    # #7936 second half — the count the TIERS below are allowed to read, which is
+    # not the same number as the rows served. See
+    # `_venue_points_countable_as_density`: a series this reader will refuse whole
+    # is density nobody draws, and counting it held the gate shut over the exact
+    # empty chart #7936's first half was built to fill.
+    venue_density = _venue_points_countable_as_density(
+        market, charted_outcomes, venue_rows, charted_ids,
+        # #7954's flag, the same one the reader's refusal is asked with below.
+        field_complete=_field_complete,
+    )
     # #7547 — the same two questions as the timeline route above: too FEW points,
     # or enough points spaced too COARSELY to carry the movement the venue holds.
     await _consider_generic_history_fill(
@@ -6615,8 +6715,9 @@ async def get_futures_history(
 
     # Auto-extend if sparse
     for threshold, extended_hours in _EXTEND_TIERS:
-        # #7351: an admitted venue observation counts toward "is this sparse".
-        if (len(snapshots) + len(venue_rows)) < threshold and extended_hours > actual_hours:
+        # #7351: an ADMITTED venue observation counts toward "is this sparse" —
+        # #7936 makes the count keep that word, so a refused series counts zero.
+        if (len(snapshots) + venue_density) < threshold and extended_hours > actual_hours:
             extended_cutoff = datetime.now(timezone.utc) - timedelta(hours=extended_hours)
             ext_query = (
                 select(FuturesOddsSnapshot)
@@ -6668,11 +6769,19 @@ async def get_futures_history(
             extended_venue_rows = venue.in_window(
                 extended_cutoff, extended_snapshots, ext_outcome_ids
             )
-            if (len(extended_snapshots) + len(extended_venue_rows)) > (
-                len(snapshots) + len(venue_rows)
+            # THE SAME RULE ON BOTH SIDES OF THE COMPARISON, or the widening is
+            # scored against a density the narrow window does not have either.
+            # The wider window re-selects, so its refusal verdict is its own.
+            extended_venue_density = _venue_points_countable_as_density(
+                market, charted_outcomes, extended_venue_rows, ext_charted_ids,
+                field_complete=_field_complete,
+            )
+            if (len(extended_snapshots) + extended_venue_density) > (
+                len(snapshots) + venue_density
             ):
                 snapshots = extended_snapshots
                 venue_rows = extended_venue_rows
+                venue_density = extended_venue_density
                 field_rows = extended_field
                 actual_hours = extended_hours
                 auto_extended = True
