@@ -377,6 +377,16 @@ def test_both_chart_readers_emit_the_receipt_from_the_block_they_return():
             "the receipt must be handed the block the response carries, so it "
             "cannot describe a different read than the one the reader got"
         )
+        # The id comes off the LOADED ROW, never off the route parameter. Same
+        # number, different provenance: a route parameter is a user-provided
+        # value on the path to a log sink (`py/log-injection` alert 2981 named
+        # both routes' `market_id` as its sources), and `market.id` is a column
+        # read back out of Postgres. Pinned here because the two spellings are
+        # one character apart and the wrong one costs nothing visible.
+        assert "market_id=market.id" in argument, (
+            "hand the receipt `market.id` (the loaded row's column), not the "
+            f"route parameter — got: {argument.strip()!r}"
+        )
         surface = argument.split('surface="')[1].split('"')[0]
         by_surface[surface] = argument
 
@@ -392,8 +402,10 @@ def test_both_chart_readers_emit_the_receipt_from_the_block_they_return():
 
 # --- the receipt is one line, and the caller does not get to decide that -------
 #
-# `market_id` arrives from a route parameter, so it is a user-provided value on
-# the path to a log sink. `json.dumps` escapes control characters, so a forged
+# The two shipped callers hand this the loaded row's `market.id`, so today
+# nothing user-provided reaches the sink — but `_safe_ident` guards the
+# BOUNDARY, not those two callers, and the next one to log a field will not read
+# their comments. `json.dumps` escapes control characters, so a forged
 # line is not reachable through the current emitter — these arms are therefore
 # written against the RECEIPT, not against the formatted line, because the
 # receipt is what the next caller will reuse and the encoder is not a property

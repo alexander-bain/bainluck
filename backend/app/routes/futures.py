@@ -5536,9 +5536,17 @@ async def get_probability_timeline(
         # left no record, which is the exact lost-evidence race this ship exists
         # to remove. The surface is named distinctly so a reader of the log can
         # tell WHICH door fell back.
+        # The LOADED ROW's id, not the route parameter. Same number — the row
+        # was fetched by that parameter — but a different provenance, and the
+        # provenance is the point: a route parameter is a user-provided value on
+        # the path to a log sink (`py/log-injection`, alert 2981, which named
+        # both routes' `market_id` as its sources). `market.id` is a column this
+        # request read back out of Postgres, so no caller-controlled value
+        # reaches the line at all. `_safe_ident` still narrows whatever it is
+        # handed; this removes the reason it would have to.
         log_durable_venue_serve(
             venue_block,
-            market_id=market_id,
+            market_id=market.id,
             surface="futures_probability_timeline",
         )
 
@@ -6379,9 +6387,12 @@ async def get_futures_history(
         # either way. Fires ONLY when the durable tier answered, reads every
         # field off the block above, and can neither raise nor change what is
         # returned (see `app/utils/durable_venue_receipt`).
+        # `market.id`, not `market_id` — see the same call in
+        # `get_probability_timeline`: the loaded row's column, so a route
+        # parameter never reaches a log sink.
         log_durable_venue_serve(
             response["venue_history"],
-            market_id=market_id,
+            market_id=market.id,
             surface="futures_history",
         )
 

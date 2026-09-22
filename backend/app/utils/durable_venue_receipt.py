@@ -83,10 +83,14 @@ _IDENT_MAX = 64
 def _safe_ident(value: Any) -> Any:
     """A value fit to appear in a log line, whatever the caller handed us.
 
-    `market_id` reaches this module from a route parameter, so it is a
-    user-provided value on the path to a log sink — the shape CodeQL flags as
-    `py/log-injection`, and it is right to: a receipt is a line a person greps,
-    and a line a stranger can add newlines to is a line a stranger can forge.
+    Both shipped callers now hand this the LOADED ROW's `market.id` rather than
+    their route parameter, so no user-provided value reaches the sink on either
+    path (CodeQL `py/log-injection` alert 2981 named exactly those two
+    parameters as its sources; the row's column is not one). This narrowing
+    stays anyway, and not as decoration: a receipt is a line a person greps, and
+    a line a stranger can add newlines to is a line a stranger can forge. The
+    guard belongs to the boundary, not to the two call sites that happen to be
+    careful today.
 
     `json.dumps` already escapes control characters, so the forging is not
     reachable TODAY. That is an argument about the current encoder, not about
