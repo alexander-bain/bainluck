@@ -65,12 +65,49 @@ describe("#1003: the chart's blend line is the backend blend or nothing", () => 
   const src = read(CHART);
 
   it("gates the blend line on the backend aggregate line, not just on having sources", () => {
+    // #8066 added a THIRD conjunct, and the fixture is updated rather than
+    // relaxed: the gate is now strictly narrower than #1003 left it.
+    //
+    // Why a third was needed. #1003 read "a non-empty `aggregate_line` means
+    // the backend blended this event" — true when it was written, and false
+    // from the moment #920 shipped, because the page now merges the live
+    // stream's published `p` into that same array and the stream publishes for
+    // single-source events the backend serves no blend for. Two pushed frames
+    // put a 2-point series on the plot under the blend's name and, through
+    // `primarySeriesKey`, demoted the real 319-point source line to 1px at
+    // 0.28 opacity. `backendBlendServed` is the page's answer, read from the
+    // SERVED response before that merge.
+    //
+    // If this shape moves again: the rule is that the blend line requires a
+    // multi-source chart, points to draw, AND those points being the
+    // BACKEND's. Update the fixture, do not delete the check.
     assert.match(
       src,
-      /const showBlendLine\s*=\s*isMultiSource\s*&&\s*filteredAggregateLine\.length\s*>\s*0/,
+      /const showBlendLine\s*=\s*isMultiSource\s*&&\s*backendBlendServed\s*&&\s*filteredAggregateLine\.length\s*>\s*0/,
       "The `showBlendLine` gate is gone or changed shape. The blend line must " +
-        "require BOTH a multi-source chart AND a non-empty backend aggregate " +
-        "line. Gating on `isMultiSource` alone is the #1003 defect."
+        "require a multi-source chart, a non-empty aggregate line, AND that " +
+        "line being the backend's blend (`backendBlendServed`). Gating on " +
+        "`isMultiSource` alone is the #1003 defect; dropping " +
+        "`backendBlendServed` is the #8066 defect."
+    );
+  });
+
+  it("does not let the page answer `backendBlendServed` from its own merged array", () => {
+    // #8066's whole point: the gate must be computed from what the BACKEND
+    // served, not from `historyData`, which already contains the live frames
+    // the gate exists to disregard. Reading the merged array makes the gate
+    // answer "yes" for exactly the pages it protects.
+    const page = read(path.join(REPO_ROOT, "frontend", "app", "events", "[id]", "page.tsx"));
+    assert.match(
+      page,
+      /const backendBlendServed\s*=\s*\(servedHistory\?\.aggregate_line\?\.length\s*\?\?\s*0\)\s*>\s*0;/,
+      "`backendBlendServed` is not derived from `servedHistory`. If it reads " +
+        "`historyData` it is reading #920's merge and the #8066 gate is inert."
+    );
+    assert.doesNotMatch(
+      page,
+      /const backendBlendServed\s*=\s*\(historyData/,
+      "`backendBlendServed` is being computed from the merged history."
     );
   });
 
