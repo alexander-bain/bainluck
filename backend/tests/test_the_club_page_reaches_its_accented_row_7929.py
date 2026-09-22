@@ -117,8 +117,40 @@ ABSENT_COMPLETED = 15316893  # Montréal v Ottawa, the specimen, open 0.5830
 VISIBLE_COMPLETED = 15312790  # Montreal v Ottawa, open NULL
 
 
-def _ago(hours):
-    return datetime.now(timezone.utc) - timedelta(hours=hours)
+def _ago(hours, now=None):
+    """A point `hours` in the past, SNAPPED INTO ONE UTC DAY.
+
+    🔴 OFFSET FIRST, THEN TRUNCATE (gotcha #44). The twin pair below sits 15
+    minutes apart, and the fold's group key is `(league, minute.date())` — a
+    CALENDAR DATE, not an interval (`event_twin_fold.py`, `_variant_group_key`).
+    A bare `now - 20h` therefore straddles UTC midnight whenever `now` falls in
+    **19:45–20:00Z**: the two rows land on different dates, the fold correctly
+    refuses to merge them, and `test_the_card_carries_the_number_the_opponents_
+    page_prints` reds — asserting `one fixture, one card — got 2`.
+
+    That is a 15-minute window each day in which this file reds master and every
+    PR gated on it, for no reason to do with the code under test. Measured, not
+    reasoned: on 2026-09-22 the same unmodified bytes gave **1 failed at 19:54Z
+    and 6 passed at 20:01Z**; CI run 35774342267 hit it at 19:47:26Z and failed
+    a `routes/events.py` change that cannot reach this module.
+
+    Snapping to noon of the day the offset lands on keeps the pair inside one
+    UTC day at every clock, and noon is far enough from both boundaries that a
+    future arm can move a row by hours without re-opening this. The anchor
+    contains no `if`, which is the actual test in gotcha #44.
+
+    `now` is injectable ONLY so the invariant below can be swept over a whole
+    day. `scripts/clock_sweep.py` cannot grade this file — measured, with the
+    unmodified file as the control: both the patched and the unpatched version
+    report `6 failed` at all 12 faked points while passing at the real clock, so
+    the fake breaks this rig rather than revealing anything about it (the tool's
+    own docstring names this failure mode). An exhaustive property check over
+    every minute is both available and stronger than 12 samples.
+    """
+    base = (now if now is not None else datetime.now(timezone.utc)) - timedelta(
+        hours=hours
+    )
+    return base.replace(hour=12, minute=0, second=0, microsecond=0)
 
 
 def _soon(hours=72):
@@ -281,6 +313,64 @@ def _ids(page):
 # --------------------------------------------------------------------------
 # The ship
 # --------------------------------------------------------------------------
+
+
+class TestTheAnchorDoesNotBranchOnTheClock:
+    """The rig's own guard. `TestTheCanadiensPage` below asserts the twin pair
+    folds to ONE card, and the fold groups on `(league, minute.date())` — so the
+    pair must share a UTC date at every clock, or this file reds for reasons
+    that have nothing to do with the route.
+
+    Swept exhaustively over all 1,440 minutes of a day rather than sampled:
+    `scripts/clock_sweep.py` cannot grade this module (it reports `6 failed` at
+    all 12 points for the UNMODIFIED file too — see `_ago`), and the property is
+    pure, so the whole domain is cheap.
+    """
+
+    #: The gap between the twin rows in `_the_canadiens_rows`, kept here so this
+    #: guard fails loudly if that gap is ever widened past the fold's drift.
+    TWIN_GAP = timedelta(minutes=15)
+
+    def _every_minute(self):
+        midnight = datetime(2026, 9, 22, tzinfo=timezone.utc)
+        return [midnight + timedelta(minutes=m) for m in range(24 * 60)]
+
+    def test_the_twin_pair_shares_one_utc_date_at_every_minute(self):
+        straddled = [
+            now.strftime("%H:%M")
+            for now in self._every_minute()
+            if _ago(20, now=now).date() != (_ago(20, now=now) + self.TWIN_GAP).date()
+        ]
+        assert not straddled, (
+            "the twin pair crosses UTC midnight at these clocks, and the fold "
+            f"groups on the calendar date, so the page shows TWO cards: {straddled}"
+        )
+
+    def test_the_anchor_is_always_in_the_past_and_inside_the_lookback(self):
+        """A snap must not invent a future 'completed' game, nor age the pair out
+        of `get_team`'s 30-day recent window."""
+        for now in self._every_minute():
+            anchored = _ago(20, now=now)
+            assert anchored < now, f"anchor is in the FUTURE at {now:%H:%M}"
+            assert now - anchored < timedelta(days=30), (
+                f"anchor falls outside the 30-day lookback at {now:%H:%M}"
+            )
+
+    def test_the_bare_offset_this_replaced_really_did_straddle(self):
+        """STRAWMAN — without it the two arms above pass on any anchor at all,
+        including one that never had the bug. The pre-fix anchor was a plain
+        `now - hours`; it straddles for exactly the 15 minutes before 20:00Z.
+        """
+        def bare(now):
+            return now - timedelta(hours=20)
+
+        straddled = [
+            now.strftime("%H:%M")
+            for now in self._every_minute()
+            if bare(now).date() != (bare(now) + self.TWIN_GAP).date()
+        ]
+        assert straddled, "the strawman did not reproduce the defect — guard is vacuous"
+        assert straddled[0] == "19:45" and straddled[-1] == "19:59", straddled
 
 
 class TestTheCanadiensPage:
