@@ -418,3 +418,174 @@ class TestTheGateReadsTheSharedGradingSemantics:
     @pytest.mark.parametrize("source", ["api_settlement"])
     def test_the_badge_is_honoured_on_the_resolved_path_too(self, source):
         assert set(_priced(_served(_board(source=source)))) == {"Under", "Over"}
+
+
+# ── CERT-3308's required repair: 2077-ROUTE-SUPPLIES-FLEET-STAMP-TO-RESOLVED-BOARDS ──
+#
+# EVERY TEST ABOVE THIS LINE PASSED ON A SHA THAT CHANGED NOTHING A READER COULD
+# SEE, and that is the finding worth keeping. They call `_format_market_detail`
+# through `_served`, which hands it `fleet_newest_observation=FLEET_NOW`
+# directly. The route does not. `_fleet_newest_observation` — the only thing
+# that supplies that argument in production — returned None without a query for
+# every status but "open", so the widened formatter received None on exactly the
+# population it had been widened for, took its documented fail-open path, and
+# withheld nothing. `/futures/56916563` went on serving `Under 0.5`.
+#
+# A guard that hands the callee an input the caller never supplies cannot
+# observe a caller that never supplies it. So these tests compose the two halves
+# the way `get_futures_market` does, and the last one asserts the two gates
+# agree about statuses rather than trusting that a future edit will touch both.
+
+
+class _CountingDb:
+    """The fleet read, counted — a skip test that never queries proves nothing."""
+
+    def __init__(self, stamp=FLEET_NOW):
+        self.calls = []
+        self._stamp = stamp
+
+    async def execute(self, *a, **kw):
+        self.calls.append(1)
+        return SimpleNamespace(scalar_one_or_none=lambda: self._stamp)
+
+
+async def _route_stamp(board, db=None):
+    """Exactly what `get_futures_market` awaits, with the clock pinned."""
+    import app.routes.futures as futures_routes
+
+    db = _CountingDb() if db is None else db
+    with _at(FLEET_NOW):
+        return await futures_routes._fleet_newest_observation(db, board), db
+
+
+async def _route_served(board=None):
+    """The REAL seam: the route's own stamp, then the formatter — composed."""
+    import app.routes.futures as futures_routes
+
+    board = _board() if board is None else board
+    stamp, _ = await _route_stamp(board)
+    with _at(FLEET_NOW):
+        return futures_routes._format_market_detail(
+            board, None, set(), fleet_newest_observation=stamp
+        )
+
+
+class TestTheRouteSuppliesTheStampItsFormatterNeeds:
+    """CERT-3308. The seam the formatter tests could not reach."""
+
+    @pytest.mark.asyncio
+    async def test_a_resolved_ungraded_board_does_reach_the_database(self):
+        """THE SHIPPED DEFECT, stated as an assertion.
+
+        On `d6936e281` this read `None` after `0` executes. It is the whole
+        reason the ship was inert.
+        """
+        stamp, db = await _route_stamp(_board())
+        assert stamp == FLEET_NOW, (
+            "an ungraded settled board past the floor must obtain the fleet "
+            "stamp — without it `unobserved_board_keys` fails open and the "
+            "board keeps printing its last quote"
+        )
+        assert db.calls == [1]
+
+    @pytest.mark.asyncio
+    async def test_composed_through_the_route_the_specimen_serves_no_price(self):
+        """The reader-visible claim, through the seam a reader actually hits."""
+        assert _priced(await _route_served()) == {}
+
+    @pytest.mark.asyncio
+    async def test_composed_through_the_route_the_row_is_withheld_not_dropped(self):
+        detail = await _route_served()
+        assert [row["name"] for row in detail["outcomes"]] == ["Under", "Over"]
+        assert detail["outcome_count"] == 2
+        assert detail["prices_withheld"] == 2
+
+    # ── the three refusals the widening must not cost us ──────────────────
+
+    @pytest.mark.asyncio
+    async def test_a_graded_settled_board_still_never_reaches_the_database(self):
+        """`/futures/413` stays protected, and costs no query to stay so."""
+        stamp, db = await _route_stamp(_board(source=SETTLEMENT_SOURCE))
+        assert stamp is None
+        assert db.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_recently_settled_board_still_never_reaches_the_database(self):
+        """The floor is status-agnostic and unchanged — a board settled today
+        is awaiting a grader, not dead, and must not even be asked about."""
+        recent = _stamp("2026-09-22 09:00:00Z")
+        fresh = _board(touched=recent)
+        for leg in fresh.outcomes:
+            leg.last_updated = recent
+
+        stamp, db = await _route_stamp(fresh)
+        assert stamp is None
+        assert db.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_status_the_database_never_holds_still_reaches_nothing(self):
+        stamp, db = await _route_stamp(_board(status="closed"))
+        assert stamp is None
+        assert db.calls == []
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_database_still_fails_open(self):
+        """A database we could not read degrades to today's page, never a
+        blanked board — now on the resolved path too."""
+
+        class _Broken:
+            async def execute(self, *a, **kw):
+                raise RuntimeError("no database")
+
+        stamp, _ = await _route_stamp(_board(), db=_Broken())
+        assert stamp is None
+        assert _priced(_served(_board(), fleet=None)) == {"Under": 0.5, "Over": 0.5}
+
+    @pytest.mark.asyncio
+    async def test_an_open_board_is_unchanged_by_the_widening(self):
+        stamp, db = await _route_stamp(_board(status="open"))
+        assert stamp == FLEET_NOW
+        assert db.calls == [1]
+
+    # ── the anti-drift guard: the two gates must name the same statuses ────
+
+    @pytest.mark.asyncio
+    async def test_the_caller_and_the_formatter_agree_about_which_statuses_count(
+        self,
+    ):
+        """THE LESSON OF CERT-3308, as a test rather than a comment.
+
+        The same `status == "open"` predicate lived in THREE places. Mutation
+        found the dead copy inside the formatter; nothing could see this one,
+        because the two halves were never exercised together. So rather than
+        assert either gate's literal tuple, assert they agree: for every status,
+        the route supplies a stamp exactly when the formatter would use one.
+
+        Widening one half alone — in either direction — reds this.
+        """
+        import app.routes.futures as futures_routes
+
+        supplies, uses = set(), set()
+        for status in ("open", "resolved", "closed", "settled", "cancelled", ""):
+            stamp, _ = await _route_stamp(_board(status=status))
+            if stamp is not None:
+                supplies.add(status)
+            with _at(FLEET_NOW):
+                detail = futures_routes._format_market_detail(
+                    _board(status=status),
+                    None,
+                    set(),
+                    fleet_newest_observation=FLEET_NOW,
+                )
+            if detail["prices_withheld"]:
+                uses.add(status)
+
+        assert supplies == uses, (
+            f"the route supplies a fleet stamp for {sorted(supplies)} but the "
+            f"formatter acts on {sorted(uses)} — a status in `uses` and not in "
+            f"`supplies` is CERT-3308 exactly: a widened rule that can never "
+            f"fire because its caller withholds the input it needs"
+        )
+        assert uses == {"open", "resolved"}, (
+            "both halves must name the two statuses production actually holds"
+        )

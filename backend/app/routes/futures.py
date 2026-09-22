@@ -4107,6 +4107,16 @@ async def _fleet_newest_observation(
     past the floor) and, in particular, every board LAT-P127's cache guard
     exercises — its fixtures carry no leg stamp at all.
 
+    SINCE #2077 THE STATUS GATE ADMITS "resolved" TOO, and the cost of that is
+    bounded by the two refusals immediately below it rather than by the status
+    test. A graded board still costs no query (the verdict early-return), and a
+    board whose own newest stamp is recent still costs no query
+    (`board_cannot_be_unobserved`, which is status-agnostic and unchanged). What
+    is newly eligible is exactly the defect population: settled, ungraded, and
+    last observed beyond the floor. This route serves ONE board per request, so
+    the worst case it adds is a single 0.042 ms Index Only Scan Backward to a
+    detail page that would otherwise print a coin flip.
+
     The bound is one-directional by construction: it can only suppress the
     read, never cause a withhold. `unobserved_board_keys` still decides against
     the fleet, so a fleet-wide stall still withholds nothing.
@@ -4126,12 +4136,38 @@ async def _fleet_newest_observation(
     """
     from app.utils.market_staleness import board_cannot_be_unobserved
 
-    if getattr(market, "status", None) != "open":
+    # 🔴 #2077, CERT-3308 — THIS LINE IS WHY WIDENING THE FORMATTER ALONE
+    # CHANGED NOTHING A READER COULD SEE.
+    #
+    # `_format_market_detail` names both statuses so an ungraded settled board
+    # reaches `unobserved_board_keys`. But the rule fails open on a missing
+    # `fleet_newest_observation`, and THIS function — the only thing that
+    # supplies it — returned None without a query for every status but "open".
+    # So the widened formatter was handed None on exactly the population it had
+    # just been widened for, took its fail-open path, and withheld nothing:
+    # `/futures/56916563` went on serving `Under 0.5`, and an exact-sha
+    # reproduction read `resolved_result=None db_execute_awaits=0`.
+    #
+    # THE GENERAL LESSON, AND IT IS THE SECOND TIME THIS RULE HAS BITTEN THIS
+    # SHIP: the same `status == "open"` test lived in three places, not two.
+    # Mutation caught the dead copy INSIDE the formatter; it could not see this
+    # one, because the tests inject `fleet_newest_observation` directly into
+    # `_format_market_detail` and therefore never traverse this seam. A guard
+    # that hands the callee an input the caller never supplies cannot observe a
+    # caller that never supplies it — which is why the repair below is a
+    # ROUTE-level regression, not another formatter unit.
+    #
+    # Named, not inverted, for the reason the formatter states: `status` is
+    # exactly {open, resolved} today, so a new status inherits today's
+    # behaviour and must come back through this line deliberately.
+    if getattr(market, "status", None) not in ("open", "resolved"):
         return None
-    # A settled board is a result and is exempt, so there is nothing to ask the
-    # fleet about. Checked here as well as in the rule so a graded board costs
-    # no query either — and so the two places cannot disagree about which
-    # semantics decide it.
+    # A settled board WITH A VERDICT is a result and is exempt, so there is
+    # nothing to ask the fleet about. Checked here as well as in the rule so a
+    # graded board costs no query either — and so the two places cannot
+    # disagree about which semantics decide it. This is the line that keeps
+    # `/futures/413` ("Jalen Brunson 99%", api_settlement on all 57 legs)
+    # protected by construction now that the status gate admits "resolved".
     if _board_has_a_verdict(getattr(market, "outcomes", None) or []):
         return None
     if board_cannot_be_unobserved(
