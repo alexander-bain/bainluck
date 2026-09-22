@@ -42,6 +42,7 @@ was exactly that mistake (CodeQL found it as two unused locals), and the lesson 
 recorded rather than repeated.
 """
 
+import ast
 import importlib
 import inspect
 import re
@@ -315,6 +316,46 @@ def test_no_withdrawal_is_gated_on_anything_but_having_legs_to_withdraw():
     assert set(guards) <= allowed, f"a withdrawal is gated on something else: {guards}"
 
 
+def _grading_pass_code() -> str:
+    """`_backfill_kalshi_winners`' own body, comments stripped.
+
+    MODULE source order is not a proxy for execution order, and this guard used
+    to assume it was. `_module_code().index('status="resolved"')` finds the FIRST
+    such write anywhere in a 4,000-line module — not the one inside the pass it
+    means to constrain. Any helper DEFINED near the top of the file that happens
+    to contain that string moves the anchor tens of thousands of characters and
+    the guard reports the ordering reversed while the order that actually matters
+    has not moved at all. That is not hypothetical: it reddened CI shard 4 as
+    `assert 54755 < 11371` on a branch that never touched the sequence.
+
+    A guard whose anchor can be relocated by an unrelated DEFINITION is aimed at
+    the file, not at the behaviour. So scope it to the one function whose
+    STATEMENT order IS its execution order. Inside that body the real sequence is
+    withdrawal, then #7870's in-loop flip — which is what the arm below pins.
+
+    THE AST RUNS ON THE RAW SOURCE, AND THE STRIPPING HAPPENS AFTER. Not a style
+    choice: `_module_code`'s comment stripper is a plain `line.split("#", 1)[0]`,
+    which is right for counting call sites and WRONG as parser input — it cuts
+    inside any string literal containing a `#`, and this module has one
+    (`"Polymarket total score resolution (#…"`), so `ast.parse` on the stripped
+    text dies with an unterminated-string SyntaxError 4,000 lines in. Parse what
+    Python would parse, then strip what a reader would ignore.
+    """
+    raw = inspect.getsource(importlib.import_module("app.tasks.backfill_winners"))
+    fn = next(
+        node
+        for node in ast.walk(ast.parse(raw))
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and node.name == "_backfill_kalshi_winners"
+    )
+    segment = ast.get_source_segment(raw, fn)
+    assert segment, "could not recover `_backfill_kalshi_winners` from its own module"
+    return "\n".join(
+        line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
+        for line in segment.splitlines()
+    )
+
+
 def test_the_withdrawal_precedes_the_status_flip_to_resolved():
     """A board must never BECOME settled while still holding a live-looking number.
 
@@ -323,7 +364,7 @@ def test_the_withdrawal_precedes_the_status_flip_to_resolved():
     not cosmetic: reversed, every newly-resolved board would serve the fossil for
     one full cycle before the next pass cleared it.
     """
-    code = _module_code()
+    code = _grading_pass_code()
     withdraw_at = code.index("ungraded_settlement_withdraw_sql()")
     flip_at = code.index('status="resolved"')
     assert withdraw_at < flip_at
