@@ -741,7 +741,7 @@ function SummaryCard({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold text-text-muted">#{index + 1}</span>
-                <span className="text-xs font-semibold text-text-secondary">{answer.category}</span>
+                <span className="text-xs font-semibold text-text-secondary">{categoryLabel(answer)}</span>
               </div>
               <p className="mt-1 truncate text-sm font-semibold">{answer.subject}</p>
               <p className="mt-1 text-xs text-text-muted">
