@@ -127,6 +127,12 @@ def _market(rungs, *, market_id=40533, metadata=None, resolution_date=None, sett
     return SimpleNamespace(
         id=market_id,
         name="2027 Pro Football Champion",
+        # A real `FuturesMarket` row has one, and `/history` reads it (#7747):
+        # the chart asks the same withheld-leg question the detail page asks, so
+        # it can refuse the #23 squeeze on the same boards. No `status` here, so
+        # the staleness arm is skipped and this board stays field-complete — the
+        # legend under test is built on the scale it was always built on.
+        source="kalshi",
         market_metadata=metadata,
         resolution_date=resolution_date,
         settled_at=settled_at,
