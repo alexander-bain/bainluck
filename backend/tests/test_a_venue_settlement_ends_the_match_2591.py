@@ -363,11 +363,16 @@ class TestAnAsciiVenueNameStillNamesAnAccentedCompetitor:
         Sever the fold and each row must go back to being refused. A test that
         stays green with ``_fold_diacritics`` neutered is asserting something
         the normaliser already did, not the fix.
-        """
-        import app.utils.event_completion as ec
 
-        monkeypatch.setattr(ec, "_fold_diacritics", lambda text: text)
-        assert ec.winning_outcome_names_a_competitor(winner, home, away) is False
+        Patched by dotted target, and the module-level import of the predicate
+        above is still the one under test: the fold is resolved as a module
+        global at CALL time, so replacing the attribute reaches the already-
+        imported function. (It also keeps this file to one import style.)
+        """
+        monkeypatch.setattr(
+            "app.utils.event_completion._fold_diacritics", lambda text: text
+        )
+        assert winning_outcome_names_a_competitor(winner, home, away) is False
 
     @pytest.mark.parametrize("winner,home,away", [
         # An abbreviation is not an accent. (`15304466`, and that event already
