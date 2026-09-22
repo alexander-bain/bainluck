@@ -437,6 +437,132 @@ def _is_evidenced_loss(outcome) -> bool:
     return getattr(outcome, "resolution_source", None) in CALIBRATION_TRUTH_ELIGIBLE_SOURCES
 
 
+# A settled line must RETURN to its graded value at least this many times before
+# the points between those returns are read as a republication rather than a
+# journey. Measured, not chosen: across 74 settled markets and 565 charted lines
+# (61 markets sampled off `settled_at`, plus all 13 `Make the Cut` markets), the
+# return count is BIMODAL — 51 lines return 0 times and 514 return 7 or more.
+# Not one line anywhere returns between 1 and 6. The threshold sits inside that
+# empty band with margin on both sides, so the number is a property of the data
+# rather than a tuning knob, and widening it later needs a new measurement.
+_GRADE_RETURN_MIN = 3
+
+
+def _at_grade(value, graded_value) -> bool:
+    """Is this charted point AT the outcome's graded value?
+
+    The same two epsilons the freeze arms use inline (``>= 0.999`` for a win,
+    ``<= 0.001`` for a loss), named once here because three call sites now ask
+    the question. Deliberately tolerant in only one direction: a de-vigged point
+    lands a hair off the raw price, so 0.9989 is a near-miss that reads as a
+    contradiction — harmless, because at chart scale the two are the same pixel
+    and the point is dropped in favour of its neighbours at 1.0.
+    """
+    if value is None:
+        return False
+    return value >= 0.999 if graded_value >= 0.5 else value <= 0.001
+
+
+def _settled_graded_values(market) -> dict:
+    """Outcome id -> the value a settled field has GRADED that outcome at.
+
+    The keys are not new and are not a third opinion: a graded winner is
+    ``is_winner is True`` and a graded loser is ``_is_evidenced_loss`` — the
+    ``resolution_source`` discriminator #7927 argued for at length two screens
+    up. Strict ``is True`` on the winner half for the same fail-closed reason
+    that function gives: ``None`` is unmeasured truth and a ``MagicMock``
+    auto-attribute is truthy, and neither may license erasing a reader's points.
+
+    A mutually-exclusive field with two graded winners returns ``{}`` — the same
+    no-op, for the same reason, as the winner freeze: that is a grading
+    CONTRADICTION, and a contradiction must not be used to decide which of a
+    reader's observations were real.
+    """
+    outcomes = list(getattr(market, "outcomes", None) or [])
+    winners = [o for o in outcomes if getattr(o, "is_winner", None) is True]
+    if len(winners) >= 2 and not _co_winners_are_legitimate(market):
+        return {}
+    graded: dict = {}
+    for outcome in winners:
+        oid = getattr(outcome, "id", None)
+        if oid is not None:
+            graded[oid] = 1.0
+    for outcome in outcomes:
+        if _is_evidenced_loss(outcome):
+            oid = getattr(outcome, "id", None)
+            if oid is not None:
+                graded[oid] = 0.0
+    return graded
+
+
+def _drop_post_decision_republication(history, graded_value):
+    """Drop the stale echo a settled line keeps being redrawn with (#7935).
+
+    ⭐ THE DEFECT THIS EXISTS FOR. `BMW PGA Championship - Make the Cut` charted
+    Tommy Fleetwood swinging between **84% and 0% forty times** across the four
+    days AFTER the cut had eliminated him — 2,990 such points on that one board,
+    60 of its 74 lines saw-toothing, on the settled page's headline graphic.
+    #7927 fixed that chart's last word; this is the same chart's sentence.
+
+    The cause is producer-side and is lane1b's #7947: two tasks write
+    ``bookmaker="datagolf_model"`` for one outcome — an hourly poll republishing
+    *pre-tournament* predictions, and a 90-second in-play beat writing the real
+    board — so each cycle stamps the stale pre-cut price, then the graded value
+    ~50 s later, forever. **That fix stops the next tournament; it does not
+    touch a stored row, so every settled board already written stays broken for
+    its reader.** This is the half a reader can see today, and it is measured on
+    the served payload: 7 of 13 `Make the Cut` markets, 439 lines, 15,038 points
+    — 10.9% of every point that family charts.
+
+    🔴 WHY THIS IS NOT KEYED ON "THE POINT DISAGREES WITH THE GRADE", which is
+    the obvious rule and is WRONG. A longshot priced at ~0, trading up through a
+    real journey, and finally losing would have every honest point it ever had
+    erased by that rule: its first observation is already AT the graded value, so
+    everything after it "contradicts" a decision that had not happened yet. The
+    anchor has to separate *a line that was decided* from *a line that merely
+    touched the number*, and a single touch cannot tell those apart.
+
+    What separates them is the symptom the issue was filed about — the line keeps
+    COMING BACK. A republication returns to the grade once per producer cycle,
+    tens of times; a journey crosses it once. That is measurably bimodal (see
+    ``_GRADE_RETURN_MIN``), so the rule fails closed on every real journey in the
+    population rather than on a judgement about which values look plausible.
+
+    So: after the first observation AT the grade, if the line returns to the
+    grade at least ``_GRADE_RETURN_MIN`` times, the points that contradict the
+    grade between those returns are a republication and are not drawn. Otherwise
+    the line is returned UNCHANGED — the same object, so a response that does not
+    carry this defect is byte-for-byte what it was.
+
+    Everything up to and including the first at-grade observation is always kept:
+    the journey TO the decision is the part of the chart worth reading, and this
+    never touches it.
+
+    Read-side only (gotcha #21): filters what this response draws. It writes no
+    snapshot, deletes no row, and the next request re-derives it from the same
+    stored history — so if the producer fix makes it unnecessary, it simply stops
+    finding anything.
+    """
+    first_at = next(
+        (i for i, pt in enumerate(history) if _at_grade(pt.get("probability"), graded_value)),
+        None,
+    )
+    if first_at is None:
+        return history  # never reached its grade in-window: nothing was decided here
+    returns = 0
+    prev_at = True
+    for pt in history[first_at + 1:]:
+        at = _at_grade(pt.get("probability"), graded_value)
+        if at and not prev_at:
+            returns += 1
+        prev_at = at
+    if returns < _GRADE_RETURN_MIN:
+        return history  # a journey, not an echo — see the docstring
+    return history[: first_at + 1] + [
+        pt for pt in history[first_at + 1:] if _at_grade(pt.get("probability"), graded_value)
+    ]
+
+
 def _detect_round_boundaries_from_eliminations(outcome_histories, existing_boundaries):
     """Detect round boundaries from simultaneous elimination patterns."""
     if existing_boundaries:
@@ -6507,6 +6633,11 @@ async def get_futures_history(
             venue_by_outcome = defaultdict(list)
     venue_rows_served: list = []
 
+    # #7935: read the grades ONCE for the whole board rather than per line — 74
+    # outcomes on this market, and the mutex-contradiction check inside it is a
+    # property of the MARKET, so asking per outcome would answer it 74 times.
+    _settled_grades = _settled_graded_values(market)
+
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
     # Captured outcomes first and in their existing order, so a response with no
@@ -6555,6 +6686,19 @@ async def get_futures_history(
             venue_rows_served.append(row)
         if venue_by_outcome.get(oid):
             history.sort(key=lambda pt: _parse_stamp(pt["timestamp"]))
+        # #7935 — the stale echo, dropped before anything downstream reads the
+        # line. Placed HERE, not after the loop with the freeze arms, for two
+        # reasons the ordering has to get right: `_detect_elimination` below
+        # infers its flag from the TAIL, so on a saw-toothing board it reported
+        # `eliminated: false` for all 74 golfers at BMW PGA — 64 of whom had
+        # missed the cut — and the chart drew every one of them as a live
+        # full-weight line instead of the eliminated grey it has a colour for.
+        # And `total_data_points` must count what is DRAWN (the reason it is
+        # accumulated here at all, per #4992's note above), so a dropped point
+        # may not be promised to the sparse flag.
+        _graded_value = _settled_grades.get(oid)
+        if _graded_value is not None:
+            history = _drop_post_decision_republication(history, _graded_value)
         elim = _detect_elimination(history)
         total_data_points += len(history)
         outcome_history[oid] = {
