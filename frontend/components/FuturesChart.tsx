@@ -8,7 +8,10 @@ import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
-import { withoutBoardNamePrefix } from "@/lib/futuresDetailDisplay";
+import {
+  visibleChartOutcomes,
+  withoutBoardNamePrefix,
+} from "@/lib/futuresDetailDisplay";
 import {
   SERIES_COLORS,
   SERIES_COLORS_GOLD,
@@ -167,13 +170,15 @@ export function FuturesChart({
   const seriesLabel = (name: string): string =>
     board ? withoutBoardNamePrefix(name, board) : name;
 
-  // Filter to selected outcomes, or show top 5 if none selected
-  const displayedOutcomes = useMemo(() => {
-    if (selectedOutcomes && selectedOutcomes.size > 0) {
-      return historyData.filter((o) => selectedOutcomes.has(o.outcome_id));
-    }
-    return historyData.slice(0, 5);
-  }, [historyData, selectedOutcomes]);
+  // Filter to selected outcomes, or show top 5 if none selected.
+  // #8016 — the rule moved to `visibleChartOutcomes` so the caption beneath this
+  // chart can ask what is drawn instead of guessing from the full leg list. This
+  // memo is byte-equivalent to the inline version it replaces; the chart stays
+  // the authority on what is on screen.
+  const displayedOutcomes = useMemo(
+    () => visibleChartOutcomes(historyData, selectedOutcomes),
+    [historyData, selectedOutcomes],
+  );
 
   // Resolve a line color: explicit per-outcome override > eliminated grey >
   // index palette. Centralized so lines, hover dots and the legend never drift.

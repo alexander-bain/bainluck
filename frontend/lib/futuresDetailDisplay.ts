@@ -792,6 +792,72 @@ export function futuresUnfurlCopy<
 }
 
 /**
+ * How many series the trend chart draws when the reader has selected none.
+ * Exported so the caption below and the chart itself quote one number.
+ */
+export const CHART_LINES_WHEN_NONE_SELECTED = 5;
+
+/**
+ * #8016 — THE SET THE CHART ACTUALLY DRAWS, asked once so two surfaces cannot
+ * disagree about it.
+ *
+ * This rule used to live only inside `FuturesChart`'s `displayedOutcomes` memo,
+ * so the caption beneath the chart had no way to ask what the chart had drawn
+ * and picked its subject from `market.outcomes` instead — every leg, including
+ * the ones the chart deliberately leaves off. On `/futures/109257` ("Who will
+ * Donald Trump meet in 2026?") that printed
+ *
+ *     legend:  Andy Burnham · Vladimir Putin · Mohammed bin Salman
+ *     caption: "Lionel Messi up 81.0 pts from opening."
+ *
+ * Messi is `is_winner: true` at 1.00 from 0.19, so +81.0 is arithmetically
+ * correct — and `pickChartSeedOutcomes` drops graded rows from a live non-mutex
+ * field (#7439), so the one leg the sentence named was the one leg the chart
+ * could never show. "Settled means settled" was being applied to the lines and
+ * not to the caption.
+ *
+ * The chart is the authority on what is on screen, so the chart's own memo now
+ * calls this too rather than keeping a second copy of the rule.
+ */
+export function visibleChartOutcomes<T extends { outcome_id: number }>(
+  historyData: readonly T[],
+  selected?: ReadonlySet<number> | null,
+): T[] {
+  if (selected && selected.size > 0) {
+    return historyData.filter((o) => selected.has(o.outcome_id));
+  }
+  return historyData.slice(0, CHART_LINES_WHEN_NONE_SELECTED);
+}
+
+/**
+ * #8016 — the caption's subject: the drawn line with the highest current
+ * probability, or null when the chart is drawing nothing.
+ *
+ * 🔴 THE QUESTION IS "WHICH LINE LEADS", NOT "WHICH LEG MOVED MOST", and the
+ * specimen cannot tell you which: on 109257 Messi is the probability leader
+ * (1.00) AND the largest mover (+81.0), which is why #8016 describes the rule as
+ * picking the biggest move. It does not. Inside the drawn set the two separate —
+ * Putin moves most (−19.5), Burnham leads (0.95) — and the caption must name
+ * Burnham. The selection rule is deliberately the same one `leader` uses — highest
+ * `probability`, nulls sorting last — narrowed to the charted set and nothing
+ * else, so a board whose leader IS charted (the ordinary case) is untouched.
+ *
+ * Returning null rather than falling back to the overall leader is the point:
+ * a caption that reaches outside the chart to find a subject is the defect.
+ * Notice 34 — leave the space empty rather than explain the emptiness.
+ */
+export function pickCaptionSubject<
+  T extends { id: number; probability?: number | null },
+>(outcomes: readonly T[], drawnIds: ReadonlySet<number>): T | null {
+  if (drawnIds.size === 0) return null;
+  const drawn = outcomes.filter((o) => drawnIds.has(o.id));
+  if (drawn.length === 0) return null;
+  return [...drawn].sort(
+    (a, b) => (b.probability ?? 0) - (a.probability ?? 0),
+  )[0];
+}
+
+/**
  * The clarification that explains the blend line's movement. Deterministic,
  * blend-only (no per-source detail): prefer opening→current ("up X pts from
  * opening"), fall back to the 24h change, else null (nothing to say). Movements
