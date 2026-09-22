@@ -797,7 +797,35 @@ export function feedExpandedContext(item: FeedItem): string {
   }
   if (item.reason) candidates.push(item.reason);
 
-  const snippetClauses = contextClauses(snippet).map(contextWords);
+  // #8091 — THE BUCKET LABEL IS A CLAUSE THE READER HAS ALREADY READ, EVEN WHEN
+  // THE SNIPPET NO LONGER SPELLS IT.
+  //
+  // This test asks "does the candidate repeat the snippet?", and until #6567
+  // that was the whole question: an unsettled game card's snippet WAS the bucket
+  // label ("Close matchup"), so `reason` — "Starting soon — close matchup" — lost
+  // its second clause here and the card correctly offered no "See more".
+  //
+  // #6567 replaced that snippet with the two seasons ("TOR 77-80 · BAL 76-81")
+  // on the thesis, which shipped, that the bucket label is the probability bar
+  // restated as prose. The label stopped appearing in the snippet, so it stopped
+  // being detected as a repeat, so the expanded context began re-admitting the
+  // exact sentence #6567 removed — measured on production 2026-09-22 21:4xZ,
+  // where every pregame card grew a "See more" that opened to
+  // "TOR 77-80 · BAL 76-81 — Starting soon — close matchup".
+  //
+  // So the comparison set is what the reader has ALREADY SEEN, which is the
+  // snippet plus the bucket the bar draws — not the snippet's text alone. Read
+  // off `highlight.label` rather than matched against a hardcoded "close
+  // matchup": the label is served (`test_the_highlight_label_is_byte_identical_
+  // so_the_rank_cannot_move` keeps it that way) and it is the same string the
+  // backend caption pass consumed, so the two halves cannot drift apart.
+  const alreadyRead = [snippet];
+  if (item.type === "event") {
+    const label = ((item.data as FeedEventData)?.highlight?.label ?? "").trim();
+    if (label) alreadyRead.push(label);
+  }
+
+  const snippetClauses = alreadyRead.flatMap(contextClauses).map(contextWords);
   const snippetWordSet = new Set(snippetClauses.flat());
 
   const extras = candidates
