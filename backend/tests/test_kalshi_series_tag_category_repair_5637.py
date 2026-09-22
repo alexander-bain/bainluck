@@ -1601,3 +1601,250 @@ def test_the_honest_blank_helper_names_no_sport_and_derives_its_vocabulary_7900(
     assert rail.HONEST_BLANK not in set(SPORT_PREFIX_TO_LLM_CATEGORY.values()), (
         "the blank has become a sport word; the fences no longer mean what they say"
     )
+
+
+# ---------------------------------------------------------------------------
+# #7937 — the reviewed-subset allowlist. The rail's page is bounded by the venue
+# budget, so a row the operator judges wrong shares a page with rows they want
+# and no cursor position separates them. Tier-1 `15726780` is the live case.
+# ---------------------------------------------------------------------------
+
+#: The live case the parameter exists for: tier 1, badged `economics`, venue tag
+#: `Football`. Newest in the population, so page one always reaches it.
+_EXEC_OTY_ID = 15726780
+_EXEC_OTY_NAME = "Executive of the Year Winner?"
+_EXEC_OTY_TICKER = "KXNFLEXECOTY-27"
+
+#: The row that shares its page and must NOT move. authority/955 excluded it
+#: deliberately: a Brady-in-the-WWE novelty is not an MMA market.
+_WWE_ID = 60912345
+_WWE_NAME = "Tom Brady to fight in the WWE before 2028?"
+_WWE_TICKER = "KXWWEFIGHTOCCUR-28JANTBRA"
+
+
+def _stranded_page():
+    """The two rows of the live case, in the order the scan reaches them."""
+    return [
+        _Row(_EXEC_OTY_ID, _EXEC_OTY_NAME, "kalshi", _EXEC_OTY_TICKER, "economics"),
+        _Row(_WWE_ID, _WWE_NAME, "kalshi", _WWE_TICKER, "entertainment"),
+    ]
+
+
+def _stranded_tags():
+    return {
+        _EXEC_OTY_TICKER: _result(tag="Football"),
+        _WWE_TICKER: _result(tag="MMA"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_without_an_allowlist_the_two_rows_are_inseparable_7937(monkeypatch):
+    """🔴 THE CONTROL, and the reason the parameter exists.
+
+    If this page were separable by the cursor there would be nothing to build.
+    Both rows plan, on one page, with the unwanted one DOWNSTREAM of the target —
+    so no `after_id` reaches the first without also reaching the second, and an
+    apply writes both.
+    """
+    out, _ = await _plan(_stranded_page(), _stranded_tags(), monkeypatch)
+
+    assert [p["id"] for p in out["planned"]] == [_EXEC_OTY_ID, _WWE_ID], (
+        "control: both rows must plan together, or this file is testing a page "
+        "that never had the problem"
+    )
+    assert out["withheld"] == [], "no allowlist withholds nothing"
+    assert out["only_ids"] is None
+    assert out["only_ids_not_planned"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_allowlist_plans_only_the_reviewed_row_7937(monkeypatch):
+    """The target is planned; the row beside it is withheld, BY NAME.
+
+    A withheld row is not a refusal — the gate had no objection to it — so it
+    travels in its own list with its whole plan, and the refusal counters must
+    not absorb it.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module, "_resolve_series_tag_result", _TagStub(_stranded_tags())
+    )
+    out = await rail.repair(
+        _FakeSession(_stranded_page()), apply=False, only_ids=str(_EXEC_OTY_ID)
+    )
+
+    assert [p["id"] for p in out["planned"]] == [_EXEC_OTY_ID]
+    assert out["planned"][0]["before"] == "economics"
+    assert out["planned"][0]["after"] == "football"
+    assert [w["id"] for w in out["withheld"]] == [_WWE_ID]
+    assert out["withheld"][0]["after"] == "mma", (
+        "the withheld row carries its whole plan — an operator has to be able to "
+        "see what they declined"
+    )
+    assert out["only_ids"] == [_EXEC_OTY_ID]
+    assert out["refused"].get("not_in_only_ids") is None, (
+        "a withheld row is not a refusal; folding it into the counters would "
+        "read as the gate having judged it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_apply_writes_only_the_allowlisted_row_7937(monkeypatch):
+    """The whole ship: the tier-1 badge moves and the WWE row does not.
+
+    Proven on the payload of a real apply, not on the plan — `restore_sql` and
+    `applied_rows` are what a D51 receipt is made of, and a filter that narrowed
+    the plan but not the write would leave both green on the dry run alone.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(
+        kalshi_module, "_resolve_series_tag_result", _TagStub(_stranded_tags())
+    )
+    # The fake matches whatever the rail actually targets, so the assertions
+    # below are about the rail's choice and never about the fake's.
+    session = _ApplySession(_stranded_page(), matched_ids=[_EXEC_OTY_ID, _WWE_ID])
+    out = await rail.repair(session, apply=True, only_ids=str(_EXEC_OTY_ID))
+
+    assert out["changed"] == 1
+    assert [r["id"] for r in out["applied_rows"]] == [_EXEC_OTY_ID]
+    assert "economics" in out["restore_sql"]
+    assert "entertainment" not in out["restore_sql"], (
+        "🔴 the undo must not name a row the rail never wrote"
+    )
+    assert str(_WWE_ID) not in out["restore_sql"]
+    assert out["drifted"] == [], (
+        "a withheld row is not a drifted row — reporting it as one would say "
+        "another writer moved it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_cursor_ignores_the_allowlist_7937(monkeypatch):
+    """🔴 The filter narrows the PLAN, never the SCAN.
+
+    The scan did reach the withheld row, so the page boundary is past it. A
+    cursor that stopped at the allowlist would re-offer the declined row on
+    every subsequent page of the drain, for ever.
+    """
+    import app.tasks.kalshi as kalshi_module
+
+    # A third row the venue cannot answer for, so the scan STOPS and emits a
+    # cursor. On a two-row page the scan exhausts and `next_cursor` is None for
+    # both arms — an equality that would hold however the filter behaved.
+    stopper = _Row(70000001, "unanswerable", "kalshi", "KXNOPE-27", "economics")
+    page = _stranded_page() + [stopper]
+    tags = dict(_stranded_tags(), **{"KXNOPE-27": _result(resolved=False)})
+
+    monkeypatch.setattr(kalshi_module, "_resolve_series_tag_result", _TagStub(tags))
+    filtered = await rail.repair(
+        _FakeSession(page), apply=False, only_ids=str(_EXEC_OTY_ID)
+    )
+
+    monkeypatch.setattr(kalshi_module, "_resolve_series_tag_result", _TagStub(tags))
+    unfiltered = await rail.repair(_FakeSession(page), apply=False)
+
+    assert unfiltered["next_cursor"] is not None, (
+        "control: the page must emit a cursor at all, or the comparison is "
+        "None == None and proves nothing"
+    )
+    assert filtered["next_cursor"] == unfiltered["next_cursor"]
+    assert filtered["next_cursor"]["after_id"] == _WWE_ID, (
+        "control: the cursor must sit past the WITHHELD row, which is what makes "
+        "this assertion worth making"
+    )
+    assert filtered["examined"] == unfiltered["examined"]
+    assert filtered["venue_calls"] == unfiltered["venue_calls"], (
+        "the allowlist must not be mistaken for a way to save venue budget"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_withheld_rows_event_never_reaches_the_ghost_arm_7937(monkeypatch):
+    """🔴 THE ARM THAT CAN COST A READER A GAME.
+
+    Retiring an event is justified by the badge correction that makes its market
+    a duplicate. If the badge is not being corrected, the justification does not
+    exist — so a withheld row's event must not even be a candidate, let alone be
+    voided.
+    """
+    market = _redblacks_market()   # event_id = the ghost, plans `football`
+    ghost = _GhostRow(
+        _GHOST_EVENT_ID, "Ottawa Redblacks", "Toronto Argonauts", "scheduled",
+        "basketball_other",
+        real_id=_REAL_EVENT_ID, real_key="americanfootball_cfl",
+    )
+    tags = {_REDBLACKS_TICKER: _result(tag="Football")}
+
+    admitted, _ = await _plan_with_ghosts([market], tags, [ghost], monkeypatch)
+    assert len(admitted["ghost_events_planned"]) == 1, (
+        "control: with no allowlist this ghost IS planned, so its absence below "
+        "is the allowlist and not an unrelated refusal"
+    )
+
+    import app.tasks.kalshi as kalshi_module
+
+    monkeypatch.setattr(kalshi_module, "_resolve_series_tag_result", _TagStub(tags))
+    withheld = await rail.repair(
+        _FakeSession([market], ghosts=[ghost]),
+        apply=False,
+        # An id that is not this page's row: the market is withheld.
+        only_ids=str(_EXEC_OTY_ID),
+    )
+
+    assert withheld["planned"] == []
+    assert withheld["ghost_events_planned"] == [], (
+        "🔴 the event arm acted on a badge correction that is not happening"
+    )
+    assert withheld["event_restore_sql"] == ""
+    assert withheld["only_ids_not_planned"] == [_EXEC_OTY_ID], (
+        "an allowlisted id this page never planned means a stale plan or the "
+        "wrong cursor, and it is the failure this parameter is most likely to "
+        "have — it may not be silent"
+    )
+
+
+def test_an_unreadable_or_empty_allowlist_is_refused_not_guessed_7937():
+    """Both defaults are wrong, so neither is taken.
+
+    "Apply everything" turns a typo into a full-page write; "apply nothing"
+    turns it into a silent no-op that reads as a drained page. A parser that
+    DISCARDED unreadable tokens would be worse than either: it would apply a set
+    the operator never wrote, and the payload could only report what it kept.
+    """
+    assert rail._parse_only_ids(None) is None, "absent is not empty"
+    assert rail._parse_only_ids(f" {_EXEC_OTY_ID} , {_WWE_ID} ") == {
+        _EXEC_OTY_ID,
+        _WWE_ID,
+    }, "control: a well-formed list must parse, or the refusals below prove nothing"
+
+    for bad in ("", "   ", ",", f"{_EXEC_OTY_ID},", f"{_EXEC_OTY_ID},oops", "0", "-1"):
+        with pytest.raises(ValueError) as caught:
+            rail._parse_only_ids(bad)
+        assert "only_ids" in str(caught.value), (
+            f"the refusal for {bad!r} must name the parameter it is about"
+        )
+
+
+def test_the_dispatcher_forwards_the_allowlist_7937():
+    """FastAPI drops an unknown query param SILENTLY.
+
+    A rail that declares `only_ids` while the dispatcher does not forward it
+    would apply the whole page every time, and the operator's receipt would say
+    they had reviewed a subset.
+    """
+    import inspect
+
+    from app.routes import admin_repairs
+
+    assert "only_ids" in inspect.signature(rail.repair).parameters
+    assert "only_ids" in inspect.signature(admin_repairs.run_repair).parameters, (
+        "the endpoint must declare it or FastAPI never sees the query param"
+    )
+
+    source = inspect.getsource(admin_repairs.run_repair)
+    assert '("only_ids", only_ids)' in source, (
+        "the dispatcher passes through only the pairs named in `extra`; an "
+        "endpoint param that is not in that list is read and thrown away"
+    )

@@ -148,6 +148,30 @@ requires `indeterminate == 0`, so "finished" is unreachable while any retryable
 row remains. This is CERT-666's correction to the Polymarket sibling, adopted
 here rather than re-learned.
 
+AIMING AT A SUBSET — `?only_ids=` (#7937)
+=========================================
+
+The cursor says where the scan STARTS; it cannot say which rows inside a page
+should be written. That is not a convenience gap. A page is bounded by the venue
+budget, so a row the operator judges wrong sits in the same page as rows they
+want, and there is no cursor position between them: tier-1 `15726780`
+("Executive of the Year Winner?", badged `economics`, venue tag `Football`) is
+the NEWEST row in the population and is reached in the same 40 calls as
+`KXWWEFIGHTOCCUR` (`entertainment` -> `mma`, wrong, deliberately excluded by
+authority/955). Without a row filter the tier-1 mis-badge a reader can see is
+unrepairable by the rail that exists to repair exactly that class.
+
+`only_ids` is a comma-separated allowlist of ids taken from a dry run's
+`planned`. It narrows the PLAN — so the dry run and the apply that follows it
+describe the same page — and it never narrows the SCAN, so the cursor is
+unaffected and a withheld row is reached again only by restarting the walk.
+Withheld rows are enumerated in `withheld`; ids allowlisted but not planned are
+enumerated in `only_ids_not_planned`.
+
+The workaround it replaces was applying the unwanted row and reverting it on a
+second write, which lands zero net change on a row nobody wanted touched and
+leaves a receipt saying the rail changed something it did not mean to.
+
 D51 — BACKUP AND RESTORE
 ========================
 
@@ -397,6 +421,56 @@ def _parse_after_date(raw: Any):
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     return datetime.fromisoformat(text)
+
+
+def _parse_only_ids(raw: Any) -> Optional[set[int]]:
+    """The reviewed-subset allowlist (#7937), as a set, or ``None`` when absent.
+
+    ABSENT AND EMPTY ARE DIFFERENT ANSWERS and neither may be guessed at. Absent
+    (``None``) is "no allowlist" and leaves the rail exactly as it was. An
+    explicitly empty ``?only_ids=`` selects no row, which would read as a drained
+    page, so it is REFUSED rather than treated as either extreme — both defaults
+    are wrong in a way the payload could not show: "apply everything" turns a
+    typo into a full-page write, "apply nothing" turns it into a silent no-op.
+
+    Every token must be a positive integer. A parser that DISCARDED the tokens it
+    could not read would apply a different set than the operator wrote, and the
+    difference would be invisible in a payload that can only report what it kept
+    — so a malformed token refuses the whole call, here, before anything is
+    scanned or written. This is the same rule `status_scope` follows on the
+    dispatcher: refuse BY NAME, never default.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (set, frozenset, list, tuple)):
+        tokens = [str(t) for t in raw]
+    else:
+        tokens = str(raw).split(",")
+
+    ids: set[int] = set()
+    for token in tokens:
+        candidate = token.strip()
+        try:
+            value = int(candidate)
+        except ValueError:
+            raise ValueError(
+                f"only_ids: {candidate!r} is not a row id. Pass a comma-separated "
+                "list of positive integers taken from the dry run's `planned`."
+            ) from None
+        if value <= 0:
+            raise ValueError(
+                f"only_ids: {value} is not a row id. Pass a comma-separated list "
+                "of positive integers taken from the dry run's `planned`."
+            )
+        ids.add(value)
+
+    if not ids:
+        raise ValueError(
+            "only_ids was supplied but names no row. An empty allowlist selects "
+            "nothing and would report as a drained page; omit the parameter to "
+            "apply the whole plan."
+        )
+    return ids
 
 
 #: Sanity ceiling on the EVENT arm, not a floor. gotcha #53 says an empty result
@@ -649,6 +723,7 @@ async def repair(
     apply: bool = False,
     after_date: Optional[str] = None,
     after_id: Optional[int] = None,
+    only_ids: Optional[str] = None,
     **_ignored,
 ) -> dict[str, Any]:
     """Plan (and optionally apply) the #5637 current-row convergence.
@@ -656,7 +731,18 @@ async def repair(
     Returns a payload complete enough to BE the D51 backup: every row it
     changed with its `before`, every refusal under a named reason, a runnable
     `restore_sql`, and a cursor if there is more to do.
+
+    `only_ids` (#7937) narrows the PLAN to the rows an operator reviewed, and it
+    narrows the dry run identically — so `apply=false&only_ids=X` is a truthful
+    preview of `apply=true&only_ids=X`, which is the whole point of reviewing.
+    It does NOT narrow the scan: the cursor still advances past a withheld row,
+    because the scan did reach it and the page boundary is a fact about the walk,
+    not about the operator's choice. A withheld row stays in the population and
+    is reached again by restarting the walk, never by paging on.
     """
+    # Parsed FIRST, before the scan: a malformed allowlist costs nothing here and
+    # every other failure mode of this rail is one that must never lose a receipt.
+    only_ids_set = _parse_only_ids(only_ids)
     from app.services.kalshi_api import KalshiAPIService
     from app.tasks.kalshi import (
         _categorize_kalshi_market,
@@ -803,20 +889,49 @@ async def repair(
                 "event_id": row.event_id,
             }
         )
-        # The event this market hangs off is a ghost CANDIDATE — decided later,
-        # in one query, by evidence this loop does not have. The venue's answer
-        # travels with it so the event arm never re-derives a sport.
-        #
-        # 🔴 A HONEST-BLANK target is not an answer about sport and must never
-        # enter that arm. `_plan_ghost_events` compares the blank against a
-        # counterpart's sport prefix, which can never equal it, so every such row
-        # would land in `counterpart_wrong_sport` — a refusal that reads as
-        # evidence weighed when in fact nothing was asked. The arm RETIRES EVENTS
-        # a reader can see; it is told only what the venue actually named.
-        if row.event_id is not None and target != HONEST_BLANK:
-            target_by_event[row.event_id] = target
         examined += 1
         next_cursor = _cursor_for(row)
+
+    # ------------------------------------------------- the reviewed subset (#7937) --
+    # 🔴 The filter is applied to the PLAN, not to the scan and not only to the
+    # write. Filtering the write alone would leave `apply=false&only_ids=X`
+    # describing a page it is not going to write, and the operator's review would
+    # be of the wrong document. Filtering the scan would move the cursor, so the
+    # rows the operator chose to skip would be silently re-offered on every
+    # subsequent page of the drain.
+    #
+    # Withheld rows are ENUMERATED, never counted: "planned 4 of 9" with no names
+    # is the shape of a rail that dropped something. So is an id in the allowlist
+    # that this page never planned — that means the operator is holding a stale
+    # plan or is on the wrong page, and it is the failure this parameter is most
+    # likely to have, so it is reported rather than shrugged off (gotcha #53).
+    withheld: list[dict[str, Any]] = []
+    only_ids_not_planned: list[int] = []
+    if only_ids_set is not None:
+        planned_ids = {item["id"] for item in planned}
+        withheld = [item for item in planned if item["id"] not in only_ids_set]
+        planned = [item for item in planned if item["id"] in only_ids_set]
+        only_ids_not_planned = sorted(only_ids_set - planned_ids)
+
+    # The event each surviving market hangs off is a ghost CANDIDATE — decided
+    # later, in one query, by evidence the scan loop does not have. The venue's
+    # answer travels with it so the event arm never re-derives a sport.
+    #
+    # 🔴 Built HERE, from the post-filter plan, and nowhere else. A withheld row's
+    # badge is not being corrected, so its event must not be retired on the
+    # strength of a correction that is not happening — that would remove a card a
+    # reader can see in exchange for nothing. One construction site, so the two
+    # arms cannot disagree about which rows this pass is acting on.
+    #
+    # 🔴 A HONEST-BLANK target is not an answer about sport and must never enter
+    # that arm. `_plan_ghost_events` compares the blank against a counterpart's
+    # sport prefix, which can never equal it, so every such row would land in
+    # `counterpart_wrong_sport` — a refusal that reads as evidence weighed when in
+    # fact nothing was asked. The arm RETIRES EVENTS a reader can see; it is told
+    # only what the venue actually named.
+    for item in planned:
+        if item["event_id"] is not None and item["after"] != HONEST_BLANK:
+            target_by_event[item["event_id"]] = item["after"]
 
     changed = 0
     drifted: list[dict[str, Any]] = []
@@ -1066,6 +1181,19 @@ async def repair(
         "examined": examined,
         "scanned_rows": len(rows),
         "planned": planned,
+        # ---- the reviewed-subset allowlist (#7937) ----
+        # Echoed so a receipt says which subset it acted on. `null` is the whole
+        # plan; a list is the operator's own statement of what they reviewed.
+        "only_ids": sorted(only_ids_set) if only_ids_set is not None else None,
+        # Planned rows the allowlist held back, in full — they are correct rows
+        # this rail deliberately did not write, which is a different thing from a
+        # refusal (the gate had no objection to them) and is reported separately
+        # so neither number can absorb the other.
+        "withheld": withheld,
+        # Ids the operator allowlisted that THIS PAGE never planned. Non-empty
+        # almost always means a stale plan or the wrong cursor, and it is the one
+        # way this parameter quietly does less than the operator asked.
+        "only_ids_not_planned": only_ids_not_planned,
         "refused": refused,
         "indeterminate_rows": indeterminate_rows,
         # Distinct UNMAPPED series this pass actually asked the venue about.
