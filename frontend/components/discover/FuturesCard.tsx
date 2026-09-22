@@ -6,7 +6,8 @@ import { BarChart3 } from "lucide-react";
 import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } from "@/lib/share";
 import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
-import { leaderFirstSlice, printsAPercent } from "@/lib/discover/leaderOrder";
+import { printsAPercent } from "@/lib/discover/leaderOrder";
+import { futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
@@ -63,12 +64,8 @@ function readSessionSeed(): string {
  */
 const HERO_MIN_MOVEMENT_POINTS = 10;
 
-// One row of `discover_card.distribution_outcomes` as the card renders it.
-type DistributionRow = {
-  label: string;
-  probability: number | null;
-  movement?: number | null;
-};
+// A row of `discover_card.distribution_outcomes` is `FuturesBoardRow`, declared
+// beside the rule that selects the rows (#8025) rather than twice, once per card.
 
 interface FuturesCardProps extends CardActionCallbacks {
   item: FeedItem;
@@ -383,110 +380,42 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     );
   }
 
-  // Typed locally: `data.discover_card` is still untyped debt (see the frontend
-  // tsc baseline), so without this annotation these rows arrive as `any` and
-  // leaderFirstSlice's generic widens them to its own constraint.
-  const allDistributionRows: DistributionRow[] = data.discover_card?.distribution_outcomes ?? [];
-  // #6505, the same cut as the ladder above and for the same reason. Production
-  // specimens, same read: "NASCAR: Food City 300 Winner" (61131240) drew
-  // `Anthony Alfredo 47% · Patrick Staropoli — · Justin Allgaier — · Dawson
-  // Cram —`, and "Premier Lacrosse League Championship Winner" (16757299) drew
-  // two priced rows over `Boston Cannons —` and `California Redwoods —`.
+  // #8025 — WHICH ROWS, HOW MANY, AND WHAT THE REMAINDER SAYS now live in one
+  // module, `lib/discover/futuresBoard.ts`, because the browse card
+  // (`components/FeedCard.tsx` → /sports, /categories/*, /my-stuff) never had
+  // them at all: it read `top_outcomes` and drew three rows, so a ten-team field
+  // read as a three-team race totalling 43% on one page and as a ranked board of
+  // four over "Field and 6 more outcomes" on another.
   //
-  const distributionRows = allDistributionRows.filter((row) => printsAPercent(row.probability));
-  // CERT-2456 — a ladder whose rungs contradict each other is served as a
-  // distribution BECAUSE the backend refused to say which rung is wrong (#4610).
-  // Such a card has three rows, not four, and the `>= 4` bar was written for a
-  // different question: when a field is more interesting than a leader. Applied
-  // to a refused ladder it deletes the field a second time, one component after
-  // the refusal — the reader gets the plain leader hero and never learns there
-  // were other rungs. Widened HERE ONLY for the refused ladder, so no card that
-  // renders correctly today changes shape.
-  //
-  // Read through a narrow local cast, the same way `utils.ts` reads this object:
-  // `discover_card` is not on `FeedFuturesData` yet (each bare access is one
-  // baselined `tsc` error), so a sixth bare access would trip the fail-on-new
-  // ratchet on a line that is not the ship.
-  const ladderTreatmentRefused =
-    (data as { discover_card?: { ladder_treatment_refused?: boolean } }).discover_card
-      ?.ladder_treatment_refused === true;
-  // #6505 — the same bend as the ladder above, on the same condition and for
-  // the same reason: a board that HAD enough rows to be a board, and lost them
-  // only because we cannot price them, is still a board. Premier Lacrosse is the
-  // specimen — eight rows, two priced at 53/47 with a final four days out, six
-  // sitting at `0.00 bid / 1.00 ask`. Dropping the six and then falling to the
-  // hero for want of a fourth row would delete "Denver Outlaws 47%", which is
-  // the whole interest of that card. A board that was under four rows to begin
-  // with is untouched and still falls through exactly as it does today.
-  const droppedBelowTheBar = allDistributionRows.length >= 4 && distributionRows.length < 4;
-  const distributionMinRows = ladderTreatmentRefused || droppedBelowTheBar ? 2 : 4;
-  // #7844 half two — MAY THIS BOARD BE DRAWN AS A PODIUM?
-  //
-  // `Which parties will be part of the next government of New Zealand?`, page
-  // one, 390px: `1 Green 68 · 2 Labour 54 · 3 National 53 · 4 NZ First 50 ·
-  // 5 Field and 2 more outcomes`. New Zealand governments are coalitions; those
-  // four legs sum to 225% and Green is not "beating" Labour, because both can be
-  // in the next government — which is the entire point of the question. Half one
-  // (#7844) took the caption off. The rank digits and the remainder row are the
-  // same false claim in chrome: `1 2 3 4` is the grammar this component uses for
-  // `2026-27 Stanley Cup® Finals Winner`, where exactly one row can win, and
-  // "Field and N more outcomes" tells a reader the rest of the probability lives
-  // in a residual field. On an independent set there is no residual field — the
-  // two hidden rows are two more yes/no questions.
-  //
-  // The refusal is a refusal, not a renormalization: 225% is the honest answer,
-  // and scaling a coalition board to 100 would be the defect.
-  //
-  // FAIL TO TODAY'S RENDERING. Only an explicit `false` — the route's own
-  // `_card_field_is_a_race`, taken off the venue's `mutually_exclusive` flag AND
-  // the printed board summing past 100 — changes the board. An absent field (an
-  // older payload, a pre-#7844 cache entry, any of the four other card formats)
-  // draws exactly what it draws today. Read through a narrow local cast for the
-  // reason stated on `ladderTreatmentRefused` above.
-  //
-  // #8033 reads the SERVED value once and derives both booleans off it, rather
-  // than taking a second bare access (each one is a baselined `tsc` error) — and
-  // the two derivations are deliberately different. The podium question fails to
-  // today's rendering on an absent key (`!== false`, above). The pair repair below
-  // fails CLOSED on one (`=== true`): a payload with no flag is a payload that has
-  // not told us the field is exclusive, and deriving a row down a point on a board
-  // that turns out to be independent would be a wrong number rather than a missing
-  // repair. It costs nothing to wait — the feed blob's TTL is 30s — and the live
-  // specimen serves the key explicitly.
-  const servedFieldIsARace = (data as { discover_card?: { field_is_a_race?: boolean } })
-    .discover_card?.field_is_a_race;
-  const fieldIsARace = servedFieldIsARace !== false;
+  // Everything that used to be computed here is computed there, unchanged and
+  // line for line — #1526's sort-before-slice, #6505's price filter and its bend
+  // of the minimum-row bar, CERT-2456 / #4610's refused ladder, #6586's count off
+  // the unfiltered list, #7844 half two's `field_is_a_race`. The reason each bend
+  // exists is in that module's docblock and on the lines themselves; this card
+  // keeps its own ROW TEMPLATE (the podium, the rank digits, the bars) and stops
+  // owning the rule privately.
+  const board = futuresDistributionBoard(data);
   // The rank cell is a column, not a decoration: dropping its content would slide
   // every label one track left and misalign the remainder row against the rows
   // above it. So the template loses the track rather than the cell losing its
   // text, and the label gets the 1.25rem + gap back at phone width.
-  const distributionRowGrid = fieldIsARace
-    ? "grid-cols-[1.25rem_minmax(0,1fr)_2.75rem]"
-    : "grid-cols-[minmax(0,1fr)_2.75rem]";
-  if (data.discover_card?.suggested_format === "outcome_distribution" && distributionRows.length >= distributionMinRows) {
-    // #1526: sort BEFORE slicing. `slice(0, 4)` on an array that is not
-    // leader-first drops the leader — the Fed September card showed four
-    // also-rans totalling 47% while the 56% "No change" row never rendered.
-    // The rank column below is `index + 1` and titled "Rank N by probability",
-    // so an unsorted slice mislabels the rows as well as losing the answer.
-    // #7844 half two drops that column on a non-exclusive board and the sort is
-    // no less load-bearing there: leader-first is what decides WHICH four of the
-    // eight rows a reader is shown, which is the "losing the answer" half.
-    const shownRows = leaderFirstSlice(distributionRows, 4);
-    // #8033 — the board's top two may not own more than the race. Taken over
-    // `shownRows` and not `distributionRows`, because the pair the reader can add
-    // up is the pair that is DRAWN; and after the slice, because the helper's
-    // leader-first clause is a check on the list it is handed. Every position it
-    // declines comes back `null`, which leaves that row rendering exactly as it
-    // does today — including every row on every board that is not a race.
-    const racePairPercents = renderedRaceBoardPercents(
-      shownRows.map((row) => row.probability),
-      servedFieldIsARace === true,
-    );
-    // #6505 — counted off the UNFILTERED list, so a row we declined to draw is
-    // still a row the reader is told exists. Filtering the total too would make
-    // the card claim a smaller field than the market has.
-    const remainingCount = data.discover_card.remaining_outcome_count + Math.max(0, allDistributionRows.length - shownRows.length);
+  const distributionRowGrid = board?.fieldIsARace === false
+    ? "grid-cols-[minmax(0,1fr)_2.75rem]"
+    : "grid-cols-[1.25rem_minmax(0,1fr)_2.75rem]";
+  if (board) {
+    // Leader-first and capped by `futuresDistributionBoard` (#1526: sorting
+    // before slicing is what decides WHICH four of the eight rows a reader is
+    // shown), so this card's rank column — `index + 1`, titled "Rank N by
+    // probability" — can trust its own index again.
+    //
+    // #8033's pair repair comes off the same module rather than being recomputed
+    // here. It was written on this card while this card privately owned the
+    // board; the rule it encodes ("the top two may not own more than the race")
+    // is a statement about the BOARD, and the browse card now draws the same two
+    // rows. Leaving it behind would have let one market print 60/41 on
+    // /categories and 60/40 on /discover — the disagreement this ship exists to
+    // end, reintroduced by the ship itself.
+    const { rows: shownRows, remainingCount, fieldIsARace, rowPercents: racePairPercents } = board;
 
     // `data-card-format` added by the CERT-678 repair: this was the only one of
     // the four `<article>` roots with no marker, so a render-path test could not
@@ -675,8 +604,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
                       no residual, so the row can only say how many more separate
                       questions this market holds. The count and its units are
                       #6586's contract and are unchanged in both arms. */}
+                  {/* #8025 — the sentence itself is shared, so the browse card
+                      cannot word this differently. Composed in the module and
+                      interpolated as ONE string here, which is the property the
+                      comment above is about. */}
                   <span className="truncate text-xs font-medium">
-                    {`${fieldIsARace ? "Field and " : ""}${remainingCount} more outcome${remainingCount === 1 ? "" : "s"}`}
+                    {futuresBoardRemainderLabel(board)}
                   </span>
                 </div>
               )}
