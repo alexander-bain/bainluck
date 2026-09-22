@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app.routes.feedback import BugReportSubmission, categorize_bug_report, submit_bug_report
 
@@ -87,14 +88,19 @@ async def test_submit_bug_report_persists_auto_category():
         app_state={"screen": "EventDetail", "platform": "iOS"},
     )
 
+    background_tasks = BackgroundTasks()
     response = await submit_bug_report(
         body=body,
         request=request,
         db=db,
         user=None,
+        background_tasks=background_tasks,
     )
 
     assert response == {"status": "ok", "id": 456, "category": "data_quality"}
+    # #1703: the GitHub-issue enqueue is scheduled post-response, never awaited
+    # here. Nothing in this test runs it, so no broker is touched.
+    assert len(background_tasks.tasks) == 1
     assert db.committed is True
     assert db.report.category == "data_quality"
     assert db.report.session_id == "session-123"
@@ -112,13 +118,17 @@ async def test_submit_bug_report_stores_authenticated_user_email_without_notific
     )
     user = SimpleNamespace(id=123, email="filer@example.com")
 
+    background_tasks = BackgroundTasks()
     response = await submit_bug_report(
         body=body,
         request=request,
         db=db,
         user=user,
+        background_tasks=background_tasks,
     )
 
     assert response == {"status": "ok", "id": 456, "category": "ui"}
+    # #1703: scheduled, not awaited — see the sibling test above.
+    assert len(background_tasks.tasks) == 1
     assert db.report.user_id == 123
     assert db.report.user_email == "filer@example.com"
