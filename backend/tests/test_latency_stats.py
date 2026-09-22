@@ -878,3 +878,74 @@ def test_an_out_of_range_window_is_refused_by_the_real_stack():
     assert c.get("/api/admin/latency-stats?minutes=120&secret=wrong").status_code == 422
     assert c.get("/api/admin/latency-stats?minutes=0&secret=wrong").status_code == 422
     assert c.get("/api/admin/latency-stats?minutes=30&secret=wrong").status_code == 403
+
+
+def _direct_call_sites():
+    """Every direct call to `get_latency_stats` in the suite, with its arg shape.
+
+    AST, not text: a regex over source would also match the name inside a
+    comment or a docstring, and the thing under test is the ARGUMENTS, which
+    only the parse can see.
+    """
+    import ast
+    from pathlib import Path
+
+    sites = []
+    for path in sorted(Path(__file__).parent.rglob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except SyntaxError:  # pragma: no cover - a broken file is another test's failure
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            # Both spellings reach the same function: a bare `get_latency_stats(...)`
+            # after a from-import, and `admin_mod.get_latency_stats(...)` after a
+            # module import. Missing the second is how this guard would go blind.
+            name = (
+                fn.id if isinstance(fn, ast.Name)
+                else fn.attr if isinstance(fn, ast.Attribute)
+                else None
+            )
+            if name != "get_latency_stats":
+                continue
+            supplies_window = len(node.args) >= 4 or any(
+                kw.arg == "minutes" for kw in node.keywords
+            )
+            sites.append((path.name, node.lineno, supplies_window))
+    return sites
+
+
+def test_every_direct_caller_supplies_the_window():
+    """The regression this file shipped: a direct call that omits `minutes`.
+
+    A direct Python call does not go through FastAPI, so an omitted `minutes`
+    stays the `Query` object and the cutoff arithmetic raises
+    `TypeError: unsupported operand type(s) for *: 'Query' and 'int'`. Four
+    tests in `test_health_read_boundary.py` failed exactly this way: they pass
+    `top` by keyword and stop there.
+
+    `test_the_default_window_is_still_one_hour` cannot catch this — it reads the
+    DECLARATION, where the default is a perfectly good 60. Only the call sites
+    show it.
+    """
+    from pathlib import Path
+
+    sites = _direct_call_sites()
+
+    # Anti-vacuity, two ways. A parse that matched nothing would pass an empty
+    # `offenders` check silently.
+    assert len(sites) >= 15, f"the scan found only {len(sites)} call sites"
+    # The failing caller used the attribute spelling and lives in ANOTHER file.
+    # If the matcher only ever saw bare-name calls in this file, the guard would
+    # be blind to precisely the case that broke.
+    assert {f for f, _, _ in sites} - {Path(__file__).name}, (
+        "the scan reached no file but this one — the attribute spelling is unmatched"
+    )
+
+    offenders = [f"{f}:{ln}" for f, ln, ok in sites if not ok]
+    assert not offenders, (
+        "these call the route directly without `minutes`, so the Query default "
+        f"reaches the cutoff arithmetic: {offenders}"
+    )
