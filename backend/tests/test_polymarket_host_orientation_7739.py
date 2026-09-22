@@ -310,3 +310,66 @@ def test_apply_refuses_without_backup():
     source = REPAIR_PATH.read_text()
     assert "REFUSING: --apply requires --backup" in source
     assert repair.BACKUP_TABLE == "backup_event_orientation_7739"
+
+
+# --------------------------------------------------------------------------
+# The swap is a TRANSPOSITION — the half that turns a label bug into a price bug
+# --------------------------------------------------------------------------
+
+def test_a_clean_row_has_no_unhandled_reasons():
+    repair = _load_repair()
+    assert repair.unhandled_reasons({
+        "has_score": False, "has_opening": False,
+        "has_closing": False, "odds_snapshots": 0,
+    }) == []
+
+
+@pytest.mark.parametrize("field,expected", [
+    ("has_score", "score"),
+    ("has_opening", "opening-probability"),
+    ("has_closing", "closing-probability"),
+])
+def test_orientation_dependent_data_blocks_the_swap(field, expected):
+    """Every stored probability for a game is HOME-oriented. Renaming the clubs
+    without moving them serves the market's price on the wrong club — a wrong
+    label becomes a wrong number, which is strictly worse."""
+    repair = _load_repair()
+    row = {"has_score": False, "has_opening": False,
+           "has_closing": False, "odds_snapshots": 0, field: True}
+    assert repair.unhandled_reasons(row) == [expected]
+
+
+def test_odds_snapshots_block_the_swap_and_are_counted():
+    repair = _load_repair()
+    reasons = repair.unhandled_reasons({
+        "has_score": False, "has_opening": False,
+        "has_closing": False, "odds_snapshots": 4,
+    })
+    assert reasons == ["4 odds snapshots"]
+
+
+def test_the_swap_moves_the_price_with_the_names():
+    """A source-scanning assertion, because the transposition is SQL.
+
+    The event statement must invert `win_probability_sources.*.value` in the
+    same statement that swaps the names, and the snapshot statement must swap
+    home/away. Specimen 15310072 stores 0.585 against `Toronto Tempo` as home;
+    after the swap Connecticut Sun is home and the stored value must read 0.415.
+    """
+    source = REPAIR_PATH.read_text()
+    swap = source.split("SWAP_EVENT_SQL = ")[1].split('"""')[1]
+    assert "home_team_name = away_team_name" in swap
+    assert "away_team_name = home_team_name" in swap
+    assert "win_probability_sources" in swap
+    assert "1 - (val ->> 'value')::numeric" in swap
+
+    snaps = source.split("SWAP_SNAPSHOTS_SQL = ")[1].split('"""')[1]
+    assert "home_win_probability = away_win_probability" in snaps
+    assert "away_win_probability = home_win_probability" in snaps
+
+
+def test_the_backup_carries_the_probabilities_it_rewrites():
+    """A backup of the names alone cannot undo a transposition of the prices."""
+    source = REPAIR_PATH.read_text()
+    create = source.split(f"CREATE TABLE IF NOT EXISTS {{BACKUP_TABLE}} (")[1]
+    assert "win_probability_sources jsonb" in create.split(")")[0]

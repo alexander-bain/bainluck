@@ -41,6 +41,34 @@ SAFETY (D51(b) / notice 47(c)).
   * Scheduled/live rows only. A completed game's orientation is load-bearing for
     scores already stored against it; swapping names there would silently
     reverse a final score, which is a worse defect than the one being fixed.
+
+🔴 THE SWAP IS A TRANSPOSITION, NOT A RENAME, AND THIS IS THE WHOLE RISK.
+`home_team_name` is not a label sitting on its own — every probability we store
+for a game is HOME-ORIENTED. Event 15310072 carries
+`win_probability_sources.polymarket.value = 0.585` with `hero_probability`
+0.585 / `hero_probability_away` 0.415, and the card reads `Toronto Tempo 59%`.
+Rename the two clubs and nothing else, and the page serves **Connecticut Sun
+59%** — the market's price on the wrong club. That is a strictly worse defect
+than the one being repaired: a wrong label becomes a wrong number.
+
+So a swap moves, atomically:
+    events.home_team_name  <-> away_team_name
+    events.home_team_id    <-> away_team_id
+    events.win_probability_sources.<source>.value  ->  1 - value
+    win_prob_snapshots.home_win_probability <-> away_win_probability
+
+and NOTHING ELSE IS ALLOWED TO BE PRESENT. `--apply` refuses any row carrying an
+orientation-dependent field this script does not transpose (a score, an
+opening/closing probability or spread, an odds snapshot). All 31 rows in the
+2026-09-22 dry run are clean on every one of those, so the refusal is a guard
+rather than a blocker — but it is what keeps this repair honest if the
+population ever changes shape.
+
+`yes_is_home` is deliberately NOT written: it is not a stored column.
+`resolve_orientation` recomputes it from the current home/away names on every
+pass, so the live writers produce the correctly-oriented value by themselves
+once the names are right. Transposing the stored value is only there so the
+page is never briefly wrong in the window before that pass.
 """
 from __future__ import annotations
 
@@ -113,6 +141,66 @@ FROM teams t
 JOIN sports s ON s.id = t.sport_id
 WHERE s.key = ANY(:leagues)
 """
+
+
+# Orientation-dependent data this script does NOT transpose. A row holding any
+# of it is refused rather than half-swapped.
+UNHANDLED_SQL = """
+SELECT e.id,
+       (e.home_score IS NOT NULL OR e.away_score IS NOT NULL) AS has_score,
+       (e.opening_home_probability IS NOT NULL
+        OR e.opening_away_probability IS NOT NULL
+        OR e.opening_home_spread IS NOT NULL
+        OR e.opening_favorite IS NOT NULL) AS has_opening,
+       (e.closing_home_probability IS NOT NULL
+        OR e.closing_away_probability IS NOT NULL
+        OR e.closing_home_spread IS NOT NULL) AS has_closing,
+       (SELECT count(*) FROM odds_snapshots o WHERE o.event_id = e.id)
+           AS odds_snapshots
+FROM events e
+WHERE e.id = ANY(:ids)
+"""
+
+# The transposition itself. One statement per table, both inside one
+# transaction: a half-applied swap is the wrong-price defect this guards.
+SWAP_EVENT_SQL = """
+UPDATE events SET
+    home_team_name = away_team_name,
+    away_team_name = home_team_name,
+    home_team_id   = away_team_id,
+    away_team_id   = home_team_id,
+    win_probability_sources = (
+        SELECT jsonb_object_agg(
+                   key,
+                   CASE WHEN jsonb_typeof(val -> 'value') = 'number'
+                        THEN jsonb_set(val, '{value}',
+                                 to_jsonb(round((1 - (val ->> 'value')::numeric), 4)))
+                        ELSE val END)
+        FROM jsonb_each(win_probability_sources) AS s(key, val)
+    )
+WHERE id = ANY(:ids)
+"""
+
+SWAP_SNAPSHOTS_SQL = """
+UPDATE win_prob_snapshots SET
+    home_win_probability = away_win_probability,
+    away_win_probability = home_win_probability
+WHERE event_id = ANY(:ids)
+"""
+
+
+def unhandled_reasons(row: dict) -> list[str]:
+    """Named reasons a row may not be swapped, or an empty list."""
+    reasons = []
+    if row.get("has_score"):
+        reasons.append("score")
+    if row.get("has_opening"):
+        reasons.append("opening-probability")
+    if row.get("has_closing"):
+        reasons.append("closing-probability")
+    if row.get("odds_snapshots"):
+        reasons.append(f"{row['odds_snapshots']} odds snapshots")
+    return reasons
 
 
 def norm(value: str | None) -> str:
@@ -341,34 +429,63 @@ async def main() -> int:
             return 0
 
         ids = [r["id"] for r in planned]
+
+        # A rename is safe only where there is nothing else oriented to `home`.
+        blocked = []
+        for row in (await session.execute(
+            text(UNHANDLED_SQL), {"ids": ids}
+        )).mappings().all():
+            reasons = unhandled_reasons(dict(row))
+            if reasons:
+                blocked.append((row["id"], reasons))
+        if blocked:
+            for event_id, reasons in blocked:
+                print(f"  REFUSING {event_id}: carries {', '.join(reasons)} "
+                      f"— this script does not transpose it", file=sys.stderr)
+            print(f"\nREFUSING --apply: {len(blocked)} of {len(ids)} rows carry "
+                  "orientation-dependent data this script does not transpose. "
+                  "A half-swap serves the market's price on the wrong club.",
+                  file=sys.stderr)
+            return 2
+
         await session.execute(text(
             f"CREATE TABLE IF NOT EXISTS {BACKUP_TABLE} ("
             " event_id bigint, home_team_name text, away_team_name text,"
             " home_team_id bigint, away_team_id bigint,"
+            " win_probability_sources jsonb,"
             " backed_up_at timestamptz DEFAULT now())"
         ))
         await session.execute(text(
             f"INSERT INTO {BACKUP_TABLE} (event_id, home_team_name,"
-            " away_team_name, home_team_id, away_team_id)"
+            " away_team_name, home_team_id, away_team_id,"
+            " win_probability_sources)"
             " SELECT id, home_team_name, away_team_name, home_team_id,"
-            " away_team_id FROM events WHERE id = ANY(:ids)"
+            " away_team_id, win_probability_sources"
+            " FROM events WHERE id = ANY(:ids)"
         ), {"ids": ids})
         await session.commit()
         print(f"\nbacked up {len(ids)} rows into {BACKUP_TABLE}")
-        print("RESTORE (one command):")
+        print("RESTORE (one command — re-swapping the snapshots is its own"
+              " inverse, so it is included):")
         print(f"  UPDATE events e SET home_team_name = b.home_team_name,"
               f" away_team_name = b.away_team_name,"
-              f" home_team_id = b.home_team_id, away_team_id = b.away_team_id"
-              f" FROM {BACKUP_TABLE} b WHERE b.event_id = e.id;")
+              f" home_team_id = b.home_team_id, away_team_id = b.away_team_id,"
+              f" win_probability_sources = b.win_probability_sources"
+              f" FROM {BACKUP_TABLE} b WHERE b.event_id = e.id;"
+              f" UPDATE win_prob_snapshots SET"
+              f" home_win_probability = away_win_probability,"
+              f" away_win_probability = home_win_probability"
+              f" WHERE event_id IN (SELECT event_id FROM {BACKUP_TABLE});")
 
-        await session.execute(text(
-            "UPDATE events SET home_team_name = away_team_name,"
-            " away_team_name = home_team_name,"
-            " home_team_id = away_team_id, away_team_id = home_team_id"
-            " WHERE id = ANY(:ids)"
-        ), {"ids": ids})
+        # One transaction: a swap that moved the names but not the prices is
+        # exactly the wrong-price defect the refusal above exists to prevent.
+        events_done = (await session.execute(
+            text(SWAP_EVENT_SQL), {"ids": ids})).rowcount
+        snaps_done = (await session.execute(
+            text(SWAP_SNAPSHOTS_SQL), {"ids": ids})).rowcount
         await session.commit()
-        print(f"rewrote {len(ids)} rows.")
+        print(f"transposed {events_done} event rows and {snaps_done} "
+              f"win-probability snapshots.")
         return 0
 
 
