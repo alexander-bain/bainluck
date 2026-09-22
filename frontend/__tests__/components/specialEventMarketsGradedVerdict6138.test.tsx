@@ -267,7 +267,17 @@ describe("#6138 — a graded row states its verdict instead of a price", () => {
       observed_at: i === 0 ? minutesAgo(2) : minutesAgo(90),
       // Only the fresh row keeps its grade; the rest are live, stale and
       // ungraded, which is the population the card is summarising.
-      ...(i === 0 ? {} : { is_winner: null, resolution_source: null }),
+      //
+      // #8067 — AND THEY NOW NEED A PRICE TO BE THAT POPULATION. These eight
+      // rows are served `probability: null`, and until #8067 `mergeOutcomes`'
+      // `?? 0` turned that into a price of zero, so they counted as live prices
+      // for the denominator this test is about. They are not: a row nobody
+      // quoted has no price for an age to be ABOUT, so `isLivePriced` now
+      // excludes it and the fixture's denominator would be empty — the card
+      // would fall silent for a reason that has nothing to do with the verdict
+      // rule under test. Giving the eight rows a real price restores exactly
+      // the case the test was written for, with nothing invented anywhere.
+      ...(i === 0 ? {} : { is_winner: null, resolution_source: null, probability: 0.1 }),
     }));
     const html = render(payload(ladder, { status: "live" }), "live");
 
