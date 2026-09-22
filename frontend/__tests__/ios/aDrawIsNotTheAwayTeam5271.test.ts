@@ -531,8 +531,21 @@ d("a draw is not the away team on iOS", () => {
 
     // The image: an OPTIONAL away probability, no default on the entry point.
     expect(renderer).toMatch(/let awayProbability: Double\?/);
-    expect(renderer).toMatch(/awayProbability: Double\?,\s*\n\s*sportName: String,/);
-    expect(renderer).toMatch(/if let awayProbability \{/);
+    // #7998 put the two served percents between `awayProbability` and
+    // `sportName`, so the adjacency this line used to assert no longer holds.
+    // The PROPERTY it was asserting — no default, because a caller that omits
+    // the argument silently restores the old reading on the one surface whose
+    // output leaves the app — is unchanged, and is now stated directly rather
+    // than inferred from what sits next to it. The new parameters inherit it.
+    expect(renderer).toMatch(
+      /awayProbability: Double\?,\s*\n\s*awayRenderedPercent: Int\?,\s*\n\s*homeRenderedPercent: Int\?,\s*\n\s*sportName: String,/
+    );
+    expect(renderer).not.toMatch(/awayProbability: Double\? =/);
+    expect(renderer).not.toMatch(/(away|home)RenderedPercent: Int\? =/);
+    // The slot is still WITHHELD rather than dashed — #5363's property, now read
+    // off the decided pair instead of the raw probability (#7998).
+    expect(renderer).toMatch(/if let awayPercent = printed\.away \{/);
+    expect(renderer).not.toMatch(/absentProbabilityMarker/);
     // …and the card hands it the rule's answer, not the served field.
     expect(cardCode).toMatch(/awayProbability: printable\.away,/);
   });
@@ -685,6 +698,13 @@ d("a draw is not the away team on iOS", () => {
       ],
       "ShareCardRenderer.swift": [
         "    private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }",
+        // #7998 — the same remainder, handed to `duelPercents` so the image
+        // prints the pair the card printed. It is the category this sweep's own
+        // note admits ("a value handed to `duelPercents`/the rule itself"), the
+        // twin of the two `DiscoverEventCard.swift` lines above, and it is never
+        // drawn: the away FIGURE comes from `printed.away`, which is nil exactly
+        // when `awayProbability` is.
+        "            away: awayProbability ?? (1 - homeProbability),",
       ],
       "WidgetAPIClient.swift": [
         "            let awayProbability = 1.0 - homeProbability",
