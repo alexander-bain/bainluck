@@ -14,6 +14,14 @@
     "REPRESENTATIVE_TIE_AUTHORITY",
     "SUM_ARM_ONLY_EXCLUDED_CELLS"
   ],
+  "hashed_root_sha16": {
+    "_calibration_population_ctes": "b97d676bd0e242f3",
+    "_main_futures_sql": "9ca68c45e08b0ecb",
+    "_roster_pushdown_predicates": "9b4afb101a88cb8a",
+    "_virtual_market_ctes": "d03415be9c36d5cb",
+    "compute_calibration_payload": "cded2bf3fc794c0f",
+    "identity_quarantine_ctes": "178dd31b64f3e836"
+  },
   "hashed_roots": [
     "_calibration_population_ctes",
     "_main_futures_sql",

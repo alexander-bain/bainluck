@@ -93,6 +93,30 @@ def _definition_closure_digest(text:str,origin:str)->str|None:
    if isinstance(child,ast.Name) and isinstance(child.ctx,ast.Load) and child.id in nodes:
     stack.append(child.id)
  return hashlib.sha256("\n---\n".join(sorted(segments)).encode()).hexdigest()[:16]
+def _root_source_digest(text:str,name:str)->str|None:
+ """A digest of exactly the bytes ``_main_input_fingerprint`` hands to the hash.
+
+ Deliberately NOT :func:`_definition_closure_digest`, which is right for a ROW
+ (a cross-module value can reach the SQL through any number of callees) and
+ wrong for a ROOT. The fingerprint concatenates ``inspect.getsource(root)``,
+ and a function's source covers that function and never what it calls — the
+ lesson ``_main_input_fingerprint``'s own docstring has now re-taught eight
+ times. A closure digest here would fire on edits the real digest cannot see,
+ and a warning that fires on the safe case is how the unsafe one stops being
+ read.
+
+ ``test_hashed_root_digest_is_the_bytes_the_fingerprint_hashes`` pins the
+ equivalence against ``inspect.getsource`` on the live tree, so this stays
+ faithful rather than merely plausible. ``.strip()`` because
+ ``ast.get_source_segment`` omits the trailing newline ``getsource`` keeps;
+ every interior byte, comments included, is still in the digest.
+ """
+ try: tree=ast.parse(text)
+ except SyntaxError: return None
+ node=_functions(tree).get(name)
+ if node is None: return None
+ segment=ast.get_source_segment(text,node)
+ return hashlib.sha256(segment.strip().encode()).hexdigest()[:16] if segment else None
 def derive_map(source:str|None=None,module_sources:dict[str,str]|None=None)->dict[str,Any]:
  source=BUILD.read_text() if source is None else source; tree=ast.parse(source)
  roots,covered=derive_declared(source); closure=_closure(tree,roots); funcs=_functions(tree)
@@ -122,7 +146,23 @@ def derive_map(source:str|None=None,module_sources:dict[str,str]|None=None)->dic
    if text: definition_sha=_definition_closure_digest(text,origin)
   rows.append({"name":name,"origin":f"{module}:{origin}","covered_by_value":name in covered,"used_in":sorted(used.get(name,[])),"sql_interpolated":name in interpolated,"impact":"sql_shaping" if name in interpolated else "behavior_or_evidence","definition_sha16":definition_sha})
  uncovered=[r for r in rows if not r["covered_by_value"]]
- return {"schema":"calibration-fingerprint-derived/v1","source":str(BUILD.relative_to(BACKEND.parent)),"source_sha256":hashlib.sha256(source.encode()).hexdigest(),"hashed_roots":sorted(roots),"covered_by_value":sorted(covered),"input_count":len(rows),"uncovered_count":len(uncovered),"uncovered_sql_shaping":sum(r["sql_interpolated"] for r in uncovered),"uncovered_behavior_or_evidence":sum(not r["sql_interpolated"] for r in uncovered),"inputs":rows}
+ # CAL-P1336 (#6868). ``hashed_roots`` is a list of NAMES, so it is identical
+ # across every edit that neither adds nor removes a root — which is almost all
+ # of them — while ``source_sha256`` moves on any byte of the build module,
+ # including a comment outside every root. Between those two the artifact could
+ # say THAT it diverged and never WHICH, and the one question its author needs
+ # answered has opposite answers in the two cases: an edit inside a root moves
+ # `_main_input_fingerprint` and discards the whole in-flight bank; an edit
+ # outside every root does not, and the bank survives. Per-root digests are what
+ # let :func:`divergence_message` tell those apart.
+ root_digests={}
+ for r in sorted(roots):
+  origin=r; text=source
+  if r in imports:
+   module,origin=imports[r]; path=_module_path(module)
+   text=(module_sources or {}).get(module,path.read_text() if path.exists() else "")
+  root_digests[r]=_root_source_digest(text,origin) if text else None
+ return {"schema":"calibration-fingerprint-derived/v1","source":str(BUILD.relative_to(BACKEND.parent)),"source_sha256":hashlib.sha256(source.encode()).hexdigest(),"hashed_roots":sorted(roots),"hashed_root_sha16":root_digests,"covered_by_value":sorted(covered),"input_count":len(rows),"uncovered_count":len(uncovered),"uncovered_sql_shaping":sum(r["sql_interpolated"] for r in uncovered),"uncovered_behavior_or_evidence":sum(not r["sql_interpolated"] for r in uncovered),"inputs":rows}
 def main():
  print(json.dumps(derive_map(),indent=2,sort_keys=True)); return 0
 if __name__=="__main__": raise SystemExit(main())
