@@ -4062,6 +4062,94 @@ def _unlocated_in_broken_field_outcome_ids(
     }
 
 
+def _board_has_a_verdict(outcomes) -> bool:
+    """Has anybody actually settled this board? (#8011 / CERT-3298)
+
+    🔴 `status == 'open'` DOES NOT ANSWER THIS, which is the whole reason this
+    exists. Gotcha #33: settled Kalshi markets stay `status='open'` in our
+    database because polling only ever sees open markets. 444 of the 969 boards
+    #8011's predicate admits carry a verdict under this test, and every one of
+    them is a RESULT that must survive — `/futures/413`'s "Jalen Brunson 99%" is
+    the Finals MVP answer, with `api_settlement` on all 57 legs.
+
+    Delegates to `futures_liveness.leg_is_graded`, the shared semantics #7387
+    and #4788 already read, rather than testing `is_winner` here. That column is
+    `default=False`, so False is what a row is BORN with and not a grader's
+    decision, and `ungradeable_result` is a RETRACTION of a fabricated loss
+    rather than a verdict. A local test would get both wrong.
+    """
+    from app.utils.futures_liveness import leg_is_graded
+
+    return any(
+        leg_is_graded(
+            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
+        )
+        for o in outcomes
+    )
+
+
+async def _fleet_newest_observation(
+    db: AsyncSession, market: FuturesMarket
+) -> "datetime | None":
+    """The newest futures leg observation the system holds, anywhere (#8011).
+
+    `unobserved_board_keys` needs a reference a single board cannot supply: is
+    anyone writing prices AT ALL right now? This is that reference, and it is
+    deliberately the same column the per-leg rule reads
+    (`futures_outcomes.last_updated`) so the two lags are commensurable.
+
+    🔴 SKIPPED ENTIRELY FOR ANY BOARD THAT COULD NOT QUALIFY, and that gate is
+    the reason this route's query count does not move. Every stamp is in the
+    past, so `fleet <= now`; a board whose own newest stamp is inside the floor
+    of `now` therefore cannot be inside it of the fleet either, and the read
+    would only confirm what `board_cannot_be_unobserved` already proved. That
+    covers ~92% of boards (2,662 of 31,716 open priced boards carry a leg stamp
+    past the floor) and, in particular, every board LAT-P127's cache guard
+    exercises — its fixtures carry no leg stamp at all.
+
+    The bound is one-directional by construction: it can only suppress the
+    read, never cause a withhold. `unobserved_board_keys` still decides against
+    the fleet, so a fleet-wide stall still withholds nothing.
+
+    NOT MEMOISED, ON PURPOSE. `ix_futures_outcomes_last_updated` makes this an
+    Index Only Scan Backward: measured on production 2026-09-22 at **0.042 ms**
+    / 6 shared hit blocks against a 1.1M-row parent table. A cache would buy
+    nothing measurable on top of the gate above, and would cost the two things
+    caches cost here — a per-uvicorn-worker copy (`WEB_CONCURRENCY=2`, so the
+    hit rate is not what a single process reports) and a stale reference that
+    could only ever push a live board towards being read as unobserved.
+
+    Returns None — which `unobserved_board_keys` reads as "withhold nothing" —
+    if the board cannot qualify, if the query fails, or if the table is empty. A
+    database this route could not reach must degrade to today's behaviour, never
+    to a blanked board.
+    """
+    from app.utils.market_staleness import board_cannot_be_unobserved
+
+    if getattr(market, "status", None) != "open":
+        return None
+    # A settled board is a result and is exempt, so there is nothing to ask the
+    # fleet about. Checked here as well as in the rule so a graded board costs
+    # no query either — and so the two places cannot disagree about which
+    # semantics decide it.
+    if _board_has_a_verdict(getattr(market, "outcomes", None) or []):
+        return None
+    if board_cannot_be_unobserved(
+        ((o.id, o.last_updated) for o in (getattr(market, "outcomes", None) or [])),
+        board_touched_at=getattr(market, "updated_at", None),
+        now=datetime.now(timezone.utc),
+    ):
+        return None
+
+    try:
+        return (
+            await db.execute(select(func.max(FuturesOutcome.last_updated)))
+        ).scalar_one_or_none()
+    except Exception:
+        logger.warning("fleet newest observation unavailable", exc_info=True)
+        return None
+
+
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
@@ -4154,7 +4242,17 @@ async def get_futures_market(
     # name now, and a second caller.
     unsupported_price_ids = await _withheld_price_outcome_ids(db, market)
 
-    detail = _format_market_detail(market, bookmakers, unsupported_price_ids)
+    # #8011: the one reader surface that heroes a single number, so the one that
+    # has to answer "is anybody still observing this board". The fleet stamp is
+    # read here rather than inside the formatter because the formatter is sync
+    # and holds no session — the same split `unsupported_price_ids` already uses
+    # one line up, for the same reason.
+    detail = _format_market_detail(
+        market,
+        bookmakers,
+        unsupported_price_ids,
+        fleet_newest_observation=await _fleet_newest_observation(db, market),
+    )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
     return detail
@@ -7389,6 +7487,8 @@ def _format_market_detail(
     market: FuturesMarket,
     bookmakers: list[str] = None,
     unsupported_price_outcome_ids: "set[int] | None" = None,
+    *,
+    fleet_newest_observation: "datetime | None" = None,
 ) -> dict:
     """Format a market for detail view with all outcomes.
 
@@ -7403,6 +7503,7 @@ def _format_market_detail(
     from app.utils.market_staleness import (
         expired_ladder_rungs,
         stale_observation_keys,
+        unobserved_board_keys,
     )
     from app.utils.outcome_display import (
         assign_display_ranks,
@@ -7869,6 +7970,64 @@ def _format_market_detail(
     if getattr(market, "status", None) == "open":
         withheld = withheld | stale_observation_keys(
             (o.id, o.last_updated) for o in sorted_outcomes
+        )
+
+        # 🔴 #8011 — AND THE RULE ABOVE HAS A BLIND SPOT THAT IS EXACTLY ITS OWN
+        # DESIGN, WHICH IS WHY IT NEEDS A SECOND REFERENCE RATHER THAN A TWEAK.
+        #
+        # WHAT A READER SAW. `/futures/10` (*FIFA World Cup Winner*) heroed
+        # `59% Spain`, undated, for a tournament decided 2026-07-19 — while the
+        # chart above it said "Last number 64 days ago" and the table below it
+        # said "as of Jul 12". Two honest surfaces and one dishonest one, and
+        # the dishonest one is the number a reader takes away.
+        #
+        # THE RULE ABOVE PRODUCED IT. It measures each leg against its OWN
+        # board's newest stamp. On a board whose newest stamp is itself two
+        # months old that withholds the 59 legs behind 2026-07-19 20:30 and
+        # certifies the two legs HOLDING that stamp — the last write before the
+        # market died — as fresh. `normalize_display_probs` then squeezed the
+        # survivors to `0.587142 + 0.412858 = 1.000000` and the wreck rendered
+        # as a healthy two-horse race. Not fail-open, which is what that rule is
+        # for: SELECTIVE fail-open.
+        #
+        # A BOARD CANNOT BE ITS OWN REFERENCE FOR "IS ANYONE WATCHING THIS
+        # BOARD". So the second reference is the FLEET's newest observation, and
+        # it is still never `now` — if futures ingestion stops everywhere, that
+        # stamp freezes too, every lag stops growing and nothing new is
+        # withheld. The outage guarantee #7537 bought is kept structurally, by
+        # the same move `price_changed_at` makes for #7747.
+        #
+        # BOTH CLAUSES, because production shows each one alone is unsound in a
+        # different direction: the leg clause alone admits live season props
+        # (*Tommy DeVito top-12 QB*, 31.4d, parent touched 11.9d ago), and the
+        # parent clause alone admits boards priced this minute (*Trump out by
+        # September 30?*, parent 19.2d, legs **0.2d**). Together they separated
+        # all twelve hand-checked specimens with a 12.0d / 64.7d gap.
+        #
+        # THE ADMITTED POPULATION IS NOT ALL DEAD, AND THE RULE DOES NOT SAY IT
+        # IS. Five boards in it were read at Polymarket on 2026-09-22 and were
+        # still `active / acceptingOrders`, one with $2,178 of 24h volume. What
+        # they share is that OUR number is unsourced — and where the venue could
+        # be read, ours was wrong by 18 to 47 points (Anthropic 0.495 vs a
+        # 0.86/0.88 book; Meta 0.475 vs 0.002/0.008). That is the inverse of
+        # CERT-3242, where the served price MATCHED the venue's live ask and
+        # withholding would have destroyed a correct number.
+        #
+        # WITHHELD, NOT DROPPED, and OPEN boards only — both for the reasons the
+        # block above states. A settled board is a RESULT and shows what ran.
+        #
+        # The chart route's own `_format_market_detail` call deliberately does
+        # NOT pass a fleet stamp, so `canonical_board` is unchanged: it sorts
+        # the plotted series on `["probability"] or 0`, and nulling every price
+        # would reorder them. The chart is the surface that was already telling
+        # the truth here; this rule has no business moving it.
+        #
+        # Measured 2026-09-22 over the 31,716 open priced boards: 970 qualify.
+        withheld = withheld | unobserved_board_keys(
+            ((o.id, o.last_updated) for o in sorted_outcomes),
+            board_touched_at=getattr(market, "updated_at", None),
+            fleet_newest_observation=fleet_newest_observation,
+            board_has_a_verdict=_board_has_a_verdict(sorted_outcomes),
         )
 
     prices_withheld = 0
