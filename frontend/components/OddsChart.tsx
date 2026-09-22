@@ -50,6 +50,8 @@ import {
   collapseDuplicateTransitions,
   placePeriodLabels,
   anchorPeriodLabels,
+  choosePeriodStripBand,
+  periodLabelPlacement,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -1477,6 +1479,42 @@ export default function OddsChart({
     return computeWinProbYAxis(values);
   }, [chartData, plottedProbKeys]);
 
+  /**
+   * #7940 — which end of the plot the period-label strip is painted at.
+   *
+   * The labels are pinned to a band, and this chart plots the HOME team's
+   * probability, so on every home win the series is pinned against the same
+   * frame the labels are drawn on and the line is ruled through their glyphs.
+   * ux/1431 measured it: every home win collides, neither home loss does, which
+   * is about half of all completed games.
+   *
+   * Read against `yDomain` and not the raw values, because `computeWinProbYAxis`
+   * zooms the axis (#3973): a tennis series living inside four points sits mid-
+   * plot on its own range and hard against the frame on the axis actually drawn,
+   * and the frame is what a label collides with.
+   *
+   * Fed from `plottedProbKeys` — the same one list the forward-fill, the axis and
+   * `filteredPeriodBoundaries` read. A series this chart draws but the strip did
+   * not consider would be the one that runs through a label.
+   */
+  const periodStripBand = useMemo(
+    () =>
+      choosePeriodStripBand(
+        chartData.map((point) => plottedProbKeys.map((key) => point[key] as number | null | undefined)),
+        yDomain as [number, number],
+        {
+          // The window is the labels' own x span, and it is read from the SAME
+          // rowed list the `<ReferenceLine>`s are drawn from. A pre-game stretch
+          // has no labels in it, so averaging across it answers a question about
+          // part of the plot the strip never occupies — measured on 15315580,
+          // where doing that left all four collisions in place.
+          categoryTimestamps: chartData.map((point) => point.timestamp as string),
+          boundaries: filteredPeriodBoundaries,
+        },
+      ),
+    [chartData, plottedProbKeys, yDomain, filteredPeriodBoundaries],
+  );
+
   // ── Count the primary series' crossings of the 50% line ──
   //
   // ═══ #4882: THIS IS NOT A LEAD CHANGE, AND IT USED TO SAY IT WAS ═══
@@ -1947,6 +1985,13 @@ export default function OddsChart({
          server render (no viewport), so the stagger is unobservable in the
          markup; this is the same channel CERT-1984 opened for the count. */
       data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
+      /* #7940: WHICH END the strip is anchored to — "top" or "bottom". The rows
+         above say how the labels stack relative to their band and cannot say
+         which band that is, so a chart with the strip in the wrong place reports
+         an identical row shape. Server-render-safe for the same reason the rows
+         channel is: the decision is data-space, so it is decided before any
+         viewport exists, unlike the `<ReferenceLine>`s themselves. */
+      data-period-strip-band={periodStripBand}
       /* #7876: WHICH labels survive, in x order — "Q2,HT,Q3,Q4,OT". The count
          and the rows above cannot answer the question that issue was filed
          about: a chart that drew `Q2 Q3 Q4 OT` reported four boundaries on two
@@ -2445,7 +2490,17 @@ export default function OddsChart({
                           // #7134 — the strip's DEPTH, read off the same rowed
                           // list the `<ReferenceLine>` labels below are drawn
                           // from, so the band can never disagree with the ink.
-                          periodChipRows: periodChipRowCount,
+                          //
+                          // #7940 — and ZERO when the strip has moved to the
+                          // bottom, because then there is no top band to clear.
+                          // This callout is the terminal-value label, which sits
+                          // wherever the series ends; the strip only moves down
+                          // when the series is pinned UP, so the two are at
+                          // opposite ends exactly when this reads 0. Keeping the
+                          // old depth here would push the callout 15–28px below
+                          // its own datum to clear a strip that is no longer
+                          // there — #5581's defect, reintroduced upside down.
+                          periodChipRows: periodStripBand === "bottom" ? 0 : periodChipRowCount,
                         })
                       : cy;
                   return (
@@ -2594,13 +2649,17 @@ export default function OddsChart({
                 strokeDasharray="6 4"
                 label={{
                   value: b.label,
-                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
                   // #6882: `dy` shifts the whole text block down from whatever
                   // `position` computed — recharts keeps `dy` through
                   // `filterProps` (it is an SVG text attribute) and `Text` adds it
                   // to y. Row 0 passes 0, so an unstaggered label is byte-identical
                   // to what it rendered before.
-                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
+                  //
+                  // #7940: and which FRAME it is anchored to now follows the
+                  // series, so a home win no longer rules its own line through
+                  // the `Q4` glyphs. `periodStripBand` is "top" for every chart
+                  // whose series is not decisively pinned to one end.
+                  ...periodLabelPlacement(b as { labelPosition?: string; labelRow?: number }, periodStripBand),
                   style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
                 }}
               />

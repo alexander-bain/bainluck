@@ -212,12 +212,48 @@ function chips(html: string): Array<{ label: string; inkTop: number; inkBottom: 
 
 const SERIES = blowout(N);
 
+/**
+ * 🔴 THE SPECIMEN #7940 LEFT THIS FILE. Same reasoning as its twin in
+ * `chartCalloutClearsTheTopStrip5581.test.tsx`, which carries the long version.
+ *
+ * In one line: #7940 moves the period strip to whichever band the series is NOT
+ * in, so a `blowout` — pinned to the ceiling across the labelled span — now
+ * draws its chips at the BOTTOM and has no top strip for the callout to clear.
+ * The two-row clearing arithmetic this file owns is still reachable, but only on
+ * a chart whose series sits mid-plot across the labels and reaches the frame at
+ * the whistle. That is `lateSurge`, and the band is asserted below so this
+ * cannot go vacuous the same way twice.
+ */
+function lateSurge(n: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    out.push(t < 0.93 ? 50 + 3 * Math.sin(i * 0.9) : 100);
+  }
+  out[out.length - 1] = 100;
+  return out;
+}
+
+const CONTESTED = lateSurge(N);
+
+/** Which band the chart reports it is painting the period strip in (#7940). */
+function stripBand(html: string): string {
+  const m = html.match(/data-period-strip-band="([^"]*)"/);
+  if (!m) throw new Error("chart did not report data-period-strip-band");
+  return m[1];
+}
+
 describe("#7134 — the end-value callout clears a TWO-row period strip", () => {
   test("the specimen really does stagger, and really does pin the callout to the ceiling", () => {
     // Without all three of these the rest of the file is testing nothing: no
     // second row means #5581's one-row band is already correct here, and a
     // callout off the ceiling is never pushed at all.
-    const html = render(SERIES, staggeredBoundaries());
+    const html = render(CONTESTED, staggeredBoundaries());
+
+    // #7940: and the strip is still at the TOP, which is the fourth thing
+    // without which the rest of the file is testing nothing. On a series pinned
+    // to the ceiling the strip now moves away and the collision cannot arise.
+    expect(stripBand(html)).toBe("top");
 
     const rows = /data-period-label-rows="([^"]*)"/.exec(html)?.[1];
     expect(rows).toBe("0,0,0,1");
@@ -236,11 +272,35 @@ describe("#7134 — the end-value callout clears a TWO-row period strip", () => 
   test("the callout does not land on the staggered chip", () => {
     // THE DEFECT. Production: callout box −236..−223, `T9` −238..−225, 11px of
     // the callout's 13 covered.
-    const html = render(SERIES, staggeredBoundaries());
+    const html = render(CONTESTED, staggeredBoundaries());
+    expect(stripBand(html)).toBe("top");
     const plate = calloutPlate(html);
     for (const chip of chips(html)) {
       expect(plate.top).toBeGreaterThanOrEqual(chip.inkBottom);
     }
+  });
+
+  test("#7940 — a ceiling-pinned series moves the strip instead, and the callout stays put", () => {
+    // The complement, on the specimen this file used to be written on. `blowout`
+    // is now the case where the chips LEAVE, so the two-row band is not owed and
+    // the callout sits on its own datum.
+    const html = render(SERIES, staggeredBoundaries());
+    expect(stripBand(html)).toBe("bottom");
+    // The stagger itself is unchanged — #7940 reflects the strip, it does not
+    // re-pack it, so the same four markers land on the same two rows.
+    expect(/data-period-label-rows="([^"]*)"/.exec(html)?.[1]).toBe("0,0,0,1");
+
+    const plot = plotRect(html);
+    const plate = calloutPlate(html);
+    expect((plate.top + plate.bottom) / 2).toBeCloseTo(
+      calloutLabelCenterY({
+        cy: plot.top,
+        plotTop: plot.top,
+        plotHeight: plot.bottom - plot.top,
+        periodChipRows: 0,
+      }),
+      5,
+    );
   });
 
   test("it is still inside the plot — clearing row 1 must not push it out the bottom", () => {
@@ -280,11 +340,14 @@ describe("#7134 — the end-value callout clears a TWO-row period strip", () => 
       label: label as string,
     }));
 
-    const oneRowHtml = render(SERIES, oneRow);
+    // CONTESTED, not SERIES: #7940 moves a ceiling-pinned chart's strip to the
+    // bottom, which zeroes the band on BOTH arms and makes the difference 0.
+    const oneRowHtml = render(CONTESTED, oneRow);
+    expect(stripBand(oneRowHtml)).toBe("top");
     expect(/data-period-label-rows="([^"]*)"/.exec(oneRowHtml)?.[1]).toBe("0,0,0");
 
     const shallow = calloutPlate(oneRowHtml).top;
-    const deep = calloutPlate(render(SERIES, staggeredBoundaries())).top;
+    const deep = calloutPlate(render(CONTESTED, staggeredBoundaries())).top;
     expect(deep - shallow).toBeCloseTo(PERIOD_LABEL_ROW_HEIGHT_PX, 5);
   });
 

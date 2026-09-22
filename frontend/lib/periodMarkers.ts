@@ -478,6 +478,244 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
   return out;
 }
 
+/** Which horizontal band the period-label strip is painted in. */
+export type PeriodStripBand = "top" | "bottom";
+
+/**
+ * How much clearer the far band must be, as a fraction of the y domain, before
+ * the strip moves to it.
+ *
+ * It is a DEADBAND, and its job is to make "top" the answer to every question
+ * that is close. `"top"` is what both charts drew before #7940, so a chart whose
+ * series runs down the middle keeps the exact strip it has always had, and the
+ * only charts that move are the ones where the far band is decisively emptier.
+ *
+ * 0.2 — a fifth of the plot. Measured on the four convicting games in #7940's
+ * costing (ux/1431), the winning side's clear-air difference is 0.25–0.55, and
+ * on the two home-LOSS controls it is negative, so the deadband sits well clear
+ * of both populations rather than splitting either. A tighter number would start
+ * flipping even games on noise; a wider one would leave the Chiefs OT chart —
+ * the narrowest convicting case at 0.25 — struck through.
+ *
+ * 🪤 WHY THIS IS NOT DERIVED FROM `PERIOD_CHIP_BAND_PX`, WHICH IS THE OBVIOUS
+ * MOVE. The strip's depth is 15px plus a row, and the honest question sounds
+ * like "does the series come within that many px of the frame?". It cannot be
+ * asked here: both charts size through `ResponsiveContainer height="100%"`
+ * inside a `flex-1` parent, so neither the component nor the test rig knows the
+ * plot's pixel height, and converting 15px into a fraction of the domain needs a
+ * height nobody has. #7940's own instrument opens by saying exactly this, and it
+ * is why `placePeriodLabels` is proportional too. So this rule asks a question
+ * that has an answer in data space — WHICH END has more room — and never how
+ * much room in pixels.
+ */
+export const PERIOD_STRIP_FLIP_MARGIN = 0.2;
+
+/**
+ * Put the period-label strip in whichever band the plotted series is NOT in.
+ *
+ * ═══ THE DEFECT ═══
+ *
+ * #7940: period labels are pinned to the plot top, and the chart plots the HOME
+ * team's probability, so the two coincide exactly when the home team is winning
+ * — the green line is drawn straight through the `Q4` glyphs. ux/1431 measured
+ * the predicate across 6 games / 12 charts: **every home win collides, neither
+ * home loss does**. That is about half of all completed games, not an edge case.
+ *
+ * The two bands hold complementary states — a series cannot be pinned against
+ * both frames at once — so whenever one is full the other is empty. `bottomBandFree`
+ * was true for every colliding label on all four convicting games. That is
+ * structural, which is what makes this repair a comparison rather than a search.
+ *
+ * ═══ WHAT IT COMPARES ═══
+ *
+ * The CLEAR AIR at each end: the mean gap between the frame and the nearest ink
+ * to it, normalised into the y domain. Per x sample the topmost plotted value
+ * and the bottommost are taken — the collision is with whichever line is nearest
+ * the frame, not with the average of all of them, and on a six-source chart
+ * those are very different numbers. The strip goes to the end with more air, and
+ * only if it wins by `flipMargin`.
+ *
+ * ═══ 🔴 THE WINDOW IS THE LABELS' OWN X SPAN, AND THIS IS MEASURED ═══
+ *
+ * The air is averaged from the FIRST period label to the end of the chart, never
+ * over the whole series. A chart's left-hand side is pre-game — hours of it on
+ * the "All" range — where the line sits mid-plot because nothing has happened
+ * yet, and no label is drawn there to collide with anything.
+ *
+ * Built first without the window, measured on production data, and it left one
+ * of the four convicting games completely unfixed: `15315580` (White Sox 8–1)
+ * draws `T1 B3 T5 T9` at x = 248…329 of a plot spanning 100…352 — every label in
+ * the right 40% — and its 4-of-4 collisions survived, because the flat pre-game
+ * two thirds balanced the air and dragged the mean back inside the deadband. The
+ * other three games flipped and looked like a fix. With the window it flips too.
+ *
+ * So the pre-game stretch is not merely noise, it is a MAJORITY of the samples on
+ * a late-starting game, and averaging over it answers a question about a part of
+ * the plot the strip is never drawn in.
+ *
+ * ═══ THE LIVE-GAME QUESTION, ANSWERED ═══
+ *
+ * #7940's costing left one thing open: on a live game the answer can change
+ * mid-game, and a strip that jumps under a reader watching a comeback is its own
+ * defect (#7876 is the precedent for a marker moving on a held page). Two choices
+ * settle it, and neither is "read the tail":
+ *
+ *   - The window is anchored at the FIRST label and runs to the chart's end, so
+ *     it only ever grows, and it grows by whole periods. It is not a trailing
+ *     window and it cannot chase the last few minutes of a close game — which is
+ *     the distinction that matters, because the fix above narrows the scope and
+ *     narrowing scope is usually how a stable rule becomes a jittery one.
+ *   - The deadband means a flip needs the far band to be a fifth of the plot
+ *     clearer. A game that genuinely turns over will flip the strip ONCE, at the
+ *     point the game has actually turned; a game that wobbles around even will
+ *     not flip at all.
+ *
+ * A single flip on a genuine reversal is the honest outcome: at that moment the
+ * top band really has been taken over by the series, and the alternative is
+ * leaving the labels struck through for the rest of the game.
+ *
+ * ═══ CALLERS ═══
+ *
+ * Shared by `OddsChart` and `ScoreDifferentialChart` so the two strips cannot
+ * drift apart, the same way `placePeriodLabels` and `anchorPeriodLabels` are.
+ * The score chart is two-sided (its domain straddles 0), which is precisely the
+ * case the issue flagged as "the bottom band need not be free" — this asks, so a
+ * chart whose series hugs the floor keeps its strip at the top.
+ *
+ * @param rows   One entry per x sample, in x order; each holds that sample's
+ *               plotted values. Nulls and gaps are skipped, so a caller may pass
+ *               its raw rows.
+ * @param yDomain `[min, max]` — the axis the values are read against, NOT the
+ *               data's own range. A chart whose axis is zoomed (`computeWinProbYAxis`)
+ *               puts the frame somewhere the raw values cannot tell you about.
+ * @param window Optional; supplies the label span described above. Given the
+ *               chart's own category timestamps and its drawn boundaries, the
+ *               samples before the first boundary are dropped. Omit it (or pass
+ *               a chart with no boundaries) and the whole series is read — which
+ *               is the right answer when there are no labels to place.
+ */
+export function choosePeriodStripBand(
+  rows: ReadonlyArray<ReadonlyArray<number | null | undefined>>,
+  yDomain: readonly [number, number],
+  window?: {
+    categoryTimestamps?: ReadonlyArray<string>;
+    boundaries?: ReadonlyArray<{ timestamp: string }>;
+  },
+  flipMargin: number = PERIOD_STRIP_FLIP_MARGIN,
+): PeriodStripBand {
+  const [lo, hi] = yDomain;
+  // A degenerate or unreadable axis has no top and no bottom. Answering "top"
+  // returns the chart to exactly its pre-#7940 rendering, which is the only
+  // answer here that cannot make a chart worse than it already was.
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return "top";
+
+  // The window's left edge, as an index into `rows`. The two inputs come from
+  // the same memo on both charts, so they are the same list the labels are drawn
+  // from — a window computed off anything else could exclude a label's own x.
+  let from = 0;
+  const stamps = window?.categoryTimestamps;
+  const bounds = window?.boundaries;
+  if (stamps && stamps.length === rows.length && bounds && bounds.length > 0) {
+    let firstLabelMs = Infinity;
+    for (const b of bounds) {
+      const t = new Date(b.timestamp).getTime();
+      if (Number.isFinite(t) && t < firstLabelMs) firstLabelMs = t;
+    }
+    if (Number.isFinite(firstLabelMs)) {
+      const i = stamps.findIndex((s) => new Date(s).getTime() >= firstLabelMs);
+      // `-1` means every category predates the first label, which cannot happen
+      // on a chart that drew one — treat it as "no window" rather than as an
+      // empty window, so a bad input falls back to the old, wider reading
+      // instead of to no reading at all.
+      if (i > 0) from = i;
+    }
+  }
+
+  let topAirSum = 0;
+  let bottomAirSum = 0;
+  let samples = 0;
+
+  for (let r = from; r < rows.length; r++) {
+    const row = rows[r];
+    let highest = -Infinity;
+    let lowest = Infinity;
+    for (const v of row) {
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      const raw = (v - lo) / (hi - lo);
+      // Clamped because a series may legitimately sit outside a zoomed axis;
+      // ink outside the frame is not drawn, so it cannot collide, and letting it
+      // run negative would pay the far band air it has not earned.
+      const norm = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+      if (norm > highest) highest = norm;
+      if (norm < lowest) lowest = norm;
+    }
+    if (highest === -Infinity) continue; // an all-null sample says nothing
+    topAirSum += 1 - highest;
+    bottomAirSum += lowest;
+    samples++;
+  }
+
+  // No plotted values at all: no series, so nothing to collide with.
+  if (samples === 0) return "top";
+
+  const topAir = topAirSum / samples;
+  const bottomAir = bottomAirSum / samples;
+
+  // Ties, near-ties and NaN margins all fall through to "top" — see the deadband
+  // note above. Written as the positive test for that reason.
+  return bottomAir - topAir >= flipMargin ? "bottom" : "top";
+}
+
+/** Everywhere a period label can be anchored, in recharts' own words. */
+export type PeriodLabelAnchor =
+  | "insideTopLeft"
+  | "insideTopRight"
+  | "insideBottomLeft"
+  | "insideBottomRight";
+
+/**
+ * Turn one placed marker plus the chart's chosen band into the two props the
+ * `<ReferenceLine>` label actually takes.
+ *
+ * Shared by both charts for the same reason `placePeriodLabels` is: the score
+ * chart carried a private copy of the spacing rule once and smeared its inning
+ * labels for it (latency/467). Two copies of "which way do rows stack" would
+ * fail the same way and only on the chart nobody screenshotted.
+ *
+ * 🪤 THE ROW DIRECTION FLIPS WITH THE BAND, AND THAT IS THE WHOLE TRICK.
+ * `dy` shifts the text block DOWN from whatever `position` computed (#6882).
+ * Anchored at the top, row 1 must move down and away from the frame; anchored at
+ * the bottom, the frame is underneath, so row 1 must move UP — the same stagger
+ * reflected. Keeping `dy` positive in the bottom band would push row 1 through
+ * the x axis and out of the plot, which reads on a screenshot as "the stagger
+ * stopped working" rather than as a sign error.
+ *
+ * `top` returns byte-identical props to what both charts passed before #7940, so
+ * every chart that does not flip renders exactly as it did.
+ */
+export function periodLabelPlacement(
+  marker: { labelPosition?: string; labelRow?: number },
+  band: PeriodStripBand,
+): { position: PeriodLabelAnchor; dy: number } {
+  const flipped = marker.labelPosition === "insideTopRight";
+  const row = marker.labelRow || 0;
+
+  if (band === "bottom") {
+    return {
+      position: flipped ? "insideBottomRight" : "insideBottomLeft",
+      // `row === 0 ? 0` rather than `-row * …`, which yields NEGATIVE ZERO for
+      // row 0 and reaches the markup as `dy="-0"`. Harmless to paint and
+      // genuinely confusing to read on a diff of two rendered charts, which is
+      // how this band gets checked.
+      dy: row === 0 ? 0 : -row * PERIOD_LABEL_ROW_HEIGHT_PX,
+    };
+  }
+  return {
+    position: flipped ? "insideTopRight" : "insideTopLeft",
+    dy: row * PERIOD_LABEL_ROW_HEIGHT_PX,
+  };
+}
+
 /**
  * Largest plausible gap WITHIN a single game's period/inning markers. No sport
  * that renders period gridlines (NBA/NFL/MLB/NHL/soccer) has a 6-hour mid-game

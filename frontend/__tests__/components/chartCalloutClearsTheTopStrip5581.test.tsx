@@ -75,6 +75,45 @@ function blowout(n: number): number[] {
   return out;
 }
 
+/**
+ * 🔴 THE CASE #7940 LEAVES BEHIND, AND THE REASON THIS FILE STILL HAS TEETH.
+ *
+ * #7940 moved the period strip to whichever band the series is NOT in, so on a
+ * `blowout` — pinned against the ceiling for most of the labelled span — the
+ * chips now sit at the BOTTOM and there is no longer anything at the top for the
+ * callout to clear. That is the fix working, and it retires the specimen this
+ * file was written on: three arms below asserted "chips at the top AND callout
+ * on the ceiling", a combination that specimen can no longer produce.
+ *
+ * It does not retire the DEFECT. #7940's rule reads the clear air across the
+ * labelled span and keeps the strip at the top unless the far band wins by
+ * `PERIOD_STRIP_FLIP_MARGIN`. So a game that spends its labelled span mid-plot
+ * and only reaches the ceiling at the whistle keeps its strip at the top AND
+ * lands its callout on the frame — and the clear-the-strip arithmetic is still
+ * the only thing between them. That game is this series, and it is an ordinary
+ * one: any close contest decided in the last minute.
+ *
+ * The strip's band is asserted, not assumed, in the specimen arm below — without
+ * that, a future change to the flip margin would silently move this specimen to
+ * the bottom too and these arms would go vacuous exactly the way they just did.
+ */
+function lateSurge(n: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    out.push(t < 0.93 ? 50 + 3 * Math.sin(i * 0.9) : 100);
+  }
+  out[out.length - 1] = 100;
+  return out;
+}
+
+/** Which band the chart reports it is painting the period strip in (#7940). */
+function stripBand(html: string): string {
+  const m = html.match(/data-period-strip-band="([^"]*)"/);
+  if (!m) throw new Error("chart did not report data-period-strip-band");
+  return m[1];
+}
+
 /** The mirror: the home side collapses to 0, so the callout lands on the FLOOR. */
 function collapse(n: number): number[] {
   return blowout(n)
@@ -214,15 +253,21 @@ function chipInkBottoms(html: string): number[] {
 }
 
 const SERIES = blowout(120);
+/** The specimen that still puts the strip and the callout in the SAME band. */
+const CONTESTED = lateSurge(120);
 
 describe("#5581 — the trailing value label is never cut by the plot's own frame", () => {
   test("the specimen really does put the callout ON the frame (without this the rest is vacuous)", () => {
-    const html = render(SERIES, lateBoundaries(SERIES));
+    const html = render(CONTESTED, lateBoundaries(CONTESTED));
     const plot = plotRect(html);
     const dot = calloutDot(html);
     // The dot is the datum, and the datum is the ceiling: this is the condition
     // the whole defect needs, asserted rather than assumed.
     expect(dot.cy).toBeCloseTo(plot.top, 5);
+    // #7940: and the strip is still UP HERE, which is the other half of the
+    // condition and the half that used to be free. On a series pinned to the
+    // ceiling the strip now moves away and these arms would pass vacuously.
+    expect(stripBand(html)).toBe("top");
     // ... and the chips really are drawn, in the band the label has to clear.
     // Both halves matter: with no chips in the markup, the strip assertion below
     // would iterate an empty list and pass on a label sitting on top of them.
@@ -232,6 +277,38 @@ describe("#5581 — the trailing value label is never cut by the plot's own fram
       expect(inkBottom).toBeGreaterThan(plot.top);
       expect(inkBottom).toBeLessThan(plot.top + 20);
     }
+  });
+
+  test("#7940 — and on a series pinned to the ceiling the two are in DIFFERENT bands", () => {
+    // The other side of the same contract, which is what #7940 bought: when the
+    // series really does live at the top, the strip leaves rather than the
+    // callout dropping past it. Asserted here rather than only in the #7940 file
+    // because THIS is the file that owns "the callout and the chips never share
+    // a band", and a fix that moved the chips without telling this guard would
+    // have left it asserting a condition that can no longer arise.
+    const html = render(SERIES, lateBoundaries(SERIES));
+    const plot = plotRect(html);
+    expect(stripBand(html)).toBe("bottom");
+    expect(calloutDot(html).cy).toBeCloseTo(plot.top, 5);
+
+    const chips = chipInkBottoms(html);
+    expect(chips.length).toBeGreaterThan(0);
+    for (const inkBottom of chips) {
+      // Chips down at the floor, callout up at the ceiling.
+      expect(inkBottom).toBeGreaterThan((plot.top + plot.bottom) / 2);
+    }
+    // And the callout is NOT dropped, because there is no top strip to clear:
+    // it sits on its own datum, which is #5581's "what this does not move".
+    const plate = calloutPlate(html);
+    expect((plate.top + plate.bottom) / 2).toBeCloseTo(
+      calloutLabelCenterY({
+        cy: plot.top,
+        plotTop: plot.top,
+        plotHeight: plot.bottom - plot.top,
+        periodChipRows: 0,
+      }),
+      5,
+    );
   });
 
   test("a game that finishes at 100% keeps its whole label inside the plot", () => {
@@ -246,7 +323,10 @@ describe("#5581 — the trailing value label is never cut by the plot's own fram
     // native/024's finding on #3237, the iOS twin: the clamp ALONE was wrong,
     // because pulling "Final" inside the frame drove it into "9th" and drew
     // "9Final". A label that is inside the plot and on top of a chip is not fixed.
-    const html = render(SERIES, lateBoundaries(SERIES));
+    // On CONTESTED, where #7940 leaves the strip at the top and the collision
+    // is therefore still reachable — see `lateSurge`.
+    const html = render(CONTESTED, lateBoundaries(CONTESTED));
+    expect(stripBand(html)).toBe("top");
     const plate = calloutPlate(html);
     const chips = chipInkBottoms(html);
     expect(chips.length).toBeGreaterThan(0);
@@ -276,10 +356,13 @@ describe("#5581 — the trailing value label is never cut by the plot's own fram
     // The `Start` marker is anchored at the plot's LEFT edge and the callout is
     // at the right by construction, so a chipless chart owes the strip nothing.
     // Asserting the two arms DIFFER is what stops the band being applied blindly.
-    const withChips = calloutPlate(render(SERIES, lateBoundaries(SERIES))).top;
-    const without = calloutPlate(render(SERIES)).top;
+    // CONTESTED again: on a ceiling-pinned series #7940 moves the strip away, so
+    // the two arms would be equal and this would compare a chart with no top
+    // strip against a chart with no strip at all.
+    const withChips = calloutPlate(render(CONTESTED, lateBoundaries(CONTESTED))).top;
+    const without = calloutPlate(render(CONTESTED)).top;
     expect(without).toBeLessThan(withChips);
-    expect(without).toBeGreaterThanOrEqual(plotRect(render(SERIES)).top);
+    expect(without).toBeGreaterThanOrEqual(plotRect(render(CONTESTED)).top);
   });
 
   test("an ordinary chart is untouched — the label still sits on its dot's row", () => {
