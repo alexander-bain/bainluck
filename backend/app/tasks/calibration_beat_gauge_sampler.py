@@ -365,7 +365,7 @@ def is_stop_key(key: Any) -> bool:
 #: So the row says what it could see, and a row that does not say is UNKNOWN. A
 #: version is the only marker that works here: the fields themselves are absent
 #: on a legacy row, and "absent" is precisely the value that must not be read.
-GAUGE_CAPTURE_VERSION = 4
+GAUGE_CAPTURE_VERSION = 5
 
 #: The first capture version whose :func:`select_gauges` retains
 #: ``staged:units_dropped`` and every ``staged:<stem>_stop:<reason>`` key —
@@ -414,6 +414,29 @@ UNIT_COST_CAPTURE_VERSION = 3
 #: The stamp moves to 4 WITH this constant rather than in the original ship
 #: because a floor that is not also a stamp bump marks nothing: both rows say 3.
 REFINEMENT_CAPTURE_VERSION = 4
+
+#: The first capture version whose :func:`select_gauges` retains
+#: ``staged:units_refined_slots`` — the SIZE of the refinement ratchet, where
+#: :data:`REFINEMENT_CAPTURE_VERSION` above covers the EVENT of one being earned.
+#:
+#: 🔴 WHY THIS ABSENCE IS THE WORST ONE IN THE FILE TO MISREAD. On a row below
+#: this floor the key was discarded at capture time, and the value it would have
+#: carried is a LEVEL whose zero is its most important reading. So "no
+#: ``staged:units_refined_slots``" must read as UNKNOWN and never as "the build
+#: holds no refinements" — those are the same bytes and opposite diagnoses: the
+#: first is a sampler that was not looking, the second is a partition that has
+#: just been reset to the bare ``STAGED_FUTURES_BUCKETS`` and cannot complete a
+#: unit. Gotcha #53, one layer above the field added to end it, for the fourth
+#: time in this file.
+#:
+#: CAL-P1337 (#6868, #8050). Measured: the 2026-09-22 12:36:50Z beat invalidated
+#: on ``population_version_malformed`` and went 203 -> 128 planned units — the
+#: ~75 refinement children the build had earned, gone with the bank. No row
+#: carried the level in either direction, because the writer wrote it only when
+#: non-empty and this sampler never kept it. Both halves are fixed together; the
+#: floor is what stops the fix being read backwards over the ring-length of rows
+#: banked before it.
+RATCHET_LEVEL_CAPTURE_VERSION = 5
 
 #: A row banked before CAL-P1030 carries no version at all. Zero, so the
 #: comparison against the floor is an ordinary ``<`` and an unparseable or
@@ -510,6 +533,29 @@ OPERATIONAL_GAUGES = (
     # in a report" licence does not hold, and the comment stays so the next
     # editor does not prune it as a report column.
     "staged:units_dropped",
+    # CAL-P1337 (#6868, #8050). The SIZE of the refinement ratchet, where
+    # ``staged:units_split`` above is the EVENT of one being earned. The pair is
+    # not redundant: a wipe earns no split and emits no event, so the only way to
+    # see a ratchet vanish is a level that was 75 and is now 0.
+    #
+    # It has never been captured because it was never named here, and until
+    # CAL-P1337 it was also written only when non-empty — so the reading that
+    # says "the ratchet is gone" could not be produced by the writer OR retained
+    # by this sampler. Measured 2026-09-22: the 12:36:50Z beat went 203 -> 128
+    # planned units on a ``population_version_malformed`` invalidation, and
+    # establishing that ~75 refinements had been lost took inferring the base
+    # partition from ``len(chunks)`` off the ring, because no row carried it.
+    #
+    # Like ``staged:units_dropped`` directly above, this is outside the tuple's
+    # "one forgotten name costs a column in a report" licence: its absence is a
+    # reader unable to tell a build that is slow from one whose partition was
+    # just reset under it. Deliberately NOT added to
+    # :data:`REBUILD_PROGRESS_GAUGES` in the same change — that publishes a ring
+    # column, and a name first captured today answers
+    # ``capture_did_not_retain`` on every row already banked. That rung needs its
+    # own capture floor beside :data:`DROP_AND_STOP_CAPTURE_VERSION` and the rows
+    # to justify it.
+    "staged:units_refined_slots",
 )
 
 
