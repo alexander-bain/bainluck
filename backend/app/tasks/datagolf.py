@@ -1128,6 +1128,14 @@ async def _poll_datagolf_live() -> dict:
         # Best-effort by design: if Redis is unreachable the keys simply do not
         # move, `_inplay_owned_events` reads nothing or reads a value that expires
         # inside the hour, and both roads lead to the hourly poll writing.
+        #
+        # If the TRANSACTION itself raises this block is skipped entirely, so a
+        # previous pass's ownership stands until its TTL. That is the deliberate
+        # direction to fail in, and not the same trade as above: clearing here
+        # would hand the board back to the hourly poll on a transient error and
+        # let it stamp a pre-tournament price over a graded one — #7935's
+        # saw-tooth, which corrupts stored history permanently. Holding costs at
+        # most one skipped hourly cycle and self-heals on the next 90s beat.
         for tour in POLL_TOURS:
             owned = wrote_prices_for.get(tour)
             try:
