@@ -458,6 +458,47 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             "the recent rail unfiltered",
             team.id,
         )
+    # ── #7051: the rail and the record must describe the SAME season ─────────
+    #
+    # `/team/washington-commanders`, production 2026-09-22: the header reads
+    # `0-2`, and one of the three cards under RECENT RESULTS is `@ Baltimore
+    # Ravens, Aug 28, L 3-41`. Denver reads `1-1` over a 34-6 win on Aug 29.
+    # Those are August exhibitions, played by backups, rendered in the same card
+    # as a real result and carrying our own probability caption. The record is
+    # not the thing that is wrong — it comes from the standings and correctly
+    # counts two games. MEASURED over all 32 NFL team payloads that morning:
+    # 32/32 pages print a record, and 36 of their 100 recent cards are pre-floor
+    # exhibitions. Every page contradicts itself.
+    #
+    # ⚠️ NOT a preseason-key filter. The rows are misfiled under
+    # `americanfootball_nfl` itself (51 of them, duplicated again under
+    # `americanfootball_nfl_preseason`), so `sport_key` cannot see them — and
+    # `league_family_identity` deliberately treats preseason as the same family.
+    # The floor is the calendar instead: `season_start` is derived from the
+    # league's own band, so it costs no ingest change and no new column.
+    #
+    # ⚠️ NOT twins-first, which is what #7051's escalation ordered. `_fold_rail`
+    # already folds the NFL pair (both providers store the kick-off on the exact
+    # hour), so no NFL page serves an exhibition twice; the duplicates are real
+    # in the table and invisible here. An id-less claim never absorbs (ruling
+    # 048 / gotcha #32) and D35 files matching symptoms rather than fixing them
+    # until #2693 lands, so the serve-time rule is the whole of what is honest.
+    #
+    # Deliberately admits, rather than empties. On this date the NHL floor is
+    # LAST October's, so the September exhibitions on an NHL rail stay — that
+    # league's page prints no record for them to contradict (#6266) and an empty
+    # rail would be the worse answer. The NHL and NBA equivalents of this cut
+    # arrive with their own openers, 2026-10-04 and 2026-10-20.
+    try:
+        _recent_raw = _rail_within_declared_season(
+            _recent_raw, team.sport.key if team.sport else None, now
+        )
+    except Exception:  # noqa: BLE001 — a gate may not cost a reader their rail
+        logger.exception(
+            "team page: season-floor gate failed for team %s; serving "
+            "the recent rail unfiltered",
+            team.id,
+        )
     recent_rows = _fold_rail(_recent_raw, "recent", team.slug)
     upcoming_events, recent_events = await _folded_briefs(
         db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
@@ -537,6 +578,47 @@ _SPORT_KEY_TO_LEAGUE = {
 
 def _league_slug_for_sport_key(sport_key: str | None) -> str | None:
     return _SPORT_KEY_TO_LEAGUE.get((sport_key or "").strip().lower())
+
+
+def _played_before_season_start(event, floor: datetime) -> bool:
+    """True when this row was played before ``floor``, the first day of the
+    season the page is describing. #7051 — the rail's half of the rule.
+
+    Keyed on the row's kick-off and nothing else. Status is deliberately not
+    read: the Broncos rail carries the exhibition's score-less `suspended` twin
+    at 2026-08-28 04:00Z beside the scored 08-29 row, 21 hours apart, so no fold
+    bound reaches it (#3601) — and a card that says "no result reported" about
+    an exhibition three weeks before kickoff is the same lie in a quieter voice.
+
+    ⚠️ `Event.commence_time` is `DateTime(timezone=True)` but a row can still
+    reach here naive — normalise rather than assume, the same call
+    `commence_time_was_never_a_kickoff` makes one gate above for the same
+    column. A row with no kick-off at all is KEPT: this gate can only ever
+    remove a card, so the unreadable case must serve it.
+    """
+    commence = getattr(event, "commence_time", None)
+    if commence is None:
+        return False
+    if commence.tzinfo is None:
+        commence = commence.replace(tzinfo=timezone.utc)
+    return commence < floor
+
+
+def _rail_within_declared_season(rows: list, sport_key: str | None, now: datetime) -> list:
+    """The past-results rail, restricted to the season the page is describing.
+
+    Both halves of the rule live here so a test can spend it without a session:
+    which season this club's league is in (the clock, injected by the caller),
+    and which rows fall outside it. A league the calendar does not model — every
+    soccer league, tennis, golf, and the preseason sport keys themselves — has no
+    floor and is returned untouched, which is the same fall-through
+    :func:`_league_slug_for_sport_key` gives every other seasonal read on this
+    page.
+    """
+    floor = season_windows.season_start(_league_slug_for_sport_key(sport_key), now)
+    if floor is None:
+        return list(rows)
+    return [e for e in rows if not _played_before_season_start(e, floor)]
 
 
 # ── #6266: a record must belong to the season the page declares ──────────────
