@@ -584,9 +584,14 @@ class CyclingEventAdapter:
             ):
                 continue
             markets.append(m)
-        if not markets:
-            return None
 
+        # #7979: do NOT bail when the open list is empty. A race that has fully
+        # settled has ZERO open markets (measured: Vuelta + Tour de France 2026 are
+        # 53 resolved / 0 open), so an early return here made the graded rescue
+        # immediately below unreachable in exactly the case it was written for —
+        # the page 404'd and the reader got "Event not found" the moment the race
+        # finished. The real guard is `winner is None` after `_select_gc_field`,
+        # which still refuses a concept with no GC field. Children stay open-only.
         gc_candidates = [m for m in markets if is_gc_winner_field_market(m.name, cfg.name_re)]
         # #1177: also consider RESOLVED/CLOSED GC winner markets. On settlement the
         # poly/kalshi GC market flips off status='open' while carrying the graded
