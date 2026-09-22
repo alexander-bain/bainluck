@@ -55,6 +55,24 @@ import {
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
+import {
+  bucketSupport,
+  classifySeriesSupport,
+  formatAge,
+  type SeriesSupport,
+  type SupportObservation,
+  type UnsupportedInterval,
+} from "@/lib/chartObservationSupport";
+
+/**
+ * #7878 — the dashed connector drawn across an interior interval nobody
+ * observed. One extra dataKey per plotted series; holds a straight-line
+ * interpolation between the two observations that bound the hole, and null
+ * everywhere else. It is a DISPLAY device for readability, not a price:
+ * excluded from the tooltip, the legend, the y-domain and the forward-fill.
+ */
+const gapConnectorKey = (dataKey: string): string => `${dataKey}__gap`;
+const isGapConnectorKey = (dataKey: string): boolean => dataKey.endsWith("__gap");
 
 /** Fallback source configs when win_prob_sources metadata isn't available */
 // Colors come from the one source-color registry (@/lib/sourceColors) — the
@@ -985,6 +1003,100 @@ export default function OddsChart({
     return keys;
   }, [nonBettingSources, filteredBookmakerHistory]);
 
+  /**
+   * #7878 — which minutes each observation series actually supports.
+   *
+   * Keyed by the same dataKeys `plottedProbKeys` lists (minus the blend: the
+   * backend blend has its own edge policy, #3898/#3911, and is not a reading
+   * of any one source). Judged per series against its own in-game cadence —
+   * the policy and its limits are documented in `lib/chartObservationSupport`.
+   * The forward-fill below consults this so a carried value never crosses an
+   * unsupported interval, and the tooltip and the stale-edge caption read it
+   * to say WHY a line stops rather than leaving a blank the reader has to
+   * guess at.
+   */
+  const observationSupport = useMemo((): Record<string, SeriesSupport> => {
+    const gameStartMs = commenceTime ? parseISO(commenceTime).getTime() : NaN;
+    const timestampsMs: number[] = [];
+    const series: Record<string, SupportObservation[]> = {};
+    const push = (key: string, obs: SupportObservation) => {
+      (series[key] ??= []).push(obs);
+      timestampsMs.push(obs.atMs);
+    };
+    for (const p of filteredHistory) {
+      push("homeDelta", {
+        atMs: parseISO(p.timestamp).getTime(),
+        observedUntilMs: p.valid_until ? parseISO(p.valid_until).getTime() : undefined,
+      });
+    }
+    for (const [bookmaker, points] of Object.entries(filteredBookmakerHistory)) {
+      for (const p of points) {
+        push(`${bookmaker}_delta`, {
+          atMs: parseISO(p.timestamp).getTime(),
+          observedUntilMs: p.valid_until ? parseISO(p.valid_until).getTime() : undefined,
+        });
+      }
+    }
+    if (useNewWinProbData) {
+      for (const [sourceKey, points] of Object.entries(filteredWinProbHistory)) {
+        for (const p of points) {
+          // The settled terminal point (`game_state.final`) is a real endpoint
+          // — the outcome — and stays an observation. Only the synthesised
+          // live edge is a delivery time.
+          push(`wp_${sourceKey}_delta`, {
+            atMs: parseISO(p.timestamp).getTime(),
+            observedUntilMs: p.valid_until ? parseISO(p.valid_until).getTime() : undefined,
+            synthetic: p.live_edge === true,
+          });
+        }
+      }
+    } else {
+      for (const p of filteredEspnHistory) {
+        push("espnDelta", { atMs: parseISO(p.timestamp).getTime() });
+      }
+    }
+    // The right edge the forward-fill will carry to: the parent's shared
+    // domain when there is one, else the last timestamp this chart holds —
+    // the same two branches `chartData` uses below.
+    //
+    // FINISHED GAMES HAVE NO STALE EDGE. A trailing hole is "the right edge
+    // is now and this source has not spoken for a while" — a live-page
+    // claim. On a completed game the right edge is the end of the game, and
+    // a market that stopped quoting when the venue settled (measured on
+    // 15316298: Kalshi and Polymarket end 04:24Z, ESPN's post-final echoes
+    // run to 04:48Z) is finished, not stale; captioning it "none since" would
+    // read as an outage warning on a game that is over. So the trailing
+    // anchor is withheld once the game is closed — interior holes are still
+    // judged, and the settled tail keeps today's behaviour (#922's domain).
+    let domainEndMs: number | null = null;
+    if (isClosed) {
+      domainEndMs = null;
+    } else if (chartEndTime) {
+      domainEndMs = parseISO(chartEndTime).getTime();
+    } else if (timestampsMs.length > 0) {
+      domainEndMs = Math.max(...timestampsMs);
+    }
+    const out: Record<string, SeriesSupport> = {};
+    for (const [key, obs] of Object.entries(series)) {
+      out[key] = classifySeriesSupport(obs, {
+        gameStartMs: Number.isFinite(gameStartMs) ? gameStartMs : null,
+        domainEndMs: domainEndMs !== null && Number.isFinite(domainEndMs) ? domainEndMs : null,
+      });
+    }
+    return out;
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, commenceTime, chartEndTime, isClosed]);
+
+  /** Series whose line ends before the chart does, with nothing observed since. */
+  const staleTrailingEdges = useMemo(() => {
+    const out: Array<{ key: string; displayName: string; color: string; interval: UnsupportedInterval }> = [];
+    for (const source of resolvedSources) {
+      const support = observationSupport[source.dataKey];
+      const trailing = support?.unsupported.find((iv) => iv.kind === "trailing");
+      if (trailing) out.push({ key: source.key, displayName: source.displayName, color: source.color, interval: trailing });
+    }
+    return out;
+  }, [resolvedSources, observationSupport]);
+
   // Transform data: convert probabilities to delta from 50%
   // Bucket by minute so each category label is unique (see `labelFormat`,
   // #3419) — required for
@@ -1229,6 +1341,53 @@ export default function OddsChart({
       }
     }
 
+    // #7878 — THE CARRY HAS A BOUND. "The probability IS the last known value
+    // until a new data point arrives" is true of a quote that is still being
+    // observed and has not moved, and false of a source that has stopped
+    // reporting; the loop above cannot tell them apart, so a 73-minute hole
+    // (15315912) and a 3h17m stall (15316479) both came out as one solid line
+    // — the second one a diagonal, since recharts joined two different values.
+    //
+    // For every minute inside an unsupported interval (see
+    // `observationSupport`) the carried value is withdrawn again, so the solid
+    // line ends ON the last observation and, for an interior hole, resumes ON
+    // the next. An interior hole additionally gets a straight-line connector
+    // under its own dataKey — drawn faint and dashed, kept out of the tooltip
+    // — so the eye can follow the series across the hole without the chart
+    // claiming a price at any minute in it. A trailing hole gets nothing:
+    // there is no far end to connect to, and drawing to "now" is the defect.
+    for (const key of probKeys) {
+      const support = observationSupport[key];
+      if (!support || support.unsupported.length === 0) continue;
+      const gapKey = gapConnectorKey(key);
+      // Endpoint values, read off the buckets themselves (post-fill they are
+      // the real observations at those minutes).
+      const valueAtMinute = (ms: number): number | null => {
+        const v = dataMap.get(new Date(Math.floor(ms / 60_000) * 60_000).toISOString())?.[key];
+        return typeof v === "number" ? v : null;
+      };
+      for (const iv of support.unsupported) {
+        const fromMinute = Math.floor(iv.fromMs / 60_000) * 60_000;
+        const toMinute = Math.floor(iv.toMs / 60_000) * 60_000;
+        const fromValue = valueAtMinute(iv.fromMs);
+        const toValue = iv.kind === "interior" ? valueAtMinute(iv.toMs) : null;
+        for (const pt of sorted) {
+          const ms = parseISO(pt.timestamp).getTime();
+          if (ms < fromMinute) continue;
+          // An interior hole ends at the next observation's minute; a
+          // trailing one runs to the end of the drawn domain, live edge
+          // included — every minute after the last reading is withdrawn.
+          if (iv.kind === "interior" && ms > toMinute) break;
+          const verdict = bucketSupport(ms, { ...support, unsupported: [iv] });
+          if (verdict.kind === "gap" || (iv.kind === "trailing" && ms > fromMinute)) pt[key] = null;
+          if (iv.kind === "interior" && fromValue !== null && toValue !== null && toMinute > fromMinute) {
+            const f = (ms - fromMinute) / (toMinute - fromMinute);
+            pt[gapKey] = fromValue + (toValue - fromValue) * f;
+          }
+        }
+      }
+    }
+
     // Forward-fill game state: carry most recent score/period/clock to subsequent points
     let lastScore: { home: number | null; away: number | null } = { home: null, away: null };
     let lastPeriod: string | null = null;
@@ -1257,7 +1416,7 @@ export default function OddsChart({
   // by the naive-mean fallback that no longer exists. `showBlendLine` added: it
   // now decides whether `bainLuckDelta` is written at all. (`timeRange` is also
   // unread here, but it predates this change and is left alone.)
-  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys]);
+  }, [filteredHistory, filteredBookmakerHistory, filteredWinProbHistory, filteredEspnHistory, useNewWinProbData, nonBettingSources, showBlendLine, filteredAggregateLine, scoringPlays, timeRange, periodBoundaries, plottedProbKeys, observationSupport]);
 
   // Report the chart's actual rendered time domain to parent so
   // ScoreDifferentialChart can match its x-axis exactly.
@@ -1731,6 +1890,62 @@ export default function OddsChart({
   const formatYTick = (value: number): string => `${value}%`;
 
   // Custom tooltip showing actual probabilities
+  /**
+   * #7878 — the faint dashed connector across an interior hole in one series.
+   * Rendered only when that series has one (so a healthy chart's DOM is
+   * unchanged); `tooltipType="none"` keeps its interpolated values out of the
+   * tooltip payload, `activeDot={false}` keeps a hover from marking a point
+   * that was never observed, and it is never forward-filled or in the
+   * y-domain (it is not in `plottedProbKeys`). Straight, because a straight
+   * segment is the only shape that claims nothing about the path in between.
+   */
+  const gapConnector = (dataKey: string, color: string, width: number, opacity = 0.5) => {
+    const support = observationSupport[dataKey];
+    if (!support || !support.unsupported.some((iv) => iv.kind === "interior")) return null;
+    return (
+      <Line
+        key={gapConnectorKey(dataKey)}
+        type="linear"
+        dataKey={gapConnectorKey(dataKey)}
+        stroke={color}
+        strokeWidth={width}
+        strokeOpacity={opacity}
+        strokeDasharray="2 5"
+        strokeLinecap="round"
+        dot={false}
+        activeDot={false}
+        legendType="none"
+        tooltipType="none"
+        isAnimationActive={false}
+        className="recharts-gap-connector"
+      />
+    );
+  };
+
+  /**
+   * #7878 — what the tooltip says about a series at a minute it does not
+   * support: never a number, always the two observations that bound the hole
+   * (or the last one, for a stale edge). Times are spelled with the axis's
+   * own label format so they match the ticks the reader is looking at.
+   */
+  const gapNotesAt = (bucketTimestamp: string): Array<{ key: string; displayName: string; color: string; text: string }> => {
+    const ms = parseISO(bucketTimestamp).getTime();
+    const notes: Array<{ key: string; displayName: string; color: string; text: string }> = [];
+    for (const source of resolvedSources) {
+      const support = observationSupport[source.dataKey];
+      if (!support) continue;
+      const verdict = bucketSupport(ms, support);
+      if (verdict.kind !== "gap") continue;
+      const from = format(new Date(verdict.interval.fromMs), labelFormat);
+      const text =
+        verdict.interval.kind === "interior"
+          ? `no readings ${from} – ${format(new Date(verdict.interval.toMs), labelFormat)}`
+          : `last reading ${from}, none since`;
+      notes.push({ key: source.key, displayName: source.displayName, color: source.color, text });
+    }
+    return notes;
+  };
+
   const CustomTooltip = ({
     active,
     payload,
@@ -1738,7 +1953,7 @@ export default function OddsChart({
   }: {
     active?: boolean;
     payload?: Array<{
-      value: number;
+      value: number | null;
       name: string;
       color: string;
       dataKey: string;
@@ -1762,7 +1977,9 @@ export default function OddsChart({
 
       // Bain Luck aggregated line (multi-source mode)
       const bainLuckEntry = showBlendLine
-        ? payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null)
+        ? (payload.find((e) => e.dataKey === "bainLuckDelta" && e.value !== null) as
+            | { value: number; dataKey: string }
+            | undefined) ?? null
         : null;
 
       // Find entries for each resolved source
@@ -1783,9 +2000,20 @@ export default function OddsChart({
               e.dataKey !== "bainLuckDelta" &&
               !e.dataKey.startsWith("wp_") &&
               e.dataKey !== "espnDelta" &&
+              // #7878: belt to `tooltipType="none"`'s braces — an interpolated
+              // connector value is not a sportsbook's number.
+              !isGapConnectorKey(e.dataKey) &&
               e.value !== null
           )
         : [];
+
+      // #7878: series with no reading at this minute say so, instead of
+      // vanishing from the card as if they had never existed.
+      const gapNotes = matchingPoint ? gapNotesAt(matchingPoint.timestamp) : [];
+      // Nothing to say (a minute before any line starts): no card, as before.
+      if (!bainLuckEntry && sourceEntries.length === 0 && bookmakerEntries.length === 0 && gapNotes.length === 0) {
+        return null;
+      }
 
       return (
         /* #1833 — the width cap has to be read off the VIEWPORT, not the chart.
@@ -1932,13 +2160,29 @@ export default function OddsChart({
             </div>
           )}
 
+          {/* #7878 — missing observations, named as such. Never a price:
+              "no readings" is the whole claim; whether the market was quiet,
+              closed or unpolled is not something this payload can say. */}
+          {gapNotes.length > 0 && (
+            <div className={sourceEntries.length > 0 || (showBlendLine && bainLuckEntry) ? "mt-2 pt-2 border-t border-surface-border space-y-1" : "space-y-1"}>
+              {gapNotes.map((note) => (
+                <div key={`gap-${note.key}`} data-testid="chart-gap-note">
+                  <p className="text-xs text-text-muted mb-0.5" style={{ color: note.color }}>
+                    {note.displayName}
+                  </p>
+                  <p className="text-xs text-text-muted italic">{note.text}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Bookmaker breakdown (sportsbooks-only mode) */}
           {bookmakerEntries.length > 0 && (
             <div className="mt-2 pt-2 border-t border-surface-border">
               <p className="text-xs text-text-muted mb-1">By sportsbook:</p>
               {bookmakerEntries.map((entry) => {
                 const bookmaker = entry.dataKey.replace("_delta", "");
-                const homeProb = entry.value; // 0–100 axis
+                const homeProb = entry.value as number; // 0–100 axis (nulls filtered above)
                 // #3892 — same rule as the edge callout above, and for the same
                 // reason: `toFixed(0)` on the axis value rounds
                 // `57.49999999999999` down to 57 where the contract says 58.
@@ -2199,7 +2443,16 @@ export default function OddsChart({
               }
               const pt = chartData[idx];
               const delta = pt[primarySeriesKey] as number | null;
-              const homeProb = delta != null ? chartAxisToHomeProb(delta) : 0.5; // 0–100 axis → 0–1
+              // #7878 — a minute the primary series does not support (an
+              // unobserved hole, or the stretch after a stale edge) has no
+              // number to hand the hero. The old `: 0.5` fallback would have
+              // printed 50% there; clearing the hover is the honest answer
+              // and is what `onMouseLeave` already does.
+              if (delta == null) {
+                onActivePointChange(null);
+                return;
+              }
+              const homeProb = chartAxisToHomeProb(delta); // 0–100 axis → 0–1
               onActivePointChange({
                 timestamp: pt.timestamp,
                 homeProb,
@@ -2294,8 +2547,26 @@ export default function OddsChart({
               strokeWidth={1.5}
               strokeDasharray="4 4"
             />
-            <Tooltip content={<CustomTooltip />} />
+            {/* #7878 — `filterNull={false}`: recharts' default drops every
+                null-valued entry and then renders no card at all when none
+                remain, which is exactly the minute after a stale edge or
+                inside a hole. The card has something true to say there ("no
+                readings …"), so it must be asked. `CustomTooltip` still
+                shows a number only for entries that carry one, and returns
+                nothing when it has neither a number nor a note. */}
+            <Tooltip content={<CustomTooltip />} filterNull={false} />
 
+            {/* #7878 — `connectNulls` is GONE from every observation series
+                below. It was the second half of the defect: the forward-fill
+                left no nulls to connect, and where the fill now withdraws a
+                carry across an unsupported interval, `connectNulls` would
+                have drawn the straight segment right back. The lines break
+                where the observations stop; the faint dashed `__gap`
+                connectors (one per series, `gapConnector` below) are what
+                carries the eye across an interior hole, and they are
+                excluded from the tooltip so no minute in the hole gets a
+                number. The backend blend keeps its `connectNulls`: it is not
+                an observation series and is not judged here. */}
             {/* ── MODE B: Sportsbooks-only — individual bookmaker lines (thin grey) ── */}
             {!isMultiSource && bookmakers.map((bookmaker) => (
               <Line
@@ -2306,10 +2577,12 @@ export default function OddsChart({
                 strokeWidth={1}
                 dot={false}
                 activeDot={{ r: 3, fill: "rgba(0,0,0,0.3)" }}
-                connectNulls
                 legendType="none"
               />
             ))}
+            {!isMultiSource && bookmakers.map((bookmaker) =>
+              gapConnector(`${bookmaker}_delta`, "rgba(0,0,0,0.15)", 1),
+            )}
 
             {/* ── MODE A: Multi-source — individual source lines (near-invisible so
                 the one blended Bain Luck line clearly dominates, per L2-131) ── */}
@@ -2354,8 +2627,16 @@ export default function OddsChart({
                 strokeDasharray={source.dashPattern ?? undefined}
                 dot={false}
                 activeDot={{ r: isPrimarySource ? 4 : 3, fill: source.color }}
-                connectNulls
               />
+              );
+            })}
+            {isMultiSource && resolvedSources.map((source) => {
+              const isPrimarySource = source.dataKey === primarySeriesKey;
+              return gapConnector(
+                source.dataKey,
+                source.color,
+                isPrimarySource ? 1.5 : 1,
+                isPrimarySource ? 0.5 : legendExpanded ? 0.4 : 0.15,
               );
             })}
 
@@ -2379,9 +2660,10 @@ export default function OddsChart({
                 strokeDasharray="6 3"
                 dot={false}
                 activeDot={{ r: 4, fill: sourceHex("espn") }}
-                connectNulls
               />
             )}
+            {!isMultiSource && !useNewWinProbData && filteredEspnHistory.length > 0 &&
+              gapConnector("espnDelta", sourceHex("espn"), 1.5, 0.5)}
 
             {/* Area fill removed — was causing green semi-circle artifacts */}
 
@@ -2411,9 +2693,9 @@ export default function OddsChart({
                 strokeWidth={3}
                 dot={false}
                 activeDot={{ r: 5, fill: sourceHex("betting") }}
-                connectNulls
               />
             )}
+            {!isMultiSource && gapConnector("homeDelta", sourceHex("betting"), 1.5, 0.5)}
 
 
 
@@ -2828,6 +3110,24 @@ export default function OddsChart({
           </div>
         )}
       </div>
+
+      {/* #7878 — a line that ends before the chart does says how old its last
+          reading is. Measured against the chart's own right edge (the live
+          edge on a live game, the last drawn minute otherwise), never the
+          wall clock, so the caption is a fact about the drawing rather than a
+          claim that expires the moment it is rendered. "None since" is the
+          whole claim: it does not say why. */}
+      {staleTrailingEdges.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 shrink-0 mt-1" data-testid="chart-stale-edges">
+          {staleTrailingEdges.map((edge) => (
+            <span key={`stale-${edge.key}`} className="text-[11px] text-text-muted">
+              <span style={{ color: edge.color }}>{edge.displayName}</span>
+              {" "}last reading {format(new Date(edge.interval.fromMs), labelFormat)} · none in the{" "}
+              {formatAge(edge.interval.toMs - edge.interval.fromMs)} since
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* #2448: `Tap/hover for details` DELETED.
           Alex read it as body text under a chart, which is what it was — a
