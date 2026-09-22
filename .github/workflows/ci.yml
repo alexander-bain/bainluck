@@ -613,6 +613,57 @@ jobs:
             exit 1
           fi
 
+      - name: "#2077 the route supplies the fleet stamp (real Postgres)"
+        # PILLAR: TRUTH. SHIP: a settled board nobody graded stops printing a
+        # live coin flip.
+        #
+        # CERT-3311's nonblocking follow-up, and it closes this ship's one defect
+        # class at the level where it kept recurring. `d6936e281` widened
+        # `_format_market_detail` and shipped 22 GREEN guards on a sha that
+        # changed nothing a reader could see, because every guard injected
+        # `fleet_newest_observation` straight into the formatter and so never
+        # traversed the route seam — which was the broken half. The repair
+        # (`57ed72128`) added guards that COMPOSE the two helpers the way
+        # `get_futures_market` does, but still not THROUGH it. This file calls
+        # the endpoint.
+        #
+        # A guard that hands the callee an input the caller never supplies cannot
+        # observe a caller that never supplies it. That is why this is wired here
+        # rather than added to the unit file: per the #6354 step above, every
+        # real-Postgres file in this repo is selected by an explicitly named step,
+        # and a new one that nobody wires is COLLECTED BY CI AND EXECUTED BY
+        # NOTHING — which reads exactly like a passing gate. It also cannot be run
+        # on a developer's machine (`NULLS NOT DISTINCT` is PostgreSQL 15+, so
+        # `create_all` is a syntax error on the 14.x Homebrew default).
+        #
+        # Three refusals, not one: a skip, a zero count, and a short count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_the_route_supplies_the_fleet_stamp_2077_pg.py \
+            -v -rs 2>&1 | tee /tmp/route2077.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/route2077.txt; then
+            echo "::error::#2077 route fleet-stamp contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/route2077.txt; then
+            echo "::error::#2077 route fleet-stamp contract collected NOTHING"
+            exit 1
+          fi
+          # 9 in the delivered gate: two INSTRUMENT controls (the seeded board
+          # stamp survived `onupdate=func.now()`, and board L really did set a
+          # recent fleet pulse) without which every withhold assertion could pass
+          # for a reason that has nothing to do with the route; the two RED-on-base
+          # cases (R, and P — the `/futures/56916563` production shape); and the
+          # four pins that keep the widening honest: G a graded board keeps its
+          # result, F a board inside the 30-day floor keeps its price and doubles
+          # as the isolation control, O the original open population is unchanged,
+          # L nothing moves.
+          PASSED=$(grep -oE "[0-9]+ passed" /tmp/route2077.txt | tail -1 | grep -oE "[0-9]+")
+          if [ "${PASSED:-0}" -lt 9 ]; then
+            echo "::error::#2077 expected 9 passing contracts, saw ${PASSED:-0} — a case was lost, not fixed"
+            exit 1
+          fi
+
       - name: Tennis twin sweep write/undo contract (real Postgres)
         # #2878 / CERT-2142. The sweep's whole effect is one jsonb element
         # appended to `events.event_tags`, and its idempotence claim lives
