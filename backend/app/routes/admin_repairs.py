@@ -669,6 +669,26 @@ _REPAIRS = {
         "app.tasks.repair_kalshi_venue_topic_badges",
         "repair",
     ),
+    # #8029 (authority/974): the SPORT-TO-SPORT half the rail above measured and
+    # declined by name ("a REPAIR moving a row between two sports is not this
+    # issue and has not been measured"). It is measured now: paging that rail's
+    # `status_scope=open` population to exhaustion returns 25 candidates, of
+    # which exactly ONE carries a venue verdict naming a different sport —
+    # `109401`, MrBeast's ECU NIL donation, stored `baseball` because a
+    # pre-#5637 ingest read "University **athletics**" as the Oakland A's.
+    #
+    # Its warrant is narrower than the sibling's: the destination must be the
+    # word the VENUE PUBLISHED as its series tag, and the shipped cascade must
+    # answer that same word, so a name guess can never be overwritten with
+    # another name guess. Enumerated bound, five refusing gates, writes
+    # `llm_sport_category` only.
+    #
+    # D51: `restore_sql` travels with the plan, built from RETURNING on apply.
+    # ATTENDED ONLY: never wire this to a beat; it is a terminating repair.
+    "kalshi-venue-sport-correction": (
+        "app.tasks.repair_kalshi_venue_sport_correction",
+        "repair",
+    ),
     # #4365 part 2 (lane1b/109): two Kalshi NHL game props stored `basketball`.
     # Same two-gate shape as the certed `repair_kalshi_senate_category` — frozen
     # id bound AND the SHIPPED `_categorize_kalshi_market` independently agreeing
