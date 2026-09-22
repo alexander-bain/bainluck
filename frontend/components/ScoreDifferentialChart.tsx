@@ -38,6 +38,8 @@ import {
   collapseDuplicateTransitions,
   placePeriodLabels,
   anchorPeriodLabels,
+  choosePeriodStripBand,
+  periodLabelPlacement,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 
@@ -806,6 +808,42 @@ export default function ScoreDifferentialChart({
   // Make symmetric around 0, rounding up to nearest 2 for a tighter fit
   const domainMax = Math.max(2, Math.ceil(maxAbs / 2) * 2);
 
+  /**
+   * #7940 — which end of the plot the period-label strip is painted at. Twin of
+   * `OddsChart`'s; the decision itself lives in `choosePeriodStripBand` so the
+   * two strips cannot drift apart.
+   *
+   * Every key this chart actually draws, not just the two the domain is sized
+   * on: the collision is with whichever line is nearest the frame, and a
+   * bookmaker's spread line can be the topmost one. A plain `const` rather than
+   * a `useMemo` because this sits below the `chartData.length === 0` early
+   * return, where a hook would be conditional.
+   *
+   * 🪤 This chart is TWO-SIDED — its domain straddles 0 — which is the case
+   * #7940 flagged as "the bottom band need not be free". It is asked, not
+   * assumed: a game whose differential runs negative keeps its strip at the top,
+   * because that is where the air is.
+   */
+  const stripSeriesKeys = [
+    "projectedDiff",
+    "actualDiff",
+    "pm_kalshi_spread",
+    "pm_polymarket_spread",
+    ...bookmakers.map((b) => `${b}_diff`),
+  ];
+  const periodStripBand = choosePeriodStripBand(
+    chartData.map((d) =>
+      stripSeriesKeys.map((k) => (d as Record<string, unknown>)[k] as number | null | undefined),
+    ),
+    [Math.min(0, -domainMax), Math.max(0, domainMax)],
+    {
+      // Twin of OddsChart's window — the labels' own x span, off the same rowed
+      // list the `<ReferenceLine>`s below are drawn from.
+      categoryTimestamps: chartData.map((d) => (d as Record<string, unknown>).timestamp as string),
+      boundaries: filteredPeriodBoundaries,
+    },
+  );
+
   // #3240: `homeShort`/`awayShort` are derived above the unit note, which also
   // names the two sides. One definition, so the axis and the sentence under it
   // cannot end up calling the same player two different things.
@@ -930,6 +968,11 @@ export default function ScoreDifferentialChart({
          server render (no viewport), so the stagger is unobservable in the
          markup; this is the same channel CERT-1984 opened for the count. */
       data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
+      /* #7940: WHICH END the strip is anchored to — "top" or "bottom". Twin of
+         OddsChart's channel; the two charts decide independently off their own
+         series, so reading only one would miss the case the issue measured,
+         where a game collides on the win-prob chart and not on this one. */
+      data-period-strip-band={periodStripBand}
       /* #7876: WHICH labels survive, in x order — "Q2,HT,Q3,Q4,OT". The count
          and the rows above cannot answer the question that issue was filed
          about: a chart that drew `Q2 Q3 Q4 OT` reported four boundaries on two
@@ -1185,9 +1228,10 @@ export default function ScoreDifferentialChart({
                 strokeDasharray="6 4"
                 label={{
                   value: b.label,
-                  position: ((b as { labelPosition?: string }).labelPosition || "insideTopLeft") as "insideTopLeft" | "insideTopRight",
                   // #6882 — see the twin in OddsChart. Row 0 passes 0.
-                  dy: ((b as { labelRow?: number }).labelRow || 0) * PERIOD_LABEL_ROW_HEIGHT_PX,
+                  // #7940 — and the band follows the series, so the `Actual
+                  // Score Diff` step line no longer rules through the glyphs.
+                  ...periodLabelPlacement(b as { labelPosition?: string; labelRow?: number }, periodStripBand),
                   style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
                 }}
               />

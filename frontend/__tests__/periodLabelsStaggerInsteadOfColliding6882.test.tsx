@@ -85,6 +85,7 @@ import {
   PERIOD_LABEL_INK_FRACTION,
   PERIOD_LABEL_ROW_HEIGHT_PX,
   DUPLICATE_TRANSITION_WINDOW_MS,
+  periodLabelPlacement,
 } from "@/lib/periodMarkers";
 
 const WIRE = JSON.parse(
@@ -359,12 +360,28 @@ describe("#6882 — both components read the rule at their call sites", () => {
 
   it.each(CHARTS)("%s passes the row through to the label as dy", (_name, _render) => {
     // SSR cannot observe the `<ReferenceLine>`, so the wiring from `labelRow` to
-    // the rendered offset is asserted on the source. `dy` is the channel because
-    // recharts keeps it through `filterProps` (it is an SVG text attribute) and
-    // `Text` adds it to y; `position` alone cannot express a vertical row.
+    // the rendered offset cannot be read off the markup. `dy` is the channel
+    // because recharts keeps it through `filterProps` (it is an SVG text
+    // attribute) and `Text` adds it to y; `position` alone cannot express a
+    // vertical row.
+    //
+    // #7940 moved the arithmetic out of both call sites into
+    // `periodLabelPlacement`, so this is now two assertions instead of one text
+    // match — and it is stronger than the text match was, which would have
+    // passed on a chart that computed a correct `dy` and never rendered it:
+    //   1. the shared helper turns a row into that exact offset (BEHAVIOUR), and
+    //   2. this chart's label props come from that helper and nowhere else.
     const src = _name === "OddsChart" ? ODDS_SOURCE : SDC_SOURCE;
-    expect(src).toMatch(/dy:\s*\(\(b as \{ labelRow\?: number \}\).labelRow \|\| 0\) \* PERIOD_LABEL_ROW_HEIGHT_PX/);
+
+    expect(periodLabelPlacement({ labelRow: 0 }, "top").dy).toBe(0);
+    expect(periodLabelPlacement({ labelRow: 1 }, "top").dy).toBe(PERIOD_LABEL_ROW_HEIGHT_PX);
+    expect(periodLabelPlacement({ labelRow: 2 }, "top").dy).toBe(2 * PERIOD_LABEL_ROW_HEIGHT_PX);
+
+    expect(src).toMatch(/\.\.\.periodLabelPlacement\(\s*b as \{ labelPosition\?: string; labelRow\?: number \},\s*periodStripBand,?\s*\)/);
     expect(src).toMatch(/placePeriodLabels\(/);
+    // And the old inline form is gone from both — a leftover copy is exactly the
+    // private re-implementation the next test bans.
+    expect(src).not.toMatch(/dy:\s*\(\(b as/);
   });
 
   it("neither chart re-implements the stagger privately", () => {
