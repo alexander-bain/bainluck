@@ -241,3 +241,45 @@ def test_an_awards_and_culture_market_with_no_subject_tag_is_still_entertainment
     `awards` and an art prize keeps the entertainment shelf it belongs on.
     """
     assert serve(["UK", "Art", "Awards", "Culture"], "Turner Prize 2026 Winner") == "entertainment"
+
+
+# ---------------------------------------------------------------------------
+# Reach — what the classifier returns is not what a reader gets
+# ---------------------------------------------------------------------------
+
+def test_the_unreachable_rows_are_still_classified_correctly_when_reached():
+    """The rows #7930 keeps off the page are RIGHT the moment the poller writes them.
+
+    CERT-3271 blocked the first presentation of this ship for claiming these move
+    today. They do not: measured on production 2026-09-22 03:15Z, 9 of the 42
+    events in the cohort have not been written in 19-40 days, and these are among
+    them. The classifier is not what is wrong with them — the writer never
+    revisits them — so what this ship owes is a correct answer waiting for #7930,
+    and that is exactly what this pins.
+
+    Keeping it as a test rather than a comment means the day #7930 lands, the
+    answer these rows take is already guarded instead of being discovered.
+    """
+    # 871036/871037/871038/871045 — absent from the venue's /events?id= entirely.
+    assert serve(["Culture", "Politics"], "How many gays become Senator in Brazil Elections?") == "politics"
+    # 838969 — active=true at the venue, merely too low-volume for the scan's tail.
+    assert serve(
+        ["France", "Culture", "Science", "Weather", "climate", "global warming"],
+        "Will summer 2026 be France's hottest summer on record?",
+    ) == "weather"
+    # 844717 — the same shape, and the arm-4 route rather than the tag route.
+    assert serve(
+        ["Ebola", "Culture", "Weather", "Pandemics", "Hantavirus"],
+        "Ebola: new country confirmed before October 1?",
+    ) == "health"
+
+
+def test_the_reachable_climate_row_is_what_half_two_actually_ships():
+    """Event 79905, `Where will 2026 rank among the hottest years on record?`.
+
+    Written 8 hours before this test was added, so it is reached by the ordinary
+    poll. It is the reason half 2 is NOT inert while #7930 is open: without this
+    row the climate arm would be a correct rule with no reader on the other end,
+    and this ship would be guard-only hardening rather than a ship.
+    """
+    assert misfiled_subject("Where will 2026 rank among the hottest years on record?", "tech") == "weather"

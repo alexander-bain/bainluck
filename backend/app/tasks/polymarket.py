@@ -696,7 +696,31 @@ def stamp_parent_content_understanding(
 #
 # The surviving one — France — is fixed in the same ship by the climate-record
 # arm of `_WEATHER_HAZARD_RE`, so no subject-tag ordering rule is needed after
-# all. With both in place the 40 moves read:
+# all.
+#
+# 🪤 WHAT THE CLASSIFIER RETURNS IS NOT WHAT A READER GETS, AND THE GAP IS
+# MEASURED HERE RATHER THAN ASSUMED (CERT-3271 blocked the first presentation of
+# this change for claiming otherwise). A row only takes a new category when the
+# poller next WRITES it. Of the 42 events in the cohort, measured on production
+# 2026-09-22 03:15Z:
+#
+#     33 events / 76 open markets   written within 14 days -> these move
+#      9 events /  9 open markets   not written in 19-40 days -> these DO NOT
+#
+# The nine are #7930 and are three different defects, none of them `archived`:
+# four are ABSENT from the venue's `/events?id=` (the Brazil election rows), two
+# are `closed=true` at the venue while we serve them open (Tupac; Brazil Vice
+# Governor), and three are `active=true, closed=false, archived=false` but
+# LOW-VOLUME (France 1,715, Ebola-844717 359, Banksy 1,426) and so fall off the
+# tail of a volume-ordered scan. That last shape is a coverage defect and is not
+# repairable by anything aimed at inactive or archived rows.
+#
+# So France — the row half 2 was written for — does not move until #7930 lands.
+# Half 2 is still not inert: `Where will 2026 rank among the hottest years on
+# record?` (event 79905) was written 8 hours before this comment and moves from
+# the `tech` shelf on the next poll.
+#
+# With both halves in place the 40 classifier moves read:
 #
 #     27  -> politics    17 plainly civic (5 Brazil election rows, the Mangione
 #                        trial, Hasan Piker arrested), 10 mention/tweet-volume
