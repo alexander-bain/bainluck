@@ -49,6 +49,34 @@ LIVE_KEY_PREFIX = "bainluck:datagolf:live"
 INPLAY_WINDOW_KEY = "bainluck:datagolf:active_today"
 INPLAY_WINDOW_TTL = 7200
 
+# #7958 — "the in-play beat is writing THIS event's prices, and the write landed".
+#
+# `LIVE_KEY_PREFIX:{tour}` cannot answer that question and must not be asked it.
+# It is set the instant the per-tour in-play endpoint returns a non-empty board,
+# BEFORE `_in_play_event_matches` decides whether that board belongs to any of
+# our open markets and BEFORE the session commits. When DataGolf serves event A's
+# board while our markets are event B — #191's own case, a stale winner's board
+# outliving its tournament — the live poll writes NOTHING and still raises the
+# flag, and #7935's deferral then stands the hourly poll down too. Zero writers:
+# prices and `last_updated` frozen for the length of event B, which is precisely
+# the outcome #7935's two-signal design exists to prevent.
+#
+# So ownership is PUBLISHED, not assumed: this key carries the datagolf event_id
+# the live poll actually wrote, written only after the session commits, and
+# deleted for any tour that wrote nothing. `_poll_datagolf_markets` defers only
+# when it names the same event that poll is about to write.
+#
+# A separate key deliberately, rather than tightening `LIVE_KEY_PREFIX`: that one
+# has two other consumers with different needs — `_golf_inplay_window_active`
+# (wakes the beat; must stay generous or play is starved) and
+# `_snapshot_leaderboard` (daily, tour-level, does not care which event). Moving
+# one flag under three consumers is how a narrow fix becomes a broad outage.
+#
+# TTL matches LIVE_KEY_PREFIX's 30 min against the hourly poll's 60-min gate, so
+# a beat that stops writing releases the board well inside one poll cycle.
+INPLAY_OWNER_KEY_PREFIX = "bainluck:datagolf:inplay_owner"
+INPLAY_OWNER_TTL = 1800
+
 # Tours to poll — all tours that DataGolf covers
 POLL_TOURS = ["pga", "euro", "kft", "opp", "alt"]
 
@@ -93,6 +121,52 @@ def _golf_inplay_window_active(r) -> bool:
 def _external_id(tour: str, event_id: str, market_type: str) -> str:
     """Build deterministic external_id for DataGolf FuturesMarket."""
     return f"datagolf:{tour}:{event_id}:{market_type}"
+
+
+def _event_id_of(external_id: str | None) -> Optional[str]:
+    """The datagolf event_id inside `datagolf:{tour}:{event_id}:{market_type}`.
+
+    Returns None for anything that is not that shape — wrong arity, a foreign
+    source, or any empty part — so a malformed id can never be published as an
+    owned event (#7958). Publishing garbage would stand the hourly poll down
+    against an event that cannot exist, which is the freeze again.
+    """
+    parts = (external_id or "").split(":")
+    if len(parts) != 4 or not all(parts) or parts[0] != "datagolf":
+        return None
+    return parts[2]
+
+
+def _inplay_owned_events(r, tour: str) -> set[str]:
+    """The datagolf event_ids the in-play beat last COMMITTED prices for (#7958).
+
+    🪤 `get_redis_client()` sets no `decode_responses`, so a real client answers
+    with BYTES while every dict-backed test fake answers with `str`. A bare
+    `r.get(key) == event_id` is therefore False in production and True under the
+    guards: #7935's deferral would silently never fire, the saw-tooth would come
+    straight back, and the suite would stay green. Decode once, here, and the
+    guards store bytes.
+
+    A set, not a scalar: one tour can carry open markets for two events whose
+    names both match the board (duplicate rows, a renamed event). Membership
+    answers "is the beat writing THIS event" without having to pick a winner.
+
+    Fail-open on a Redis error, matching every other Redis read on this path —
+    an unreadable flag means "nobody owns it", so the hourly poll keeps writing.
+    Silence is the worse failure.
+    """
+    try:
+        value = r.get(f"{INPLAY_OWNER_KEY_PREFIX}:{tour}")
+    except Exception:
+        return set()
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode()
+        except UnicodeDecodeError:  # pragma: no cover - defensive
+            return set()
+    if not value:
+        return set()
+    return {part for part in str(value).split(",") if part}
 
 
 def _event_metadata_tour(requested_tour: str, event) -> str:
@@ -226,14 +300,26 @@ async def _poll_datagolf_markets() -> dict:
                     #       that key is fleet-wide across POLL_TOURS, so gating
                     #       on it would let a live pga event starve pre-tournament
                     #       writes for a euro event that has not teed off.
-                    #   (2) `LIVE_KEY_PREFIX:{tour}` — set by `_poll_datagolf_live`
-                    #       only when the in-play endpoint actually returned a
-                    #       board for this tour, 30-min TTL against this poll's
-                    #       60-min gate. Without it, a tour inside its date window
+                    #   (2) `INPLAY_OWNER_KEY_PREFIX:{tour}` must name THIS event.
+                    #       Without a second signal, a tour inside its date window
                     #       whose event DataGolf does not cover in-play (or any
                     #       morning before tee-off) would have no writer at all:
                     #       prices frozen and `last_updated` going stale for days,
                     #       which is a worse defect than the one being fixed.
+                    #
+                    #       ── #7958 ──────────────────────────────────────────
+                    #       This signal was `LIVE_KEY_PREFIX:{tour}` and that key
+                    #       cannot carry it. The live poll raises it as soon as
+                    #       the in-play endpoint returns a board — before
+                    #       `_in_play_event_matches` and before the commit — so a
+                    #       stale event-A board over our event-B markets (#191's
+                    #       case) meant the beat wrote nothing, claimed the tour
+                    #       anyway, and this poll stood down: the no-writer-at-all
+                    #       freeze described two lines up, arrived at by the very
+                    #       guard meant to prevent it. The owner key is published
+                    #       only after a committed price write and names the event
+                    #       written, so "someone is writing" became "the beat is
+                    #       writing THIS event".
                     # The conjunction costs no coverage — the ping-pong requires
                     # the in-play beat to be writing, which is exactly what (2)
                     # reports — and every failure mode of either signal (a Redis
@@ -256,8 +342,9 @@ async def _poll_datagolf_markets() -> dict:
                                 INPLAY_WINDOW_KEY, "1", ex=INPLAY_WINDOW_TTL
                             )
                             stats["debug"]["inplay_window"] = f"{tour}:{current_event.event_name}"
-                            inplay_owns_prices = bool(
-                                _redis.get(f"{LIVE_KEY_PREFIX}:{tour}")
+                            inplay_owns_prices = (
+                                str(current_event.event_id)
+                                in _inplay_owned_events(_redis, tour)
                             )
                     except Exception:
                         pass
@@ -625,6 +712,10 @@ async def _poll_datagolf_live() -> dict:
     service = DataGolfAPIService()
     stats = {"tours_polled": 0, "live_events": 0, "snapshots_written": 0, "skipped": 0}
 
+    # #7958: tour -> the datagolf event_ids this pass actually wrote prices for.
+    # Accumulated inside the transaction, published only after it commits.
+    wrote_prices_for: dict[str, set[str]] = {}
+
     try:
         r = get_redis_client()
 
@@ -918,6 +1009,17 @@ async def _poll_datagolf_live() -> dict:
                                 session.add(snap)
                                 stats["snapshots_written"] += 1
 
+                        if players_written > 0:
+                            # #7958: ownership is claimed by WRITING, not by the
+                            # endpoint answering. Recorded here — past the
+                            # future-date guard and past `_in_play_event_matches`
+                            # — and published only once this transaction commits.
+                            written_event_id = _event_id_of(market.external_id)
+                            if written_event_id:
+                                wrote_prices_for.setdefault(tour, set()).add(
+                                    written_event_id
+                                )
+
                         if players_written > 0 or players_skipped_none > 0:
                             logger.info(
                                 "DataGolf live %s market %s: %d players written, %d skipped (None prob)",
@@ -1013,6 +1115,47 @@ async def _poll_datagolf_live() -> dict:
                 except Exception as e:
                     logger.warning("DataGolf live poll error for tour=%s: %s", tour, e)
                     continue
+
+        # #7958 — PUBLISH OWNERSHIP, AFTER THE COMMIT.
+        #
+        # Outside the `async with`, so `get_task_session()` has committed: a pass
+        # whose writes rolled back never claims the board, and the hourly poll
+        # keeps writing rather than standing down for a transaction that did not
+        # land. Every tour that wrote nothing is CLEARED here rather than left to
+        # age out — a stale board can keep the endpoint answering for days, and a
+        # 30-minute lie is 30 minutes of a frozen leaderboard.
+        #
+        # Best-effort by design: if Redis is unreachable the keys simply do not
+        # move, `_inplay_owned_events` reads nothing or reads a value that expires
+        # inside the hour, and both roads lead to the hourly poll writing.
+        #
+        # If the TRANSACTION itself raises this block is skipped entirely, so a
+        # previous pass's ownership stands until its TTL. That is the deliberate
+        # direction to fail in, and not the same trade as above: clearing here
+        # would hand the board back to the hourly poll on a transient error and
+        # let it stamp a pre-tournament price over a graded one — #7935's
+        # saw-tooth, which corrupts stored history permanently. Holding costs at
+        # most one skipped hourly cycle and self-heals on the next 90s beat.
+        for tour in POLL_TOURS:
+            owned = wrote_prices_for.get(tour)
+            try:
+                if owned:
+                    r.set(
+                        f"{INPLAY_OWNER_KEY_PREFIX}:{tour}",
+                        ",".join(sorted(owned)),
+                        ex=INPLAY_OWNER_TTL,
+                    )
+                else:
+                    r.delete(f"{INPLAY_OWNER_KEY_PREFIX}:{tour}")
+            except Exception as owner_exc:
+                logger.warning(
+                    "DataGolf live: could not publish in-play ownership for "
+                    "tour=%s: %s",
+                    tour, owner_exc,
+                )
+        stats["inplay_owned"] = {
+            tour: sorted(ids) for tour, ids in wrote_prices_for.items()
+        }
 
     finally:
         await service.close()
