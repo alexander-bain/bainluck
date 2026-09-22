@@ -35,7 +35,21 @@ from app.tasks import generic_market_history_fill as fill
 from app.utils import durable_state
 from app.utils import generic_market_history as gmh
 
-NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
+# 🪤 #8036 — THIS ANCHOR MAY NOT BE A WALL-CLOCK LITERAL, and the reason is that
+# only HALF this file controls its own clock. Every `_read` test injects `now`
+# into `read_durable_history`, so a frozen date is harmless there — which is
+# exactly why the hazard survived review. `_serve` does NOT: it goes through
+# `futures._load_generic_venue_history`, which takes no `now` and measures the
+# bank's age with `datetime.now(timezone.utc)`. So a literal anchor keeps drifting
+# away from the real clock until the lifetimes it builds are already spent, and
+# the file goes red ON A DATE rather than on a change. `2026-09-21 12:00Z` built
+# its specimen at NOW − 10 h against a 36-hour life, so it expired at
+# 2026-09-22T14:00:00Z and took master CI red for every lane.
+#
+# Gotcha #44: the offset is taken FIRST and the result truncated, never the other
+# way round, and there is no branch on the clock — a `replace(hour=…)` here would
+# re-pin the time of day and reintroduce the same expiry.
+NOW = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
 
 
 def _market(source="kalshi", market_id=1, external_id="KXQ-26", status="open"):
