@@ -233,6 +233,15 @@ struct ShareableEventCardView: View {
     /// even where it cannot be attributed to the away side. #5271 settled this
     /// on the event page — the segment survives, the away team's colour does not.
     private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }
+    /// #7998 — the pair the CARD decided, carried in rather than re-derived.
+    ///
+    /// These are `current_odds.{away,home}_rendered_percent` and they are two
+    /// halves of one decision (#2279), which is why they are passed as a pair and
+    /// read as a pair. No defaults, for the reason `commenceTime` and
+    /// `awayProbability` have none: a caller that forgets them silently restores
+    /// the old reading on the one surface whose output leaves the app.
+    let awayRenderedPercent: Int?
+    let homeRenderedPercent: Int?
     let sportName: String
     let homeColor: Color
     let awayColor: Color
@@ -295,6 +304,76 @@ struct ShareableEventCardView: View {
         return sportName.uppercased()
     }
 
+    /// The two strings this card prints, decided ONCE — #7998.
+    ///
+    /// Measured 2026-09-22 over the 408 production event payloads in
+    /// `artifacts/native-293/event-details.json`: of 295 two-way events serving a
+    /// printable pair, **119 (40%)** produced an image whose numbers disagreed
+    /// with the card the reader had just long-pressed. Two distinct failures, and
+    /// the second is the one no sum guard can see:
+    ///
+    /// | specimen | the card | this image, before |
+    /// |---|---|---|
+    /// | Gabriela Ruse @ Eva Lys `15314911` | `59% / 41%` | `59% / 42%` — **101** |
+    /// | NY Islanders @ NY Rangers `15313235` | `42% / 58%` | `43% / 57%` — **100** |
+    ///
+    /// 105 of the 119 were the first kind; **14 were the second**, where the pair
+    /// sums to 100 and simply states a probability the app does not hold.
+    ///
+    /// 1. THE PAIR. `routes/feed.py` derives away as `round(1.0 - home, 6)`, so
+    ///    when `home * 100` lands on `.5` two independent half-up roundings both
+    ///    round up. It prints 101 and can never print 99 — #2084 / UX-P114, on the
+    ///    one game-card surface that never adopted `duelPercents`.
+    /// 2. THE SCALE. Bare `formatProbability` rounds `value * 100`; the contract's
+    ///    `renderedPercent` rounds `value * 1000 / 10` (#3867, contract v5)
+    ///    precisely because `0.575 * 100` is `57.4999…`. So this image printed 57
+    ///    where the card and the server both said 58.
+    ///
+    /// 🔴 **IT ASKS THE CARD'S QUESTION, IT DOES NOT COPY THE CARD'S ANSWER.**
+    /// Same function, same served pair, same `?? (1 - home)` derivation as
+    /// `DiscoverEventCard`'s strip. A rule re-stated here — even a correct one —
+    /// is a third copy that can drift; routing the same inputs through
+    /// `duelPercents` makes disagreeing structurally impossible, including on the
+    /// draw-priced branch where `servedAway` is nil and #2279's both-or-neither
+    /// rule sends the pair WHOLE to the local fallback.
+    ///
+    /// #4963 fixed this class on the web OG image and recorded "iOS is NOT
+    /// affected — checked, not assumed", naming the share SENTENCE's
+    /// `duelPercents` call. That reading was right. The image is a second output
+    /// of the same `contextMenu` on the same `ShareLink`, and it was never looked
+    /// at — which is why this is a `static func` a test can call rather than
+    /// arithmetic buried in a `some View` nothing can assert on (the reason
+    /// ``eyebrow`` above is static too).
+    ///
+    /// Returns `nil` for `away` when the away slot is withheld (#5363) — an empty
+    /// slot, not a dash: this image has no legend and travels without us.
+    static func printedPercents(
+        away awayProbability: Double?,
+        home homeProbability: Double,
+        servedAway: Int?,
+        servedHome: Int?
+    ) -> (away: String?, home: String) {
+        let duel = duelPercents(
+            away: awayProbability ?? (1 - homeProbability),
+            home: homeProbability,
+            servedAway: servedAway,
+            servedHome: servedHome
+        )
+        return (
+            awayProbability.map { formatProbability($0, renderedPercent: duel[0]) },
+            formatProbability(homeProbability, renderedPercent: duel[1])
+        )
+    }
+
+    private var printed: (away: String?, home: String) {
+        Self.printedPercents(
+            away: awayProbability,
+            home: homeProbability,
+            servedAway: awayRenderedPercent,
+            servedHome: homeRenderedPercent
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Dark header band
@@ -338,8 +417,8 @@ struct ShareableEventCardView: View {
                         // left empty rather than dashed: this image has no
                         // legend and travels without us, so a mark a stranger
                         // cannot interpret is worse than white space.
-                        if let awayProbability {
-                            Text(formatProbability(awayProbability))
+                        if let awayPercent = printed.away {
+                            Text(awayPercent)
                                 .font(.system(size: 32, weight: .black).monospacedDigit())
                                 .foregroundStyle(awayColor)
                         }
@@ -375,7 +454,7 @@ struct ShareableEventCardView: View {
                             .multilineTextAlignment(.center)
                             .lineLimit(3)
                             .foregroundStyle(Color(red: 0.10, green: 0.10, blue: 0.12))
-                        Text(formatProbability(homeProbability))
+                        Text(printed.home)
                             .font(.system(size: 32, weight: .black).monospacedDigit())
                             .foregroundStyle(homeColor)
                         if let score = homeScore {
@@ -469,6 +548,12 @@ enum ShareCardRenderer {
         /// `commenceTime` has none: a caller that forgets it would silently
         /// restore the old reading on the one surface whose output leaves the app.
         awayProbability: Double?,
+        /// #7998 — the pair the card decided (`current_odds.{away,home}_rendered_percent`).
+        /// No defaults, same reason as the two neighbours: a caller that forgets
+        /// them restores an image that disagreed with its own card on 119 of 295
+        /// production events.
+        awayRenderedPercent: Int?,
+        homeRenderedPercent: Int?,
         sportName: String,
         homeColor: Color,
         awayColor: Color,
@@ -484,6 +569,8 @@ enum ShareCardRenderer {
             awayTeam: awayTeam,
             homeProbability: homeProbability,
             awayProbability: awayProbability,
+            awayRenderedPercent: awayRenderedPercent,
+            homeRenderedPercent: homeRenderedPercent,
             sportName: sportName,
             homeColor: homeColor,
             awayColor: awayColor,
