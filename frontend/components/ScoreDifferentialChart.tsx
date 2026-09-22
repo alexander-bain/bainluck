@@ -23,6 +23,7 @@ import {
 import { sourceLabel } from "@/lib/sourceColors";
 import { impliedSpreadHomeMargin, drawnImpliedSpreadSources } from "@/lib/impliedSpreadAxis";
 import { actualScoreSeriesDrawn } from "@/lib/scoreDifferentialHeading";
+import { scoreDifferentialYTicks } from "@/lib/scoreDifferentialTicks";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
@@ -1069,15 +1070,16 @@ export default function ScoreDifferentialChart({
             />
             <YAxis
               domain={[Math.min(0, -domainMax), Math.max(0, domainMax)]}
-              ticks={(() => {
-                const step = Math.max(2, Math.ceil(domainMax / 3));
-                const ticks: number[] = [];
-                for (let v = -domainMax; v <= domainMax; v += step) {
-                  ticks.push(v);
-                }
-                if (!ticks.includes(0)) ticks.push(0);
-                return ticks.sort((a, b) => a - b);
-              })()}
+              // #7920 — symmetric, zero-inclusive, evenly spaced. The old
+              // inline generator missed zero whenever 3 did not divide
+              // `domainMax` and bolted it back on beside a neighbour 2.9px away.
+              ticks={scoreDifferentialYTicks(domainMax)}
+              // Draw every rung we hand over. Safe ONLY because the ladder above
+              // is correct: its tightest gap is `domainMax / 3`, so there is no
+              // near-duplicate pair left for the heuristic to save us from. With
+              // the old ladder this line would have painted `0` and `+1` on top
+              // of each other on 25 of 40 domain sizes.
+              interval={0}
               width={44}
               tick={{ fontSize: 10, fill: "#9ca3af" }}
               tickLine={false}
