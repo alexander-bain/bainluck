@@ -1833,6 +1833,66 @@ def _alias_may_claim(
     return False
 
 
+# A CLUB'S CREST AND COLOURS BELONG TO THE CLUB; ITS RECORD BELONGS TO A SEASON
+# (#8084 arm B). These three fields — and only these three — may be inherited by
+# a row that wins a key without carrying them. `record`, `conference`,
+# `division`, `seed` and `espn_id` are deliberately absent: they are true of a
+# club IN ONE COMPETITION, and filling them across rows is exactly the defect
+# #6230 was opened for (a spring-training record served on an MLB grid).
+_VISUAL_IDENTITY_FIELDS = ("logo_url", "primary_color", "secondary_color")
+
+
+def _with_inherited_identity(meta: dict, previous: dict | None) -> dict:
+    """`meta`, with any empty visual-identity field filled from the key's last holder.
+
+    THE FILL CANNOT WIDEN THE MATCH, WHICH IS THE WHOLE SAFETY ARGUMENT (#8084).
+    `previous` is whatever currently sits under this key, so it is by
+    construction a row the rules above ALREADY ADMITTED to it — `_alias_may_claim`
+    and `_alias_contest_winner` ran before it was written, and a refused row
+    never wrote at all. A crest reachable here is therefore a crest this
+    function would already have served for this key had the winning row simply
+    not existed. What changes is which admitted row's crest survives, never
+    whether a row is admitted, so #7727 (a row wearing another school's crest)
+    and #7761 (the wrong winner among claimants) keep their refusals untouched.
+
+    Measured on production 2026-09-22, over the 398 rows the 13 warm grids
+    serve: **25 are bare** and 6 of them gain a crest —
+
+        Manchester United  11861 `soccer_uefa_champs_league_women` <- 145 `soccer_epl`
+        Real Betis          5670 `soccer_uefa_europa_league`       <- 2194 `soccer_spain_la_liga`
+        BYU Cougars         2408 `basketball_wncaab`               <- 890 `baseball_ncaa`
+        East Tennessee St   1083 `basketball_ncaab`                <- 3607 `baseball_ncaa`
+        South Dakota St     1062 `basketball_ncaab`                <- 8999 `baseball_ncaa`
+        LIU Sharks          1128 `basketball_ncaab`                <- 17071 `americanfootball_ncaaf`
+
+    — and **no other row moves at all**. That is not a sampling claim: a row
+    whose winner already carries a logo is untouched by construction, and the
+    served population has ZERO rows with a logo but no colour, so the colour
+    half widens the blast radius by exactly nothing while keeping the crest and
+    the colours arriving together rather than from two different rows.
+
+    Two bare rows are deliberately NOT fixed and stay bare, because no admitted
+    row for their key carries a crest either: `Grambling St Tigers` (1129, 2405,
+    3046 — all three empty; the crested `Grambling Tigers` 13746 is a different
+    name and a different key) and `St. Francis (PA) Red Flash` (1099, the only
+    row there is). A bare row is a far smaller harm than a wrong crest, so the
+    rule declines rather than reaching for a name that is merely similar.
+    """
+    if not previous:
+        return meta
+    missing = {
+        field: previous[field]
+        for field in _VISUAL_IDENTITY_FIELDS
+        if not meta.get(field) and previous.get(field)
+    }
+    if not missing:
+        return meta
+    # A COPY, NOT A MUTATION. One `meta` object is shared by every key a row
+    # writes — its own name and each alias — so filling it in place would carry
+    # a crest inherited under one key across to all the others.
+    return {**meta, **missing}
+
+
 async def _get_team_metadata(
     session: AsyncSession,
     team_names: set[str],
@@ -2060,8 +2120,18 @@ async def _get_team_metadata(
                 if not meta["seed"]:
                     meta["seed"] = bracket_info["seed"]
 
+        # WINNING A KEY DOES NOT MEAN HAVING ANYTHING TO PUT IN IT (#8084 arm B).
+        # The order above answers WHICH row takes a key; nothing in it asks
+        # whether that row carries a crest. So a row minted by a poller with
+        # nothing but a name outranks the real row purely for being newer, and
+        # the reader gets bare text where a crest was sitting one row away:
+        # `Manchester United` on the Champions League grid is row 11861 in
+        # `soccer_uefa_champs_league_women`, empty, beating row 145 in
+        # `soccer_epl` — which holds the crest, the colours and espn_id 360 —
+        # on `id` alone, both being out of scope. The winner still wins; it
+        # just stops taking the key's visual identity down with it.
         norm = _normalize_team_name(team.name)
-        team_lookup[norm] = meta
+        team_lookup[norm] = _with_inherited_identity(meta, team_lookup.get(norm))
 
         # Secondary identifiers. An abbreviation or an alternate name is a
         # CLAIM about who a row is; the row's own `name` is the row itself. So
@@ -2072,7 +2142,9 @@ async def _get_team_metadata(
             if _alias_may_claim(
                 alt_norm, team, canonical_owners, scope_keys, alias_winners
             ):
-                team_lookup[alt_norm] = meta
+                team_lookup[alt_norm] = _with_inherited_identity(
+                    meta, team_lookup.get(alt_norm)
+                )
 
     return team_lookup
 
