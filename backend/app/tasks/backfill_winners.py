@@ -42,6 +42,7 @@ from app.utils.settled_price import (
     SETTLED_YES_PRICE,
     settled_price_set_sql,
     settled_price_values,
+    ungraded_settlement_withdraw_sql,
 )
 from app.utils.winner_field_coherence import (
     DUPLICATE_CONDITION_LEG_SQL,
@@ -1353,6 +1354,13 @@ async def _backfill_kalshi_winners(
                             else:
                                 stats["losers_set"] += 1
 
+                    # #7987: legs the venue settled on a NUMBER, whose fossil
+                    # price outlives the verdict we correctly refuse to invent.
+                    # Collected here and written once after the loop, in the
+                    # shape the three sibling graders already use for their own
+                    # bulk writes.
+                    withdraw_tickers: list[str] = []
+
                     for market_data in nested:
                         ticker = market_data.get("ticker", "")
                         result = market_data.get("result")
@@ -1386,6 +1394,17 @@ async def _backfill_kalshi_winners(
                                             "result": str(result)[:20],
                                         }
                                     )
+                            # #7987 — THE REFUSAL ABOVE IS RIGHT; THE PRICE
+                            # SURVIVING IT IS NOT. Asked through the shared
+                            # predicate so all four graders admit exactly the
+                            # same population: the venue has DECLARED (finalized
+                            # or determined) and the declaration is one we cannot
+                            # map to a side. A `closed` market with no result is
+                            # still trading and is deliberately not in it.
+                            if kms.settled_without_verdict(
+                                market_data.get("status"), result
+                            ):
+                                withdraw_tickers.append(ticker)
                             continue
 
                         if not dry_run:
@@ -1435,6 +1454,28 @@ async def _backfill_kalshi_winners(
                                             "result": result,
                                         }
                                     )
+
+                    # --- #7987: AND A LEG IT ANSWERED ON A NUMBER KEEPS NO PRICE ---
+                    #
+                    # Placed BEFORE the status flip below on purpose: the flip is
+                    # what makes the frontend treat this board as settled, and a
+                    # board must never become settled while still holding a live
+                    # -looking number on a question it has answered. On a board
+                    # already `resolved` (the common case — the specimen's was)
+                    # the flip writes 0 rows and this still runs, which is why it
+                    # is not nested inside it.
+                    #
+                    # Idempotent by its own WHERE, so the ~every-6h re-visit of a
+                    # board that stays in band 1 for three days writes 0 rows
+                    # after the first pass.
+                    if not dry_run and withdraw_tickers:
+                        withdrawn = await session.execute(
+                            text(ungraded_settlement_withdraw_sql()),
+                            {"tickers": withdraw_tickers},
+                        )
+                        stats["ungraded_price_withdrawn"] = stats.get(
+                            "ungraded_price_withdrawn", 0
+                        ) + (withdrawn.rowcount or 0)
 
                     # --- #7870: THE GRADE IS NOT THE STATUS ---
                     #
@@ -1662,6 +1703,7 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
 
             yes_tickers = []
             no_tickers = []
+            withdraw_tickers: list[str] = []  # #7987
             for event_ticker, markets in results:
                 stats["tickers_queried"] += 1
                 if not markets:
@@ -1694,13 +1736,22 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                             stats["no_result"] += 1
                         else:
                             stats["ungradeable_result"] += 1
+                        # #7987, the same clause as the sibling graders. Latent
+                        # here rather than leaking, for the reason the comment
+                        # above gives (this call's `status=settled` filter has
+                        # so far returned only `finalized`/`yes|no`) — but the
+                        # ship is that no grader leaves a fossil behind, and a
+                        # filter that has always held is not a reason to be the
+                        # one path that would.
+                        if kms.settled_without_verdict(mkt.get("status"), result_val):
+                            withdraw_tickers.append(ticker)
                         continue
                     if won:
                         yes_tickers.append(ticker)
                     else:
                         no_tickers.append(ticker)
 
-            if yes_tickers or no_tickers:
+            if yes_tickers or no_tickers or withdraw_tickers:
                 async with get_task_session() as session:
                     if yes_tickers:
                         r = await session.execute(
@@ -1732,6 +1783,14 @@ async def _backfill_kalshi_winners_targeted(limit: int = 2000):
                             {"tickers": no_tickers},
                         )
                         stats["losers_set"] += r.rowcount
+                    if withdraw_tickers:  # #7987
+                        r = await session.execute(
+                            text(ungraded_settlement_withdraw_sql()),
+                            {"tickers": withdraw_tickers},
+                        )
+                        stats["ungraded_price_withdrawn"] = stats.get(
+                            "ungraded_price_withdrawn", 0
+                        ) + (r.rowcount or 0)
                     await session.commit()
 
             logger.info(
@@ -1799,6 +1858,7 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
 
             yes_tickers = []
             no_tickers = []
+            withdraw_tickers: list[str] = []  # #7987
             for mkt in markets:
                 stats["markets_scanned"] += 1
                 ticker = mkt.get("ticker", "")
@@ -1817,13 +1877,16 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                         stats["ungradeable_result"] = (
                             stats.get("ungradeable_result", 0) + 1
                         )
+                    # #7987 — same clause as the sibling graders.
+                    if kms.settled_without_verdict(mkt.get("status"), result):
+                        withdraw_tickers.append(ticker)
                     continue
                 if won:
                     yes_tickers.append(ticker)
                 else:
                     no_tickers.append(ticker)
 
-            if yes_tickers or no_tickers:
+            if yes_tickers or no_tickers or withdraw_tickers:
                 async with get_task_session() as session:
                     if yes_tickers:
                         r = await session.execute(
@@ -1860,6 +1923,15 @@ async def _backfill_kalshi_winners_via_markets(limit: int = 10000):
                             {"tickers": no_tickers},
                         )
                         stats["losers_set"] += r.rowcount
+
+                    if withdraw_tickers:  # #7987
+                        r = await session.execute(
+                            text(ungraded_settlement_withdraw_sql()),
+                            {"tickers": withdraw_tickers},
+                        )
+                        stats["ungraded_price_withdrawn"] = stats.get(
+                            "ungraded_price_withdrawn", 0
+                        ) + (r.rowcount or 0)
 
                     await session.commit()
                     total_resolved += stats["winners_set"] + stats["losers_set"]
@@ -9299,6 +9371,7 @@ async def _resolve_winners_only(limit: int = 2000):
                     if not events:
                         break
                     yes_t, no_t = [], []
+                    withdraw_t: list[str] = []  # #7987
                     for ev in events:
                         for mkt in ev.get("markets") or []:
                             tk = mkt.get("ticker", "")
@@ -9336,6 +9409,16 @@ async def _resolve_winners_only(limit: int = 2000):
                                 # recorded as a fact (gotcha #53), and a population
                                 # nobody counts is one nobody notices.
                                 settled_stats["undeclared"] += 1
+                                # #7987. "Counted, never silent" was the right
+                                # instinct and it stopped one step short: a leg
+                                # the venue answered on a NUMBER is not merely
+                                # undeclared to us, it is finished, and the price
+                                # it keeps is a fossil. Same shared clause as the
+                                # three sibling graders.
+                                if kms.settled_without_verdict(
+                                    mkt.get("status"), mkt.get("result")
+                                ):
+                                    withdraw_t.append(tk)
                                 continue
                             (yes_t if won else no_t).append(tk)
                     page_resolved = 0
@@ -9364,6 +9447,21 @@ async def _resolve_winners_only(limit: int = 2000):
                                 {"t": no_t},
                             )
                             page_resolved += r.rowcount
+                        if withdraw_t:  # #7987
+                            r = await sess.execute(
+                                text(ungraded_settlement_withdraw_sql("t")),
+                                {"t": withdraw_t},
+                            )
+                            # DELIBERATELY NOT `page_resolved`. That counter
+                            # drives `empty_pages`, which ends the sweep and
+                            # moves its cursor — a page that only withdrew a
+                            # fossil would otherwise read as a page that graded
+                            # something and reset the termination heuristic.
+                            # Nothing here grades anything.
+                            settled_stats["ungraded_price_withdrawn"] = (
+                                settled_stats.get("ungraded_price_withdrawn", 0)
+                                + (r.rowcount or 0)
+                            )
                         await sess.commit()
                     settled_stats["resolved"] += page_resolved
                     if page_resolved == 0:

@@ -147,6 +147,51 @@ def graded_columns(status: str | None, result: str | None) -> dict[str, object]:
     return {"is_winner": won, "resolution_source": VENUE_SETTLEMENT_SOURCE}
 
 
+def settled_without_verdict(status: str | None, result: str | None) -> bool:
+    """The venue answered this market, in a language we cannot grade.
+
+    #7987. :func:`gradeable_winner` returning ``None`` is TWO populations wearing
+    one return value, and a caller that treats them alike leaves a reader looking
+    at a live-looking price on a question that is over:
+
+    * ``active``/``closed`` with ``result == ""`` — the venue has NOT answered.
+      The contract may still trade; its last quote is a quote. Nothing to do.
+    * ``finalized``/``determined`` with ``result == "scalar"`` — the venue HAS
+      answered, on a number rather than a side. The contract is settled, it is
+      not trading, and :mod:`app.utils.settled_price` measured what the venue
+      then returns for it: ``yes_bid: null, yes_ask: null, last_price: null``.
+      Our stored price is a fossil of the last quote before it closed.
+
+    This predicate is exactly the second population. It licenses taking a PRICE
+    down and nothing else — no ``is_winner``, no ``resolution_source``. #1852
+    established that grading a ``scalar`` as a loss poisons the calibration
+    curve, that refusal is correct and stands, and this is the residual that
+    refusal leaves behind: no verdict, and a price that outlives it.
+
+    THE SHAPE A READER MET (``/events/14780545``, read 09:49Z 2026-09-22, six
+    hours after Rams 28–6 Giants). The *1st Touchdown* board served ``Davante
+    Adams — Won`` directly above ``Puka Nacua — last quote 9%``, ``Jordan
+    Whittington — 3%`` and ``CJ Daniels — 1%``: a question already answered,
+    still offering three players a live chance at the touchdown Adams scored.
+    All three legs read ``finalized``/``scalar`` at Kalshi with ``yes_bid: None``;
+    their 24 graded siblings served no price at all.
+
+    BOTH CLAUSES ARE REQUIRED, and the pairing is the safety argument. The
+    status clause alone would admit a ``closed`` market, which the module table
+    above measures as "trading over, outcome NOT yet called" — and ``closed``'s
+    known false positive is #1818's open question, deliberately untouched here.
+    The result clause alone would trust a stray value on a status the venue does
+    not put results on. Requiring both means this can only fire where the venue
+    has declared, which is the only state in which "not trading" is a fact
+    rather than an inference.
+    """
+    if not has_declared_result(status):
+        return False
+    if result is None or str(result).strip() == "":
+        return False
+    return gradeable_winner(status, result) is None
+
+
 def is_terminal(status: str | None) -> bool:
     """True when a Kalshi market status means "no longer trading toward a result"."""
     return bool(status) and status in TERMINAL_STATUSES
