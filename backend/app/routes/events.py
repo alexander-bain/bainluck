@@ -21325,6 +21325,92 @@ async def _build_related_futures(
         # No team match or no timing confirmation — exclude
         return False
 
+    # ── #8052 — IN A TWO-CLUB CITY THE TICKER DECIDES WHOSE PAGE A ROW IS ON ─
+    #
+    # `_team_name_patterns("Los Angeles Dodgers")` emits a bare "Los Angeles",
+    # because Kalshi labels teams by city ("Texas", "Houston", "Seattle"). In a
+    # two-club city that pattern cannot tell the clubs apart, so Kalshi's
+    # truncated "Los Angeles A" — the ANGELS — matched the Dodgers' patterns and
+    # the Angels' AL West, AL Champion, playoff-qualifier and fifteen World
+    # Series matchup legs joined the Dodgers' list. Symmetric, and not MLB-only:
+    # "Chicago C" matches the White Sox's patterns, "New York M" the Yankees'.
+    #
+    # It is not merely an extra row. `dedup_by_merge_group` keys the per-team
+    # groups on `merge_group` ALONE, so both admitted rows of one group collapse
+    # to one and the tie-break — freshness, then liquidity — knows nothing about
+    # which club the page is for. Measured on production 2026-09-22: the Angels'
+    # 0.000 playoff-qualifier row beat the Dodgers' own 1.000, so a club that had
+    # clinched showed no "Make Playoffs" line at all, and the Angels' card
+    # printed the Dodgers' 31% World Series and 41% NL Champion.
+    #
+    # The mechanism that fixes it already ships one step later: #2001 resolves a
+    # Kalshi row through its TICKER, which gotcha #16 rules authoritative over
+    # the display string, and it is wired into `merge_relabel_collisions` below
+    # but not into this classification. So the ticker decides here too, and a
+    # ticker naming only OTHER clubs vetoes the name fallback instead of letting
+    # the bare city re-admit it.
+    #
+    # Three refusals keep it additive. A ticker that names nothing known stays
+    # silent and changes nothing (player props, date-stamped game tickers,
+    # threshold ladders). An abbreviation two clubs share is already absent from
+    # the index, so it contributes no id rather than a guess. And when neither of
+    # this event's teams resolved to a `teams` row there is nothing to compare
+    # against, so the veto never arms and the payload is what it is today.
+    from app.utils.team_identity_resolution import (
+        build_team_alias_index,
+        ticker_team_ids,
+    )
+
+    team_index = None
+    team_rows: list = []
+
+    async def _load_team_roster():
+        """The sport's roster, read AT MOST ONCE and shared with the merge below.
+
+        Both consumers — this veto and `merge_relabel_collisions` — need the same
+        rows, and the logo enrichment further down needs the same query's extra
+        columns, so whichever asks first pays and the others are free.
+        """
+        nonlocal team_index, team_rows
+        if team_index is None and event.sport_id:
+            team_rows = (
+                await db.execute(
+                    select(
+                        Team.id,
+                        Team.name,
+                        Team.abbreviation,
+                        Team.location,
+                        Team.alternate_names,
+                        Team.logo_url_small,
+                        Team.logo_url,
+                    ).where(Team.sport_id == event.sport_id)
+                )
+            ).all()
+            team_index = build_team_alias_index(
+                [
+                    {
+                        "id": t.id,
+                        "name": t.name,
+                        "abbreviation": t.abbreviation,
+                        "location": t.location,
+                        "alternate_names": t.alternate_names,
+                    }
+                    for t in team_rows
+                ]
+            )
+        return team_index
+
+    # Gated on the only thing the veto needs: at least one of this event's teams
+    # resolved to a `teams` row, so there is something to compare against. NOT
+    # gated on the row carrying a Kalshi ticker, which was the first thing tried
+    # and was wrong — the two rows that printed the Dodgers' numbers on the
+    # Angels' card are Polymarket rows keyed by a hex condition id, and a
+    # ticker-shaped gate skips the roster read on exactly the payload that needs
+    # it. The cost is one indexed read per call on a resolvable event, which the
+    # merge below already pays whenever the payload has any merge group at all.
+    if all_team_ids and outcomes:
+        await _load_team_roster()
+
     for outcome in outcomes:
         if outcome.id in seen_ids:
             continue
@@ -21363,9 +21449,39 @@ async def _build_related_futures(
             elif not _game_market_matches_event(market):
                 continue
 
-        # Classify: team_id first (reliable for player outcomes), then name matching
-        is_home = outcome.team_id in home_team_ids if outcome.team_id else False
-        is_away = outcome.team_id in away_team_ids if outcome.team_id else False
+        # Classify: the ticker first where it speaks (#8052), then team_id
+        # (reliable for player outcomes), then name matching.
+        #
+        # The ticker outranks the stored `team_id` deliberately: #2010 measured
+        # that column wrong on 11.6% of ticker-derivable Kalshi outcomes, and
+        # wrong toward the city sibling EVERY time — the exact rows this veto is
+        # about. A stored id trusted here would admit the sibling and veto the
+        # right club, which is the failure this is meant to end.
+        ticker_teams = ticker_team_ids(outcome.external_id, team_index)
+        # When the ticker is silent — Polymarket's hex condition ids are, and
+        # they carry the FULL name — an exact alias is the same kind of evidence.
+        # It has to be here and not only in the ticker: the two rows that printed
+        # the Dodgers' 31% and 41% on the Angels' card were Polymarket rows
+        # labelled `Los Angeles Dodgers`, which no ticker rule can reach. An
+        # alias two clubs share ("Los Angeles") is already absent from the index,
+        # so it resolves to nothing and the row keeps the behaviour it has today.
+        named_team = (
+            team_index.alias_team(outcome.name)
+            if team_index is not None and not ticker_teams
+            else None
+        )
+        claimed_teams = ticker_teams or (
+            frozenset({named_team}) if named_team is not None else frozenset()
+        )
+        if claimed_teams and all_team_ids:
+            is_home = bool(claimed_teams & home_team_ids)
+            is_away = not is_home and bool(claimed_teams & away_team_ids)
+            if not is_home and not is_away:
+                # Names other clubs only. The name fallback must not re-admit it.
+                continue
+        else:
+            is_home = outcome.team_id in home_team_ids if outcome.team_id else False
+            is_away = outcome.team_id in away_team_ids if outcome.team_id else False
 
         if not is_home and not is_away:
             # Fall back to name matching on outcome (team outcomes)
@@ -21526,11 +21642,11 @@ async def _build_related_futures(
     # and must never blend into the Dodgers. The resolver refuses every
     # ambiguous alias rather than ranking it; see `team_identity_resolution`.
     from app.utils.futures_source_merge import merge_relabel_collisions
-    from app.utils.team_identity_resolution import build_team_alias_index
 
     # ONE roster read, shared with the logo enrichment below (which used to run
     # its own query) — so identity resolution costs this route zero extra
-    # round-trips.
+    # round-trips. Since #8052 the classification above may already have paid for
+    # it, in which case `_load_team_roster` returns the same index it built then.
     #
     # Gated on there being ANY merge_group, which is strictly cheaper than the
     # old code rather than merely equal: the logo path below only ever fires on
@@ -21540,34 +21656,8 @@ async def _build_related_futures(
     needs_roster = any(
         f.get("merge_group") for f in home_futures + away_futures
     )
-    team_rows: list = []
-    team_index = None
     if event.sport_id and needs_roster:
-        team_rows = (
-            await db.execute(
-                select(
-                    Team.id,
-                    Team.name,
-                    Team.abbreviation,
-                    Team.location,
-                    Team.alternate_names,
-                    Team.logo_url_small,
-                    Team.logo_url,
-                ).where(Team.sport_id == event.sport_id)
-            )
-        ).all()
-        team_index = build_team_alias_index(
-            [
-                {
-                    "id": t.id,
-                    "name": t.name,
-                    "abbreviation": t.abbreviation,
-                    "location": t.location,
-                    "alternate_names": t.alternate_names,
-                }
-                for t in team_rows
-            ]
-        )
+        await _load_team_roster()
 
     home_futures = merge_relabel_collisions(home_futures, team_index)
     away_futures = merge_relabel_collisions(away_futures, team_index)
