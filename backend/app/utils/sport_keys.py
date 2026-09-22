@@ -387,6 +387,26 @@ LLM_CATEGORY_TO_SPORT_PREFIX: dict[str, str] = {
     "olympics": "olympics",
 }
 
+#: The one `llm_sport_category` value that is an ANSWER rather than a sport.
+#:
+#: Deliberately absent from the map above, and that absence is the whole
+#: semantics: `"other"` is what the column holds when the venue itself declined
+#: to name a sport (`repair_kalshi_series_tag_category.HONEST_BLANK`, #7900) or
+#: when the classifier could not (`services/llm.py`'s fallback). It is #1888's
+#: door — the one value a later poll with better evidence may overwrite — which
+#: is why nothing is allowed to read it as a sport.
+#:
+#: 🔴 A LOOKUP MISS AND THIS VALUE ARE NOT THE SAME EVENT, and a reader paid for
+#: the difference: `LLM_CATEGORY_TO_SPORT_PREFIX.get()` answers `None` for both,
+#: so `/futures/{id}/related-events` treated "the venue says this is not a
+#: sport" as "we have not classified this yet" and served a bridge-building
+#: contest 21 college football fixtures (#7944). A caller that means "no sport
+#: was asserted" tests against this constant; a caller that means "this category
+#: is not in my map" tests the map. Giving `"other"` a key here would silently
+#: re-open that branch, which is why `test_futures_related_events_honest_blank_7944`
+#: asserts it stays out.
+NO_SPORT_CATEGORY = "other"
+
 
 # =============================================================================
 # 7-pre. _SOCCER_CUP_PROP_TICKER_TO_SPORT_KEY — #3446 / CERT-2043
