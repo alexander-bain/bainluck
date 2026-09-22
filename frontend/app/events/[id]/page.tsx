@@ -662,6 +662,16 @@ export default function EventPage({ params }: EventPageProps) {
     [servedHistory, event, isLive, chartPoints],
   );
 
+  /* #8066: the chart's blend line must be the BACKEND's blend, and after #920
+     `historyData.aggregate_line` can no longer answer that — it holds the
+     served blend AND every frame this page accumulated from the live stream,
+     which the backend publishes for single-source events too. This reads the
+     SERVED response, before the merge, so the answer is about the backend and
+     not about how long the tab has been open. `heroBlend` and the hero's
+     `latestBlendPoint` fallback keep reading the merged array; only the chart's
+     "is there a blend to draw" question is re-pointed. */
+  const backendBlendServed = (servedHistory?.aggregate_line?.length ?? 0) > 0;
+
   /* ── #3612: A GAME THAT HAS BEGUN DOES NOT PROMISE THAT TRACKING WILL BEGIN ──
      No source has ever written a price for this event — no odds history, no
      win-prob history of any kind — and the game is not in the future. Measured
@@ -2340,6 +2350,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               aggregateLine={historyData?.aggregate_line ?? undefined}
+              backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
               eventStatus={event.status}
@@ -2921,6 +2932,7 @@ export default function EventPage({ params }: EventPageProps) {
               winProbSources={historyData?.win_prob_sources}
               scoringPlays={historyData?.scoring_plays}
               aggregateLine={historyData?.aggregate_line ?? undefined}
+              backendBlendServed={backendBlendServed}
               completedAt={historyData?.completed_at ?? undefined}
               eventId={eventId}
               eventStatus={event.status}

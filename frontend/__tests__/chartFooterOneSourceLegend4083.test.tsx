@@ -156,9 +156,19 @@ describe("#4083 the win-probability card carries one source legend", () => {
     // source lines are what clicking in adds. If this initialises to `true` the
     // card is back where it started — every source named before anyone asked.
     expect(chart).toMatch(/legendExpanded[\s\S]{0,40}useState\(false\)/);
-    // And the chips are gated on it: rendered when the reader expands, or in
-    // sportsbooks-only mode where there is no blend for them to compete with.
-    expect(chart).toContain("(!isMultiSource || legendExpanded) && resolvedSources.map");
+    // And the chips are gated on it: rendered when the reader expands, or
+    // where there is no blend for them to compete with.
+    //
+    // #8066 moved that second clause from `!isMultiSource` to `!showBlendLine`
+    // — the same rule, on the discriminator that actually states it. This
+    // guard's own sentence is "no blend for them to compete with", and
+    // sportsbooks-only was one instance of that, not the whole of it: a
+    // single-source event draws no blend line either, and under the old
+    // literal its legend collapsed to "+ 1 source" with nothing left naming
+    // the only line on the plot. Not a relaxation — `showBlendLine` is
+    // strictly the narrower gate (it implies `isMultiSource`), so the chips
+    // are still hidden everywhere D91(b) asked them to be.
+    expect(chart).toContain("(!showBlendLine || legendExpanded) && resolvedSources.map");
   });
 
   it("carries ux/1034 B7 forward: the surviving legend still reads the payload", () => {

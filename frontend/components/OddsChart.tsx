@@ -291,6 +291,23 @@ interface OddsChartProps {
   scoringPlays?: ScoringPlay[];
   /** Backend-computed aggregate line (weighted median with staleness decay) */
   aggregateLine?: Array<{ timestamp: string; home_probability: number }>;
+  /**
+   * #8066: whether the BACKEND served a blend for this event, as opposed to
+   * `aggregateLine` merely holding points the page accumulated from the live
+   * stream since it was opened (`mergeLiveChartHistory`, #920).
+   *
+   * They are not the same claim and only the page can tell them apart. The
+   * backend emits `aggregate_line` only when it blended two or more sources;
+   * the live stream publishes `p` for every live event, single-source ones
+   * included. So on a Kalshi-only match two pushed frames were enough to put
+   * a 2-point series on the plot under the blend's name and, through
+   * `primarySeriesKey`, demote the real 319-point source line to 1px at 0.28
+   * opacity — #3151/#3111's "a correct path nobody can see", arriving five
+   * seconds after page load.
+   *
+   * Absent ⇒ true: a caller that says nothing gets the behaviour it had.
+   */
+  backendBlendServed?: boolean;
   /** Event ID for analytics tracking */
   eventId?: number;
   /** Event status - determines default filter: closed/completed defaults to "Since Start", open defaults to "All" */
@@ -501,6 +518,7 @@ export default function OddsChart({
   winProbSources,
   scoringPlays,
   aggregateLine,
+  backendBlendServed = true,
   eventId,
   eventStatus,
   fillContainer = false,
@@ -939,7 +957,15 @@ export default function OddsChart({
   // Now: no backend blend, no blend line. The chart falls back to the same
   // primary series it uses in sportsbooks-only mode, which is a real measured
   // source that is labelled as itself.
-  const showBlendLine = isMultiSource && filteredAggregateLine.length > 0;
+  //
+  // #8066 adds the third gate: the points must be the BACKEND's blend. The
+  // live stream hands the page real published blend values for a single-source
+  // event too, and `mergeLiveChartHistory` puts them in the same array — so
+  // "there are aggregate points" stopped meaning "the backend blended this
+  // event" the moment #920 shipped. The hero still reads those points; the
+  // chart does not draw a blend line out of them.
+  const showBlendLine =
+    isMultiSource && backendBlendServed && filteredAggregateLine.length > 0;
 
   // The primary series every "what is the number here" reader uses: the fill
   // gradient, the lead-change count, the current-probability callout, and the
@@ -3006,8 +3032,16 @@ export default function OddsChart({
 
         {/* Multi-source: the individual source lines stay collapsed behind an
             expander so the blend dominates (L2-163 Item 1). Sportsbooks-only mode
-            keeps its flat legend (there is no blend to dominate). */}
-        {isMultiSource && resolvedSources.length > 0 && !legendExpanded && (
+            keeps its flat legend (there is no blend to dominate).
+
+            #8066: the gate is `showBlendLine`, not `isMultiSource`. Collapsing
+            exists to let the blend dominate, so with no blend drawn there is
+            nothing for it to defer to — and the collapse was hiding the name of
+            the ONLY line on the plot. A Kalshi-only match rendered a legend
+            whose entire content was "+ 1 source" above a 319-point line nobody
+            had labelled. #1003's fallback is a real measured source "labelled
+            as itself"; that is the half this restores. */}
+        {showBlendLine && resolvedSources.length > 0 && !legendExpanded && (
           <button
             type="button"
             onClick={() => setLegendExpanded(true)}
@@ -3021,21 +3055,30 @@ export default function OddsChart({
           </button>
         )}
 
-        {/* Individual sources — always shown in sportsbooks-only mode; in
-            multi-source mode only once the reader expands the legend. */}
-        {(!isMultiSource || legendExpanded) && resolvedSources.map((source) => {
+        {/* Individual sources — always shown when no blend line dominates; in
+            blend mode only once the reader expands the legend. */}
+        {(!showBlendLine || legendExpanded) && resolvedSources.map((source) => {
+          // #8066: the swatch is drawn at the weight the PLOT gives this
+          // series, so the legend can never describe a line the chart did not
+          // draw. `primarySeriesKey` is the same discriminator the lines
+          // themselves use (MODE A above), which is what keeps the two in step
+          // by construction rather than by two lists agreeing. Unchanged in
+          // both old modes: with a blend drawn no source is primary, so every
+          // swatch stays faint; in sportsbooks-only mode betting IS primary
+          // (`dataKey: "homeDelta"`), so it keeps 2.5 at full opacity.
+          const isPrimarySource = source.dataKey === primarySeriesKey;
           const inner = (
             <>
               <svg width="20" height="4" className="shrink-0">
                 <line
                   x1="0" y1="2" x2="20" y2="2"
                   stroke={source.color}
-                  strokeWidth={isMultiSource ? "1" : "2.5"}
+                  strokeWidth={isPrimarySource ? "2.5" : "1"}
                   strokeDasharray={source.dashPattern ?? undefined}
-                  strokeOpacity={isMultiSource ? 0.4 : 1}
+                  strokeOpacity={isPrimarySource ? 1 : 0.4}
                 />
               </svg>
-              <span className={`text-xs ${isMultiSource ? "text-text-muted" : "text-text-secondary hover:text-text-primary"}`}>
+              <span className={`text-xs ${isPrimarySource ? "text-text-secondary hover:text-text-primary" : "text-text-muted"}`}>
                 {source.displayName}
               </span>
             </>
