@@ -38,6 +38,10 @@ THE CONTROLS, and what each can fail on:
   ladder keeps every result and the chart keeps the completed journey,
   including the champion's early points that ran through an empty book. Fails
   if the repair over-reaches from "retraction" to "any terminal source".
+  Since #7927 this market is also where the settled freeze's LOSER arm is
+  graded on a real Postgres: `settled loser, stale empty book` ends at 0.0
+  instead of at its stale 49% midpoint, its three observed points untouched,
+  while the two legs already drawn at their result gain nothing.
 * ``A`` — the shipped #6757 arm: ungraded (``resolution_source IS NULL``)
   empty-book legs are still withheld. Fails if the repair loosens the arm.
 * ``C`` — a healthy two-sided field. Nothing moves. Fails if the repair
@@ -336,6 +340,25 @@ def _drawn(history) -> dict[str, list[float]]:
     }
 
 
+def _observed(history) -> dict[str, list[float]]:
+    """Drawn points EXCLUDING the settled freeze's synthesized terminal point.
+
+    #7927. The freeze ends a graded line at its result by APPENDING a
+    ``bookmaker="settlement"`` point; it never removes an observed one. Keeping
+    the two apart lets "a settled series is shown whole" stay a claim about the
+    real journey — which is the only thing it was ever testing — instead of
+    becoming a count that moves whenever the freeze's population does.
+    """
+    return {
+        o["name"]: [
+            pt["probability"]
+            for pt in o["history"]
+            if pt.get("bookmaker") != "settlement"
+        ]
+        for o in history["outcomes"]
+    }
+
+
 class TestD_TheWBCShape:
     async def test_retracted_empty_book_legs_are_withheld_on_the_ladder(self, seeded):
         """🔴 RED ON BASE. The four retracted 49s are served; after the fix they are withheld.
@@ -403,13 +426,48 @@ class TestS_GenuinelySettled:
         assert winners[_label("settled loser, book collapsed")] is False
 
     async def test_the_chart_keeps_the_completed_journey(self, seeded):
-        """The champion's early empty-book points are the journey, and they stay."""
+        """The champion's early empty-book points are the journey, and they stay.
+
+        Counted on the OBSERVED points only, since #7927. That arm appends a
+        terminal point to a graded loser and removes nothing, so a raw `len`
+        here would go red on a change that leaves this claim exactly as true as
+        it was. The ending is its own test below.
+        """
         client, ids = seeded
-        drawn = _drawn(await _history(client, ids["S"]["market"]))
+        observed = _observed(await _history(client, ids["S"]["market"]))
         for name, p, *_ in S_LEGS:
             assert (
-                len(drawn[_label(name)]) == 3
+                len(observed[_label(name)]) == 3
             ), f"{name!r}: a settled series is shown whole"
+
+    async def test_a_graded_losers_line_ends_at_the_loss(self, seeded):
+        """🔴 RED ON BASE (#7927). A graded loss is the chart's last word, not a price.
+
+        `settled loser, stale empty book` is the specimen the loser arm of the
+        settled freeze exists for, and this market is the shape that makes it
+        visible: `api_settlement` graded the leg a LOSS while its line still
+        ended on the 49% midpoint of an empty book eleven days stale. The chart
+        contradicted the verdict the ladder beside it already printed — the same
+        defect two golfers who missed the BMW PGA cut showed at 84%.
+
+        The two siblings are the arm's short-circuits, and they are controls
+        rather than decoration: a winner already drawn at its win and a loser
+        whose book already collapsed to zero both END where they should, so
+        neither gains a second point. A freeze that appended unconditionally
+        would draw a flat tail nobody observed on both.
+        """
+        client, ids = seeded
+        drawn = _drawn(await _history(client, ids["S"]["market"]))
+        stale = drawn[_label("settled loser, stale empty book")]
+        assert stale[-1] == 0.0, (
+            "a leg graded `api_settlement` / is_winner False must end at the "
+            "loss; it ended at the stale empty-book midpoint"
+        )
+        assert len(stale) == 4, "the terminal point is APPENDED — nothing is dropped"
+        for name in ("settled winner", "settled loser, book collapsed"):
+            assert (
+                len(drawn[_label(name)]) == 3
+            ), f"{name!r} already ends at its result and must gain no second point"
 
     async def test_adjacent_terminal_sources_keep_current_behaviour(self, seeded):
         """PINNED, NOT RULED. ``did_not_play`` / ``all_losers`` are not retractions.
@@ -417,6 +475,12 @@ class TestS_GenuinelySettled:
         This patch only stops ``ungradeable_result`` from claiming the grade
         exemption. Whether other terminal sources should is a separate
         decision; until it is made they print as they do today.
+
+        #7927 made the decision for the CHART's loser freeze and made it the
+        same way: neither source is drawn down to 0.0, so the single point each
+        leg carries is still the single point it carried. This assertion is now
+        also that arm's control — a freeze widened to the whole terminal tier
+        reddens it.
         """
         client, ids = seeded
         prices = _prices(await _detail(client, ids["S"]["market"]))
