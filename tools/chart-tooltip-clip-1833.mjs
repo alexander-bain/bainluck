@@ -212,12 +212,33 @@ async function measure(label, root = '', idx = 0) {
 const out = { url, width, surfaces: [] };
 let exit = 0;
 try {
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
+  // 🔴 NOT `networkidle`, AND THE STATE IT MADE UNRELIABLE IS THE ONE #7848 IS ABOUT.
+  // A live event page polls for score and price updates for as long as it is open, so whether it
+  // ever presents Playwright with 500ms of network silence is a race against its own poll.
+  // Pointed at Rams–Giants in the second quarter this threw `page.goto: Timeout 90000ms
+  // exceeded … waiting until "networkidle"` and exited 4 — on the notice-42 walk, which had
+  // opened the probe precisely because #7848's premise is that THE TOOLTIP IS TALLEST DURING A
+  // LIVE GAME. So the instrument was unreliable in the single state its own defect is worst in.
+  //
+  // ⚠️ IT IS A COIN FLIP, NOT AN IMPOSSIBILITY, and the distinction is worth the line: five
+  // minutes later `ux1368-chart-labels-do-not-collide-7134.mjs` reached `networkidle` on the
+  // SAME live page and exited 0. `mnf-live-walk-1426.mjs`'s header records a third data point on
+  // the failing side. So the cost of keeping it is not "live pages are unmeasurable" — it is a
+  // flaky 90-second stall that surfaces as a load failure, which is worse, because a lane that
+  // re-runs it once and gets through will conclude the tool is fine.
+  //
+  // The trap underneath is that `networkidle` is RELIABLE on a completed page, which is what
+  // every banked run of this probe has used, so nothing here ever failed.
+  //
+  // Swapping it costs nothing, because `networkidle` was never this probe's readiness gate —
+  // the `waitForSelector` below is, and the comment under it already said so. The chart is
+  // client-rendered after its history fetch, so `networkidle` could land before the first
+  // recharts node existed anyway. Readiness is therefore UNCHANGED by this edit, which is what
+  // keeps #1833's and #7848's banked after-checks comparable to runs taken after it.
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
   // The chart mounts below the fold and recharts sizes off a ResizeObserver, so scroll it in.
-  // The chart is client-rendered after its history fetch, so `networkidle` can land before the
-  // first recharts node exists (always on a cold dev server, sometimes on production). Waiting
-  // for the node — rather than querying once — is the difference between "this page has no
-  // chart" and "I looked too early", which exit 3 would otherwise conflate.
+  // Waiting for the node — rather than querying once — is the difference between "this page has
+  // no chart" and "I looked too early", which exit 3 would otherwise conflate.
   let chart = null;
   try {
     await page.waitForSelector('.recharts-surface', { timeout: 45000 });

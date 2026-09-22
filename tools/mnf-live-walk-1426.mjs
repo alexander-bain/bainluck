@@ -62,6 +62,40 @@ const log = (m) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
+/**
+ * Sleep until a WALL-CLOCK deadline, in hops of at most a minute.
+ *
+ * 🔴 EVERY WAIT IN THIS FILE GOES THROUGH HERE, and the reason is written out at
+ * the kickoff wait below: `setTimeout` runs on a MONOTONIC clock that does not
+ * advance while the laptop is suspended, and this machine took 898 seconds of
+ * Maintenance Sleep in one stretch on the night this tool was written.
+ *
+ * The kickoff wait was fixed for that and the two waits inside the main loop
+ * were not, which is the more dangerous half: `AFTER_FINAL_MS` is the "10
+ * minutes after the final" of notice 42 — the one frame a reload-based walk can
+ * never take — and a suspend during it silently turns it into final-plus-forty,
+ * against a page whose whole value is the elapsed time nobody touched it. The
+ * cycle sleep has the same shape and also gates how soon the loop next asks the
+ * API whether the game has ended, so a nap there delays the final frames too.
+ *
+ * A fix that lives in one of three call sites is not a fix, so there is now one
+ * primitive and no bare `sleep()` of more than a minute anywhere below.
+ */
+async function sleepUntil(deadlineMs, what) {
+  let lastReport = Date.now();
+  while (Date.now() < deadlineMs) {
+    await sleep(Math.min(60_000, deadlineMs - Date.now()));
+    // A heartbeat, so "still waiting" and "wedged" stop looking identical from
+    // the outside — the whole reason the kickoff stall was found late.
+    const left = deadlineMs - Date.now();
+    if (left > 0 && Date.now() - lastReport >= 15 * 60_000) {
+      lastReport = Date.now();
+      log(`still waiting — ${Math.round(left / 60000)} min ${what}`);
+    }
+  }
+}
+const sleepFor = (ms, what) => sleepUntil(Date.now() + ms, what);
+
 // 🔴 NOT `fetch`. Node's global fetch ignores HTTPS_PROXY, and in this sandbox every request it
 // makes dies as a bare `TypeError: fetch failed` — which this function would have folded into
 // `{error}`, so the walk would have polled a dead instrument for six hours and never fired the
@@ -205,7 +239,10 @@ if (proxy) args.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=<-loopback>
 // A walk armed hours ahead for a marquee game is exactly the case that suspends.
 //
 // Polling `Date.now()` in short hops cannot drift, because every hop re-reads the
-// wall clock. The 60s cap also bounds how late the first frame can be.
+// wall clock. The 60s cap also bounds how late the first frame can be. That poll
+// is `sleepUntil` above, and the two waits in the main loop now share it — this
+// stall was originally repaired here only, which left the same bug sitting on the
+// "10 minutes after the final" wait, where it would have been harder to see.
 if (kickoffISO) {
   const kickoffMs = new Date(kickoffISO).getTime();
   if (Number.isNaN(kickoffMs)) {
@@ -214,17 +251,7 @@ if (kickoffISO) {
   }
   if (kickoffMs > Date.now()) {
     log(`waiting ${Math.round((kickoffMs - Date.now()) / 60000)} min for kickoff ${kickoffISO}`);
-    let lastReport = 0;
-    while (Date.now() < kickoffMs) {
-      await sleep(Math.min(60_000, kickoffMs - Date.now()));
-      // A heartbeat every 15 min, so "still waiting" and "wedged" stop looking
-      // identical from the outside — the whole reason this was found late.
-      const left = kickoffMs - Date.now();
-      if (left > 0 && Date.now() - lastReport >= 15 * 60_000) {
-        lastReport = Date.now();
-        log(`still waiting — ${Math.round(left / 60000)} min to kickoff`);
-      }
-    }
+    await sleepUntil(kickoffMs, 'to kickoff');
     log(`kickoff reached (${Math.round((Date.now() - kickoffMs) / 1000)}s past ${kickoffISO})`);
   }
 }
@@ -258,7 +285,7 @@ while (Date.now() - started < MAX_MS) {
     await shoot(held, 'f1-held-at-final', 'HELD @ final (never reloaded)');
     await freshShot('f2-fresh-at-final', 'FRESH @ final');
 
-    await sleep(AFTER_FINAL_MS);
+    await sleepFor(AFTER_FINAL_MS, 'to the final+10 frame');
     await shoot(held, 'f3-held-final-plus-10', 'HELD @ final+10 (still never reloaded)');
     await freshShot('f4-fresh-final-plus-10', 'FRESH @ final+10');
     break;
@@ -269,7 +296,7 @@ while (Date.now() - started < MAX_MS) {
   await shoot(held, `${tag}-held`, `HELD cycle ${cycle}`);
   await freshShot(`${tag}-fresh`, `FRESH cycle ${cycle}`);
 
-  await sleep(CYCLE_MS);
+  await sleepFor(CYCLE_MS, 'to the next cycle');
 }
 
 writeFileSync(`${outDir}/walk-summary.json`, JSON.stringify({
