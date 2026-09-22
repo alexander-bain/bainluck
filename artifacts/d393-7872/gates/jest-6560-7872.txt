@@ -1,0 +1,6 @@
+
+Test Suites: 2 passed, 2 total
+Tests:       42 passed, 42 total
+Snapshots:   0 total
+Time:        1.23 s, estimated 4 s
+Ran all test suites matching sportsFuturesCaptionRestatesHeading6560|futuresCaptionRestatesResolution7872.

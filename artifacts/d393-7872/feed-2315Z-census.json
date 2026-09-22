@@ -1,0 +1,821 @@
+[
+ {
+  "name": "MLB World Series Winner",
+  "id": 1,
+  "resolution_date": null,
+  "eyebrow": "",
+  "branch": "no-date",
+  "caption": "Los Angeles Dodgers lead at 28%, Milwaukee Brewers up 10.2 points since Feb 2",
+  "window_clause": null
+ },
+ {
+  "name": "Nobel Peace Prize Winner 2026",
+  "id": 113129,
+  "resolution_date": "2026-10-10T00:00:00+00:00",
+  "eyebrow": "Resolves Oct 10, 2026",
+  "branch": "resolves-date",
+  "caption": "Sudan's Emergency Response Rooms leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "Brazil Presidential Election",
+  "id": 112996,
+  "resolution_date": "2026-10-04T00:00:00+00:00",
+  "eyebrow": "Resolves Oct 4, 2026",
+  "branch": "resolves-date",
+  "caption": "Fl\u00e1vio Bolsonaro leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "Xi Jinping out before 2027?",
+  "id": 112894,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "4% chance, down 4.2 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Next French Presidential Election",
+  "id": 113364,
+  "resolution_date": "2027-04-30T00:00:00+00:00",
+  "eyebrow": "Resolves Apr 30, 2027",
+  "branch": "resolves-date",
+  "caption": "Marine Le Pen leads at 38%",
+  "window_clause": null
+ },
+ {
+  "name": "NASCAR O'Reilly Auto Parts Series Champion (2026)",
+  "id": 59698972,
+  "resolution_date": "2026-11-07T23:59:00+00:00",
+  "eyebrow": "Resolves Nov 7, 2026",
+  "branch": "resolves-date",
+  "caption": "Justin Allgaier leads at 28%",
+  "window_clause": null
+ },
+ {
+  "name": "Walmart NW Arkansas Championship presented by P&G Winner",
+  "id": 61734333,
+  "resolution_date": "2026-09-27T00:00:00+00:00",
+  "eyebrow": "Closes Sep 27",
+  "branch": "closes-date",
+  "caption": "Na Rin An leads at 32%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "2027 PPA Tour Finals: To Reach the Final (Men's)",
+  "id": 61076604,
+  "resolution_date": "2027-05-10T23:59:00+00:00",
+  "eyebrow": "Resolves May 10, 2027",
+  "branch": "resolves-date",
+  "caption": "CJ Klinger at 87%",
+  "window_clause": null
+ },
+ {
+  "name": "2026-27 Stanley Cup\u00ae Finals Winner",
+  "id": 52755659,
+  "resolution_date": "2027-07-01T14:00:00+00:00",
+  "eyebrow": "Resolves Jul 1, 2027",
+  "branch": "resolves-date",
+  "caption": "Florida Panthers lead at 11%",
+  "window_clause": null
+ },
+ {
+  "name": "Will Dallas Stars advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+  "id": 61380701,
+  "resolution_date": "2027-05-05T23:59:00+00:00",
+  "eyebrow": "Resolves May 5, 2027",
+  "branch": "resolves-date",
+  "caption": "Down 1 point since Sep 18 \u2014 now 40% chance",
+  "window_clause": null
+ },
+ {
+  "name": "Will China invade Taiwan by end of 2026?",
+  "id": 112921,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "4% chance, down 7.5 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "NFL Super Bowl Winner",
+  "id": 86832,
+  "resolution_date": null,
+  "eyebrow": "",
+  "branch": "no-date",
+  "caption": "Los Angeles Rams lead at 11%",
+  "window_clause": null
+ },
+ {
+  "name": "When will Apple release the iPhone 18?",
+  "id": 109349,
+  "resolution_date": "2027-04-01T03:59:00+00:00",
+  "eyebrow": "Resolves Apr 1, 2027",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Best AI at the end of 2026?",
+  "id": 109596,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Claude leads at 71%",
+  "window_clause": null
+ },
+ {
+  "name": "Venezuela leader end of 2026?",
+  "id": 114199,
+  "resolution_date": "2026-12-31T00:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "New favorite: Nicol\u00e1s Maduro (55%)",
+  "window_clause": null
+ },
+ {
+  "name": "Houthi x Saudi Arabia effective ceasefire begins by...? (2 week pause)",
+  "id": 61300958,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "Odds up 21 points",
+  "window_clause": null
+ },
+ {
+  "name": "Peak Severe Drought in Minas Gerais during the Coffee Growing Season?",
+  "id": 60527872,
+  "resolution_date": "2027-05-01T03:59:00+00:00",
+  "eyebrow": "Resolves May 1, 2027",
+  "branch": "resolves-date",
+  "caption": "New favorite: 20% to 39.99% (33%)",
+  "window_clause": null
+ },
+ {
+  "name": "Will Rocket Lab USA, Inc. (RKLB) hit (HIGH) $74 Week of September 21 2026?",
+  "id": 61429051,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "50% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will NVIDIA (NVDA) hit (LOW) $220 Week of September 21 2026?",
+  "id": 61429115,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "37% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Florida Panthers advance to the Second Round of the 2027 Stanley Cup Playoffs?",
+  "id": 61380677,
+  "resolution_date": "2027-05-05T23:59:00+00:00",
+  "eyebrow": "Resolves May 5, 2027",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Which party will win the U.S. House?",
+  "id": 108621,
+  "resolution_date": "2027-02-01T15:00:00+00:00",
+  "eyebrow": "Resolves Feb 1, 2027",
+  "branch": "resolves-date",
+  "caption": "Democratic Party leads at 91%, up 13.3 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Which party will win the Senate in 2026?",
+  "id": 112902,
+  "resolution_date": "2026-11-03T00:00:00+00:00",
+  "eyebrow": "Resolves Nov 3, 2026",
+  "branch": "resolves-date",
+  "caption": "Democratic Party leads at 64%",
+  "window_clause": null
+ },
+ {
+  "name": "NATO x Russia military clash?",
+  "id": 113013,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "Odds up 3 points",
+  "window_clause": null
+ },
+ {
+  "name": "Dancing with the Stars Season 35 \u00b7 Winner",
+  "id": 60481087,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Maura Higgins at 21%, up 18 points since Sep 8",
+  "window_clause": null
+ },
+ {
+  "name": "Will Costco (COST) beat quarterly earnings?",
+  "id": 60693464,
+  "resolution_date": "2026-09-24T21:00:00+00:00",
+  "eyebrow": "Closes Sep 24",
+  "branch": "closes-date",
+  "caption": "72% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "2027 US Open Men's Singles Winner",
+  "id": 61308736,
+  "resolution_date": "2027-09-21T05:00:00+00:00",
+  "eyebrow": "Resolves Sep 21, 2027",
+  "branch": "resolves-date",
+  "caption": "Jannik Sinner leads at 32%",
+  "window_clause": null
+ },
+ {
+  "name": "Maduro Prison Time?",
+  "id": 114196,
+  "resolution_date": "2027-12-31T00:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2027",
+  "branch": "resolves-date",
+  "caption": "No prison time leads at 56%, up 29.5 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Trump out as President before 2027?",
+  "id": 113289,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "6% chance, down 10 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "2026 Midterms: Congress Balance of Power?",
+  "id": 108619,
+  "resolution_date": "2027-02-01T15:00:00+00:00",
+  "eyebrow": "Resolves Feb 1, 2027",
+  "branch": "resolves-date",
+  "caption": "D-House, D-Senate leads at 61%, up 22 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Argentina Monthly Inflation - September",
+  "id": 60760395,
+  "resolution_date": "2026-10-13T15:59:00+00:00",
+  "eyebrow": "Resolves Oct 13, 2026",
+  "branch": "resolves-date",
+  "caption": "1.9 to 2.1% leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "Will Trump buy at least part of Greenland?",
+  "id": 108366,
+  "resolution_date": "2029-01-20T15:00:00+00:00",
+  "eyebrow": "Resolves Jan 20, 2029",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Brazil Annual Inflation 2026",
+  "id": 114629,
+  "resolution_date": "2027-01-12T00:00:00+00:00",
+  "eyebrow": "Resolves Jan 12, 2027",
+  "branch": "resolves-date",
+  "caption": "5.50-5.99% up 21.9 points today; 5.00-5.49% leads at 42%",
+  "window_clause": null
+ },
+ {
+  "name": "Crude Oil all time high?",
+  "id": 16625182,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "Shifted since May 6",
+  "window_clause": null
+ },
+ {
+  "name": "Golden Boy 2026 Winner",
+  "id": 60607618,
+  "resolution_date": "2026-12-31T04:59:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Pau Cubarsi leads at 88%",
+  "window_clause": null
+ },
+ {
+  "name": "Next Prime Minister of Morocco? (Invested)",
+  "id": 60517216,
+  "resolution_date": "2026-09-23T23:59:00+00:00",
+  "eyebrow": "Closes Sep 23",
+  "branch": "closes-date",
+  "caption": "Fatima Ezzahra El Mansouri leads at 55%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "Price of Dozen Eggs in September?",
+  "id": 60760493,
+  "resolution_date": "2026-10-15T03:59:00+00:00",
+  "eyebrow": "Resolves Oct 15, 2026",
+  "branch": "resolves-date",
+  "caption": "$2.20 to $2.30 leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "Next Prime Minister of Romania?",
+  "id": 16634605,
+  "resolution_date": "2026-12-31T00:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Sorin Grindeanu leads at 29%",
+  "window_clause": null
+ },
+ {
+  "name": "Central Bank of Colombia decision in October",
+  "id": 60760364,
+  "resolution_date": "2026-10-30T00:00:00+00:00",
+  "eyebrow": "Resolves Oct 30, 2026",
+  "branch": "resolves-date",
+  "caption": "No change down 5 points today",
+  "window_clause": null
+ },
+ {
+  "name": "Port of Mobile container volume in 2026",
+  "id": 59693609,
+  "resolution_date": "2027-01-29T21:59:00+00:00",
+  "eyebrow": "Resolves Jan 29, 2027",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Who will be featured on GTA VI: The Album?",
+  "id": 61321728,
+  "resolution_date": "2026-11-27T04:59:00+00:00",
+  "eyebrow": "Resolves Nov 27, 2026",
+  "branch": "resolves-date",
+  "caption": "Sexyy Red up 46 points today; Kodak Black at 86%",
+  "window_clause": null
+ },
+ {
+  "name": "Friedrich Merz out as Chancellor of Germany?",
+  "id": 113264,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Big Brother Season 28 \u00b7 Winner",
+  "id": 52756010,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Rick Devens leads at 34%",
+  "window_clause": null
+ },
+ {
+  "name": "Which parties will win a seat in the 2026 Knesset elections?",
+  "id": 60627547,
+  "resolution_date": "2026-10-27T23:59:00+00:00",
+  "eyebrow": "Resolves Oct 27, 2026",
+  "branch": "resolves-date",
+  "caption": "Reservists and New Economic Party up 9 points today; Ra'am at 89%",
+  "window_clause": null
+ },
+ {
+  "name": "Will Opendoor Technologies Inc. (OPEN) hit (HIGH) $2.75 Week of September 21 2026?",
+  "id": 61792148,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "81% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Who will be Trump's next Press Secretary?",
+  "id": 108328,
+  "resolution_date": "2029-01-21T15:00:00+00:00",
+  "eyebrow": "Resolves Jan 21, 2029",
+  "branch": "resolves-date",
+  "caption": "Scott Jennings leads at 19%",
+  "window_clause": null
+ },
+ {
+  "name": "Houthis enter Aden by October 31, 2026?",
+  "id": 60722951,
+  "resolution_date": "2027-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2027",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Will the Starship for SpaceX Starship Flight Test 14 achieve a successful splashdown?",
+  "id": 57767960,
+  "resolution_date": "2026-10-31T23:59:00+00:00",
+  "eyebrow": "Resolves Oct 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Down 8 points today \u2014 now 75% chance",
+  "window_clause": null
+ },
+ {
+  "name": "Next Astra Model (6.1+) released by October 31, 2026?",
+  "id": 61381007,
+  "resolution_date": "2026-12-31T23:59:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Up 20.5 points today \u2014 now 64% chance",
+  "window_clause": null
+ },
+ {
+  "name": "UEFA Champions League: League Phase Winner",
+  "id": 60607786,
+  "resolution_date": "2027-02-28T23:59:00+00:00",
+  "eyebrow": "Resolves Feb 28, 2027",
+  "branch": "resolves-date",
+  "caption": "Barcelona leads at 18%",
+  "window_clause": null
+ },
+ {
+  "name": "Texas Senate winner?",
+  "id": 109065,
+  "resolution_date": "2027-11-03T15:00:00+00:00",
+  "eyebrow": "Resolves Nov 3, 2027",
+  "branch": "resolves-date",
+  "caption": "James Talarico leads at 59%, Ken Paxton down 24 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Ohio Senate winner?",
+  "id": 109072,
+  "resolution_date": "2027-11-03T15:00:00+00:00",
+  "eyebrow": "Resolves Nov 3, 2027",
+  "branch": "resolves-date",
+  "caption": "Sherrod Brown leads at 62%, up 21 points since Feb 19",
+  "window_clause": null
+ },
+ {
+  "name": "Will Jacob Coxon publicly testify before congress by October 31?",
+  "id": 60634594,
+  "resolution_date": "2026-11-01T03:59:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "Dancing with the Stars Season 35 \u00b7 Top 3 Finishers",
+  "id": 60481084,
+  "resolution_date": "2026-12-31T15:00:00+00:00",
+  "eyebrow": "Resolves Dec 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Maura Higgins at 65%",
+  "window_clause": null
+ },
+ {
+  "name": "Anthropic announces a Millennium Prize solution?",
+  "id": 60607594,
+  "resolution_date": "2028-01-01T04:59:00+00:00",
+  "eyebrow": "Resolves Jan 1, 2028",
+  "branch": "resolves-date",
+  "caption": "",
+  "window_clause": null
+ },
+ {
+  "name": "FedEx Open de France Winner",
+  "id": 61461681,
+  "resolution_date": "2026-09-27T00:00:00+00:00",
+  "eyebrow": "Closes Sep 27",
+  "branch": "closes-date",
+  "caption": "Ludvig \u00c5berg at 9%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "WTA Singapore Singles Winner",
+  "id": 61437318,
+  "resolution_date": "2026-09-27T12:00:00+00:00",
+  "eyebrow": "Closes Sep 27",
+  "branch": "closes-date",
+  "caption": "Linda Fruhvirtova leads at 38%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "#2 Spotify song this week? (September 25)",
+  "id": 61425396,
+  "resolution_date": "2026-09-25T23:59:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "Earrings - Malcolm Todd leads at 62%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "WNBA: 2026 Champion",
+  "id": 9413479,
+  "resolution_date": "2026-10-31T00:00:00+00:00",
+  "eyebrow": "Resolves Oct 31, 2026",
+  "branch": "resolves-date",
+  "caption": "Minnesota Lynx leads at 48%",
+  "window_clause": null
+ },
+ {
+  "name": "UEFA Champions League 2027: Home country of champion",
+  "id": 60607658,
+  "resolution_date": "2027-06-30T03:59:00+00:00",
+  "eyebrow": "Resolves Jun 30, 2027",
+  "branch": "resolves-date",
+  "caption": "England leads at 32%",
+  "window_clause": null
+ },
+ {
+  "name": "Women's Pro Basketball Champion",
+  "id": 12046267,
+  "resolution_date": "2026-12-01T15:00:00+00:00",
+  "eyebrow": "Resolves Dec 1, 2026",
+  "branch": "resolves-date",
+  "caption": "Minnesota leads at 48%",
+  "window_clause": null
+ },
+ {
+  "name": "Will \"Resident Evil\" score at least 96 on the Rotten Tomatoes Tomatometer?",
+  "id": 61723002,
+  "resolution_date": "2026-09-21T23:59:00+00:00",
+  "eyebrow": "Closes in 43m",
+  "branch": "minutes",
+  "caption": "Up 8 points today \u2014 now 90% chance",
+  "window_clause": null
+ },
+ {
+  "name": "Pro Baseball Champion",
+  "id": 275,
+  "resolution_date": "2026-11-01T04:00:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "Los Angeles Dodgers lead at 31%, Milwaukee up 13.7 points since Feb 3",
+  "window_clause": null
+ },
+ {
+  "name": "Which party will win the Arizona State Senate in 2026?",
+  "id": 60709604,
+  "resolution_date": "2026-11-04T04:59:00+00:00",
+  "eyebrow": "Resolves Nov 4, 2026",
+  "branch": "resolves-date",
+  "caption": "Republican Party up 2 points today; Democratic Party leads at 56%",
+  "window_clause": null
+ },
+ {
+  "name": "NPB Japan Series Champion (2026)",
+  "id": 59703246,
+  "resolution_date": "2026-11-01T23:59:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "Fukuoka SoftBank Hawks leads at 27%",
+  "window_clause": null
+ },
+ {
+  "name": "NASCAR Cup Series: 2026 Champion",
+  "id": 56947465,
+  "resolution_date": "2026-11-08T23:59:00+00:00",
+  "eyebrow": "Resolves Nov 8, 2026",
+  "branch": "resolves-date",
+  "caption": "Denny Hamlin leads at 25%",
+  "window_clause": null
+ },
+ {
+  "name": "Will S&P 500 (SPY) hit (HIGH) $780 Week of September 21 2026?",
+  "id": 61428997,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "51% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Top Global Netflix Movie this week?",
+  "id": 61496006,
+  "resolution_date": "2026-09-22T03:59:00+00:00",
+  "eyebrow": "Closes in 5h",
+  "branch": "hours",
+  "caption": "Why Did I Get Married Again? leads at 90%; resolves within a day",
+  "window_clause": "resolves within a day"
+ },
+ {
+  "name": "Minas Gerais Governor Election Winner",
+  "id": 13475994,
+  "resolution_date": "2026-10-04T06:00:00+00:00",
+  "eyebrow": "Resolves Oct 4, 2026",
+  "branch": "resolves-date",
+  "caption": "Cleitinho Azevedo leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "Titled Tuesday Winner: September 22",
+  "id": 61148180,
+  "resolution_date": "2026-10-07T03:59:00+00:00",
+  "eyebrow": "Resolves Oct 7, 2026",
+  "branch": "resolves-date",
+  "caption": "Denis Lazavik leads; resolves within a month",
+  "window_clause": "resolves within a month"
+ },
+ {
+  "name": "KBO Korean Series Champion (2026)",
+  "id": 59698965,
+  "resolution_date": "2026-11-01T23:59:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "KT Wiz leads at 22%",
+  "window_clause": null
+ },
+ {
+  "name": "Worlds 2026: Winner",
+  "id": 60552216,
+  "resolution_date": "2026-11-29T04:59:00+00:00",
+  "eyebrow": "Resolves Nov 29, 2026",
+  "branch": "resolves-date",
+  "caption": "Gen.G leads at 34%",
+  "window_clause": null
+ },
+ {
+  "name": "S&P 500 (SPY) closes above ___ on September 22?",
+  "id": 61790467,
+  "resolution_date": "2026-09-22T20:00:00+00:00",
+  "eyebrow": "Closes in 21h",
+  "branch": "hours",
+  "caption": "Resolves within a day",
+  "window_clause": "Resolves within a day"
+ },
+ {
+  "name": "DP World Tour: Open de France Winner",
+  "id": 61814765,
+  "resolution_date": "2026-09-28T03:59:00+00:00",
+  "eyebrow": "Closes Sep 28",
+  "branch": "closes-date",
+  "caption": "Ludvig Aaberg at 7%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "Demacia Cup Global Invitational 2026: Winner",
+  "id": 60552215,
+  "resolution_date": "2026-11-01T03:59:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "KT Rolster leads at 65%",
+  "window_clause": null
+ },
+ {
+  "name": "Will Palantir Technologies Inc. (PLTR) hit (LOW) $174 Week of September 21 2026?",
+  "id": 61429085,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "41% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will NVIDIA (NVDA) finish week of September 21 above $225?",
+  "id": 61429123,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "64% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Tesla, Inc. (TSLA) hit (HIGH) $382.50 Week of September 21 2026?",
+  "id": 61429130,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "69% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Tesla (TSLA) finish week of September 21 above $365?",
+  "id": 61429144,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "79% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Meta Platforms, Inc. (META) hit (LOW) $660 Week of September 21 2026?",
+  "id": 61429155,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "6% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Meta (META) finish week of September 21 above $690?",
+  "id": 61429166,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "90% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Alphabet Inc. (GOOGL) hit (HIGH) $360 Week of September 21 2026?",
+  "id": 61429171,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "72% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Amazon.com, Inc. (AMZN) hit (HIGH) $264 Week of September 21 2026?",
+  "id": 61429188,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "58% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Microsoft Corporation (MSFT) hit (HIGH) $502.50 Week of September 21 2026?",
+  "id": 61429214,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "83% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will Apple (AAPL) hit (HIGH) $340 Week of September 21 2026?",
+  "id": 61429231,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "92% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Will South Korea ETF (EWY) hit (LOW) $180 Week of September 21 2026?",
+  "id": 61433455,
+  "resolution_date": "2026-09-25T20:00:00+00:00",
+  "eyebrow": "Closes Sep 25",
+  "branch": "closes-date",
+  "caption": "27% chance, resolving within a week",
+  "window_clause": null
+ },
+ {
+  "name": "Azerbaijan Grand Prix Winner",
+  "id": 61495797,
+  "resolution_date": "2026-09-26T17:00:00+00:00",
+  "eyebrow": "Closes Sep 26",
+  "branch": "closes-date",
+  "caption": "Andrea Kimi Antonelli leads at 37%; resolves within a week",
+  "window_clause": "resolves within a week"
+ },
+ {
+  "name": "MotoGP World Champion (2026)",
+  "id": 59698974,
+  "resolution_date": "2026-11-29T23:59:00+00:00",
+  "eyebrow": "Resolves Nov 29, 2026",
+  "branch": "resolves-date",
+  "caption": "Marc Marquez leads at 67%",
+  "window_clause": null
+ },
+ {
+  "name": "2027 PPA Tour Finals: Player to Qualify (Men's)",
+  "id": 61076610,
+  "resolution_date": "2027-05-10T23:59:00+00:00",
+  "eyebrow": "Resolves May 10, 2027",
+  "branch": "resolves-date",
+  "caption": "Ben Johns at 96%",
+  "window_clause": null
+ },
+ {
+  "name": "Will gas be below $3.75 in any state?",
+  "id": 61305564,
+  "resolution_date": "2026-11-01T03:59:00+00:00",
+  "eyebrow": "Resolves Nov 1, 2026",
+  "branch": "resolves-date",
+  "caption": "September 30 up 19 points today",
+  "window_clause": null
+ },
+ {
+  "name": "ESL Pro League Season 24: Winner",
+  "id": 60552218,
+  "resolution_date": "2026-10-26T03:59:00+00:00",
+  "eyebrow": "Resolves Oct 26, 2026",
+  "branch": "resolves-date",
+  "caption": "Spirit leads at 25%",
+  "window_clause": null
+ },
+ {
+  "name": "UEFA Nations League 2026-27: Group D1 Winner",
+  "id": 60607776,
+  "resolution_date": "2026-12-02T04:59:00+00:00",
+  "eyebrow": "Resolves Dec 2, 2026",
+  "branch": "resolves-date",
+  "caption": "Malta at 38%",
+  "window_clause": null
+ }
+]

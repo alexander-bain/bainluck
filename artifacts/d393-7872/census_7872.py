@@ -93,7 +93,8 @@ WINDOW_RE = re.compile(
 
 
 def main():
-    payload = json.load(open(sys.argv[1]))
+    with open(sys.argv[1]) as fh:
+        payload = json.load(fh)
     items = payload.get("items") or payload.get("feed") or []
     futures = [i for i in items if i.get("type") == "futures"]
     rows = []
@@ -132,7 +133,8 @@ def main():
     for r in rows:
         if r["window_clause"] and not r["eyebrow"]:
             print(f"  [{r['branch']}] {r['name']} :: {r['caption']}")
-    json.dump(rows, open(sys.argv[1].replace(".json", "-census.json"), "w"), indent=1)
+    with open(sys.argv[1].replace(".json", "-census.json"), "w") as out:
+        json.dump(rows, out, indent=1)
 
 
 if __name__ == "__main__":

@@ -166,13 +166,20 @@ const render = (served: Served) =>
 
 /** `renderToStaticMarkup` escapes the apostrophe in "Sudan's" — compare the text
  *  a reader sees, not its HTML encoding. */
+const ENTITIES: Record<string, string> = {
+  "&#x27;": "'",
+  "&quot;": '"',
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+};
+
 function decode(text: string): string {
-  return text
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  // ONE pass over the string, not a chain of `.replace`s. Chained, `&amp;`
+  // becomes `&` before `&lt;` is considered, so a served `&amp;lt;` decodes to
+  // `<` — a character the payload never contained. A single scan cannot
+  // re-examine what it just wrote.
+  return text.replace(/&(?:#x27|quot|lt|gt|amp);/g, (m) => ENTITIES[m] ?? m);
 }
 
 function captionText(html: string): string | null {

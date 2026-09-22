@@ -1,0 +1,6 @@
+
+> bainluck-frontend@0.1.0 typecheck
+> node scripts/tsc-census.js --run --check
+
+typecheck errors: 70 (baseline 70)
+no new type errors, and the baseline matches the real count.

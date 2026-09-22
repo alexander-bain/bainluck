@@ -12,7 +12,7 @@ import json
 import re
 import sys
 
-from census_7872 import caption, parse, resolves_label, strip_head
+from census_7872 import caption, resolves_label, strip_head
 
 WINDOW_CLAUSE = r"resolv(?:es|ing) within (?:a day|two days|a week|a month)"
 # whole string
@@ -57,7 +57,8 @@ def new_caption(item, eyebrow):
 
 
 def main():
-    payload = json.load(open(sys.argv[1]))
+    with open(sys.argv[1]) as fh:
+        payload = json.load(fh)
     items = payload.get("items") or payload.get("feed") or []
     futures = [i for i in items if i.get("type") == "futures"]
 

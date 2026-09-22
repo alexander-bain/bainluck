@@ -1,0 +1,142 @@
+FAIL __tests__/components/futuresCaptionRestatesResolution7872.test.tsx
+  ● #7872 — the rendered caption states the resolution once › tail-clause-month — the served copy says it twice; the card does not
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:      "Sudan's Emergency Response Rooms leads; resolves within a month"
+
+      216 |     const caption = captionText(html);
+      217 |     expect(caption).toBeTruthy();
+    > 218 |     expect(caption).not.toMatch(WINDOW_CLAUSE);
+          |                         ^
+      219 |   });
+      220 |
+      221 |   test("the card whose whole caption was the clause gains a sentence, not a blank", () => {
+
+      at __tests__/components/futuresCaptionRestatesResolution7872.test.tsx:218:25
+
+  ● #7872 — the rendered caption states the resolution once › tail-clause-day — the served copy says it twice; the card does not
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:      "Why Did I Get Married Again? leads at 90%; resolves within a day"
+
+      216 |     const caption = captionText(html);
+      217 |     expect(caption).toBeTruthy();
+    > 218 |     expect(caption).not.toMatch(WINDOW_CLAUSE);
+          |                         ^
+      219 |   });
+      220 |
+      221 |   test("the card whose whole caption was the clause gains a sentence, not a blank", () => {
+
+      at __tests__/components/futuresCaptionRestatesResolution7872.test.tsx:218:25
+
+  ● #7872 — the rendered caption states the resolution once › tail-clause-with-live-pill — the served copy says it twice; the card does not
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:      "1.9 to 2.1% leads; resolves within a month"
+
+      216 |     const caption = captionText(html);
+      217 |     expect(caption).toBeTruthy();
+    > 218 |     expect(caption).not.toMatch(WINDOW_CLAUSE);
+          |                         ^
+      219 |   });
+      220 |
+      221 |   test("the card whose whole caption was the clause gains a sentence, not a blank", () => {
+
+      at __tests__/components/futuresCaptionRestatesResolution7872.test.tsx:218:25
+
+  ● #7872 — the rendered caption states the resolution once › whole-caption-is-the-clause — the served copy says it twice; the card does not
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:      "Resolves within a day"
+
+      216 |     const caption = captionText(html);
+      217 |     expect(caption).toBeTruthy();
+    > 218 |     expect(caption).not.toMatch(WINDOW_CLAUSE);
+          |                         ^
+      219 |   });
+      220 |
+      221 |   test("the card whose whole caption was the clause gains a sentence, not a blank", () => {
+
+      at __tests__/components/futuresCaptionRestatesResolution7872.test.tsx:218:25
+
+  ● #7872 — the rendered caption states the resolution once › the card whose whole caption was the clause gains a sentence, not a blank
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Big odds movement"
+    Received: "Resolves within a day"
+
+      225 |     // worse answer than the duplicate.
+      226 |     const spy = SERVED.find((s) => s.label === "whole-caption-is-the-clause")!;
+    > 227 |     expect(captionText(render(spy))).toBe("Big odds movement");
+          |                                      ^
+      228 |   });
+      229 |
+      230 |   test.each(SERVED)("$label — the caption is still the shared chain's answer (notice 35)", (served) => {
+
+      at Object.<anonymous> (__tests__/components/futuresCaptionRestatesResolution7872.test.tsx:227:38)
+
+  ● #7872 — the pill cannot carry the clause back one row up › a pill #4403 suppressed is not re-admitted by the shorter caption
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /resolv(?:es|ing) within (?:a day|two days|a week|a month)/i
+    Received string:      "<a aria-label=\"Argentina Monthly Inflation - September\" href=\"/futures/7872\"><div class=\"rounded-card border border-surface-border bg-surface-card p-3 hover:bg-surface-elevated transition-all cursor-pointer\"><div class=\"flex items-center justify-between gap-2 mb-2\"><div class=\"flex items-center gap-1.5 min-w-0\"><span class=\"text-[11px] text-text-muted tracking-wide min-w-0 truncate\"><span class=\"mr-0.5\">📈</span>Economics</span></div><div class=\"flex items-center gap-1.5 flex-shrink-0\"><span class=\"text-[11px] text-text-muted\">Resolves Oct 13, 2026</span><span class=\"text-[11px] bg-accent-futures/10 text-accent-futures px-1.5 py-0.5 rounded font-medium\">2 sources</span></div></div><div class=\"flex items-center justify-between gap-3\"><div class=\"flex-1 min-w-0\"><div class=\"text-sm font-medium text-text-primary line-clamp-2\">Argentina Monthly Inflation - September</div><p data-testid=\"futures-card-caption\" class=\"text-xs text-text-secondary mt-0.5 line-clamp-2\">1.9 to 2.1% leads; resolves within a month</p></div><div class=\"flex-shrink-0 text-right\"><div class=\"font-mono text-sm font-bold text-text-primary\">56%</div><div class=\"flex items-center justify-end gap-1 text-[11px] text-text-muted min-w-0 max-w-[130px]\"><div role=\"img\" aria-label=\"Leader (no logo available)\" title=\"Leader\" data-testid=\"entity-image-placeholder\" class=\"rounded-full flex-shrink-0 flex items-center justify-center font-medium border border-dashed border-surface-border bg-surface-elevated text-text-muted \" style=\"width:14px;height:14px;font-size:8px\">L</div><span class=\"truncate\">Leader</span></div></div></div><div class=\"mt-2 pt-2 border-t border-surface-border/50 space-y-1.5\"><div class=\"flex items-center gap-2\"><span title=\"Leader\" class=\"text-[11px] flex-1 min-w-0 truncate font-semibold text-text-primary\">Leader</span><div class=\"w-28 sm:w-44 shrink-0 h-1.5 rounded-full bg-surface-border overflow-hidden\" role=\"progressbar\" aria-valuenow=\"56\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"Leader probability\"><div class=\"h-full rounded-full transition-all duration-500 bg-accent-brand\" style=\"width:56.00000000000001%\"></div></div><span class=\"font-mono tabular-nums text-[11px] font-bold text-text-primary w-8 text-right\">56%</span></div><div class=\"flex items-center gap-2\"><span title=\"Runner-up\" class=\"text-[11px] flex-1 min-w-0 truncate text-text-secondary\">Runner-up</span><div class=\"w-28 sm:w-44 shrink-0 h-1.5 rounded-full bg-surface-border overflow-hidden\" role=\"progressbar\" aria-valuenow=\"29\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"Runner-up probability\"><div class=\"h-full rounded-full transition-all duration-500 bg-text-muted/30\" style=\"width:28.999999999999996%\"></div></div><span class=\"font-mono tabular-nums text-[11px] font-bold text-text-primary w-8 text-right\">29%</span></div><p class=\"text-[10px] text-text-muted leading-relaxed pt-0.5\" data-testid=\"card-sum-explanation\">These two sides are quoted separately, so they do not add up to 100.</p></div><div class=\"flex items-center justify-end mt-1\"></div></div></a>"
+
+      286 |     const html = render(argentina);
+      287 |     expect(pillText(html)).toBeNull();
+    > 288 |     expect(html).not.toMatch(WINDOW_CLAUSE);
+          |                      ^
+      289 |   });
+      290 | });
+      291 |
+
+      at Object.<anonymous> (__tests__/components/futuresCaptionRestatesResolution7872.test.tsx:288:22)
+
+  ● #7872 — the subtraction only ever removes backend copy › all three positions the backend composes
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Leader leads at 32%"
+    Received: "Leader leads at 32%; resolves within a week"
+
+      296 |     expect(
+      297 |       stripResolutionWindowClause("Leader leads at 32%; resolves within a week", EYEBROW),
+    > 298 |     ).toBe("Leader leads at 32%");
+          |       ^
+      299 |     expect(
+      300 |       stripResolutionWindowClause("90% chance, resolving within a week", EYEBROW),
+      301 |     ).toBe("90% chance");
+
+      at Object.<anonymous> (__tests__/components/futuresCaptionRestatesResolution7872.test.tsx:298:7)
+
+  ● #7872 — the subtraction only ever removes backend copy › no eyebrow, no subtraction — at the helper, in both directions
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Leader leads at 32%"
+    Received: "Leader leads at 32%; resolves within a week"
+
+      326 |     expect(stripResolutionWindowClause(withClause, null)).toBe(withClause);
+      327 |     expect(stripResolutionWindowClause(withClause, undefined)).toBe(withClause);
+    > 328 |     expect(stripResolutionWindowClause(withClause, EYEBROW)).toBe("Leader leads at 32%");
+          |                                                              ^
+      329 |   });
+      330 | });
+      331 |
+
+      at Object.<anonymous> (__tests__/components/futuresCaptionRestatesResolution7872.test.tsx:328:62)
+
+Test Suites: 1 failed, 1 total
+Tests:       8 failed, 13 passed, 21 total
+Snapshots:   0 total
+Time:        1.645 s
+Ran all test suites matching futuresCaptionRestatesResolution7872.
