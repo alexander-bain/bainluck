@@ -22,6 +22,10 @@
 #   --scroll N photograph N POINTS down the page instead of the top viewport
 #   --expand   open the sections that start collapsed (the event page's Sources
 #              disclosure, and anything else reading LaunchRig)
+#   --dwell S[,S...]  extra frames from the SAME launch at cumulative seconds,
+#              for "does this advance while the reader sits on it" (#920). Every
+#              other mode relaunches, which re-fetches and so cannot see a
+#              freeze at all. Carries a pid control; see the block at the bottom.
 #
 # WHY --expand EXISTS (native/086, #4406): the app has honoured
 # `-launch_expand_sections` since the flag was added — LaunchRig documents it,
@@ -103,6 +107,7 @@ SCROLL=""
 EXPAND=""
 ALLOW_STALE=""
 RESOLVE_ONLY=""
+DWELL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --counts) COUNTS=1 ;;
@@ -112,6 +117,10 @@ while [ $# -gt 0 ]; do
     --resolve-only) RESOLVE_ONLY=1 ;;
     --scroll)
       SCROLL="${2:?--scroll needs a point count, e.g. --scroll 1600}"
+      shift
+      ;;
+    --dwell)
+      DWELL="${2:?--dwell needs seconds, e.g. --dwell 120,240}"
       shift
       ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
@@ -219,7 +228,11 @@ ARGS=(-suppress_notification_prompt YES -bainluck_telemetry_consent none -discov
 [ -n "$SCROLL" ] && ARGS+=(-launch_scroll "$SCROLL")
 [ -n "$EXPAND" ] && ARGS+=(-launch_expand_sections YES)
 
-xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" >/dev/null 2>&1
+LAUNCH_OUT=$(xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" 2>/dev/null)
+# `simctl launch` prints "<bundle>: <pid>". The pid is the whole dwell control:
+# a simulator app is a HOST process, so `ps -p` answers for it.
+LAUNCH_PID="${LAUNCH_OUT##*: }"
+case "$LAUNCH_PID" in (*[!0-9]*|"") LAUNCH_PID="" ;; esac
 
 # The app hands the route to the router after LaunchRig.routeDelay (2.5s), and
 # the destination screen then loads. 18s covers a cold feed on a cold sim.
@@ -234,3 +247,51 @@ SHOT="$OUT/$LABEL.png"
 xcrun simctl io "$SIM" screenshot "$SHOT" >/dev/null 2>&1 \
   && echo "  shot $SHOT" \
   || { echo "  screenshot FAILED" >&2; exit 1; }
+
+# ── --dwell: MORE FRAMES FROM THE SAME LAUNCH ────────────────────────────────
+#
+# WHY THIS EXISTS (native/297, #920). Every other mode of this tool terminates
+# and relaunches (see the `terminate` above), so two shots are two SEPARATE
+# PAGES, each freshly fetched. That is fine for "what does this screen look
+# like" and USELESS for "does this screen ADVANCE while the reader sits on it" —
+# the claim #920 is about. A relaunch re-fetches, so a relaunched pair shows new
+# data whether or not the live update works: the instrument passes with the bug
+# present. (Same trap as the eight-scroll Discover walk of native/296: frames
+# that look contiguous and are not one page.)
+#
+# So dwell shoots frame 0, then sleeps and shoots again WITHOUT touching the
+# process. Offsets are CUMULATIVE seconds from frame 0: `--dwell 120,240` gives
+# `<label>.png`, `<label>-t120.png`, `<label>-t240.png`.
+#
+# THE PID IS THE CONTROL, and it is not decoration. If the app crashed and
+# SpringBoard revived it, the later frame would show fresh data for exactly the
+# wrong reason and look like a pass. Same pid at the last frame as the first is
+# what makes the pair evidence about one continuous session. A pid we could not
+# read is reported as UNVERIFIED, never as a pass.
+if [ -n "$DWELL" ]; then
+  if [ -n "$LAUNCH_PID" ]; then
+    echo "  dwell: pid $LAUNCH_PID at frame 0"
+  else
+    echo "  dwell: PID UNREADABLE — frames cannot be proven to share one session" >&2
+  fi
+  ELAPSED=0
+  IFS=',' read -r -a _offsets <<< "$DWELL"
+  for off in "${_offsets[@]}"; do
+    case "$off" in (*[!0-9]*|"") echo "  --dwell: '$off' is not seconds" >&2; exit 2 ;; esac
+    WAIT=$(( off - ELAPSED ))
+    if [ "$WAIT" -le 0 ]; then
+      echo "  --dwell: offsets must increase; '$off' does not follow $ELAPSED" >&2; exit 2
+    fi
+    sleep "$WAIT"
+    ELAPSED="$off"
+    if [ -n "$LAUNCH_PID" ] && ! ps -p "$LAUNCH_PID" >/dev/null 2>&1; then
+      echo "  DWELL BROKEN — pid $LAUNCH_PID died before +${off}s. The page did not stay open," >&2
+      echo "  so nothing shot after this proves a no-refresh update." >&2
+      exit 1
+    fi
+    DSHOT="$OUT/$LABEL-t${off}.png"
+    xcrun simctl io "$SIM" screenshot "$DSHOT" >/dev/null 2>&1 \
+      && echo "  shot $DSHOT  (+${off}s, same launch$([ -n "$LAUNCH_PID" ] && echo ", pid $LAUNCH_PID alive"))" \
+      || { echo "  screenshot FAILED at +${off}s" >&2; exit 1; }
+  done
+fi
