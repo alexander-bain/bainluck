@@ -1,4 +1,22 @@
 import { formatShareProbability } from "./share";
+// #7906 — the shapes whose winners are PEERS, so a second grade makes naming any
+// one of them arbitrary. `quantity` (a cumulative ladder, plural by design) and
+// `unshaped` (we do not know) are deliberately absent. See `gradedWinner`.
+import {
+  SHAPE_CLAIM,
+  SHAPE_CONTAINER_MEMBER,
+  SHAPE_DUEL,
+  SHAPE_FIELD,
+  SHAPE_PARTICIPATION,
+} from "./marketShape";
+
+const PEER_WINNER_SHAPES: ReadonlySet<string> = new Set([
+  SHAPE_CLAIM,
+  SHAPE_CONTAINER_MEMBER,
+  SHAPE_DUEL,
+  SHAPE_FIELD,
+  SHAPE_PARTICIPATION,
+]);
 
 // #883 futures-detail blend-only redesign — pure display helpers.
 //
@@ -212,12 +230,92 @@ export function pickChartSeedOutcomes<
  * to print "won" calls it. `pickHeroOutcome` is untouched: the subject and the
  * verdict are two different questions and collapsing them is the bug.
  * ─────────────────────────────────────────────────────────────────────────── */
+/* ───────────────────────────────────────────────────────────────────────────
+ * #7906 — A BOARD THAT GRADED MANY WINNERS NAMES NONE OF THEM.
+ *
+ * #6079 gave the word "won" one source, and #6301 taught the three surfaces to
+ * stay silent when that source grades NOBODY. Both ask "is the featured row a
+ * winner". Neither asks "is it the ONLY one", and on a participation board that
+ * is the whole question.
+ *
+ * Measured on production 2026-09-22 06:45Z, `/futures/61010898` at 390px:
+ *
+ *     BMW PGA Championship - Make the Cut
+ *     Ludvig Aberg   WON                ← the hero
+ *     Settled — Ludvig Aberg won.       ← the caption under the trend chart
+ *     Final Results: 72 of 163 rows badged  Won · 100% Settled
+ *
+ * The payload serves `mutually_exclusive: false`, `market_type: 'participation'`
+ * and seventy-two `is_winner: true` rows, because seventy-two golfers made that
+ * cut. Aberg is one of them; he did not win the BMW PGA Championship. The crown
+ * lands on him by accident of ordering: `pickHeroOutcome`'s resolved branch is
+ * `outcomes.find((o) => o.is_winner === true)`, the FIRST graded row in payload
+ * order. The 106-golfer board in #7906's original report reads "Jackson Suber
+ * WON" for the same reason.
+ *
+ * 🔴 THE TEST IS THE COUNT OF GRADES, NOT `mutually_exclusive`. That flag cannot
+ * carry this: CERT-609 on `independentOutcomesNote` records that only Kalshi's
+ * `false` is affirmative, because Polymarket's parser turns an ABSENT `negRisk`
+ * key into `false`. The number of graded rows is served by every source and
+ * means the same thing in all of them.
+ *
+ * It is also the right test in the OTHER world, where plurality is corruption
+ * rather than design. #6590 measured a MUTEX market serving two winners —
+ * `/futures/60015154` printed "Settled — SK Beveren won." above a table badging
+ * both `SK Beveren` and `Draw (…)` as Won, on a match that finished 3–0. There
+ * we cannot tell which of the two rows is the lie, and #4923 already ruled that
+ * case: no verdict beats a wrong one. One rule serves both.
+ *
+ * 🔴 PLURALITY ALONE IS NOT THE TEST — A LADDER'S PLURAL GRADES ARE ITS DESIGN.
+ * On a cumulative threshold board several rungs being true is correct, and the
+ * rungs are ORDERED, so the first true one is a canonical sentence. #6032's
+ * specimen is exactly that: `/futures/60544511`, a New York temperature ladder
+ * serving `77° or above`, `78° or above` and `82° or above` all graded true,
+ * whose card correctly reads "77° or above won". Winners on a field or a
+ * participation board are PEERS in no order at all, which is why choosing among
+ * them can only be arbitrary — Aberg is crowned for being emitted first.
+ *
+ * (Whether a ladder should name its LOOSEST true rung is a real question and it
+ * is not this one — #6032 asserts that behaviour deliberately and it stays.)
+ *
+ * 🔴 SO THE GUARD IS KEYED POSITIVELY, ON THE STORED SHAPE, AND DECLINES TO GUESS.
+ * It fires only when `market_type` AFFIRMS that the winners are peers. The
+ * tempting form — "decline unless the shape is `quantity`" — reads the same until
+ * the shape is missing, and then it inverts: `resolveShapeFallback`'s
+ * `NUMERIC_OUTCOME_RE` anchors its keywords at the START of the name, so
+ * `"77° or above"` matches nothing and a temperature ladder classifies as a
+ * FIELD. A negative test would therefore strip the crown from precisely the
+ * boards this paragraph exempts, on every payload whose shape had not been
+ * backfilled. Widening that regex is not this ship's to do — it re-shapes cards,
+ * concept pages and the feed, all of which key off the same field.
+ *
+ * The honest cost, stated rather than papered over: a peer board that carries NO
+ * stored `market_type` keeps today's behaviour and stays wrong. This fixes the
+ * boards the API can prove, and never guesses on the ones it cannot.
+ *
+ * Single-winner boards are untouched byte for byte — the guard falls through and
+ * the #6079/#6301 test below decides exactly as it did before. This withholds a
+ * CROWN, never a row: the Final Results table still badges all seventy-two, which
+ * is the honest place for that fact and the reason the silence leaves no hole.
+ * ─────────────────────────────────────────────────────────────────────────── */
 export function gradedWinner<T extends { is_winner?: boolean | null }>(
   outcomes: readonly T[],
   leader: T | null,
   status: string | null | undefined,
+  marketType?: string | null,
 ): T | null {
   if (status !== "resolved") return null;
+  if (PEER_WINNER_SHAPES.has(marketType ?? "")) {
+    // Counted rather than filtered: the answer is settled by the SECOND grade,
+    // and a participation board carries 163 rows.
+    let graded = 0;
+    for (const outcome of outcomes) {
+      if (outcome?.is_winner === true) {
+        graded += 1;
+        if (graded > 1) return null;
+      }
+    }
+  }
   const featured = pickHeroOutcome(outcomes, leader, true);
   return featured?.is_winner === true ? featured : null;
 }
@@ -584,6 +682,9 @@ export function futuresUnfurlCopy<
   leader: T | null;
   status?: string | null;
   hookDescription?: string | null;
+  /** `FuturesMarket.market_type` (#7906) — optional; `gradedWinner` falls back
+   *  to the outcome-name heuristic when a caller cannot supply it. */
+  marketType?: string | null;
 }): FuturesUnfurlCopy {
   const isResolved = opts.status === "resolved";
   // `is_winner === true` is required before the word "won" is printed, mirroring
@@ -593,7 +694,9 @@ export function futuresUnfurlCopy<
   // #6079 — asked through `gradedWinner` rather than re-derived here, because the
   // unfurl TITLE needs the identical answer and the copy of this test that lived
   // in `layout.tsx` is exactly the one that went missing.
-  const graded = gradedWinner(opts.outcomes, opts.leader, opts.status);
+  // #7906 — the shape travels with the question so the card declines a crown on
+  // exactly the boards the page declines one on, ladders excepted in both.
+  const graded = gradedWinner(opts.outcomes, opts.leader, opts.status, opts.marketType);
   const settledWon = graded !== null;
   // #6301 — THE NAME GOES WITH THE VERDICT, and until now it did not.
   //
