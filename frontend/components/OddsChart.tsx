@@ -47,8 +47,8 @@ import type {
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import {
-  dedupePeriodLabels,
-  assignPeriodLabelRows,
+  collapseDuplicateTransitions,
+  placePeriodLabels,
   anchorPeriodLabels,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
@@ -1361,23 +1361,19 @@ export default function OddsChart({
       parseISO(chartData[chartData.length - 1].timestamp).getTime() -
       parseISO(chartData[0].timestamp).getTime();
 
-    // Minimum spacing before two markers are collapsed into one.
+    // Which period markers get drawn, and where.
     //
-    // UX-P022: this used to be `max(duration * 3%, 2 minutes)`. Label collision
-    // is a function of PIXELS, but the 2-minute floor is a function of TIME, and
-    // the two only agree at one chart length. On a 3-hour game 2 minutes is
-    // ~1% of the width and far too tight; on a 21-minute live game it is ~10% of
-    // the width, so two markers 2 minutes apart were both kept and their labels
-    // printed on top of each other — the unreadable "T9|1" smear on a live Red
-    // Sox chart.
+    // UX-P022: spacing used to be `max(duration * 3%, 2 minutes)`. Label
+    // collision is a function of PIXELS, but the 2-minute floor is a function of
+    // TIME, and the two only agree at one chart length. On a 3-hour game 2
+    // minutes is ~1% of the width and far too tight; on a 21-minute live game it
+    // is ~10% of the width, so two markers 2 minutes apart were both kept and
+    // their labels printed on top of each other — the unreadable "T9|1" smear on
+    // a live Red Sox chart.
     //
-    // Spacing is now purely proportional, so it means the same thing at every
-    // chart length: markers must be at least 7% of the visible width apart, which
-    // is comfortably wider than a 2–4 character period label at 11px.
-    //
-    // The rule itself now lives in `dedupePeriodLabels` and is shared with the
-    // score differential chart below, which carried a private pre-UX-P022 copy
-    // and smeared its inning labels (latency/467). Behaviour here is unchanged.
+    // The rule is purely proportional and lives in `placePeriodLabels`, shared
+    // with the score differential chart below, which carried a private
+    // pre-UX-P022 copy and smeared its inning labels (latency/467).
     const filtered = periodBoundaries
       .filter((b) => {
         const t = parseISO(b.timestamp).getTime();
@@ -1389,16 +1385,24 @@ export default function OddsChart({
       })
       .sort((a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime());
 
-    // Deduplicate: when two boundaries are too close, keep the later one
-    // (e.g., "End of Q2" and "HT" at nearly the same time -> keep "HT")
-    const deduped = dedupePeriodLabels(filtered, chartDuration);
+    // #7876, first of two passes: drop markers that name one moment twice
+    // ("End of 2nd Quarter" then "Halftime"; "end of the 2nd" then "Top 3rd").
+    // Span-independent, because whether two markers mean the same thing is a
+    // fact about the game and not about how wide the chart is.
+    const distinct = collapseDuplicateTransitions(filtered);
 
-    // #6882: a pair can survive the collapse above and STILL be unreadable —
-    // NFL's `HT → Q3` clears 7% by 1.6 minutes and then paints 3.4px apart at
-    // 390px. Collapsing it would delete `HT` (the rule keeps the LATER marker),
-    // so the later label drops a row instead and both stay. Layout only; the set
-    // of markers drawn is exactly what `dedupePeriodLabels` returned.
-    const rowed = assignPeriodLabelRows(deduped, chartDuration);
+    // #6882 / #7876: a crowded pair drops a row rather than losing a label —
+    // NFL's `HT → Q3` is 15 min and paints 3.4px apart at 390px, so one of the
+    // two rows is the only way both survive. A marker is dropped only when
+    // BOTH rows are inside one label's ink, and then the later one wins
+    // ("End of Q2" immediately followed by "HT" -> keep "HT").
+    const rowed = placePeriodLabels(
+      distinct,
+      chartDuration,
+      // The axis the labels are actually painted on. Spacing measured in time
+      // instead of categories smeared `T8`/`T9` by 8px at 390px (#7876).
+      chartData.map((d) => d.timestamp),
+    );
 
     // #7371: every label grows RIGHT out of its rule (UX-P022 — anchoring them
     // all the same way is what makes the gap between two markers the space
@@ -1943,6 +1947,12 @@ export default function OddsChart({
          server render (no viewport), so the stagger is unobservable in the
          markup; this is the same channel CERT-1984 opened for the count. */
       data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
+      /* #7876: WHICH labels survive, in x order — "Q2,HT,Q3,Q4,OT". The count
+         and the rows above cannot answer the question that issue was filed
+         about: a chart that drew `Q2 Q3 Q4 OT` reported four boundaries on two
+         rows and looked healthy, and the only way to see that the missing one
+         was HALFTIME is to read the names. */
+      data-period-labels={filteredPeriodBoundaries.map((b) => b.label).join(",")}
       /* #6987: the end-callout's printed string, on the wrapper, for the same
          reason as the two above — the label is drawn inside a recharts `shape`,
          which renders nothing without a viewport, so a guard reading the markup

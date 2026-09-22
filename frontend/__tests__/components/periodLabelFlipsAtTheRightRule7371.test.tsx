@@ -375,13 +375,49 @@ describe("#7371 — the flip rule itself", () => {
   });
 
   it("flips only the markers with no room to their right", () => {
-    const out = anchorPeriodLabels([at(2 * INK), at(INK + 1000), at(INK - 1000), at(0)], SPAN, END);
+    const out = anchorPeriodLabels([at(2 * INK), at(INK + 1000), at(INK - 1000)], SPAN, END);
     expect(out.map((b) => b.labelPosition)).toEqual([
       "insideTopLeft",
       "insideTopLeft",
       "insideTopRight",
+    ]);
+  });
+
+  it("refuses a flipped label that would paint backwards over its own row", () => {
+    // #7876 — THIS ARM USED TO EXPECT THE SMEAR, and it is worth saying why
+    // rather than quietly restating the number. The case above used to carry a
+    // FOURTH marker at the right rule and assert that it flipped too. Both of
+    // the last two are inside one ink of the end, so they are inside one ink of
+    // EACH OTHER, and a flipped label grows backwards — the fourth was asserted
+    // to paint straight across the third.
+    //
+    // It went unnoticed because the old clearance check compared a flipped
+    // marker against the previous element of the ARRAY: the third had already
+    // been pushed down to row 1, so the fourth saw `prev.labelRow === 1`, skipped
+    // the drop, and stayed on row 0 next to a marker one ink behind it. The
+    // synthetic shape here is exactly what `/events/15313139` paints at 390px,
+    // where `T9` overlapped `T8` by 8px.
+    //
+    // Four markers packed into two inks of the right rule cannot all be drawn.
+    // The one that cannot is the one that is not drawn.
+    const out = anchorPeriodLabels(
+      [at(2 * INK), at(INK + 1000), at(INK - 1000), at(0)],
+      SPAN,
+      END
+    );
+    expect(out).toHaveLength(3);
+    expect(out.map((b) => b.labelPosition)).toEqual([
+      "insideTopLeft",
+      "insideTopLeft",
       "insideTopRight",
     ]);
+
+    // And it is the CROWDING that drops it, not the flip: the same marker at the
+    // right rule with room behind it keeps its caption. This is #7371's own case
+    // — a live `T10` alone at the edge — and it must not have been broken.
+    const roomy = anchorPeriodLabels([at(4 * INK), at(0)], SPAN, END);
+    expect(roomy).toHaveLength(2);
+    expect(roomy[1].labelPosition).toBe("insideTopRight");
   });
 
   it("puts the boundary where the ink runs out, to the millisecond", () => {

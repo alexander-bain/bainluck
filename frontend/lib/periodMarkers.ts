@@ -14,61 +14,30 @@ export interface PeriodBoundary {
 }
 
 /**
- * Minimum gap between two period markers before their LABELS are collapsed into
- * one, as a fraction of the chart's visible time span.
+ * HALF the painted width of one period label, as a fraction of the chart's
+ * visible time span. The number a reader actually feels is
+ * `PERIOD_LABEL_INK_FRACTION` below; this is the historical base it is derived
+ * from, kept because #6882's derivation is written in terms of it.
  *
  * UX-P022 derived this on the win-probability chart: label collision is a
  * function of PIXELS, so the rule has to be purely proportional. The earlier
  * hybrid — `max(duration * N%, some minutes)` — mixes a pixel budget with a time
  * budget, and the two only agree at one chart length: on a three-hour game the
  * minutes floor is far too tight, on a twenty-minute live game it is far too
- * wide. 7% of the visible width is comfortably wider than a 2–4 character period
- * label at 11px, and means the same thing at every chart length.
+ * wide.
+ *
+ * 🪤 IT IS NO LONGER A COLLAPSE THRESHOLD, AND #7876 IS WHY. Read as "markers
+ * closer than 7% of the span are collapsed into one", this number silently
+ * deleted a real boundary as soon as a game ran long — see `placePeriodLabels`.
+ * Nothing compares a gap against it any more; it survives only as the term
+ * `PERIOD_LABEL_INK_FRACTION` is written in.
  */
 export const PERIOD_LABEL_MIN_SPACING_FRACTION = 0.07;
 
 /**
- * Collapse period boundaries whose labels would overlap, keeping the LATER of
- * any too-close pair (so "HT" wins over "Q2 end", which names the same moment
- * better).
- *
- * Input must be timestamp-ascending — each chart bounds and filters the list its
- * own way first, because they disagree on what "on the chart" means: the
- * win-probability chart measures its drawn extent (CERT-1984), the score
- * differential chart requires a drawn score line (CERT-1989). Only the spacing
- * rule is shared, and it is shared because it is the same pixel problem on the
- * same page at the same width.
- *
- * #888-adjacent, routed by latency/467: the score differential chart carried a
- * private copy of the PRE-UX-P022 rule and rendered `TB2`, `TB3`, `T5T6` at
- * 390px while the win-probability chart directly above it spaced the identical
- * innings cleanly. One rule, two call sites, so a third chart cannot inherit the
- * old one by copy-paste.
- */
-export function dedupePeriodLabels<T extends { timestamp: string }>(
-  ascending: T[],
-  chartDurationMs: number,
-): T[] {
-  const minSpacing = chartDurationMs * PERIOD_LABEL_MIN_SPACING_FRACTION;
-  const deduped: T[] = [];
-  for (const b of ascending) {
-    const t = new Date(b.timestamp).getTime();
-    if (deduped.length > 0) {
-      const prevT = new Date(deduped[deduped.length - 1].timestamp).getTime();
-      if (t - prevT < minSpacing) {
-        deduped[deduped.length - 1] = b;
-        continue;
-      }
-    }
-    deduped.push(b);
-  }
-  return deduped;
-}
-
-/**
- * How much wider than the collapse threshold a gap must be before both labels
- * read cleanly on the SAME row. Below this — but above the collapse threshold,
- * so both markers are kept — the later label drops one row.
+ * How much wider than `PERIOD_LABEL_MIN_SPACING_FRACTION` a gap must be before
+ * two labels read cleanly on the SAME row. Below it, the later label drops a
+ * row.
  *
  * #6882 — NFL HALFTIME IS THE PAIR THIS EXISTS FOR, AND IT IS STRUCTURAL.
  * Measured on `/events/14638444` (Bills–Lions) at 390px with
@@ -87,11 +56,16 @@ export function dedupePeriodLabels<T extends { timestamp: string }>(
  * on every NFL game, on the one boundary a reader most needs distinguished.
  *
  * 🪤 RAISING `PERIOD_LABEL_MIN_SPACING_FRACTION` IS THE WRONG FIX, TWICE.
- * `dedupePeriodLabels` keeps the LATER of a too-close pair, so collapsing this
- * one DELETES `HT` from every NFL chart — strictly worse than the crowding. And
+ * Collapsing this pair DELETES `HT` from every NFL chart — the collapse it used
+ * to feed kept the LATER marker — which is strictly worse than the crowding. And
  * the constant is shared by both charts across every sport by deliberate design
  * (#888 / latency/467), so any move is also a claim about innings, halves and
  * hockey periods. The labels must both survive; only their layout changes.
+ *
+ * #7876 proved the second clause from the other direction: nobody raised the
+ * constant, and `HT` was deleted anyway, because OVERTIME RAISED THE SPAN — which
+ * against a purely proportional threshold is arithmetically the same thing. That
+ * is why the threshold no longer decides what survives; see `placePeriodLabels`.
  *
  * WHY 1.8. At 390px the plot is 252px wide (measured, above). Reading the 3.4px
  * gap back through the 5px label offset puts a 2-character label at 11px bold at
@@ -122,51 +96,70 @@ export const PERIOD_LABEL_STAGGER_SPACING_MULTIPLE = 1.8;
 export const PERIOD_LABEL_ROW_HEIGHT_PX = 13;
 
 /**
- * Assign each surviving period label a row — 0 for the top row, 1 for one line
- * down — so that a pair too close to read side by side is spread vertically
- * instead of being collapsed.
+ * How close two period markers have to be before they are read as ONE moment
+ * named twice, rather than as two boundaries.
  *
- * Input must be timestamp-ascending and ALREADY DEDUPED: this decides layout for
- * markers that are being drawn, and says nothing about which markers survive.
- * The two steps are deliberately separate — collapsing is about what the chart
- * claims, staggering is about how it reads.
+ * ⚠️ THE ONE RULE IN THIS MODULE MEASURED IN TIME, AND THE REASON IS THE WHOLE
+ * POINT OF #7876. UX-P022 removed a `max(duration × N%, M minutes)` hybrid and
+ * was right to: that rule's job was stopping two labels PAINTING ON TOP OF EACH
+ * OTHER, which is a question about pixels, and a minutes floor answers it
+ * differently at every chart length. This rule's job is different — "do these
+ * two markers name the same transition?" — and that is a question about the
+ * game, not about the picture. `"End of 2nd Quarter"` and `"Halftime"` are the
+ * same moment whether the chart is twenty minutes wide or six hours. Answering
+ * it proportionally is what broke: at 7% of the span it meant 84 seconds on a
+ * live chart and 15 minutes on an overtime one, so it deleted halftime.
  *
- * The FIRST of a crowded pair keeps the top row and the later one drops. That
- * ordering is not arbitrary: on the pair this was built for the survivor of a
- * collapse would have been `Q3`, so keeping the earlier label prominent is what
- * puts `HT` back where a reader looks for it.
+ * MEASURED, on every derived boundary of four real payloads — two NFL
+ * (14638444 regulation, 14780544 overtime) and two MLB (15313139, 15314713),
+ * 53 adjacent pairs. The gap distribution is not a gradient; it is two clusters
+ * with nothing between them:
  *
- * TWO ROWS ARE PROVABLY ENOUGH, given the collapse rule ran first. A marker only
- * drops when its predecessor is on row 0, so rows alternate at worst. Three
- * consecutive crowded markers put A and C both on row 0 — and every kept pair is
- * at least `PERIOD_LABEL_MIN_SPACING_FRACTION` apart, so A→C is at least twice
- * that (14%), which already clears the 12.6% stagger band. A and C cannot
- * collide, so no third row can be needed.
+ *   60s ×6, 120s ×6   │   240s, 300s ×4, 420s ×2, 442s, 480s ×4, …
+ *   ONE MOMENT, TWICE │   DISTINCT BOUNDARIES
+ *
+ * The low cluster is exactly the shape this exists for: `"end of the 2nd"`
+ * arriving a minute before `"Top 3rd"`, and `"End of 2nd Quarter"` arriving
+ * seconds before `"Halftime"`. The high cluster starts at 240s — `T9 → B9`, a
+ * three-up-three-down half-inning, the tightest genuinely distinct pair any of
+ * the four games contains.
+ *
+ * 150s sits in the empty space between them: 1.6× clear of the tightest real
+ * boundary and 1.25× past the widest duplicate. The margins are deliberately
+ * lopsided toward the real boundary, because the two errors are not equal —
+ * keeping a redundant label is untidy, and deleting a real one is #7876.
  */
-export function assignPeriodLabelRows<T extends { timestamp: string }>(
+export const DUPLICATE_TRANSITION_WINDOW_MS = 150_000;
+
+/**
+ * Collapse markers that name the same transition twice, keeping the LATER —
+ * `"End of 2nd Quarter"` then `"Halftime"` becomes `HT`, and `"end of the 2nd"`
+ * then `"Top 3rd"` becomes `T3`. The later label names the moment better in
+ * every pair the measurement above found.
+ *
+ * Input must be timestamp-ascending. This is the SEMANTIC pass and it knows
+ * nothing about the chart: it removes markers that carry no information, so
+ * that the layout pass below is only ever asked to place boundaries a reader
+ * would actually want distinguished. Keeping the two apart is what stopped a
+ * crowded chart and a repetitive one being answered with one number (#7876).
+ */
+export function collapseDuplicateTransitions<T extends { timestamp: string }>(
   ascending: T[],
-  chartDurationMs: number,
-): Array<T & { labelRow: number }> {
-  const staggerSpacing =
-    chartDurationMs *
-    PERIOD_LABEL_MIN_SPACING_FRACTION *
-    PERIOD_LABEL_STAGGER_SPACING_MULTIPLE;
-  const out: Array<T & { labelRow: number }> = [];
+): T[] {
+  const out: T[] = [];
   for (const b of ascending) {
     const t = new Date(b.timestamp).getTime();
-    let labelRow = 0;
     if (out.length > 0) {
-      const prev = out[out.length - 1];
-      const prevT = new Date(prev.timestamp).getTime();
-      if (t - prevT < staggerSpacing && prev.labelRow === 0) labelRow = 1;
+      const prevT = new Date(out[out.length - 1].timestamp).getTime();
+      if (t - prevT < DUPLICATE_TRANSITION_WINDOW_MS) {
+        out[out.length - 1] = b;
+        continue;
+      }
     }
-    out.push({ ...b, labelRow });
+    out.push(b);
   }
   return out;
 }
-
-/** Where a period label is anchored, in the `ReferenceLine` label's own words. */
-export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
 
 /**
  * Painted width of one period label plus the air a reader needs after it, as a
@@ -175,14 +168,208 @@ export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
  * NOT A NEW NUMBER. It is `PERIOD_LABEL_MIN_SPACING_FRACTION ×
  * PERIOD_LABEL_STAGGER_SPACING_MULTIPLE` — 12.6% — and that product is exactly
  * what #6882 derived it from: a 3-character label at 11px bold is ~24px, plus
- * ~8px of air, on the 252px plot a 390px screen draws, = 32px = 12.7%. #6882
- * spends it on the gap BETWEEN two markers; the rule below spends the same
- * budget on the gap between a marker and the plot's right rule, because it is
- * the same ink measured against a different obstacle. Naming it here is what
- * stops the two drifting into two numbers that mean one thing.
+ * ~8px of air, on the 252px plot a 390px screen draws, = 32px = 12.7%.
+ *
+ * This is the ONLY distance in this module a reader can feel. Two labels closer
+ * than this on the SAME row touch; on different rows they never do, whatever
+ * the gap. Every rule below spends this one budget against a different
+ * obstacle — the next label (`placePeriodLabels`), or the plot's right rule
+ * (`anchorPeriodLabels`) — which is what stops them drifting into several
+ * numbers that mean one thing.
  */
 export const PERIOD_LABEL_INK_FRACTION =
   PERIOD_LABEL_MIN_SPACING_FRACTION * PERIOD_LABEL_STAGGER_SPACING_MULTIPLE;
+
+/**
+ * How many rows of period labels the chart will paint before it gives up and
+ * starts dropping markers.
+ *
+ * TWO, and the cost of a third is the reason. The chip band the chart reserves
+ * above the plot grows a whole `PERIOD_LABEL_ROW_HEIGHT_PX` line per row
+ * (`OddsChart`'s `band` calculation), and that height comes off a 390px phone
+ * chart's drawing area. Two rows buy 2 × (1 / 12.6%) ≈ 15 labels across the
+ * span, which is more than any sport's real boundary count except a deep
+ * baseball game — so the third row would be bought for innings alone, and
+ * innings are the labels a reader needs least.
+ *
+ * It is a BUDGET, not an assumption. `placePeriodLabels` drops a marker only
+ * when this budget is exhausted, and the charts COUNT the rows they actually
+ * got rather than trusting the number (`periodChipRowCount`), so raising it is
+ * a one-line change that nothing downstream has to be told about.
+ */
+export const PERIOD_LABEL_MAX_ROWS = 2;
+
+/**
+ * The chart's own x categories as epoch ms, ascending, or `null` when the caller
+ * did not supply an axis.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL — THE BUDGET IS SPENT IN PIXELS, NOT IN MINUTES.
+ * Every rule in this module is a proportion of the chart's width, and the whole
+ * module used to convert that proportion into a number of MILLISECONDS. That is
+ * only the same thing when the x axis is linear in time, and this one is not: it
+ * is CATEGORICAL (`dataKey="time"`), so a marker is painted at its category's
+ * INDEX and every category is the same width regardless of how much time it
+ * covers. A page whose history starts hours before kickoff has sparse pre-game
+ * categories an hour wide sitting beside in-game categories a minute wide.
+ *
+ * Measured, 2026-09-21, on `/events/15313139` at 390px with the fix in place and
+ * spacing still computed in time: `T8` and `T9` were a full ink-width apart by
+ * the clock and painted 7px apart, boxes OVERLAPPING BY 8px — the `TB2`/`T5T6`
+ * smear #6658 exists to prevent, arriving from the one direction its guard could
+ * not see, because the guard also measured in time. The jest arms were green.
+ *
+ * So positions are category indices whenever the caller knows its axis, and the
+ * millisecond form survives only as a fallback for callers that do not.
+ */
+function categoryAxis(categoryTimestamps?: string[]): number[] | null {
+  if (!categoryTimestamps || categoryTimestamps.length < 2) return null;
+  return categoryTimestamps.map((t) => new Date(t).getTime());
+}
+
+/**
+ * Index of the category a marker is painted on: the last one at or before it,
+ * clamped into the axis. Binary search — this runs per marker per render.
+ */
+function categoryIndex(axis: number[], t: number): number {
+  if (t <= axis[0]) return 0;
+  if (t >= axis[axis.length - 1]) return axis.length - 1;
+  let lo = 0;
+  let hi = axis.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (axis[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Decide which period labels are drawn and on which row, in one pass.
+ *
+ * Returns the survivors, timestamp-ascending, each carrying `labelRow` — 0 for
+ * the top row, 1 for one line down. Input must be timestamp-ascending; each
+ * chart bounds and filters the list its own way first, because they disagree on
+ * what "on the chart" means: the win-probability chart measures its drawn extent
+ * (CERT-1984), the score differential chart requires a drawn score line
+ * (CERT-1989). Only this rule is shared, and it is shared because it is the same
+ * pixel problem on the same page at the same width (#888 / latency/467 — the
+ * score differential chart once carried a private pre-UX-P022 copy and smeared
+ * `TB2`, `TB3`, `T5T6` at 390px while the chart directly above it did not).
+ *
+ * ── #7876: WHY THIS IS ONE PASS AND NOT TWO ──────────────────────────────────
+ *
+ * It used to be two: `dedupePeriodLabels` deleted a marker whose gap to its
+ * predecessor was under 7% of the span, then `assignPeriodLabelRows` dropped a
+ * row for anything still under 12.6%. On the completed Chiefs 33–30 Colts page
+ * the win-probability chart read `Q2 Q3 Q4 OT`. There was no `HT`.
+ *
+ * The game's `HT → Q3` gap is 15.01 min — NFL halftime is structurally ~15 min —
+ * and overtime stretched the span to 215.0 min, so the threshold was
+ * 0.07 × 215.0 = 15.05 min. Halftime lost by 2.4 SECONDS, and because the
+ * collapse kept the LATER of a too-close pair, the label the reader lost was the
+ * one it most wanted. On a regulation broadcast (191.6 min) the identical pair
+ * clears the identical threshold and both labels are drawn, staggered. So the
+ * marker APPEARED IN REGULATION AND VANISHED WHEN THE GAME WENT TO OVERTIME —
+ * visible to a reader who never reloaded.
+ *
+ * 🪤 THE FIRST PASS WAS ANSWERING A QUESTION THE SECOND PASS ALREADY OWNED.
+ * A pairwise gap threshold cannot tell "one crowded pair on an otherwise empty
+ * chart" from "a chart too dense to lay out" — and only the second is a reason
+ * to delete anything. Five markers over 215 minutes need 5 × 12.6% = 63% of one
+ * row's ink; KC–IND had room to spare and still lost a boundary.
+ *
+ * 🪤 AND LOWERING THE 7% WOULD HAVE BEEN A DEFERRAL, NOT A FIX. Halftime
+ * survives while `15 min > threshold × span`, so every constant just names the
+ * span at which the bug comes back: 7% fails past 214 min, 6.3% past 238 min.
+ * Double overtime finds the next one. The defect is the SHAPE of the rule.
+ *
+ * ── WHAT DECIDES IT NOW ──────────────────────────────────────────────────────
+ *
+ * A marker is drawn if there is a row with room for it, and dropped only when
+ * there is not. "Room" is `PERIOD_LABEL_INK_FRACTION` clear of whatever that row
+ * last drew — the actual painted width of a label, which is the actual reason
+ * two labels cannot share a spot. Consecutive markers need NO horizontal gap at
+ * all when they land on different rows, because labels one line apart cannot
+ * touch however close their rules are.
+ *
+ * This is strictly more permissive than the pair of rules it replaces — the old
+ * collapse fired at 7% where collision starts at 12.6%, so it was deleting
+ * markers the layout could always have drawn — and it is the same anti-smear
+ * guarantee stated honestly for the first time. The old invariant, "no two
+ * survivors closer than 7%", never implied legibility: 7% is INSIDE one label's
+ * ink, which is exactly why #6882 had to add staggering behind it. The invariant
+ * now is the one a reader can check: NO TWO LABELS ON THE SAME ROW ARE CLOSER
+ * THAN ONE LABEL'S INK.
+ *
+ * ── THE TWO ORDERING RULES, BOTH LOAD-BEARING ────────────────────────────────
+ *
+ * LOWEST ROW WINS, so the FIRST of a crowded pair keeps the top row and the
+ * later one drops. Not arbitrary: on the pair this was built for, the survivor
+ * of the old collapse was `Q3`, so keeping the earlier label prominent is what
+ * puts `HT` back where a reader looks for it.
+ *
+ * ON OVERFLOW THE LATER MARKER WINS, replacing the last one placed, in its row.
+ * That is the old collapse's rule kept deliberately: on a ladder too dense to
+ * draw whole, the newer boundary is the one a reader following the game wants.
+ *
+ * Input should already have run through `collapseDuplicateTransitions`, which
+ * removes the markers that name a moment twice. This pass cannot tell a
+ * redundant marker from a real one and must not try — that is the separation
+ * #7876 turns on.
+ *
+ * `categoryTimestamps` is the chart's own x categories, in order. PASS IT: it is
+ * what makes the spacing a statement about painted distance rather than about
+ * elapsed time, and those differ by enough to smear labels on any page with
+ * pre-game history (see `categoryAxis`). `chartDurationMs` is then only the
+ * fallback for a caller with no axis to hand.
+ */
+export function placePeriodLabels<T extends { timestamp: string }>(
+  ascending: T[],
+  chartDurationMs: number,
+  categoryTimestamps?: string[],
+): Array<T & { labelRow: number }> {
+  const axis = categoryAxis(categoryTimestamps);
+  const span = axis ? axis.length - 1 : chartDurationMs;
+  const ink = span * PERIOD_LABEL_INK_FRACTION;
+  const at = (iso: string) =>
+    axis ? categoryIndex(axis, new Date(iso).getTime()) : new Date(iso).getTime();
+
+  const out: Array<T & { labelRow: number }> = [];
+  // Where each row last drew a label. `-Infinity` reads as "this row is empty",
+  // so an empty row always has room and needs no separate case.
+  const rowLastMs: number[] = new Array(PERIOD_LABEL_MAX_ROWS).fill(-Infinity);
+
+  for (const b of ascending) {
+    const t = at(b.timestamp);
+
+    const row = rowLastMs.findIndex((lastMs) => t - lastMs >= ink);
+
+    if (row === -1) {
+      // Every row is still inside one label's ink: this marker cannot be drawn
+      // anywhere. Hand its position to the last marker placed — the later label
+      // wins — rather than dropping it and leaving the earlier one to stand for
+      // a moment that has moved on.
+      //
+      // No emptiness guard, and it is not an omission: every row starts at
+      // `-Infinity`, so the FIRST marker always finds room while
+      // `PERIOD_LABEL_MAX_ROWS >= 1`. Reaching here therefore means something
+      // was already placed. A `if (prev)` beside it would be a condition that
+      // cannot be false, which reads as a handled case and is not one.
+      const prev = out[out.length - 1];
+      rowLastMs[prev.labelRow] = t;
+      out[out.length - 1] = { ...b, labelRow: prev.labelRow };
+      continue;
+    }
+
+    rowLastMs[row] = t;
+    out.push({ ...b, labelRow: row });
+  }
+
+  return out;
+}
+
+/** Where a period label is anchored, in the `ReferenceLine` label's own words. */
+export type PeriodLabelPosition = "insideTopLeft" | "insideTopRight";
 
 /**
  * Choose which side each period label grows out of, and drop a row where that
@@ -225,9 +412,33 @@ export const PERIOD_LABEL_INK_FRACTION =
  * `ResponsiveContainer width="100%"` and never learn their pixel width, so the
  * rule stays proportional like every other rule here.
  *
- * Input must be timestamp-ascending and ALREADY ROWED by
- * `assignPeriodLabelRows`: this is the second layout pass and it only ever
- * raises a row, never lowers one.
+ * Input must be timestamp-ascending and ALREADY PLACED by `placePeriodLabels`:
+ * this is the second layout pass and it only ever raises a row, never lowers
+ * one.
+ *
+ * ── #7876: THE CLEARANCE CHECK WAS ASKING THE WRONG NEIGHBOUR ────────────────
+ *
+ * A flipped label grows LEFTWARD out of its rule, so the marker it can collide
+ * with is the one BEHIND it — and only the one behind it ON ITS OWN ROW, since
+ * labels a row apart cannot touch. This used to compare against
+ * `out[out.length - 1]`, the previous marker in the ARRAY, which with two rows
+ * in play is usually on the other row; the check then read `prev.labelRow === 0`
+ * as false and silently passed.
+ *
+ * Measured on `/events/15313139` at 390px, both charts: `T9` is last, so it
+ * flips; its predecessor in the array is `End 8th` on row 1, so no drop fired;
+ * and its actual row-0 neighbour `T8` sat 31px away — inside the 64px a flipped
+ * label needs — so `T9`'s caption painted backwards across `T8`, OVERLAPPING IT
+ * BY 8px. That is the `TB2`/`T5T6` smear #6658 exists to prevent, on the pair
+ * neither the spacing rule nor the row rule could see, because both had already
+ * done their jobs correctly.
+ *
+ * A FLIPPED LABEL WITH ROOM ON NEITHER ROW IS NOT DRAWN. It needs twice the
+ * budget (UX-P022: two labels either side of a gap grow toward each other), and
+ * when neither row can give it that, the choice is a smear or a missing caption.
+ * #3541 made the same trade for the `Final` marker and it is the right one: an
+ * unreadable label is worse than an absent one, and this only ever reaches the
+ * newest marker at the right edge.
  */
 export function anchorPeriodLabels<T extends { timestamp: string; labelRow: number }>(
   ascending: T[],
@@ -236,21 +447,33 @@ export function anchorPeriodLabels<T extends { timestamp: string; labelRow: numb
 ): Array<T & { labelPosition: PeriodLabelPosition }> {
   const ink = chartDurationMs * PERIOD_LABEL_INK_FRACTION;
   const out: Array<T & { labelPosition: PeriodLabelPosition }> = [];
+
+  /** How far this marker sits from the last label drawn on `row`. */
+  const clearanceOn = (row: number, t: number) => {
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].labelRow === row) return t - new Date(out[i].timestamp).getTime();
+    }
+    return Infinity; // nothing on that row yet
+  };
+
   for (const b of ascending) {
     const t = new Date(b.timestamp).getTime();
     // Room to the right of this marker, measured against the plot's right rule.
     const flip = chartEndMs - t < ink;
-    let labelRow = b.labelRow;
-    if (flip && out.length > 0) {
-      const prev = out[out.length - 1];
-      const prevT = new Date(prev.timestamp).getTime();
-      if (t - prevT < 2 * ink && prev.labelRow === 0) labelRow = 1;
+
+    if (!flip) {
+      out.push({ ...b, labelPosition: "insideTopLeft" });
+      continue;
     }
-    out.push({
-      ...b,
-      labelRow,
-      labelPosition: flip ? "insideTopRight" : "insideTopLeft",
-    });
+
+    // Flipped: it grows backwards, so it needs two inks of clear room behind it
+    // on whichever row it lands on. Its own row first — this pass raises a row,
+    // never lowers one, so row 1 stays on row 1.
+    const rows = b.labelRow === 0 ? [0, 1] : [1];
+    const row = rows.find((r) => clearanceOn(r, t) >= 2 * ink);
+    if (row === undefined) continue; // no room on any row: draw no marker here
+
+    out.push({ ...b, labelRow: row, labelPosition: "insideTopRight" });
   }
   return out;
 }

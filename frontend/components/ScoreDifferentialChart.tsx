@@ -35,8 +35,8 @@ import type {
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
 import {
-  dedupePeriodLabels,
-  assignPeriodLabelRows,
+  collapseDuplicateTransitions,
+  placePeriodLabels,
   anchorPeriodLabels,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
@@ -735,22 +735,32 @@ export default function ScoreDifferentialChart({
       })
       .sort((a, b) => parseISO(a.timestamp).getTime() - parseISO(b.timestamp).getTime());
 
-    // UX-P022's spacing rule, shared with the win-probability chart above rather
-    // than copied. This chart used to run `max(duration * 5%, 3 minutes)` — the
-    // hybrid pixel/time form UX-P022 removed — and the 12-label modulo cap below
-    // it, which decimated by INDEX and so dropped markers without reference to
-    // whether they were actually close together.
-    const deduped = dedupePeriodLabels(filtered, chartDuration);
+    // #7876, first of two passes: drop markers that name one moment twice
+    // ("end of the 2nd" then "Top 3rd"). Span-independent, because whether two
+    // markers mean the same thing is a fact about the game, not the chart.
+    const distinct = collapseDuplicateTransitions(filtered);
 
-    // #6882's stagger, shared with the win-probability chart for the same reason
-    // the collapse rule is: it is the same pixel problem on the same page at the
-    // same width, and this chart measured 5.5px of clear space between `HT` and
-    // `Q3` where the one above measured 3.4px. A private copy is how `TB2`/`T5T6`
+    // UX-P022's spacing rule and #6882's stagger, now one pass and shared with
+    // the win-probability chart above rather than copied. This chart used to run
+    // `max(duration * 5%, 3 minutes)` — the hybrid pixel/time form UX-P022
+    // removed — and the 12-label modulo cap below it, which decimated by INDEX
+    // and so dropped markers without reference to whether they were actually
+    // close together.
+    //
+    // It is shared because it is the same pixel problem on the same page at the
+    // same width: this chart measured 5.5px of clear space between `HT` and `Q3`
+    // where the one above measured 3.4px. A private copy is how `TB2`/`T5T6`
     // happened; there is exactly one implementation and both charts call it.
-    const rowed = assignPeriodLabelRows(deduped, chartDuration);
+    const rowed = placePeriodLabels(
+      distinct,
+      chartDuration,
+      // The axis the labels are actually painted on. Spacing measured in time
+      // instead of categories smeared `T8`/`T9` by 8px at 390px (#7876).
+      chartData.map((d) => d.timestamp),
+    );
 
-    // #7371's flip, shared with the win-probability chart for the third time in
-    // this pipeline (collapse, stagger, anchor): a marker on the LAST CATEGORY
+    // #7371's flip, shared with the win-probability chart for the second time in
+    // this pipeline (place, anchor): a marker on the LAST CATEGORY
     // has nowhere to grow a left-anchored label but out of the svg, which is how
     // a live `T10` reached the page as a bare `T` on the chart above. This chart
     // uses the same anchor at the same width, so it clips the same way; the rule
@@ -920,6 +930,12 @@ export default function ScoreDifferentialChart({
          server render (no viewport), so the stagger is unobservable in the
          markup; this is the same channel CERT-1984 opened for the count. */
       data-period-label-rows={filteredPeriodBoundaries.map((b) => (b as { labelRow?: number }).labelRow ?? 0).join(",")}
+      /* #7876: WHICH labels survive, in x order — "Q2,HT,Q3,Q4,OT". The count
+         and the rows above cannot answer the question that issue was filed
+         about: a chart that drew `Q2 Q3 Q4 OT` reported four boundaries on two
+         rows and looked healthy, and the only way to see that the missing one
+         was HALFTIME is to read the names. */
+      data-period-labels={filteredPeriodBoundaries.map((b) => b.label).join(",")}
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
