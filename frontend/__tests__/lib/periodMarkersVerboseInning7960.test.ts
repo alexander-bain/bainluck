@@ -89,25 +89,31 @@ describe("#7960 — the verbose inning form is a marker, not a caption", () => {
     expect(normalizePeriodLabel("Middle 8th")).toBe("");
   });
 
-  it("CONTROL: `End 8th` keeps its PRE-EXISTING value, which is not the one the code reads as", () => {
+  it("`End 8th` is DROPPED — the open question this control left has been settled by #7982", () => {
     // 🪤 THIS CONTROL WAS WRITTEN ASSERTING `""` AND IT FAILED — against the
-    // PARENT COMMIT as well as this one, which is the only reason it is worth
-    // a test of its own.
+    // PARENT COMMIT as well as this one, which is the only reason it was worth
+    // a test of its own. It then pinned `"8"`, the value master produced, and
+    // said in as many words that whether `"8"` was RIGHT (against `""`, or a
+    // `/8` end-marker) was a live question this ship would not settle.
     //
-    // `iMatch` lists `end` among the half-inning prefixes it drops, so reading
-    // the function top-to-bottom says `"End 8th"` -> `""`. It does not: the
-    // `isEnd` detection ~30 lines above STRIPS `^(?:end|start)\s+(?:of\s+)?`
-    // before `iMatch` ever runs, so by then the string is `"8th"` and the
-    // plain-ordinal branch answers it. `iMatch`'s `|end` alternative is
-    // unreachable for this form.
+    // #7982 settled it: `""`. The reasoning the control recorded was the whole
+    // case — `iMatch` lists `end` among the prefixes it drops, but the `isEnd`
+    // detection ~30 lines above STRIPS `^(?:end|start)\s+(?:of\s+)?` before
+    // `iMatch` runs, so by then the string is `"8th"` and the plain-ordinal
+    // branch answers it. That branch now returns `""` when `isEnd`, and the
+    // dead `|end` alternative is gone rather than left to mislead a third
+    // reader. `"End 8"` lands one branch further on (no suffix, no unit) and is
+    // dropped there for the same reason, so the two spellings agree.
     //
-    // Pinned at the value master actually produces, verified by probing the
-    // parent commit rather than assumed, so this fix cannot be blamed for it
-    // and a future reader is not misled by the `|end` in the source. Whether
-    // `"8"` is the RIGHT answer here (against `""`, or a `/8` end-marker) is a
-    // live question and deliberately not settled by this ship.
-    expect(normalizePeriodLabel("End 8th")).toBe("8");
-    expect(normalizePeriodLabel("End 8")).toBe("8");
+    // Measured over ux/1433's 70-event / 7-sport corpus: 10 charts changed, all
+    // baseball; no non-baseball end marker reaches either branch (they carry
+    // their unit word and become `/Q3`, `/P1`); no label gained anywhere.
+    expect(normalizePeriodLabel("End 8th")).toBe("");
+    expect(normalizePeriodLabel("End 8")).toBe("");
+    // The START forms this file exists to protect are untouched — a drop that
+    // reached them would be a #7960 regression, not a #7982 fix.
+    expect(normalizePeriodLabel("8th Inning")).toBe("8");
+    expect(normalizePeriodLabel("8th")).toBe("8");
   });
 
   it("CONTROL: an unknown label is still returned verbatim, not truncated to a digit", () => {

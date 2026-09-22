@@ -878,11 +878,26 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
   if (hMatch) return isEnd ? `/${hMatch[1]}H` : `${hMatch[1]}H`;
 
   // Baseball innings: "Top 3rd" → "T3", "Bottom 5th" → "B5"
-  // Skip "Middle" and "End" to avoid chart clutter — only show half-inning starts
-  const iMatch = s.match(/^(top|bottom|mid(?:dle)?|end)\s+(\d+)/i);
+  // Skip "Middle" to avoid chart clutter — only show half-inning starts.
+  //
+  // 🪤 "End" IS NOT IN THIS ALTERNATION, AND ITS ABSENCE IS THE FIX FOR #7982.
+  // It used to be, and the branch was unreachable for every input: the `isEnd`
+  // strip ~27 lines above consumes the word, so `"End 8th"` arrives here as
+  // `"8th"` and `"End of 8th Inning"` as `"8th Inning"` — neither matches a
+  // pattern anchored on `^(top|bottom|…)`. Both fell through to the ordinal
+  // branch below and painted a BARE DIGIT on the chart (`T7  8  T9`), which is
+  // the one label on the strip that does not name its half-inning and is not a
+  // half-inning at all. `Middle` never had the problem because nothing strips
+  // it. Two halves of one comment, two different behaviours.
+  //
+  // The drop now happens where the stripped string actually lands — at
+  // `ordMatch` below, keyed on `isEnd` — so it cannot be un-reached again by a
+  // change to the prefix strip. Listing `end` here as well would restore a
+  // second, dead spelling of the same rule, which is what misled two readers.
+  const iMatch = s.match(/^(top|bottom|mid(?:dle)?)\s+(\d+)/i);
   if (iMatch) {
     const half = iMatch[1].toLowerCase();
-    if (half === "mid" || half === "middle" || half === "end") return "";
+    if (half === "mid" || half === "middle") return "";
     const prefix = iMatch[1][0].toUpperCase();
     return `${prefix}${iMatch[2]}`;
   }
@@ -913,15 +928,48 @@ export function normalizePeriodLabel(raw: string, sport?: string | null): string
   // `labelBarePeriod` below, which completes it from the sport, and quietly
   // swallowing it here would silently revert that. Anchored, so "8th Inning
   // Stretch" stays unknown and falls through to `return s` as it should.
+  //
+  // #7982 — AN "End of" ORDINAL IS DROPPED, NOT NUMBERED. Everything above about
+  // the bare number is about the START of an inning, which is a thing that
+  // happened at a time. `"End of 8th Inning"` is the other edge of the same
+  // inning and the baseball branch has always meant to skip it; this is the line
+  // that now does it, because the alternation up there never could.
+  //
+  // UNCONDITIONAL ON SPORT, MEASURED RATHER THAN ASSUMED. The worry is that this
+  // branch is shared, so dropping here might silently delete a marker some other
+  // sport needs. It does not: across ux/1433's 70-event / 7-sport corpus every
+  // end-prefixed string in football, basketball and hockey carries its unit word
+  // (`End of 3rd Quarter`, `End of 1st Period`) and is consumed by `qMatch` /
+  // `pMatch` into `/Q3`, `/P1` long before it gets here — 267 of them, none a
+  // bare digit — while soccer and MMA emit none at all. The 242 that DID reach
+  // this line were baseball, every one. (`artifacts/ux-1434/reach-7982-*.json`.)
+  //
+  // So the sport gate would have been dead weight, and leaving it off is also the
+  // safe direction for a shape nobody has seen yet: an unrecognised `End of Nth`
+  // becomes a hole rather than a confident `N` asserting that period N STARTED
+  // here when what was observed is that it ended.
   const ordMatch = s.match(/^(\d+)(?:(?:st|nd|rd|th)(?:\s+inning)?|\s+inning)$/i);
-  if (ordMatch) return ordMatch[1];
+  if (ordMatch) return isEnd ? "" : ordMatch[1];
 
   // #4888: a BARE number is the one member of the "already short" set below that
   // does not name its own unit — `Q1`, `P2`, `1H`, `OT`, `HT` all do. Complete it
   // from the sport when we know it; fall through to the old behaviour when we
   // don't, or when the sport has no honest completion (baseball).
+  //
+  // #7982, the same rule one spelling over. `"End 8"` reaches HERE, not the
+  // ordinal branch, because it carries neither an ordinal suffix nor the unit —
+  // so a drop keyed only on `ordMatch` would leave the two spellings of one
+  // marker behaving differently, which is the exact defect this ship is closing.
+  // It is also the worse half: `labelBarePeriod` COMPLETES a bare number from
+  // the sport, so `"End of 3"` on a football feed becomes `Q3` — not a terse
+  // label but a false one, a quarter asserted to START where it was seen to end.
+  //
+  // Zero occurrences in the 70-event corpus, so this changes no chart today and
+  // is a consistency arm rather than a reader-visible fix. It is here because
+  // the reach of the form is not the reach of the rule, and #7960's control
+  // pinned `"End 8" -> "8"` as an open question rather than a settled answer.
   const bare = s.match(/^(\d+)$/);
-  if (bare) return labelBarePeriod(bare[1], sport) ?? s;
+  if (bare) return isEnd ? "" : labelBarePeriod(bare[1], sport) ?? s;
 
   // Already short like "Q1", "P2", "1H", "OT"
   if (/^(Q\d|P\d|\d+H|OT\d?|HT|\d+)$/i.test(s)) return s.toUpperCase();
