@@ -14,6 +14,7 @@ from collections import defaultdict
 from typing import Callable, Sequence
 
 from app.models import FuturesMarket
+from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -171,6 +172,58 @@ def is_resolved(market: FuturesMarket) -> bool:
 def clean_outcomes(outcomes: list) -> list:
     """Filter garbage placeholder outcomes."""
     return [o for o in outcomes if not GARBAGE_OUTCOME_RE.match(o.name or "")]
+
+
+def clean_and_dedupe_outcomes(outcomes: list) -> list:
+    """:func:`clean_outcomes`, then #2427's duplicate-leg drop.
+
+    A SEPARATE function rather than a widening of :func:`clean_outcomes`, which
+    means one thing and is what several docstrings elsewhere cite by name: drop
+    the ``Person XX`` placeholder rows. This is the pair of filters every
+    reader-facing row on the three themed dashboards needs.
+
+    #2427. :func:`~app.utils.duplicate_condition_outcomes.drop_duplicate_legs`
+    (#2434, shipped 2026-08-31) removes a Polymarket ``{condition}_yes``/``_no``
+    leg when the bare condition rung is present on the SAME market — three rows
+    describing one condition. It has run in ``routes/feed.py``,
+    ``routes/futures.py`` and ``routes/events.py`` since it shipped and has
+    NEVER run in ``routes/politics.py``, ``routes/entertainment.py`` or
+    ``routes/economics.py``, so those three pages are the last surfaces serving
+    the exact shape the fix was written for. The defect was not absent here; the
+    fix was unwired here.
+
+    Measured on production 2026-09-22 13:50Z — ``/api/entertainment`` card
+    61858010, *"What will MrBeast say during his next gaming YouTube video?"* —
+    the market holds ``0xe54e…172e`` "Prize" 0.505 alongside
+    ``0xe54e…172e_no`` "No" 0.495 and ``0xe54e…172e_yes`` "Yes" 0.505, and the
+    card answered its own question **"Prize 51% / Yes 51% / No 50%"** off a
+    14-rung ladder. Through here it reads Prize / Build / Minecraft and
+    ``outcome_count`` 14 → 12.
+
+    ⚠️ THIS IS NOT THE WHOLE OF #2427, deliberately. The nine Kalshi rows on the
+    same pages (``KXAMBMALAY-26JAN06-JAN01`` and siblings) carry plain tickers
+    with no ``_yes`` suffix and no stripped twin, so they do not match this
+    discriminator and are untouched by it — a real unlabelled terminal leg
+    inside a date ladder, which is its own row and its own rule. Widening this
+    predicate to reach them is what the second half of ``drop_duplicate_legs``'
+    docstring exists to forbid.
+
+    Scoped per market by construction: every caller passes ONE market's
+    ``outcomes``, which is the scoping
+    :func:`~app.utils.duplicate_condition_outcomes.duplicate_leg_external_ids`
+    documents as the caller's own to hold.
+
+    ``getattr`` with a default, not ``o.external_id``: the column is nullable,
+    and a row whose id we cannot read is a row we cannot PROVE is a duplicate
+    leg, so it must survive. :func:`binary_leg_base` already returns ``None``
+    for ``None``, so the two agree and the filter fails safe in the direction
+    that keeps a rung on the page. It is also the rule ``routes/feed.py`` states
+    for the same shape — a reduced fixture that does not carry the attribute
+    must mean UNKNOWN, not raise.
+    """
+    return drop_duplicate_legs(
+        clean_outcomes(outcomes), lambda o: getattr(o, "external_id", None)
+    )
 
 
 def normalize_question(q: str) -> str:

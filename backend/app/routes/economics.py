@@ -21,12 +21,17 @@ from app.models import FuturesMarket, FuturesOutcome
 from app.services import get_db
 from app.utils.cross_source_matching import (
     GARBAGE_OUTCOME_RE,
-    clean_outcomes as _clean_outcomes,
+    # #2427 — the deduping pair, not bare `clean_outcomes`: every row this file
+    # builds must also lose a Polymarket `_yes`/`_no` leg that duplicates a rung
+    # already on the same market. Aliased so all of this file's existing call
+    # sites pass through it unchanged.
+    clean_and_dedupe_outcomes as _clean_outcomes,
     find_cross_source_markets,
     group_markets_by_group_id,
     is_resolved as _is_resolved,
     source as _source,
 )
+from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
 from app.utils.economics_headline import (
     LadderCandidate,
     RecessionCandidate,
@@ -147,7 +152,30 @@ def _classify_theme(market: FuturesMarket) -> str:
 
 
 def _outcomes_sorted(market: FuturesMarket) -> list:
-    return sorted(market.outcomes, key=lambda o: o.rank or 0)
+    # #2427 — THE SECOND SEAM IN THIS FILE, and the reason wiring the
+    # `_clean_outcomes` alias alone would have left this page almost unfixed.
+    # `_market_row` reaches the dedupe through that alias, but twelve other call
+    # sites in this file — the ladder, partition and section builders, and
+    # `_render_multi_outcome`, which renders every market `_market_row` refuses
+    # above five outcomes — come through HERE and read `market.outcomes` raw.
+    #
+    # Deduping in both places is also what keeps the two halves of one decision
+    # agreeing: a market of four real rungs plus a `_yes`/`_no` pair counts as
+    # six to `_render_multi_outcome`'s `min_outcomes` floor and as four to
+    # `_market_row`'s five-outcome ceiling, so fixing only one seam would let a
+    # market be rendered twice, or by neither.
+    #
+    # Dedupe only, NOT `clean_outcomes`: this helper's contract is ordering, and
+    # the `Person XX` placeholder filter is a separate question its callers
+    # answer for themselves.
+    #
+    # `getattr` with a default for the reason `clean_and_dedupe_outcomes` gives:
+    # `external_id` is nullable, and a row whose id we cannot read cannot be
+    # PROVEN a duplicate leg, so it survives.
+    return sorted(
+        drop_duplicate_legs(market.outcomes, lambda o: getattr(o, "external_id", None)),
+        key=lambda o: o.rank or 0,
+    )
 
 
 # A leader name that would tell the reader nothing they don't already have.
