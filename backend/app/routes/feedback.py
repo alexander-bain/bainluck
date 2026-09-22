@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, field_validator as pydantic_field_validator
 from sqlalchemy import select, update, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -199,10 +199,40 @@ class BugReportSubmission(BaseModel):
         return v
 
 
+def _enqueue_bug_report_github_issue(report_id: int) -> None:
+    """Best-effort enqueue of the GitHub-issue task for a stored bug report.
+
+    Synchronous by design (#1703): the caller schedules it as a Starlette
+    background task, so the blocking kombu publish runs in the threadpool after
+    the response has been sent instead of on the event loop in front of it.
+
+    A broker outage must not fail the submission — anonymous reporting keeps
+    working (gotcha #29) — but it must not pass silently either. What the log
+    can honestly say is bounded by what a raised publish actually proves: kombu
+    can fail *after* the message reached the broker, so the failure is
+    AMBIGUOUS. The warning therefore says the enqueue was not CONFIRMED; it
+    never claims no GitHub issue will be created, because that is a fact this
+    frame does not have.
+    """
+    try:
+        from app.tasks import celery_app
+        celery_app.send_task(
+            "app.tasks.create_github_issue_for_bug_report", args=[report_id]
+        )
+    except Exception:
+        logger.warning(
+            "Bug report #%d stored but its GitHub-issue enqueue was not "
+            "confirmed; the task may or may not have been queued",
+            report_id,
+            exc_info=True,
+        )
+
+
 @router.post("/bug-report")
 async def submit_bug_report(
     request: Request,
     body: BugReportSubmission,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_rw),
     user: User | None = Depends(get_optional_user),
 ):
@@ -230,10 +260,17 @@ async def submit_bug_report(
         (body.description or "")[:50],
     )
 
-    try:
-        from app.tasks import celery_app
-        celery_app.send_task("app.tasks.create_github_issue_for_bug_report", args=[report.id])
-    except Exception:
-        pass
+    # #1703: `send_task` is a blocking kombu publish (~19s against a dead
+    # broker) and used to run inline here, in an `async def`, holding the event
+    # loop and the reader's 200 behind it. As a background task it runs after
+    # the response is sent, in Starlette's threadpool.
+    #
+    # What that buys, stated no larger than it is: the submission itself never
+    # waits on the broker. It does NOT make concurrent requests immune — the
+    # threadpool is shared and finite, so enough simultaneously blocked
+    # publishes can still make other threadpool work queue behind them. And it
+    # is best-effort, not durable: a background task is process-local and dies
+    # with the dyno, which is why the helper logs loudly instead of pretending.
+    background_tasks.add_task(_enqueue_bug_report_github_issue, report.id)
 
     return {"status": "ok", "id": report.id, "category": report.category}
