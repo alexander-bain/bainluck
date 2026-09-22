@@ -5726,6 +5726,7 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         is_complete,
         merge_futures_rows,
         note_unit_cancelled,
+        packing_split_factor,
         plan_units,
         refine_unit,
         retain_planned_units,
@@ -5949,6 +5950,88 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
                 "banked — %d ms left, worst unit %d ms",
                 stop_reason, done, len(chunks), max(0, remaining_ms), int(worst_unit_ms),
             )
+            # -- #6599: A SLOW SUCCESS IS EVIDENCE ABOUT THE PLAN TOO ----------
+            #
+            # Every refinement in this loop lives in the ``except`` branch
+            # below, and so keys on a CANCELLATION. The slot just declined did
+            # not cancel; nothing about it failed. What declined it is the
+            # measured cost of the units this build COMPLETES — and if that cost
+            # cannot fit into a whole beat twice, then no beat can ever run two
+            # units, the build is pinned at one per hour, and under the
+            # cancellation rules every slot in it is healthy and asks for
+            # nothing. That is the state production reached: 108/203 banked, one
+            # 726,124 ms unit per 1,336,679 ms beat, 46% of every window
+            # unusable, and the accuracy page serving a seven-day-old bank
+            # because a build that never fails never triggers its own repair.
+            #
+            # Measured against the WHOLE window and never against
+            # ``remaining_ms``, and that distinction is the entire guard: "this
+            # beat is spent" is the normal, correct end of a healthy beat and
+            # must cut nothing, while "no beat could hold two of these" is a
+            # statement about the PARTITION and is the only one that licenses a
+            # cut. Because the predicate reads neither ``remaining_ms`` nor
+            # ``stop_reason``, it is equally sound on both stop reasons and is
+            # not branched on them.
+            #
+            # Slot-local, and unbanked twice over: the loop skipped every banked
+            # chunk above, and ``refine_unit`` refuses ``SPLIT_BANKED`` besides.
+            # So the 108 units already in the cursor cannot be re-planned by
+            # this, which is the property that makes it safe to do mid-build.
+            unit_reference_ms = max(float(worst_unit_ms or 0.0), prior_unit_ms)
+            beat_window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
+            packing_factor = packing_split_factor(
+                unit_reference_ms, beat_window_ms, safety=STAGED_UNIT_WINDOW_SAFETY
+            )
+            packing_ref = slot_ref(chunk)
+            if not packing_factor:
+                # Recorded on every decline that does NOT cut, because "the slot
+                # fits and this beat simply ran out" and "the beat never got as
+                # far as asking" must not render the same (gotcha #53).
+                runner.ledger.record_gauge("staged:unit_packs_in_window", 1)
+            else:
+                runner.ledger.record_gauge(
+                    f"staged:unit_packing_factor:{packing_ref}", packing_factor
+                )
+                cursor, packing_outcome = refine_unit(
+                    cursor, chunk, factor=packing_factor
+                )
+                # The four ``SPLIT_*`` refusals mean four different things and
+                # "the evidence was conclusive and the cut was refused" must read
+                # apart from "no cut was owed" (gotcha #53).
+                runner.ledger.record_gauge(
+                    f"staged:unit_packing_split:{packing_outcome}:{packing_ref}",
+                    packing_factor,
+                )
+                logger.warning(
+                    "calibration staged futures: slot %s completes at %d ms against a "
+                    "%d ms beat window — no beat can hold two, refinement %s "
+                    "(factor %d, %d/%d units banked)",
+                    packing_ref, int(unit_reference_ms), int(beat_window_ms),
+                    packing_outcome, packing_factor, done, len(chunks),
+                )
+                if packing_outcome == SPLIT_APPLIED:
+                    runner.ledger.record_stage("staged:units_split", 1)
+                    # The refinement lives on the CURSOR and this beat is over
+                    # one line below. Unpersisted it is forgotten, the next beat
+                    # cuts nothing, and the ceiling stands — the same REMEMBER IT
+                    # the cancellation path exists for. ``banks_a_unit=False``:
+                    # nothing completed here, so a failed write is not an
+                    # unbanked completion and must not be subtracted from this
+                    # beat's completed count (CAL-P1302). A failed write costs
+                    # the memory of this cut and nothing else — the bank is
+                    # untouched — so it is logged and the beat ends as it would
+                    # have anyway.
+                    if not await save_staged_cursor(
+                        cursor, terminal=TERMINAL_PARTIAL, banks_a_unit=False
+                    ):
+                        runner.ledger.record_gauge(
+                            "staged:unit_packing_not_persisted", 1
+                        )
+                        logger.warning(
+                            "calibration staged futures: cursor write failed after slot "
+                            "%s was cut for packing — the refinement is not remembered",
+                            packing_ref,
+                        )
             break
         unit_started = time.monotonic()
         # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
