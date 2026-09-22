@@ -167,7 +167,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import text
@@ -1184,6 +1184,7 @@ async def _write_prices(
     """
     from app.models.models import FuturesOddsSnapshot, FuturesOutcome
     from app.utils.feed_market_quality import is_empty_book_midpoint
+    from app.utils.market_staleness import OBSERVATION_LAG_DAYS  # #7582
     from app.utils.odds_math import probability_to_american
     from app.utils.price_change_stamp import price_changed_at_value
     from sqlalchemy import case, func, or_, update as sa_update
@@ -1252,7 +1253,16 @@ async def _write_prices(
 
     now = datetime.now(timezone.utc)
     written = 0
+    # #7582. Partitioned rather than handled in place, because the clear below
+    # is conditional on `written` and therefore cannot run until every quote on
+    # this board has been written. Held as items (not ids) so `_legs` resolves
+    # them under the same three id conventions as a priced item — a Polymarket
+    # decomposed pair would otherwise clear its yes leg and leave the no leg.
+    unpriced: list[dict] = []
     for item in priced:
+        if item.get("venue_quotes_no_price"):
+            unpriced.append(item)
+            continue
         prob = item.get("probability")
         if prob is None or not (0 < prob < 1):
             # #5869. A second silent `continue`, on the other side of the
@@ -1455,6 +1465,108 @@ async def _write_prices(
             )
             written += 1
 
+    # ── #7582: stop publishing a price the venue stopped quoting ─────────────
+    #
+    # The game poller has had this rule since #4356 (`_clear_outcome_price`);
+    # the futures path never did, and that asymmetry IS the issue. Its three
+    # conditions are reproduced below rather than imported, because that helper
+    # mutates a loaded ORM object on a different model's session and this write
+    # is a Core UPDATE — but they are the same three and must stay the same
+    # three, so each names its sibling.
+    #
+    # 🔴 GATED ON `written`, AND THAT GATE IS THE WHOLE SAFETY ARGUMENT. Codex
+    # ruled on 2026-09-20, on #7537, that an old snapshot is not by itself proof
+    # a venue stopped quoting: a leg last written days ago "is equally
+    # compatible with a still-quoted leg whose ingestion has failed". A rule
+    # that asked the wall clock alone could not tell those apart, and a bad
+    # afternoon at our end would blank boards fleet-wide. This one can only fire
+    # on a board where THIS pass priced at least one sibling — so if the fetch,
+    # the parse or the venue is broken, `written` is 0, nothing is stale and
+    # nothing is cleared. The evidence is always a SPLIT within one pass: the
+    # venue answered for these legs and not for those, which is a fact about the
+    # legs rather than about us. That is `stale_observation_keys`' argument
+    # (#7537) applied one layer earlier, at the writer instead of the serve.
+    #
+    # THE LAG BOUND IS #7537's, IMPORTED AND NOT RE-DERIVED. `OBSERVATION_LAG_DAYS`
+    # was measured off the spread distribution of live boards and chosen at the
+    # far end of its plateau precisely because it governs a WITHHOLD — the
+    # harmful direction is taking a number off a leg somebody is really quoting.
+    # The same asymmetry applies here and more sharply, because this withholds by
+    # WRITING. A second constant for one question is how two rules drift, and the
+    # serve-time rule is the one a reader already meets on this board.
+    #
+    # So a leg the venue stops quoting keeps its last price for a week. That is
+    # deliberate: a quiet book is the normal state of a season future, and one
+    # unpriced pass is not evidence of anything.
+    if written and unpriced:
+        stale_before = now - timedelta(days=OBSERVATION_LAG_DAYS)
+        for item in unpriced:
+            for outcome_id, _side in _legs(item):
+                cleared = await session.execute(
+                    sa_update(FuturesOutcome)
+                    .where(
+                        FuturesOutcome.id == outcome_id,
+                        # Idempotent — a leg cleared once is not restamped every
+                        # hour. `last_updated` is a liveness gate other code reads
+                        # (`routes/playoffs.py` drops a stale outcome from the
+                        # grid), so a restamp is not free. Sibling condition 3.
+                        FuturesOutcome.current_probability.isnot(None),
+                        # Never wipe a captured closing line — calibration's
+                        # evidence, and unrecoverable. Sibling condition 2. This
+                        # is the one `ELIGIBLE_OUTCOMES_SQL` does NOT already
+                        # apply, so it is the one that would silently go missing
+                        # if this WHERE were trimmed to "what the select left".
+                        FuturesOutcome.calibration_probability.is_(None),
+                        # Never un-price a settled row (gotcha #21). Sibling
+                        # condition 1, in both its halves — the CROWN and the
+                        # GRADE, which #5246 established are not the same test.
+                        # Restated here even though `existing` was selected on
+                        # them: between that SELECT and this UPDATE a settlement
+                        # feed may have graded the row, and the whole point of
+                        # this arm is that it runs on boards nobody else is
+                        # writing promptly.
+                        FuturesOutcome.is_winner.isnot(True),
+                        FuturesOutcome.resolution_source.is_distinct_from(
+                            "api_settlement"
+                        ),
+                        FuturesOutcome.last_updated < stale_before,
+                    )
+                    .values(
+                        current_probability=None,
+                        current_american_odds=None,
+                        current_yes_bid=None,
+                        current_yes_ask=None,
+                        # A 24h delta describing a price that no longer exists is
+                        # not a delta — the sibling clear's #2024 finding.
+                        probability_change_24h=None,
+                        last_updated=func.now(),
+                        # STAMPED, where the game poller's clear deliberately is
+                        # not, and the difference is not an inconsistency — it is
+                        # the rule that file's own exemption states. There, the
+                        # ordinary price MOVE in the same task does not stamp
+                        # either, so stamping the clear alone would make the
+                        # column mean "when this price went away" for one writer
+                        # and nothing for the writer beside it. HERE the opposite
+                        # holds: the write forty lines up stamps every move, so a
+                        # clear that did not stamp would be the only unstamped
+                        # write in the file. `price_changed_at_value` takes None
+                        # for exactly this case — its docstring: "a price going
+                        # away IS a change".
+                        price_changed_at=price_changed_at_value(
+                            FuturesOutcome.current_probability,
+                            FuturesOutcome.price_changed_at,
+                            None,
+                        ),
+                    )
+                )
+                # NO SNAPSHOT ROW. `futures_odds_snapshots` is a record of
+                # observed PRICES; there is no price here, and writing one would
+                # put a NULL-probability row into calibration's input. The
+                # sibling clear writes none either.
+                stats["legs_cleared_venue_unpriced"] = stats.get(
+                    "legs_cleared_venue_unpriced", 0
+                ) + (cleared.rowcount or 0)
+
     return written
 
 
@@ -1549,6 +1661,14 @@ async def _fetch_kalshi_prices(service, external_id: str):
     * a list — the venue has a book; the list holds whatever survived the price
       guards, and may be empty if every quote was refused.
 
+      SINCE #7582 IT ALSO HOLDS THE LEGS THAT DID NOT SURVIVE, flagged
+      ``venue_quotes_no_price`` and carrying ``probability: None``. Those are
+      not prices and are never written as one — they are the venue declining to
+      quote a contract it still lists, which is a FACT this function is the only
+      place that can observe, and which `_write_prices` needs in order to stop
+      publishing the fossil that a bare ``continue`` left standing. A caller
+      that wants only quotes filters the flag; the one caller there is does.
+
     🔴 WHAT (2) COSTS A READER, measured on production 2026-09-12 22:2xZ. Of the
     24 events kicking off in the future whose stored Kalshi blend leg sat at
     <=2% or >=98%, a venue read of all 24 tickers split them cleanly:
@@ -1612,6 +1732,13 @@ async def _fetch_kalshi_prices(service, external_id: str):
     }
 
     priced: list[dict] = []
+    #: #7582. Kept in its own list and concatenated at the return rather than
+    #: appended inline, so the quoted legs always precede the unquoted ones in
+    #: the returned list. `_write_prices` partitions on the flag and does not
+    #: depend on that order, but a caller reading the list in sequence sees the
+    #: prices first, and the clear is defined as a thing that happens after a
+    #: pass has priced what it could.
+    unpriced: list[dict] = []
     for market in event.markets:
         if not market.ticker:
             continue
@@ -1623,6 +1750,40 @@ async def _fetch_kalshi_prices(service, external_id: str):
             market.yes_bid, market.yes_ask, market.last_price
         )
         if prob is None:
+            # #7582 — THE LEG THE VENUE LISTS AND WILL NOT PRICE. This `continue`
+            # used to drop the market here, and dropping it is what made the
+            # fossil: `_write_prices` never saw the ticker, so it left the stored
+            # price AND the stored `last_updated` exactly where the last pass that
+            # could price them put them. Measured on `/futures/3971707`, 2026-09-22
+            # 08:3xZ — sixteen days after filing and unchanged: eleven of fourteen
+            # legs frozen at `2026-09-06 05:46:08.358811`, all eleven at that one
+            # microsecond, while three siblings were rewritten 05:51:52 the same
+            # morning. Hull Kingston Rovers printed 33% and Wigan 29.5% as the
+            # second and third favourites off a book (`0.19 / 0.47`) the venue had
+            # not quoted for a fortnight; Kalshi's own answer for `-HKR` is
+            # `0.0000 / 0.9600`, last `0.0000`.
+            #
+            # CARRIED, NOT PRICED. The item goes forward with `probability: None`
+            # and a flag, so the WRITER can decide; nothing here nulls anything.
+            # The venue's own book travels with it because the clear is only
+            # legible beside the quote that justified it.
+            #
+            # 🔴 THIS IS NOT THE ANSWERED-LEG `continue` TWELVE LINES UP, and the
+            # two must never merge. `venue_answered(market.result)` is a leg the
+            # venue has SETTLED: its quote is a settlement artifact and its price
+            # is a RESULT, which "settled means settled" keeps on the page. This
+            # one is a leg the venue still lists `active` and simply is not
+            # quoting. A settlement is a positive statement; silence is not.
+            unpriced.append(
+                {
+                    "external_id": market.ticker,
+                    "probability": None,
+                    "venue_quotes_no_price": True,
+                    "yes_bid": market.yes_bid,
+                    "yes_ask": market.yes_ask,
+                    "last_price": market.last_price,
+                }
+            )
             continue
         priced.append(
             {
@@ -1642,7 +1803,7 @@ async def _fetch_kalshi_prices(service, external_id: str):
                 "volume_24h": volume_by_ticker.get(market.ticker),
             }
         )
-    return priced
+    return priced + unpriced
 
 
 #: Which outcomes of a market may be re-priced by a poll — the settled refusal,
@@ -2532,6 +2693,21 @@ async def _refresh_stale_futures_prices(
         # silent. Zero here is the healthy steady state; a jump is the venue
         # quoting empty books at us, not a regression in this task.
         "legs_declined_empty_book": 0,
+        # #7582. The legs this pass took a price OFF, because the venue listed
+        # them and would not quote them and their stored number was already a
+        # week behind the board it sits on. Counted apart from every decline
+        # above it, and the distinction is the issue: a DECLINE leaves the old
+        # number on the page, a CLEAR takes it down. Reading them as one total
+        # would make the fossil the declines create invisible inside the count
+        # of declines that created it.
+        #
+        # ZERO IS THE HEALTHY STEADY STATE ONCE THE BACKLOG DRAINS, and it is
+        # reached by the clear's own idempotence rather than by nothing
+        # happening — which is why it is initialised here and reported
+        # unconditionally (gotcha #53). A sustained non-zero number means the
+        # venue keeps listing contracts it will not quote; a jump on one pass
+        # after a quiet week is the thing to look at.
+        "legs_cleared_venue_unpriced": 0,
         # #4253. The Kalshi half of the same withdrawal, counted SEPARATELY from
         # `legs_retired` because it answers a different venue question — "the
         # venue no longer lists this contract", not "the venue lists it and
