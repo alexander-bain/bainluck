@@ -90,13 +90,21 @@ const PUBLISHED_KEY = { category: "americanfootball_nfl", n: 30_000 };
  * Eleven parked raw keys, outcomes strictly descending so the visible/folded
  * split is unambiguous and order-checkable by eye.
  */
+// #7913 — two of these categories used to be `lacrosse_ncaa` (990) and
+// `lacrosse` (560), copied from the live payload when this fixture was written.
+// They now fold onto one key that clears the 1,000 bar, so they PUBLISH and stop
+// being parked at all: the card correctly rendered 9 chips where this fixture
+// asks for 11. Swapped for two categories that genuinely stay parked, because
+// this fixture's subject is the expander, not which sports are below the bar.
+// Do not re-add a fragmented sport here — `calibrationDoesNotParkASportItCouldPublish7913`
+// owns that property and would contradict this file.
 const PARKED_RAW = [
-  { category: "lacrosse_ncaa", outcomes: 990 },
+  { category: "cycling", outcomes: 990 },
   { category: "chess", outcomes: 900 },
   { category: "pll", outcomes: 830 },
   { category: "rugby", outcomes: 740 },
   { category: "boxing", outcomes: 650 },
-  { category: "lacrosse", outcomes: 560 },
+  { category: "crypto", outcomes: 560 },
   { category: "pickleball", outcomes: 470 },
   { category: "darts", outcomes: 380 },
   // --- the fold starts here: everything below is the tail the card withheld ---
