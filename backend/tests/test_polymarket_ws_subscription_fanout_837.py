@@ -12,8 +12,10 @@ filler behind it changing:
 
 Monotone, reproduced twice, and not a prefix — at 1,019 subscribed it served 180
 assets, 8 of them from the front-placed probe. Production was sending >=3,274
-ids in one ~255 KiB frame and re-dealing it six times an hour, which is how a
-176-minute MNF game produced a single 15.5-minute band of prices.
+ids in one ~255 KiB frame and re-dealing it six times an hour, well inside the
+degraded band. A 176-minute MNF game produced a single 15.5-minute band of
+prices; the measurement proves this transport was defective during that game,
+not that it was the sole cause of that particular hole.
 
 THE FAILURE IS SILENT AT EVERY LAYER WE OWN, which is the whole reason these
 are guard tests rather than a comment: the socket is connected, the message
@@ -44,6 +46,7 @@ from app.services.polymarket_ws import (
     MAX_ASSETS_PER_CONNECTION,
     MAX_SUBSCRIBE_BYTES,
     PolymarketWebSocket,
+    _frame_overheads,
     _shard_asset_ids,
     _subscribe_frame,
 )
@@ -113,6 +116,148 @@ class TestEveryShardFitsTheBound:
         # it — if this fails, somebody raised MAX_SUBSCRIBE_BYTES into the
         # measured degradation band.
         assert MAX_SUBSCRIBE_BYTES < 56.9 * 1024
+
+
+class TestTheSizingArithmeticIsExactAtEveryIdLength:
+    """The ceiling is breached only in a WINDOW of id lengths, and the rest of
+    this class sat inside that window's blind spot.
+
+    The first version of `_shard_asset_ids` charged one byte per separator;
+    `json.dumps` writes `", "`, two bytes. Codex caught it on the frozen sha by
+    executing the committed functions: 1,100 ids of 78 characters planned frames
+    of 41066 / 41066 / 8266 bytes against a 40960 ceiling, and at 90 characters
+    41332 / 41332 / 20934.
+
+    Why the sizing tests above missed a one-byte-per-id error for a whole
+    session — the part worth keeping:
+
+      * at their fixture length of 76, the ASSET cap binds first (500 ids is
+        ~40066 bytes), so the byte arithmetic never decides anything;
+      * at length 400 the byte cap binds, but only ~101 ids fit a shard, so the
+        undercount totals ~100 bytes and disappears into the rounding slack.
+
+    The error is proportional to ids-per-shard, so it only surfaces where the
+    BYTE cap binds AND shards stay large — roughly 78-90 characters. Real ids
+    are 74-78 today (live/512). The defect was one character of id drift away
+    from production, and a fixture at a single length cannot see it. So this
+    sweeps the length axis instead of sampling it.
+    """
+
+    #: Spans both regimes: count-bound (small), the window the defect lived in
+    #: (77-92), and byte-bound with few ids per shard (large).
+    LENGTHS = [1, 8, 20, 40, 60, 74, 76, 77, 78, 80, 84, 88, 90, 92, 120, 200, 400, 900]
+
+    def test_the_real_frame_fits_the_ceiling_at_every_id_length(self):
+        for length in self.LENGTHS:
+            for shard in _shard_asset_ids(_ids(1100, length=length)):
+                frame = len(_subscribe_frame(shard).encode("utf-8"))
+                assert frame <= MAX_SUBSCRIBE_BYTES, (
+                    f"ids of {length} chars plan a {frame}-byte frame, over the "
+                    f"{MAX_SUBSCRIBE_BYTES} ceiling — the venue accepts this and "
+                    "serves only part of it, which is #837 all over again"
+                )
+
+    def test_no_id_is_lost_at_any_id_length(self):
+        # The ceiling can always be met by dropping ids. Pin the two properties
+        # together or the arm above is satisfiable the wrong way.
+        for length in self.LENGTHS:
+            assets = _ids(1100, length=length)
+            flattened = [a for shard in _shard_asset_ids(assets) for a in shard]
+            assert flattened == assets, f"ids of {length} chars lost or reordered"
+
+    def test_codex_exact_populations_now_fit(self):
+        """The two populations from the finding, by the numbers it reported."""
+        for length, was in ((78, 41066), (90, 41332)):
+            frames = [
+                len(_subscribe_frame(s).encode("utf-8"))
+                for s in _shard_asset_ids(_ids(1100, length=length))
+            ]
+            assert max(frames) <= MAX_SUBSCRIBE_BYTES, (length, frames)
+            assert was > MAX_SUBSCRIBE_BYTES, "the reported breach must be a breach"
+
+    def test_the_one_byte_separator_this_replaced_really_did_breach(self):
+        """STRAWMAN — without it every arm above passes on arithmetic that was
+        never wrong, and a `+1` could be reintroduced tomorrow unnoticed.
+
+        Reproduces the old planner exactly and asserts it breaks the ceiling in
+        the window, so the sweep is proven to be looking where the defect lives.
+        """
+        envelope, _ = _frame_overheads()
+
+        def old_planner(assets):
+            shards, current, current_bytes = [], [], 0
+            for asset_id in assets:
+                cost = len(json.dumps(asset_id).encode("utf-8")) + 1  # the bug
+                if current and (
+                    len(current) + 1 > MAX_ASSETS_PER_CONNECTION
+                    or envelope + current_bytes + cost > MAX_SUBSCRIBE_BYTES
+                ):
+                    shards.append(current)
+                    current, current_bytes = [], 0
+                current.append(asset_id)
+                current_bytes += cost
+            if current:
+                shards.append(current)
+            return shards
+
+        breached = {
+            length: max(
+                len(_subscribe_frame(s).encode("utf-8"))
+                for s in old_planner(_ids(1100, length=length))
+            )
+            for length in self.LENGTHS
+        }
+        over = {k: v for k, v in breached.items() if v > MAX_SUBSCRIBE_BYTES}
+        assert over, (
+            "the strawman did not reproduce the breach at any length — this "
+            "guard is vacuous and would not notice the bug coming back"
+        )
+        assert 78 in over and 90 in over, (
+            f"the finding's own two lengths must breach under the old "
+            f"arithmetic; breached: {over}"
+        )
+
+    def test_the_separator_width_is_derived_from_json_not_assumed(self):
+        """The repair's actual mechanism. If someone hardcodes the separator
+        again, this is the arm that says so."""
+        _, separator = _frame_overheads()
+        measured = (
+            len(json.dumps(["x", "x"]).encode("utf-8"))
+            - len(json.dumps(["x"]).encode("utf-8"))
+            - len(json.dumps("x").encode("utf-8"))
+        )
+        assert separator == measured
+        assert separator == 2, (
+            "json.dumps defaults to ', ' — if this is 1, the serializer changed "
+            "and the sizing above needs re-measuring, not re-assuming"
+        )
+
+    def test_the_boundary_guard_fires_when_the_arithmetic_drifts(self, monkeypatch):
+        """The boundary guard, driven by the exact drift it exists to catch.
+
+        With correct arithmetic a multi-id shard can never exceed the ceiling —
+        the planner only adds a second id after the byte check passes — so the
+        guard is unreachable through the public path by construction. That is
+        the point of a boundary guard, and it also means the only honest way to
+        test it is to reintroduce the fault.
+
+        So: put the one-byte separator back and confirm the planner now REFUSES
+        rather than handing the venue a frame it would silently half-serve. A
+        venue-side sizing bug produces missing prices, never an error, so the
+        loud failure is the whole value.
+        """
+        envelope, _ = _frame_overheads()
+        monkeypatch.setattr(
+            "app.services.polymarket_ws._frame_overheads", lambda: (envelope, 1)
+        )
+        with pytest.raises(RuntimeError, match="over the 40960-byte ceiling"):
+            _shard_asset_ids(_ids(1100, length=78))
+
+    def test_the_boundary_guard_exempts_a_lone_id_that_cannot_fit(self):
+        """...but never at the cost of dropping one: a single id too large for
+        the bound still rides alone rather than raising or vanishing."""
+        huge = "x" * (MAX_SUBSCRIBE_BYTES * 2)
+        assert _shard_asset_ids([huge]) == [[huge]]
 
 
 class _FakeSocket:

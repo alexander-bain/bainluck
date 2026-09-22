@@ -26,8 +26,11 @@ WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 # (61.6 KiB), 6/119 at 2,000. Monotone, reproduced twice, and NOT a prefix — at
 # 1,019 subscribed it served 180 assets, 8 of them from the front-placed probe.
 # We were sending >=3,274 ids in one ~255 KiB frame and re-dealing that list six
-# times an hour, which is why a 176-minute MNF game produced one 15.5-minute
-# band of prices while Kalshi ran the whole way.
+# times an hour — far into the degraded band in both size and composition. A
+# 176-minute MNF game produced one 15.5-minute band of prices while Kalshi ran
+# the whole way; the measurement establishes that this transport was defective
+# during it, and does NOT establish it as the sole cause of that hole, which was
+# never independently attributed.
 #
 # So the list is FANNED over several connections, each sized to sit well under
 # the cliff. Two deliberate choices:
@@ -84,6 +87,31 @@ def _subscribe_frame(asset_ids: Optional[list[str]]) -> str:
     return json.dumps(sub)
 
 
+#: The two syntax costs `json.dumps` writes around the ids, MEASURED from the
+#: serializer rather than read off the shape of the string.
+#:
+#: An earlier version of this file hardcoded one byte for the separator, on the
+#: reasonable-looking grounds that the separator is a comma. `json.dumps`
+#: defaults to `", "` — comma AND space — so every shard was under-charged by
+#: one byte per id and the planner's own ceiling was breached by the frames it
+#: planned: 1,100 ids of 78 characters gave frames of 41066 / 41066 / 8266
+#: bytes against a 40960 ceiling, and at 90 characters 41332 / 41332 / 20934.
+#: Deriving both numbers means a separator change in the stdlib, or a key added
+#: to the envelope, moves the accounting instead of silently invalidating it.
+def _frame_overheads() -> tuple[int, int]:
+    """`(envelope, separator)` in bytes for the frame `_subscribe_frame` builds.
+
+    `envelope` is every byte a one-id frame costs EXCEPT that id's own
+    serialization — the object around it plus the brackets. `separator` is what
+    each id after the first adds on top of its own serialization.
+    """
+    probe = "x"
+    encoded_probe = len(json.dumps(probe).encode("utf-8"))
+    one = len(_subscribe_frame([probe]).encode("utf-8"))
+    two = len(_subscribe_frame([probe, probe]).encode("utf-8"))
+    return one - encoded_probe, two - one - encoded_probe
+
+
 def _shard_asset_ids(
     asset_ids: list[str],
     max_bytes: int = MAX_SUBSCRIBE_BYTES,
@@ -93,25 +121,44 @@ def _shard_asset_ids(
 
     Losing none is the load-bearing property: a dropped id is exactly the defect
     this function exists to fix, so an id too large to fit a shard on its own
-    still gets its own shard rather than being silently discarded.
+    still gets its own shard rather than being silently discarded. That lone
+    oversized id is the ONE case a shard may exceed `max_bytes`, and it is the
+    only exemption the boundary check below grants.
     """
-    envelope = len(_subscribe_frame([]).encode("utf-8")) + len(b'"assets_ids": [], ')
+    envelope, separator = _frame_overheads()
     shards: list[list[str]] = []
     current: list[str] = []
     current_bytes = 0
 
     for asset_id in asset_ids:
-        cost = len(json.dumps(asset_id).encode("utf-8")) + 1  # + the separator
+        encoded = len(json.dumps(asset_id).encode("utf-8"))
+        # The first id in a shard pays no separator; every later one does.
+        cost = encoded + (separator if current else 0)
         too_many = len(current) + 1 > max_assets
         too_big = envelope + current_bytes + cost > max_bytes
         if current and (too_many or too_big):
             shards.append(current)
-            current, current_bytes = [], 0
+            current, current_bytes = [], encoded
+        else:
+            current_bytes += cost
         current.append(asset_id)
-        current_bytes += cost
 
     if current:
         shards.append(current)
+
+    # Boundary check. The arithmetic above is exact, so this never fires — it is
+    # here because the failure it catches is INVISIBLE at the venue: an
+    # oversized frame is accepted and served in part (that is the whole finding
+    # behind this file), so a sizing bug shows up as quiet missing prices, not
+    # as an error. Better to fail here, loudly, than to under-serve a game.
+    for shard in shards:
+        size = len(_subscribe_frame(shard).encode("utf-8"))
+        if size > max_bytes and len(shard) > 1:
+            raise RuntimeError(
+                f"subscribe shard of {len(shard)} ids serializes to {size} bytes, "
+                f"over the {max_bytes}-byte ceiling — the frame sizing is wrong "
+                "and the venue would silently serve only part of it"
+            )
     return shards
 
 
