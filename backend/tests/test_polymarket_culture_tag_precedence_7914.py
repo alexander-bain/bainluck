@@ -277,9 +277,18 @@ def test_the_unreachable_rows_are_still_classified_correctly_when_reached():
 def test_the_reachable_climate_row_is_what_half_two_actually_ships():
     """Event 79905, `Where will 2026 rank among the hottest years on record?`.
 
-    Written 8 hours before this test was added, so it is reached by the ordinary
-    poll. It is the reason half 2 is NOT inert while #7930 is open: without this
-    row the climate arm would be a correct rule with no reader on the other end,
-    and this ship would be guard-only hardening rather than a ship.
+    It is the reason half 2 is NOT inert while #7930 is open: without this row
+    the climate arm would be a correct rule with no reader on the other end, and
+    this ship would be guard-only hardening rather than a ship.
+
+    Its writer is the hourly heavy `recover_sunk_polymarket_events`, NOT the
+    ordinary poll — this docstring claimed the poll on first presentation and was
+    wrong. Measured 2026-09-22 04:10Z: `volume_updated_at` 19:27:03Z, the
+    `crontab(minute=26)` sweep's stamp. Two tests in
+    `test_recovery_sweep_reaches_the_category_writer_7914.py` — NOT in this file —
+    pin that: `test_the_recovery_selector_admits_the_open_parent_shape_both_
+    specimens_have` and `test_the_recovery_sweep_hands_its_events_to_the_polls_
+    category_writer`. So the reachability claim this ship rests on is guarded
+    rather than asserted.
     """
     assert misfiled_subject("Where will 2026 rank among the hottest years on record?", "tech") == "weather"
