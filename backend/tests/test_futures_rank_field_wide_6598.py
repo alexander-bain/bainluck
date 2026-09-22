@@ -381,10 +381,30 @@ WIRED_WRITERS = {
 #: `test_the_playoffs_exemption_still_rests_on_a_read_only_session` below —
 #: the day that module takes a writable session the exemption is wrong, and a
 #: reason nobody re-checks is how a stale exemption hides a real writer.
+#: The fourth (#7987) is the third kind again — not a write at all, for a
+#: different reason — and it is CONDITIONAL in the same way. `settled_price.py`
+#: is SQL TEXT: every function in it RETURNS a string or a dict and none of them
+#: takes a session, executes, or commits. There is therefore no "write's own
+#: commit boundary" in that module to wire a re-rank to; the boundary belongs to
+#: whichever caller splices the text, and those callers are scanned here on
+#: their own account.
+#:
+#: It entered this population when #7987 added
+#: `ungraded_settlement_withdraw_sql` — the first function here to emit a WHOLE
+#: statement rather than a `SET`-clause fragment, which is the only reason the
+#: scanner can see a module that has always written this column.
+#:
+#: AND RE-DERIVING WOULD BE THE WRONG ANSWER ANYWAY, by the refusal already
+#: recorded two paragraphs up: every statement this module emits acts on a leg
+#: whose board the venue has SETTLED, and #6325 refuses to renumber a settled
+#: board because a finished field's `rank` is the record of how it finished.
+#: The condition — that the module executes nothing — is asserted by
+#: `test_the_settled_price_exemption_still_rests_on_a_module_that_executes_nothing`.
 EXEMPT_WRITERS = {
     "tasks/backfill_winners.py": "settlement — writes the grade, not a quote (#6325)",
     "tasks/repair_winner_field.py": "settlement repair — same board, same refusal",
     "routes/playoffs.py": "display-only coercion in a read-only GET — never persisted",
+    "utils/settled_price.py": "SQL text only — no session, no commit boundary to wire; settled boards are never renumbered (#6325/#7987)",
 }
 
 
@@ -690,6 +710,58 @@ def test_the_playoffs_exemption_still_rests_on_a_read_only_session():
         "its price coercion may now persist. Its EXEMPT_WRITERS reason "
         "('never persisted') no longer holds — wire the rerank or re-derive "
         "the reason."
+    )
+
+
+def test_the_settled_price_exemption_still_rests_on_a_module_that_executes_nothing():
+    """#7987's exemption, asserted as its condition rather than its conclusion.
+
+    `settled_price.py` is exempt because it is SQL TEXT — it emits statements
+    and runs none of them, so it owns no commit boundary a re-rank could be
+    wired to. That is a property of the MODULE, and the day a function there
+    takes a session and executes, the module becomes a real writer on a real
+    boundary and the reason becomes a lie.
+
+    Asserted by AST rather than by grep so the module's essay-length docstrings
+    — which quote `session.execute` while explaining its callers — cannot
+    satisfy or break it.
+    """
+    import ast
+    import pathlib
+
+    path = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "app" / "utils" / "settled_price.py"
+    )
+    tree = ast.parse(path.read_text())
+
+    assert "utils/settled_price.py" in EXEMPT_WRITERS
+
+    assert not [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))
+                and not (isinstance(n, ast.ImportFrom) and n.module == "__future__")], (
+        "settled_price.py has grown an import. Its exemption rests on being "
+        "inert SQL text; re-check the reason."
+    )
+
+    calls = {
+        n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    }
+    assert not ({"execute", "commit", "flush", "scalar"} & calls), (
+        "settled_price.py now executes SQL, so it owns a commit boundary and "
+        "its EXEMPT_WRITERS reason ('SQL text only') no longer holds — wire "
+        f"the rerank or re-derive the reason. Found: {sorted(calls)}"
+    )
+
+    params = {
+        a.arg
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for a in n.args.args
+    }
+    assert "session" not in params and "conn" not in params, (
+        "a function in settled_price.py now takes a session — see above"
     )
 
 

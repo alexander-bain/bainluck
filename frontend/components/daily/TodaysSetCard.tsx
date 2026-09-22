@@ -1,4 +1,5 @@
 import { CheckCircle2, XCircle } from "lucide-react";
+import { toAcronymSafePreservingCase } from "@/lib/titleCase";
 
 /**
  * The Daily Challenge's progress list: today's five questions, each with the
@@ -77,9 +78,18 @@ export function todaysSetIsAnswered(rows: readonly TodaysSetRow[]): boolean {
 }
 
 export function categoryLabel(question: { category: string }): string {
-  return question.category
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  // #1930 — this used an acronym-blind per-word capitalizer, so the raw
+  // `llm_sport_category` slug a /daily question carries (`mma`, from
+  // `sport_name || llm_sport_category`) reached the reader as "Mma". The
+  // shared acronym-aware caser owns this job; its league list is the single
+  // contract authority (contracts/category-acronyms.json).
+  //
+  // The caser is the case-PRESERVING one, not `toTitleCaseAcronymSafe`: the
+  // other half of this field is `sports.name`, which is already human-cased
+  // ("MiLB", "FA Cup", "Liga MX", "DFB-Pokal"), and re-casing it lowercases a
+  // capital the source supplied on 24 of 179 live rows. Guarded by
+  // __tests__/dailyCategoryPreservesSuppliedCase1930.test.ts.
+  return toAcronymSafePreservingCase(question.category);
 }
 
 /**

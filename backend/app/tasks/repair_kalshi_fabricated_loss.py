@@ -197,6 +197,7 @@ from app.utils.calibration_invalidation import (
     obligation_retry_instruction,
 )
 from app.utils.kalshi_fabricated_loss import (
+    FUTURE_DATE_COHORT_SQL,
     HARM_COHORT_HAVING_SQL,
     IMPLIED_LOSS_EXCLUSION_SQL,
     POPULATION_HAVING_SQL,
@@ -1247,6 +1248,12 @@ _WORK_SQL = f"""
            OR (fm.resolution_date, fm.id)
                 > (CAST(:after_date AS timestamptz), CAST(:after_id AS bigint))
             )
+        -- #7980: the THIRD cohort selector, on the same column the band already
+        -- bounds and the sort already uses, so it composes with the cursor
+        -- instead of replacing it. This is the cohort CAL-P057's comment above
+        -- measured as unreachable and declined to fix by re-sorting; see
+        -- FUTURE_DATE_COHORT_SQL for why a selector and not an ORDER BY.
+        AND {FUTURE_DATE_COHORT_SQL}
       ORDER BY fm.resolution_date ASC, fm.id ASC
     ) s
     CROSS JOIN LATERAL (
@@ -2161,6 +2168,7 @@ async def repair(
     band_as_of: str | None = None,
     plan_hash: str | None = None,
     min_harm: float | None = None,
+    future_only: str | None = None,
 ) -> dict[str, Any]:
     """Per-leg retraction/restoration against the venue's own declaration.
 
@@ -2250,6 +2258,26 @@ async def repair(
                 ),
                 "elapsed_s": round(time.monotonic() - started, 1),
             }
+        if future_only is not None:
+            # #7980, refused for the reason ?band= and ?min_harm= are and BY ITS
+            # OWN NAME. This one would read, in scrollback, as a promise that
+            # only future-dated markets were written — the most reassuring of
+            # the three, because the cohort it names is the one whose rows are
+            # still answerable — while the apply writes every leg id the
+            # reviewed plan already named, past-dated rows included.
+            return {
+                "measured": False,
+                "refused": "FUTURE_ONLY_ON_APPLY",
+                "presented_future_only": future_only,
+                "reason": (
+                    "?future_only= is a cohort selector for the DRY RUN. An "
+                    "apply executes the reviewed plan by leg id and selects "
+                    "nothing, so a cohort here would narrow nothing while "
+                    "appearing to. The cohort the plan was built under is in "
+                    "its own context."
+                ),
+                "elapsed_s": round(time.monotonic() - started, 1),
+            }
         return await _apply_reviewed_plan(session, plan_hash, started)
 
     return await _dry_run(
@@ -2262,6 +2290,7 @@ async def repair(
         band=band,
         band_as_of=band_as_of,
         min_harm=min_harm,
+        future_only=future_only,
     )
 
 
@@ -2398,6 +2427,61 @@ def parse_min_harm(min_harm: Any) -> float | None:
             f"scrollback said otherwise. For the 90%+ rows pass 0.9.",
         )
     return value
+
+
+#: The values ``?future_only=`` accepts, mapped to the bind. Spelled as a table
+#: rather than tested with ``in ("true", "1")`` so the refusal below can name
+#: exactly what it takes, and so the FALSE spellings are real values and not the
+#: absence of a true one — an operator who writes ``?future_only=false`` has said
+#: something, and it is not the same thing as omitting the parameter.
+_FUTURE_ONLY_WORDS: dict[str, bool] = {
+    "true": True,
+    "1": True,
+    "yes": True,
+    "false": False,
+    "0": False,
+    "no": False,
+}
+
+
+def parse_future_only(future_only: Any) -> bool | None:
+    """``?future_only=`` -> the cohort flag, or ``None`` for the whole population.
+
+    #7980. ``true`` selects the markets whose ``resolution_date`` has not yet
+    arrived — the cohort CAL-P057 measured as sorted dead last behind ~2,887
+    past-dated markets the venue can mostly no longer answer.
+
+    **Refused BY NAME on anything else, rather than read as false**, which is the
+    same rule ``?band=`` and ``?min_harm=`` follow and it matters more here than
+    for either of them. This flag's two readings differ by the entire population:
+    a typo silently read as false runs the DEFAULT walk — the one that spends its
+    whole venue budget on ``unexplained_absence`` rows — while the operator's
+    scrollback says they targeted the future-dated cohort. They would then read a
+    page of unrepairable markets as evidence that the cohort they asked for had
+    nothing in it. An unparseable selector must stop the run, not choose one of
+    its two meanings.
+
+    ``false`` is accepted and is NOT the same as omitting it: both walk the whole
+    population, but the operator who typed it gets it echoed back parsed, so the
+    payload can show that the flag was read and did nothing. It adds no selector
+    to ``exhausted_scope`` because it narrows nothing.
+    """
+    if future_only is None:
+        return None
+    if isinstance(future_only, bool):
+        return future_only
+    word = str(future_only).strip().lower()
+    if word not in _FUTURE_ONLY_WORDS:
+        raise BandRefused(
+            "FUTURE_ONLY_UNPARSEABLE",
+            f"?future_only= must be one of "
+            f"{sorted(_FUTURE_ONLY_WORDS)}; got {future_only!r}. It is refused "
+            f"rather than read as false because false is the DEFAULT walk, "
+            f"which drains past-dated markets the venue can no longer answer — "
+            f"so a typo would return a page of unrepairable rows while the "
+            f"scrollback said the future-dated cohort had been asked for.",
+        )
+    return _FUTURE_ONLY_WORDS[word]
 
 
 def parse_band(band: str | None) -> tuple[int, int] | None:
@@ -2544,6 +2628,7 @@ async def _dry_run(
     band=None,
     band_as_of=None,
     min_harm=None,
+    future_only=None,
 ):
     """Select, ask the venue, judge, and emit the reviewed plan. No writes."""
     from app.services.kalshi_api import KalshiAPIService
@@ -2557,6 +2642,17 @@ async def _dry_run(
             "measured": False,
             "refused": e.refused,
             "presented_min_harm": min_harm,
+            "reason": e.reason,
+            "elapsed_s": round(time.monotonic() - started, 1),
+        }
+
+    try:
+        future_only = parse_future_only(future_only)
+    except BandRefused as e:
+        return {
+            "measured": False,
+            "refused": e.refused,
+            "presented_future_only": future_only,
             "reason": e.reason,
             "elapsed_s": round(time.monotonic() - started, 1),
         }
@@ -2639,6 +2735,7 @@ async def _dry_run(
                     "band_max_age": band_max_age,
                     "band_as_of": anchor,
                     "min_harm": min_harm,
+                    "future_only": future_only,
                 },
             )
         ).all()
@@ -2805,6 +2902,10 @@ async def _dry_run(
             # so this is the only record of which slice of the population the
             # reviewed legs came from.
             "min_harm": min_harm,
+            # #7980: same obligation as min_harm above — the apply refuses
+            # ?future_only=, so the plan is the only record that these legs came
+            # from the future-dated cohort rather than from the default walk.
+            "future_only": future_only,
             "band": band if parsed_band else None,
             "band_as_of": url_safe_isoformat(anchor) if parsed_band else None,
             "window": window,
@@ -2843,6 +2944,11 @@ async def _dry_run(
         for name, active in (
             ("band", bool(parsed_band)),
             ("min_harm", min_harm is not None),
+            # #7980, and the entry CAL-P1125 said a third selector would be:
+            # `future_only=False` is NOT a selector — it walks the whole
+            # population, so a page that empties under it really has exhausted
+            # that population. Only the True cohort narrows anything.
+            ("future_only", future_only is True),
         )
         if active
     ]
@@ -2864,6 +2970,19 @@ async def _dry_run(
                 "`exhausted` at a threshold says nothing about rows beneath it"
             )
             if min_harm is not None
+            else None,
+            # #7980. Echoed PARSED and always present, including as null, for
+            # the reason min_harm is: an operator who cannot see whether the
+            # cohort took effect cannot tell a drained future-dated slice from
+            # a default walk that spent its budget on purged rows.
+            "future_only": future_only,
+            "future_only_means": (
+                "markets whose resolution_date has not yet arrived — the cohort "
+                "CAL-P057 measured as sorted behind every past-dated row; "
+                "`exhausted` under it says nothing about the past-dated "
+                "population beneath it"
+            )
+            if future_only is True
             else None,
             # #3257: echoed PARSED, not as presented. An operator reading their
             # own string back learns nothing about whether it took effect.

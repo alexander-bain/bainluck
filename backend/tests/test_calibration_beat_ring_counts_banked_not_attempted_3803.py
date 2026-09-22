@@ -91,8 +91,21 @@ from app.tasks.calibration_beat_gauge_sampler import (
 #: ring at 05:46Z. Six units ran, five banked, one cancelled at 15m50.3s against a
 #: 15m49.7s bound. This map is the fixture spine: it is the beat the defect was
 #: found on, not a constructed one.
+#:
+#: 🔴 CAL-P1334 (#6868) added ``staged:units_planned`` to BOTH maps below, and it
+#: is not a minted number. These two maps are EXCERPTS — the keys this suite
+#: reasons about, not the row's whole gauge map — so the denominator's absence
+#: here was a property of the excerpt and never of the beat. 128 is what the plan
+#: was on 2026-09-07: the ring's own rows carry ``staged:units_planned: 128``
+#: unbroken from its oldest retained row through 2026-09-19T15:38Z, when
+#: CAL-P1301's first refinement cut a slot and made it 129, and CAL-P1301 did not
+#: exist on this date; the p1039 fixture, verbatim from ``?full=true`` for the
+#: previous day, carries 128 too. Without it these rows would answer
+#: ``rebuild_progress_measured: false`` — which would be the excerpt describing
+#: itself, not this beat.
 BEAT_0415Z_GAUGES: dict = {
     "staged:units_banked": 18,
+    "staged:units_planned": 128,
     "staged:units_this_beat": 6,
     "staged:units_completed_this_beat": 5,
     "staged:units_cancelled": 1,
@@ -112,6 +125,7 @@ BEAT_0415Z_GAUGES: dict = {
 #: not a one-off worth a note in a report.
 BEAT_0515Z_GAUGES: dict = {
     "staged:units_banked": 23,
+    "staged:units_planned": 128,  # CAL-P1334 — see the note on the 04:15Z map.
     "staged:units_this_beat": 6,
     "staged:units_completed_this_beat": 5,
     "staged:units_cancelled": 1,

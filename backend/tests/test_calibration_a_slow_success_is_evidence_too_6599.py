@@ -899,10 +899,26 @@ class TestTheCutIsThePlansAndNotOneSlots:
 
         Deliberately on the NON-learning rig, which pins the carried cost the
         way both #6599 rigs did before ``learns`` existed: that is the regime
-        where the carried arm can win the ``max`` forever, so it is the only
-        regime where this guard is reachable. Without the guard the split map
-        goes 15 → 41 → 74 → 103 on this arm; with it, at most one slot a beat,
-        which is the declined slot and no more.
+        where the carried arm can win the ``max``, so it is the regime where
+        this guard is reachable. Without the guard the split map goes
+        15 → 41 → 74 → 103 on this arm; with it, a beat holding an anonymous
+        reference cuts the declined slot and no more.
+
+        **KEYED ON THE SCOPE THE BEAT ACTUALLY RAN AT, and that is a
+        re-statement CAL-P1335 (#6868) forced.** This assertion used to read
+        "after beat one, growth <= 1 on every beat", which was true only
+        because a beat that refused a unit then ENDED, so after beat one no
+        beat ever completed a unit and ``worst_unit_ms`` was always zero.
+        CAL-P1335 makes the loop pass over a refused candidate and carry on, so
+        a beat can now complete a unit after a refusal, name the partition it
+        was measured at, and legitimately sweep — the map on this arm is
+        ``[15, 16, ..., 21, 25, 26, ..., 29]``, ones with one jump of four, and
+        that jump is the mechanism working, not the cascade. The clause was
+        never about beat numbers: it is *an anonymous reference may not sweep*.
+        So the guard now reads the scope gauge and asserts the clause directly,
+        which makes it STRICTER than the old form (the old one could not have
+        caught a plan-wide sweep on beat one of a slot-scoped run) as well as
+        correct on the new loop.
         """
         run = await drive(
             buckets=16, slow_slots=16, max_beats=12, conclusive_splits=False
@@ -916,10 +932,20 @@ class TestTheCutIsThePlansAndNotOneSlots:
             later - earlier
             for earlier, later in zip(run.per_beat_splits, run.per_beat_splits[1:])
         ]
-        assert max(growth) <= 1, (
-            "after beat one the reference is the carried cost, which names no "
-            "partition, so it may cut the declined slot and nothing else: "
-            f"{run.per_beat_splits}"
+        slot_scoped = [
+            (beat, delta)
+            for beat, delta in enumerate(growth, start=2)
+            if run.per_beat_packing_scope[beat - 1] == "slot"
+        ]
+        assert slot_scoped, (
+            "the run must CONTAIN an anonymous-reference beat or this guard is "
+            f"vacuous: scopes {run.per_beat_packing_scope}"
+        )
+        assert all(delta <= 1 for _beat, delta in slot_scoped), (
+            "a beat whose reference is the carried cost names no partition, so "
+            "it may cut the declined slot and nothing else: "
+            f"{[(b, d) for b, d in slot_scoped if d > 1]} in "
+            f"{run.per_beat_splits} at scopes {run.per_beat_packing_scope}"
         )
         assert max(run.per_beat_banked) > 1, (
             "and the build must still be running units, or a bounded split map "
@@ -975,8 +1001,29 @@ class TestTheShipAtTheSizeProductionRuns:
     artifacts of that pin. ``learns=True`` carries the beat's own measured cost
     forward, which is what ``measured_unit_ms`` does in production.
 
-    With it: 64 slots 64 → 52 beats, 128 slots 128 → 99. The 128 arm is left out
-    of CI for runtime; 64 is the one that runs.
+    **RE-MEASURED 2026-09-22 on CAL-P1335 (#6868), and the control moved.** That
+    ship made the admission fence size-aware and the unit loop pass over a
+    refused candidate instead of ending the beat on it, which recovers part of
+    this defect on its own: the 64-slot control is 57 beats now, not 64, and the
+    128-slot control is 111, not 128. Every number below is measured against
+    THAT control, on a tree carrying both.
+
+    ============  =========  ============  ==========
+    plan          control    slot-local    plan-wide
+    ============  =========  ============  ==========
+    64 slots      57         52            **44**
+    128 slots     111        103           **86**
+    ============  =========  ============  ==========
+
+    The middle column is the one worth reading, because it is where this queue's
+    own prior finding was re-based. Before CAL-P1335 a slot-local cut was WORSE
+    THAN NOTHING (128 uncut against 174 with it): the fence read the carried
+    worst unit, so a beat that opened on an uncut parent refused the cheap
+    children beside it and the plan never converted. CAL-P1335 removed exactly
+    that, so slot-local now pays — 111 → 103. Plan-wide still beats it close to
+    two to one, and THAT, not the old "worse than nothing", is the live argument
+    for the scope. The 128 arm is left out of CI for runtime; 64 is the one that
+    runs.
     """
 
     @pytest.mark.asyncio
@@ -990,10 +1037,10 @@ class TestTheShipAtTheSizeProductionRuns:
             conclusive_splits=False,
         )
 
-        assert base.completed_at == 64, (
-            "the control is one beat per unit, which is the defect; if it is not "
-            f"64 the regime moved and the number below means something else: "
-            f"{base.completed_at}"
+        assert base.completed_at == 57, (
+            "the control is ~a beat per unit, which is the defect, less the part "
+            "CAL-P1335 (#6868) already recovers; if it is not 57 the regime moved "
+            f"again and the number below means something else: {base.completed_at}"
         )
         assert cand.completed_at is not None, "the candidate must publish at all"
         assert cand.completed_at < base.completed_at * 0.9, (

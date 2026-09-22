@@ -118,6 +118,9 @@ d("a draw is not the away team on iOS", () => {
   // #3051 moved the since-open caption's whole decision out of the view.
   const sinceOpen = () =>
     readFileSync(join(IOS_ROOT, "Utilities/SinceOpenCaption.swift"), "utf8");
+  // #7984 moved the source rows' PAIR decision out of the view the same way.
+  const formatting = () =>
+    readFileSync(join(IOS_ROOT, "Utilities/FormattingUtilities.swift"), "utf8");
 
   /** The tell has to actually fire on the code that shipped the bug. */
   it("the complement tell matches the four pre-fix lines", () => {
@@ -270,12 +273,29 @@ d("a draw is not the away team on iOS", () => {
 
     // The row's away side is optional all the way through.
     expect(code).toMatch(/probabilities: \(away: Double\?, home: Double\)/);
-    expect(code).toMatch(/Text\(formatProbabilityOrDash\(probabilities\.away\)\)/);
+
+    // #7984 moved the FORMATTING one level down, not the optionality: the pair
+    // is now decided together by `duelProbabilityStrings` because rounding the
+    // two sides apart printed 101 on 122 of 332 production rows. What this test
+    // guards is unchanged — the away side reaching the Text is still the
+    // OPTIONAL one, so a withheld away still prints a dash rather than a number
+    // invented from `1 - home`.
+    expect(code).toMatch(
+      /let printed = duelProbabilityStrings\(\s*away: probabilities\.away, home: probabilities\.home\)/
+    );
+    expect(code).toMatch(/Text\(printed\.away\)/);
+    // ...and the shared helper is what keeps the dash. Asserted on the helper's
+    // own file, because that is where the guarantee now lives: a
+    // `duelProbabilityStrings` that reached for `formatProbability` would
+    // compile, and would print "0%" for a price that never arrived.
+    expect(stripComments(formatting())).toMatch(
+      /func duelProbabilityStrings\([\s\S]{0,400}formatProbabilityOrDash\(away, renderedPercent:/
+    );
 
     // The measured strings are the printed strings (a column sized against
     // "1%" and printing "—" is the mutant here).
     expect(code).toMatch(
-      /values: entries\.flatMap \{[\s\S]{0,200}formatProbabilityOrDash\(printable\(\$0\)\?\.away\)/
+      /values: entries\.flatMap \{[\s\S]{0,300}duelProbabilityStrings\(\s*away: printable\(entry\)\?\.away/
     );
 
     // The bar's remainder loses the away team's COLOUR with its number.
@@ -300,8 +320,10 @@ d("a draw is not the away team on iOS", () => {
     expect(code).toMatch(
       /let printable = \{ \(row: NamedBookmakerRow\) in\s*DrawPricedWinner\.printablePair\(/
     );
+    // #7984 — as on the sources rows above: the pair is decided together, and
+    // the side handed in is still the optional one off `printable`.
     expect(code).toMatch(
-      /\[formatProbabilityOrDash\(printable\(row\)\?\.away\),\s*formatProbability\(row\.probabilities\.home\)\]/
+      /duelProbabilityStrings\(\s*away: printable\(row\)\?\.away, home: row\.probabilities\.home\)/
     );
     // #4406's filter is untouched: the row still needs BOTH prices to exist.
     expect(code).toMatch(
@@ -509,8 +531,21 @@ d("a draw is not the away team on iOS", () => {
 
     // The image: an OPTIONAL away probability, no default on the entry point.
     expect(renderer).toMatch(/let awayProbability: Double\?/);
-    expect(renderer).toMatch(/awayProbability: Double\?,\s*\n\s*sportName: String,/);
-    expect(renderer).toMatch(/if let awayProbability \{/);
+    // #7998 put the two served percents between `awayProbability` and
+    // `sportName`, so the adjacency this line used to assert no longer holds.
+    // The PROPERTY it was asserting — no default, because a caller that omits
+    // the argument silently restores the old reading on the one surface whose
+    // output leaves the app — is unchanged, and is now stated directly rather
+    // than inferred from what sits next to it. The new parameters inherit it.
+    expect(renderer).toMatch(
+      /awayProbability: Double\?,\s*\n\s*awayRenderedPercent: Int\?,\s*\n\s*homeRenderedPercent: Int\?,\s*\n\s*sportName: String,/
+    );
+    expect(renderer).not.toMatch(/awayProbability: Double\? =/);
+    expect(renderer).not.toMatch(/(away|home)RenderedPercent: Int\? =/);
+    // The slot is still WITHHELD rather than dashed — #5363's property, now read
+    // off the decided pair instead of the raw probability (#7998).
+    expect(renderer).toMatch(/if let awayPercent = printed\.away \{/);
+    expect(renderer).not.toMatch(/absentProbabilityMarker/);
     // …and the card hands it the rule's answer, not the served field.
     expect(cardCode).toMatch(/awayProbability: printable\.away,/);
   });
@@ -663,6 +698,13 @@ d("a draw is not the away team on iOS", () => {
       ],
       "ShareCardRenderer.swift": [
         "    private var awayBarShare: Double { awayProbability ?? (1 - homeProbability) }",
+        // #7998 — the same remainder, handed to `duelPercents` so the image
+        // prints the pair the card printed. It is the category this sweep's own
+        // note admits ("a value handed to `duelPercents`/the rule itself"), the
+        // twin of the two `DiscoverEventCard.swift` lines above, and it is never
+        // drawn: the away FIGURE comes from `printed.away`, which is nil exactly
+        // when `awayProbability` is.
+        "            away: awayProbability ?? (1 - homeProbability),",
       ],
       "WidgetAPIClient.swift": [
         "            let awayProbability = 1.0 - homeProbability",

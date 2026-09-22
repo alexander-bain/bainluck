@@ -684,6 +684,18 @@ class TestCompletionScalesWithThePopulation:
         the build costs a beat per unit. The repair's job is to break that
         proportionality, and it does — which is why leaving it live here would
         quietly turn this into a test of the repair.
+
+        **RE-BASED 2026-09-22 (CAL-P1335, #6868): 8 → 7, not 8 → 9.** The floor
+        below is a REGIME sentinel, not a target — it exists so that a build
+        which suddenly finishes in a fraction of a beat per unit is read as "the
+        rig stopped measuring the defect" rather than as good news. CAL-P1335
+        made the unit loop pass over a candidate too big for the remainder
+        instead of ending the beat on it, so a beat now banks the smaller slots
+        behind a refused one and the count fell by one beat in eight. That is a
+        12.5% move with a named cause, which is exactly the kind this sentinel
+        should NOT fire on; a drop to 4 or 2 is the kind it should. So the floor
+        moves to the new measurement and keeps its margin, and the scaling
+        assertion above it — the actual claim of this class — is untouched.
         """
         small = await drive(
             buckets=8, slow_slots=8, max_beats=40, packing_splits=False
@@ -698,7 +710,7 @@ class TestCompletionScalesWithThePopulation:
             "completion time must grow with the population — that growth is what "
             "eventually outruns the cursor's survival"
         )
-        assert small.completed_at >= 8, (
+        assert small.completed_at >= 7, (
             f"finished in {small.completed_at} beats for 8 units; if this ever "
             "drops far below one beat per unit the regime has changed and the "
             "rest of this file is measuring something else"

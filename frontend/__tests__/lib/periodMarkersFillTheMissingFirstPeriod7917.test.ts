@@ -257,16 +257,21 @@ describe("#7917 — the first period is filled from a source that can report it"
     // This is the load-bearing line: consulting a second source changed nothing.
     expect(withFallback).toEqual(markersOnly);
 
-    // 🪤 The bare `1` is NOT this ship and is not a filled marker — it is what
-    // `normalizePeriodLabel("End of 1st Inning")` returns on master, and it is
-    // present identically on both sides of the equality above. The `isEnd` strip
-    // consumes "End of ", so `iMatch`'s `|end` arm (the one whose comment says
-    // "Skip … 'End' to avoid chart clutter") never sees the string, and it falls
-    // through to the plain-ordinal branch instead. Written out rather than
-    // filtered away, so this pins the defect where a reader meets it: fix it and
-    // this line fails, which is the point. Filed separately; measured at 6–9 such
-    // rules on 10 of 10 corpus MLB charts.
-    expect(withFallback.map((b) => b.label)).toEqual(["T1", "1", "B1", "T2", "B2"]);
+    // ✅ THE BARE `1` IS GONE, AND ITS REMOVAL IS #7982, NOT THIS SHIP.
+    // This line used to read `["T1", "1", "B1", "T2", "B2"]`. That `1` was what
+    // `normalizePeriodLabel("End of 1st Inning")` returned: the `isEnd` strip
+    // consumes "End of ", so `iMatch`'s `|end` arm — the one whose comment says
+    // "Skip … 'End' to avoid chart clutter" — never saw the string and it fell
+    // through to the plain-ordinal branch. It was written out rather than
+    // filtered away precisely so that fixing it would fail this line instead of
+    // passing silently. #7982 fixed it; this is that line failing, then updated.
+    //
+    // The end marker is now dropped at the ordinal branch, keyed on `isEnd`, so
+    // it cannot be un-reached again by a change to the prefix strip. Measured
+    // over the 70-event corpus: 10 charts changed, all baseball, no label gained
+    // anywhere. The claim THIS test still owns is the one below it — consulting
+    // a second source changed nothing — and it is unaffected either way.
+    expect(withFallback.map((b) => b.label)).toEqual(["T1", "B1", "T2", "B2"]);
   });
 
   it("never moves a marker the transitions log supplies", () => {

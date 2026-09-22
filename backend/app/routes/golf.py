@@ -29,6 +29,11 @@ from app.utils.golf_evolution_market import (
     select_by_snapshot_richness,
 )
 from app.utils.odds_math import probability_to_american
+from app.utils.golf_event_format import (  # #7985
+    is_team_match_play_key,
+    select_team_side_matchup,
+    withhold_individual_market,
+)
 from app.utils.golf_membership import (
     drop_foreign_field_markets,
     is_foreign_domain,
@@ -2113,7 +2118,21 @@ def _build_tournament_entry(
     golfers.sort(key=lambda g: g["probability"], reverse=True)
 
     if not golfers:
-        return None
+        # #7985: "no golfers" is the right reason to drop a stroke-play card and
+        # the wrong reason to drop a team match-play one. The Presidents Cup's
+        # only individual outcomes were the phantoms the serve guard just
+        # withheld; its REAL market — Kalshi's Team USA 81.5% v Team World
+        # 14.5% — is an h2h matchup, and h2h matchups are routed and attached
+        # AFTER this function returns. So returning None here would have fixed
+        # the phantom by deleting the Presidents Cup from /golf during the
+        # Presidents Cup, trading a truth defect for a notice-27 marquee
+        # absence.
+        #
+        # The card is kept alive to be judged once its h2h and prop markets are
+        # on it; `_drop_contentless_team_cards` does that, and drops it there if
+        # it turns out to carry nothing.
+        if not is_team_match_play_key(tourn_key):
+            return None
 
     all_golfers = golfers
     for g in all_golfers:
@@ -2192,6 +2211,98 @@ def _build_tournament_entry(
         "prop_markets": prop_markets_list,
         "_all_golfers": all_golfers,
     }
+
+
+def _promote_team_matchup_to_card(tournaments: list[dict]) -> int:
+    """Lead a team match-play card with its two teams. (#7985)
+
+    The withhold upstream takes the phantom individual field off the Presidents
+    Cup card. This is what replaces it. The card component enters its cup
+    renderer on `golfers.length === 2` and reads its hero from `golfers[0]`; it
+    never reads `h2h_matchups`. So the event's real market — Kalshi's Team USA
+    81.5% v Team World 14.5% — has to be moved into `golfers` to be rendered at
+    all. Without this the fix trades "led by a golfer who is not in the event"
+    for "a title with nothing under it", which is what CERT-3289 blocked.
+
+    Runs after h2h matchups are attached (they are routed late) and before
+    `_drop_contentless_team_cards`, so a card that gets its teams here is no
+    longer contentless and survives on them.
+
+    Only ever fills a card that has NO golfers, so it cannot displace a real
+    field, and `select_team_side_matchup` only ever returns a pair whose two
+    sides both name teams, so it cannot put a person back at the top of the
+    card. Returns the number of cards led.
+    """
+    promoted = 0
+    for t in tournaments:
+        if not is_team_match_play_key(t.get("key")) or t.get("golfers"):
+            continue
+        matchup = select_team_side_matchup(t.get("h2h_matchups"))
+        if not matchup:
+            continue
+
+        # Shaped exactly like `_build_tournament_entry`'s golfers, because the
+        # card, the feed serializer and the movers loop all read that shape and
+        # a short entry would KeyError one of them. `movement_24h=None` is a
+        # statement, not a placeholder: the h2h entry carries no 24h basis, and
+        # None is how this payload already says "no movement to report" — it is
+        # what keeps these two out of `biggest_movers`, where a team is not a
+        # mover. `golfer_a` is the higher probability by `_build_h2h_entry`'s
+        # own construction, so rank follows the list.
+        sides = [
+            {
+                "name": matchup[slot]["name"],
+                "probability": matchup[slot]["probability"],
+                "movement_24h": None,
+                "movement_is_dated": False,
+                "sources": {matchup.get("source") or "unknown": matchup[slot]["probability"]},
+                "opening_probability": None,
+                "rank": rank,
+            }
+            for rank, slot in enumerate(("golfer_a", "golfer_b"), start=1)
+        ]
+        t["golfers"] = sides
+        # The two teams ARE the whole field of a team match-play card. Keeping
+        # `_all_golfers` in step matters because it is what the 132-entry field
+        # in the filing was measured on.
+        t["_all_golfers"] = list(sides)
+        promoted += 1
+        logger.info(
+            "Golf #7985: leading team match-play card '%s' with %s %.1f%% v %s %.1f%%",
+            t.get("name") or t.get("key"),
+            sides[0]["name"], sides[0]["probability"] * 100,
+            sides[1]["name"], sides[1]["probability"] * 100,
+        )
+    return promoted
+
+
+def _drop_contentless_team_cards(tournaments: list[dict]) -> list[dict]:
+    """Drop a team match-play card that ended up with nothing to show. (#7985)
+
+    `_build_tournament_entry` lets a team match-play tournament through with no
+    golfers, because its real market is an h2h matchup that is not attached
+    until later. This is where that licence is paid back: once h2h matchups and
+    props ARE attached, a card with no golfers, no matchups and no props is an
+    empty card, and an empty card is worse than an absent one.
+
+    Only ever removes a card this rule created — a tournament with golfers is
+    untouched, and a non-team card never reached here empty in the first place.
+    """
+    kept: list[dict] = []
+    for t in tournaments:
+        if (
+            is_team_match_play_key(t.get("key"))
+            and not t.get("golfers")
+            and not t.get("h2h_matchups")
+            and not t.get("prop_markets")
+        ):
+            logger.info(
+                "Golf: dropping team match-play card '%s' — no golfers, no h2h, no props",
+                t.get("name") or t.get("key"),
+            )
+            continue
+        kept.append(t)
+    return kept
 
 
 def _route_h2h_to_tournament(
@@ -2543,6 +2654,7 @@ async def get_golf(
         market_sources = []
         earliest_commence = None
         latest_resolution = None
+        team_format_withheld = 0
 
         source_best, dedup_candidates = _dedup_winner_markets(tourn_key, tourn_markets)
 
@@ -2560,6 +2672,24 @@ async def get_golf(
                     latest_resolution = market.resolution_date
 
             if market.id in dedup_candidates and market.id != source_best.get(source):
+                continue
+
+            # #7985: the rows the mint guard was too late for. A team match-play
+            # event has no cut and no individual champion, so our own
+            # `datagolf:…:{win,top_5,top_10,top_20,make_cut}` markets for it are
+            # answers to questions it cannot be asked. Withheld here rather than
+            # left to rank, because the aggregation below cannot tell a phantom
+            # 6.1% from a real one — it ranked Jackson Koivun to the top of the
+            # Presidents Cup card out of a 132-player field for a 24-player
+            # event. `withhold_individual_market` can only reach markets we
+            # minted; Kalshi's Team USA v Team World on the same card is out of
+            # its reach by construction.
+            #
+            # Placed AFTER the commence/resolution harvest above on purpose: the
+            # withheld rows still date the card, so the guard changes what the
+            # card SAYS without changing when it thinks the event is.
+            if withhold_individual_market(tourn_key, source, market.external_id):
+                team_format_withheld += 1
                 continue
 
             # Per-golfer binary markets: drop the winner-field fragments, but
@@ -2639,6 +2769,13 @@ async def get_golf(
                     withheld, market.name, getattr(market, "id", None),
                 )
 
+        if team_format_withheld:
+            logger.info(
+                "Golf #7985: withheld %d minted individual stroke-play market(s) "
+                "from team match-play tournament '%s'",
+                team_format_withheld, tourn_key,
+            )
+
         entry = _build_tournament_entry(
             tourn_key, tourn_markets, golfer_data, prop_markets_list,
             market_ids, market_sources, earliest_commence, latest_resolution,
@@ -2693,6 +2830,13 @@ async def get_golf(
             deduped.append(m)
         deduped.sort(key=lambda m: abs(m["golfer_a"]["probability"] - m["golfer_b"]["probability"]))
         t["h2h_matchups"] = deduped
+
+    # #7985: the team pair reaches the card contract here — h2h matchups are
+    # attached just above, and the drop below must see the card it leads.
+    _promote_team_matchup_to_card(tournaments)
+
+    # #7985: the other half of keeping an empty team match-play card alive.
+    tournaments = _drop_contentless_team_cards(tournaments)
 
     # Sort and clean up
     tournaments.sort(key=lambda t: (t["order"], t.get("sort_date") or "9999"))

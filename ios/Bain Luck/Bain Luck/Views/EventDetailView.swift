@@ -1628,10 +1628,17 @@ struct EventDetailView: View {
         )
         .frame(maxWidth: .infinity)
 
-        Text(formatProbabilityOrDash(probabilities.away))
+        // #7984 — the two sides of one source are ONE rounding decision. Drawn
+        // independently, a venue on the half-percent grid put both on `.5` and
+        // half-up rounded both up: Polymarket `0.585` printed `42% 59%` under a
+        // Sportsbooks row reading `3% 97%`. The bar above is unaffected — it
+        // partitions the true doubles, not the printed integers.
+        let printed = duelProbabilityStrings(
+            away: probabilities.away, home: probabilities.home)
+        Text(printed.away)
             .font(.caption2.monospacedDigit())
             .frame(width: columns.numeric, alignment: .trailing)
-        Text(formatProbability(probabilities.home))
+        Text(printed.home)
             .font(.caption2.monospacedDigit())
             .frame(width: columns.numeric, alignment: .trailing)
     }
@@ -1662,11 +1669,18 @@ struct EventDetailView: View {
                 home: entry.homeProbability,
                 sport: event.sport)
         }
+        //
+        // #7984 — and the pair is rounded as one decision here too, through the
+        // same `duelProbabilityStrings` the rows draw with. Measuring the two
+        // sides independently while the row prints them jointly would size this
+        // column against a string no row draws, which is the #4208/#5271 trap
+        // from the other direction.
         let columns = EventSourceLabelColumn.columns(
             labels: entries.map(\.label),
-            values: entries.flatMap {
-                [formatProbabilityOrDash(printable($0)?.away),
-                 formatProbability($0.homeProbability)]
+            values: entries.flatMap { entry -> [String] in
+                let printed = duelProbabilityStrings(
+                    away: printable(entry)?.away, home: entry.homeProbability)
+                return [printed.away, printed.home]
             },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize)
@@ -1887,11 +1901,20 @@ struct EventDetailView: View {
                 home: row.probabilities.home,
                 sport: event.sport)
         }
+        //
+        // #7984 — as in `sourceContent`, and #4233's rule is why it is here at
+        // all: these two lists are one visual table, so a pair rule applied to
+        // one of them would put a 101 directly beneath a 100. A book's away price
+        // is served rather than derived, so most of these pairs are not exact
+        // complements and `renderedDuelPercents` leaves them alone; 6 of 557 on
+        // production were complements printing 101, and those are the ones this
+        // moves.
         let columns = EventSourceLabelColumn.columns(
             labels: rows.map(\.label),
             values: rows.flatMap { row -> [String] in
-                [formatProbabilityOrDash(printable(row)?.away),
-                 formatProbability(row.probabilities.home)]
+                let printed = duelProbabilityStrings(
+                    away: printable(row)?.away, home: row.probabilities.home)
+                return [printed.away, printed.home]
             },
             availableWidth: sourceRowWidth,
             typeSize: dynamicTypeSize,

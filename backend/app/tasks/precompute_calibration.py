@@ -5563,9 +5563,44 @@ STAGED_UNIT_WINDOW_SAFETY = 1.25
 
 
 def _unit_fits_in_window(
-    remaining_ms: int, worst_unit_ms: float, prior_unit_ms: float = 0.0
+    remaining_ms: int,
+    worst_unit_ms: float,
+    prior_unit_ms: float = 0.0,
+    *,
+    candidate_vms: int = 0,
+    worst_unit_vms: int = 0,
+    prior_unit_vms: float = 0.0,
 ) -> bool:
     """Whether another unit may be STARTED, not merely whether time remains.
+
+    **CAL-P1335 (#6868): the reference is rescaled to the CANDIDATE's size.**
+    Both references below are costs of some OTHER unit, and once
+    :func:`~app.utils.calibration_staged_futures.refine_unit` starts cutting
+    slots the plan stops being uniform — production carries 92 slots at
+    ``buckets=128`` beside 111 children cut 2x to 11x. Comparing a 1/11th-size
+    child against the cost of a whole 128-slot is a scale error, and it is the
+    one that stopped refinement paying: the build cuts a slot finer so more fit
+    in a window, then refuses the children on the strength of the parent. At
+    10:27Z on 2026-09-22 that was 1 unit banked per beat with 497,980 ms of
+    window left over and 94 unbanked children, none of which was asked its own
+    size.
+
+    The scale is the virtual-question count, because cost is essentially pure
+    ``scalable/B`` here — the two-point read at ``128:119`` / ``256:119``
+    (2026-09-19) puts the fixed per-unit prefix at **<= 14.2 s** against a
+    635 s child, and the constant above this function carries that measurement.
+    Halving the rows halves the time, so a candidate with half the questions is
+    expected to cost half as much, and that expectation is what the window has
+    to hold.
+
+    **Absent counts change nothing.** Every argument defaults to zero and a
+    reference with no size attached is used exactly as it is today, so a caller
+    that does not measure size gets the pre-CAL-P1335 predicate byte for byte.
+    "We cannot tell how big this unit is" must not read as "it is small".
+
+    **And the rescaling only ever WIDENS** — see the ``min`` below. This is a
+    pure widening of admission: every unit the size-blind fence admits is still
+    admitted, so nothing that runs today stops running.
 
     ``worst_unit_ms <= 0`` means this beat has not completed a unit yet.
     ``prior_unit_ms`` is CAL-P081's answer to that (#2052): the PREVIOUS beat's
@@ -5594,7 +5629,36 @@ def _unit_fits_in_window(
     """
     if remaining_ms <= 0:
         return False
-    reference = max(float(worst_unit_ms or 0.0), float(prior_unit_ms or 0.0))
+    worst = float(worst_unit_ms or 0.0)
+    prior = float(prior_unit_ms or 0.0)
+    if candidate_vms > 0:
+        # Rescaled INDEPENDENTLY, then maxed — the two references can describe
+        # units of different sizes, so converting each to its own per-question
+        # rate first is the only order that compares like with like. Maxing the
+        # raw millisecond figures and rescaling once would pick the bigger UNIT
+        # rather than the dearer QUESTION.
+        #
+        # ``min`` AND NOT THE PLAIN PRODUCT, and this clause is the one that
+        # keeps the change safe: **rescaling may only ever widen admission.**
+        # An above-average candidate rescales UP, and a unit refused at the
+        # START of a beat — when the window is the largest it will ever be —
+        # can never run at all: nothing later in the build makes it smaller,
+        # because the only thing that does (``refine_unit``) fires on a
+        # CANCELLATION, which needs the unit to have been admitted. So
+        # tightening does not defer a unit, it strands it, and the simulator in
+        # ``test_calibration_oversized_slot_is_cut_on_its_proof_6599`` says so
+        # out loud: the unclamped form banks every below-mean slot and then
+        # never publishes.
+        #
+        # Clamped, every unit today's fence admits is still admitted, the
+        # change is a pure widening, and the over-admission it can cause is the
+        # bounded one the build already recovers from (statement bound ->
+        # cancellation -> ``note_unit_cancelled`` -> ``refine_unit``).
+        if worst > 0 and worst_unit_vms > 0:
+            worst = min(worst, worst / worst_unit_vms * candidate_vms)
+        if prior > 0 and prior_unit_vms > 0:
+            prior = min(prior, prior / prior_unit_vms * candidate_vms)
+    reference = max(worst, prior)
     if reference <= 0:
         return True
     return remaining_ms >= reference * STAGED_UNIT_WINDOW_SAFETY
@@ -5932,6 +5996,39 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         "staged:units_deferred",
         sum(1 for chunk in chunks if cursor.unit_cancels.get(slot_ref(chunk), 0)),
     )
+    # -- CAL-P1335 (#6868): the sizes the admission fence compares --------------
+    #
+    # ``prior_unit_ms`` is a MEAN over the units the previous beat completed, so
+    # the size it describes is the mean size of a planned unit. Taken from the
+    # CURRENT plan rather than a carried count, which is the conservative
+    # direction and not merely the convenient one: the plan only ever gets FINER
+    # (``refine_unit`` adds children, nothing merges them back), so this mean is
+    # <= the mean that was in force when the cost was measured, and dividing by
+    # the smaller number overstates the per-question rate. An error here refuses
+    # a unit that would have fitted; it never admits one that will not.
+    total_vms = sum(len(getattr(chunk, "vm_ids", ()) or ()) for chunk in chunks)
+    prior_unit_vms = (total_vms / len(chunks)) if chunks and total_vms else 0.0
+    # The size of the unit that set ``worst_unit_ms``, carried beside it for the
+    # same reason the cost is: a maximum with no size attached cannot be rescaled
+    # and silently keeps the old blind comparison.
+    worst_unit_vms = 0
+    #: #6599: the bucket count of the partition ``worst_unit_ms`` was measured
+    #: at, or 0 when this beat has completed nothing. The packing sweep after
+    #: the loop is the only reader; see it for why a cost without its
+    #: granularity cannot be compared against a refined plan.
+    worst_unit_buckets = 0
+    #: #6599: the FIRST chunk this beat's admission fence declined, on either
+    #: stop reason, or None if it declined none. The packing sweep runs once
+    #: after the loop and this is the one slot it has direct evidence about.
+    #: Held rather than acted on in the branch because since CAL-P1335 (#6868)
+    #: that branch runs once PER DECLINED CANDIDATE — a beat can pass over 90
+    #: of them — and the sweep is one decision about the whole plan.
+    packing_declined_chunk = None
+    # Units the fence passed over as too large for what is left of THIS window.
+    # Counted rather than logged per unit: the scan below can decline 90-odd
+    # candidates in a beat and a ledger row each would bury the beat's own story.
+    passed_over = 0
+    hit_deadline = False
     # D45(A): an EMPTY iterable, not a `break` inside the loop and not a `return`
     # above it. The loop body is untouched by this queue — every line of it still
     # runs, on the rebuild pass, exactly as it did — and Stage 3 below still gets
@@ -5941,213 +6038,51 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
             done += 1
             continue
         remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
-        if not _unit_fits_in_window(remaining_ms, worst_unit_ms, prior_unit_ms):
+        if not _unit_fits_in_window(
+            remaining_ms,
+            worst_unit_ms,
+            prior_unit_ms,
+            candidate_vms=len(getattr(chunk, "vm_ids", ()) or ()),
+            worst_unit_vms=worst_unit_vms,
+            prior_unit_vms=prior_unit_vms,
+        ):
             # CAL-P038 (#1597): STOP BEFORE the window runs out, not after. The
             # two cases are recorded apart because they mean different things —
             # ``deadline`` is the window genuinely gone, ``unit_too_large`` is
             # time left that provably cannot hold a unit. An absent stage reads
             # as "fine" (gotcha #53), and this is the branch that decides whether
             # the beat ends honest or ends RED.
-            stop_reason = "deadline" if remaining_ms <= 0 else "unit_too_large"
-            runner.ledger.record_stage(f"staged:window_stop:{stop_reason}", 0)
-            runner.ledger.record_gauge("staged:window_left_ms", max(0, remaining_ms))
-            logger.info(
-                "calibration staged futures: out of window (%s) with %d/%d units "
-                "banked — %d ms left, worst unit %d ms",
-                stop_reason, done, len(chunks), max(0, remaining_ms), int(worst_unit_ms),
-            )
-            # -- #6599: A SLOW SUCCESS IS EVIDENCE ABOUT THE PLAN TOO ----------
-            #
-            # Every refinement in this loop lives in the ``except`` branch
-            # below, and so keys on a CANCELLATION. The slot just declined did
-            # not cancel; nothing about it failed. What declined it is the
-            # measured cost of the units this build COMPLETES — and if that cost
-            # cannot fit into a whole beat twice, then no beat can ever run two
-            # units, the build is pinned at one per hour, and under the
-            # cancellation rules every slot in it is healthy and asks for
-            # nothing. That is the state production reached: 108/203 banked, one
-            # 726,124 ms unit per 1,336,679 ms beat, 46% of every window
-            # unusable, and the accuracy page serving a seven-day-old bank
-            # because a build that never fails never triggers its own repair.
-            #
-            # Measured against the WHOLE window and never against
-            # ``remaining_ms``, and that distinction is the entire guard: "this
-            # beat is spent" is the normal, correct end of a healthy beat and
-            # must cut nothing, while "no beat could hold two of these" is a
-            # statement about the PARTITION and is the only one that licenses a
-            # cut. Because the predicate reads neither ``remaining_ms`` nor
-            # ``stop_reason``, it is equally sound on both stop reasons and is
-            # not branched on them.
-            #
-            # **The cut is the PLAN's, not this slot's, and that scope is the
-            # whole mechanism.** The evidence here — a carried cost measured over
-            # completions, against a whole window — is not about the slot that
-            # happened to be declined; it is about the partition every unbanked
-            # slot belongs to. Cutting only the declined one converts a plan at
-            # one slot per beat, and MEASURED (lat941) that is worse than doing
-            # nothing at the size production runs: 128 near-uniform slots over 60
-            # beats banked 541 questions with a slot-local cut against 557
-            # without it, because the beat's admission fence reads the carried
-            # WORST unit, so a beat that opens on an uncut parent still refuses a
-            # cheap child and the plan never converts. Cut the remainder and the
-            # same plan converts in one beat.
-            #
-            # Unbanked twice over: every chunk offered below is one this beat has
-            # not banked and ``cursor.has`` says so, and ``refine_unit`` refuses
-            # ``SPLIT_BANKED`` besides. So the units already in the cursor cannot
-            # be re-planned by this, which is the property that makes it safe to
-            # do mid-build — and it is the same property whether one slot is cut
-            # or two hundred.
-            #
-            # One DECISION per beat, still: the predicate is evaluated once, on
-            # one reference cost, and one cursor write carries whatever it
-            # decided. What widened is the decision's scope, not its frequency.
-            unit_reference_ms = max(float(worst_unit_ms or 0.0), prior_unit_ms)
-            beat_window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
-            packing_factor = packing_split_factor(
-                unit_reference_ms, beat_window_ms, safety=STAGED_UNIT_WINDOW_SAFETY
-            )
-            packing_ref = slot_ref(chunk)
-            if not packing_factor:
-                # Recorded on every decline that does NOT cut, because "the slot
-                # fits and this beat simply ran out" and "the beat never got as
-                # far as asking" must not render the same (gotcha #53).
-                runner.ledger.record_gauge("staged:unit_packs_in_window", 1)
-            else:
-                runner.ledger.record_gauge(
-                    f"staged:unit_packing_factor:{packing_ref}", packing_factor
+            if remaining_ms <= 0:
+                hit_deadline = True
+                runner.ledger.record_stage("staged:window_stop:deadline", 0)
+                runner.ledger.record_gauge("staged:window_left_ms", 0)
+                logger.info(
+                    "calibration staged futures: out of window (deadline) with "
+                    "%d/%d units banked — worst unit %d ms",
+                    done, len(chunks), int(worst_unit_ms),
                 )
-                # The declined slot FIRST, then the rest of the plan in its
-                # attempt order, so the one slot with direct evidence against it
-                # is cut even if the refinement budget stops the sweep partway.
-                #
-                # **The reference is scaled to each candidate's granularity, and
-                # without that this cascades.** ``unit_reference_ms`` is a cost
-                # measured at ONE partition — ``worst_unit_buckets``, the slot
-                # that produced it — and a candidate already cut k-fold finer
-                # holds 1/k of the questions and is expected to cost 1/k as much.
-                # Comparing every candidate against the unscaled number re-cuts
-                # last beat's children every beat until they are single
-                # questions.
-                #
-                # Honest about what this arithmetic is worth: MEASURED (lat941)
-                # it moves ONE slot across four arms — a sweep's candidates share
-                # the reference's partition almost by construction, because the
-                # reference is a unit this beat ran out of the same plan. It is
-                # the guard below, not this ratio, that stops the cascade, and a
-                # mutation that deletes the ratio survives the suite. Kept
-                # because heterogeneous plans are the normal state once a build
-                # has been refining for a week, and the cost is a divide.
-                #
-                # **No granularity, no sweep** — and the reference only carries
-                # one when it came from ``worst_unit_ms``, a unit THIS beat ran
-                # and whose slot is therefore known. When ``prior_unit_ms`` wins
-                # the ``max`` the number is a carried cost from a partition this
-                # beat cannot name, and attributing it to the granularity of some
-                # other unit is how a sweep re-cuts its own children: MEASURED
-                # (lat941) as a reference pinned at 656,889 ms while the units
-                # actually running cost 400,000 — 1,300 splits on a 128-slot
-                # plan and 128 beats became 174. An unscalable number may speak
-                # for the one slot with direct evidence against it, the one just
-                # declined, and for nothing else.
-                reference_buckets = (
-                    worst_unit_buckets
-                    if worst_unit_ms > 0 and worst_unit_ms >= prior_unit_ms
-                    else 0
-                )
-                sweep = (chunk, *planned_order) if reference_buckets else (chunk,)
-                packing_applied = 0
-                packing_outcomes: dict[str, int] = {}
-                swept_refs: set[str] = set()
-                for candidate in sweep:
-                    if cursor.has(candidate.key):
-                        continue
-                    candidate_ref = slot_ref(candidate)
-                    # The declined slot leads the sweep and is in the plan behind
-                    # it, so without this it is offered twice and banks a
-                    # ``SPLIT_ALREADY`` against itself — a refusal in the ledger
-                    # that describes the loop rather than the plan.
-                    if candidate_ref in swept_refs:
-                        continue
-                    swept_refs.add(candidate_ref)
-                    candidate_parsed = parse_slot_ref(candidate_ref)
-                    if candidate is chunk:
-                        # The declined slot is judged on the plan-level factor
-                        # already computed: it is the one slot this beat has
-                        # direct evidence about, so it is cut whether or not its
-                        # reference can be scaled.
-                        candidate_factor = packing_factor
-                    elif candidate_parsed is None:
-                        # An unreadable reference costs that candidate and
-                        # nothing else; the sweep is not abandoned over it.
-                        packing_outcomes["unreadable_ref"] = (
-                            packing_outcomes.get("unreadable_ref", 0) + 1
-                        )
-                        continue
-                    else:
-                        candidate_factor = packing_split_factor(
-                            unit_reference_ms
-                            * reference_buckets
-                            / candidate_parsed[0],
-                            beat_window_ms,
-                            safety=STAGED_UNIT_WINDOW_SAFETY,
-                        )
-                    if not candidate_factor:
-                        packing_outcomes["packs_already"] = (
-                            packing_outcomes.get("packs_already", 0) + 1
-                        )
-                        continue
-                    cursor, candidate_outcome = refine_unit(
-                        cursor, candidate, factor=candidate_factor
-                    )
-                    # The four ``SPLIT_*`` refusals mean four different things and
-                    # "the evidence was conclusive and the cut was refused" must
-                    # read apart from "no cut was owed" (gotcha #53). Counted by
-                    # outcome rather than named per slot: a per-slot gauge over a
-                    # 203-unit plan is a ledger nobody can read.
-                    packing_outcomes[candidate_outcome] = (
-                        packing_outcomes.get(candidate_outcome, 0) + 1
-                    )
-                    if candidate_outcome == SPLIT_APPLIED:
-                        packing_applied += 1
-                for outcome_name, count in sorted(packing_outcomes.items()):
-                    runner.ledger.record_gauge(
-                        f"staged:unit_packing_split:{outcome_name}", count
-                    )
-                logger.warning(
-                    "calibration staged futures: a unit completes at %d ms against a "
-                    "%d ms beat window — no beat can hold two, so the unbanked "
-                    "remainder is cut (factor %d, %d slots cut, outcomes %s, "
-                    "%d/%d units banked, declined on %s)",
-                    int(unit_reference_ms), int(beat_window_ms), packing_factor,
-                    packing_applied, sorted(packing_outcomes.items()), done,
-                    len(chunks), packing_ref,
-                )
-                if packing_applied:
-                    runner.ledger.record_stage("staged:units_split", packing_applied)
-                    # The refinement lives on the CURSOR and this beat is over
-                    # one line below. Unpersisted it is forgotten, the next beat
-                    # cuts nothing, and the ceiling stands — the same REMEMBER IT
-                    # the cancellation path exists for. ``banks_a_unit=False``:
-                    # nothing completed here, so a failed write is not an
-                    # unbanked completion and must not be subtracted from this
-                    # beat's completed count (CAL-P1302). A failed write costs
-                    # the memory of this cut and nothing else — the bank is
-                    # untouched — so it is logged and the beat ends as it would
-                    # have anyway.
-                    if not await save_staged_cursor(
-                        cursor, terminal=TERMINAL_PARTIAL, banks_a_unit=False
-                    ):
-                        runner.ledger.record_gauge(
-                            "staged:unit_packing_not_persisted", 1
-                        )
-                        logger.warning(
-                            "calibration staged futures: cursor write failed after %d "
-                            "slots were cut for packing — the refinement is not "
-                            "remembered",
-                            packing_applied,
-                        )
-            break
+                if packing_declined_chunk is None:
+                    packing_declined_chunk = chunk
+                break
+            # CAL-P1335 (#6868): PASS OVER, do not break. ``unit_too_large`` is a
+            # statement about THIS candidate once the fence knows its size, and
+            # the plan is not uniform — the slots behind this one include children
+            # cut as fine as 1/11th. Breaking here threw the rest of the window
+            # away on the strength of the first slot the order happened to reach,
+            # which is how a beat ended with 497,980 ms unspent and 94 unbanked
+            # children it never asked about.
+            #
+            # The scan is bounded by the plan and costs no queries — every
+            # candidate it declines is declined by arithmetic on numbers already
+            # in hand. With no sizes to compare (the pre-CAL-P1335 case, and any
+            # beat before a slot is refined) every later candidate is measured
+            # against the same reference and declines identically, so the loop
+            # falls out of the bottom having banked exactly what a ``break``
+            # would have banked, and records the same stage below.
+            passed_over += 1
+            if packing_declined_chunk is None:
+                packing_declined_chunk = chunk
+            continue
         unit_started = time.monotonic()
         # Re-armed every unit: ``SET LOCAL`` dies with the transaction that the
         # previous unit's commit ended, so without this the next unit would run
@@ -6362,16 +6297,284 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
         # worst is what the next unit might cost, and it is the next unit the
         # window has to hold. A mean-based bound admits exactly the above-average
         # unit that then gets cancelled.
+        #
+        # CAL-P1335 (#6868): the SIZE moves with the cost, in one assignment, so
+        # the pair can never describe two different units. Recording the maximum
+        # here and the size somewhere else is how a rescaling fence ends up
+        # dividing one slot's milliseconds by another slot's question count.
         if unit_ms >= worst_unit_ms:
             worst_unit_ms = unit_ms
-            # #6599: and the PARTITION it was measured at. A cost is only a cost
-            # per something, and once a plan can be refined mid-build the units
-            # this ring holds are not all the same size — 726 s means one thing
-            # from a 128-way slot and another from a 512-way child of one. The
-            # packing sweep scales by this; every other reader wants the raw
-            # number and is unaffected.
+            worst_unit_vms = len(getattr(chunk, "vm_ids", ()) or ())
+            # #6599: and the PARTITION the same unit was measured at, for the
+            # same reason and in the same assignment. ``worst_unit_vms`` is the
+            # question count the admission fence rescales by; this is the
+            # BUCKET count the packing sweep below rescales by, because a slot
+            # ref names a partition and a child of a 128-way slot is a 256-way
+            # one. Two readers, two denominators, one unit — and neither can
+            # drift from the cost, because all three move together here.
             worst_unit_buckets = (parse_slot_ref(slot_ref(chunk)) or (0, 0))[0]
 
+    # CAL-P1335 (#6868): the ``unit_too_large`` stop is recorded ONCE, here, and
+    # it now means what it always claimed to — the beat ended with window left
+    # that no REMAINING unit could fill, rather than window left that the first
+    # unit in the order could not fill. Recorded only when the scan actually
+    # declined something and the window did not run out, so the two stop reasons
+    # stay mutually exclusive and neither is ever absent when it applies (gotcha
+    # #53). ``staged:units_passed_over`` is the new number and the one that says
+    # whether rescaling is paying: it is the count of candidates this beat ruled
+    # too big for the time it had left.
+    if passed_over and not hit_deadline and not defer_rebuild:
+        remaining_ms = runner.ledger.remaining_ms(elapsed_ms=runner.elapsed_ms())
+        runner.ledger.record_stage("staged:window_stop:unit_too_large", 0)
+        runner.ledger.record_gauge("staged:window_left_ms", max(0, remaining_ms))
+        runner.ledger.record_gauge("staged:units_passed_over", passed_over)
+        logger.info(
+            "calibration staged futures: out of window (unit_too_large) with "
+            "%d/%d units banked — %d ms left, %d candidate(s) passed over, "
+            "worst unit %d ms across %d questions",
+            done, len(chunks), max(0, remaining_ms), passed_over,
+            int(worst_unit_ms), worst_unit_vms,
+        )
+
+
+    if packing_declined_chunk is not None:
+        # -- #6599: A SLOW SUCCESS IS EVIDENCE ABOUT THE PLAN TOO ----------
+        #
+        # AFTER the loop, not inside the decline branch, and that placement is
+        # CAL-P1335's (#6868). Since that ship the branch runs once per
+        # DECLINED CANDIDATE — a beat can pass over ninety of them — while this
+        # is one decision about the whole plan, taken on one reference cost and
+        # carried by one cursor write. Running it in the branch would take the
+        # decision ninety times on ninety different references, which is not a
+        # louder version of this mechanism but a different one. Out here the
+        # reference is also strictly better evidence: it is the worst unit the
+        # beat ACTUALLY ran, across everything it ran, rather than whatever had
+        # completed by the time the first refusal happened to land.
+        #
+        # Every refinement in this loop lives in the ``except`` branch
+        # below, and so keys on a CANCELLATION. The slot just declined did
+        # not cancel; nothing about it failed. What declined it is the
+        # measured cost of the units this build COMPLETES — and if that cost
+        # cannot fit into a whole beat twice, then no beat can ever run two
+        # units, the build is pinned at one per hour, and under the
+        # cancellation rules every slot in it is healthy and asks for
+        # nothing. That is the state production reached: 108/203 banked, one
+        # 726,124 ms unit per 1,336,679 ms beat, 46% of every window
+        # unusable, and the accuracy page serving a seven-day-old bank
+        # because a build that never fails never triggers its own repair.
+        #
+        # Measured against the WHOLE window and never against
+        # ``remaining_ms``, and that distinction is the entire guard: "this
+        # beat is spent" is the normal, correct end of a healthy beat and
+        # must cut nothing, while "no beat could hold two of these" is a
+        # statement about the PARTITION and is the only one that licenses a
+        # cut. Because the predicate reads neither ``remaining_ms`` nor
+        # ``stop_reason``, it is equally sound on both stop reasons and is
+        # not branched on them.
+        #
+        # **The cut is the PLAN's, not this slot's, and that scope is the
+        # whole mechanism.** The evidence here — a carried cost measured over
+        # completions, against a whole window — is not about the slot that
+        # happened to be declined; it is about the partition every unbanked
+        # slot belongs to. Cutting only the declined one converts a plan at one
+        # slot per beat; cutting the remainder converts it in one.
+        #
+        # MEASURED on this tree (lat939), 64- and 128-slot plans, beats to
+        # publish — control / slot-local / plan-wide: 57 / 52 / **44** and
+        # 111 / 103 / **86**.
+        #
+        # **That middle column is a re-basing and it is worth saying out loud.**
+        # This queue's earlier finding was that a slot-local cut is WORSE THAN
+        # NOTHING (128 uncut against 174 with it), and the reason was CAL-P1335's
+        # defect, not this one: the fence read the carried WORST unit, so a beat
+        # opening on an uncut parent refused the cheap children beside it and the
+        # plan never converted. #6868 fixed that. Slot-local therefore PAYS now,
+        # and the old argument for this scope is spent. The live one is the plain
+        # arithmetic above — plan-wide is worth close to twice slot-local — and a
+        # reader who finds the old claim quoted anywhere should trust this table.
+        #
+        # Unbanked twice over: every chunk offered below is one this beat has
+        # not banked and ``cursor.has`` says so, and ``refine_unit`` refuses
+        # ``SPLIT_BANKED`` besides. So the units already in the cursor cannot
+        # be re-planned by this, which is the property that makes it safe to
+        # do mid-build — and it is the same property whether one slot is cut
+        # or two hundred.
+        #
+        # One DECISION per beat, still: the predicate is evaluated once, on
+        # one reference cost, and one cursor write carries whatever it
+        # decided. What widened is the decision's scope, not its frequency.
+        unit_reference_ms = max(float(worst_unit_ms or 0.0), prior_unit_ms)
+        beat_window_ms = runner.ledger.remaining_ms(elapsed_ms=0)
+        packing_factor = packing_split_factor(
+            unit_reference_ms, beat_window_ms, safety=STAGED_UNIT_WINDOW_SAFETY
+        )
+        packing_ref = slot_ref(packing_declined_chunk)
+        if not packing_factor:
+            # Recorded on every decline that does NOT cut, because "the slot
+            # fits and this beat simply ran out" and "the beat never got as
+            # far as asking" must not render the same (gotcha #53).
+            runner.ledger.record_gauge("staged:unit_packs_in_window", 1)
+        else:
+            runner.ledger.record_gauge(
+                f"staged:unit_packing_factor:{packing_ref}", packing_factor
+            )
+            # The declined slot FIRST, then the rest of the plan in its
+            # attempt order, so the one slot with direct evidence against it
+            # is cut even if the refinement budget stops the sweep partway.
+            #
+            # **The reference is scaled to each candidate's granularity, and
+            # without that this cascades.** ``unit_reference_ms`` is a cost
+            # measured at ONE partition — ``worst_unit_buckets``, the slot
+            # that produced it — and a candidate already cut k-fold finer
+            # holds 1/k of the questions and is expected to cost 1/k as much.
+            # Comparing every candidate against the unscaled number re-cuts
+            # last beat's children every beat until they are single
+            # questions.
+            #
+            # Honest about what this arithmetic is worth: MEASURED (lat941,
+            # re-run on the CAL-P1335 tree by lat939 with the same result)
+            # it moves ONE slot across four arms — a sweep's candidates share
+            # the reference's partition almost by construction, because the
+            # reference is a unit this beat ran out of the same plan. It is
+            # the guard below, not this ratio, that stops the cascade, and a
+            # mutation that deletes the ratio survives the suite. Kept
+            # because heterogeneous plans are the normal state once a build
+            # has been refining for a week, and the cost is a divide.
+            #
+            # **No granularity, no sweep** — and the reference only carries
+            # one when it came from ``worst_unit_ms``, a unit THIS beat ran
+            # and whose slot is therefore known. When ``prior_unit_ms`` wins
+            # the ``max`` the number is a carried cost from a partition this
+            # beat cannot name, and attributing it to the granularity of some
+            # other unit is how a sweep re-cuts its own children: MEASURED
+            # (lat941, on the PINNED rig and quoted as that) as a reference
+            # pinned at 656,889 ms while the units actually running cost
+            # 400,000 — 1,300 splits on a 128-slot plan and 128 beats became
+            # 174. An unscalable number may speak for the one slot with direct
+            # evidence against it, the one just declined, and for nothing else.
+            #
+            # Still live on the CAL-P1335 tree, re-run by lat939: severing this
+            # condition reddens the provenance guard, which since #6868 reads
+            # the scope gauge below rather than assuming every beat after the
+            # first is anonymous — a beat that passes over a refusal can go on
+            # to complete a unit and name its partition, so the two scopes now
+            # interleave WITHIN one run and only the gauge can tell them apart.
+            reference_buckets = (
+                worst_unit_buckets
+                if worst_unit_ms > 0 and worst_unit_ms >= prior_unit_ms
+                else 0
+            )
+            sweep = (
+                (packing_declined_chunk, *planned_order)
+                if reference_buckets
+                else (packing_declined_chunk,)
+            )
+            # WHICH of the two the beat chose, recorded because the split count
+            # alone cannot tell them apart (gotcha #53): "one slot cut, because
+            # the reference named no partition and the sweep was refused the
+            # plan" and "one slot cut, because the plan was swept and one slot
+            # was all that was owed" are different facts about the mechanism,
+            # and only the first is the provenance guard holding. Since
+            # CAL-P1335 (#6868) a beat can complete a unit AFTER a refusal —
+            # the loop passes over instead of ending — so which arm wins the
+            # ``max`` now varies beat to beat within one run, and a reader
+            # counting splits cannot recover the scope from the outside.
+            runner.ledger.record_gauge(
+                "staged:unit_packing_scope:plan" if reference_buckets
+                else "staged:unit_packing_scope:slot",
+                1,
+            )
+            packing_applied = 0
+            packing_outcomes: dict[str, int] = {}
+            swept_refs: set[str] = set()
+            for candidate in sweep:
+                if cursor.has(candidate.key):
+                    continue
+                candidate_ref = slot_ref(candidate)
+                # The declined slot leads the sweep and is in the plan behind
+                # it, so without this it is offered twice and banks a
+                # ``SPLIT_ALREADY`` against itself — a refusal in the ledger
+                # that describes the loop rather than the plan.
+                if candidate_ref in swept_refs:
+                    continue
+                swept_refs.add(candidate_ref)
+                candidate_parsed = parse_slot_ref(candidate_ref)
+                if candidate is packing_declined_chunk:
+                    # The declined slot is judged on the plan-level factor
+                    # already computed: it is the one slot this beat has
+                    # direct evidence about, so it is cut whether or not its
+                    # reference can be scaled.
+                    candidate_factor = packing_factor
+                elif candidate_parsed is None:
+                    # An unreadable reference costs that candidate and
+                    # nothing else; the sweep is not abandoned over it.
+                    packing_outcomes["unreadable_ref"] = (
+                        packing_outcomes.get("unreadable_ref", 0) + 1
+                    )
+                    continue
+                else:
+                    candidate_factor = packing_split_factor(
+                        unit_reference_ms
+                        * reference_buckets
+                        / candidate_parsed[0],
+                        beat_window_ms,
+                        safety=STAGED_UNIT_WINDOW_SAFETY,
+                    )
+                if not candidate_factor:
+                    packing_outcomes["packs_already"] = (
+                        packing_outcomes.get("packs_already", 0) + 1
+                    )
+                    continue
+                cursor, candidate_outcome = refine_unit(
+                    cursor, candidate, factor=candidate_factor
+                )
+                # The four ``SPLIT_*`` refusals mean four different things and
+                # "the evidence was conclusive and the cut was refused" must
+                # read apart from "no cut was owed" (gotcha #53). Counted by
+                # outcome rather than named per slot: a per-slot gauge over a
+                # 203-unit plan is a ledger nobody can read.
+                packing_outcomes[candidate_outcome] = (
+                    packing_outcomes.get(candidate_outcome, 0) + 1
+                )
+                if candidate_outcome == SPLIT_APPLIED:
+                    packing_applied += 1
+            for outcome_name, count in sorted(packing_outcomes.items()):
+                runner.ledger.record_gauge(
+                    f"staged:unit_packing_split:{outcome_name}", count
+                )
+            logger.warning(
+                "calibration staged futures: a unit completes at %d ms against a "
+                "%d ms beat window — no beat can hold two, so the unbanked "
+                "remainder is cut (factor %d, %d slots cut, outcomes %s, "
+                "%d/%d units banked, declined on %s)",
+                int(unit_reference_ms), int(beat_window_ms), packing_factor,
+                packing_applied, sorted(packing_outcomes.items()), done,
+                len(chunks), packing_ref,
+            )
+            if packing_applied:
+                runner.ledger.record_stage("staged:units_split", packing_applied)
+                # The refinement lives on the CURSOR and this beat is over
+                # one line below. Unpersisted it is forgotten, the next beat
+                # cuts nothing, and the ceiling stands — the same REMEMBER IT
+                # the cancellation path exists for. ``banks_a_unit=False``:
+                # nothing completed here, so a failed write is not an
+                # unbanked completion and must not be subtracted from this
+                # beat's completed count (CAL-P1302). A failed write costs
+                # the memory of this cut and nothing else — the bank is
+                # untouched — so it is logged and the beat ends as it would
+                # have anyway.
+                if not await save_staged_cursor(
+                    cursor, terminal=TERMINAL_PARTIAL, banks_a_unit=False
+                ):
+                    runner.ledger.record_gauge(
+                        "staged:unit_packing_not_persisted", 1
+                    )
+                    logger.warning(
+                        "calibration staged futures: cursor write failed after %d "
+                        "slots were cut for packing — the refinement is not "
+                        "remembered",
+                        packing_applied,
+                    )
     if defer_rebuild:
         # NOT the projection. This pass ran no unit loop, so every input it takes
         # is structurally zero, and a projection built from them would report the

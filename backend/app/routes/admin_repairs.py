@@ -82,8 +82,8 @@ transactional session and RETURNS its own before/after census in the response bo
 Repairs whose signature declares ``limit`` / ``sport`` / ``newest_first`` /
 ``offset`` / ``after_id`` / ``after_date`` / ``plan_hash`` / ``expected_blank`` /
 ``population`` / ``probe`` / ``undo_identity`` / ``band`` / ``band_as_of`` /
-``only_ids`` also accept those as query params; the dispatcher passes through only
-what a given repair's signature names.
+``only_ids`` / ``future_only`` also accept those as query params; the dispatcher
+passes through only what a given repair's signature names.
 
 ``only_ids`` (#7937, authority/957) is the reviewed-subset allowlist: the row ids,
 taken from a dry run's own plan, that an apply is allowed to write. A keyset cursor
@@ -366,7 +366,17 @@ _REPAIRS = {
     # exclusion, so retracting them would delete correct rows from the curve.
     # Unlike every earlier version of this rail, the retraction arm now MOVES the
     # published curve, downward, and that is the ship.
-    # Accepts ?limit=&sport=&band=&band_as_of=&min_harm=&after_id=&after_date=&plan_hash=.
+    # #7980: `?future_only=true` is the THIRD cohort selector, and it reaches the
+    # slice CAL-P057 measured in 2026-08 as unreachable and declined to fix by
+    # re-sorting — the future-dated markets that `ORDER BY resolution_date ASC`
+    # puts behind every past-dated row. Measured 2026-09-22 on the shipping rail,
+    # the default walk's first page was 10 of 10 `unexplained_absence` at 86.0
+    # days: the budget goes to rows the venue cannot answer while the rows a
+    # reader is looking at — an open market quoted at 41.5% whose chart plunges
+    # to 0% — sit at the end of the sort. Like `?band=` and `?min_harm=` it is a
+    # selector and not a re-sort, so it scopes `exhausted_scope` and can only
+    # make `population_exhausted` false.
+    # Accepts ?limit=&sport=&band=&band_as_of=&min_harm=&future_only=&after_id=&after_date=&plan_hash=.
     # ATTENDED ONLY: never wire this to a beat.
     "kalshi-fabricated-loss": (
         "app.tasks.repair_kalshi_fabricated_loss",
@@ -1262,6 +1272,20 @@ async def run_repair(
                     "Omit it to act on the whole plan; an empty value is REFUSED "
                     "rather than read as either extreme.",
     ),
+    future_only: str = Query(
+        None,
+        description="Restrict a walk to the markets whose resolution_date has "
+                    "not yet arrived (#7980). Like ?band= and ?min_harm= it is a "
+                    "cohort selector, not a verdict: it changes no judgment "
+                    "about any row it admits, and it leaves the sort, the keyset "
+                    "and the band untouched. It exists because a rail sorted "
+                    "oldest-first puts every future-dated market behind every "
+                    "past-dated one, and on this rail the past-dated rows ahead "
+                    "of them are largely ones the venue can no longer answer. "
+                    "Refused BY NAME on an unknown value rather than read as "
+                    "false, because false is the default walk and a typo would "
+                    "silently run it.",
+    ),
     undo_identity: str = Query(
         None,
         description="Put ONE earlier apply's rows back, for repairs that write a "
@@ -1304,6 +1328,7 @@ async def run_repair(
             ("since", since), ("until", until),
             ("band", band), ("band_as_of", band_as_of),
             ("min_harm", min_harm),
+            ("future_only", future_only),
             ("plan_hash", plan_hash),
             ("expected_blank", expected_blank),
             ("population", population),

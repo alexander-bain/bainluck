@@ -608,6 +608,13 @@ struct NativeEventDiscoverCard: View {
             awayTeam: event.awayTeam,
             homeProbability: printable.home,
             awayProbability: printable.away,
+            // #7998 — the sentence above and the strip in the body both ask
+            // `duelPercents` with this served pair; the image asked nobody and
+            // rounded each side alone, so it printed 101 on 105 of 295 production
+            // events and a different-but-summing-to-100 pair on 14 more. Handing
+            // the served pair over is what makes the comment above true.
+            awayRenderedPercent: event.currentOdds?.awayRenderedPercent,
+            homeRenderedPercent: event.currentOdds?.homeRenderedPercent,
             sportName: event.sportName ?? event.sport ?? "Sports",
             homeColor: homeColor,
             awayColor: awayColor,

@@ -25,6 +25,39 @@ therefore costs ``N`` beats rather than ``N/2``. At the production plan of 128,
 the first refinement moves from beat 65 to beat 129. Hourly. Measured here at
 8 → 9, 16 → 17, 32 → 33 (:class:`TestTheNewRegimeOneCancellationPerBeat`).
 
+## EVERY BEAT COUNT BELOW MOVED DOWN ON 2026-09-22 (CAL-P1335, #6868)
+
+Read this before treating any number in this file as a constant. ``_unit_fits_
+in_window`` now rescales its reference to the CANDIDATE's question count, and the
+unit loop PASSES OVER a candidate that does not fit instead of ending the beat on
+it. In a plan where every slot is the same size that is a no-op — the whole file
+passed unchanged under the pass-over alone — but wherever a population is MIXED,
+a beat that used to stop at the first slot too big for its remainder now banks the
+smaller slots behind it. So the counts fell, in BOTH arms, together:
+
+| measurement | was (control / candidate) | now |
+|---|---|---|
+| 4 oversized slots, completion | 16 / 13 | **15 / 11** |
+| 8 oversized slots, completion | 30 / 22 | **30 / 19** (control unmoved) |
+| era 26, completion | 40 / 22 | **38 / 19** |
+| false-positive band, completion | 14 / 12 | **14 / 10** |
+| era 16, completion | 30 | **28** |
+| 32 of 128 oversized | 90 / 83 | **86 / 78** |
+| 64 of 128 oversized | 175 / 160 | **166 / 148** |
+| wholly oversized, max banked | 129 / 151 | **139 / 166** |
+| wholly oversized, refinements | 73 / 91 | **88 / 117** |
+| phase-budget fence, 16/32/64 | 43 / 83 / 160 | **42 / 76 / 142** |
+
+**Every structural claim in this file survived and none was adjusted to fit.**
+The candidate still beats its control in every arm; the fenced and free arms of
+:class:`TestTheSecondFenceIsThePhaseBudget` are still EQUAL to each other; the
+wholly-oversized plan still publishes in neither arm; and
+:class:`TestTheNewRegimeOneCancellationPerBeat` — the "one slot a beat" law —
+still holds exactly, because it is measured on a uniform population where
+rescaling has nothing to bite on. Only the absolute beat counts moved, and every
+one of them moved in the improving direction. A number here going UP is the
+event worth investigating.
+
 ## What was already refuted, and is not rebuilt here
 
 **Ordering.** calibration/1336 built the reserved re-attempt inside
@@ -416,6 +449,11 @@ class _Run:
         self.per_beat_conclusive: list[dict[str, int]] = []
         #: Per beat, ``(ref, cancelled_after_ms)`` for every cancellation.
         self.per_beat_cancel_ms: list[list[int]] = []
+        #: Per beat, the scope #6599's packing sweep ran at — ``"plan"`` when
+        #: the reference named a partition it could scale by, ``"slot"`` when
+        #: it did not and only the declined slot was eligible, ``None`` when
+        #: the sweep did not run. Read from ``staged:unit_packing_scope:*``.
+        self.per_beat_packing_scope: list[str | None] = []
         #: The PUBLISHED census, present only on a run that completed.
         self.census: dict | None = None
 
@@ -574,6 +612,16 @@ def staged_beat_loop(monkeypatch):
                 }
             )
             out.per_beat_cancel_ms.append([ms for _vms, ms in db.cancelled])
+            out.per_beat_packing_scope.append(
+                next(
+                    (
+                        name.rsplit(":", 1)[1]
+                        for name in runner.ledger.stages
+                        if name.startswith("staged:unit_packing_scope:")
+                    ),
+                    None,
+                )
+            )
             if learns:
                 # What production carries: the cost of the units THIS beat ran,
                 # so a plan whose units got cheaper is a plan the next beat's
@@ -801,16 +849,22 @@ class TestAConclusiveCancellationCutsOnBeatOne:
 
         | slots | control completes | candidate | control 1st cut | candidate |
         |-------|-------------------|-----------|-----------------|-----------|
-        |   4   |        16         |    13     |     beat 5      |  beat 1   |
-        |   8   |        30         |    22     |     beat 9      |  beat 1   |
-        |  16   |        55         |    43     |     beat 17     |  beat 1   |
+        |   4   |        15         |    11     |     beat 5      |  beat 1   |
+        |   8   |        30         |    19     |     beat 9      |  beat 1   |
+
+        (Re-measured 2026-09-22 under CAL-P1335 — see the table at the top of
+        this file. The SAVING is what this test is about and it GREW: 4 beats
+        at 4 slots and 11 at 8, against 3 and 8 before. At 8 slots the control
+        did not move at all, which is the shape the rescaling predicts — a
+        wholly oversized population is uniform, so there is no smaller slot
+        behind the refused one for the pass-over to reach.)
 
         The saving tracks the population, which is the signature of a pass being
         removed rather than a constant being tuned. **It is also the ceiling on
         what this candidate can ever be worth**, and at 128 slots one pass is
         128 hourly beats — see :class:`TestTheLimitThisCandidateDoesNotReach`.
         """
-        for buckets, control_beats, candidate_beats in ((4, 16, 13), (8, 30, 22)):
+        for buckets, control_beats, candidate_beats in ((4, 15, 11), (8, 30, 19)):
             cand = await drive(buckets=buckets, oversized_slots=buckets, max_beats=120)
             base = await drive(
                 buckets=buckets,
@@ -882,7 +936,7 @@ class TestAConclusiveCancellationCutsOnBeatOne:
             conclusive_splits=False,
         )
 
-        assert (cand.completed_at, base.completed_at) == (22, 40), (
+        assert (cand.completed_at, base.completed_at) == (19, 38), (
             f"candidate {cand.completed_at} vs control {base.completed_at}"
         )
 
@@ -1361,7 +1415,7 @@ class TestATransientDelayIsNotExcludedAndIsBoundedWhenItHappens:
             buckets=8, oversized_slots=4, max_beats=1, window_ms=50_000_000
         )
 
-        assert (cand.completed_at, base.completed_at) == (12, 14), (
+        assert (cand.completed_at, base.completed_at) == (10, 14), (
             f"candidate {cand.completed_at} vs control {base.completed_at}"
         )
         assert cand.max_banked >= base.max_banked
@@ -1444,8 +1498,8 @@ class TestTheLimitThisCandidateDoesNotReach:
         """
         run = await drive(buckets=8, oversized_slots=8, max_beats=200, reset_every=16)
 
-        assert run.completed_at == 30, (
-            f"era 16 must publish on beat 30; got {run.completed_at}"
+        assert run.completed_at == 28, (
+            f"era 16 must publish on beat 28; got {run.completed_at}"
         )
 
     @pytest.mark.asyncio
@@ -1564,7 +1618,7 @@ class TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "oversized,graded,repaired",
-        [(16, 46, 43), (32, 90, 83), (64, 175, 160)],
+        [(16, 46, 43), (32, 86, 78), (64, 166, 148)],
     )
     async def test_the_128_slot_build_publishes_and_does_so_sooner(
         self, drive, oversized, graded, repaired
@@ -1668,13 +1722,13 @@ class TestTheProductionRegimeIsNotAnEraAndTheBuildPublishesInIt:
             "neither arm publishes a wholly oversized plan inside 200 beats, "
             "and the ship is not sold as if it did"
         )
-        assert (base.max_banked, cand.max_banked) == (129, 151), (
+        assert (base.max_banked, cand.max_banked) == (139, 166), (
             f"banked: graded {base.max_banked} / repaired {cand.max_banked}, "
-            "expected 129 / 151"
+            "expected 139 / 166"
         )
-        assert (base.splits, cand.splits) == (73, 91), (
+        assert (base.splits, cand.splits) == (88, 117), (
             f"refinements: graded {base.splits} / repaired {cand.splits}, "
-            "expected 73 / 91"
+            "expected 88 / 117"
         )
 
 
@@ -1908,7 +1962,7 @@ class TestTheSecondFenceIsThePhaseBudget:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "oversized,fenced_first_split,fenced_publish,free_publish",
-        [(16, 1, 43, 43), (32, 1, 83, 83), (64, 1, 160, 160)],
+        [(16, 1, 42, 42), (32, 1, 76, 76), (64, 1, 142, 142)],
     )
     async def test_the_phase_budget_no_longer_erases_the_beat_one_cut(
         self, drive, oversized, fenced_first_split, fenced_publish, free_publish
