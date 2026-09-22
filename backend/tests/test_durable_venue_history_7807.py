@@ -35,7 +35,22 @@ from app.tasks import generic_market_history_fill as fill
 from app.utils import durable_state
 from app.utils import generic_market_history as gmh
 
-NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
+# 🔴 RELATIVE, NEVER A LITERAL (gotcha #44: offset FIRST, then truncate).
+# Most anchors in this file are injected into the code under test (`now=NOW`,
+# `generated_at=NOW`) and are self-consistent at any wall-clock time. The
+# `_serve` tests are NOT: they reach `_load_generic_venue_history`, which has no
+# `now=` seam and reads the real clock, so a payload's `built_at` is compared
+# against today. With the literal `2026-09-21T12:00:00Z` that made the file a
+# dated time bomb, and it went off on master at exactly 14:00:00Z on 09-22:
+# `test_a_durable_hit_is_put_back_in_front_of_the_next_reader` builds its bank at
+# NOW−10h = 09-21T02:00Z, CACHE_TTL_SECONDS is 36h, so the bank's declared life
+# ended 09-22T14:00Z. CI was green at 13:30Z and red at 14:21Z on an unrelated
+# commit, and would have stayed red for ever — the remaining TTL the test asserts
+# is positive had gone to −1,721s. The default-`_payload()` `_serve` tests were
+# the next one due, at 09-23T00:00Z.
+# Truncating to the hour keeps the anchor stable within a run without pinning it
+# to a date; every offset below stays inside the 36h TTL by many hours.
+NOW = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
 def _market(source="kalshi", market_id=1, external_id="KXQ-26", status="open"):
