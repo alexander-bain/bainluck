@@ -107,7 +107,17 @@ async def _poll_datagolf_markets() -> dict:
     from app.models.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 
     service = DataGolfAPIService()
-    stats = {"tours_polled": 0, "markets_upserted": 0, "outcomes_upserted": 0, "snapshots_written": 0, "debug": {}}
+    stats = {
+        "tours_polled": 0,
+        "markets_upserted": 0,
+        "outcomes_upserted": 0,
+        "snapshots_written": 0,
+        # #7935: prices this poll declined to write because the in-play beat
+        # owns them (see the deferral block below). A non-zero value during a
+        # tournament is the fix working, not a failure.
+        "inplay_price_writes_deferred": 0,
+        "debug": {},
+    }
 
     try:
         async with get_task_session() as session:
@@ -189,20 +199,72 @@ async def _poll_datagolf_markets() -> dict:
                     # STATUS string is not — the reason the event page needs the
                     # leaderboard-presence fallback). Belt: also set when status is
                     # a live-ish string, in case dates are missing.
+                    #
+                    # ── #7935: ONE WRITER PER PHASE ─────────────────────────
+                    # The same boolean that WAKES the in-play beat also decides
+                    # whether this poll may still write prices, and until now it
+                    # only did the first half. `get_pre_tournament` returns
+                    # numbers computed BEFORE the event started, so once play is
+                    # under way this poll was stamping a stale pre-cut price
+                    # onto an outcome the 90s beat had just graded — both under
+                    # `bookmaker="datagolf_model"`, and write-time dedup (below)
+                    # compares only against the LATEST snapshot whoever wrote
+                    # it, so the two families always disagree, both always
+                    # insert, and each sets the other's `valid_until`. Measured
+                    # on three post-cut tournaments: BMW PGA Make-the-Cut 4,176
+                    # snapshots carrying 146 distinct values (~144 pre-cut
+                    # player prices + 0.0 + 1.0), Biltmore 3,930/132, Nationwide
+                    # Children's 3,277/115 — every leg alternating between its
+                    # stale pre-cut price and its graded value every ~62-96 min,
+                    # which is a settled golf chart saw-toothing between 84% and
+                    # 0% forty times. Dedup cannot fix it: the values genuinely
+                    # differ, so any correct dedup keeps both.
+                    #
+                    # TWO SIGNALS, AND BOTH ARE PER-TOUR:
+                    #   (1) `event_in_play` — THIS tour's current event's own
+                    #       window, computed locally. Never `INPLAY_WINDOW_KEY`:
+                    #       that key is fleet-wide across POLL_TOURS, so gating
+                    #       on it would let a live pga event starve pre-tournament
+                    #       writes for a euro event that has not teed off.
+                    #   (2) `LIVE_KEY_PREFIX:{tour}` — set by `_poll_datagolf_live`
+                    #       only when the in-play endpoint actually returned a
+                    #       board for this tour, 30-min TTL against this poll's
+                    #       60-min gate. Without it, a tour inside its date window
+                    #       whose event DataGolf does not cover in-play (or any
+                    #       morning before tee-off) would have no writer at all:
+                    #       prices frozen and `last_updated` going stale for days,
+                    #       which is a worse defect than the one being fixed.
+                    # The conjunction costs no coverage — the ping-pong requires
+                    # the in-play beat to be writing, which is exactly what (2)
+                    # reports — and every failure mode of either signal (a Redis
+                    # hiccup, a missing flag, a raise) falls through to the old
+                    # behaviour rather than to silence.
+                    event_in_play = False
+                    inplay_owns_prices = False
                     try:
                         s = current_event.start_date
                         e = current_event.end_date or s
                         live_str = (current_event.status or "").lower().replace("-", "_")
-                        if (s and e and s <= now_str <= e) or live_str in (
-                            "in_progress", "live", "active"
-                        ):
+                        event_in_play = bool(
+                            (s and e and s <= now_str <= e)
+                            or live_str in ("in_progress", "live", "active")
+                        )
+                        if event_in_play:
                             from app.tasks.redis_state import get_redis_client
-                            get_redis_client().set(
+                            _redis = get_redis_client()
+                            _redis.set(
                                 INPLAY_WINDOW_KEY, "1", ex=INPLAY_WINDOW_TTL
                             )
                             stats["debug"]["inplay_window"] = f"{tour}:{current_event.event_name}"
+                            inplay_owns_prices = bool(
+                                _redis.get(f"{LIVE_KEY_PREFIX}:{tour}")
+                            )
                     except Exception:
                         pass
+                    if inplay_owns_prices:
+                        stats["debug"]["inplay_prices_owned_by_beat"] = (
+                            f"{stats['debug'].get('inplay_prices_owned_by_beat', '')}{tour} "
+                        )
 
                     # 2. Fetch pre-tournament predictions
                     players = await service.get_pre_tournament(tour=tour)
@@ -351,6 +413,17 @@ async def _poll_datagolf_markets() -> dict:
                                 )
                                 session.add(outcome)
                                 await session.flush()
+                            elif inplay_owns_prices:
+                                # #7935: the leg exists and the beat owns its
+                                # price — take the name (a rename is not a
+                                # price) and leave every price column alone.
+                                # `last_updated` goes with the price it dates:
+                                # advancing it here would have this poll vouch
+                                # for the freshness of a number it did not
+                                # write, which is the "we looked" / "it moved"
+                                # confusion #4958 exists to keep apart.
+                                outcome.name = player.player_name
+                                stats["inplay_price_writes_deferred"] += 1
                             else:
                                 outcome.name = player.player_name
                                 # #4958: `price_changed_at` BEFORE the price, and
@@ -380,6 +453,16 @@ async def _poll_datagolf_markets() -> dict:
                             stats["outcomes_upserted"] += 1
 
                             # Write-time dedup: use batch-loaded latest snapshot
+                            #
+                            # #7935: not while the beat owns the price. This is
+                            # the write that draws the saw-tooth — a new row
+                            # every hour at the pre-tournament value, closing
+                            # the graded snapshot's `valid_until` on the way
+                            # past. A leg born above during play gets its first
+                            # snapshot from the beat within 90s.
+                            if inplay_owns_prices:
+                                continue
+
                             existing_snap = _latest_snaps_by_outcome.get(outcome.id)
 
                             if existing_snap and abs(float(existing_snap.probability) - prob) < 0.0001:
@@ -406,16 +489,28 @@ async def _poll_datagolf_markets() -> dict:
                         # prevents e.g. Anthony Kim from lingering in the
                         # Masters winner odds after DataGolf stops returning
                         # him.
-                        fresh_ext_ids = {f"dg_{p.dg_id}" for p in players}
-                        stale_result = await session.execute(
-                            select(FuturesOutcome).where(
-                                FuturesOutcome.market_id == market.id,
-                                FuturesOutcome.current_probability.isnot(None),
-                                ~FuturesOutcome.external_id.in_(fresh_ext_ids),
-                            )
-                        )
+                        #
+                        # #7935: also a price write — and the most damaging one
+                        # to make from a pre-tournament field during play. A
+                        # player the pre-tournament endpoint has stopped
+                        # returning (a missed cut, a withdrawal it has dropped)
+                        # still has a graded 0.0 the beat wrote, and nulling it
+                        # takes the row off the board entirely — the /golf route
+                        # skips None outcomes. The beat runs the same null-out
+                        # against the board it actually read.
                         stale_nulled = 0
-                        for stale in stale_result.scalars().all():
+                        stale_rows = []
+                        if not inplay_owns_prices:
+                            fresh_ext_ids = {f"dg_{p.dg_id}" for p in players}
+                            stale_result = await session.execute(
+                                select(FuturesOutcome).where(
+                                    FuturesOutcome.market_id == market.id,
+                                    FuturesOutcome.current_probability.isnot(None),
+                                    ~FuturesOutcome.external_id.in_(fresh_ext_ids),
+                                )
+                            )
+                            stale_rows = stale_result.scalars().all()
+                        for stale in stale_rows:
                             # #4958: a price GOING AWAY is a price change, and on
                             # this rail it is the only one this write can make —
                             # the same reading kalshi.py's unprice path takes.
@@ -453,6 +548,15 @@ async def _poll_datagolf_markets() -> dict:
                         # `session.execute` autoflushes the ORM assignments
                         # above first (gotcha #5 — this rail writes through
                         # attributes, like `tasks/futures.py`).
+                        #
+                        # #7935 leaves this running even when the prices were
+                        # deferred, and that is deliberate: `rank` is a pure
+                        # derivation of whatever `current_probability` now
+                        # holds, so re-deriving it from the beat's numbers is
+                        # the same answer the beat's own re-rank computes. Two
+                        # writers of one deterministic function of the same
+                        # input cannot disagree, which is exactly what could not
+                        # be said of the price.
                         await session.execute(
                             rerank_market_field_stmt(market.id)
                         )
