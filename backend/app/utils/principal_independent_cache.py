@@ -1622,6 +1622,24 @@ def failure_rail_snapshot(*, now: Optional[float] = None) -> dict[str, Any]:
     for _reasons in _ns_failure_reasons.values():
         for _reason, _count in _reasons.items():
             reasons_total[_reason] = reasons_total.get(_reason, 0) + _count
+    # LAT-P278: the two halves are a PARTITION of `_stats`, not a filter over it.
+    #
+    # This selected `cross_worker_*` by prefix and published nothing else, so a
+    # counter whose name broke the convention was dropped from every worker's
+    # field, from `workers[]` and from `cross_worker_total` — silently, at the
+    # instrument, with no error anywhere. LAT-P277's `declined_age` (#2143) was
+    # added on 2026-09-21 and was unreadable fleet-wide the moment it shipped:
+    # PRESENT in the code, absent from the rail. That is the exact failure this
+    # module's comment above cites for `cross_worker_declined_age` — the rail
+    # was built to remove it and then reproduced it on its own input.
+    #
+    # A prefix test fails CLOSED on the counter it has never seen, which is
+    # always the new one. So the split is total by construction: every key in
+    # `_stats` lands in exactly one of the two dicts, and adding a counter
+    # publishes it whatever it is called. `cross_worker` keeps its exact
+    # membership and name (the reader and its tests are keyed on it); the
+    # complement rides beside it rather than inside it, because a `builds` count
+    # under a key named `cross_worker` would be a second, quieter lie.
     return {
         "at": at,
         "started_at": _rail_process_started_at,
@@ -1629,6 +1647,9 @@ def failure_rail_snapshot(*, now: Optional[float] = None) -> dict[str, Any]:
         "dyno": os.environ.get("DYNO") or "",
         "cross_worker": {
             k: v for k, v in _stats.items() if k.startswith("cross_worker_")
+        },
+        "local": {
+            k: v for k, v in _stats.items() if not k.startswith("cross_worker_")
         },
         "failure_reasons": {ns: dict(c) for ns, c in _ns_failure_reasons.items() if c},
         "failure_reasons_total": dict(sorted(reasons_total.items())),
@@ -1801,7 +1822,8 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
     worker, and a rail whose whole purpose is that a zero must not read as
     "clean" cannot afford an invisible row. So every parseable field appears in
     `workers` with its `age_s` and a `stale` flag; only the fresh ones reach
-    `failure_reasons_total`, `by_namespace` and `cross_worker_total`.
+    `failure_reasons_total`, `by_namespace`, `cross_worker_total` and
+    `local_total`.
 
     An operator reading in the minutes after a deploy therefore sees two
     generations side by side — one with a small `uptime_s`, one going stale —
@@ -1825,6 +1847,11 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         "failure_reasons_total": {},
         "by_namespace": {},
         "cross_worker_total": {},
+        # LAT-P278: the non-`cross_worker_*` counters, summed the same way. A
+        # field written before that change carries no `local` key at all, and
+        # that reads here as an empty dict — an older generation contributes
+        # nothing rather than making the whole read unparseable.
+        "local_total": {},
     }
     if not cross_worker_enabled():
         out["reason"] = "cross-worker tier disabled"
@@ -1854,6 +1881,7 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
     reasons_total: dict[str, int] = {}
     by_ns: dict[str, dict[str, int]] = {}
     cw_total: dict[str, int] = {}
+    loc_total: dict[str, int] = {}
     stale = 0
     unparseable = 0
     workers: list[dict[str, Any]] = []
@@ -1878,6 +1906,8 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         is_fresh = age_s is not None and age_s <= FAILURE_RAIL_FRESH_S
         cw = parsed.get("cross_worker")
         cw = cw if isinstance(cw, dict) else {}
+        loc = parsed.get("local")
+        loc = loc if isinstance(loc, dict) else {}
         totals = parsed.get("failure_reasons_total")
         totals = totals if isinstance(totals, dict) else {}
         per_ns = parsed.get("failure_reasons")
@@ -1887,6 +1917,9 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
             for name, count in cw.items():
                 if isinstance(count, int) and not isinstance(count, bool):
                     cw_total[str(name)] = cw_total.get(str(name), 0) + count
+            for name, count in loc.items():
+                if isinstance(count, int) and not isinstance(count, bool):
+                    loc_total[str(name)] = loc_total.get(str(name), 0) + count
             for reason, count in totals.items():
                 if isinstance(count, int) and not isinstance(count, bool):
                     reasons_total[str(reason)] = (
@@ -1921,6 +1954,7 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
                     else None
                 ),
                 "cross_worker": {str(k): v for k, v in cw.items()},
+                "local": {str(k): v for k, v in loc.items()},
                 # The per-worker rate is the whole point of splitting by worker:
                 # a merged rate averages the quiet worker's 1-in-6 into the busy
                 # one's 0-in-51 and reports a healthy fleet.
@@ -1948,6 +1982,7 @@ async def read_failure_rail(*, now: Optional[float] = None) -> dict[str, Any]:
         ns: dict(sorted(c.items())) for ns, c in sorted(by_ns.items())
     }
     out["cross_worker_total"] = dict(sorted(cw_total.items()))
+    out["local_total"] = dict(sorted(loc_total.items()))
     return out
 
 
