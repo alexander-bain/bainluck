@@ -883,70 +883,184 @@ def _build_presidential(
 # Chamber control — find Senate/House control binary markets
 # ---------------------------------------------------------------------------
 
+# A chamber-control market ASKS WHO HOLDS THE CHAMBER. The old rule's middle
+# arms were `republican.*senate` / `democrat.*senate` / `gop.*senate`: bare
+# containment across `.*`, so ANY sentence naming a party and the chamber
+# qualified. Measured against the real open population it matched five wrong
+# markets and **zero right ones** (#8006):
+#
+#     MATCH  Republicans favored to win the Senate on Nate Silver's Bulletin by...?
+#     MATCH  Will Democrats win all "core four" senate races?
+#     MATCH  Republican Senate seats after the 2026 midterm elections?
+#     MATCH  North Carolina Democratic Senate nominee?
+#     MATCH  Republicans win Trifecta with Senate Supermajority in midterms?
+#     no     Which party will win the U.S. Senate?        <- kalshi CONTROLS-2026
+#     no     Which party will win the Senate in 2026?     <- polymarket 32224
+#
+# The first of those was live on `/politics` on 2026-09-22, publishing
+# `10% R vs 90% D` from a question about when a newsletter would rate
+# Republicans as favored, while `CONTROLS-2026` sat in the same congressional
+# pool saying 60.5% D. Both genuine control markets are phrased "which party
+# will win …", which the rule had no arm for at all — `control\s+…senate`
+# requires the literal word "control".
+#
+# So the party-containment arms are GONE and the phrasings are named instead.
+# `_SENATE_CONTROL_KEYWORDS` below already knew "which party"; it feeds the
+# senate MAP, not this selector, which is how the gap survived.
 _SENATE_CONTROL_RE = re.compile(
-    r"\b(?:senate\s+control|control\s+(?:of\s+)?(?:the\s+)?senate|"
-    r"republican.*senate|democrat.*senate|gop.*senate)\b", re.I
+    r"(?:\bsenate\s+control\b"
+    r"|\bcontrol\s+(?:of\s+)?(?:the\s+)?senate\b"
+    r"|\bsenate\s+majority\b"
+    r"|\bwhich\s+party\s+will\s+(?:win|control|hold)\b[^?]*\bsenate\b)",
+    re.I,
 )
 _HOUSE_CONTROL_RE = re.compile(
-    r"\b(?:house\s+control|control\s+(?:of\s+)?(?:the\s+)?house|"
-    r"republican.*house\b|democrat.*house\b|gop.*house)\b", re.I
+    r"(?:\bhouse\s+control\b"
+    r"|\bcontrol\s+(?:of\s+)?(?:the\s+)?house\b"
+    r"|\bhouse\s+majority\b"
+    r"|\bwhich\s+party\s+will\s+(?:win|control|hold)\b[^?]*\bhouse\b)",
+    re.I,
 )
+
+# Chamber control is NATIONAL. The phrasing arms above would also admit "which
+# party will win the Georgia state senate", which is a state race wearing the
+# same sentence — and its two legs really are D-vs-R, so no structural gate
+# downstream can tell it apart. The name is the only place that distinction
+# exists, so it is made here.
+_STATE_NAME_RE: re.Pattern | None = None
+
+
+def _names_a_state(name: str) -> bool:
+    """True if the market name names a US state (so it is not a national race)."""
+    global _STATE_NAME_RE
+    if _STATE_NAME_RE is None:
+        _STATE_NAME_RE = re.compile(
+            r"\b(?:" + "|".join(re.escape(s) for s in _STATE_ABBREV) + r")\b", re.I
+        )
+    return bool(_STATE_NAME_RE.search(name or ""))
 
 
 def _extract_control_probs(market: FuturesMarket) -> dict | None:
-    """Extract GOP/Dem probabilities from a control market."""
+    """Extract GOP/Dem probabilities from a control market.
+
+    🔴 THE STRUCTURE GATE IS THE POINT, NOT THE WORD MATCHING (#8006). "Who
+    holds the chamber" is a TWO-SIDED, mutually exclusive question: one party
+    holds it or the other does. Anything with more live legs than that is a
+    ladder, a date question or a field market that merely mentions a party and
+    a chamber, and mining it for a `Yes`/`No` pair invents a number rather than
+    reading one.
+
+    The market this was written against, `59395529`, is five legs — `Yes`,
+    `No`, and three DATES (`September 15`, `September 30`, `October 31`) —
+    with `mutually_exclusive = false`, because the question is *when* a
+    newsletter will rate Republicans as favored. The old code saw a leg
+    literally named `yes`, saw `republican` in the title, and published
+    `gop = 10.5 / dem = 89.5` as chamber control.
+    """
     outcomes = _clean_outcomes(market.outcomes)
     if not outcomes:
         return None
 
-    gop_prob = None
-    dem_prob = None
-
-    for o in outcomes:
-        name_lower = (o.name or "").lower()
-        prob = round(float(o.current_probability or 0) * 100, 1)
-        if any(w in name_lower for w in ["republican", "gop", "red", "(r)"]):
-            gop_prob = prob
-        elif any(w in name_lower for w in ["democrat", "dem", "blue", "(d)"]):
-            dem_prob = prob
-        elif name_lower in ("yes", "no"):
-            # Binary market: "Will Republicans control the Senate?"
-            market_name = (market.name or "").lower()
-            if "republican" in market_name or "gop" in market_name:
-                gop_prob = prob if name_lower == "yes" else 100 - prob
-                dem_prob = 100 - gop_prob
-            elif "democrat" in market_name:
-                dem_prob = prob if name_lower == "yes" else 100 - prob
-                gop_prob = 100 - dem_prob
-
-    result = None
-    if gop_prob is not None and dem_prob is not None:
-        result = {"gop": gop_prob, "dem": dem_prob, "market_id": market.id}
-    elif gop_prob is not None:
-        result = {"gop": gop_prob, "dem": round(100 - gop_prob, 1), "market_id": market.id}
-    elif dem_prob is not None:
-        result = {"gop": round(100 - dem_prob, 1), "dem": dem_prob, "market_id": market.id}
-    if result and max(result["gop"], result["dem"]) > 97:
+    # An explicitly non-exclusive market is not a two-sided question, whatever
+    # its legs are named. (`None` is left alone: the column defaults True and
+    # older rows predate it being written.)
+    if getattr(market, "mutually_exclusive", None) is False:
         return None
-    return result
+
+    def _pct(o) -> float:
+        return round(float(o.current_probability or 0) * 100, 1)
+
+    gop = [o for o in outcomes if any(
+        w in (o.name or "").lower() for w in ("republican", "gop", "(r)"))]
+    dem = [o for o in outcomes if any(
+        w in (o.name or "").lower() for w in ("democrat", "(d)"))]
+
+    gop_prob = dem_prob = None
+    if len(gop) == 1 and len(dem) == 1:
+        # Party-named pair. Any OTHER leg must be inert — a placeholder such as
+        # Polymarket's "Other" carrying no price. A third leg with a real price
+        # means this is a field market, not a duel.
+        named = {id(gop[0]), id(dem[0])}
+        for o in outcomes:
+            if id(o) not in named and o.current_probability is not None:
+                return None
+        gop_prob, dem_prob = _pct(gop[0]), _pct(dem[0])
+    elif not gop and not dem:
+        # Binary phrasing: "Will Republicans control the Senate?". Requires
+        # EXACTLY the two legs and nothing else, so a `Yes` belonging to a
+        # date ladder cannot be read as a party's chance.
+        by_name = {(o.name or "").lower(): o for o in outcomes}
+        if len(outcomes) == 2 and set(by_name) == {"yes", "no"}:
+            market_name = (market.name or "").lower()
+            yes = _pct(by_name["yes"])
+            if "republican" in market_name or "gop" in market_name:
+                gop_prob, dem_prob = yes, round(100 - yes, 1)
+            elif "democrat" in market_name:
+                dem_prob, gop_prob = yes, round(100 - yes, 1)
+
+    if gop_prob is None or dem_prob is None:
+        return None
+    if max(gop_prob, dem_prob) > 97:
+        return None
+    # `source` is additive and is the producer half of the badge fix: the card
+    # renders `<SourceBadge source="both">` as a literal, so it asserts Kalshi
+    # AND Polymarket agreement over a number that comes from one market (#8006).
+    # The consumer half is ux's — this route cannot claim it.
+    return {
+        "gop": gop_prob,
+        "dem": dem_prob,
+        "market_id": market.id,
+        "source": _source(market),
+    }
+
+
+def _control_candidates(
+    markets: list[FuturesMarket], pattern: re.Pattern
+) -> list[dict]:
+    """Every market that both READS as a chamber-control question and IS one."""
+    out = []
+    for m in markets:
+        name = m.name or ""
+        if _is_resolved(m) or not pattern.search(name) or _names_a_state(name):
+            continue
+        probs = _extract_control_probs(m)
+        if probs:
+            out.append(probs)
+    return out
+
+
+def _best_control(candidates: list[dict]) -> dict | None:
+    """Pick one chamber-control market, deterministically.
+
+    The old loop took the FIRST regex hit in pool order and stopped, so which
+    market answered "who holds the Senate" depended on query ordering — and on
+    2026-09-22 that was a newsletter-rating question. Ordering is not a
+    tie-break, so rank instead: the closer a candidate's two sides are to a
+    true complement the more it behaves like a duel, then a stable source
+    preference, then the id. Every term is total, so the result cannot wobble
+    between requests.
+    """
+    if not candidates:
+        return None
+    src_rank = {"kalshi": 0, "polymarket": 1}
+    return min(
+        candidates,
+        key=lambda c: (
+            abs(c["gop"] + c["dem"] - 100),
+            src_rank.get(c.get("source") or "", 9),
+            c["market_id"],
+        ),
+    )
 
 
 def _find_chamber_control(congressional_markets: list[FuturesMarket]) -> dict:
-    senate = None
-    house = None
-
-    for m in congressional_markets:
-        if _is_resolved(m):
-            continue
-        name = m.name or ""
-        if _SENATE_CONTROL_RE.search(name) and senate is None:
-            senate = _extract_control_probs(m)
-        elif _HOUSE_CONTROL_RE.search(name) and house is None:
-            house = _extract_control_probs(m)
-
     return {
-        "senate": senate,
-        "house": house,
+        "senate": _best_control(
+            _control_candidates(congressional_markets, _SENATE_CONTROL_RE)
+        ),
+        "house": _best_control(
+            _control_candidates(congressional_markets, _HOUSE_CONTROL_RE)
+        ),
     }
 
 

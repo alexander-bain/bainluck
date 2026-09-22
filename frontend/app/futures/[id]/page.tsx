@@ -58,9 +58,11 @@ import {
   movementWindowLabel,
   noPricedOutcomesNote,
   partitionOutcomesByPrice,
+  pickCaptionSubject,
   pickChartSeedOutcomes,
   pickHeroOutcome,
   sortFuturesOutcomes,
+  visibleChartOutcomes,
 } from "@/lib/futuresDetailDisplay";
 import type { FuturesSortField, FuturesSortDirection } from "@/lib/futuresDetailDisplay";
 import { PinButton } from "@/components/PinButton";
@@ -449,9 +451,28 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // #883: the clarification that EXPLAINS the blend line's movement (#871-style,
   // deterministic from opening vs current — no per-source detail, blend-only).
   // Pure logic in lib/futuresDetailDisplay.ts (unit-tested).
+  //
+  // #8016 — ITS SUBJECT COMES FROM THE CHART, NOT FROM THE LEG LIST. `leader` is
+  // the highest-probability row of the WHOLE field, and the chart deliberately
+  // does not draw all of it (#7439 drops graded rows from a live non-mutex
+  // board), so the caption could name a leg with no line: /futures/109257
+  // captioned "Lionel Messi up 81.0 pts from opening." under a legend reading
+  // Burnham · Putin · bin Salman. The subject is now the leading DRAWN line, and
+  // there is deliberately no fallback to `leader` — a chart drawing nothing gets
+  // no sentence (notice 34). `leader` itself is untouched: the hero's movement
+  // pill asks a different question and keeps its own answer.
+  const captionSubject = useMemo(() => {
+    const drawnIds = new Set(
+      visibleChartOutcomes(historyOutcomes, selectedOutcomes).map(
+        (o) => o.outcome_id,
+      ),
+    );
+    return pickCaptionSubject(market?.outcomes ?? [], drawnIds);
+  }, [historyOutcomes, selectedOutcomes, market?.outcomes]);
+
   const movementExplanation = useMemo(
-    () => movementExplanationHelper(leader, market?.name),
-    [leader, market?.name]
+    () => movementExplanationHelper(captionSubject, market?.name),
+    [captionSubject, market?.name]
   );
 
   // D102 / #4568 — the rows that print a number, and the numberless ones folded

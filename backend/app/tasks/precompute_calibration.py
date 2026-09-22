@@ -5645,10 +5645,35 @@ def _unit_fits_in_window(
         # can never run at all: nothing later in the build makes it smaller,
         # because the only thing that does (``refine_unit``) fires on a
         # CANCELLATION, which needs the unit to have been admitted. So
-        # tightening does not defer a unit, it strands it, and the simulator in
-        # ``test_calibration_oversized_slot_is_cut_on_its_proof_6599`` says so
-        # out loud: the unclamped form banks every below-mean slot and then
-        # never publishes.
+        # tightening does not defer a unit, it strands it.
+        #
+        # 🔴 **THE SIMULATOR DOES NOT DECIDE THIS, AND THE FIRST VERSION OF THIS
+        # COMMENT SAID IT DID** (CAL-P1335, corrected 2026-09-22; latency/lat941
+        # caught it and it was their measurement, not ours).
+        # ``test_calibration_oversized_slot_is_cut_on_its_proof_6599`` rebuilds
+        # its ledger from a CONSTANT on every beat, so the carried reference in
+        # that rig can never fall however cheap the units get — and the
+        # unclamped form's failure to publish there is a property of that pin,
+        # not of the unclamped form. Re-measured with the carry fed forward
+        # (previous beat's completed mean and running worst, which moves
+        # 656,889 -> 63,998 -> 699,996 across a run), 128 slots, carried
+        # regime, beats to publish, ``slow=0``/``slow=32``:
+        #
+        #   ===================  ==========  ==========
+        #   arm                  pinned      learning
+        #   ===================  ==========  ==========
+        #   pre-CAL-P1335        57 / 85     50 / 81
+        #   clamped (this)       43 / 69     44 / 71
+        #   unclamped            never       44 / 71
+        #   ===================  ==========  ==========
+        #
+        # So the clamp stands on the paragraph above — a stranded unit is
+        # unrecoverable — and on being never worse than the unclamped form in
+        # any of the eight arms measured. It does NOT stand on a simulator run.
+        # **A reader who re-measures this with a learning carry will find a tie,
+        # and must not read that as licence to remove the ``min``:** the tie is
+        # the two forms agreeing where the reference can fall, while the clamp
+        # is what bounds the case where it cannot.
         #
         # Clamped, every unit today's fence admits is still admitted, the
         # change is a pure widening, and the over-admission it can cause is the
