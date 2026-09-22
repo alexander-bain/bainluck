@@ -588,6 +588,7 @@ _TEAM_NAME_ALIASES: dict[str, str] = {
 from app.utils.name_normalization import (
     strip_diacritics as _strip_diacritics,  # noqa: F811 — re-exported for tests
     normalize_team_name as _normalize_team_name,
+    normalize_team_name_for_matching as _normalize_team_name_for_matching,
 )
 
 
@@ -1891,6 +1892,72 @@ def _with_inherited_identity(meta: dict, previous: dict | None) -> dict:
     # writes — its own name and each alias — so filling it in place would carry
     # a crest inherited under one key across to all the others.
     return {**meta, **missing}
+
+
+def _team_meta_for_label(
+    team_meta: dict[str, dict],
+    primary_key: str | None,
+    display_name: str | None,
+) -> dict:
+    """The metadata a row shows: by its grid key, else its label, else the college form.
+
+    THE THIRD RUNG READS ONLY KEYS THE FIRST TWO COULD HAVE READ (#8084 arm C).
+    It fires exactly when the first two find NOTHING, and it looks the label up
+    in the same dict — so it cannot create a key, move one, or change which row
+    won one. `_alias_may_claim` and `_alias_contest_winner` have already run and
+    a row they refused was never written, so it stays unreachable here. This is
+    `_with_inherited_identity`'s argument on the read side: widening the LOOKUP
+    cannot widen the MATCH. What it adds is that a college feed spelling
+    "Ohio St." can find the key "Ohio State" already legitimately holds.
+
+    `normalize_team_name_for_matching` is the repo's existing canonical college
+    form (`utils/name_normalization.py`) — already used by the market → event
+    matcher, `authority_name_forms` and the twin fold. This route is the one
+    caller that never adopted it. It expands a NON-LEADING "st" to "state" and
+    deliberately leaves a LEADING "St." alone, so "St. Louis" never reads as a
+    state school.
+
+    Measured on production 2026-09-22 over the 398 rows the 13 warm grids serve:
+    11 rows resolve to no metadata at all, and this rung moves exactly TWO —
+
+        Ohio St.  -> `ohio state` -> row 68   `basketball_wncaab` espn 194
+        Iowa St.  -> `iowa state` -> row 2844 `basketball_wncaab` espn 66
+
+    Both on /playoffs/ncaa-women-basketball, where they are the only two rows on
+    a 30-row grid rendering as bare text. The other nine are unmoved and stay
+    bare, which is the intended answer rather than a miss: `North Carolina St.`
+    expands to a key no row holds (ours is `NC State Wolfpack`, so the fix there
+    is an alias, not a spelling rule), and `Saint Louis`, `New York RB`,
+    `Deportivo De La Coruna`, `Viking`, `Sabah Masazir`, `M´gladbach` and
+    `Mainz 05` are not the "St." spelling at all. A bare row is a far smaller
+    harm than a wrong crest, so the rung declines rather than reaching for a
+    name that is merely similar.
+
+    THE DANGEROUS ROW IS THE ONE THIS MUST NOT REACH, AND A TEST PINS IT.
+    `teams` row 14627 is NAMED `Ohio State` while carrying Penn State's
+    identity — espn_id 414, abbreviation `PSU`, alternates
+    `Penn State Nittany Lions` — so it is the canonical OWNER of the key
+    `ohio state`, and serving it on an Ohio State row is #7727 exactly. It does
+    not win: it sits in `baseball_ncaa`, the women's basketball grid scopes to
+    `basketball_wncaab`, and scope beats `id` in both the write order and
+    `_alias_contest_winner`. Row 68 takes the key. That is the whole safety of
+    this rung, so it is asserted on the real row data rather than reasoned about.
+
+    Deliberately NOT done: the WRITE side still keys on `_normalize_team_name`.
+    Indexing rows under the college form too would let
+    `East Tennessee State Buccaneers` and `East Tennessee St Buccaneers` share a
+    key — a key MERGE, which owes the full cross-sport collision census
+    `_alias_contest_winner` warns about and pays nothing here (arm B already
+    crests that row).
+    """
+    meta = (team_meta.get(primary_key) if primary_key else None) or {}
+    if meta or not display_name:
+        return meta
+    meta = team_meta.get(_normalize_team_name(display_name)) or {}
+    if meta:
+        return meta
+    college_form = _normalize_team_name_for_matching(display_name)
+    return (team_meta.get(college_form) or {}) if college_form else {}
 
 
 async def _get_team_metadata(
@@ -5669,9 +5736,7 @@ async def get_playoff_grid(
         # Look up team metadata. Register grids key rows by the register's
         # canonical entity, which may not be spelled the way the Team table
         # normalizes, so fall back to the display name before giving up.
-        meta = team_meta.get(norm_name) or {}
-        if not meta and display_name:
-            meta = team_meta.get(_normalize_team_name(display_name)) or {}
+        meta = _team_meta_for_label(team_meta, norm_name, display_name)
 
         cells = {}
         for col in config.columns:
@@ -5856,11 +5921,7 @@ async def get_playoff_grid(
             row = rows_by_entity.get(entity_key)
             if row is None:
                 display = entity_names.get(entity_key, entity_key)
-                meta = (
-                    team_meta.get(entity_key)
-                    or team_meta.get(_normalize_team_name(display))
-                    or {}
-                )
+                meta = _team_meta_for_label(team_meta, entity_key, display)
                 row = {
                     "name": display,
                     "short_name": meta.get("short_name") or display,
@@ -6606,7 +6667,11 @@ async def _get_team_progression_for_event_uncached(
             return None
 
         col_map = grid_raw[grid_name]
-        meta = team_meta.get(grid_name, {}) or team_meta.get(_normalize_team_name(display_name), {})
+        # #6246's rule — one vocabulary, the grid and the event page's
+        # Championship Path read the same metadata, so a lookup rung that lived
+        # only in the grid would let the two surfaces disagree about whether a
+        # club has a crest.
+        meta = _team_meta_for_label(team_meta, grid_name, display_name)
 
         stages = []
         for col in config.columns:
