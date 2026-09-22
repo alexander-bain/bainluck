@@ -37,7 +37,8 @@
 // close together at all.
 //
 // A private copy of a rule cannot inherit the fix to the rule. So the rule now
-// has ONE implementation, `dedupePeriodLabels`, and both charts call it — which
+// has ONE implementation, `placePeriodLabels` (`dedupePeriodLabels` when this
+// was written; #7876 merged it with the stagger), and both charts call it — which
 // is the assertion this file is really making. Each chart keeps its own EXTENT
 // logic, because they legitimately disagree about what "on the chart" means:
 // the win-probability chart bounds on its drawn line (CERT-1984), this one
@@ -57,9 +58,10 @@ import { join } from "path";
 
 import ScoreDifferentialChart from "@/components/ScoreDifferentialChart";
 import {
-  dedupePeriodLabels,
+  collapseDuplicateTransitions,
+  placePeriodLabels,
   derivePeriodBoundaries,
-  PERIOD_LABEL_MIN_SPACING_FRACTION,
+  PERIOD_LABEL_INK_FRACTION,
 } from "@/lib/periodMarkers";
 
 const WIRE = JSON.parse(
@@ -134,19 +136,27 @@ describe("#6658 — the specimen actually carries the collision", () => {
 });
 
 describe("#6658 — the shared rule", () => {
-  it("leaves no two surviving labels closer than the spacing fraction", () => {
+  it("leaves no two labels SHARING A ROW closer than one label's ink", () => {
+    // #7876 restated this. It used to read "no two survivors closer than 7% of
+    // the span", which sounds like the anti-smear guarantee and never was one:
+    // 7% is INSIDE a label's 12.6% ink, so two survivors at 8% both passed it
+    // and still touched — which is why #6882 had to add a second pass behind it.
+    // The rule a reader can actually check is per ROW.
     const b = boundaries();
     const span =
       new Date(b[b.length - 1].timestamp).getTime() -
       new Date(b[0].timestamp).getTime();
-    const kept = dedupePeriodLabels(b, span);
+    const kept = placePeriodLabels(collapseDuplicateTransitions(b), span);
 
     expect(kept.length).toBeGreaterThan(0);
-    for (let i = 1; i < kept.length; i++) {
-      const gap =
-        new Date(kept[i].timestamp).getTime() -
-        new Date(kept[i - 1].timestamp).getTime();
-      expect(gap).toBeGreaterThanOrEqual(span * PERIOD_LABEL_MIN_SPACING_FRACTION);
+    for (const row of [0, 1]) {
+      const onRow = kept.filter((k) => k.labelRow === row);
+      for (let i = 1; i < onRow.length; i++) {
+        const gap =
+          new Date(onRow[i].timestamp).getTime() -
+          new Date(onRow[i - 1].timestamp).getTime();
+        expect(gap).toBeGreaterThanOrEqual(span * PERIOD_LABEL_INK_FRACTION);
+      }
     }
   });
 
@@ -157,18 +167,17 @@ describe("#6658 — the shared rule", () => {
       new Date(b[0].timestamp).getTime();
     // If the rule dropped nothing on the very page that smeared, it would be
     // satisfying the spacing assertion vacuously.
-    expect(dedupePeriodLabels(b, span).length).toBeLessThan(b.length);
+    expect(
+      placePeriodLabels(collapseDuplicateTransitions(b), span).length
+    ).toBeLessThan(b.length);
   });
 
   it("keeps the LATER of a too-close pair, so 'HT' wins over 'Q2 end'", () => {
-    const kept = dedupePeriodLabels(
-      [
-        { timestamp: "2026-09-16T22:40:00Z", label: "Q2 end" },
-        { timestamp: "2026-09-16T22:40:30Z", label: "HT" },
-        { timestamp: "2026-09-16T23:40:00Z", label: "Q3" },
-      ],
-      60 * 60 * 1000
-    );
+    const kept = collapseDuplicateTransitions([
+      { timestamp: "2026-09-16T22:40:00Z", label: "Q2 end" },
+      { timestamp: "2026-09-16T22:40:30Z", label: "HT" },
+      { timestamp: "2026-09-16T23:40:00Z", label: "Q3" },
+    ]);
     expect(kept.map((k) => k.label)).toEqual(["HT", "Q3"]);
   });
 });
@@ -188,7 +197,9 @@ describe("#6658 — the component reads the shared rule at its call site", () =>
     // The chart measures its span on the full category extent, which is at least
     // the boundary span, so it can keep no MORE than the rule allows on that
     // narrower window.
-    expect(drawn).toBeLessThanOrEqual(dedupePeriodLabels(b, span).length);
+    expect(drawn).toBeLessThanOrEqual(
+      placePeriodLabels(collapseDuplicateTransitions(b), span).length
+    );
     // And the pre-fix code kept far more than this — see the regression arm.
   });
 
@@ -258,7 +269,7 @@ describe("#6658 — the rule has one implementation, not two", () => {
       ["ScoreDifferentialChart", SDC_SOURCE],
       ["OddsChart", ODDS_SOURCE],
     ] as const) {
-      expect({ name, calls: /dedupePeriodLabels\(/.test(src) }).toEqual({
+      expect({ name, calls: /placePeriodLabels\(/.test(src) }).toEqual({
         name,
         calls: true,
       });
