@@ -2914,6 +2914,50 @@ jobs:
             exit 1
           fi
 
+      - name: "#7739 the orientation repair can select its own candidates (real Postgres)"
+        # Same class as #7354 directly above, eleven days later, in a different
+        # script. `CANDIDATE_SQL` shipped with `interval :horizon_days`, and
+        # INTERVAL is a type constructor whose operand must be a literal, so
+        # `interval $1` dies in the PARSER:
+        # `PostgresSyntaxError: syntax error at or near "$1"`.
+        # Measured on production the moment the script reached the slug —
+        # `run.3888`, 12:03Z on 2026-09-22, a plain dry run with no arguments,
+        # exit 1 on the first statement. So no invocation of that script has
+        # ever selected a row, while CERT-3291 and every unit guard were green:
+        # they all drive a fake session, and only a server can read SQL.
+        #
+        # 🪤 The obvious fix is also wrong, and the second arm guards it.
+        # `:horizon_days::int` compiles with an EMPTY bind list, because
+        # SQLAlchemy's bind regex refuses a colon preceded by a colon — the
+        # literal reaches the server and raises a DIFFERENT syntax error. The
+        # shipped spelling is `cast(:horizon_days AS int)`.
+        #
+        # A cast is not the only edit that silences the original error — deleting
+        # the BETWEEN clause does too — so the corpus carries a far-future row, a
+        # row with an `espn_id`, a completed row and a two-anchor row, and the
+        # arms assert both directions plus that a tighter horizon empties the
+        # population (a hardcoded 30 fails there). Red-first is executed, not
+        # remembered: one arm rebuilds the merged text by surgery on the shipped
+        # constant and asserts the server still refuses it.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_7739_candidate_sql_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/candidate7739.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/candidate7739.txt; then
+            echo "::error::#7739 candidate-query gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          if grep -qiE "no tests ran|collected 0 items" /tmp/candidate7739.txt; then
+            echo "::error::#7739 candidate-query gate collected NOTHING"
+            exit 1
+          fi
+          # 9 in the delivered gate. A short count means an arm was deleted or
+          # renamed out of collection, which pytest reports as success.
+          if ! grep -qE "9 passed" /tmp/candidate7739.txt; then
+            echo "::error::#7739 candidate-query gate did not report 9 passed"
+            exit 1
+          fi
+
       - name: "#7445 the settled-orientation rail applied TWICE writes nothing (real Postgres)"
         # The rail merged with 54 unit guards AND the census gate above, and was
         # still not idempotent on a DRAW. `SLOT_COPY_PROOF` asks whether a store
