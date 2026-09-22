@@ -2696,7 +2696,26 @@ export default function CalibrationPage() {
         const thin = parkedCategories;
         const thinTotal = thin.reduce((s, c) => s + c.outcomes, 0);
         const examples = thin.slice(0, 8);
+        // #7892: the tail the card used to count and then withhold. Sorted with
+        // the rest (outcomes descending), so this really is "the other N", not
+        // a different selection.
+        const rest = thin.slice(8);
         const catLabel = nicheCatLabel;
+        // Declared once so the chip markup — and its collection hook — has a
+        // single definition shared by the visible eight and the folded tail.
+        const chip = (c: typeof thin[number]) => (
+          <span
+            key={c.category}
+            data-testid="calibration-parked-category"
+            data-category={c.category}
+            data-disposition={c.disposition ?? ""}
+            data-outcomes={c.outcomes}
+            className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border"
+          >
+            {catLabel(c.category)}{" "}
+            <span className="tabular-nums text-text-muted">{c.outcomes.toLocaleString()}</span>
+          </span>
+        );
         // Queue 299 made the held-out disposition machine-readable
         // (`parked_below_publish_bar` + the bar + the cohort's own ECE). It is
         // published here as data so the rail — and the native surface — can
@@ -2769,25 +2788,59 @@ export default function CalibrationPage() {
                 opt the number back out of the parent's `capitalize`, and with
                 no parent transform it asserts nothing. */}
             <div className="flex flex-wrap gap-2 mb-3">
-              {examples.map(c => (
-                <span
-                  key={c.category}
-                  data-testid="calibration-parked-category"
-                  data-category={c.category}
-                  data-disposition={c.disposition ?? ""}
-                  data-outcomes={c.outcomes}
-                  className="text-xs px-2.5 py-1 rounded-full bg-surface-deep text-text-secondary border border-surface-border"
-                >
-                  {catLabel(c.category)}{" "}
-                  <span className="tabular-nums text-text-muted">{c.outcomes.toLocaleString()}</span>
-                </span>
-              ))}
-              {thin.length > examples.length && (
-                <span className="text-xs px-2.5 py-1 text-text-muted">
-                  +{(thin.length - examples.length).toLocaleString()} more
-                </span>
-              )}
+              {examples.map(chip)}
             </div>
+            {/* #7892 — this said "+34 more" in a bare span. It named a quantity
+                of held-back categories and gave the reader no way to reach them:
+                not a link, not a summary, no cursor, and clicking it changed
+                nothing (measured on production 2026-09-21 23:07Z). Those 34
+                names reached no screen anywhere on the page.
+
+                The page already had the answer for this shape 600 lines below —
+                "Other exclusion rules (N more)" inside a <details> under notice
+                34 / D102, "present, openable, no real estate when closed". The
+                niche chips were the one place making that promise and not
+                keeping it, so this is that idiom, not a new one.
+
+                ONE CHIP RENDERER, TWO CALL SITES, ON PURPOSE.
+                `calibrationAuditHooks.test.tsx` counts the chip's testid
+                attribute as a string in THIS FILE's source and requires exactly
+                one occurrence — it is a COLLECTION hook, one `.map()` and many
+                DOM nodes. Inlining the chip a second time for the fold would
+                turn that guard red for a reason that has nothing to do with
+                what it guards. (Nor may this comment spell the attribute out:
+                the guard counts text, and prose counts.)
+
+                The fold changes no ordering and no number: `parkedCategories`
+                is already sorted by outcomes descending, so the visible eight
+                are the ones closest to the bar and this is their tail. */}
+            {/* The disclosure idiom is `CalibrationCardNote`'s, down to the
+                rotating caret, because this card already carries one two lines
+                above ("Why they aren't shown yet") and two different triangles
+                in one card read as two different mechanisms. It is not that
+                component: a card note is a METHOD note, and this is the card's
+                own data continued — it needs its own hook and its own count,
+                which that component neither takes nor should. */}
+            {rest.length > 0 && (
+              <details
+                className="group mb-3"
+                data-testid="calibration-parked-rest"
+                data-rest-count={rest.length}
+              >
+                <summary className="cursor-pointer list-none select-none text-xs text-text-muted hover:text-text-secondary">
+                  The other {rest.length.toLocaleString()}{" "}
+                  <span
+                    aria-hidden="true"
+                    className="inline-block transition-transform group-open:rotate-180"
+                  >
+                    &#9662;
+                  </span>
+                </summary>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {rest.map(chip)}
+                </div>
+              </details>
+            )}
           </section>
         );
       })()}
