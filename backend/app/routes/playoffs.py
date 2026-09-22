@@ -47,6 +47,7 @@ from app.utils.odds_math import devig_consensus
 # pass from ever again being two different rules.
 from app.utils.playoff_grid import enforce_monotonicity as _grid_enforce_monotonicity
 from app.utils.regex_to_ilike import regex_to_ilike
+from app.utils import season_windows  # #6266
 from app.utils.team_short_name import compact_team_label  # #7798
 
 logger = logging.getLogger(__name__)
@@ -4812,6 +4813,85 @@ def _build_grid_market_filters(config: LeagueConfig):
     return market_filter_with_status, market_filter
 
 
+# ── #6266: a record must belong to the season the grid HEADS ITSELF with ─────
+#
+# `/playoffs/nba` heads itself **NBA Playoffs 2026-27** and prints a completed
+# 82-game record beside all thirty clubs — Oklahoma City `64-18`, San Antonio
+# `62-20` — for a season that has played no games. `/playoffs/nhl` heads itself
+# 2026-27 and is wrong in two ways at once, which is why it reads MIXED rather
+# than uniformly stale: St. Louis carries last season's finished `36-33-12`,
+# eight clubs carry a record built from THIS WEEK'S EXHIBITIONS (Colorado
+# `1-0-0`, Washington `0-0-1`), and the remaining twenty-three have rolled over
+# to `0-0-0`. That is the surface #6266 was filed from.
+#
+# THE WITHHOLD MUST RUN AFTER `apply_record_overlay`, NOT AT `_team_meta`.
+# `team_row["record"]` has two writers: `meta.get("record")` (from
+# `Team.current_record`) when the row is built, and the ESPN standings overlay
+# (#7675), which REPLACES it unconditionally for every club ESPN names. Gating
+# the first writer alone is inert wherever the second one speaks — and the
+# second one is exactly who supplies the NHL exhibition records this withhold
+# exists for (its own docstring counts 25 NHL rows corrected on 2026-09-21).
+# So this is a serving-boundary pass over the finished rows, after both writers
+# and after every filter, which is also what makes it immune to a third writer
+# arriving later.
+#
+# Same authority as the team page, deliberately, so two surfaces describing one
+# club cannot answer differently: `routes/teams.py:_record_for_declared_season`
+# (#6266, live at `b1c932bab`) calls `season_windows.is_offseason` for the same
+# decision. The team page reaches the league through the sport key; a grid IS a
+# league, so `config.slug` is the key here and no second mapping is introduced.
+#
+# MEASURED on production 2026-09-22 07:4xZ over all FOURTEEN grids:
+#
+#   nba   offseason   30 rows, 30 non-zero    -> 30 withheld
+#   nhl   offseason   32 rows,  9 non-zero    -> 32 withheld
+#   nfl   in_season   32 rows, 32 non-zero    -> untouched (week 3)
+#   mlb   in_season   30 rows, 30 non-zero    -> untouched (pennant race)
+#   the other ten     no modelled band        -> untouched
+#
+# So 62 rows change and 39 of them were printing a non-zero record for a season
+# with no games played. NFL and MLB are the control that proves this is a
+# per-league calendar rule and not a date cutoff: they are in season on the very
+# instant that blanks the NBA, and they keep every record they have.
+#
+# NOT REACHED, and said here rather than papered over: `ncaa-basketball` (63
+# non-zero under a 2026 heading) and `ncaa-women-basketball` (27 under a 2027
+# heading) have the same defect and no band in `season_windows`. Widening
+# `_LEAGUE_BANDS` is not free — those bands are the seasonality hint the
+# sentinels read, and they sit deliberately INSIDE the true schedule edges — so
+# the college grids stay on #6266 rather than riding this change.
+#
+# Withholding the `0-0-0` rows too is the point rather than an overreach: the
+# team page already prints nothing for those clubs, and a grid that answered
+# `0-0-0` where the club's own page answers nothing would be a fresh
+# disagreement about one club. Empty, not explained (notice 34).
+def _withhold_records_out_of_season(
+    rows: list[dict], league: str, now: datetime | None = None
+) -> int:
+    """Blank every ``record`` on a grid whose league has not started its season.
+
+    Returns the number of rows changed. A league with no modelled band, and a
+    calendar that raises, both leave every record exactly as it was — this is a
+    display withhold and it may never cost a reader the grid.
+    """
+    try:
+        if not season_windows.is_offseason(league, now):
+            return 0
+    except Exception:  # noqa: BLE001 — a calendar edge may not cost a reader the grid
+        logger.exception(
+            "Playoff grid %s: season gate failed; serving records unfiltered",
+            league,
+        )
+        return 0
+
+    withheld = 0
+    for row in rows:
+        if row.get("record") is not None:
+            row["record"] = None
+            withheld += 1
+    return withheld
+
+
 async def get_playoff_grid(
     league_slug: str,
     hours: int = None,
@@ -5962,6 +6042,18 @@ async def get_playoff_grid(
                     teams, col.key, entries=column_data.get(col.key)
                 ),
             })
+
+    # #6266: the serving boundary for the record beside a club's name — after
+    # both writers (`_team_meta` and the ESPN overlay) and after every filter,
+    # and before the rows are grouped, so `teams` and `grouped_teams` cannot
+    # disagree about one club. See `_withhold_records_out_of_season`.
+    records_withheld = _withhold_records_out_of_season(teams, config.slug)
+    if records_withheld:
+        logger.info(
+            "Playoff grid %s: %d record(s) withheld — the season it heads "
+            "itself with has played no games (#6266)",
+            config.slug, records_withheld,
+        )
 
     # Group teams by conference if configured
     grouped_teams = None
