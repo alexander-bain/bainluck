@@ -139,6 +139,7 @@ __all__ = [
     "decode_staged_cursor",
     "decode_staged_cursor_detailed",
     "decode_unit_rows",
+    "describe_malformed_cursor_field",
     "encode_accumulator",
     "encode_unit_rows",
     "fold_unit_rows",
@@ -1915,6 +1916,64 @@ def classify_field_mismatch(
     if not isinstance(stored, str) or not stored:
         return malformed
     return changed
+
+
+#: The two field-level ``*_MALFORMED`` tokens, mapped to the payload key whose
+#: value earned them. Only these two: the other malformed-ish reasons name a
+#: whole payload (:data:`REASON_MALFORMED`) or a collection
+#: (:data:`REASON_MALFORMED_UNITS`), and neither has a single rejected scalar to
+#: show.
+MALFORMED_REASON_FIELDS = {
+    REASON_POPULATION_VERSION_MALFORMED: "population_version",
+    REASON_INPUT_FINGERPRINT_MALFORMED: "input_fingerprint",
+}
+
+#: Characters of ``repr`` kept by :func:`describe_malformed_cursor_field`. A
+#: rejected value is by definition a shape nothing here wrote, so it may be a
+#: whole nested payload; the bound is what stops one corrupt row from becoming a
+#: megabyte of log.
+MALFORMED_REPR_LIMIT = 120
+
+
+def describe_malformed_cursor_field(
+    raw: Any, reason: str, *, limit: int = MALFORMED_REPR_LIMIT
+) -> Optional[str]:
+    """``"population_version=int 271"``, or ``None``. Pure.
+
+    CAL-P1339 (#8050). At 12:36:50Z on 2026-09-22 the rebuild invalidated on
+    ``population_version_malformed`` and discarded 109 banked units and the ~75
+    refinement children earned behind them. **The value that caused it could not
+    be named even minutes later**: each beat overwrites the cursor, and by the
+    time anyone read the row the field was a well-formed ``'q271'`` again. So the
+    wipe class is self-erasing, and the token alone says only *which field* was
+    unusable, never *what was in it* — which is the half that says whether a
+    writer, a migration or a torn write is the cause.
+
+    :func:`classify_field_mismatch` decides the verdict and this only explains
+    it, so the mapping is keyed on that function's own output tokens rather than
+    re-deriving the test. A reason it does not recognise returns ``None`` and the
+    caller logs nothing: this is a diagnostic, and a diagnostic that guesses is
+    worse than one that declines.
+
+    **The type is carried beside the repr on purpose.** ``''`` and ``0`` and
+    ``'0'`` are three different corruptions with nearly the same repr, and only
+    the first is a shape :func:`new_staged_cursor` could produce by dropping a
+    value rather than by writing a wrong one.
+
+    Deliberately NOT a gauge. The token block above this module's
+    ``REASON_POPULATION_VERSION_ABSENT`` fixes cursor-token cardinality at six
+    precisely so the sampler can bank these by name, and interpolating an
+    observed value would mint a new gauge name per occurrence. A log line has no
+    cardinality budget to blow.
+    """
+    field_name = MALFORMED_REASON_FIELDS.get(reason)
+    if field_name is None or not isinstance(raw, Mapping):
+        return None
+    value = raw.get(field_name)
+    rendered = repr(value)
+    if len(rendered) > limit:
+        rendered = f"{rendered[:limit]}...(truncated from {len(rendered)})"
+    return f"{field_name}={type(value).__name__} {rendered}"
 
 
 def refinement_from_raw(raw: Any) -> tuple[dict[str, int], dict[str, int]]:
