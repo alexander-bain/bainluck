@@ -88,13 +88,18 @@ struct ProbabilityNumber: View {
     let value: Double
     var size: CGFloat = 36
     var color: Color?
+    /// The card-level integer, when the caller has already decided the whole
+    /// field together (#2060). Overrides the figure, never the `<1%` rule, and
+    /// never the COLOUR — `DS.probColor` reads the probability, which is a
+    /// property of the value rather than of the printed numeral.
+    var renderedPercent: Int?
 
     /// `value` is percentage POINTS. The figure goes through `percentNumber` so a
     /// priced-but-tiny outcome reads `<1%` rather than `0%` (#5899) — the futures
     /// leader row drew `0%` directly above three `<1%` rows of the same list.
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text(percentNumber(value))
+            Text(percentNumber(value, renderedPercent: renderedPercent))
                 .font(.system(size: size, weight: .semibold, design: .monospaced))
                 .foregroundStyle(color ?? DS.probColor(value))
                 .tracking(-0.5)
