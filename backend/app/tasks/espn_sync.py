@@ -3978,6 +3978,7 @@ async def _transition_event_statuses_impl() -> dict:
             SUSPEND_ON_VENUE_SETTLEMENT_SQL,
             VENUE_SETTLED_GAME_MARKETS_SQL,
             venue_settlement_ends_the_match,
+            winning_outcome_names_a_competitor,
         )
         from app.utils.game_market_class import classify_game_market_class
 
@@ -3985,7 +3986,12 @@ async def _transition_event_statuses_impl() -> dict:
         # Counted, not inferred from the difference: an event whose ONLY settled
         # markets are derivatives is the near-miss this arm exists to refuse, so
         # "we looked and declined" must be distinguishable from "we never
-        # looked" in the log (gotcha #53). On the 2026-09-21 slate this reads 5.
+        # looked" in the log (gotcha #53). It counts BOTH refusal shapes — the
+        # derivative conjunct 1 reads in the name, and the one only conjunct 4
+        # can see — so a rise here is the near-miss rate, not a fault. The
+        # 2026-09-21 22:0xZ slate read 5; re-measured 2026-09-22 00:3xZ after
+        # conjunct 4 landed it reads 1 of 9 candidate events (the NRFI row on
+        # 15316384), the population having churned between the two reads.
         stats["held_derivative_settlement_only"] = 0
         settled_event_ids: set[int] = set()
 
@@ -4002,6 +4008,9 @@ async def _transition_event_statuses_impl() -> dict:
                 ),
                 row.market_status,
                 row.winner_source,
+                winning_outcome_names_a_competitor(
+                    row.winner_outcome_name, row.home_team_name, row.away_team_name
+                ),
             ):
                 settling.setdefault(row.event_id, row)
         stats["held_derivative_settlement_only"] = len(looked_at) - len(settling)

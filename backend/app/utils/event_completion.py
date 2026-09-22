@@ -1083,13 +1083,96 @@ def play_resumes(status) -> bool:
 #: string; :func:`venue_settlement_ends_the_match` asserts the equality.
 FULL_CONTEST_WINNER_CLASS = "moneyline"
 
+#: A settled three-way contest answers with neither competitor. Same two tokens
+#: as ``market_shape._DRAW_TOKENS``; spelled here for the reason
+#: :data:`FULL_CONTEST_WINNER_CLASS` is, and asserted equal to that set by the
+#: suite so the two cannot drift into disagreeing about what a drawn match is.
+DRAWN_CONTEST_OUTCOMES = frozenset({"draw", "tie"})
+
+
+def winning_outcome_names_a_competitor(outcome_name, home_team_name, away_team_name) -> bool:
+    """Does the settled leg answer with a PARTICIPANT, or a drawn contest?
+
+    🔴 THIS FUNCTION EXISTS BECAUSE THE SHIP WITHOUT IT SUSPENDED A LIVE MLB GAME,
+    and it was the author who found it, on production, before merge — CERT-3264's
+    own correction block records the miss in full.
+
+    :func:`classify_game_market_class` reads the market's NAME. That is enough to
+    refuse every derivative that announces itself there — ``… : Map 1`` lands
+    ``other``, ``… : Total Maps`` lands ``total``, ``… - Halftime Result`` lands
+    ``other``. It is not enough for a derivative published under a name
+    **identical to the bare matchup**, because then there is nothing in the name
+    to read. Measured on production 2026-09-22 00:1xZ: Kalshi market ``1028088``
+    is named exactly ``Washington Nationals vs. Detroit Tigers`` and settles
+    **NRFI** — no-run-first-inning. It classifies ``moneyline``, it is
+    ``resolved``, its winning leg is ``api_settlement``, and on the read it would
+    have ended event ``15316384`` — a Tigers/Nationals game then in the **Top of
+    the 7th at 9-0**, ESPN-anchored and still being scored. The venue publishes
+    the same question a second time, correctly named
+    (``Will there be a run scored in the first inning?: …``), and THAT one is
+    refused by the classifier. Only the bare-named twin gets through.
+
+    So the tell is not in the name; it is in the ANSWER. A market that decides
+    who wins a contest answers with one of the two competitors, or says the
+    contest was drawn. ``NRFI`` is neither, and neither is ``Over``, ``Yes``, a
+    scoreline or a player.
+
+    WHY NOT :func:`~app.utils.team_side.resolve_team_side`, which asks almost
+    exactly this. Because its containment is a PREFIX test, and it was replayed
+    over this arm's own served population before being rejected rather than
+    reasoned about: it refuses the MLB defect and **also refuses four of the
+    tennis rows this ship exists for** — the venue answers with a full name
+    (``Juan Cruz Martin Manzano``) where we store a surname (``Martin Manzano``),
+    which is a suffix, not a prefix. Widening that module was the other option
+    and is rejected too: its own docstring says its two readers
+    (``period_window_grade``, ``final_score_margin``) want the strict test
+    because both print a verdict under a club's name, so loosening it to rescue
+    this arm would move what those readers show. One arm's problem does not get
+    solved in a helper two other readers depend on.
+
+    The test here is WHOLE-TOKEN containment in either direction, normalised by
+    :func:`~app.utils.team_side.normalize_team_text` (shared, because it is a
+    pure normaliser and carries no policy):
+
+    * ``{martin, manzano} ⊆ {juan, cruz, martin, manzano}`` — the venue's fuller
+      name names our competitor. Accept.
+    * ``{detroit} ⊆ {detroit, tigers}`` — a short name for a long one. Accept.
+    * ``{nrfi}`` meets neither side in either direction. Refuse.
+
+    **Exactly one side may match**, which is :func:`resolve_team_side`'s
+    fail-safe kept rather than reinvented: ``"New York"`` on a Yankees/Mets
+    matchup names both sides and therefore names neither, and a row we cannot
+    orient is a row we do not end. Replayed over the 2026-09-22 00:3xZ slate this
+    keeps 8 of 9 genuine settlements (all four tennis, both esports, the soccer
+    winner and its draw) and loses exactly the NRFI row.
+
+    Failing CLOSED is the whole design. A settlement we decline costs the reader
+    nothing he is not already paying — the staleness arm reaches the row an hour
+    or two later, which is today's behaviour — while a settlement we accept
+    wrongly takes a game off the live board while it is being played.
+    """
+    from app.utils.team_side import normalize_team_text
+
+    answer = set(normalize_team_text(outcome_name).split())
+    if not answer:
+        return False
+    if answer <= DRAWN_CONTEST_OUTCOMES:
+        return True
+
+    sides_named = 0
+    for side_name in (home_team_name, away_team_name):
+        side = set(normalize_team_text(side_name).split())
+        if side and (side <= answer or answer <= side):
+            sides_named += 1
+    return sides_named == 1
+
 
 def venue_settlement_ends_the_match(
-    market_class, market_status, winner_resolution_source
+    market_class, market_status, winner_resolution_source, outcome_names_a_competitor
 ) -> bool:
     """Has the venue PAID OUT on who wins this contest? (rung 2 of §R)
 
-    Three facts, and each one is load-bearing against a different way of being
+    Four facts, and each one is load-bearing against a different way of being
     wrong. Pure, so the net that spends it can be tested without a venue.
 
     1. **The market decides the CONTEST, not a piece of it.** ``market_class``
@@ -1113,6 +1196,12 @@ def venue_settlement_ends_the_match(
        ticker-only tells are all taken BEFORE the bare-matchup winner catch, so
        ``… : Map 1`` lands ``other`` and ``… : Total Maps`` lands ``total``.
 
+       ⚠️ AND IT ONLY REACHES DERIVATIVES THAT ANNOUNCE THEMSELVES IN THE NAME.
+       The paragraph above was written as though this conjunct were sufficient,
+       and it is not: a derivative published under a name IDENTICAL to the bare
+       matchup leaves the classifier nothing to read, and one of those ended a
+       live MLB game in review. That hole is conjunct 4's, not this one's.
+
     2. **The venue closed the market.** ``resolved`` only. An ``open`` market
        priced at 0.99 is a price, and §R rung 4 says a price may conclude
        nothing — it is the same quote a venue will keep showing through a rain
@@ -1134,6 +1223,21 @@ def venue_settlement_ends_the_match(
        score settle the match it was frozen from, which is the CAL-P002 loop
        live/048 removed from the net below.
 
+    4. **The settled leg answers with a PARTICIPANT.**
+       ``outcome_names_a_competitor`` is
+       :func:`winning_outcome_names_a_competitor` applied to the winning leg's
+       name and the event's two sides. It is passed in rather than computed here
+       so this function stays pure over scalars like its three siblings.
+
+       This is the conjunct conjunct 1 cannot cover, and it is here because the
+       ship without it suspended a live MLB game: Kalshi market ``1028088`` is
+       named exactly ``Washington Nationals vs. Detroit Tigers`` — so conjunct 1
+       reads ``moneyline`` — and settles **NRFI**. Conjuncts 2 and 3 pass it too:
+       the venue really did close it and really did grade it ``api_settlement``.
+       Every existing guard says yes, and the match was in the Top of the 7th.
+       A market that decides a contest answers with a competitor or with a draw;
+       ``NRFI`` is an answer to a different question wearing the match's name.
+
     A ``None`` source (ungraded), a guess-family source and an unrecognised one
     all answer False — :func:`~app.utils.resolution_authority.authority_tier`
     fails safe to -1 for the unknown, so a source added without being classified
@@ -1144,6 +1248,8 @@ def venue_settlement_ends_the_match(
     if market_class != FULL_CONTEST_WINNER_CLASS:
         return False
     if market_status != "resolved":
+        return False
+    if not outcome_names_a_competitor:
         return False
     return is_authoritative(winner_resolution_source)
 
@@ -1356,6 +1462,7 @@ VENUE_SETTLED_GAME_MARKETS_SQL = """
            fm.name         AS market_name,
            fm.external_id  AS market_external_id,
            fm.status       AS market_status,
+           fo.name         AS winner_outcome_name,
            fo.resolution_source AS winner_source
       FROM events e
       JOIN futures_markets fm ON fm.event_id = e.id

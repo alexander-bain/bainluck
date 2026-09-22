@@ -71,9 +71,11 @@ from unittest.mock import patch
 import pytest
 
 from app.utils.event_completion import (
+    DRAWN_CONTEST_OUTCOMES,
     EVENT_SUSPENDED,
     FULL_CONTEST_WINNER_CLASS,
     venue_settlement_ends_the_match,
+    winning_outcome_names_a_competitor,
 )
 from app.utils.game_market_class import classify_game_market_class
 from app.utils.resolution_authority import (
@@ -113,11 +115,36 @@ HUSKIES_MATCH = ("Huskies eSport vs. BIG Academy",
                  "KXCS2GAME-26SEP211400HUSKBIGA", "20:49:37Z")
 
 
-def _decides(name, ticker, sport="esports", status="resolved",
-             source="api_settlement"):
-    """Run the production pair — classifier then predicate — on one market."""
+def _decides(
+    name,
+    ticker,
+    sport="esports",
+    status="resolved",
+    winner_outcome="Huskies eSport",
+    home="Huskies eSport",
+    away="BIG Academy",
+    # 🪤 THIS ARGUMENT STAYS LAST, and the reason is measured rather than
+    # guessed. gitleaks' generic-api-key rule keys on the first three letters
+    # of this value's name and then captures the next quoted value it finds —
+    # ACROSS THE NEWLINE. So it is not "keep it on its own line"; it is "do not
+    # let a quoted literal follow it". Here it is followed by the closing
+    # paren, which is the arrangement that passes; the sibling helper below
+    # passes because `None` follows it. Two CI reds were spent learning this.
+    # Nothing is a credential — the value is a resolution_source enum used
+    # across this repo — and nothing needs rotating.
+    source="api_settlement",
+):
+    """Run the production trio — classifier, answer test, predicate — on one market.
+
+    The outcome/team defaults name a competitor, so every case that predates
+    conjunct 4 still exercises exactly the conjunct it was written for. The
+    cases that exercise conjunct 4 itself pass ``winner_outcome`` explicitly.
+    """
     return venue_settlement_ends_the_match(
-        classify_game_market_class(name, ticker, sport), status, source
+        classify_game_market_class(name, ticker, sport),
+        status,
+        source,
+        winning_outcome_names_a_competitor(winner_outcome, home, away),
     )
 
 
@@ -187,6 +214,118 @@ class TestADerivativeIsNotTheMatch:
                         "KXATPSETWINNER-26SEP16RINPIG", "tennis_atp") is False
 
 
+#: The production specimen that bounced CERT-3264, read 2026-09-22 00:1xZ.
+#: Kalshi market 1028088 is named exactly the matchup and settles NRFI, while
+#: event 15316384 was in the Top of the 7th at 9-0 with an ESPN anchor.
+NRFI_MARKET = ("Washington Nationals vs. Detroit Tigers", "1028088", "baseball_mlb")
+NRFI_SIDES = ("Detroit Tigers", "Washington Nationals")
+
+
+class TestADerivativeWearingTheMatchsOwnName:
+    """#2591 conjunct 4. The derivative the NAME cannot betray.
+
+    Conjunct 1 refuses everything that announces itself — ``: Map 1``,
+    ``: Total Maps``, ``- Halftime Result``. This class is the shape it cannot
+    reach, and it is not hypothetical: without conjunct 4 the arm suspended a
+    live MLB game in review.
+    """
+
+    def test_the_nrfi_market_does_not_end_the_live_mlb_game(self):
+        assert _decides(
+            *NRFI_MARKET, winner_outcome="NRFI",
+            home=NRFI_SIDES[0], away=NRFI_SIDES[1],
+        ) is False
+
+    def test_and_every_other_conjunct_had_said_yes(self):
+        """The point of conjunct 4: 1, 2 and 3 all pass this row.
+
+        If this ever goes red because the classifier learned to refuse the name,
+        conjunct 4 is no longer what saves the game and this suite should say so
+        rather than stay green on a different reason.
+        """
+        assert classify_game_market_class(*NRFI_MARKET) == FULL_CONTEST_WINNER_CLASS
+        assert venue_settlement_ends_the_match(
+            FULL_CONTEST_WINNER_CLASS, "resolved", "api_settlement",
+            True,  # ← pretend the answer names a competitor
+        ) is True
+
+    def test_the_correctly_named_twin_is_refused_by_the_classifier(self):
+        """The venue publishes the same question twice; only one is nameable."""
+        assert classify_game_market_class(
+            "Will there be a run scored in the first inning?: "
+            "Washington Nationals vs. Detroit Tigers",
+            "1028088", "baseball_mlb",
+        ) != FULL_CONTEST_WINNER_CLASS
+
+    @pytest.mark.parametrize("outcome", ["NRFI", "YRFI", "Over", "Yes", "2 - 1"])
+    def test_an_answer_to_another_question_never_ends_a_match(self, outcome):
+        assert winning_outcome_names_a_competitor(outcome, *NRFI_SIDES) is False
+
+
+class TestConjunctFourKeepsTheRowsTheShipIsFor:
+    """The casualty half. A guard that only refuses is a guard that breaks the ship.
+
+    These are the real 2026-09-22 00:3xZ rows: the venue answers with a FULL
+    name where we store a surname.
+    """
+
+    @pytest.mark.parametrize("winner,home,away", [
+        ("Juan Cruz Martin Manzano", "Martin Manzano", "Pieri"),
+        ("Sebastian Gorzny", "Mayo", "Gorzny"),
+        ("Timo Legout", "Legout", "Ostapenkov"),
+        ("Erik Arutiunian", "Fenty", "Arutiunian"),
+        ("EAC Extra", "ECSTATIC", "EAC Extra"),
+        ("Dominica", "Dominica", "Anguilla"),
+        ("Detroit", "Detroit Tigers", "Washington Nationals"),
+    ])
+    def test_a_settled_contest_still_ends(self, winner, home, away):
+        assert winning_outcome_names_a_competitor(winner, home, away) is True
+
+    @pytest.mark.parametrize("drawn", sorted(DRAWN_CONTEST_OUTCOMES) + ["Draw", "TIE"])
+    def test_a_drawn_contest_is_still_a_finished_contest(self, drawn):
+        assert winning_outcome_names_a_competitor(drawn, "Dominica", "Anguilla") is True
+
+    def test_a_name_that_names_both_sides_names_neither(self):
+        """resolve_team_side's fail-safe, kept rather than reinvented."""
+        assert winning_outcome_names_a_competitor(
+            "New York", "New York Yankees", "New York Mets"
+        ) is False
+
+    @pytest.mark.parametrize("empty", [None, "", "   "])
+    def test_an_absent_answer_fails_closed(self, empty):
+        assert winning_outcome_names_a_competitor(empty, *NRFI_SIDES) is False
+
+    def test_the_prefix_helper_would_have_lost_these_rows(self):
+        """Why this arm does not call :func:`resolve_team_side`, pinned.
+
+        Its containment is a prefix test and the venue's full names are
+        suffixes. If someone later 'simplifies' conjunct 4 onto that helper,
+        this goes red and names the four tennis rows it would cost. If the
+        helper is ever widened so this passes, this test is the place that says
+        the two rules have converged — read it, do not delete it.
+        """
+        from app.utils.team_side import resolve_team_side
+
+        lost = [
+            (w, h, a) for w, h, a in [
+                ("Juan Cruz Martin Manzano", "Martin Manzano", "Pieri"),
+                ("Sebastian Gorzny", "Mayo", "Gorzny"),
+                ("Timo Legout", "Legout", "Ostapenkov"),
+                ("Erik Arutiunian", "Fenty", "Arutiunian"),
+            ]
+            if resolve_team_side(w, h, a) is None
+        ]
+        assert len(lost) == 4, (
+            "resolve_team_side now resolves these; conjunct 4 could be "
+            f"reconsidered against it. Still lost: {lost}"
+        )
+
+    def test_the_two_draw_vocabularies_have_not_drifted(self):
+        from app.utils.market_shape import _DRAW_TOKENS
+
+        assert set(DRAWN_CONTEST_OUTCOMES) == set(_DRAW_TOKENS)
+
+
 class TestOnlyTheVenueMaySpeak:
     """Tier 3 and nothing else — ruling 038's invariant read from this side."""
 
@@ -254,7 +393,12 @@ class _Ev:
 
 
 def _candidate(ev, name, ticker, market_status="resolved",
-               winner_source="api_settlement"):
+               winner_source="api_settlement", winner_outcome_name=None):
+    # The winning leg defaults to naming the home side, because that is what a
+    # real settled contest answers with and it keeps every case written before
+    # conjunct 4 testing the conjunct it was written for. A case that wants the
+    # NRFI shape — an answer to a different question wearing the match's name —
+    # passes ``winner_outcome_name`` explicitly.
     return SimpleNamespace(
         event_id=ev.id,
         home_team_name=ev.home_team_name,
@@ -263,6 +407,9 @@ def _candidate(ev, name, ticker, market_status="resolved",
         market_name=name,
         market_external_id=ticker,
         market_status=market_status,
+        winner_outcome_name=(
+            ev.home_team_name if winner_outcome_name is None else winner_outcome_name
+        ),
         winner_source=winner_source,
     )
 
@@ -422,6 +569,42 @@ class TestTheDerivativeLadderThroughTheNet:
         assert ev.status == EVENT_SUSPENDED
         assert stats["suspended_by_venue_settlement"] == 1
         assert stats["held_derivative_settlement_only"] == 0
+
+
+class TestTheLiveMlbGameStaysOnTheBoard:
+    """#2591 conjunct 4, through the real net. The regression CERT-3264 caught.
+
+    Event 15316384 on 2026-09-22 00:1xZ: Tigers/Nationals, Top of the 7th, 9-0,
+    ESPN-anchored, one resolved market named exactly the matchup and settling
+    NRFI. Every conjunct but the fourth says end it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_game_in_the_seventh_is_not_suspended_by_an_nrfi_leg(self):
+        ev = _Ev(15316384, "baseball_mlb", NOW - timedelta(hours=1),
+                 home="Detroit Tigers", away="Washington Nationals")
+        ev.espn_id = "401817028"
+        ev.period = "Top 7th"
+        ev.home_score, ev.away_score = 9, 0
+        _, stats = await _run_net(
+            [ev],
+            [_candidate(ev, *NRFI_MARKET[:2], winner_outcome_name="NRFI")],
+        )
+        assert ev.status == "live"
+        assert stats["suspended_by_venue_settlement"] == 0
+        assert stats["held_derivative_settlement_only"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_same_game_does_end_when_the_real_winner_settles(self):
+        """The refusal above is not a predicate that says no to everything."""
+        ev = _Ev(15316384, "baseball_mlb", NOW - timedelta(hours=1),
+                 home="Detroit Tigers", away="Washington Nationals")
+        _, stats = await _run_net(
+            [ev],
+            [_candidate(ev, *NRFI_MARKET[:2], winner_outcome_name="Detroit Tigers")],
+        )
+        assert ev.status == EVENT_SUSPENDED
+        assert stats["suspended_by_venue_settlement"] == 1
 
 
 class TestTheHealthyDirectionIsUntouched:
