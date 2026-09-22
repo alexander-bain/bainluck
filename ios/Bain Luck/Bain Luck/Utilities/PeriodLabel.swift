@@ -328,6 +328,67 @@ enum PeriodLabel {
         default: return "th"
         }
     }
+
+    // MARK: - Asking what a period IS, rather than what to call it (#7943)
+
+    /// Whether this raw period string is the boundary at the END of the first
+    /// half.
+    ///
+    /// Lives here, and not beside its one caller (``HalfScores``), because this
+    /// file is the single source of ESPN period vocabulary — the rule
+    /// `periodLabelSingleSource` enforces and the reason stated at the top of
+    /// this file. A second file that reads the same clock strings is a second
+    /// verdict on them, which is gotcha #128's shape however narrow its
+    /// question. The question is genuinely a different one — "is this the
+    /// halftime boundary" rather than "what chip do I draw" — so it is its own
+    /// section rather than a branch of `normalize`.
+    ///
+    /// 🔴 `"end of 2nd"` IS NOT A SAFE TEST, and web's `computeHalfScores` uses
+    /// exactly that. It matches `"End of 2nd Quarter"` (the halftime boundary,
+    /// correct) AND `"End of 2nd Half"` — FULL TIME in the two-half vocabulary
+    /// soccer and several others use, which ``columnLabel`` already handles a
+    /// few lines up. Under the loose test a finished match hands its FINAL score
+    /// back as its first-half score and the second half subtracts to 0–0. So the
+    /// quarter form is spelled in full and the half form is refused by name.
+    ///
+    /// ⚠️ WHICH OF THOSE TWO IS DOING THE WORK, because they are not equal.
+    /// **Spelling the quarter form in full is the load-bearing one.** The
+    /// refusal line below is belt-and-braces: at HEAD no string containing
+    /// `"2nd half"` reaches a `true` even without it, so deleting it changes no
+    /// answer (it is an equivalent mutation, and the mutation harness for
+    /// #7943 says so rather than claiming a kill it did not get). It earns its
+    /// place only against a future edit that shortens the quarter clause — and
+    /// the assertion that actually catches that edit is
+    /// `"End of 2nd Period"`, a three-period sport's boundary, which this
+    /// refusal line CANNOT catch. Do not read the line below as the guard.
+    static func isFirstHalfBoundary(_ raw: String) -> Bool {
+        let lower = raw.lowercased().trimmingCharacters(in: .whitespaces)
+        if lower.contains("2nd half") || lower.contains("second half") { return false }
+        if lower == "ht" { return true }
+        if lower.contains("halftime") || lower.contains("half time") { return true }
+        if lower.contains("end of 2nd quarter") || lower.contains("end of second quarter") { return true }
+        if lower.contains("end of 1st half") || lower.contains("end of first half") { return true }
+        return false
+    }
+
+    /// Whether this raw period string is played after regulation.
+    ///
+    /// Named for the attribute and not for the word it matches: it is true of a
+    /// shootout and of penalties, neither of which is "overtime", and a reader
+    /// of the call site should not have to know which nouns the body lists.
+    static func isAfterRegulation(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        if lower.contains("overtime") || lower.contains("shootout") || lower.contains("penalt") {
+            return true
+        }
+        // `OT`, `2OT`, `End of 3OT`, `7:12 - OT` — the TOKEN, never a substring
+        // of a longer word: a bare `contains("ot")` is true of "promotion",
+        // "not started" and "bottom 4th".
+        let tokens = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        return tokens.contains { token in
+            token == "ot" || (token.count <= 3 && token.hasSuffix("ot") && token.dropLast(2).allSatisfy(\.isNumber))
+        }
+    }
 }
 
 // MARK: - Halves inferred from a gap (#3317)

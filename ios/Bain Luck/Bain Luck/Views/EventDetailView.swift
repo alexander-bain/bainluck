@@ -422,7 +422,8 @@ struct EventDetailView: View {
                             openingOverUnder: event.openingOdds?.overUnder,
                             homeScore: event.homeScore,
                             awayScore: event.awayScore,
-                            absenceStatedAbove: absenceStatedAbove
+                            absenceStatedAbove: absenceStatedAbove,
+                            halfScores: halfScores(event)
                         )
                     }
                     // Total Points Spectrum (projected scoring + threshold ladder)
@@ -581,6 +582,30 @@ struct EventDetailView: View {
         TeamTextContrast.cardColors(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor
+        )
+    }
+
+    /// #7943 — what each half was played to, for the four half maps.
+    ///
+    /// Read off the SAME `espn_history` the segment table above already
+    /// consumes, so the two cards on this page cannot disagree about the
+    /// halftime score. `HalfScores` withholds rather than guesses; `.none` is a
+    /// card that draws no result, which is the behaviour every half map had
+    /// before this.
+    private func halfScores(_ event: EventDetail) -> HalfScores.Pair {
+        guard let espnHistory = vm.history?.espnHistory else { return .none }
+        let readings = espnHistory.compactMap { point -> HalfScoreReading? in
+            guard let period = point.period,
+                  let home = point.homeScore,
+                  let away = point.awayScore,
+                  let date = point.timestamp.asDate else { return nil }
+            return HalfScoreReading(period: period, home: home, away: away, date: date)
+        }
+        return HalfScores.split(
+            readings: readings,
+            currentHome: event.homeScore,
+            currentAway: event.awayScore,
+            isDone: isFinished
         )
     }
 
