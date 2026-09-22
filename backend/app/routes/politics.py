@@ -61,6 +61,46 @@ _THEME_BY_TICKER: list[tuple[str, str]] = [
     ("kxbill", "policy"),
 ]
 
+# #8038 — the two national chamber-control markets, anchored by TICKER, and
+# deliberately NOT part of `_THEME_BY_TICKER` above.
+#
+# `CONTROLH-2026` ("Which party will win the U.S. House?", volume_24h 982,211 —
+# twenty-three times its Senate twin) reached `/politics` classified "other", so
+# `_find_chamber_control` — which searches only `congressional_markets` — could
+# never see it, and the page published a SENATE CONTROL card with no HOUSE card
+# beside it. `CONTROLS-2026` only ever arrived by luck: the name "…U.S. Senate?"
+# matches the `\bsenate\b` arm of `_THEME_BY_NAME`, while "…U.S. House?" matches
+# nothing, because that rule's house arm is deliberately `house\s*(?:of\s*rep|seat)`.
+#
+# 🔴 DO NOT "fix" this by loosening that arm to a bare `\bhouse\b`. What the
+# narrowness actually buys was measured, and it is not the obvious thing:
+# "White House" is already safe (the presidential arm claims it two lines into
+# `_THEME_BY_NAME`) and "housing" is already safe (no word boundary). The
+# population it protects is FOREIGN AND STATE chambers — every open market
+# naming "House of Representatives" on 2026-09-22 was Dutch, Nepali, Texan,
+# Nigerian or Malaysian, and `_THEME_BY_NAME` has no Nepal or Malaysia entry to
+# catch them on its international arm. A bare `\bhouse\b` files a Nepali general
+# election under US Congressional. The ambiguity lives in the NAME, so the
+# repair belongs where the name is not consulted: the ticker.
+#
+# 🔴 SEPARATE LIST, BECAUSE `_THEME_BY_TICKER` HAS A SECOND CONSUMER. That table
+# is also spread into the market-selection query as
+# `external_id.like(f"{prefix.upper()}%")`, and those arms cannot use an index —
+# the comment on that query records `market_query` as the dominant stage of the
+# cold build (7,332ms of 10,437ms), a path a reader takes on a cold cache. Both
+# rows carry `llm_sport_category = 'politics'` (measured 2026-09-22), so the
+# category arm already fetches them and a LIKE arm would add scan cost for zero
+# additional rows. What was missing is CLASSIFICATION, so only classification is
+# added. `test_every_ticker_prefix_still_reaches_the_query`'s cost ratchet stays
+# exactly as it was.
+#
+# Hyphenated on purpose: `CONTROLS` is an English word and would claim any
+# future `CONTROLSOMETHING-*` series; `controls-` can only match this family.
+_THEME_BY_TICKER_CLASSIFY_ONLY: list[tuple[str, str]] = [
+    ("controlh-", "congressional"),
+    ("controls-", "congressional"),
+]
+
 _THEME_BY_NAME: list[tuple[re.Pattern, str]] = [
     # International FIRST — prevents foreign presidential elections from matching "presidential"
     (re.compile(
@@ -174,7 +214,7 @@ def _place_led_gov_race_is_us(name: str) -> bool | None:
 
 def _classify_theme(market: FuturesMarket) -> str:
     ext = (market.external_id or "").lower()
-    for prefix, theme in _THEME_BY_TICKER:
+    for prefix, theme in (*_THEME_BY_TICKER, *_THEME_BY_TICKER_CLASSIFY_ONLY):
         if ext.startswith(prefix):
             return theme
     name = market.name or ""
