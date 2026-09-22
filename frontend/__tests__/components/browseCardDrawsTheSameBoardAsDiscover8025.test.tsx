@@ -202,6 +202,143 @@ describe("the browse card and the Discover card read one board", () => {
   });
 });
 
+// ── 2b. #8033'S PAIR REPAIR IS PART OF THE BOARD RULE, SO BOTH CARDS HAVE IT ─
+//
+// This block exists because of how this ship nearly shipped. #8033 landed on
+// `discover/FuturesCard.tsx` WHILE that card still privately owned the board, so
+// the rule "the top two may not own more than the race" was written into the
+// same lines this ship extracts. Rebasing the extraction onto it produced a
+// conflict whose obvious resolution — take the extracted version — silently
+// deleted the repair.
+//
+// #8033's own guard (`raceBoardTopTwoOverHundred8033.test.tsx`) renders
+// `DiscoverCard` and would have caught that on the Discover side. NOTHING would
+// have caught it here: the browse card had no board at all when #8033 was
+// written, so no guard anywhere asserted that THIS card can add up. It now draws
+// the identical top two, which is precisely what makes it able to print 101%.
+//
+// The specimen is #8033's own: `Brazil Presidential Election` market 112996,
+// raw legs 0.5955 / 0.405 measured off `GET /api/feed?limit=200`. Independently
+// rounded they print 60% and 41% — 101% of a mutually exclusive race, refutable
+// by a reader adding two numbers.
+
+const BRAZIL_BOARD = [
+  { label: "Flávio Bolsonaro", probability: 0.5955, movement: null },
+  { label: "Luiz Inácio Lula da Silva", probability: 0.405, movement: null },
+  { label: "Renan Santos", probability: 0.0075, movement: null },
+  { label: "Jair Bolsonaro", probability: 0.0015, movement: null },
+];
+
+function brazilData(fieldIsARace?: boolean): FeedFuturesData {
+  const discoverCard: Record<string, unknown> = {
+    suggested_format: "outcome_distribution",
+    distribution_outcomes: BRAZIL_BOARD,
+    remaining_outcome_count: 12,
+  };
+  // Omit the key entirely rather than sending `null` when undefined — "an older
+  // payload" is the case the closed gate exists for, and that is what one sends.
+  if (fieldIsARace !== undefined) discoverCard.field_is_a_race = fieldIsARace;
+  return iplData({
+    id: 112996,
+    name: "Brazil Presidential Election",
+    llm_sport_category: "politics",
+    outcome_count: 32,
+    top_outcomes: BRAZIL_BOARD.slice(0, 3).map((row, i) => ({
+      id: i + 1,
+      rank: i + 1,
+      name: row.label,
+      probability: row.probability,
+      movement: null,
+    })),
+    discover_card: discoverCard,
+  });
+}
+
+/**
+ * The percent each BOARD ROW printed, in rendered order.
+ *
+ * Anchored on each row's own `title="<label>"` and then the first numeric cell
+ * after it, rather than on every percent in the markup: both cards print the
+ * leader a second time in a hero rail above the board, so a document-wide sweep
+ * reads that one first and every index is off by one. `renderToStaticMarkup`
+ * escapes the `<` of UX-P046's `<1%`, so the entity is decoded here — asserting
+ * `&lt;1%` would pin the escaping rather than the reading.
+ */
+function boardPercents(html: string): string[] {
+  return BRAZIL_BOARD.map((row) => ({
+    at: html.indexOf(`title="${row.label}"`),
+  }))
+    .filter((x) => x.at !== -1)
+    .sort((a, b) => a.at - b.at)
+    .map((x) => {
+      const m = /tabular-nums[^>]*>([^<]*)</.exec(html.slice(x.at));
+      return m ? m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">") : "";
+    })
+    .filter((c) => c.endsWith("%"));
+}
+
+describe("the top two may not own more than the race, on either card", () => {
+  it("the browse card prints a top two a reader can add up", () => {
+    const cells = boardPercents(browseHtml(brazilData(true)));
+    expect(cells.slice(0, 2)).toEqual(["60%", "40%"]);
+    const topTwo = cells
+      .slice(0, 2)
+      .map((c) => Number.parseInt(c.replace("%", ""), 10))
+      .reduce((a, b) => a + b, 0);
+    expect(topTwo).toBe(100);
+  });
+
+  it("both cards print the identical top two", () => {
+    const data = brazilData(true);
+    expect(boardPercents(browseHtml(data)).slice(0, 2)).toEqual(
+      boardPercents(discoverHtml(data)).slice(0, 2),
+    );
+  });
+
+  it("does not move the leader on either card", () => {
+    // Clause 4 — only the second row is derived, as `100 - leader`. A repair that
+    // normalized index 0 would print 60 on THIS specimen too, so the guard that
+    // discriminates is the runner-up, asserted above.
+    const data = brazilData(true);
+    expect(boardPercents(browseHtml(data))[0]).toBe("60%");
+    expect(boardPercents(discoverHtml(data))[0]).toBe("60%");
+  });
+
+  it("THE DEFECT IS REAL: without the repair the browse card prints 101%", () => {
+    // `field_is_a_race: false` is the widening control AND the strawman. It is
+    // the one input for which the repair is correctly refused, so it renders the
+    // unrepaired arithmetic — which is exactly what a resolution that dropped
+    // `rowPercents` would have printed for every board.
+    const cells = boardPercents(browseHtml(brazilData(false)));
+    expect(cells.slice(0, 2)).toEqual(["60%", "41%"]);
+    expect(
+      cells
+        .slice(0, 2)
+        .map((c) => Number.parseInt(c.replace("%", ""), 10))
+        .reduce((a, b) => a + b, 0),
+    ).toBe(101);
+  });
+
+  it("fails CLOSED on a payload that never said the field is exclusive", () => {
+    // The two `field_is_a_race` derivations differ on purpose: the podium
+    // question fails to today's rendering on an absent key (`!== false`), the
+    // pair repair fails closed (`=== true`). Deriving a row down a point on a
+    // board that turns out to be independent is a wrong number, not a missing
+    // repair — and both cards must agree about that too.
+    const data = brazilData(undefined);
+    expect(boardPercents(browseHtml(data)).slice(0, 2)).toEqual(["60%", "41%"]);
+    expect(boardPercents(discoverHtml(data)).slice(0, 2)).toEqual(["60%", "41%"]);
+  });
+
+  it("leaves every row beneath the pair alone on both cards", () => {
+    const data = brazilData(true);
+    expect(boardPercents(browseHtml(data)).slice(2, 4)).toEqual(
+      boardPercents(discoverHtml(data)).slice(2, 4),
+    );
+    expect(boardPercents(browseHtml(data)).slice(2, 4)).toEqual(["1%", "<1%"]);
+  });
+});
+
 // ── 3. THE ARM THAT DOES NOT CHANGE ──────────────────────────────────────────
 
 describe("a card with no board renders exactly as it did", () => {

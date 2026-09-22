@@ -12,7 +12,7 @@ import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
-import { renderedLeaderPercent, renderedRaceBoardPercents } from "@/lib/renderedPercent";
+import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
