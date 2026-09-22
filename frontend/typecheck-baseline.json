@@ -9,7 +9,7 @@
     "ratchet": "Both directions. Fixing errors without lowering this file also fails — a baseline above the real count is headroom new debt can be added into unnoticed.",
     "note": "4,491 of the 4,612 errors that existed before L2-234 were missing jest globals; declaring @types/jest@30.0.0 removed them. What remains is real."
   },
-  "total": 70,
+  "total": 69,
   "byFile": {
     "__tests__/components/discoverCardTapNav.test.tsx": 1,
     "__tests__/components/feedEmptyEnvelope.test.tsx": 2,
@@ -36,11 +36,9 @@
     "components/admin/discover/EngagementPanel.tsx": 1,
     "components/admin/discover/ScoreBucketList.tsx": 1,
     "components/discover/FuturesCard.tsx": 5,
-    "components/discover/ThemeBundleCard.tsx": 2,
-    "components/weather/WeatherHero.tsx": 1
+    "components/discover/ThemeBundleCard.tsx": 2
   },
   "byCode": {
-    "TS18047": 1,
     "TS18048": 2,
     "TS2322": 47,
     "TS2339": 8,
