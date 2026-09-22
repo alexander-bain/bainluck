@@ -8,6 +8,7 @@ import { formatProbability } from "@/lib/api";
 import { renderedFieldRowPercents } from "@/lib/renderedPercent";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { eventPath } from "@/lib/eventKey";
+import { orderByParticipant } from "@/lib/railParticipantOrder";
 import { PriceAgeMark } from "@/components/event/PriceAgeMark";
 
 /** The item types this section knows how to render.
@@ -125,6 +126,17 @@ interface RelatedByTagProps {
   excludeType?: "event" | "futures";
   /** Max items to display */
   limit?: number;
+  /**
+   * The sides of the match this rail is standing beside (#5973).
+   *
+   * Cards naming one of them sort first; everything else keeps the feed's own
+   * rank behind them. This is a PREFERENCE, never a filter — see
+   * `lib/railParticipantOrder` for the measurement and for why the obvious
+   * alternatives (narrow the query, widen the fetch) were rejected. Omitted on
+   * a surface with no participants to prefer, which leaves the order exactly as
+   * the feed served it.
+   */
+  preferNames?: string[];
   /** Section title */
   title?: string;
   /**
@@ -145,6 +157,7 @@ export default function RelatedByTag({
   limit = 6,
   title = "More Like This",
   fallbackTitle,
+  preferNames,
 }: RelatedByTagProps) {
   const { data } = useSWR(
     tags.length > 0 ? ["related-by-tag", ...tags] : null,
@@ -157,8 +170,8 @@ export default function RelatedByTag({
       means what a reader would say it means rather than what the raw payload
       length says. A response of four items that are all the current event, or
       all of a type this component cannot draw, IS empty here. */
-  const usable = (response: typeof data) =>
-    (response?.items ?? [])
+  const usable = (response: typeof data) => {
+    const renderable = (response?.items ?? [])
       .filter((item) => RENDERABLE.has(item.type))
       .filter((item) => {
         if (excludeId === undefined) return true;
@@ -169,8 +182,14 @@ export default function RelatedByTag({
             ? (item.data as FeedFuturesData).id
             : null;
         return !(item.type === excludeType && id === excludeId);
-      })
-      .slice(0, limit);
+      });
+    /* THE SORT HAPPENS BEFORE THE SLICE, which is the whole point (#5973). The
+       rail draws four of the nine it fetched, and every card this is meant to
+       promote was in the five it threw away — `MLB: 2026 AL Central Champion`
+       sat at rank 5 on a Tigers page. Ordering the already-chosen four would be
+       a no-op dressed as a fix. */
+    return orderByParticipant(renderable, preferNames ?? []).slice(0, limit);
+  };
 
   const primary = usable(data);
 

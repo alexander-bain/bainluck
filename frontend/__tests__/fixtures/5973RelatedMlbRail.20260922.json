@@ -1,0 +1,1185 @@
+{
+ "items": [
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Los Angeles Dodgers (28%) lead MLB World Series Winner",
+   "headline": "Los Angeles Dodgers lead at 28%",
+   "context_summary": "Los Angeles Dodgers lead at 28%",
+   "data": {
+    "id": 1,
+    "name": "MLB World Series Winner",
+    "sport": "baseball_mlb",
+    "sport_name": "MLB",
+    "llm_sport_category": "baseball",
+    "source": "odds_api",
+    "source_count": 2,
+    "sources": [
+     "odds_api",
+     "polymarket"
+    ],
+    "market_tier": 5,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": null,
+    "price_observed_at": "2026-09-22T20:30:02+00:00",
+    "top_outcomes": [
+     {
+      "id": 1,
+      "name": "Los Angeles Dodgers",
+      "probability": 0.280846,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 28
+     },
+     {
+      "id": 14,
+      "name": "Milwaukee Brewers",
+      "probability": 0.125152,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 13
+     },
+     {
+      "id": 21,
+      "name": "Tampa Bay Rays",
+      "probability": 0.096154,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 10
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 30,
+    "canonical_market_key": "baseball:MLB:championship:",
+    "group_id": null,
+    "group_type": null,
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Los Angeles Dodgers",
+       "probability": 0.280846,
+       "movement": null
+      },
+      {
+       "label": "Milwaukee Brewers",
+       "probability": 0.125152,
+       "movement": null
+      },
+      {
+       "label": "Tampa Bay Rays",
+       "probability": 0.096154,
+       "movement": null
+      },
+      {
+       "label": "New York Yankees",
+       "probability": 0.089382,
+       "movement": null
+      },
+      {
+       "label": "Atlanta Braves",
+       "probability": 0.060743,
+       "movement": null
+      },
+      {
+       "label": "Boston Red Sox",
+       "probability": 0.060362,
+       "movement": null
+      },
+      {
+       "label": "Chicago Cubs",
+       "probability": 0.055477,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia Phillies",
+       "probability": 0.052925,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 22,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/31940399/pexels-photo-31940399.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 465,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.8235,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:odds_api",
+     "sport:baseball"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 89,
+   "reason": "Los Angeles Dodgers (29%) lead MLB World Series Champion 2026",
+   "headline": "Los Angeles Dodgers lead at 29%",
+   "context_summary": "Los Angeles Dodgers lead at 29%",
+   "data": {
+    "id": 114584,
+    "name": "MLB World Series Champion 2026",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-10-31T23:55:00+00:00",
+    "price_observed_at": "2026-09-22T22:53:54+00:00",
+    "top_outcomes": [
+     {
+      "id": 1634465,
+      "name": "Los Angeles Dodgers",
+      "probability": 0.2898,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 29
+     },
+     {
+      "id": 1634478,
+      "name": "Milwaukee Brewers",
+      "probability": 0.1525,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 15
+     },
+     {
+      "id": 1634488,
+      "name": "Tampa Bay Rays",
+      "probability": 0.1012,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 10
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 31,
+    "canonical_market_key": "baseball:MLB:championship:2026",
+    "group_id": "polymarket:179312",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Los Angeles Dodgers",
+       "probability": 0.2898,
+       "movement": null
+      },
+      {
+       "label": "Milwaukee Brewers",
+       "probability": 0.1525,
+       "movement": null
+      },
+      {
+       "label": "Tampa Bay Rays",
+       "probability": 0.1012,
+       "movement": null
+      },
+      {
+       "label": "New York Yankees",
+       "probability": 0.0903,
+       "movement": null
+      },
+      {
+       "label": "San Diego Padres",
+       "probability": 0.0689,
+       "movement": null
+      },
+      {
+       "label": "Atlanta Braves",
+       "probability": 0.0599,
+       "movement": null
+      },
+      {
+       "label": "Boston Red Sox",
+       "probability": 0.0584,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia Phillies",
+       "probability": 0.0442,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 23,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/20316377/pexels-photo-20316377.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 450,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.8235,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "discover_llm": {
+     "topic": "sports",
+     "subtopic": "baseball",
+     "archetype": "other",
+     "audience_scope": "broad",
+     "salience_score": 4,
+     "junk_flags": [],
+     "comparison_axes": []
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:polymarket",
+     "sport:baseball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 59,
+   "reason": "Bobby Witt Jr. (28%) leads MLB: AL Platinum Glove Winner",
+   "headline": "Bobby Witt Jr. leads at 28%",
+   "context_summary": "Bobby Witt Jr. leads at 28%",
+   "data": {
+    "id": 7448770,
+    "name": "MLB: AL Platinum Glove Winner",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "price_observed_at": "2026-09-22T18:50:35+00:00",
+    "top_outcomes": [
+     {
+      "id": 39434533,
+      "name": "Bobby Witt Jr.",
+      "probability": 0.275,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 28
+     },
+     {
+      "id": 39434535,
+      "name": "Ceddanne Rafaela",
+      "probability": 0.075,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 8
+     },
+     {
+      "id": 39434534,
+      "name": "Dillon Dingler",
+      "probability": 0.065,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 7
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 27,
+    "canonical_market_key": "baseball:MLB:championship:2027",
+    "group_id": "polymarket:311458",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Bobby Witt Jr.",
+       "probability": 0.275,
+       "movement": null
+      },
+      {
+       "label": "Ceddanne Rafaela",
+       "probability": 0.075,
+       "movement": null
+      },
+      {
+       "label": "Dillon Dingler",
+       "probability": 0.065,
+       "movement": null
+      },
+      {
+       "label": "Wilyer Abreu",
+       "probability": 0.052,
+       "movement": null
+      },
+      {
+       "label": "Alex Bregman",
+       "probability": 0.051,
+       "movement": null
+      },
+      {
+       "label": "Nathaniel Lowe",
+       "probability": 0.0465,
+       "movement": null
+      },
+      {
+       "label": "Kevin Kiermaier",
+       "probability": 0.024,
+       "movement": null
+      },
+      {
+       "label": "Cody Bellinger",
+       "probability": 0.0185,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 19,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/28964175/pexels-photo-28964175.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.6471,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:polymarket",
+     "sport:baseball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 52,
+   "reason": "Yordan Alvarez (83%) leads MLB: AL Comeback Player of the Year",
+   "headline": "Yordan Alvarez leads at 83%",
+   "context_summary": "Yordan Alvarez leads at 83%",
+   "data": {
+    "id": 7435308,
+    "name": "MLB: AL Comeback Player of the Year",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "polymarket",
+    "source_count": 1,
+    "sources": [
+     "polymarket"
+    ],
+    "market_tier": 3,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "price_observed_at": "2026-09-22T12:32:11+00:00",
+    "top_outcomes": [
+     {
+      "id": 39370260,
+      "name": "Yordan Alvarez",
+      "probability": 0.8275,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 83
+     },
+     {
+      "id": 39370268,
+      "name": "Gerrit Cole",
+      "probability": 0.065,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 7
+     },
+     {
+      "id": 39370265,
+      "name": "Anthony Volpe",
+      "probability": 0.0355,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 4
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 10,
+    "canonical_market_key": "baseball:MLB:championship:2027",
+    "group_id": "polymarket:307476",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Yordan Alvarez",
+       "probability": 0.8275,
+       "movement": null
+      },
+      {
+       "label": "Gerrit Cole",
+       "probability": 0.065,
+       "movement": null
+      },
+      {
+       "label": "Anthony Volpe",
+       "probability": 0.0355,
+       "movement": null
+      },
+      {
+       "label": "Adley Rutschman",
+       "probability": 0.0136,
+       "movement": null
+      },
+      {
+       "label": "Jonathan India",
+       "probability": 0.0131,
+       "movement": null
+      },
+      {
+       "label": "Mike Trout",
+       "probability": 0.0126,
+       "movement": null
+      },
+      {
+       "label": "Kristian Campbell",
+       "probability": 0.0117,
+       "movement": null
+      },
+      {
+       "label": "Anthony Santander",
+       "probability": 0.0112,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 2,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/31167777/pexels-photo-31167777.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+    "image_width": 940,
+    "image_height": 529,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.4706,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:polymarket",
+     "sport:baseball",
+     "tier:3"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 51,
+   "reason": "Louis Varland (67%) leads AL Reliever of the Year Winner?",
+   "headline": "Louis Varland leads at 67%",
+   "context_summary": "Louis Varland leads at 67%",
+   "data": {
+    "id": 215,
+    "name": "AL Reliever of the Year Winner?",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "kalshi",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 1,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-12-08T15:00:00+00:00",
+    "price_observed_at": "2026-09-22T19:51:39+00:00",
+    "top_outcomes": [
+     {
+      "id": 144914832,
+      "name": "Louis Varland",
+      "probability": 0.6667,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 67
+     },
+     {
+      "id": 1589,
+      "name": "Aroldis Chapman",
+      "probability": 0.0412,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 4
+     },
+     {
+      "id": 1581,
+      "name": "Josh Hader",
+      "probability": 0.0412,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 4
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 26,
+    "canonical_market_key": "baseball:MLB:championship:2026",
+    "group_id": "kalshi:KXMLBALRELOTY-26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": false,
+     "comparison_theme": null,
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Louis Varland",
+       "probability": 0.6667,
+       "movement": null
+      },
+      {
+       "label": "Aroldis Chapman",
+       "probability": 0.0412,
+       "movement": null
+      },
+      {
+       "label": "Josh Hader",
+       "probability": 0.0412,
+       "movement": null
+      },
+      {
+       "label": "Cade Smith",
+       "probability": 0.037,
+       "movement": null
+      },
+      {
+       "label": "Bryan Baker",
+       "probability": 0.0329,
+       "movement": null
+      },
+      {
+       "label": "Andres Mu\u00f1oz",
+       "probability": 0.0165,
+       "movement": null
+      },
+      {
+       "label": "Brayan Bello",
+       "probability": 0.0082,
+       "movement": null
+      },
+      {
+       "label": "Jeff Hoffman",
+       "probability": 0.0082,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 18,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/332826/pexels-photo-332826.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 623,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:kalshi",
+     "sport:baseball",
+     "tier:1"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 49,
+   "reason": "MLB: 2026 AL Central Champion resolves within a month, Cleveland Guardians lead at 52%",
+   "headline": "Cleveland Guardians lead; resolves within a month",
+   "context_summary": "Cleveland Guardians lead; resolves within a month",
+   "data": {
+    "id": 199064,
+    "name": "MLB: 2026 AL Central Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 4,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-10-11T00:00:00+00:00",
+    "price_observed_at": "2026-09-22T12:31:58+00:00",
+    "top_outcomes": [
+     {
+      "id": 2083191,
+      "name": "Cleveland Guardians",
+      "probability": 0.515,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 52
+     },
+     {
+      "id": 2083194,
+      "name": "Chicago White Sox",
+      "probability": 0.4725,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 47
+     },
+     {
+      "id": 2083190,
+      "name": "Detroit Tigers",
+      "probability": 0.001,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 0
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 6,
+    "canonical_market_key": "baseball:MLB:championship:2026",
+    "group_id": "polymarket:215885",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Cleveland Guardians",
+       "probability": 0.515,
+       "movement": null
+      },
+      {
+       "label": "Chicago White Sox",
+       "probability": 0.4725,
+       "movement": null
+      },
+      {
+       "label": "Detroit Tigers",
+       "probability": 0.001,
+       "movement": null
+      },
+      {
+       "label": "Kansas City Royals",
+       "probability": 0.001,
+       "movement": null
+      },
+      {
+       "label": "Minnesota Twins",
+       "probability": 0.001,
+       "movement": null
+      },
+      {
+       "label": "Other",
+       "probability": null,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/25547640/pexels-photo-25547640.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "high",
+    "confidence_score": 0.8235,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:polymarket",
+     "sport:baseball",
+     "tier:4"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 49,
+   "reason": "Texas Rangers (59%) lead MLB: 2026 AL West Champion",
+   "headline": "Texas Rangers lead at 59%",
+   "context_summary": "Texas Rangers lead at 59%",
+   "data": {
+    "id": 199065,
+    "name": "MLB: 2026 AL West Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "polymarket",
+    "source_count": 2,
+    "sources": [
+     "kalshi",
+     "polymarket"
+    ],
+    "market_tier": 4,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-11-01T03:59:00+00:00",
+    "price_observed_at": "2026-09-22T12:31:58+00:00",
+    "top_outcomes": [
+     {
+      "id": 2083198,
+      "name": "Texas Rangers",
+      "probability": 0.585,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 59
+     },
+     {
+      "id": 2083196,
+      "name": "Houston Astros",
+      "probability": 0.3945,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 39
+     },
+     {
+      "id": 2083197,
+      "name": "Oakland Athletics",
+      "probability": 0.002,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 0
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 6,
+    "canonical_market_key": "baseball:MLB:championship:2026",
+    "group_id": "polymarket:215886",
+    "group_type": "negrisk",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Texas Rangers",
+       "probability": 0.585,
+       "movement": null
+      },
+      {
+       "label": "Houston Astros",
+       "probability": 0.3945,
+       "movement": null
+      },
+      {
+       "label": "Oakland Athletics",
+       "probability": 0.002,
+       "movement": null
+      },
+      {
+       "label": "Seattle Mariners",
+       "probability": 0.0015,
+       "movement": null
+      },
+      {
+       "label": "Los Angeles Angels",
+       "probability": 0.001,
+       "movement": null
+      },
+      {
+       "label": "Other",
+       "probability": null,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 0,
+     "qa_signals": [
+      "multi_source_consistency_check"
+     ],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/25547640/pexels-photo-25547640.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "moderate",
+    "confidence_score": 0.5294,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:polymarket",
+     "sport:baseball",
+     "tier:4"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 46,
+   "reason": "Milwaukee is up 22 points since Feb 3 in National League Champion",
+   "headline": "Los Angeles Dodgers lead at 38%, Milwaukee up 22 points since Feb 3",
+   "context_summary": "Los Angeles Dodgers lead at 38%, Milwaukee up 22 points since Feb 3",
+   "data": {
+    "id": 270,
+    "name": "National League Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 2,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-11-01T04:00:00+00:00",
+    "price_observed_at": "2026-09-22T22:51:25+00:00",
+    "top_outcomes": [
+     {
+      "id": 2279,
+      "name": "Los Angeles Dodgers",
+      "probability": 0.3821,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 38
+     },
+     {
+      "id": 2277,
+      "name": "Milwaukee",
+      "probability": 0.25,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 25
+     },
+     {
+      "id": 2284,
+      "name": "Atlanta",
+      "probability": 0.1179,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 12
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 15,
+    "canonical_market_key": "baseball:MLB:championship:2028",
+    "group_id": "kalshi:KXMLBNL-26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Los Angeles Dodgers",
+       "probability": 0.3821,
+       "movement": null
+      },
+      {
+       "label": "Milwaukee",
+       "probability": 0.25,
+       "movement": null
+      },
+      {
+       "label": "Atlanta",
+       "probability": 0.1179,
+       "movement": null
+      },
+      {
+       "label": "Chicago Cubs",
+       "probability": 0.0802,
+       "movement": null
+      },
+      {
+       "label": "Philadelphia",
+       "probability": 0.0802,
+       "movement": null
+      },
+      {
+       "label": "San Diego",
+       "probability": 0.0802,
+       "movement": null
+      },
+      {
+       "label": "Arizona",
+       "probability": 0.0094,
+       "movement": null
+      },
+      {
+       "label": "Colorado",
+       "probability": 0.0,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 7,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/163534/baseball-victory-game-sport-163534.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:kalshi",
+     "sport:baseball",
+     "tier:2"
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 46,
+   "reason": "Tampa Bay is up 27.5 points since Feb 3 in American League Champion",
+   "headline": "Tampa Bay leads at 30%, up 27.5 points since Feb 3",
+   "context_summary": "Tampa Bay leads at 30%, up 27.5 points since Feb 3",
+   "data": {
+    "id": 274,
+    "name": "American League Champion",
+    "sport": null,
+    "sport_name": null,
+    "llm_sport_category": "baseball",
+    "source": "kalshi",
+    "source_count": 1,
+    "sources": [
+     "kalshi"
+    ],
+    "market_tier": 2,
+    "market_type": "field",
+    "status": "open",
+    "resolution_date": "2026-11-01T04:00:00+00:00",
+    "price_observed_at": "2026-09-22T22:51:25+00:00",
+    "top_outcomes": [
+     {
+      "id": 2302,
+      "name": "Tampa Bay",
+      "probability": 0.295,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 30
+     },
+     {
+      "id": 2304,
+      "name": "New York Yankees",
+      "probability": 0.205,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 21
+     },
+     {
+      "id": 2311,
+      "name": "Cleveland",
+      "probability": 0.155,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 16
+     }
+    ],
+    "card_sum_reason": null,
+    "outcome_count": 15,
+    "canonical_market_key": "baseball:MLB:championship:2028",
+    "group_id": "kalshi:KXMLBAL-26",
+    "group_type": "kalshi_event",
+    "discover_card": {
+     "suggested_format": "outcome_distribution",
+     "bundle_candidate": true,
+     "comparison_theme": "sports_paths",
+     "threshold_points": [],
+     "ladder_treatment_refused": false,
+     "field_is_a_race": true,
+     "distribution_outcomes": [
+      {
+       "label": "Tampa Bay",
+       "probability": 0.295,
+       "movement": null
+      },
+      {
+       "label": "New York Yankees",
+       "probability": 0.205,
+       "movement": null
+      },
+      {
+       "label": "Cleveland",
+       "probability": 0.155,
+       "movement": null
+      },
+      {
+       "label": "Boston",
+       "probability": 0.13,
+       "movement": null
+      },
+      {
+       "label": "Chicago White Sox",
+       "probability": 0.095,
+       "movement": null
+      },
+      {
+       "label": "Texas",
+       "probability": 0.085,
+       "movement": null
+      },
+      {
+       "label": "Houston",
+       "probability": 0.045,
+       "movement": null
+      },
+      {
+       "label": "Baltimore",
+       "probability": 0.01,
+       "movement": null
+      }
+     ],
+     "remaining_outcome_count": 7,
+     "qa_signals": [],
+     "public_source_disagreement": false,
+     "reasons": [
+      "multi_outcome_distribution",
+      "bundle_candidate"
+     ]
+    },
+    "image_url": "https://images.pexels.com/photos/7005497/pexels-photo-7005497.jpeg?auto=compress&cs=tinysrgb&h=350",
+    "image_width": 525,
+    "image_height": 350,
+    "hook_description": null,
+    "temporal_badge": null,
+    "confidence_tier": "low",
+    "confidence_score": 0.3529,
+    "confidence_signals": {
+     "has_closing_line": false
+    },
+    "market_tags": [
+     "category:championship",
+     "league:mlb",
+     "market_status:open",
+     "source:kalshi",
+     "sport:baseball",
+     "tier:2"
+    ]
+   }
+  }
+ ],
+ "total": 14,
+ "limit": 9,
+ "offset": 0,
+ "has_more": true,
+ "edition": "7b2221df65a1f065",
+ "cache": {
+  "status": "miss",
+  "built_at": 1790118469.904326,
+  "ttl_seconds": 60,
+  "stale_ttl_seconds": 300,
+  "live": false
+ }
+}
