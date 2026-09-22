@@ -181,7 +181,23 @@ POLL_STAMP_COUNTS = {
     # #2199: the price refresher. A FOURTH writer, and the census is why it had
     # to declare itself — it exists precisely because the three above cannot
     # reach every market they are assumed to cover.
-    "app/tasks/futures_price_refresh.py": 1,
+    # 1 -> 2 (#7582). `_write_prices` gained the clear that takes a price DOWN on
+    # a leg the venue still LISTS and will not QUOTE — the futures path's missing
+    # equivalent of `_clear_outcome_price`, which the game poller has had since
+    # #4356. It advances `last_updated` unconditionally, like every other write in
+    # this file.
+    #
+    # THE AUDIT RE-RUN RATHER THAN THE COUNT BUMPED, as this census asks by name.
+    # The severe consumer is `routes/playoffs.py`, which DROPS an outcome from the
+    # grid on a stale stamp. This write can only make that gate LESS likely to
+    # drop a row — it moves the stamp forward, never back. What it does do is
+    # blank the row's PRICE, so the grid renders a priceable-looking outcome with
+    # no number; that is the intended user-visible effect (the number was a
+    # fortnight-old fossil) and it is the serve-time answer #7537 already gives
+    # the same leg on the detail page. `admin_judgments.py`'s price-age floor sees
+    # a fresher stamp on a priceless row, which is correct: the sampler should not
+    # label a leg that has no price.
+    "app/tasks/futures_price_refresh.py": 2,
     # Q460: the two WebSocket consumers. They were price writers all along —
     # they have been writing `current_probability` on the `worker-ws` dyno since
     # they shipped — and they were writing it WITHOUT either stamp. This census
@@ -411,6 +427,23 @@ READ_SIDE_CONSUMERS = {
         "price that the API keeps returning would age into this branch and be "
         "zeroed. PRE-EXISTING and unaudited until Q482 widened the scan."
     ),
+    "app/tasks/futures_price_refresh.py": (
+        "POLLER ALIVE — #7582's clear. `FuturesOutcome.last_updated < "
+        "stale_before` is the seven-day grace (`OBSERVATION_LAG_DAYS`) before a "
+        "leg the venue lists and will not quote has its price taken down. Under "
+        "option 1 this INVERTS, and it is the subtlest inversion in the dict "
+        "because the arm's own gate hides it. The clear reaches only legs the "
+        "venue refused to price on THIS pass, so a stable-but-quoted leg never "
+        "enters it and the obvious failure cannot happen. What can: option 1 "
+        "redefines the gate from 'nobody has priced this in a week' to 'nobody "
+        "has MOVED this in a week', and a low-liquidity season future parked at "
+        "3% satisfies the second within days of satisfying neither. The moment "
+        "its book empties, the grace it was owed has already elapsed and the "
+        "price comes down at once — on exactly the shelf `prices_have_stopped` "
+        "took a separate constant to spare (its own census: 601 markets blocked "
+        "at two days, 107 at fourteen). The grace is the whole safety margin of "
+        "this arm, so a change that silently shortens it to zero is the hazard."
+    ),
     "app/tasks/kalshi_resolution_sweep.py": (
         "POLLER ALIVE — #5024's live arm. `NOT EXISTS (… fo.last_updated >= "
         ":stale_touch_floor)` reaches a LIVE market no leg of which has been "
@@ -578,7 +611,20 @@ PRICE_CHANGE_STAMPERS = {
     # as a move — `routes/playoffs.py` drops an outcome from the grid on a stale
     # stamp, and this writer's whole cohort is the tier-1 championship fields
     # that grid renders.
-    "app/tasks/futures_price_refresh.py": 1,
+    # 1 -> 2 (#7582): the venue-unpriced CLEAR in the same function, stamping the
+    # change with `None` as the new price — exactly as #4356's withdrawn-leg clear
+    # in `kalshi.py` does, and for the reason `price_changed_at_value`'s docstring
+    # gives in its own words: "a price going away IS a change".
+    #
+    # 🔴 THIS FILE STAMPS ITS CLEAR WHERE `prediction_market_matching.py` DOES NOT,
+    # and the divergence is the rule rather than an exception to it. That file is
+    # in `KNOWN_UNSTAMPED` because the ordinary price MOVE beside its clear does
+    # not stamp either, so stamping only the clear would make the column mean
+    # "when this price went away" for one writer and nothing for the writer next
+    # to it. Here the reverse is true — the move forty lines up stamps — so an
+    # unstamped clear would be the single unstamped write in the file. Both
+    # choices follow one principle: within a file, the column means one thing.
+    "app/tasks/futures_price_refresh.py": 2,
     # Q460: the WebSocket consumers, now routed through the shared helper like
     # every other price writer. They are the FASTEST-moving writers of this
     # column — sub-second, versus the polls' 120s — so they are also the ones
