@@ -11,7 +11,7 @@ import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
 import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
-import { renderedLeaderPercent } from "@/lib/renderedPercent";
+import { renderedLeaderPercent, renderedRaceBoardPercents } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
 import { compactOutcomeName, feedContextSnippet, feedExpandedContext, resolvesLabel } from "./utils";
@@ -443,9 +443,19 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // older payload, a pre-#7844 cache entry, any of the four other card formats)
   // draws exactly what it draws today. Read through a narrow local cast for the
   // reason stated on `ladderTreatmentRefused` above.
-  const fieldIsARace =
-    (data as { discover_card?: { field_is_a_race?: boolean } }).discover_card
-      ?.field_is_a_race !== false;
+  //
+  // #8033 reads the SERVED value once and derives both booleans off it, rather
+  // than taking a second bare access (each one is a baselined `tsc` error) — and
+  // the two derivations are deliberately different. The podium question fails to
+  // today's rendering on an absent key (`!== false`, above). The pair repair below
+  // fails CLOSED on one (`=== true`): a payload with no flag is a payload that has
+  // not told us the field is exclusive, and deriving a row down a point on a board
+  // that turns out to be independent would be a wrong number rather than a missing
+  // repair. It costs nothing to wait — the feed blob's TTL is 30s — and the live
+  // specimen serves the key explicitly.
+  const servedFieldIsARace = (data as { discover_card?: { field_is_a_race?: boolean } })
+    .discover_card?.field_is_a_race;
+  const fieldIsARace = servedFieldIsARace !== false;
   // The rank cell is a column, not a decoration: dropping its content would slide
   // every label one track left and misalign the remainder row against the rows
   // above it. So the template loses the track rather than the cell losing its
@@ -463,6 +473,16 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
     // no less load-bearing there: leader-first is what decides WHICH four of the
     // eight rows a reader is shown, which is the "losing the answer" half.
     const shownRows = leaderFirstSlice(distributionRows, 4);
+    // #8033 — the board's top two may not own more than the race. Taken over
+    // `shownRows` and not `distributionRows`, because the pair the reader can add
+    // up is the pair that is DRAWN; and after the slice, because the helper's
+    // leader-first clause is a check on the list it is handed. Every position it
+    // declines comes back `null`, which leaves that row rendering exactly as it
+    // does today — including every row on every board that is not a race.
+    const racePairPercents = renderedRaceBoardPercents(
+      shownRows.map((row) => row.probability),
+      servedFieldIsARace === true,
+    );
     // #6505 — counted off the UNFILTERED list, so a row we declined to draw is
     // still a row the reader is told exists. Filtering the total too would make
     // the card claim a smaller field than the market has.
@@ -547,7 +567,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               {shownRows.map((row, index) => {
                 const probability = row.probability ?? 0;
                 // UX-P046: a nonzero probability must never print as "0%".
-                const pct = formatProbabilityPercent(probability);
+                // #8033: `rendered` overrides the INTEGER, not the rule — the
+                // boundary clamp still runs on the probability, and a `null` here
+                // is "no override" rather than a decision.
+                const pct = formatProbabilityPercent(probability, {
+                  rendered: racePairPercents[index],
+                });
                 // #1574 acceptance (c): the fill IS the printed number. This was
                 // previously divided by the leader's probability, which renders
                 // the top bar full regardless of its actual value — a 12% leader
