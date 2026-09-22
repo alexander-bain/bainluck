@@ -180,8 +180,25 @@ def test_the_stamp_moved_for_this_capture_rule():
     question ("did the refinement fire?") reads absence on both and cannot tell
     "the sampler could not see it" from "the policy declined", which are the two
     readings this whole ship exists to separate.
+
+    **RELAXED FROM ``==`` TO ``>=`` by CAL-P1337 (#6868, #8050), which is the
+    behaviour this file already documents rather than a weakening.** The census
+    test below (``test_adding_a_capture_rule_fails_this_until_the_stamp_moves``)
+    names the ``==`` form as the defect it was written to replace: it "fires when
+    a later ship bumps the stamp — the CORRECT action — and is silent when a ship
+    adds a capture rule and forgets to". CAL-P1337 is that later ship: it added
+    ``staged:units_refined_slots`` to the capture set and moved the stamp to 5, so
+    the equality failed for doing the right thing while the census test — the one
+    that actually enforces the duty — passed once the count was updated.
+
+    Nothing is lost. The fact this test exists to record is that THIS rule earned
+    a stamp bump of its own, and that is pinned permanently by the floor's VALUE
+    sitting above the floor before it (``test_the_older_floors_did_not_move``),
+    not by the live stamp still happening to equal it.
     """
-    assert GAUGE_CAPTURE_VERSION == REFINEMENT_CAPTURE_VERSION
+    assert GAUGE_CAPTURE_VERSION >= REFINEMENT_CAPTURE_VERSION
+    # A floor above the live stamp would mark a population that cannot exist.
+    assert REFINEMENT_CAPTURE_VERSION <= GAUGE_CAPTURE_VERSION
 
 
 def test_the_older_floors_did_not_move():
@@ -192,6 +209,11 @@ def test_the_older_floors_did_not_move():
     assert DROP_AND_STOP_CAPTURE_VERSION == 2
     assert UNIT_COST_CAPTURE_VERSION == 3
     assert UNIT_COST_CAPTURE_VERSION < REFINEMENT_CAPTURE_VERSION
+    # CAL-P1337 (#6868, #8050): this floor is now itself an older one — a later
+    # rule (``staged:units_refined_slots``, floor 5) has shipped behind it. Pinned
+    # at its value for the same reason as the two above: re-dating it would make a
+    # ring-length of rows stop licensing a reading they legitimately license.
+    assert REFINEMENT_CAPTURE_VERSION == 4
 
 
 def test_a_row_banked_before_this_deploy_is_below_the_floor():
@@ -207,7 +229,7 @@ def test_a_row_banked_before_this_deploy_is_below_the_floor():
 #: Every capture rule ``select_gauges`` applies, pinned. NOT a restatement of the
 #: module for its own sake — see the test below for why this exact shape.
 EXPECTED_CAPTURE_PREFIXES = 6
-EXPECTED_OPERATIONAL_GAUGES = 13
+EXPECTED_OPERATIONAL_GAUGES = 14
 
 
 def test_adding_a_capture_rule_fails_this_until_the_stamp_moves():

@@ -5929,8 +5929,31 @@ async def _run_staged_futures(db, runner, sql_builder, *, rebuild_only=False):
     # partition CONSTANT as ``units_total`` — true only while the plan is exactly
     # the base partition, and a lie the moment one slot is cut finer.
     runner.ledger.record_gauge("staged:units_planned_total", len(chunks))
-    if cursor.unit_splits:
-        runner.ledger.record_gauge("staged:units_refined_slots", len(cursor.unit_splits))
+    # 🔴 CAL-P1337 (#6868, #8050): RECORDED UNCONDITIONALLY, AND THE ZERO IS THE
+    # READING THAT MATTERS. This sat behind ``if cursor.unit_splits:``, so the
+    # one value that says the refinement ratchet is GONE was the one value never
+    # written — gotcha #53, an absent key reading as "fine".
+    #
+    # Measured cost, 2026-09-22: the 12:36:50Z beat invalidated on
+    # ``population_version_malformed`` and the plan went 203 -> 128 units, i.e.
+    # the ~75 refinement children this build had earned over days were lost with
+    # the bank. ``carry_refinement`` exists to stop exactly that and runs ABOVE
+    # the population-version check, so either the payload's ``unit_splits`` were
+    # unreadable or the carry is inert in production — and the two cannot be told
+    # apart after the fact, because each beat overwrites the cursor. The ratchet's
+    # size was recoverable only by inferring it from ``len(chunks)`` against a
+    # base partition of ``STAGED_FUTURES_BUCKETS``, which is archaeology, not a
+    # reading.
+    #
+    # The distinction is worth a durable row rather than a log line: the bank is
+    # re-earned in beats, the ratchet in DAYS, so it is the expensive half of a
+    # wipe and the half nothing published. A level, so a gauge, not a stage
+    # (CAL-P024c) — and now in ``OPERATIONAL_GAUGES`` so ``select_gauges``
+    # actually retains it. NOT yet mapped into ``REBUILD_PROGRESS_GAUGES``: that
+    # publishes a ring COLUMN, and a name that starts being captured today would
+    # answer ``capture_did_not_retain`` on every row already in the ring. That
+    # rung needs its own capture floor and is owed a week of rows first.
+    runner.ledger.record_gauge("staged:units_refined_slots", len(cursor.unit_splits))
     logger.info(
         "calibration staged futures: generation %s — %d markets in %d units "
         "(%d refined slot(s))",
