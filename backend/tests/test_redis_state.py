@@ -9,6 +9,8 @@ import inspect
 
 import pytest
 
+from tests.lib_buffered_redis import BufferedRedis, to_bytes
+
 from app.tasks import redis_state
 from app.tasks.redis_state import (
     compute_odds_hash,
@@ -126,16 +128,33 @@ class TestTaskMetricsConstants:
         assert callable(get_all_task_metrics)
 
 
-class _FakeMetricsRedis:
-    """Fake redis backing get_task_metrics: hash per task + counter keys."""
+class _FakeMetricsRedis(BufferedRedis):
+    """Fake redis backing get_task_metrics: hash per task + counter keys.
+
+    #1813: the write side is a buffered pipeline — queued ops publish only on
+    ``execute()``, so a deleted flush fails the state assertions instead of
+    passing against an eagerly-mutated store. Read shape is unchanged (hashes
+    keyed by task name, counters by full key, ``ttl`` unmeasurable as before),
+    ``expire`` stays a call-record, and the ``calls`` ledger keeps the
+    ``set``/``incr``/``expire`` tuple shapes so call-shape assertions read it
+    unchanged.
+
+    Side repair this exposes: the old double had no ``lpush``, so every writer
+    driven through it lost its duration tail to a swallowed ``AttributeError``
+    AFTER the eagerly-applied hash/counter writes — the suite could not see
+    the partial write. The shared pipe supports the list ops, so the tail is
+    queued on the same pipe: an omitted or pre-dispatch-failed flush drops it
+    along with the hash/counter writes. (Pre-dispatch only — no claim about
+    mid-queue op errors, which apply in order with no rollback.)
+    """
 
     def __init__(self, hashes, counters=None):
         # hashes: {task_name: {b"consecutive_failures": b"3", ...}}
+        super().__init__()
         self.hashes = hashes
         self.counters = counters or {}
-        self.calls = []
 
-    # --- read side ---------------------------------------------------------
+    # --- read side (unchanged) ----------------------------------------------
     def hgetall(self, key):
         # key = "bainluck:task_metrics:<task_name>"
         task = key.rsplit(":", 1)[-1]
@@ -148,39 +167,91 @@ class _FakeMetricsRedis:
         task = key.rsplit(":", 1)[-1]
         return self.hashes.get(task, {}).get(field.encode())
 
+    def ttl(self, key):
+        # The old double had no `ttl` at all; readers degraded that to
+        # unmeasurable (None) through their except path. Same reading, stated.
+        return None
+
     def keys(self, _pattern):
         out = []
         for task in self.hashes:
             out.append(f"{TASK_METRICS_PREFIX}:{task}".encode())
         return out
 
-    # --- write side (pipeline is a no-op recorder) -------------------------
-    def pipeline(self):
-        return self
+    # --- commit into the legacy shapes --------------------------------------
+    def _apply(self, op):
+        kind = op[0]
+        if kind == "hset":
+            _, key, field, value, mapping = op
+            task = key.rsplit(":", 1)[-1]
+            target = self.hashes.setdefault(task, {})
+            for f, v in mapping.items():
+                target[to_bytes(f)] = to_bytes(v)
+            if field is not None:
+                target[to_bytes(field)] = to_bytes(value)
+            return True
+        if kind == "set":
+            _, key, value, ex, nx = op
+            if nx and (key in self.counters or self._exists(key)):
+                return None
+            self.counters[key] = to_bytes(value)
+            return True
+        if kind == "incr":
+            _, key = op
+            self.counters[key] = str(int(self.counters.get(key, b"0")) + 1).encode()
+            return self.counters[key]
+        if kind == "expire":
+            return False  # call-record only, as before
+        return super()._apply(op)
 
-    def hset(self, key, mapping=None):
-        self.calls.append(("hset", key, dict(mapping or {})))
-        task = key.rsplit(":", 1)[-1]
-        target = self.hashes.setdefault(task, {})
-        for field, value in (mapping or {}).items():
-            target[field.encode()] = str(value).encode()
 
-    def expire(self, key, ttl):
-        self.calls.append(("expire", key, ttl))
+class TestMissingFlushIsCaught:
+    """#1813: the double used to publish before ``execute()``.
 
-    def set(self, key, value, ex=None, nx=False):
-        self.calls.append(("set", key, value, ex, nx))
-        if nx and key in self.counters:
-            return None
-        self.counters[key] = str(value).encode()
-        return True
+    Queued hash/counter writes must remain invisible until the pipe is
+    executed and must vanish when execution is omitted or fails before
+    dispatch — otherwise a deleted ``pipe.execute()`` in any metrics writer
+    leaves this file's state assertions green while real Redis publishes
+    nothing. ("Fails before dispatch" only: the injected fault models a dead
+    connection, not mid-queue command errors or ambiguous network failures.)
+    """
 
-    def incr(self, key):
-        self.calls.append(("incr", key))
-        self.counters[key] = str(int(self.counters.get(key, b"0")) + 1).encode()
+    def _client(self, monkeypatch, hashes=None, counters=None):
+        fake = _FakeMetricsRedis(hashes if hashes is not None else {}, counters)
+        monkeypatch.setattr(redis_state, "get_redis_client", lambda: fake)
+        return fake
 
-    def execute(self):
-        return []
+    def test_queued_writes_are_invisible_until_execute(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        pipe = fake.pipeline()
+        pipe.hset(f"{TASK_METRICS_PREFIX}:t", mapping={"a": 1})
+        pipe.incr(f"{TASK_METRICS_PREFIX}:t:starts")
+        assert fake.hashes == {}
+        assert fake.counters == {}
+        pipe.execute()
+        assert fake.hashes["t"] == {b"a": b"1"}
+        assert fake.counters[f"{TASK_METRICS_PREFIX}:t:starts"] == b"1"
+
+    def test_a_pre_dispatch_execute_failure_publishes_nothing(self, monkeypatch):
+        fake = self._client(monkeypatch)
+        fake.fail_all_executes = RuntimeError("redis down")
+        # Best-effort by contract: the writers swallow the failure...
+        redis_state.record_task_success("t", 100.0, {})
+        redis_state.record_task_failure("t", 900.0, "boom")
+        # ...but nothing was published — no hash, no counter, no durations.
+        assert fake.hashes == {}
+        assert fake.counters == {}
+        assert fake.lists == {}
+
+    def test_a_flushed_success_publishes_hash_counter_and_tail(self, monkeypatch):
+        # The old double had no `lpush`, so every writer driven through it
+        # silently dropped its duration tail AFTER the eagerly-applied
+        # hash/counter writes. A flushed write publishes all three because
+        # they ride the same pipe.
+        fake = self._client(monkeypatch)
+        redis_state.record_task_success("t", 100.0, {})
+        assert fake.counters[f"{TASK_METRICS_PREFIX}:t:successes"] == b"1"
+        assert fake.lists[f"{TASK_METRICS_PREFIX}:t:durations"] != []
 
 
 class TestRetiredTaskHealth:
