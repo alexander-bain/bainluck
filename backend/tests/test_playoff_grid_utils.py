@@ -533,8 +533,15 @@ class TestEnforceMonotonicity:
         # This is OK because the issue is with PRESENT columns being inconsistent.
         assert team["cells"]["conference"]["merged_probability"] == 0.60  # unchanged (no prev cell for pair)
 
-    def test_source_probabilities_capped(self):
-        """Individual source probabilities are capped along with merged."""
+    def test_capped_cell_keeps_each_markets_quote_and_names_its_bound(self):
+        """#8251: the merged number is capped; the sources are NOT.
+
+        Each `sources` entry names a market and a reader taps the row to read
+        what that market says (D91). Clamping them credited the CFP semifinal
+        market with a number it never quoted. The cap is announced instead, by
+        `capped_by` naming the bound column, so a client (or a withholding rule,
+        #8243) can tell an inherited bound from a quote.
+        """
         team = {
             "name": "Source Cap Test",
             "cells": {
@@ -549,8 +556,13 @@ class TestEnforceMonotonicity:
             },
         }
         enforce_monotonicity([team], self._chained_columns())
-        for src in team["cells"]["conference"]["sources"]:
-            assert src["probability"] <= 0.15
+        conf = team["cells"]["conference"]
+        assert conf["merged_probability"] == 0.15
+        assert [s["probability"] for s in conf["sources"]] == [0.30, 0.28]
+        assert conf["capped_by"] == "division"
+        # the bound itself and an uncapped cell carry no marker
+        assert "capped_by" not in team["cells"]["division"]
+        assert "capped_by" not in team["cells"]["championship"]
 
     def test_normalization_then_monotonicity(self):
         """Simulates the real bug: normalization inflates conference, then monotonicity re-caps.
