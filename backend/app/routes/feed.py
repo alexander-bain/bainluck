@@ -6324,7 +6324,7 @@ from app.utils.futures_market_snapshot import (
 )
 
 
-def _drop_stale_observation_legs(market, outcomes: list) -> list:
+def _drop_stale_observation_legs(market, outcomes: list, stale_ids=None) -> list:
     """Legs not observed alongside the rest of their own board, gone (#7537).
 
     🔴 #7274 IS A CONTRACT BETWEEN TWO SURFACES, SO ITS MEMBERSHIP RULES COME
@@ -6429,9 +6429,7 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     """
     if getattr(market, "status", None) != "open":
         return outcomes
-    stale_ids = _stale_observation_keys(
-        (o.id, _outcome_observed_at(o)) for o in outcomes
-    )
+    stale_ids = _resolve_stale_ids(market, outcomes, stale_ids)
     if not stale_ids:
         return outcomes
     survivors = [
@@ -6440,6 +6438,35 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
         if o.id not in stale_ids or not _outcome_prints_a_price(o)
     ]
     return survivors or outcomes
+
+
+def _resolve_stale_ids(market, outcomes: list, stale_ids=None) -> set:
+    """The legs this board has not observed lately, computed once per card (#8237).
+
+    The exact counterpart of `_resolve_withheld_ids` below, and it exists for the
+    same reason: the DROP above and the DIVISOR GATE must not form two opinions
+    about which legs the detail page refused. A caller that has already computed
+    the set passes it in; anyone else gets it derived here, from one rule.
+
+    🔴 THE CALLER COMPUTES IT BEFORE THE DROP, AND THAT ORDERING IS THE WHOLE
+    POINT. `_drop_stale_observation_legs` removes the PRICED stale legs, so a
+    gate that derives this set from the post-drop list sees an empty one on
+    exactly the boards whose staleness was priced — the "asked after the drop"
+    shape CERT-3330 blocked on #7632's first cut, and the one #8237's own gate
+    is placed before `_drop_withheld_price_legs` to avoid. Deriving it here is
+    correct only for a caller that has not dropped yet.
+
+    OPEN MARKETS ONLY, the drop's bound and the page's (`futures.py`'s union adds
+    this term under the same `status == "open"` test): a settled board is a
+    RESULT and keeps every leg.
+    """
+    if stale_ids is not None:
+        return stale_ids
+    if getattr(market, "status", None) != "open":
+        return set()
+    return _stale_observation_keys(
+        (o.id, _outcome_observed_at(o)) for o in outcomes
+    )
 
 
 def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list:
@@ -6556,12 +6583,55 @@ def _resolve_withheld_ids(market, withheld_ids=None):
     )
 
 
-def _field_has_withheld_legs(market, outcomes: list, withheld_ids=None) -> bool:
+def _field_has_withheld_legs(
+    market, outcomes: list, withheld_ids=None, stale_ids=None
+) -> bool:
     """Did the DETAIL PAGE refuse a price on any leg of THIS card's field (#8237)?
 
     The answer `normalize_display_probs` gets as `field_complete=False`, asked on
     the card's side of the same field, so the two surfaces stop dividing a
     one-winner field by two different numbers.
+
+    ══ THE PAGE'S SET IS A UNION OF TWO TERMS, AND THE FIRST CUT ASKED ONE ══
+
+    `futures.py` composes the answer this mirrors in three lines:
+
+        _withheld_ids = await _withheld_price_outcome_ids(db, market)   # 5 arms
+        if status == "open":
+            _withheld_ids |= stale_observation_keys(...)                # + #7537
+        _field_complete = not _withheld_ids
+
+    #8237's first cut read the ARMS ONLY, and repaired 10 of its 13 pre-registered
+    boards on that alone. The three that stayed split — with two later entrants, 5
+    on the served feed of 2026-09-23 17:xxZ — are withheld by the SECOND term, and
+    the arms genuinely have nothing to say about them. MEASURED, page beside the
+    stored rows (`page_wh` = `prices_withheld`, `storedNULL` = legs whose
+    `current_probability` IS NULL):
+
+        128718    MLS Cup Winner        31 legs   storedNULL  1   page_wh  1
+        7435308   MLB AL Comeback POY   11 legs   storedNULL  1   page_wh  1
+        9962834   NCAA FB 2027 Champ   109 legs   storedNULL 93   page_wh 67
+        12764689  DWTS S35 Winner       53 legs   storedNULL 37   page_wh 37
+        16634605  Next PM of Romania    49 legs   storedNULL 13   page_wh  1
+        ---- the two boards the first cut DID repair, as the contrast arm ----
+        52755536  2031 Championship     26 legs   storedNULL  0   page_wh  7
+        2417016   Pro Baseball Matchup 225 legs   storedNULL  0   page_wh100
+
+    🔴 EVERY WITHHELD LEG ON THE FIVE IS STORED-NULL, AND EVERY ONE ON THE TWO
+    REPAIRED BOARDS CARRIES A REAL PRICE. That is not a coincidence, it is the
+    mechanism: `is_empty_book_midpoint` opens `if probability is None: return
+    False`, and a price that does not exist cannot be refuted by a book either —
+    so all five arms are structurally SILENT on a leg that was never priced. The
+    five boards' oldest stamp is `2026-05-12` against a newest of `2026-09-23`,
+    four months, so `stale_observation_keys` names them and the page withholds
+    on that term alone. The card's gate had no such term and so read `complete`.
+
+    🪤 AND THE DIVISOR IDENTITY IS WHAT SAID SO BEFORE ANY CODE WAS READ. On all
+    five, `implied_div == priced_sum` to four decimals (1.0586/1.0585 ·
+    1.0760/1.0760 · 1.0522/1.0525 · 1.2937/1.2935 · 1.0771/1.0770). A gate that
+    fired and computed a WRONG divisor would not land on the priced sum exactly;
+    one that was never asked divides by precisely the legs that carry a number.
+    The residual's signature, not its count, is what identified the missing term.
 
     🔴 CALLED ON THE PRE-DROP LIST, and that is the whole subtlety. #7632 DROPS
     the refused legs from the card (the page nulls them in place), so by the time
@@ -6570,24 +6640,31 @@ def _field_has_withheld_legs(market, outcomes: list, withheld_ids=None) -> bool:
     to 1.291. Asked after the drop, this function would answer `False` on exactly
     the boards it exists to catch.
 
-    🪤 AN INTERSECTION, NOT THE SET'S TRUTHINESS. `withheld_outcome_ids` is
-    computed over the WHOLE market, and the legs it names need not all appear in
-    the list this card is built from (dedup, the stale-observation drop and the
-    mixed-binary strip all run around here). `league_futures.py` makes the same
-    distinction in the same words — "counted while nulling, never re-derived from
-    `withheld_ids` ... what the gate has to describe is what THIS payload refused
-    to print" — and this is that sentence on the feed's side.
+    🪤 AN INTERSECTION FOR THE ARMS, TRUTHINESS FOR THE STALE TERM, AND THE TWO
+    ARE NOT AN INCONSISTENCY. `withheld_outcome_ids` is computed over the WHOLE
+    market, so the legs it names need not appear in the list this card is built
+    from (dedup, the stale-observation drop and the mixed-binary strip all run
+    around here) — hence the intersection. `league_futures.py` makes the same
+    distinction in the same words: "what the gate has to describe is what THIS
+    payload refused to print". The stale set is already computed FROM this card's
+    own list by `_resolve_stale_ids`, so it needs no second narrowing; asking an
+    intersection of a set with the list it was derived from is a no-op that reads
+    as a safety check. Each term is narrowed exactly once.
 
-    OPEN MARKETS ONLY, the drop's bound: a settled board keeps every leg, so
-    there is nothing for the gate to describe.
+    OPEN MARKETS ONLY, the drop's bound and the page's: a settled board keeps
+    every leg, so there is nothing for the gate to describe.
     """
     if getattr(market, "status", None) != "open":
         return False
     withheld = _resolve_withheld_ids(market, withheld_ids)
-    if not withheld:
-        return False
-    withheld_ids = set(withheld)
-    return any(getattr(o, "id", None) in withheld_ids for o in outcomes)
+    if withheld:
+        withheld_ids = set(withheld)
+        if any(getattr(o, "id", None) in withheld_ids for o in outcomes):
+            return True
+    # The page's second union term. Reached even when the arms named nothing,
+    # which is the whole of the residual: on all five specimens above the arms
+    # are empty and this is the only term that can answer.
+    return bool(_resolve_stale_ids(market, outcomes, stale_ids))
 
 
 #: Read-only stand-in for the instance dict of a carrier that has none, so the
@@ -10800,7 +10877,13 @@ async def _score_sports_mode_futures(
         # disagreement from card-vs-page to card-vs-card. Sports mode has no
         # expired-rung drop of its own, so this sits directly after the dedup
         # sort, which is the same relative position: before the leader pick.
-        sorted_outcomes = _drop_stale_observation_legs(market, sorted_outcomes)
+        # #8237: computed HERE, before the drop that consumes it, and handed to
+        # both consumers. Derived after the drop it would be empty on exactly the
+        # boards whose stale legs were priced — see `_resolve_stale_ids`.
+        _stale_ids = _resolve_stale_ids(market, sorted_outcomes)
+        sorted_outcomes = _drop_stale_observation_legs(
+            market, sorted_outcomes, _stale_ids
+        )
         # #7632: and the other half of the same contract — a leg whose price the
         # DETAIL PAGE refuses leaves this list too. Immediately after its
         # sibling, in both serializers, for #4610's reason: these two print the
@@ -10818,7 +10901,10 @@ async def _score_sports_mode_futures(
         # them, so after this line the field looks complete and the divisor has
         # no way to know it is dividing by a partial mass.
         _field_incomplete = _field_has_withheld_legs(
-            market, sorted_outcomes, withheld_by_market.get(market.id)
+            market,
+            sorted_outcomes,
+            withheld_by_market.get(market.id),
+            stale_ids=_stale_ids,
         )
         sorted_outcomes = _drop_withheld_price_legs(
             market, sorted_outcomes, withheld_by_market.get(market.id)
@@ -12406,7 +12492,12 @@ async def _score_futures(
             # hold the same legs (#7274). Placed against the SAME set the page
             # measures — after the duplicate-leg and expired-rung drops — so the
             # two boards agree on their own newest stamp as well as on the rule.
-            sorted_outcomes = _drop_stale_observation_legs(market, sorted_outcomes)
+            # #8237: computed before the drop consumes it, and shared with the
+            # divisor gate below — see `_resolve_stale_ids`.
+            _stale_ids = _resolve_stale_ids(market, sorted_outcomes)
+            sorted_outcomes = _drop_stale_observation_legs(
+                market, sorted_outcomes, _stale_ids
+            )
 
             # UX-P011 (#1574): drop outcomes whose price was manufactured by averaging
             # an untradeable book. A 1c-bid / 99c-ask quote midpoints to a confident-
@@ -12468,7 +12559,9 @@ async def _score_futures(
             # #8237: asked BEFORE the drop, for the reason its own docstring
             # gives — the drop deletes the legs that prove the field is partial,
             # so the divisor computed after it cannot see them.
-            _field_incomplete = _field_has_withheld_legs(market, sorted_outcomes)
+            _field_incomplete = _field_has_withheld_legs(
+                market, sorted_outcomes, stale_ids=_stale_ids
+            )
             sorted_outcomes = _drop_withheld_price_legs(market, sorted_outcomes)
 
             # UX-P126/F5: and neither may an anonymized reserved slot ("Party C",

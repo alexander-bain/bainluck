@@ -544,9 +544,23 @@ class TestBothSerializersCarryTheRule:
 
     def test_the_filter_reads_the_dual_carrier_reader_not_the_raw_column(self):
         """The mechanism, not the outcome — asserting the verdict alone would
-        still pass a wiring that reads `last_updated` and dies on the cache."""
+        still pass a wiring that reads `last_updated` and dies on the cache.
 
-        source = inspect.getsource(feed_module._drop_stale_observation_legs)
-        body = source.split('"""')[-1]
-        assert "_outcome_observed_at" in body
-        assert "last_updated" not in body
+        #8237 MOVED THE READ, SO THIS GUARD FOLLOWS IT RATHER THAN RELAXING.
+        `_resolve_stale_ids` now derives the set the drop consumes, so the stamp
+        read lives there; the drop is asserted to hold NO stamp read of its own,
+        which is a strictly stronger statement than the original (it can no
+        longer pass by reading the raw column in a helper). Both halves of the
+        pair are pinned, so a future inlining cannot quietly reintroduce
+        `last_updated` in either.
+        """
+
+        derive = inspect.getsource(feed_module._resolve_stale_ids).split('"""')[-1]
+        assert "_outcome_observed_at" in derive
+        assert "last_updated" not in derive
+
+        drop = inspect.getsource(feed_module._drop_stale_observation_legs)
+        drop_body = drop.split('"""')[-1]
+        assert "last_updated" not in drop_body
+        # It consumes the derived set rather than re-deriving one.
+        assert "_resolve_stale_ids" in drop_body
