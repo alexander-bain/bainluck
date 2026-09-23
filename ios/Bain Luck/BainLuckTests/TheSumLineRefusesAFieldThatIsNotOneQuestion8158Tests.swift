@@ -29,6 +29,7 @@ import SwiftUI
 /// SPECIMENS — real served shapes on both sides of it — so a later change to the
 /// number is graded on whether these markets still land where they belong rather
 /// than on whether a literal matched.
+@MainActor
 final class TheSumLineRefusesAFieldThatIsNotOneQuestion8158Tests: XCTestCase {
 
     private typealias Policy = EvolutionCombinedLinePolicy
@@ -359,12 +360,17 @@ final class TheSumLineRefusesAFieldThatIsNotOneQuestion8158Tests: XCTestCase {
             "displayedOutcomes drops Field and truncates to Top N — it is not the served field")
     }
 
-    private func intrinsicSize<V: View>(of view: V) -> CGSize {
-        let host = UIHostingController(rootView: AnyView(view))
+    /// The size the bar ASKS for, with nothing constraining it.
+    ///
+    /// Through `hostForMeasurement` (#4207), never a bare `UIHostingController`:
+    /// these two assertions are about the WIDTH of a row of text chips, so they
+    /// resolve `Font.caption` against whatever Dynamic Type the process carries —
+    /// and this lane leaves simulators at accessibility sizes after photographing
+    /// accessibility frames. Unpinned, a verdict here is a function of the last
+    /// screenshot somebody took.
+    private func intrinsicSize<V: View>(of view: V, at size: DynamicTypeSize = .large) -> CGSize {
+        let host = hostForMeasurement(view, at: size)
         host.view.frame = CGRect(x: 0, y: 0, width: 1200, height: 2000)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1200, height: 2000))
-        window.rootViewController = host
-        window.isHidden = false
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
         return host.sizeThatFits(in: CGSize(
