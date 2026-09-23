@@ -2907,6 +2907,33 @@ jobs:
             exit 1
           fi
 
+      - name: Miami identity on the NCAAF grid, two schools two rows (real Postgres, #7829)
+        # #7829 part 1. Kalshi spells two different schools `Miami (FL)` and
+        # `Miami (OH)`; `normalize_team_name` strips the trailing qualifier, so
+        # both keyed the grid as `miami`, that one key collected both ticker
+        # suffixes, and the #7821 anchor correctly fail-closed — the Hurricanes
+        # were served championship-only. The fix keeps the qualifier on the
+        # grid key and resolves a CONTESTED qualified key (two spellings, one
+        # base, in one grid) by identity only: textual prefix or exactly-one
+        # ticker hit, never string length.
+        #
+        # Driven through `get_playoff_grid` on real Postgres because a unit
+        # test of the key function passes whether or not the route calls it.
+        # Three seeds: production face (Miami (OH) graded out — the valid
+        # zero), permuted insertion/source order, and Miami (OH) priced live so
+        # the wrong-number face is visible on base. Plus an anchorless seed
+        # where the qualified spelling has no ticker and must stay unbound.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_grid_miami_identity_7829_pg.py \
+            -v -rs 2>&1 | tee /tmp/miamiidentity7829.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/miamiidentity7829.txt; then
+            echo "::error::#7829 Miami identity grid gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
         # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
         # and Polymarket consumers under one `asyncio.gather`, each with its own
