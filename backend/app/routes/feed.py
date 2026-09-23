@@ -275,6 +275,7 @@ from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.sport_keys import sport_display_name
 from app.utils.outcome_display import (
+    _FIELD_SUM_MAX,
     display_rank_order,
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
@@ -6720,8 +6721,26 @@ def _outcomes_are_cumulative_ladder(
     )
 
 
+def _market_exclusivity(market) -> bool | None:
+    """``FuturesMarket.mutually_exclusive`` as #8224's overround ceiling reads it.
+
+    🔴 `getattr` WITH A DEFAULT, AND THE DEFAULT IS LOAD-BEARING. The cached path
+    rebuilds markets from `MARKET_ROW_COLUMNS` (`futures_market_snapshot.py`), and
+    the column only joined that list in #7808 (snapshot v7) — a v6 payload still in
+    Redis has no such attribute at all, so a bare `market.mutually_exclusive` would
+    raise inside the card builder and take the card out (gotcha #42). `None` is not
+    a guess either: it is read as "caller does not know" and keeps the historical
+    2.0 ceiling, so the degraded path is byte-identical to today rather than a
+    silently widened repair.
+    """
+    return getattr(market, "mutually_exclusive", None)
+
+
 def _feed_display_scale(
-    all_sorted_outcomes: list, question: str | None = None,
+    all_sorted_outcomes: list,
+    question: str | None = None,
+    *,
+    mutually_exclusive: bool | None = None,
 ) -> float:
     """The single display-probability divisor for one futures card (Queue 283,
     #1487).
@@ -6811,6 +6830,51 @@ def _feed_display_scale(
     91 futures cards cross-read against their own `/api/futures/{id}`:
     1 card repaired, 0 other fields flip at any of the four sites the gate
     feeds, 0 regressions.
+
+    ── #8224: AND THE ONE-WINNER FIELD THE PAGE STOPPED SQUEEZING IN #1200 ──
+
+    The three shapes above are all "we read the field wrong". This one is not:
+    both surfaces read the field correctly and still print different numbers,
+    because they disagree on WHERE AN OVER-ROUNDED FIELD STOPS BEING ONE WINNER.
+
+    `normalize_display_probs` (`outcome_display.py`, #1200) keeps a
+    ``mutually_exclusive`` field RAW once its YES prices sum past
+    ``_FIELD_SUM_MAX`` (1.60), reasoning that such a field is a set of INDEPENDENT
+    candidate binaries and squeezing it dilutes a near-lock leader into a false
+    coin-flip. This function's ceiling was 2.0. So a one-winner field summing in
+    **(1.60, 2.0]** was kept raw by the page and divided by the card — the card
+    doing to Barcelona exactly what #1200 stopped the page doing to Pogačar:
+
+      `60607786` UEFA Champions League: League Phase Winner  `Barcelona`
+          page .3400 / sum 1.860 -> card .1828   (15.7 pts)
+
+    MEASURED 2026-09-23 on production: 30/30 legs priced, ``mutually_exclusive``
+    true, and 1/1.86 = .5376 reproduces the split to four decimals — the divisor
+    IS the defect. Over every open market with priced legs the band holds **116**
+    exclusive fields and **381** non-exclusive ones.
+
+    🔴 THE CEILING IS PER-CLASS, AND THE NON-EXCLUSIVE 2.0 IS DELIBERATELY LEFT
+    ALONE. Those 381 are gotcha #58's independent-binary field, which the page
+    keeps raw for a DIFFERENT and also correct reason (#199, non-ME participation
+    families), and dividing them is the entire reason this function exists —
+    #4079's ``test_7`` pins a 1.40-sum independent field that must keep dividing.
+    Codex's disposition is explicit: use detail's 1.60 for the named exclusive
+    class, do not globally replace feed's 2.0. Hence one ceiling per class rather
+    than one number.
+
+    🪤 AND THIS IS NOT THE ``mutually_exclusive`` USE THE #7641 BLOCK ABOVE
+    REFUSES. That block refuses the column as the LADDER discriminator, because an
+    independent-binary field and a cumulative ladder are both non-exclusive and the
+    column cannot tell them apart. Nothing in that reasoning bears on the overround
+    CEILING, where exclusive-vs-not is exactly the distinction being drawn — and it
+    is the same column the detail page already gates #1200 on, so reading it here
+    is what makes the two surfaces agree rather than a second opinion about the
+    field. The ladder gate below is untouched and still runs first.
+
+    ``None`` means "the caller does not know" and keeps the historical 2.0: a v6
+    snapshot payload predating #7808 carries no ``mutually_exclusive`` at all, and
+    the safe reading of an absent column is today's behaviour, never a silently
+    widened repair.
     """
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
         return 1.0
@@ -6826,7 +6890,10 @@ def _feed_display_scale(
         for o in all_sorted_outcomes
         if o.current_probability
     )
-    if all_sum <= norm_threshold or all_sum > 2.0:
+    # #8224: the overround ceiling is per-class — detail's 1.60 for a one-winner
+    # field, the historical 2.0 for everything else (and for "caller didn't say").
+    field_sum_max = _FIELD_SUM_MAX if mutually_exclusive else 2.0
+    if all_sum <= norm_threshold or all_sum > field_sum_max:
         return 1.0
     return all_sum
 
@@ -6974,6 +7041,8 @@ def _normalize_feed_probabilities(
     top_outcomes: list[dict],
     all_sorted_outcomes: list,
     question: str | None = None,
+    *,
+    mutually_exclusive: bool | None = None,
 ) -> list[dict]:
     """Normalize feed-card probabilities for independent binary markets.
 
@@ -6989,9 +7058,13 @@ def _normalize_feed_probabilities(
       81% leader to ~33%.  Skip entirely.
 
     Delegates the eligibility/divisor decision to ``_feed_display_scale`` so the
-    mini-list shares one basis with the distribution + headline (Queue 283).
+    mini-list shares one basis with the distribution + headline (Queue 283) —
+    including #8224's per-class overround ceiling, which is why
+    ``mutually_exclusive`` is threaded here rather than re-derived.
     """
-    scale = _feed_display_scale(all_sorted_outcomes, question)
+    scale = _feed_display_scale(
+        all_sorted_outcomes, question, mutually_exclusive=mutually_exclusive
+    )
     if scale == 1.0:
         return top_outcomes
     for o in top_outcomes:
@@ -10714,7 +10787,11 @@ async def _score_sports_mode_futures(
         # mini-list, distribution, and headline/context leader copy. Sports mode
         # draws every outcome surface from card_outcomes (no mixed-binary
         # strip). leader_prob stays RAW for hook staleness/eligibility below.
-        _display_scale = _feed_display_scale(card_outcomes, market.name)
+        _display_scale = _feed_display_scale(
+            card_outcomes,
+            market.name,
+            mutually_exclusive=_market_exclusivity(market),
+        )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
         probs_available = [
@@ -10975,7 +11052,10 @@ async def _score_sports_mode_futures(
             top_outcomes_data, market.name
         )
         top_outcomes_data = _normalize_feed_probabilities(
-            top_outcomes_data, card_outcomes, market.name
+            top_outcomes_data,
+            card_outcomes,
+            market.name,
+            mutually_exclusive=_market_exclusivity(market),
         )
         # #2088 criterion 3: the printed percents and the reason they may not total
         # 100. AFTER the scale, so the rule is applied to the displayed basis.
@@ -12362,7 +12442,11 @@ async def _score_futures(
             # numbers. leader_prob stays RAW below for the eligibility filters
             # (is_locked_near_certain / runtime filters); only the COPY leader is
             # scaled, so surfacing/ranking is unchanged.
-            _display_scale = _feed_display_scale(card_outcomes, market.name)
+            _display_scale = _feed_display_scale(
+                card_outcomes,
+                market.name,
+                mutually_exclusive=_market_exclusivity(market),
+            )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
             # --- Staleness filters ---
@@ -12536,7 +12620,10 @@ async def _score_futures(
             # outcomes whose raw probabilities are meaningful — normalizing them
             # flattens an 81% leader to 33% when the top 3 are all high.
             top_outcomes_data = _normalize_feed_probabilities(
-                top_outcomes_data, card_outcomes, market.name
+                top_outcomes_data,
+                card_outcomes,
+                market.name,
+                mutually_exclusive=_market_exclusivity(market),
             )
             # #2088 criterion 3: the printed percents and the reason they may not
             # total 100. AFTER the scale, so the rule sees the displayed basis.
