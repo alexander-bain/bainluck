@@ -60,6 +60,10 @@ SHA_IN="${1:-}"
 SELF="${BASH_SOURCE[0]:-}"
 REPO_PATH="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 REPO_SLUG="alexander-bain/bainluck"
+# The branch whose protection rules arbitrate the merge. Everything else in this
+# file says `origin/master` literally; this is named because it is a URL segment
+# in the protection API, not a ref, and the two are not interchangeable.
+BASE_BRANCH="master"
 LEDGER="${MERGE_GATE_LEDGER:-$HOME/bainluck/.claude/handoff/CODEX-CERT-LOG.md}"
 GREP=/usr/bin/grep
 
@@ -745,9 +749,121 @@ pr_state_scan () {
   elif [ "$head_oid" != "$sha" ]; then
     PRS_VERDICT=moved
     PRS_DETAIL="head is $head_oid, NOT the gated sha — the branch moved under the cert"
+  elif [ "$mstate" = "BLOCKED" ] || [ "$mstate" = "DIRTY" ] || [ "$mstate" = "BEHIND" ]; then
+    # `mergeable` and `mergeStateStatus` answer DIFFERENT questions, and this
+    # file scored the row off the first one alone for months. `MERGEABLE` means
+    # only "no merge conflict". `BLOCKED` means branch protection is actively
+    # REFUSING the merge — GitHub will not do it — and the two coexist happily.
+    #
+    # Found by int (2026-09-23 1725Z) on ux's `ef81eafb9b` / PR #8253: this gate
+    # printed `VERDICT: GO` on a sha GitHub had BLOCKED. Cause was four required
+    # contexts (`backend-tests (1)`–`(4)`) that were never CREATED — that PR ran
+    # an unsharded `backend-tests`. Notice 28 passes (CI is `completed/success`;
+    # jobs that never ran cannot fail) and notice 32 passes (a check-run that
+    # does not exist is not in the refusal set), so nothing else in this file
+    # could see it. The only tell was a number nobody reads: 13 current checks
+    # where every other sha in the pass had 16.
+    #
+    # WHY IT IS WORSE AT THE DESK THAN IN A LANE, which is why this is a STOP and
+    # not a WARN: a lane that trusts GO simply cannot land the sha — GitHub
+    # refuses the merge button. The desk merges locally and pushes straight to
+    # master, so the PR's protection never arbitrates the push. A GO here would
+    # bypass the exact gate GitHub was enforcing, and it would be the one actor
+    # capable of doing so.
+    #
+    # DIRTY and BEHIND ride along for the same reason rather than a tidy one:
+    # both are GitHub telling us the merge as offered is not the merge that would
+    # happen. DIRTY is a conflict the `mergeable` field has not caught up with;
+    # BEHIND is a strict-required base that must move first (`strict` is false on
+    # this repo today, so BEHIND is defensive — it costs nothing and the setting
+    # is not ours to depend on).
+    #
+    # Deliberately NOT refused: UNSTABLE, which is a NON-required check failing.
+    # GitHub permits that merge, notice 32 already judges the failing check on
+    # its merits, and refusing it here would duplicate that gate and stop shas
+    # the desk is right to land.
+    PRS_VERDICT=protected
+    PRS_DETAIL="is $mergeable/$mstate — MERGEABLE means only 'no conflict'; $mstate means GitHub is REFUSING this merge. Read the required-context row below: a required check that is ABSENT, still RUNNING, or FAILED are all causes, and only the third is visible to notices 28 and 32. If that row is clean, the cause is not a missing context — open the PR page"
   else
     PRS_VERDICT=ok
     PRS_DETAIL="OPEN, non-draft, $mergeable/$mstate, head == gated sha"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHICH REQUIRED CONTEXTS ARE ACTUALLY PRESENT — the diagnostic half of the
+# BLOCKED stop above. Knowing GitHub refuses is not actionable; knowing WHICH
+# required context never appeared is.
+#
+# Absence is the hazard, exactly as in notice 28: a required job that was never
+# created cannot fail, so every gate that reads conclusions is blind to it. This
+# reads the branch's own protection list and subtracts what the commit carries.
+#
+# Pure, so the selftest can drive it with literals: both arguments are newline
+# lists the caller fetched. `present` must be the UNION of check-run names and
+# commit-status contexts — a required context can be satisfied by either, and
+# reading only check-runs would invent missing contexts for any status-based
+# check (Vercel posts statuses, not check-runs).
+# ─────────────────────────────────────────────────────────────────────────────
+RCS_VERDICT=""; RCS_DETAIL=""; RCS_MISSING=""
+required_contexts_scan () {
+  local required="$1" present="$2" skipped="${3:-}"
+  # Fail CLOSED on an unreadable protection list. An empty required list and a
+  # failed read arrive as the same empty string, and "no contexts are required"
+  # is the answer that would wave through precisely the sha this exists to stop.
+  if [ -z "$required" ]; then
+    RCS_VERDICT=unanswered
+    RCS_MISSING=""
+    RCS_DETAIL="could not read the branch protection required-context list — NOT the same as 'nothing is required'; re-run, and do not read this row as a pass"
+    return 0
+  fi
+  # `comm` collates in the AMBIENT locale, so `LC_ALL=C` on the two `sort`s alone
+  # is a silent mis-merge: in C order `CodeQL` sorts before `backend-tests (1)`,
+  # in en_US it does not, and `comm` then reads a correctly-sorted list as out of
+  # order and reports a context as missing that is plainly present. Caught by
+  # this function's own all-present selftest arm on the first run — which is the
+  # whole reason that arm exists, because the failure invents a STOP rather than
+  # dropping one, and a gate that cries wolf is a gate people route around.
+  # One locale for the sorts AND the merge, or none of them.
+  RCS_MISSING="$(LC_ALL=C /usr/bin/comm -23 \
+    <(printf '%s\n' "$required" | /usr/bin/grep -v '^$' | LC_ALL=C sort -u) \
+    <(printf '%s\n' "$present"  | /usr/bin/grep -v '^$' | LC_ALL=C sort -u))"
+  local n_req
+  n_req="$(printf '%s\n' "$required" | /usr/bin/grep -c . )"
+  if [ -n "$RCS_MISSING" ]; then
+    RCS_VERDICT=missing
+    RCS_DETAIL="$(printf '%s\n' "$RCS_MISSING" | /usr/bin/grep -c .) of $n_req required contexts were NEVER CREATED on this sha: $(printf '%s' "$RCS_MISSING" | tr '\n' ';' | /usr/bin/sed 's/;$//') — absent, not failed, so notices 28 and 32 cannot see them"
+    # WHY they are absent, when the evidence says so. ux/1464 measured it: a
+    # scope=frontend sha has `backend-tests` SKIPPED at job level by the CI
+    # change-scope classifier, a skipped matrix job never expands, so its legs
+    # `backend-tests (1)`–`(4)` are never created — on EVERY purely-frontend sha.
+    # The classifier reads the changed file set, so a rebase cannot create them;
+    # the desk asked for one once and it was a wasted cycle. So: if every missing
+    # context is a matrix leg `NAME (N)` whose parent `NAME` is present and
+    # SKIPPED, say so. Still a STOP — GitHub is still refusing — but the reader
+    # stops reaching for the remedy that cannot work.
+    if [ -n "$skipped" ]; then
+      local leg parent explained=1
+      while IFS= read -r leg; do
+        [ -z "$leg" ] && continue
+        parent="$(printf '%s' "$leg" | /usr/bin/sed -nE 's/^(.+) \([0-9]+\)$/\1/p')"
+        if [ -z "$parent" ] || ! printf '%s\n' "$skipped" | /usr/bin/grep -qxF -- "$parent"; then
+          explained=0; break
+        fi
+      done <<< "$RCS_MISSING"
+      if [ "$explained" = 1 ]; then
+        RCS_DETAIL="$RCS_DETAIL. CAUSE: each is a matrix leg whose parent job ran and was SKIPPED at job level (CI change-scope), so the legs were never expanded — structural for every scope=frontend sha; a REBASE CANNOT create them. Landing it past protection is a desk policy call, not a lane repair"
+      fi
+    fi
+  else
+    RCS_VERDICT=ok
+    # "present" means CREATED, not concluded. That is deliberately the whole
+    # question this row answers: a check that ran and failed is notice 32's, and
+    # a check still running is the PR-state row's. Measured 2026-09-23: of five
+    # open BLOCKED PRs, two were missing contexts outright and three had all nine
+    # present but still in flight — so a clean row here does NOT mean mergeable,
+    # and saying it would trade one over-claim for another.
+    RCS_DETAIL="all $n_req required contexts present on this sha (present = CREATED; a clean row here does not mean concluded, let alone mergeable)"
   fi
 }
 
@@ -1894,8 +2010,111 @@ FIXEOF
   check "pr_state_scan: a head that moved under the cert still refuses" \
     "[ \"$PRS_VERDICT\" = moved ]"
 
+  # int's 1725Z finding: `MERGEABLE` alone was the whole PASS test, so a sha
+  # GitHub was REFUSING scored GO. These are the specimen (`ef81eafb9b`, PR
+  # #8253) and its two siblings.
+  pr_state_scan "false|MERGEABLE|BLOCKED|abc123" abc123
+  check "pr_state_scan: MERGEABLE/BLOCKED REFUSES — protection is saying no (the ef81eafb9b GO)" \
+    "[ \"$PRS_VERDICT\" = protected ]"
+  # The verdict alone is weak here: `conflict` would also refuse and would also
+  # be wrong, and the instruction a reader acts on is what differs. A conflict
+  # says rebase; this must NOT, because rebasing changes the sha and kills the
+  # token (notice 28's corollary). So pin that it names protection, not a merge.
+  check "pr_state_scan: and BLOCKED is named as protection refusing, not as a conflict" \
+    "printf '%s' \"\$PRS_DETAIL\" | /usr/bin/grep -q 'REFUSING this merge'"
+  check "pr_state_scan: and it points at the required-context row, which is the actionable half" \
+    "printf '%s' \"\$PRS_DETAIL\" | /usr/bin/grep -q 'required-context row'"
+
+  pr_state_scan "false|MERGEABLE|DIRTY|abc123" abc123
+  check "pr_state_scan: MERGEABLE/DIRTY refuses too — the field has not caught up with the conflict" \
+    "[ \"$PRS_VERDICT\" = protected ]"
+  pr_state_scan "false|MERGEABLE|BEHIND|abc123" abc123
+  check "pr_state_scan: MERGEABLE/BEHIND refuses — a strict base must move first" \
+    "[ \"$PRS_VERDICT\" = protected ]"
+
+  # THE OVER-REFUSAL ARM, and the one that would actually hurt: UNSTABLE is a
+  # NON-required check failing. GitHub permits that merge and notice 32 already
+  # judges the check on its merits. Refusing it here would stop shas the desk is
+  # right to land, which is how a safety gate gets ignored.
+  pr_state_scan "false|MERGEABLE|UNSTABLE|abc123" abc123
+  check "pr_state_scan: UNSTABLE still PASSES — a non-required check failing is notice 32's call, not this row's" \
+    "[ \"$PRS_VERDICT\" = ok ]"
+  pr_state_scan "false|MERGEABLE|HAS_HOOKS|abc123" abc123
+  check "pr_state_scan: HAS_HOOKS still passes" "[ \"$PRS_VERDICT\" = ok ]"
+
+  # Ordering: a sha that is BOTH blocked and moved is reported as MOVED, because
+  # the whole gate is then about the wrong commit and the protection state of
+  # some other sha is not information.
+  pr_state_scan "false|MERGEABLE|BLOCKED|deadbeef" abc123
+  check "pr_state_scan: moved beats protected — a protection verdict on the wrong sha is noise" \
+    "[ \"$PRS_VERDICT\" = moved ]"
+
   pr_state_scan "false|MERGEABLE|CLEAN|abc123" abc123
   check "pr_state_scan: and the clean case still passes" "[ \"$PRS_VERDICT\" = ok ]"
+
+  # ── required_contexts_scan ────────────────────────────────────────────────
+  # The real specimen, reduced: `ef81eafb9b` carried an UNSHARDED `backend-tests`
+  # where protection requires four sharded ones, so four contexts were never
+  # created. Absent, not failed — invisible to every gate that reads conclusions.
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nbackend-tests (2)\nfrontend-build\n')" \
+    "$(printf 'backend-tests\nfrontend-build\nCodeQL\n')"
+  check "required_contexts_scan: a required context that was never CREATED refuses" \
+    "[ \"$RCS_VERDICT\" = missing ]"
+  check "required_contexts_scan: and it NAMES the missing ones — 'blocked' without them is not actionable" \
+    "printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'backend-tests (1)' \
+     && printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'backend-tests (2)'"
+  check "required_contexts_scan: and it says ABSENT, not failed — that is why 28 and 32 are blind" \
+    "printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'absent, not failed'"
+  check "required_contexts_scan: a near-miss name does NOT satisfy a required context" \
+    "printf '%s' \"\$RCS_MISSING\" | /usr/bin/grep -qx 'backend-tests (1)'"
+
+  # The specimen's actual shape: the matrix parent is PRESENT and SKIPPED. Still
+  # a STOP, but the detail must say a rebase cannot help (ux/1464's proof).
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nbackend-tests (2)\nfrontend-build\n')" \
+    "$(printf 'backend-tests\nfrontend-build\n')" \
+    "$(printf 'backend-tests\nsearch-recall\n')"
+  check "required_contexts_scan: legs of a SKIPPED matrix parent still refuse" \
+    "[ \"$RCS_VERDICT\" = missing ]"
+  check "required_contexts_scan: and the detail names the skipped-parent cause and that a rebase cannot fix it" \
+    "printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'REBASE CANNOT create them'"
+  # Over-claim arm: one missing context that is NOT a leg of a skipped parent
+  # means the cause is not (only) scope, and the row must not say it is.
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nsearch-recall\n')" \
+    "$(printf 'backend-tests\n')" \
+    "$(printf 'backend-tests\n')"
+  check "required_contexts_scan: a missing context with no skipped parent withholds the scope explanation" \
+    "[ \"$RCS_VERDICT\" = missing ] && ! printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'CAUSE:'"
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\n')" "$(printf 'backend-tests\n')" "$(printf 'frontend-build\n')"
+  check "required_contexts_scan: a parent that is present but NOT skipped withholds it too" \
+    "! printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'CAUSE:'"
+
+  # Anti-vacuity: the healthy sha must pass, or the gate is a permanent STOP that
+  # everyone learns to skip. Extra present contexts are normal and irrelevant.
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nfrontend-build\n')" \
+    "$(printf 'frontend-build\nbackend-tests (1)\nCodeQL\ndeploy\n')"
+  check "required_contexts_scan: all present PASSES, and extra contexts are not an error" \
+    "[ \"$RCS_VERDICT\" = ok ]"
+
+  # A required context satisfied by a commit STATUS rather than a check-run. The
+  # caller unions the two; this pins that the scan does not care which it was.
+  required_contexts_scan \
+    "$(printf 'vercel\n')" "$(printf 'vercel\n')"
+  check "required_contexts_scan: a status-satisfied context counts (the caller unions both kinds)" \
+    "[ \"$RCS_VERDICT\" = ok ]"
+
+  # FAIL CLOSED. An unreadable protection list and a genuinely empty one arrive
+  # as the same empty string, and 'nothing is required' would wave through the
+  # exact sha this gate exists to stop.
+  required_contexts_scan "" "$(printf 'frontend-build\n')"
+  check "required_contexts_scan: an unreadable protection list is UNANSWERED, never a pass" \
+    "[ \"$RCS_VERDICT\" = unanswered ]"
+  check "required_contexts_scan: and it says so — an empty required list is not 'nothing is required'" \
+    "printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q \"NOT the same as 'nothing is required'\""
 
   # The fail-OPEN half. `gh` prints the same empty string for "this commit has
   # no open PR" and "the API did not answer", and the second used to arrive as
@@ -2899,6 +3118,26 @@ case "$PRL_VERDICT" in
       *)          stop  "PR state" "#$pr_num $PRS_DETAIL" ;;
     esac
     ;;
+esac
+
+# The required-context roll-up. Runs for every sha, not only a BLOCKED one: the
+# BLOCKED status is GitHub's conclusion, and this is the evidence under it. A sha
+# with no open PR gets no protection verdict from GitHub at all, so for a direct
+# merge this row is the ONLY thing that would notice an absent required check.
+req_ctx="$(gh api "repos/$REPO_SLUG/branches/$BASE_BRANCH/protection" \
+  --jq '.required_status_checks.contexts[]?' 2>/dev/null)"
+# Union of both kinds of signal — see the note on `required_contexts_scan`.
+present_ctx="$(
+  gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[].name' 2>/dev/null
+  gh api "repos/$REPO_SLUG/commits/$SHA/status?per_page=100"     --jq '.statuses[].context' 2>/dev/null
+)"
+skipped_ctx="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
+  --jq '.check_runs[]|select(.conclusion=="skipped")|.name' 2>/dev/null)"
+required_contexts_scan "$req_ctx" "$present_ctx" "$skipped_ctx"
+case "$RCS_VERDICT" in
+  ok)         pass  "required contexts" "$RCS_DETAIL" ;;
+  unanswered) stopq "required contexts" "$RCS_DETAIL" ;;
+  *)          stop  "required contexts" "$RCS_DETAIL" ;;
 esac
 
 # The PR-body closing references, read for the SAME PR the row above judged.
