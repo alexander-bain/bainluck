@@ -99,6 +99,13 @@ COVERED = (
     "test_kalshi_fabricated_loss_bind_contract_pg.py",
     "test_kalshi_settlement_recency_band_pg.py",
     "test_kalshi_sweep_settlement_bind_pg.py",
+    # #8022. Seeds nine `futures_markets` and their legs by raw INSERT to prove
+    # which empty-event rows are eligible to be confirmed purged. Enrolled with
+    # the gate itself: eight of its nine markets exist only to be REFUSED, so a
+    # seed that silently failed to insert one would turn that refusal into a
+    # vacuous pass — exactly the shape this file catches, and the shape a
+    # negative-assertion corpus is most exposed to.
+    "test_purge_confirmable_selector_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`

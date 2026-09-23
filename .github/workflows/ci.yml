@@ -1120,6 +1120,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#8022 which empty-event markets are confirmable purged (real Postgres)"
+        # 355 markets carry a complete, venue-issued, single-winner verdict and
+        # still render as live — the hero prints "99%" and "Resolves Nov 3, 2027"
+        # while the same page prints "Won" 900px down. The purge repair's
+        # PRECONDITION is three aggregate HAVING clauses deciding which of those
+        # rows our own data describes unambiguously enough to settle.
+        #
+        # Real Postgres because a fake session agrees with itself: a row is absent
+        # from a canned list only because the test author left it out, so any of
+        # the three clauses — plus `source = 'kalshi'` and `status <> 'resolved'`
+        # — can be deleted with every unit test still green. `FILTER` and
+        # `COALESCE(resolution_source,'')` against NULL legs are also real
+        # server semantics that a double never evaluates. Eight of the corpus's
+        # nine markets exist to be REFUSED, which is precisely the shape that
+        # turns vacuous if the seed silently fails.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_purge_confirmable_selector_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/purge_confirmable_selector.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/purge_confirmable_selector.txt; then
+            echo "::error::#8022 purge-confirmable selector gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: A played game's market leaves the search pool (real Postgres)
         # #4914. `Set 2 Winner: Swiatek vs Zheng` was served as row 7 of
         # `q=swiatek` at tier 1 showing `No 100%`, four days after that match

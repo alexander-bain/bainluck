@@ -326,12 +326,18 @@ def _grading_pass_code() -> str:
     to contain that string moves the anchor tens of thousands of characters and
     the guard reports the ordering reversed while the order that actually matters
     has not moved at all. That is not hypothetical: it reddened CI shard 4 as
-    `assert 54755 < 11371` on a branch that never touched the sequence.
+    `assert 54755 < 11371` on a branch that never touched the sequence, and #8022
+    reaches the same state from the other direction — it adds
+    `_resolve_purge_confirmed_markets`, defined near the top beside its sibling
+    cursor readers but CALLED at the very end of the pass, which puts that
+    helper's write 68,000 characters BEFORE the withdrawal it is meant to follow.
 
     A guard whose anchor can be relocated by an unrelated DEFINITION is aimed at
     the file, not at the behaviour. So scope it to the one function whose
-    STATEMENT order IS its execution order. Inside that body the real sequence is
-    withdrawal, then #7870's in-loop flip — which is what the arm below pins.
+    STATEMENT order IS its execution order, and assert every way a board can
+    become settled against it (the two arms below). Inside that body the real
+    sequence is withdrawal, then #7870's in-loop flip, then #8022's post-loop
+    call — which is what those two arms pin.
 
     THE AST RUNS ON THE RAW SOURCE, AND THE STRIPPING HAPPENS AFTER. Not a style
     choice: `_module_code`'s comment stripper is a plain `line.split("#", 1)[0]`,
@@ -368,3 +374,23 @@ def test_the_withdrawal_precedes_the_status_flip_to_resolved():
     withdraw_at = code.index("ungraded_settlement_withdraw_sql()")
     flip_at = code.index('status="resolved"')
     assert withdraw_at < flip_at
+
+
+def test_the_purge_confirm_rail_obeys_the_same_ordering():
+    """#8022 is a SECOND way a board becomes settled, and the rule binds it too.
+
+    The arm above would not notice it: that one anchors on `status="resolved"`,
+    which appears inside the purge rail's own helper rather than at its call
+    site, so the ordering of the call is invisible there. `_resolve_purge_…` runs
+    after the whole grading pass — including every withdrawal — and this pins
+    that rather than leaving it to the reader.
+
+    (The rail additionally cannot settle a board holding a fossil at all: its
+    precondition requires EVERY leg to carry an authoritative resolution source,
+    and a leg the venue settled on a number carries none. This arm guards the
+    ordering; that is the belt to its braces.)
+    """
+    code = _grading_pass_code()
+    withdraw_at = code.index("ungraded_settlement_withdraw_sql()")
+    purge_at = code.index("_resolve_purge_confirmed_markets(")
+    assert withdraw_at < purge_at
