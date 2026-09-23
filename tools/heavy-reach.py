@@ -178,6 +178,14 @@ def app_imports(node, this_module, module_level_only):
     return {m for m in out if m.split(".")[0] == "app"}
 
 
+def _parse(path):
+    """Parse a file, closing it. The graph opens 587 of these in one build, so a
+    bare `open(...).read()` leaks handles at a rate that matters (and CodeQL
+    flags it, correctly, as "File is not always closed")."""
+    with open(path, encoding="utf-8") as fh:
+        return ast.parse(fh.read())
+
+
 def build_graph(mods):
     """(module-level graph, all-imports graph) over the app package."""
 
@@ -189,7 +197,7 @@ def build_graph(mods):
     ml, everything = {}, {}
     for m, p in mods.items():
         try:
-            tree = ast.parse(open(p, encoding="utf-8").read())
+            tree = _parse(p)
         except (SyntaxError, UnicodeDecodeError):
             ml[m], everything[m] = set(), set()
             continue
@@ -303,7 +311,7 @@ def reach(seed_mods, graph, resolve):
 def analyse(changed_paths):
     mods = all_modules()
     ml, everything, resolve = build_graph(mods)
-    tree = ast.parse(open(TASKS_INIT, encoding="utf-8").read())
+    tree = _parse(TASKS_INIT)
 
     members, extra_beats = heavy_fleet(tree)
     fleet = members | extra_beats
@@ -421,7 +429,7 @@ def selftest():
     print()
     mods = all_modules()
     ml, everything, resolve = build_graph(mods)
-    tree = ast.parse(open(TASKS_INIT, encoding="utf-8").read())
+    tree = _parse(TASKS_INIT)
     members, extra_beats = heavy_fleet(tree)
     funcs = {n.rsplit(".", 1)[1] for n in members | extra_beats}
     seeds = function_seeds(tree, funcs)
