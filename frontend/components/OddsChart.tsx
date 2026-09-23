@@ -46,7 +46,7 @@ import type {
   ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
-import { carryGameStateForward } from "@/lib/chartGameState";
+import { carriedStateDisclosure, carryGameStateForward } from "@/lib/chartGameState";
 import {
   collapseDuplicateTransitions,
   placePeriodLabels,
@@ -2016,6 +2016,26 @@ export default function OddsChart({
       // Look up game state from chartData for this time label
       const matchingPoint = chartData.find((d) => d.time === label);
       const hasGameState = matchingPoint && (matchingPoint._homeScore != null || matchingPoint._period);
+      // #925 — the tooltip prints the same carried period/clock the readout
+      // under the chart does, and until this said nothing about their age. One
+      // rule (`lib/chartGameState.ts`), one sibling line: the period/clock span
+      // below is pinned by #7860 to the bare `formatLiveClockLabel` call and
+      // is not touched.
+      const carriedDisclosure =
+        matchingPoint && hasGameState
+          ? carriedStateDisclosure({
+              timestamp: matchingPoint.timestamp as string,
+              period: matchingPoint._period as string | null | undefined,
+              clock: matchingPoint._clock as string | null | undefined,
+              hasScore: matchingPoint._homeScore != null && matchingPoint._awayScore != null,
+              periodObservedAt: matchingPoint._periodObservedAt as string | null | undefined,
+              clockObservedAt: matchingPoint._clockObservedAt as string | null | undefined,
+              scoreObservedAt: matchingPoint._scoreObservedAt as string | null | undefined,
+              periodApprox: matchingPoint._periodApprox as boolean | undefined,
+              clockApprox: matchingPoint._clockApprox as boolean | undefined,
+              scoreApprox: matchingPoint._scoreApprox as boolean | undefined,
+            })
+          : null;
 
       // Bain Luck aggregated line (multi-source mode)
       const bainLuckEntry = showBlendLine
@@ -2133,6 +2153,14 @@ export default function OddsChart({
               </div>
               {!(matchingPoint._homeScore != null && matchingPoint._awayScore != null) && (
                 <p className="text-[10px] text-text-muted mt-0.5">{label}</p>
+              )}
+              {carriedDisclosure && (
+                <p
+                  className="text-[10px] text-text-muted mt-0.5 tabular-nums"
+                  data-testid="chart-tooltip-state-as-of"
+                >
+                  {carriedDisclosure.text}
+                </p>
               )}
             </div>
           ) : (

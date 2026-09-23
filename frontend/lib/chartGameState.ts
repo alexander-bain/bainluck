@@ -37,6 +37,9 @@
  * already had.
  */
 
+import { format, parseISO } from "date-fns";
+import { trustedLiveClock } from "@/lib/gameTimeLabel";
+
 export interface CarriedGameStateRow {
   timestamp: string;
   _homeScore?: number | null;
@@ -136,4 +139,91 @@ export function carryGameStateForward<T extends CarriedGameStateRow>(sorted: T[]
   }
 
   return sorted;
+}
+
+// ── THE TOOLTIP'S AGE LINE (#925, the clause the first delivery left unpaid) ──
+//
+// `GamePlayCard` dates what it prints (`8206`). The hover tooltip on the same
+// chart prints the same carried period/clock through `formatLiveClockLabel`
+// and, until this, said nothing about their age. This is the tooltip's one
+// rule, kept out of the component so it is tested on the exact shape it runs
+// on: #7860 pins the tooltip's period/clock span to the bare helper call, so
+// the disclosure is a SIBLING line and never touches that span.
+//
+// The rule is `GamePlayCard`'s, restated for a line that has no `~` to lean on
+// (the span is pinned, so it cannot carry the mark): it names WHICH half is
+// carried, and the OLDEST observation among the carried halves actually
+// rendered. Decided over what `trustedLiveClock` renders — a clock the helper
+// dropped (#7860 `alreadySpelledOut` / `repeatsPeriod`) cannot date a line the
+// reader cannot see. The score joins only when the badge shows nothing else.
+
+
+export interface CarriedStateDisclosureInput {
+  /** The point's own timestamp — what the tooltip's time label is made from. */
+  timestamp: string;
+  period?: string | null;
+  clock?: string | null;
+  hasScore: boolean;
+  periodObservedAt?: string | null;
+  clockObservedAt?: string | null;
+  scoreObservedAt?: string | null;
+  periodApprox?: boolean;
+  clockApprox?: boolean;
+  scoreApprox?: boolean;
+}
+
+export interface CarriedStateDisclosure {
+  /** Which rendered halves were carried, in reader words. */
+  carried: "period" | "clock" | "period and clock" | "score";
+  /** "7:41 PM" — the oldest carried observation on screen. */
+  asOf: string;
+  /** The line as the tooltip prints it. */
+  text: string;
+}
+
+/**
+ * Null when nothing rendered is carried, when a carried half has no date, or
+ * when the carry is inside the point's own displayed minute (nothing to say).
+ * The same three silences `GamePlayCard` keeps.
+ */
+export function carriedStateDisclosure(
+  p: CarriedStateDisclosureInput,
+): CarriedStateDisclosure | null {
+  // No sport key, exactly as the tooltip's own call site passes none (#7860):
+  // the sport arm that deletes a clock cannot fire, so "rendered" here is
+  // "rendered there".
+  const trusted = trustedLiveClock(p.period ?? undefined, p.clock ?? undefined);
+  const periodShown = !!trusted.period;
+  const clockShown = !!trusted.gameClock;
+  const periodIsCarried = p.periodApprox === true && periodShown;
+  const clockIsCarried = p.clockApprox === true && clockShown;
+
+  const carried: { which: string; at: string }[] = [];
+  if (periodIsCarried && p.periodObservedAt) carried.push({ which: "period", at: p.periodObservedAt });
+  if (clockIsCarried && p.clockObservedAt) carried.push({ which: "clock", at: p.clockObservedAt });
+  if (!periodShown && !clockShown && p.hasScore && p.scoreApprox === true && p.scoreObservedAt) {
+    carried.push({ which: "score", at: p.scoreObservedAt });
+  }
+  if (carried.length === 0) return null;
+
+  let oldest: string;
+  let timeOfDay: string;
+  try {
+    oldest = format(
+      parseISO(carried.map((c) => c.at).reduce((a, b) => (parseISO(a).getTime() <= parseISO(b).getTime() ? a : b))),
+      "h:mm a",
+    );
+    timeOfDay = format(parseISO(p.timestamp), "h:mm a");
+  } catch {
+    return null;
+  }
+  // Minute-keyed rows: when the two read the same minute the line would only
+  // repeat the time already on the card.
+  if (oldest === timeOfDay) return null;
+
+  const which =
+    carried.length === 2
+      ? "period and clock"
+      : (carried[0].which as "period" | "clock" | "score");
+  return { carried: which, asOf: oldest, text: `${which} as of ${oldest}` };
 }
