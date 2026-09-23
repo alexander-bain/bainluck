@@ -63,6 +63,7 @@ from app.tasks.base import get_task_session  # noqa: E402
 from repair_8247_unstarted_straggler_scoreboards import (  # noqa: E402
     BACKUP_TABLE,
     PRODUCER_APP,
+    SNAPSHOT_BACKUP_TABLE,
     wrong_app_refusal,
 )
 
@@ -73,8 +74,10 @@ __all__ = [
     "NO_BACKUP",
     "PRODUCER_APP",
     "RESTORE",
+    "SNAPSHOT_BACKUP_TABLE",
     "classify",
     "main",
+    "restore_snapshots",
     "run",
 ]
 
@@ -109,6 +112,63 @@ def classify(row: dict) -> str:
     return RESTORE
 
 
+async def restore_snapshots(session, apply: bool) -> tuple[int, int, int]:
+    """Put the deleted chart points back, under their ORIGINAL ids.
+
+    Returns ``(to_restore, restored, already_back)``.
+
+    Two things make this a real undo rather than a re-insert:
+
+    * the original `id` goes back in explicitly. `score_snapshots.id` is what the
+      history route orders on, so a point restored under a fresh id is a
+      different row wearing the same values.
+    * `ON CONFLICT (id) DO NOTHING`, so running the undo twice is a no-op and a
+      row the repair never actually deleted is never duplicated.
+
+    A missing bank table is not an error: it means the snapshot half never ran.
+    """
+    exists = await session.execute(
+        text("SELECT to_regclass(:t)"), {"t": SNAPSHOT_BACKUP_TABLE}
+    )
+    if exists.scalar() is None:
+        return (0, 0, 0)
+
+    result = await session.execute(
+        text(f"""
+            SELECT b.snapshot_id, b.event_id, b.captured_at,
+                   b.home_score, b.away_score,
+                   (ss.id IS NOT NULL) AS still_present
+              FROM {SNAPSHOT_BACKUP_TABLE} b
+              LEFT JOIN score_snapshots ss ON ss.id = b.snapshot_id
+             ORDER BY b.snapshot_id
+        """)
+    )
+    rows = [dict(r) for r in result.mappings()]
+    already_back = [r for r in rows if r["still_present"]]
+    to_restore = [r for r in rows if not r["still_present"]]
+
+    if not apply:
+        return (len(to_restore), 0, len(already_back))
+
+    restored = 0
+    for row in to_restore:
+        res = await session.execute(
+            text("""
+                INSERT INTO score_snapshots
+                    (id, event_id, captured_at, home_score, away_score)
+                VALUES (:sid, :eid, :cap, :home, :away)
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {
+                "sid": row["snapshot_id"], "eid": row["event_id"],
+                "cap": row["captured_at"], "home": row["home_score"],
+                "away": row["away_score"],
+            },
+        )
+        restored += res.rowcount or 0
+    return (len(to_restore), restored, len(already_back))
+
+
 async def run(apply: bool) -> int:
     if apply:
         refusal = wrong_app_refusal()
@@ -117,27 +177,48 @@ async def run(apply: bool) -> int:
             return 2
 
     async with get_task_session() as session:
-        exists = await session.execute(
-            text("SELECT to_regclass(:t)"), {"t": BACKUP_TABLE}
-        )
-        if exists.scalar() is None:
+        # BOTH banks are consulted before giving up. The repair creates them in
+        # one transaction, but it creates the snapshot bank only when it has a
+        # snapshot to delete — so "no event bank" does not imply "no chart points
+        # to put back", and an early return on the event bank alone would make
+        # the chart half of the undo silently unreachable.
+        # `Result.scalar()` CONSUMES the result, so each of these is read exactly
+        # once into a name. Reading `exists.scalar()` twice returns None the
+        # second time and would report a present table as missing.
+        event_bank = (
+            await session.execute(text("SELECT to_regclass(:t)"), {"t": BACKUP_TABLE})
+        ).scalar()
+        snapshot_bank = (
+            await session.execute(
+                text("SELECT to_regclass(:t)"), {"t": SNAPSHOT_BACKUP_TABLE}
+            )
+        ).scalar()
+
+        if event_bank is None and snapshot_bank is None:
             print(
-                f"no backup table {BACKUP_TABLE} — the repair has not been "
-                f"applied, so there is nothing to undo."
+                f"no backup table {BACKUP_TABLE} and no {SNAPSHOT_BACKUP_TABLE} "
+                f"— the repair has not been applied, so there is nothing to undo."
             )
             return 0
 
-        result = await session.execute(
-            text(f"""
-                SELECT b.event_id AS id,
-                       b.prior_home_score, b.prior_away_score,
-                       e.status, e.completed_at, e.home_score, e.away_score
-                  FROM {BACKUP_TABLE} b
-                  JOIN events e ON e.id = b.event_id
-                 ORDER BY b.event_id
-            """)
-        )
-        rows = [dict(r) for r in result.mappings()]
+        rows: list[dict] = []
+        if event_bank is None:
+            print(
+                f"no {BACKUP_TABLE} — the hero half was never applied; "
+                f"restoring chart points only."
+            )
+        else:
+            result = await session.execute(
+                text(f"""
+                    SELECT b.event_id AS id,
+                           b.prior_home_score, b.prior_away_score,
+                           e.status, e.completed_at, e.home_score, e.away_score
+                      FROM {BACKUP_TABLE} b
+                      JOIN events e ON e.id = b.event_id
+                     ORDER BY b.event_id
+                """)
+            )
+            rows = [dict(r) for r in result.mappings()]
 
         buckets: dict[str, list[dict]] = {
             RESTORE: [], ALREADY_BACK: [], DIVERGED: [], NO_BACKUP: [],
@@ -153,6 +234,10 @@ async def run(apply: bool) -> int:
                 f"    DIVERGED {row['id']}: now status={row['status']!r} "
                 f"score={row['home_score']}-{row['away_score']} — left alone"
             )
+
+        snap_pending, _, snap_already = await restore_snapshots(session, apply=False)
+        print(f"  chart points back: {snap_already}")
+        print(f"  chart points due : {snap_pending}")
 
         if not apply:
             print("\ndry run — nothing written. Re-run with --apply.")
@@ -179,12 +264,20 @@ async def run(apply: bool) -> int:
                 },
             )
             written += result.rowcount or 0
+
+        # Same transaction as the hero rows, for the same reason the repair
+        # deletes them in one: the page must never serve a restored hero over a
+        # chart that has not come back yet.
+        snap_due, snap_restored, _ = await restore_snapshots(session, apply=True)
         await session.commit()
 
         drift = len(buckets[RESTORE]) - written
+        snap_drift = snap_due - snap_restored
         print(f"\n  rows restored    : {written}")
         print(f"  concurrent_drift : {drift}")
-        return 0 if drift == 0 else 1
+        print(f"  chart restored   : {snap_restored}")
+        print(f"  chart drift      : {snap_drift}")
+        return 0 if (drift == 0 and snap_drift == 0) else 1
 
 
 def main() -> int:

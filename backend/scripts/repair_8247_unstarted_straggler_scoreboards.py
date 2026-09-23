@@ -153,6 +153,56 @@ EXPECTED: tuple[tuple[int, int, int], ...] = (
 
 EXPECTED_BY_ID = {row[0]: row for row in EXPECTED}
 
+#: ── THE SECOND TABLE THE BAD WRITE TOUCHED (CERT-3346's required repair) ──
+#:
+#: Clearing `events.home_score/away_score` clears the HERO and nothing else. The
+#: chart is served by `GET /api/events/{id}/history`, which builds `score_history`
+#: straight out of `score_snapshots` (`routes/events.py`, the `ScoreSnapshot`
+#: select) — a different table this repair never touched. So the repair as first
+#: written would have taken the false `0 — 0` off the hero and LEFT the false
+#: orange point on the chart: the same untruth, one surface further down the page,
+#: and harder to see because the hero now looks fixed.
+#:
+#: Measured on production 2026-09-23 16:52Z, and the served route confirms it:
+#:
+#:     GET /api/events/15290171/history
+#:       score_history -> [{"timestamp": "2026-09-23T15:26:57...", 0, 0}]
+#:
+#: One point, 0-0, on a game played 2026-04-02.
+#:
+#: WHY THESE ROWS ARE PROVABLY FALSE, AND NOT BY A DATE LITERAL. Each snapshot
+#: was captured between 15:24Z and 15:32Z on 2026-09-23 — from 56 to 173 DAYS
+#: after its own game's `commence_time`. `score_snapshots` exists to track live
+#: score progression; a live capture cannot lag the game it captures by two
+#: months. That lag is the mechanism, so it is what the predicate below tests,
+#: with the date pin only as the belt to its braces.
+SNAPSHOT_BACKUP_TABLE = "backup_8247_unstarted_straggler_snapshots"
+
+#: A snapshot whose capture lags its own game's start by less than this could be
+#: a real live capture, and is never deleted however 0-0 it looks. The 13 below
+#: clear it by a factor of fifty; the bar exists for the row that does not.
+MIN_POST_GAME_LAG_HOURS = 24
+
+#: Pinned BY SNAPSHOT ID, for the same reason the events are: the predicate is
+#: not the population. `(snapshot_id, event_id, home_score, away_score)`.
+EXPECTED_SNAPSHOTS: tuple[tuple[int, int, int, int], ...] = (
+    (396619, 15290171, 0, 0),  # captured 15:26:57Z, game 2026-04-02, lag 173d
+    (396620, 15290172, 0, 0),  # captured 15:26:57Z, game 2026-04-04, lag 171d
+    (396614, 15290173, 0, 0),  # captured 15:25:56Z, game 2026-04-25, lag 150d
+    (396615, 15290174, 0, 0),  # captured 15:25:56Z, game 2026-04-29, lag 146d
+    (396618, 15290177, 0, 0),  # captured 15:25:56Z, game 2026-05-05, lag 140d
+    (396621, 15290178, 0, 0),  # captured 15:26:57Z, game 2026-05-24, lag 121d
+    (396607, 15290215, 0, 0),  # captured 15:24:56Z, game 2026-06-06, lag 108d
+    (396671, 15290351, 0, 0),  # captured 15:29:57Z, game 2026-07-10, lag  74d
+    (396678, 15290359, 0, 0),  # captured 15:29:57Z, game 2026-07-17, lag  67d
+    (396680, 15290362, 0, 0),  # captured 15:30:57Z, game 2026-07-19, lag  66d
+    (396699, 15290373, 0, 0),  # captured 15:30:57Z, game 2026-07-21, lag  63d
+    (396700, 15290374, 0, 0),  # captured 15:30:57Z, game 2026-07-21, lag  63d
+    (396724, 15290402, 0, 0),  # captured 15:32:57Z, game 2026-07-28, lag  56d
+)
+
+EXPECTED_SNAPSHOTS_BY_ID = {row[0]: row for row in EXPECTED_SNAPSHOTS}
+
 
 def wrong_app_refusal() -> str | None:
     """Return a refusal string when not running on :data:`PRODUCER_APP`."""
@@ -188,6 +238,81 @@ def row_is_writable(row: dict) -> str | None:
             f"(banked {expected[1]}-{expected[2]}) — this may be a real result"
         )
     return None
+
+
+def snapshot_is_deletable(row: dict, repaired_event_ids: set[int]) -> str | None:
+    """Return None when this snapshot may be deleted, else why it may not.
+
+    PURE, and per-row. `row` carries the snapshot's own columns plus its event's
+    `commence_time`, which is what makes the lag test possible without a second
+    query.
+
+    THE COUPLING IS THE POINT. A snapshot is deleted only when its EVENT was
+    actually repaired in this same run. If the event was skipped — it took a
+    real score, it settled, it left `scheduled` — then its 0-0 snapshot is no
+    longer evidenced as false and this repair has no business touching it. That
+    makes the two halves of the cleanup impossible to drift apart: the hero and
+    the chart are corrected together or neither is.
+    """
+    expected = EXPECTED_SNAPSHOTS_BY_ID.get(row["id"])
+    if expected is None:
+        return "not in the pinned population"
+    if row["event_id"] not in repaired_event_ids:
+        return (
+            f"event {row['event_id']} was not repaired in this run — its 0-0 is "
+            f"no longer evidenced as false"
+        )
+    if (row["home_score"], row["away_score"]) != (expected[2], expected[3]):
+        return (
+            f"score drifted to {row['home_score']}-{row['away_score']} "
+            f"(banked {expected[2]}-{expected[3]})"
+        )
+    if row["commence_time"] is None:
+        return "event has no commence_time — the lag test cannot be evaluated"
+    lag_hours = (row["captured_at"] - row["commence_time"]).total_seconds() / 3600
+    if lag_hours < MIN_POST_GAME_LAG_HOURS:
+        return (
+            f"captured {lag_hours:.1f}h after kickoff — inside the "
+            f"{MIN_POST_GAME_LAG_HOURS}h window, so it may be a real live capture"
+        )
+    return None
+
+
+async def bank_snapshot_pre_image(session, deletable: list[dict]) -> None:
+    """Bank whole snapshot rows BEFORE the first DELETE, ids included.
+
+    The id is banked as a plain column, not as the backup table's own primary
+    key, so the restore can put the row back under its ORIGINAL id — a restored
+    chart point that arrives with a new id is a different row wearing the same
+    values, and `score_snapshots.id` is what the server orders and dedups on.
+    """
+    await session.execute(
+        text(f"""
+            CREATE TABLE IF NOT EXISTS {SNAPSHOT_BACKUP_TABLE} (
+                snapshot_id BIGINT PRIMARY KEY,
+                event_id    BIGINT NOT NULL,
+                captured_at TIMESTAMPTZ NOT NULL,
+                home_score  INTEGER NOT NULL,
+                away_score  INTEGER NOT NULL,
+                banked_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+    )
+    for row in deletable:
+        # ON CONFLICT DO NOTHING for the same reason the event bank uses it: the
+        # FIRST pre-image is the true one.
+        await session.execute(
+            text(f"""
+                INSERT INTO {SNAPSHOT_BACKUP_TABLE}
+                    (snapshot_id, event_id, captured_at, home_score, away_score)
+                VALUES (:sid, :eid, :cap, :home, :away)
+                ON CONFLICT (snapshot_id) DO NOTHING
+            """),
+            {
+                "sid": row["id"], "eid": row["event_id"], "cap": row["captured_at"],
+                "home": row["home_score"], "away": row["away_score"],
+            },
+        )
 
 
 async def bank_pre_image(session, writable: list[dict]) -> None:
@@ -265,6 +390,36 @@ async def run(apply: bool) -> int:
         )
         strays = [dict(r) for r in unpinned.mappings()]
 
+        # ── THE CHART'S HALF (CERT-3346) ──
+        # Read on the pinned EVENT ids, not on the pinned snapshot ids, so that
+        # a false snapshot this population gained after 16:52Z is SEEN by the
+        # census below instead of falling silently outside both reads.
+        repaired_event_ids = {row["id"] for row in writable}
+        snap_result = await session.execute(
+            text(f"""
+                SELECT ss.id, ss.event_id, ss.captured_at,
+                       ss.home_score, ss.away_score, e.commence_time
+                  FROM score_snapshots ss
+                  JOIN events e ON e.id = ss.event_id
+                 WHERE ss.event_id IN ({ids})
+                 ORDER BY ss.event_id, ss.captured_at
+            """)
+        )
+        snap_rows = [dict(r) for r in snap_result.mappings()]
+
+        deletable: list[dict] = []
+        snap_skipped: list[tuple[int, str]] = []
+        for row in snap_rows:
+            why = snapshot_is_deletable(row, repaired_event_ids)
+            if why is None:
+                deletable.append(row)
+            else:
+                snap_skipped.append((row["id"], why))
+
+        snap_missing = sorted(
+            set(EXPECTED_SNAPSHOTS_BY_ID) - {r["id"] for r in snap_rows}
+        )
+
         print(f"#8247 — {'APPLY' if apply else 'DRY RUN'}")
         print(f"  pinned              : {len(EXPECTED)}")
         print(f"  writable            : {len(writable)}")
@@ -278,6 +433,24 @@ async def run(apply: bool) -> int:
             )
         for eid, why in skipped:
             print(f"    SKIP {eid}: {why}")
+
+        print(f"  snapshots pinned    : {len(EXPECTED_SNAPSHOTS)}")
+        print(f"  snapshots deletable : {len(deletable)}")
+        print(f"  snapshots skipped   : {len(snap_skipped)}")
+        print(
+            f"  snapshots missing   : {len(snap_missing)}"
+            f"{snap_missing if snap_missing else ''}"
+        )
+        for row in deletable:
+            lag_days = (row["captured_at"] - row["commence_time"]).days
+            print(
+                f"    snapshot {row['id']}  event {row['event_id']}  "
+                f"{row['home_score']}-{row['away_score']}  "
+                f"captured {row['captured_at']:%Y-%m-%d %H:%M}Z, "
+                f"{lag_days}d after kickoff -> DELETE"
+            )
+        for sid, why in snap_skipped:
+            print(f"    SKIP snapshot {sid}: {why}")
 
         if strays:
             print(
@@ -298,11 +471,44 @@ async def run(apply: bool) -> int:
                 "    this into a sweep."
             )
 
+        # Same census discipline for the chart's half: a snapshot in the defect
+        # SHAPE — 0-0, captured more than a day after its own game started —
+        # that is not pinned is reported and never written. Measured 0 outside
+        # the pin at 16:52Z; the read exists so a later operator finds out when
+        # that stops being true, instead of the pin going quietly stale.
+        snap_unpinned = await session.execute(
+            text(f"""
+                SELECT ss.id, ss.event_id, ss.captured_at, e.commence_time
+                  FROM score_snapshots ss
+                  JOIN events e ON e.id = ss.event_id
+                 WHERE ss.home_score = 0 AND ss.away_score = 0
+                   AND ss.captured_at > e.commence_time
+                                        + make_interval(hours => {MIN_POST_GAME_LAG_HOURS})
+                   AND e.status = 'scheduled'
+                   AND e.completed_at IS NULL
+                   AND ss.event_id NOT IN ({ids})
+                 ORDER BY ss.id
+            """)
+        )
+        snap_strays = [dict(r) for r in snap_unpinned.mappings()]
+        if snap_strays:
+            print(
+                f"\n  ⚠️  {len(snap_strays)} snapshot(s) in the defect shape are "
+                f"NOT pinned and will NOT be deleted:"
+            )
+            for row in snap_strays:
+                print(f"    snapshot {row['id']}  event {row['event_id']}")
+            print(
+                "    Evidence each one at the venue before adding it to "
+                "EXPECTED_SNAPSHOTS.\n"
+                "    Do NOT widen this into a sweep."
+            )
+
         if not apply:
             print("\ndry run — nothing written. Re-run with --apply.")
             return 0
 
-        if not writable:
+        if not writable and not deletable:
             print("\nnothing to write.")
             return 0
 
@@ -325,20 +531,55 @@ async def run(apply: bool) -> int:
                 {"eid": row["id"], "home": row["home_score"], "away": row["away_score"]},
             )
             written += result.rowcount or 0
+
+        # The chart's half, in the SAME transaction as the hero's. A commit
+        # between them is a window in which the page serves a blank hero over a
+        # false chart point — the two surfaces disagreeing is worse than either
+        # being wrong, and a reader who reloads inside it sees exactly that.
+        await bank_snapshot_pre_image(session, deletable)
+        deleted = 0
+        for row in deletable:
+            # Re-assert the defect shape in the WHERE clause, same as the event
+            # UPDATE: a snapshot that changed between the SELECT and here is not
+            # deleted on a stale read, and its absence is counted as drift.
+            result = await session.execute(
+                text("""
+                    DELETE FROM score_snapshots
+                     WHERE id = :sid
+                       AND event_id = :eid
+                       AND home_score = :home
+                       AND away_score = :away
+                """),
+                {
+                    "sid": row["id"], "eid": row["event_id"],
+                    "home": row["home_score"], "away": row["away_score"],
+                },
+            )
+            deleted += result.rowcount or 0
+
         await session.commit()
 
         drift = len(writable) - written
+        snap_drift = len(deletable) - deleted
         print(f"\n  pre-image banked in : {BACKUP_TABLE}")
         print(f"  rows written        : {written}")
         print(f"  concurrent_drift    : {drift}")
+        print(f"  snapshot bank       : {SNAPSHOT_BACKUP_TABLE}")
+        print(f"  snapshots deleted   : {deleted}")
+        print(f"  snapshot_drift      : {snap_drift}")
         print(
-            "\nverify: SELECT count(*) FROM events WHERE status='scheduled' "
+            "\nverify hero : SELECT count(*) FROM events WHERE status='scheduled' "
             "AND completed_at IS NULL AND home_score IS NOT NULL;  -- expect 0"
+        )
+        print(
+            "verify chart: curl -s $BAINLUCK_API/api/events/15290171/history "
+            "| python3 -c \"import json,sys; "
+            "print(json.load(sys.stdin)['score_history'])\"  -- expect []"
         )
         print(
             "undo: python3 scripts/restore_8247_unstarted_straggler_scoreboards.py --apply"
         )
-        return 0 if drift == 0 else 1
+        return 0 if (drift == 0 and snap_drift == 0) else 1
 
 
 def main() -> int:

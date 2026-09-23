@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -218,3 +218,132 @@ def test_a_bank_row_with_no_pre_image_is_never_guessed_at():
     """NULL/NULL in the bank is not an invitation to invent a scoreboard."""
     row = _banked(prior_home_score=None, prior_away_score=None)
     assert restore.classify(row) == restore.ALREADY_BACK
+
+
+# ---------------------------------------------------------------------------
+# the chart's half — snapshot_is_deletable (CERT-3346)
+#
+# Clearing `events.home_score/away_score` clears the HERO. The chart is served
+# by `GET /api/events/{id}/history`, which builds `score_history` out of
+# `score_snapshots`. Measured on production 2026-09-23 16:52Z, event 15290171
+# served exactly one point — 0-0, captured 15:26:57Z, on a game played April 2 —
+# so a repair that stops at the events table takes the false number off the hero
+# and leaves it on the chart.
+# ---------------------------------------------------------------------------
+
+#: The specimen's snapshot, and the kickoff it lags by 173 days.
+SPECIMEN_SNAPSHOT = 396619
+SPECIMEN_KICKOFF = datetime(2026, 4, 2, 20, 10, tzinfo=timezone.utc)
+SPECIMEN_CAPTURE = datetime(2026, 9, 23, 15, 26, 57, tzinfo=timezone.utc)
+
+#: Every pinned event is repaired, unless an arm says otherwise.
+ALL_REPAIRED = {eid for eid, _h, _a in repair.EXPECTED}
+
+
+def _snap(**kw):
+    """A snapshot row in the defect shape, with overrides."""
+    base = {
+        "id": SPECIMEN_SNAPSHOT,
+        "event_id": SPECIMEN,
+        "captured_at": SPECIMEN_CAPTURE,
+        "home_score": 0,
+        "away_score": 0,
+        "commence_time": SPECIMEN_KICKOFF,
+    }
+    base.update(kw)
+    return base
+
+
+def test_the_pinned_snapshots_are_one_per_repaired_event():
+    """13 snapshots, 13 events, every one 0-0 — and no event pinned twice.
+
+    A 14th snapshot appearing here, or two on one event, means the population
+    was re-measured and the evidence has to be re-read with it.
+    """
+    assert len(repair.EXPECTED_SNAPSHOTS) == 13
+    assert {(h, a) for _s, _e, h, a in repair.EXPECTED_SNAPSHOTS} == {(0, 0)}
+    event_ids = [e for _s, e, _h, _a in repair.EXPECTED_SNAPSHOTS]
+    assert len(set(event_ids)) == 13
+    assert set(event_ids) == ALL_REPAIRED
+    assert SPECIMEN_SNAPSHOT in repair.EXPECTED_SNAPSHOTS_BY_ID
+
+
+def test_the_specimens_snapshot_is_deletable():
+    """The positive control. Without it every refusal below is vacuous."""
+    assert repair.snapshot_is_deletable(_snap(), ALL_REPAIRED) is None
+
+
+def test_a_snapshot_outside_the_pin_is_never_deleted():
+    """The arm that fails if the DELETE is 'simplified' into a predicate sweep."""
+    assert repair.snapshot_is_deletable(_snap(id=999_999_999), ALL_REPAIRED) == (
+        "not in the pinned population"
+    )
+
+
+def test_a_snapshot_whose_event_was_skipped_is_never_deleted():
+    """THE COUPLING ARM.
+
+    If the event took a real score and was skipped by `row_is_writable`, its 0-0
+    snapshot is no longer evidenced as false. Deleting it anyway would destroy a
+    chart point for a game whose hero we deliberately left alone — the two halves
+    of the cleanup drifting apart, which is the whole failure CERT-3346 named.
+    """
+    repaired_without_specimen = ALL_REPAIRED - {SPECIMEN}
+    why = repair.snapshot_is_deletable(_snap(), repaired_without_specimen)
+    assert why is not None and "was not repaired in this run" in why
+
+
+def test_a_snapshot_captured_during_its_own_game_is_never_deleted():
+    """A real live capture is 0-0 for as long as the game is scoreless.
+
+    This is the arm that stops the repair eating a genuine first point. One hour
+    after kickoff is inside the window, so it is refused however 0-0 it is.
+    """
+    row = _snap(captured_at=SPECIMEN_KICKOFF + timedelta(hours=1))
+    why = repair.snapshot_is_deletable(row, ALL_REPAIRED)
+    assert why is not None and "may be a real live capture" in why
+
+
+def test_the_lag_window_is_exclusive_at_its_own_boundary():
+    """Pin the boundary in both directions, so the comparison cannot be flipped.
+
+    Exactly `MIN_POST_GAME_LAG_HOURS` after kickoff is deletable; one second
+    under it is not. An arm that only tested 1h and 173d would pass with `<=`,
+    `<`, or any bound in between.
+    """
+    edge = SPECIMEN_KICKOFF + timedelta(hours=repair.MIN_POST_GAME_LAG_HOURS)
+    assert repair.snapshot_is_deletable(_snap(captured_at=edge), ALL_REPAIRED) is None
+    just_under = edge - timedelta(seconds=1)
+    assert repair.snapshot_is_deletable(
+        _snap(captured_at=just_under), ALL_REPAIRED
+    ) is not None
+
+
+def test_a_snapshot_carrying_a_real_score_is_never_deleted():
+    """Drift off 0-0 means the row is not the one that was measured."""
+    why = repair.snapshot_is_deletable(_snap(home_score=4, away_score=3), ALL_REPAIRED)
+    assert why is not None and "drifted" in why
+
+
+def test_a_snapshot_whose_event_has_no_kickoff_is_refused_not_assumed():
+    """The lag test cannot run without a `commence_time`, so it refuses.
+
+    Fails closed: an unevaluable condition is never read as a pass.
+    """
+    why = repair.snapshot_is_deletable(_snap(commence_time=None), ALL_REPAIRED)
+    assert why is not None and "lag test cannot be evaluated" in why
+
+
+def test_the_two_banks_are_different_tables():
+    """A single shared bank would make the hero undo overwrite the chart undo."""
+    assert repair.SNAPSHOT_BACKUP_TABLE != repair.BACKUP_TABLE
+    assert repair.SNAPSHOT_BACKUP_TABLE.startswith("backup_")
+
+
+def test_the_restore_reaches_the_snapshot_bank_by_import():
+    """The undo names the same table the repair banked into — not a copy of it.
+
+    A restore with its own string literal is one edit away from undoing nothing.
+    """
+    assert restore.SNAPSHOT_BACKUP_TABLE is repair.SNAPSHOT_BACKUP_TABLE
+    assert callable(restore.restore_snapshots)
