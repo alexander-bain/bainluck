@@ -209,7 +209,11 @@ describe("#6129 · WHAT HIT states 'no grades published' once, not once per row"
     const script = visibleText(
       renderToStaticMarkup(<PropsSection items={UNGRADED_LADDER} state="script" />),
     );
-    expect(script).toContain("What the market expected before the event.");
+    // #8147 moved this literal from "expected" to "expects" (the blurb renders
+    // only on events that have not started, so the past tense was never true).
+    // This control's claim — #6129's ungraded-blurb rule does not leak out of
+    // WHAT HIT — is unchanged; only the sentence it names moved.
+    expect(script).toContain("What the market expects before the event.");
     expect(script).not.toContain("No grades published");
 
     const divergence = visibleText(

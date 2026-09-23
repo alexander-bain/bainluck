@@ -33,8 +33,9 @@
 //     `current`. On the live payload, 209 rows carried both fields on an event that
 //     had not started and they differed by a median of 4pts, up to 22.5pts, so a
 //     fallback would print a live price under a heading reading "What the market
-//     expected before the event". Nothing in the code stops a future session doing
-//     that; this test does.
+//     expects before the event" (#8147 moved that sentence off the past tense;
+//     the argument is unchanged). Nothing in the code stops a future session
+//     doing that; this test does.
 // A file where every test reds is a file whose controls are not controls.
 
 import { renderToStaticMarkup } from "react-dom/server";
