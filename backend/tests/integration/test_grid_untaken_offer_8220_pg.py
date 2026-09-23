@@ -117,7 +117,32 @@ _T2_LEGS = (
     # CONTROL, fails the BOOK clause alone: one cent of bid is somebody paying
     # something, which is the evidence the entire rule turns on.
     ("Kansas Jayhawks", 0.11, 0.01, 0.15, None, True),
+    # 🔴 #8243, AND THE ROW THE FAIL-CLOSED RULE DELETED. Book IDENTICAL to the
+    # specimen — zero bid, lone 15c offer — and the ONLY difference is that the
+    # snapshot carries a trade. La Liga's Real Sociedad is this shape in
+    # production: asks 0.49 having last traded at 0.99. It must SURVIVE.
+    ("Gonzaga Bulldogs", 0.15, 0.00, 0.15, None, True),
+    # 🔴 #8243 / GOTCHA #53. Book identical again, and this leg has NO SNAPSHOT
+    # ROW AT ALL — see `_LAST_PRICE`. "We never looked" is not "it never traded",
+    # so it FAILS OPEN and keeps its number. A mutant that seeds a missing read
+    # as `last_price=0.0`, or that collapses the evidence flag into
+    # `bool(last_price)`, blanks this row and nothing else in this file sees it.
+    ("UCLA Bruins", 0.13, 0.00, 0.13, None, True),
 )
+
+#: ``last_price`` on each leg's Kalshi snapshot; ``None`` means NO SNAPSHOT ROW.
+#:
+#: Defaulting to ``0.0`` rather than omitting the row is what makes this fixture
+#: faithful: production stores ``last_price 0 / volume 0 / open interest 0`` for
+#: exactly these books (this module's own docstring says so), and before #8243
+#: the fixture seeded no snapshots at all because the fail-closed rule never
+#: read them. Under the real rule a missing row means "never looked" and every
+#: untaken offer would be SERVED — so an unfaithful fixture would not have
+#: caught a regression here, it would have BEEN one.
+_LAST_PRICE = {
+    "Gonzaga Bulldogs": 0.19,   # traded: survives
+    "UCLA Bruins": None,       # no snapshot: fails open, survives
+}
 
 #: Championship legs. EVERY corpus team gets one, and that mirrors production:
 #: all 68 cells in that column are populated, so no team's row depends on its
@@ -175,6 +200,22 @@ async def pg_engine():
 
 
 async def _clear(conn) -> None:
+    # #8243 — SNAPSHOTS FIRST, and the order is a foreign key, not a preference.
+    # `futures_odds_snapshots.outcome_id` references `futures_outcomes`, so once
+    # this fixture started seeding trades the outcome delete below began failing
+    # with ForeignKeyViolationError. `_clear` runs at BOTH setup and teardown, so
+    # a leftover snapshot from a crashed run also wedges the next one — the whole
+    # file errors at setup until the row is cleared by hand.
+    #
+    # Scoped through the outcome's own market ids rather than by a snapshot id
+    # block: this file owns nothing but `_MARKETS`, and the database is shared.
+    await conn.execute(
+        text(
+            "DELETE FROM futures_odds_snapshots WHERE outcome_id IN ("
+            "SELECT id FROM futures_outcomes WHERE market_id = ANY(:ids))"
+        ),
+        {"ids": list(_MARKETS)},
+    )
     await conn.execute(
         text("DELETE FROM futures_outcomes WHERE market_id = ANY(:ids)"),
         {"ids": list(_MARKETS)},
@@ -236,23 +277,63 @@ async def _seed(conn) -> None:
 
     for market_id, legs in ((MARKET_T2, _T2_LEGS), (MARKET_CHAMP, _CHAMP_LEGS)):
         for name, prob, bid, ask, resolution_source, _admitted in legs:
-            await conn.execute(
-                text(
-                    "INSERT INTO futures_outcomes (market_id, external_id, name, "
-                    "current_probability, current_yes_bid, current_yes_ask, "
-                    "resolution_source, is_winner, last_updated) VALUES "
-                    "(:mid, :ext, :name, :p, :bid, :ask, :rs, false, NOW())"
-                ),
-                {
-                    "mid": market_id,
-                    "ext": f"{market_id}-{name.replace(' ', '')[:12].upper()}",
-                    "name": name,
-                    "p": prob,
-                    "bid": bid,
-                    "ask": ask,
-                    "rs": resolution_source,
-                },
-            )
+            outcome_id = (
+                await conn.execute(
+                    text(
+                        "INSERT INTO futures_outcomes (market_id, external_id, name, "
+                        "current_probability, current_yes_bid, current_yes_ask, "
+                        "resolution_source, is_winner, last_updated) VALUES "
+                        "(:mid, :ext, :name, :p, :bid, :ask, :rs, false, NOW()) "
+                        "RETURNING id"
+                    ),
+                    {
+                        "mid": market_id,
+                        "ext": f"{market_id}-{name.replace(' ', '')[:12].upper()}",
+                        "name": name,
+                        "p": prob,
+                        "bid": bid,
+                        "ask": ask,
+                        "rs": resolution_source,
+                    },
+                )
+            ).scalar_one()
+
+            # #8243. The grid now reads the newest Kalshi trade for every
+            # candidate leg, so the snapshot IS part of the specimen and not
+            # scaffolding. `_LAST_PRICE` defaults to 0.0 — "we looked, and this
+            # market has never traded" — which is what production stores for
+            # these books; `None` means seed no row at all, which is the
+            # different answer gotcha #53 refuses to collapse into it.
+            #
+            # `captured_at` from the SERVER for the reason `last_updated` above
+            # takes it from the server: `_newest_kalshi_trades` picks the newest
+            # capture per outcome, so a hard-coded stamp would quietly stop
+            # being the newest one.
+            last_price = _LAST_PRICE.get(name, 0.0)
+            if last_price is not None:
+                # `reading_count` IS SUPPLIED EXPLICITLY, and leaving it out is
+                # not a style slip: the column is NOT NULL with a PYTHON-side
+                # `default=1` on the model, which a raw `text()` INSERT never
+                # runs. Omitting it dies at setup with NotNullViolationError, and
+                # because this whole file skips without a Postgres you find out
+                # only in CI, on a job `deploy` needs.
+                # `tests/test_pg_gate_seed_completeness.py` is the guard for that
+                # class and it caught exactly this.
+                await conn.execute(
+                    text(
+                        "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, "
+                        "probability, yes_bid, yes_ask, last_price, captured_at, "
+                        "reading_count) "
+                        "VALUES (:oid, 'kalshi', :p, :bid, :ask, :last, NOW(), 1)"
+                    ),
+                    {
+                        "oid": outcome_id,
+                        "p": prob,
+                        "bid": bid,
+                        "ask": ask,
+                        "last": last_price,
+                    },
+                )
 
 
 async def _cells(engine, column: str) -> dict[str, float]:
@@ -403,4 +484,42 @@ async def test_the_column_sum_falls_toward_the_number_of_places(pg_engine):
     assert total < seeded, (
         f"the untaken offers are still in the sum: served {total:.3f} of a "
         f"seeded {seeded:.3f}"
+    )
+
+
+async def test_a_traded_leg_survives_the_same_book_that_refuses_the_specimen(pg_engine):
+    """#8243 end-to-end: the trade term reaches the served payload.
+
+    Gonzaga's book is byte-identical to South Dakota St's — zero bid, lone 15c
+    offer — and the ONLY difference between them is a snapshot carrying a trade
+    at 0.19. The pair is the whole ship: one cell goes, one cell stays, and a
+    mutant that reverts the call site to the fail-closed rule keeps BOTH out.
+
+    Asserted as a PAIR in one test on purpose. Asserting the survivor alone
+    would pass on a mutant that deleted the withholding entirely.
+    """
+    served = await _cells(pg_engine, "title_game")
+    assert _match(served, "Gonzaga Bulldogs"), (
+        "a leg that has TRADED at 0.19 was withheld — the grid is still failing "
+        f"closed and #8243 did not reach the call site (cells={served})"
+    )
+    assert not _match(served, "South Dakota St Jackrabbits"), (
+        "the never-traded specimen came back; the trade term is not just "
+        f"unused, it has inverted the rule (cells={served})"
+    )
+
+
+async def test_a_leg_with_no_snapshot_at_all_keeps_its_number(pg_engine):
+    """GOTCHA #53 end-to-end: an absent read fails OPEN.
+
+    Baylor carries the specimen's book and NO snapshot row. "We never looked" is
+    not "it never traded", and only the second is evidence. This is the row that
+    makes the difference observable on the page: if the snapshot table ever goes
+    dark for a grid, every cell degrades to the number it serves today rather
+    than the column blanking wholesale.
+    """
+    served = await _cells(pg_engine, "title_game")
+    assert _match(served, "UCLA Bruins"), (
+        "a leg the trade read never saw was withheld — absence was treated as "
+        f"evidence of no trade, which gotcha #53 forbids (cells={served})"
     )
