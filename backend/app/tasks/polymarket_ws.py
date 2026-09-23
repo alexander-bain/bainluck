@@ -333,10 +333,20 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     this client and subscribes without shards: absent coverage keys must print
     a zero, never raise inside a stats loop whose exception would kill the
     socket's only heartbeat.
+
+    `wire=` rides beside `served=` for the reason stated at the top of this
+    docstring, applied to the field that was just added: `served` is now the
+    intersection against the subscription, so it can no longer exceed its own
+    denominator — and an excess that can no longer show up in the ratio would
+    stop existing for every reader if the raw total were computed and never
+    printed. `wire - served` is the count of ids the venue sent us unasked,
+    which was previously being read AS coverage. It is also the only
+    served-shaped number the shadow consumer has, since that one subscribes to
+    everything and so has no subscription to intersect against.
     """
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
-        "%d msgs | coverage shards=%d/%d served=%d/%d by_shard=%s "
+        "%d msgs | coverage shards=%d/%d served=%d/%d wire=%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -344,6 +354,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         ws_stats.get("shards_connected", 0), ws_stats.get("shards", 0),
         ws_stats.get("assets_served", 0),
         ws_stats.get("assets_subscribed", 0),
+        ws_stats.get("assets_on_wire", 0),
         _format_by_shard(ws_stats),
         blend["stamped"], blend["no_reading"],
         blend["throttled"], blend["errors"],
@@ -997,6 +1008,11 @@ async def _run_polymarket_ws_consumer():
     stats["served_by_shard"] = exit_stats.get("served_by_shard", {})
     stats["subscribed_by_shard"] = exit_stats.get("subscribed_by_shard", {})
     stats["unserved_by_shard"] = exit_stats.get("unserved_by_shard", {})
+    # PER SHARD, because that is the resolution the excess was found at: the
+    # minute line's fleet total would have read 394 over a 375 shard as a few
+    # ids across eight shards and nothing would have stood out. `2:394/375`
+    # stood out precisely because one shard crossed its own denominator.
+    stats["on_wire_by_shard"] = exit_stats.get("on_wire_by_shard", {})
     _log_unserved_sample(ws)
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
