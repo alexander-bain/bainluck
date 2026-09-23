@@ -246,6 +246,25 @@ async def run(apply: bool) -> int:
 
         missing = sorted(set(EXPECTED_BY_ID) - {r["id"] for r in rows})
 
+        # PIN FOR WRITES, CENSUS FOR VISIBILITY. The pin above is what keeps
+        # this repair off a live 0-0 mis-stamped `scheduled`, and it is also a
+        # snapshot that can go stale: the gate stops NEW rows taking a
+        # scoreboard, but any that landed between the measurement and the gate
+        # going live are not in it. Silently ignoring them would leave the
+        # operator's verify query returning a number nobody can explain, which
+        # is the failure mode a pinned population invites. So the shape is
+        # counted — read-only, never written — and reported by id.
+        unpinned = await session.execute(
+            text(f"""
+                SELECT id, home_score, away_score FROM events
+                 WHERE status = 'scheduled' AND completed_at IS NULL
+                   AND (home_score IS NOT NULL OR away_score IS NOT NULL)
+                   AND id NOT IN ({ids})
+                 ORDER BY id
+            """)
+        )
+        strays = [dict(r) for r in unpinned.mappings()]
+
         print(f"#8247 — {'APPLY' if apply else 'DRY RUN'}")
         print(f"  pinned              : {len(EXPECTED)}")
         print(f"  writable            : {len(writable)}")
@@ -259,6 +278,25 @@ async def run(apply: bool) -> int:
             )
         for eid, why in skipped:
             print(f"    SKIP {eid}: {why}")
+
+        if strays:
+            print(
+                f"\n  ⚠️  {len(strays)} row(s) in the defect shape are NOT pinned "
+                f"and will NOT be written:"
+            )
+            for row in strays:
+                print(
+                    f"    {row['id']}  {row['home_score']}-{row['away_score']}"
+                )
+            print(
+                "    Each is either a row that took a scoreboard after the "
+                "population was measured\n"
+                "    (2026-09-23) or a genuinely LIVE game mis-stamped "
+                "`scheduled` (#5324's class).\n"
+                "    Tell them apart at the venue before adding any id to "
+                "EXPECTED — do NOT widen\n"
+                "    this into a sweep."
+            )
 
         if not apply:
             print("\ndry run — nothing written. Re-run with --apply.")
