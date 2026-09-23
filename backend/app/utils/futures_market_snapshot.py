@@ -263,7 +263,30 @@ OUTCOME_COLUMNS: tuple[str, ...] = (
 #: still loaded-and-dropped; what IS carried now is one DERIVED INTEGER per
 #: outcome — see `DERIVED_OUTCOME_COLUMNS` directly below, and the measurement
 #: that separates the two.
-OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = ("last_updated", "opening_captured_at")
+#:
+#: 🔴 #7632 ADDS FOUR, AND THEY ARE HERE RATHER THAN IN `OUTCOME_COLUMNS` ON
+#: PURPOSE. `resolution_source`, `volume_24h`, `volume_24h_at` and `is_winner`
+#: are what the detail page's five withheld-price arms read. The card used to
+#: read none of them and so printed prices the page refuses — WTA Seoul offered
+#: three co-favourites at 49% on a board the page prices 1 of 16 legs of. The
+#: arms now run at BUILD time (`withheld_price_outcome_ids_for_markets`) and
+#: only their VERDICT reaches the wire, as one id list per market in
+#: `DERIVED_MARKET_COLUMNS`. So these four are loaded-and-dropped exactly like
+#: `last_updated`: four columns in, one list out, and no per-leg growth in a
+#: size-capped shared artifact.
+#:
+#: ⚠️ Every arm reads them through `getattr(..., None)`, which on a
+#: `load_only`-restricted row does not raise — it silently refuses nothing. That
+#: is the failure mode this tuple exists to prevent, and it is why dropping one
+#: of these four is a card/page divergence rather than a crash.
+OUTCOME_LOAD_ONLY_EXTRA: tuple[str, ...] = (
+    "last_updated",
+    "opening_captured_at",
+    "resolution_source",
+    "volume_24h",
+    "volume_24h_at",
+    "is_winner",
+)
 
 #: Outcome-level values COMPUTED for the artifact, not loaded (#5809).
 #:
@@ -349,9 +372,25 @@ OUTCOME_ROW_COLUMNS: tuple[str, ...] = OUTCOME_COLUMNS + DERIVED_OUTCOME_COLUMNS
 #: `displayed_price_stamp`. Keeping the market fold beside it would leave two
 #: answers to one reader-visible question, differing exactly on the cards the
 #: filters touch.
+#: `withheld_outcome_ids` (#7632) is the detail page's five-arm withheld set,
+#: computed once at build time over the whole candidate pool and carried so both
+#: card serializers can drop exactly what the page drops. A LIST OF IDS, not a
+#: per-outcome flag, because a board withholds nothing far more often than it
+#: withholds something and an absent-by-default list costs one empty sequence
+#: rather than a column on every leg.
+#:
+#: 🔴 `None` AND `[]` ARE DIFFERENT FACTS AND THE CONSUMER TREATS THEM SO.
+#: `None` means NOT COMPUTED — an ORM row that never went through the builder —
+#: and must drop nothing, which is the pre-#7632 behaviour and the fail-open
+#: direction. `[]` means COMPUTED, REFUSED NOTHING. Collapsing them would make a
+#: carrier that never ran the arms indistinguishable from a healthy board, which
+#: is how a shared artifact quietly becomes "a DIFFERENT feed, not a cheaper
+#: one". `_drop_withheld_price_legs` keys on exactly this distinction and
+#: `test_card_and_page_share_the_withheld_set_7632` gives each case a control.
 DERIVED_MARKET_COLUMNS: tuple[str, ...] = (
     "price_polled_at",
     "opening_baseline_at",
+    "withheld_outcome_ids",
 )
 
 #: The full positional market row on the wire: loaded columns, then derived ones.
@@ -423,7 +462,12 @@ SPORT_COLUMNS: tuple[str, ...] = ("key", "name")
 #: path and the clause silently off — the card naming a different favourite
 #: depending on which path served it. Under v7 those entries are never read and
 #: expire under their own TTL.
-SNAPSHOT_SCHEMA_VERSION = 7
+#: 7 → 8 (#7632): `withheld_outcome_ids` joins `DERIVED_MARKET_COLUMNS`, so a
+#: v7 payload is a row of the wrong width and must never be decoded as a v8 one.
+#: The version is part of the shared-cache key, so the bump is self-cleaning —
+#: v7 entries are unreachable rather than stale, and the first read after deploy
+#: is a MISS that rebuilds.
+SNAPSHOT_SCHEMA_VERSION = 8
 
 
 class _Snapshot:
@@ -1407,7 +1451,34 @@ def concept_price_observed_at_iso(
     return stamp.isoformat()
 
 
-def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
+def _withheld_ids_row(
+    market: Any, withheld_by_market: dict[int, set[int]] | None
+) -> list[int] | None:
+    """This market's withheld-price ids as a plain sorted list, or `None` (#7632).
+
+    `None` for BOTH "the caller did not compute the set" and "the caller
+    computed a set that has no entry for this market" — the second is a builder
+    bug, and the honest answer to a bug is "I do not know", never an empty list
+    that reads as a clean bill of health (gotcha #53). The consumer drops
+    nothing on `None`, so an unmapped board degrades to the pre-#7632 card
+    rather than to a card with its prices silently removed.
+
+    SORTED, because this list lands in a shared cache artifact keyed by content
+    digest and a set's iteration order is not stable across processes — an
+    unsorted list would make two byte-equal builds produce two payloads.
+    """
+    if withheld_by_market is None:
+        return None
+    ids = withheld_by_market.get(market.__dict__.get("id"))
+    if ids is None:
+        return None
+    return sorted(int(i) for i in ids)
+
+
+def to_plain(
+    markets: Iterable[Any],
+    withheld_by_market: dict[int, set[int]] | None = None,
+) -> dict[str, Any]:
     """Convert hydrated ORM markets into the shareable plain-data artifact.
 
     The result contains only `None`/`bool`/`int`/`float`/`str`/`datetime`/
@@ -1424,13 +1495,31 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
     "we do not know", which every consumer must read as not-fresh rather than
     fresh (gotcha #53), and which for `opening_baseline_at` also covers the
     market whose outcomes disagree about their opening day.
+
+    `withheld_by_market` (#7632) is the detail page's five-arm withheld set for
+    each market, computed by the caller because the arms are `async` and this
+    function is not. OMITTING IT IS A REAL CHOICE, NOT A DEGRADED ONE: every
+    market then carries `withheld_outcome_ids = None`, which the consumer reads
+    as "not computed, drop nothing" — the pre-#7632 card. A caller that HAS the
+    set passes it and the card drops exactly what the page drops. What must
+    never happen is the two collapsing into each other; see the column's note.
     """
     # Keyed by column NAME and read by name below, so a derived column added to
     # the tuple without a producer here is a `KeyError` at build time rather
     # than a row of the wrong width that the validator then rejects forever.
+    #
+    # All three take `(market, outcomes)` so the mapping stays uniform and that
+    # `KeyError` guard keeps covering every name — #7632's column is folded from
+    # the market's id rather than from its outcome rows, and a second producer
+    # mapping for that one case would be a second place to forget a column.
     producers = {
-        "price_polled_at": _price_polled_at,
-        "opening_baseline_at": _opening_baseline_at,
+        "price_polled_at": lambda market, outcomes: _price_polled_at(outcomes),
+        "opening_baseline_at": lambda market, outcomes: _opening_baseline_at(
+            outcomes
+        ),
+        "withheld_outcome_ids": lambda market, outcomes: _withheld_ids_row(
+            market, withheld_by_market
+        ),
     }
     # Same rule, one level down (#5809): keyed by NAME so a derived outcome
     # column added to the tuple without a producer here is a `KeyError` on the
@@ -1446,7 +1535,10 @@ def to_plain(markets: Iterable[Any]) -> dict[str, Any]:
         rows.append(
             [
                 _row(market, MARKET_COLUMNS)
-                + [producers[name](outcomes) for name in DERIVED_MARKET_COLUMNS],
+                + [
+                    producers[name](market, outcomes)
+                    for name in DERIVED_MARKET_COLUMNS
+                ],
                 [
                     _row(o, OUTCOME_COLUMNS)
                     + [

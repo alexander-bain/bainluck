@@ -43,6 +43,12 @@ from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.dependencies.auth import get_optional_user
+
+# #7632. The detail page's five withheld-price arms, batched over a whole pool.
+# Module level, not lazy: `routes/futures.py` imports from THIS module only from
+# inside a function body, so there is no import-time cycle to break, and a lazy
+# import here would buy nothing while hiding the dependency from the reader.
+from app.routes.futures import withheld_price_outcome_ids_for_markets
 # Admission bounds for the shared candidate base live WITH the base (they exist
 # to bound its Redis key + process-local map), so there is one definition.
 from app.utils import candidate_base as _cb_limits
@@ -6435,6 +6441,113 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     return survivors or outcomes
 
 
+def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list:
+    """Legs whose price the DETAIL PAGE refuses, gone from the card too (#7632).
+
+    🔴 THE CARD USED TO PRINT PRICES THE PAGE WITHHOLDS. `/futures/{id}` screens
+    every leg through five arms — unsupported price, refuted midpoint,
+    book-refuted, empty book, unlocated-in-a-broken-field — and renders `-` for
+    the ones it refuses. The card ran NONE of them. Three boards on the served
+    feed of 2026-09-23 06:09Z, matched by outcome id:
+
+        61960017  WTA Seoul      card: Birrell 49% · Tararudee 49% · Bondar 49%
+                                 page: prices 1 of 16 legs; all three refused
+        61437318  WTA Singapore  card leader Kasatkina 31%, Tjen 29%
+                                 page refuses both (15 of 19); hero Eala 28.5%
+        61734333  LPGA NW Ark.   page refuses 100 of 144, prints Yamashita 11%
+                                 card divides by the fuller mass, prints 7.65%
+
+    Seoul is the plainest: a card offering three co-favourites at 49% lands on a
+    page that will not price any of them. Singapore is the worst kind — the card
+    NAMES A LEADER the page refuses, so the story inverts on the tap. LPGA is
+    the divisor arm, every leg off by the same 0.6955.
+
+    ═══ THIS IS #7537's RULE, NOT A NEW ONE ═══
+
+    `_drop_stale_observation_legs` one function up exists because "the
+    membership rule is SHARED, not the divisor ... so the two surfaces cannot
+    drift into two answers about which rungs are real" (#7274). That closed the
+    FOSSIL class — a leg nobody observed when its siblings were observed. This
+    closes the REFUSED class — a leg the page observed and declined to believe.
+    Same contract, second half; the sibling's docstring never claimed this one.
+
+    DROPPED HERE, not withheld as the page withholds, for the sibling's exact
+    reason: the two surfaces owe each other one DIVISOR, not one render. A
+    detail row can print `-` in a column; a card has no such affordance, and
+    every other membership rule in this chain already drops. `outcome_count`
+    reads the DB row, so the reader's "16 outcomes" is untouched.
+
+    BEFORE THE LEADER PICK, which is the half Singapore needs: a refused price
+    that outranks the believed ones does not merely inflate the divisor, it
+    NAMES THE CARD'S LEADER off a number the page will not show.
+
+    ⚠️ `None` IS NOT `[]` AND THE TWO MUST NOT COLLAPSE. `None` means the arms
+    never ran for this carrier — a market that did not come through the snapshot
+    builder — and drops nothing, which is the pre-#7632 card and the fail-open
+    direction. `[]` means they ran and refused nothing. Reading a missing field
+    as "refuse everything" would empty cards on any path that skipped the
+    builder; reading it as `[]` would let a carrier that never ran the arms look
+    identical to a healthy board, which is how a shared artifact becomes "a
+    DIFFERENT feed, not a cheaper one". The wire column's note carries the same
+    warning from the producing end.
+
+    FAILS OPEN ON AN ALL-REFUSED BOARD. A board whose every leg is withheld
+    keeps them all rather than becoming a card with nothing on it — same
+    judgement as the sibling's `survivors or outcomes`, and for the same reason:
+    the harmful direction here is taking a card's numbers away. The page shows
+    such a board as an all-`-` table; the card shows the prices and is at worst
+    no worse than today, which is where it already is.
+
+    ═══ TWO CARRIER SHAPES, ONE RULE (CERT-3330) ═══
+
+    `withheld_ids` is for the caller that computed the set but has nowhere to
+    put it. Discover hydrates PLAIN carriers through the snapshot builder, so
+    its set arrives on `withheld_outcome_ids` and the `__dict__` read below
+    finds it. Sports mode (`_score_sports_mode_futures`) loads ORM rows
+    directly and never passes through that builder, so on the first cut of
+    #7632 its call to this function read `None` on every board and dropped
+    nothing — the ship was INERT on the live Sports path while a source-order
+    guard reported it present. CERT-3330 blocked exactly that.
+
+    An argument rather than a second field because the ORM row has no honest
+    place to keep one: stamping an unmapped key into a mapped instance's
+    `__dict__` would make the two surfaces differ in how the set ARRIVES while
+    claiming they share how it is APPLIED, which is the drift this function
+    exists to prevent. Passing it keeps one rule and makes the wiring visible
+    to a test — `None` still means "the arms never ran for this carrier" and
+    still drops nothing, so a board the builder omitted (it raised; see
+    `withheld_price_outcome_ids_for_markets`) serves at its pre-#7632 numbers
+    on both paths.
+
+    OPEN MARKETS ONLY, the sibling's bound and #7274's: a settled board is a
+    RESULT, and a result shows what ran.
+    """
+    if getattr(market, "status", None) != "open":
+        return outcomes
+    # `__dict__.get`, never `getattr` — a rehydrated snapshot always carries this
+    # attribute (it is in `DERIVED_MARKET_COLUMNS`), and a carrier that does NOT
+    # must answer `None` rather than lazy-load or raise inside the per-item
+    # serializer (gotcha #42, and the module's rule one file over).
+    withheld = (
+        withheld_ids
+        if withheld_ids is not None
+        else getattr(market, "__dict__", _NO_MARKET_DICT).get(
+            "withheld_outcome_ids"
+        )
+    )
+    if not withheld:
+        return outcomes
+    withheld_ids = set(withheld)
+    survivors = [o for o in outcomes if o.id not in withheld_ids]
+    return survivors or outcomes
+
+
+#: Read-only stand-in for the instance dict of a carrier that has none, so the
+#: read above stays a `__dict__` read on every shape. Module-level and never
+#: written to, the same construction `futures_market_snapshot` uses.
+_NO_MARKET_DICT: dict = {}
+
+
 def _card_price_observed_at(displayed_outcomes: list) -> str | None:
     """WHEN THE PRICES ON THIS CARD WERE LAST SEEN, for the reader (#5752).
 
@@ -10435,6 +10548,34 @@ async def _score_sports_mode_futures(
     # has to be answerable in both or the fix lands on one surface only.
     team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
 
+    # #7632 / CERT-3330: THE DETAIL PAGE'S WITHHELD SET FOR THIS POOL TOO.
+    # Discover gets this on the carrier out of the snapshot builder; sports mode
+    # loads ORM rows directly and so has to ask for it, or `_drop_withheld_price_legs`
+    # below reads `None` and the whole #7632 contract is inert on /sports — which
+    # is what it was, on the surface the three filed specimens were seen on
+    # (WTA Singapore's card led with Kasatkina 31%, a leg the page refuses).
+    #
+    # Batched for the same reason and by the same helper as the Discover call
+    # site: FOUR QUERIES AT MOST whatever the pool size, never two per board.
+    # Measured on the live sports pool 2026-09-23 (120 boards / 4,238 legs, of
+    # which the pure screens admit 603 candidate legs across 13 Kalshi boards):
+    # the Kalshi arm is a fully index-supported ~150-260 ms, and the midpoint
+    # arm is the same shape over a subset. That is real against this function's
+    # "<200 ms" docstring claim and is stated here rather than hidden — but the
+    # gate this pass actually runs under is `_futures_budget_s()`, the remainder
+    # of `FEED_TOTAL_BUDGET_MS` (25 s), and the whole build sits behind the feed
+    # singleflight cache, so the cost lands per BUILD on a miss, never per card
+    # and never per request. A card that names a leader the page refuses is not
+    # worth keeping to protect a docstring's round number.
+    #
+    # The load projection is `_futures_feed_load_options()`, which is
+    # `market_load_options()` — the same list the snapshot builder uses — so the
+    # four columns this helper warns it needs (`resolution_source`,
+    # `volume_24h`, `volume_24h_at`, `is_winner`, all in `OUTCOME_LOAD_ONLY_EXTRA`)
+    # are loaded here. That is not luck: it is the ONE-list contract in
+    # `_futures_feed_load_options`'s own docstring paying out.
+    withheld_by_market = await withheld_price_outcome_ids_for_markets(db, markets)
+
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
     scored_items: list[dict] = []
@@ -10466,6 +10607,20 @@ async def _score_sports_mode_futures(
         # expired-rung drop of its own, so this sits directly after the dedup
         # sort, which is the same relative position: before the leader pick.
         sorted_outcomes = _drop_stale_observation_legs(market, sorted_outcomes)
+        # #7632: and the other half of the same contract — a leg whose price the
+        # DETAIL PAGE refuses leaves this list too. Immediately after its
+        # sibling, in both serializers, for #4610's reason: these two print the
+        # same card type, so a membership rule landing in one of them only moves
+        # the disagreement from card-vs-page to card-vs-card.
+        #
+        # CERT-3330: the set is PASSED here, not read off the row. `.get` yields
+        # `None` for a board the builder omitted because evaluating it raised,
+        # which the helper reads as "the arms never ran" and serves at its
+        # pre-#7632 numbers — one bad board never empties a card, and never
+        # wipes the pass (gotcha #42).
+        sorted_outcomes = _drop_withheld_price_legs(
+            market, sorted_outcomes, withheld_by_market.get(market.id)
+        )
         # UX-P126/F5: nothing UNRANKABLE may hold a leader or top-N slot. Runs BEFORE
         # the top-10 slice and leader pick, same reason the phantom-book filter in
         # `_score_futures` does: a placeholder that outranks the real prices doesn't
@@ -11764,7 +11919,24 @@ async def _score_futures(
             # same ids — was written and measured on production at 423 ms warm,
             # ~72% of this whole stage, and thrown away
             # (`OUTCOME_LOAD_ONLY_EXTRA` carries the numbers).
-            return _futures_snapshot.to_plain(result.scalars().unique().all())
+            loaded = result.scalars().unique().all()
+            # #7632. THE DETAIL PAGE'S WITHHELD SET, COMPUTED ONCE FOR THE WHOLE
+            # POOL AND CARRIED ON THE ARTIFACT. Here rather than in the
+            # serializers because here is the only place with a session, the
+            # hydrated rows and a cache in front of it: this builder runs on a
+            # shared-cache MISS, so the cost is per BUILD, never per card — the
+            # per-card query on `/api/feed` that decision (b) forbids.
+            #
+            # Four queries at most whatever the pool size, not two per board:
+            # both database arms are `IN`-list reads keyed on a bookmaker, so
+            # `withheld_price_outcome_ids_for_markets` batches the Kalshi arm to
+            # one call and the midpoint arm to one per venue. See its docstring.
+            return _futures_snapshot.to_plain(
+                loaded,
+                withheld_by_market=await withheld_price_outcome_ids_for_markets(
+                    db, loaded
+                ),
+            )
 
         _snapshot_payload = await _pic.get_or_build(
             "market_load", _snapshot_key, _build_market_rows
@@ -12058,6 +12230,30 @@ async def _score_futures(
                     for o, keep in zip(sorted_outcomes, phantom_keep_mask)
                     if keep
                 ]
+
+            # #7632: the leg the DETAIL PAGE refuses to price leaves too — not
+            # just the one nobody observed (`_drop_stale_observation_legs`
+            # above). Still before the leader pick, which is the half WTA
+            # Singapore needs: the card was NAMING a leader the page withholds.
+            #
+            # 🔴 AFTER THE PHANTOM FILTER, NOT BESIDE ITS SIBLING, AND THE ORDER
+            # IS THE RULE. `classify_fabricated_book` returns a verdict about
+            # the WHOLE BOARD — SpaceX's sixteen rungs, every book quoted
+            # 1c/99c, is a card that must never ship (Alex, and
+            # `test_feed_phantom_midpoint_suppression`). Those same 1c/99c legs
+            # are what this function's empty-book arm removes. Run first, it
+            # deletes fifteen of the sixteen, the board-level screen then sees
+            # one healthy-looking leg, `phantom_drop_card` never fires and the
+            # suppressed card REACHES THE FEED. The first cut of #7632 did
+            # exactly that and the guard caught it.
+            #
+            # So a board-level judgement is taken on the whole board, and only
+            # then are individual legs removed. This is the same ordering rule
+            # `_unlocated_in_broken_field_outcome_ids` obeys inside the arms —
+            # it runs last because its gate is a fact about what the other four
+            # already took away. A rule that reads the field as a whole cannot
+            # be fed a field something else has already thinned.
+            sorted_outcomes = _drop_withheld_price_legs(market, sorted_outcomes)
 
             # UX-P126/F5: and neither may an anonymized reserved slot ("Party C",
             # "Coach N") or a ~100% "Other". Same insertion point and the same

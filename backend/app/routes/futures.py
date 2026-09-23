@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import mean, median
-from typing import Optional
+from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, func, exists
@@ -3684,6 +3684,24 @@ async def _unsupported_price_outcome_ids(
     The legs keep their names, exactly as the 33 never-priced legs on the
     specimen market already render.
     """
+    candidates = _unsupported_price_candidates(market)
+    if not candidates:
+        return set()
+    latest_trade = await _newest_kalshi_trades(db, [o.id for o in candidates])
+    return _unsupported_price_verdicts(market, candidates, latest_trade)
+
+
+def _unsupported_price_candidates(market: FuturesMarket) -> list:
+    """The legs of this market worth spending a trade read on (#7632 split).
+
+    THE SCREEN, LIFTED OUT OF THE ARM SO TWO CALLERS SHARE ONE SPELLING. The
+    page asks this market-by-market; the feed's snapshot builder asks it of
+    every candidate board at once so it can issue ONE trade query for the whole
+    pool instead of one per board. Both reach the same rows because both call
+    THIS — the alternative is a second copy of the screen, which is precisely
+    what `_withheld_price_outcome_ids`'s "ONE HELPER, NOT A FIFTH SPELLING"
+    forbids. Nothing about the rule moved; only the fetch did.
+    """
     # `getattr` for the same reason the outcome reads below use it: a caller may
     # hand this a market object that never loaded these columns, and an absent
     # attribute must read as "not proved" rather than raise or, worse, be taken
@@ -3700,7 +3718,7 @@ async def _unsupported_price_outcome_ids(
     # page still issues ONE trade query per market — the arm adds 38 candidate
     # legs across 34 boards on production, so the widened `IN` list is noise
     # against the 429 the sibling already sends.
-    candidates = [
+    return [
         o
         for o in market.outcomes
         if needs_trade_evidence(
@@ -3722,17 +3740,31 @@ async def _unsupported_price_outcome_ids(
             last_seen_at=getattr(o, "last_updated", None),
         )
     ]
-    if not candidates:
-        return set()
 
-    candidate_ids = [o.id for o in candidates]
+
+async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dict:
+    """`{outcome_id: last_price}` at each leg's newest Kalshi capture (#7632).
+
+    THE ONLY PART OF THIS ARM THAT TOUCHES THE DATABASE, AND IT IS KEYED ON AN
+    ID LIST RATHER THAN A MARKET SO IT BATCHES. The page passes one board's
+    candidates; the snapshot builder passes every candidate leg on the feed's
+    whole pool and gets back one dict in ONE query. The per-board loop the naive
+    wiring would have written is what turns "share the page's rule" into a
+    per-card query on `/api/feed`, which decision (b) explicitly forbids.
+
+    An empty id list is answered WITHOUT a query — a pool whose boards hold no
+    candidate must cost nothing, which is the same property the per-market arm
+    had before the split.
+    """
+    if not outcome_ids:
+        return {}
     newest = (
         select(
             FuturesOddsSnapshot.outcome_id,
             func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
         )
         .where(
-            FuturesOddsSnapshot.outcome_id.in_(candidate_ids),
+            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
             FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER,
         )
         .group_by(FuturesOddsSnapshot.outcome_id)
@@ -3756,8 +3788,23 @@ async def _unsupported_price_outcome_ids(
     # Two Kalshi snapshots can share one `captured_at`; the aggregate above keeps
     # the HIGHEST last_price among them, which is the fail-open direction — any
     # trade evidence at all leaves the price on the page.
-    latest_trade = {outcome_id: price for outcome_id, price in rows.all()}
+    return {outcome_id: price for outcome_id, price in rows.all()}
 
+
+def _unsupported_price_verdicts(
+    market: FuturesMarket, candidates: list, latest_trade: dict
+) -> set[int]:
+    """Which candidates the two #5611/#7747 screens actually refuse (#7632 split).
+
+    Pure, so the batched builder and the per-market page path reach an identical
+    answer from an identical dict. `latest_trade` may hold ids belonging to other
+    boards when the builder batches — every read here is keyed on `o.id`, so a
+    wider dict is inert rather than contaminating.
+    """
+    in_exclusive_field = market_is_proved_exclusive_field(
+        getattr(market, "market_type", None),
+        getattr(market, "market_metadata", None),
+    )
     return {
         o.id
         for o in candidates
@@ -3830,7 +3877,27 @@ async def _refuted_midpoint_outcome_ids(
     if venue not in MIDPOINT_TRADE_SOURCES:
         return set()
 
-    candidates = [
+    candidates = _refuted_midpoint_candidates(market)
+    if not candidates:
+        return set()
+    rows = await _newest_venue_trade_rows(db, venue, [o.id for o in candidates])
+    latest_trade = _closest_trade_by_outcome(candidates, rows)
+    return _refuted_midpoint_verdicts(market, candidates, latest_trade)
+
+
+def _refuted_midpoint_candidates(market: FuturesMarket) -> list:
+    """The legs of this market worth a venue trade read (#7632 split).
+
+    Carries the VENUE GATE, not just the per-leg screen, so a caller batching
+    many boards cannot accidentally send a non-midpoint venue's legs to the
+    trade query: a market whose source is outside `MIDPOINT_TRADE_SOURCES` has
+    no candidates at all, exactly as the per-market arm decided before the
+    split. See `_unsupported_price_candidates` for why the screen is a named
+    function rather than an inline comprehension.
+    """
+    if (market.source or "").strip().lower() not in MIDPOINT_TRADE_SOURCES:
+        return []
+    return [
         o
         for o in market.outcomes
         if needs_trade_disconfirmation(
@@ -3841,17 +3908,29 @@ async def _refuted_midpoint_outcome_ids(
             _as_float(getattr(o, "current_yes_ask", None)),
         )
     ]
-    if not candidates:
-        return set()
 
-    candidate_ids = [o.id for o in candidates]
+
+async def _newest_venue_trade_rows(
+    db: AsyncSession, venue: str, outcome_ids: list[int]
+) -> list:
+    """Raw `(outcome_id, last_price)` at each leg's newest capture on `venue`.
+
+    RAW ROWS, NOT A DICT, because this arm's pick is not "the max" — it is "the
+    trade closest to the served midpoint among those sharing the newest
+    `captured_at`", and that choice needs the served probability, which is a
+    per-market fact. So the query batches (one call per venue for the whole
+    pool) and `_closest_trade_by_outcome` folds per board. Empty id list costs
+    no query, same as the Kalshi sibling.
+    """
+    if not outcome_ids:
+        return []
     newest = (
         select(
             FuturesOddsSnapshot.outcome_id,
             func.max(FuturesOddsSnapshot.captured_at).label("captured_at"),
         )
         .where(
-            FuturesOddsSnapshot.outcome_id.in_(candidate_ids),
+            FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
             FuturesOddsSnapshot.bookmaker == venue,
         )
         .group_by(FuturesOddsSnapshot.outcome_id)
@@ -3871,9 +3950,24 @@ async def _refuted_midpoint_outcome_ids(
         )
         .where(FuturesOddsSnapshot.bookmaker == venue)
     )
+    return list(rows.all())
+
+
+def _closest_trade_by_outcome(candidates: list, rows: list) -> dict:
+    """Per leg, the newest-capture trade nearest its served midpoint (#7632 split).
+
+    ⚠️ ROWS BELONGING TO OTHER BOARDS ARE SKIPPED, NOT FOLDED. When the snapshot
+    builder batches a venue's whole pool into one query, this fold is handed
+    rows for legs that are not this market's candidates. Keying the skip on
+    `served` membership keeps the batched answer byte-identical to the
+    per-market one — and on the per-market path every row is a candidate, so
+    the filter is a no-op there rather than a behaviour change.
+    """
     served = {o.id: _as_float(o.current_probability) for o in candidates}
     latest_trade: dict[int, float] = {}
-    for outcome_id, last_price in rows.all():
+    for outcome_id, last_price in rows:
+        if outcome_id not in served:
+            continue
         price = _as_float(last_price)
         if price is None:
             continue
@@ -3883,7 +3977,13 @@ async def _refuted_midpoint_outcome_ids(
             target is not None and abs(price - target) < abs(held - target)
         ):
             latest_trade[outcome_id] = price
+    return latest_trade
 
+
+def _refuted_midpoint_verdicts(
+    market: FuturesMarket, candidates: list, latest_trade: dict
+) -> set[int]:
+    """Which candidates the #5876 midpoint screen actually refuses (#7632 split)."""
     return {
         o.id
         for o in candidates
@@ -4220,6 +4320,137 @@ async def _withheld_price_outcome_ids(
     # fact about the column a reader is actually shown. See the arm's docstring.
     ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
     return ids
+
+
+async def withheld_price_outcome_ids_for_markets(
+    db: AsyncSession, markets: Sequence[FuturesMarket]
+) -> dict[int, set[int]]:
+    """`_withheld_price_outcome_ids` over MANY boards, in a constant query count.
+
+    #7632. THE CARD AND THE PAGE DISAGREED BECAUSE ONLY THE PAGE ASKED. The
+    detail route refuses a leg's price through the five arms above; the Discover
+    card ran none of them, so it printed prices the page withholds and divided by
+    a mass that still contained them. Three boards on the served feed of
+    2026-09-23 06:09Z, matched by outcome id:
+
+        61960017  WTA Seoul      card: Birrell/Tararudee/Bondar all 49%
+                                 page: prices 1 of 16 legs, all three withheld
+        61437318  WTA Singapore  card leader Kasatkina 31%
+                                 page withholds her; hero is Eala 28.5%
+        61734333  LPGA NW Ark.   page withholds 100 of 144, prints Yamashita 11%
+                                 card divides by the fuller mass, prints 7.65%
+
+    Seoul is the one to read: a card offering three co-favourites at 49% lands on
+    a page that will not price any of them. Singapore is worse in kind — the card
+    NAMES A LEADER the page refuses, so a tap inverts the story.
+
+    ═══ WHY A SEPARATE ENTRY POINT AND NOT A LOOP ═══
+
+    Calling the per-market helper once per board is the obvious wiring and it is
+    the one thing decision (b) forbids: two queries per card on the feed's build
+    path. Both database arms are `IN`-list reads keyed on a bookmaker, so they
+    batch — the Kalshi arm collapses to ONE query for the entire pool, and the
+    midpoint arm to one per distinct venue, of which `MIDPOINT_TRADE_SOURCES`
+    admits two. **Four queries at most, whatever the pool size.** That is
+    strictly cheaper than the per-board budget the decision approved.
+
+    The arms are not re-implemented here. Each was split into (candidates → trade
+    read → verdict) and this function reuses the same pure halves the page path
+    calls, which is `_withheld_price_outcome_ids`'s own "ONE HELPER, NOT A FIFTH
+    SPELLING" obeyed rather than evaded: a sixth arm, or a change to any existing
+    one, reaches the card and the page together or not at all.
+
+    ⚠️ THE CALLER MUST HAVE LOADED `resolution_source`, `volume_24h`,
+    `volume_24h_at` AND `is_winner`. Every read of them below is a `getattr`
+    defaulting to `None`, which on a `load_only`-restricted row is not a crash —
+    it is a screen that quietly refuses nothing, the "a DIFFERENT feed, not a
+    cheaper one" failure `futures_market_snapshot` exists to prevent. Those four
+    are in `OUTCOME_LOAD_ONLY_EXTRA` for exactly this reason, and
+    `test_card_and_page_share_the_withheld_set_7632` pins them there.
+
+    Returns a mapping keyed by market id, holding an empty set for a board that
+    refuses nothing. A board is OMITTED only when evaluating it raised — see the
+    per-market guard below. Missing and empty are different facts downstream
+    (see `_drop_withheld_price_legs`), which is what makes omission safe.
+
+    ⚠️ ONE BAD BOARD MUST NEVER WIPE THE POOL (gotcha #42). This runs OUTSIDE
+    the serializers' per-item `try`, in the shared-artifact builder, so an
+    unconverted string on one market's leg would otherwise take down the whole
+    futures pass — `test_poison_market_does_not_wipe_futures_pass` caught
+    exactly that on the first cut of this function and was right to. Every
+    market is therefore evaluated under its own guard, and a board that raises
+    is left OUT of the map, which the consumer reads as "not computed" and so
+    serves at its pre-#7632 numbers. The failure direction is one card keeping
+    the prices the page refuses, never a feed with no futures in it.
+    """
+    unsupported_candidates: dict[int, list] = {}
+    midpoint_candidates: dict[int, list] = {}
+    kalshi_ids: list[int] = []
+    venue_ids: dict[str, list[int]] = {}
+    unreadable: set[int] = set()
+
+    for market in markets:
+        try:
+            unsupported = _unsupported_price_candidates(market)
+            midpoint = _refuted_midpoint_candidates(market)
+        except Exception:
+            logger.warning(
+                "withheld-price screen could not read market %s — its card "
+                "keeps its pre-#7632 prices",
+                getattr(market, "id", None),
+                exc_info=True,
+            )
+            unreadable.add(getattr(market, "id", None))
+            continue
+        if unsupported:
+            unsupported_candidates[market.id] = unsupported
+            kalshi_ids.extend(o.id for o in unsupported)
+        if midpoint:
+            midpoint_candidates[market.id] = midpoint
+            venue = (market.source or "").strip().lower()
+            venue_ids.setdefault(venue, []).extend(o.id for o in midpoint)
+
+    latest_kalshi_trade = await _newest_kalshi_trades(db, kalshi_ids)
+    venue_rows = {
+        venue: await _newest_venue_trade_rows(db, venue, ids)
+        for venue, ids in venue_ids.items()
+    }
+
+    withheld: dict[int, set[int]] = {}
+    for market in markets:
+        if getattr(market, "id", None) in unreadable:
+            continue
+        try:
+            ids: set[int] = set()
+            unsupported = unsupported_candidates.get(market.id)
+            if unsupported:
+                ids |= _unsupported_price_verdicts(
+                    market, unsupported, latest_kalshi_trade
+                )
+            midpoint = midpoint_candidates.get(market.id)
+            if midpoint:
+                venue = (market.source or "").strip().lower()
+                ids |= _refuted_midpoint_verdicts(
+                    market,
+                    midpoint,
+                    _closest_trade_by_outcome(midpoint, venue_rows.get(venue, [])),
+                )
+            ids |= _book_refuted_outcome_ids(market)
+            ids |= _empty_book_outcome_ids(market)
+            # Last, and reading the four above — the same composition order as
+            # the per-market helper, because this arm's gate is a fact about
+            # what the OTHER four already took away.
+            ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
+        except Exception:
+            logger.warning(
+                "withheld-price screen could not grade market %s — its card "
+                "keeps its pre-#7632 prices",
+                getattr(market, "id", None),
+                exc_info=True,
+            )
+            continue
+        withheld[market.id] = ids
+    return withheld
 
 
 @router.get("/{market_id}")

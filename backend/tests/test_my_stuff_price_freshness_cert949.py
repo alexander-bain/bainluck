@@ -393,7 +393,10 @@ class TestTheSnapshotCarriesIt:
         `top_price_observed_at`, the third, then `(5, 32, 12, 2)` ->
         `(6, 31, 13, 2)` when #5809 was completed: that market column removed and
         `price_observed_epoch` added to the OUTCOME row, then
-        `(6, 31, 13, 2)` -> `(7, 32, 13, 2)` for #7808's `mutually_exclusive`.
+        `(6, 31, 13, 2)` -> `(7, 32, 13, 2)` for #7808's `mutually_exclusive`,
+        then `(7, 32, 13, 2)` -> `(8, 33, 13, 2)` for #7632's
+        `withheld_outcome_ids` — the detail page's refused-price set, carried so
+        both card serializers drop what the page drops.
 
         The third rot is the one this tuple was really written for. Both widths
         moved in the SAME commit and in OPPOSITE directions, so a v5 entry read
@@ -408,7 +411,7 @@ class TestTheSnapshotCarriesIt:
             len(fms.OUTCOME_ROW_COLUMNS),
             len(fms.SPORT_COLUMNS),
         )
-        assert shape == (7, 32, 13, 2), (
+        assert shape == (8, 33, 13, 2), (
             "the snapshot wire shape changed. Bump `SNAPSHOT_SCHEMA_VERSION` "
             "(it is part of the shared cache key, so the bump is what stops this "
             "build reading a predecessor's rows) and update this tuple."
@@ -703,16 +706,30 @@ class TestTheCallSiteReadsTheDerivedStamp:
         """
         assert "priced_at=_utc(market.updated_at)" not in self._source()
 
-    def test_the_build_stays_one_statement(self):
-        """The fold rides the hydration SELECT; no second query joins it.
+    def test_the_fold_still_rides_the_hydration_select(self):
+        """No second query re-derives `price_polled_at`.
 
         Measured, not preferred: the `GROUP BY` version of this cost 423 ms warm
         on production against a 588 ms stage. A future edit that reintroduces it
         should have to argue with that number, so the number has a test.
+
+        #7632 SPLIT THE CALL ACROSS TWO LINES AND THAT IS ALL IT DID TO THIS
+        RULE. The builder now names the hydrated rows (`loaded`) so it can hand
+        the SAME list to both `to_plain` and the withheld-price screen, instead
+        of consuming the result iterator inline. The fold still reads the rows
+        this SELECT already loaded; nothing re-queries for them. So the
+        assertion moves from "it is one statement" — which was a proxy — to the
+        two things actually being protected: the fold's input IS the hydration
+        result, and the rejected `GROUP BY` is still absent.
+
+        (What #7632 DID add to this builder is a bounded, batched trade read for
+        a different column. It is not this fold, it does not scale with the
+        pool, and it has its own guard —
+        `test_card_and_page_share_the_withheld_set_7632`'s query-count class.)
         """
-        assert "return _futures_snapshot.to_plain(result.scalars().unique().all())" in (
-            self._source()
-        )
+        source = self._source()
+        assert "loaded = result.scalars().unique().all()" in source
+        assert "_futures_snapshot.to_plain(\n                loaded," in source
         # Code lines only — the call site's own comment names the statement it
         # rejected, and a scan that counted the comment could never pass.
         code = "\n".join(
