@@ -158,8 +158,17 @@ Dry-run by default; ``--apply`` writes. The undo is
 
 Refuses to run anywhere but ``bainluck-heavy`` (notice 47(c): the runtime DDL
 below is attended-invocation-only, which is what keeps it out of migration
-class). Idempotent: a second run finds every row already at its target and
-reports ``ALREADY_REPAIRED``.
+class). Idempotent: a second run writes nothing and reports every pinned leg as
+``ALREADY_REPAIRED``.
+
+That last sentence is only true because of :func:`reconcile_pinned`, and it is
+worth knowing why. A repaired leg cannot come back from the DERIVATION at all —
+the population predicate requires ``fo.is_winner IS TRUE`` and the repair sets
+that column false — so for the first version of this script a second run printed
+``ALREADY_REPAIRED : 0`` and ``MISSING from derivation: 56``, which is the same
+line a retention purge would print. The pinned legs are therefore reconciled
+against their own current row, and the run's last line names which state the
+cohort is in rather than saying "nothing written" for four different reasons.
 
 BY DEFAULT IT REPAIRS ONLY THE PINNED :data:`EXPECTED` LEGS, and that is
 deliberate. ``run_settlement_sweep`` banks ~3,000 boards a night, so the derived
@@ -228,6 +237,26 @@ ALREADY_REPAIRED = "ALREADY_REPAIRED"
 DIVERGED = "DIVERGED"
 NEW = "NEW"
 WOULD_DOWNGRADE = "WOULD_DOWNGRADE"
+
+#: Verdicts that exist only for a PINNED leg the derivation did not return, and
+#: are reachable only through :func:`reconcile_pinned`. See its docstring for why
+#: the derivation cannot speak about a repaired leg at all.
+EVIDENCE_GONE = "EVIDENCE_GONE"
+MOVED = "MOVED"
+GONE = "GONE"
+
+#: Every verdict, in the order the report prints them. Named once so a new
+#: verdict cannot be added and silently left out of the operator's summary.
+VERDICTS: tuple[str, ...] = (
+    REPAIR,
+    ALREADY_REPAIRED,
+    NEW,
+    DIVERGED,
+    WOULD_DOWNGRADE,
+    EVIDENCE_GONE,
+    MOVED,
+    GONE,
+)
 
 #: (outcome_id, market_id, ticker, venue_result, prior_resolution_source).
 #: Measured on production 2026-09-23 00:50-01:05Z; every row `is_winner = TRUE`.
@@ -455,6 +484,103 @@ async def derive(session) -> list[dict]:
     return plan
 
 
+async def reconcile_pinned(session, plan: list[dict]) -> list[dict]:
+    """Account for every pinned leg :func:`derive` did not return.
+
+    ⭐ THE REASON THIS EXISTS. :func:`_population_sql` requires
+    ``fo.is_winner IS TRUE``, and the repair's entire effect is to set that
+    column FALSE. So a leg this script has successfully repaired can never come
+    back from the derivation again — and :data:`ALREADY_REPAIRED`, whose branch
+    in :func:`derive` tests ``row["is_winner"] is False``, is **unreachable
+    through the derivation**: it asks for a value the query it reads from has
+    already excluded. The docstring's promise that "a second run finds every row
+    already at its target and reports ALREADY_REPAIRED" was therefore false. What
+    a second run actually printed was ``ALREADY_REPAIRED : 0`` and
+    ``MISSING from derivation: 56``.
+
+    That is not cosmetic, because MISSING is also what a genuine emergency looks
+    like. Kalshi MARKET data purges at ≥74/<86 days (gotcha #35, measured), and
+    these are July tickers — so within weeks "the capture evidence aged out" will
+    produce the SAME line as "the repair worked". An operator re-running the
+    dry-run to ask *is the repair holding?* — which is exactly the +6h survival
+    question this repair owes — could not tell the healthy state from the
+    alarming one, and the alarming one is the one that needs them.
+
+    So the pinned legs are reconciled against their OWN CURRENT ROW, through a
+    read that does not touch `settlement_captures` at all. That read is the only
+    thing in this script that can distinguish:
+
+    * :data:`ALREADY_REPAIRED` — ``is_winner`` false and stamped with the target
+      this leg earns. The repair landed and is holding. **Healthy.**
+    * :data:`EVIDENCE_GONE` — the leg is still ``is_winner = TRUE``, so it did
+      not move; what vanished is the capture that evidenced it. Retention purge,
+      a `_head`-clipped payload, or a deleted capture. **Not repaired, and no
+      longer provable from our own tables.**
+    * :data:`MOVED` — false, but carrying some other source. Another grader
+      reached it. Not this script's write, and not this script's to undo.
+    * :data:`GONE` — the outcome row itself no longer exists.
+
+    A leg a price crowner handed BACK is deliberately not in that list: it
+    returns to ``is_winner = TRUE`` with its evidence intact, so the derivation
+    returns it and grades it :data:`REPAIR` again, which is already the loudest
+    thing the report can say. That is the clawback the ``guard_is_live`` refusal
+    exists to prevent, and it stays where it was.
+    """
+    seen = {row["outcome_id"] for row in plan}
+    absent = [oid for oid in sorted(EXPECTED_BY_ID) if oid not in seen]
+    if not absent:
+        return []
+
+    rows = (
+        await session.execute(
+            text("""
+                SELECT id, is_winner, COALESCE(resolution_source, '') AS source
+                FROM futures_outcomes
+                WHERE id = ANY(:ids)
+            """),
+            {"ids": absent},
+        )
+    ).all()
+    current = {oid: (is_winner, source) for oid, is_winner, source in rows}
+
+    reconciled: list[dict] = []
+    for oid in absent:
+        _, market_id, ticker, venue_result, prior_source = EXPECTED_BY_ID[oid]
+        target = RETRACTION_FOR[venue_result]
+        row = {
+            "outcome_id": oid,
+            "market_id": market_id,
+            "ticker": ticker,
+            "venue_result": venue_result,
+            "is_winner": None,
+            "prior_source": prior_source,
+            "target_source": target,
+            "verdict": GONE,
+            "why": "outcome row no longer exists",
+        }
+        if oid in current:
+            is_winner, source = current[oid]
+            row["is_winner"] = is_winner
+            if is_winner is True:
+                row["verdict"] = EVIDENCE_GONE
+                row["why"] = (
+                    "still a winner, but no capture evidences it any more — "
+                    "this leg is NOT repaired and can no longer be proved from "
+                    "our own tables (Kalshi market data purges at 74-86 days)"
+                )
+            elif source == target:
+                row["verdict"] = ALREADY_REPAIRED
+                row["why"] = ""
+            else:
+                row["verdict"] = MOVED
+                row["why"] = (
+                    f"another grader stamped it {source!r}, not this repair's "
+                    f"{target!r}"
+                )
+        reconciled.append(row)
+    return reconciled
+
+
 async def bank_pre_image(session, writable: list[dict]) -> None:
     """Write the pre-image BEFORE the first UPDATE, or write nothing at all."""
     await session.execute(
@@ -544,6 +670,65 @@ def _summarise(plan: list[dict]) -> dict[str, int]:
     return out
 
 
+#: Verdicts that mean "an operator should look at this leg". Everything else is
+#: the work itself (:data:`REPAIR`), the healthy resting state
+#: (:data:`ALREADY_REPAIRED`), or deliberately held back (:data:`NEW`).
+NEEDS_AN_EYE: tuple[str, ...] = (DIVERGED, WOULD_DOWNGRADE, EVIDENCE_GONE, MOVED, GONE)
+
+
+def state_sentence(plan: list[dict], writable: list[dict], include_new: bool) -> str:
+    """One sentence naming which state the pinned cohort is actually in.
+
+    The line this replaces was ``nothing writable — no rows touched.``, printed
+    identically whether every leg was repaired and holding, every leg had been
+    clawed back by another grader, or the derivation had returned nothing at
+    all. "It returned" is not "it worked" (gotcha #53): a zero-yield run has to
+    say WHICH zero it is, and the healthy zero and the alarming zero are the two
+    an operator most needs told apart.
+    """
+    if writable:
+        return f"{len(writable)} row(s) to write."
+
+    summary = _summarise(plan)
+    repaired = summary.get(ALREADY_REPAIRED, 0)
+    concerning = {v: summary[v] for v in NEEDS_AN_EYE if summary.get(v)}
+    held = 0 if include_new else summary.get(NEW, 0)
+    # Appended rather than folded into the branch below, because a fully repaired
+    # cohort IS holding even when unpinned legs are waiting — but an operator who
+    # reads only the last line still has to be told they are waiting.
+    held_clause = (
+        f" {held} NEW leg(s) held back — pass --include-new to write them."
+        if held
+        else ""
+    )
+
+    if repaired == len(EXPECTED) and not concerning:
+        return (
+            f"the repair is applied and HOLDING: all {repaired} pinned legs "
+            f"carry their retraction.{held_clause}"
+        )
+
+    parts: list[str] = []
+    if repaired:
+        parts.append(
+            f"{repaired} of {len(EXPECTED)} pinned legs repaired and holding"
+        )
+    if concerning:
+        parts.append(
+            "needs an eye: " + ", ".join(f"{n} {v}" for v, n in concerning.items())
+        )
+    if held:
+        parts.append(
+            f"{held} NEW leg(s) held back — pass --include-new to write them"
+        )
+    if not parts:
+        return (
+            "nothing was derived and no pinned leg was reconciled — check the "
+            "capture table and the join before concluding anything."
+        )
+    return "; ".join(parts) + "."
+
+
 async def run(apply: bool, include_new: bool) -> int:
     refusal = wrong_app_refusal()
     if refusal:
@@ -560,34 +745,62 @@ async def run(apply: bool, include_new: bool) -> int:
             )
             return 2
 
-        plan = await derive(session)
+        derived = await derive(session)
+        # Every pinned leg the derivation could not speak about — which after a
+        # successful apply is ALL of them, because the repair sets the column the
+        # population SQL filters on. See `reconcile_pinned`.
+        reconciled = await reconcile_pinned(session, derived)
+        plan = derived + reconciled
         summary = _summarise(plan)
         writable = writable_rows(plan, include_new)
 
         print(f"#8132 fabricated-win retraction — {'APPLY' if apply else 'DRY RUN'}")
         print(f"  pinned EXPECTED legs : {len(EXPECTED)}")
-        print(f"  derived legs         : {len(plan)}")
-        for verdict in (REPAIR, ALREADY_REPAIRED, NEW, DIVERGED, WOULD_DOWNGRADE):
+        print(f"  derived legs         : {len(derived)}")
+        print(f"  reconciled pinned    : {len(reconciled)}")
+        for verdict in VERDICTS:
             print(f"  {verdict:<18} : {summary.get(verdict, 0)}")
         print(f"  writable             : {len(writable)}")
 
-        for row in plan:
-            if row["verdict"] in (DIVERGED, WOULD_DOWNGRADE, NEW):
-                print(
-                    f"    {row['verdict']} {row['outcome_id']} {row['ticker']} "
-                    f"{row['why']}"
+        # Grouped by reason rather than one line per row. The derived verdicts
+        # carry a per-row `why` and still print individually; the reconciled ones
+        # share a single sentence across the whole cohort, and EVIDENCE_GONE is
+        # bulk by nature — retention will eventually take all 56 at once, and 56
+        # repetitions of one 200-character sentence is not a report.
+        for verdict in (NEW, *NEEDS_AN_EYE):
+            rows = [r for r in plan if r["verdict"] == verdict]
+            if not rows:
+                continue
+            by_why: dict[str, list[dict]] = {}
+            for row in rows:
+                by_why.setdefault(row["why"], []).append(row)
+            for why, group in by_why.items():
+                print(f"    {verdict} x{len(group)}{': ' + why if why else ''}")
+                shown = ", ".join(
+                    f"{r['outcome_id']} {r['ticker']}" for r in group[:5]
                 )
+                extra = f" (+{len(group) - 5} more)" if len(group) > 5 else ""
+                print(f"      {shown}{extra}")
 
-        missing = sorted(set(EXPECTED_BY_ID) - {r["outcome_id"] for r in plan})
-        if missing:
-            print(f"  MISSING from derivation: {len(missing)} -> {missing[:10]}")
+        # Every pinned leg is now accounted for by name — `reconcile_pinned`
+        # gives one to each id the derivation dropped, so this can only fire if
+        # that accounting is broken. It is a loud invariant, not a status line.
+        unaccounted = sorted(set(EXPECTED_BY_ID) - {r["outcome_id"] for r in plan})
+        if unaccounted:
+            print(
+                f"  ⛔ UNACCOUNTED pinned legs: {len(unaccounted)} -> "
+                f"{unaccounted[:10]} — the reconciliation is broken; do not read "
+                "this run as evidence of anything"
+            )
+
+        state = state_sentence(plan, writable, include_new)
 
         if not apply:
-            print("\ndry run — nothing written. Re-run with --apply.")
+            print(f"\ndry run — nothing written. {state}")
             return 0
 
         if not writable:
-            print("\nnothing writable — no rows touched.")
+            print(f"\nnothing writable — no rows touched. {state}")
             return 0
 
         await bank_pre_image(session, writable)
