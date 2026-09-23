@@ -7,7 +7,7 @@ import os
 import re
 import time
 from collections import Counter
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
 from copy import deepcopy
@@ -2238,6 +2238,49 @@ async def _fetch_futures_window(
         # `budget_exceeded`: this arm never touched the database (gotcha #53).
         return tier1_rows, "shed"
     await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+
+    async def _refetch_tier1() -> list:
+        """The pre-LAT-P278 recovery: full rollback, then re-read the name arm."""
+        await _recover_search_session(db, deadline)
+        if not tier1_arms:  # pragma: no cover - the name arm is always built
+            return []
+        return list(
+            (await db.execute(window_query(candidates_in(tier1_arms))))
+            .scalars()
+            .unique()
+            .all()
+        )
+
+    # LAT-P278/#1619: the arm runs inside a SAVEPOINT, so blowing the budget costs
+    # the arm and nothing else.
+    #
+    # 🔴 THE OLD SHAPE HERE WAS WRONG ABOUT ITS OWN COST, AND SAID SO IN A COMMENT.
+    # It recovered with a FULL rollback, which expires every ORM row in the session
+    # (gotcha #6), so `tier1_rows` had to be discarded and re-read — justified as
+    # re-reading "the cheap arm (the one measured at 114-204 ms)". That number is
+    # the tier<=1 arm measured on HEALTHY queries, and this path only ever runs on
+    # the pathological ones. The tier<=1 NAME predicate is synonym-expanded too,
+    # and on the queries that actually reach here it is the most expensive thing in
+    # the stage. Production `EXPLAIN (ANALYZE)`, 2026-09-23:
+    #
+    #     f1 champion   name ILIKE '%f1%' AND (%champion% OR %winner%)   1,124 ms
+    #     f1 winner     name ILIKE '%f1%' AND (%winner% OR %champion%)   1,362 ms
+    #     f1 masters    name ILIKE '%f1%' AND %masters%                     42 ms
+    #
+    # `f1 champion` measured a 4,920-5,536 ms futures stage while reporting
+    # `budget_exceeded` against a 1,000 ms bound — two executions of a 1.1 s name
+    # arm is where that time goes, not the bounded arm.
+    #
+    # ⭐ The general shape, worth carrying past this file: a fallback path's cost
+    # was estimated from the healthy population, but a fallback only ever runs on
+    # the sick one. Cost a recovery on the inputs that actually reach it.
+    #
+    # Rolling back to the savepoint leaves the OUTER transaction alive, and with it
+    # every row already loaded, so the name matches are returned as they stand —
+    # set-identical to what the re-read produced, same rows in the same order. The
+    # price is one SAVEPOINT + one RELEASE round trip on the healthy path; stated
+    # here rather than hidden, and pinned by `test_the_healthy_path_is_untouched`.
+    nested = await db.begin_nested()
     try:
         outcome_rows = (
             (await db.execute(window_query(candidates_in([outcome_arm]))))
@@ -2247,30 +2290,38 @@ async def _fetch_futures_window(
         )
     except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
         if not _is_query_timeout(exc):
+            # A real error. Release the savepoint's aborted state before handing it
+            # up, so the caller's own recovery is not fighting a poisoned
+            # transaction — but never let that cleanup mask the original error.
+            with suppress(Exception):
+                await nested.rollback()
             raise
-        # The arm blew its own budget. Before this existed the cancellation
-        # propagated to the caller, which empties the WHOLE futures bucket and
-        # logs a recall failure — so the expensive arm's failure cost the reader
-        # the cheap arm's answer too. The tier<=1 rows are already in hand and
-        # every one of them outranks every row this arm could have returned.
+        # The arm blew its own budget. Before LAT-P271 the cancellation propagated
+        # to the caller, which empties the WHOLE futures bucket and logs a recall
+        # failure — so the expensive arm's failure cost the reader the cheap arm's
+        # answer too. The tier<=1 rows are already in hand and every one of them
+        # outranks every row this arm could have returned.
         logger.warning(
             "search futures outcome arm exceeded its %d ms budget — keeping the "
             "%d name matches", bound_ms, len(tier1_rows),
         )
-        await _recover_search_session(db, deadline)
-        # 🔴 gotcha #6: that rollback EXPIRED every ORM row we are holding, so
-        # `tier1_rows` cannot be returned — serialising it would lazy-load on a
-        # rolled-back session. Re-read the cheap arm (the one measured at 114-204
-        # ms) rather than hand the caller rows that raise when they are rendered.
-        if not tier1_arms:  # pragma: no cover - the name arm is always built
-            return [], "budget_exceeded"
-        refetched = list(
-            (await db.execute(window_query(candidates_in(tier1_arms))))
-            .scalars()
-            .unique()
-            .all()
-        )
-        return refetched, "budget_exceeded"
+        try:
+            await nested.rollback()
+        except Exception as rollback_exc:  # noqa: BLE001
+            # The savepoint could not be released, so the transaction's state is
+            # unknown and `tier1_rows` cannot be trusted. Fall back to the shape
+            # this replaced rather than serve rows that may raise when rendered.
+            logger.warning(
+                "search futures savepoint rollback failed (%s) — falling back to "
+                "the full-rollback recovery", rollback_exc,
+            )
+            return await _refetch_tier1(), "budget_exceeded"
+        # `SET LOCAL statement_timeout` was applied OUTSIDE the savepoint, so it is
+        # still the arm's budget and would silently bound every REMAINING stage of
+        # the request at it. Put the stage's own bound back.
+        await _apply_search_statement_timeout(db, deadline)
+        return tier1_rows, "budget_exceeded"
+    await nested.commit()
     merged = list(tier1_rows)
     seen = {m.id for m in merged}
     for m in outcome_rows:
