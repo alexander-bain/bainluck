@@ -56,6 +56,7 @@ from __future__ import annotations
 
 __all__ = [
     "unescape_like_pattern",
+    "pattern_token_spans",
     "pattern_matches_token",
     "any_pattern_matches_token",
 ]
@@ -87,28 +88,40 @@ def _is_token_char(ch: str) -> bool:
     return ch.isalnum()
 
 
-def pattern_matches_token(label: str, pattern: str) -> bool:
-    """True when ``pattern`` (ILIKE-escaped, case-insensitive) occupies whole
-    tokens somewhere in ``label``. See the module docstring for the rule."""
+def pattern_token_spans(label: str, pattern: str) -> list[tuple[int, int]]:
+    """Every ``(start, end)`` at which ``pattern`` (ILIKE-escaped,
+    case-insensitive) occupies whole tokens of ``label``, in label order.
+
+    The same rule as :func:`pattern_matches_token`, which is ``bool`` of this.
+    Added for #7867, whose identity test needs to know WHERE a token matched so
+    it can ask whether that span sits inside a longer known club name.
+    """
     if not label or not pattern:
-        return False
+        return []
     needle = unescape_like_pattern(pattern).lower()
     if not needle:
-        return False
+        return []
     hay = label.lower()
 
     need_left = _is_token_char(needle[0])
     need_right = _is_token_char(needle[-1])
 
+    spans: list[tuple[int, int]] = []
     start = hay.find(needle)
     while start != -1:
         end = start + len(needle)
         left_ok = (not need_left) or start == 0 or not _is_token_char(hay[start - 1])
         right_ok = (not need_right) or end == len(hay) or not _is_token_char(hay[end])
         if left_ok and right_ok:
-            return True
+            spans.append((start, end))
         start = hay.find(needle, start + 1)
-    return False
+    return spans
+
+
+def pattern_matches_token(label: str, pattern: str) -> bool:
+    """True when ``pattern`` (ILIKE-escaped, case-insensitive) occupies whole
+    tokens somewhere in ``label``. See the module docstring for the rule."""
+    return bool(pattern_token_spans(label, pattern))
 
 
 def any_pattern_matches_token(label: str, patterns: list[str]) -> bool:

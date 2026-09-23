@@ -21918,9 +21918,15 @@ async def _build_related_futures(
         build_team_alias_index,
         ticker_team_ids,
     )
+    from app.utils.team_label_identity import (
+        build_label_identity,
+        label_names_another_club,
+    )
 
     team_index = None
     team_rows: list = []
+    home_label_identity = None
+    away_label_identity = None
 
     async def _load_team_roster():
         """The sport's roster, read AT MOST ONCE and shared with the merge below.
@@ -21928,22 +21934,45 @@ async def _build_related_futures(
         Both consumers — this veto and `merge_relabel_collisions` — need the same
         rows, and the logo enrichment further down needs the same query's extra
         columns, so whichever asks first pays and the others are free.
+
+        #7867 — THE SAME READ NOW SPANS THE SPORT FAMILY, and is partitioned
+        here. The candidate pool above is family-wide (`basketball%`,
+        `baseball%` — every `Sport` with this prefix), which is how an NPB
+        title reaches an MLB page and an NBA title a WNBA page. The identity
+        that can refuse those rows lives in `teams` at the same width: Yomiuri
+        Giants is a `baseball_npb` row, Bridgeport Islanders an `icehockey_ahl`
+        row. So the query is widened by one JOIN and one column (`sport_id`),
+        still ONE query, and every consumer this function already had —
+        `team_index` for the ticker/alias veto and the merge, `team_rows` for
+        the logos — keeps receiving EXACTLY the event's own league rows, so a
+        cross-league abbreviation collision (`MIN` is the Lynx and the
+        Timberwolves) can never poison the #8052 ticker path. Only the
+        two new per-side label identities see the whole family.
         """
-        nonlocal team_index, team_rows
+        nonlocal team_index, team_rows, home_label_identity, away_label_identity
         if team_index is None and event.sport_id:
-            team_rows = (
+            family_rows = (
                 await db.execute(
                     select(
                         Team.id,
+                        Team.sport_id,
                         Team.name,
                         Team.abbreviation,
                         Team.location,
                         Team.alternate_names,
                         Team.logo_url_small,
                         Team.logo_url,
-                    ).where(Team.sport_id == event.sport_id)
+                    )
+                    .join(Sport, Team.sport_id == Sport.id)
+                    .where(
+                        or_(
+                            Team.sport_id == event.sport_id,
+                            Sport.key.like(f"{sport_prefix}%"),
+                        )
+                    )
                 )
             ).all()
+            team_rows = [t for t in family_rows if t.sport_id == event.sport_id]
             team_index = build_team_alias_index(
                 [
                     {
@@ -21955,6 +21984,30 @@ async def _build_related_futures(
                     }
                     for t in team_rows
                 ]
+            )
+            identity_rows = [
+                {
+                    "id": t.id,
+                    "sport_id": t.sport_id,
+                    "name": t.name,
+                    "abbreviation": t.abbreviation,
+                    "location": t.location,
+                    "alternate_names": t.alternate_names,
+                }
+                for t in family_rows
+            ]
+            # Identity is side-specific: when the Islanders play the Rangers,
+            # the Rangers' longer name is still foreign to the Islanders.
+            # Keep the shared league index above event-wide for #8052/merge.
+            home_label_identity = build_label_identity(
+                identity_rows,
+                own_team_ids=home_team_ids,
+                own_team_names=(event.home_team_name,),
+            )
+            away_label_identity = build_label_identity(
+                identity_rows,
+                own_team_ids=away_team_ids,
+                own_team_names=(event.away_team_name,),
             )
         return team_index
 
@@ -22041,16 +22094,57 @@ async def _build_related_futures(
             is_home = outcome.team_id in home_team_ids if outcome.team_id else False
             is_away = outcome.team_id in away_team_ids if outcome.team_id else False
 
+        # #7867 — A TOKEN THAT IS PART OF ANOTHER KNOWN CLUB'S NAME IS NOT OURS.
+        #
+        # The two name fallbacks below admit a row when a pattern occupies whole
+        # tokens of the label (#6806). `_team_name_patterns("Duke Blue Devils")`
+        # emits `Duke`, `Devils` and `Blue` so short venue labels can match, and
+        # each is a whole token of some OTHER entity's name: `Arizona State Sun
+        # Devils`, `Middle Tennessee Blue Raiders`, `Delaware Blue Hens` on
+        # Duke's own NCAAF title market; `Ball St. vs Miami (OH)` ×14 on the
+        # Hurricanes; `Alabama vs South Carolina` ×22 on Coastal Carolina;
+        # `Yomiuri Giants` (NPB) at rel 44.7, the highest row on the Giants'
+        # card; `Minnesota Timberwolves` on the Lynx. Measured 2026-09-21/22 on
+        # production, ids on the issue.
+        #
+        # The rule that was tried first — a label is ours only when our names
+        # cover ALL its tokens — was replayed over 12 production payloads and
+        # REJECTED (841 rows, 190 lost: `Miami (FL)`, `NE Patriots D/ST: 1+`),
+        # because it asks whether a token is present. This asks whether the
+        # token is PART OF A DIFFERENT KNOWN CLUB'S NAME, against the `teams`
+        # rows the roster read above already holds, and refuses only when every
+        # occurrence is. `Miami (FL) vs Stanford` keeps `Miami` because
+        # `Miami (FL)` is the Hurricanes' own; `NE Patriots D/ST` keeps
+        # `Patriots` because nothing known covers it; `Duke Tobin` — a person,
+        # not in `teams` — is the named limitation and stays, because an
+        # identity that cannot be established is never refused. Rule, twins and
+        # the family width: `app/utils/team_label_identity.py`.
+        #
+        # Armed only when the roster read ran, which is gated above on at least
+        # one of this event's teams resolving — the same arm that keeps #8052
+        # additive: no resolved team, nothing to be "ours", no refusal.
+        # Asked PER SIDE, so a leg naming this event's opponent beside a foreign
+        # club (`New York I and Colorado` on a Rangers v Avalanche page) lands
+        # on the opponent's side rather than reaching ours through the token
+        # that is the Islanders'.
         if not is_home and not is_away:
             # Fall back to name matching on outcome (team outcomes)
-            is_home = _matches_any(outcome.name, home_patterns)
-            is_away = _matches_any(outcome.name, away_patterns)
+            is_home = _matches_any(outcome.name, home_patterns) and not label_names_another_club(
+                outcome.name, home_patterns, home_label_identity
+            )
+            is_away = _matches_any(outcome.name, away_patterns) and not label_names_another_club(
+                outcome.name, away_patterns, away_label_identity
+            )
 
         if not is_home and not is_away:
             # Fall back to name matching on MARKET name (game props)
             # e.g., "Boston at Golden State: Rebounds" → market name matches
-            is_home = _matches_any(market.name, home_team_patterns)
-            is_away = _matches_any(market.name, away_team_patterns)
+            is_home = _matches_any(market.name, home_team_patterns) and not label_names_another_club(
+                market.name, home_team_patterns, home_label_identity
+            )
+            is_away = _matches_any(market.name, away_team_patterns) and not label_names_another_club(
+                market.name, away_team_patterns, away_label_identity
+            )
 
         if not is_home and not is_away:
             continue

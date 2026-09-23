@@ -129,6 +129,11 @@ def _roster_rows():
     return [
         SimpleNamespace(
             id=tid,
+            # #7867 widened the roster read to the sport family and selects
+            # `sport_id` to partition it; every row here is the event's own
+            # league, so the partition is the identity and the seven arms below
+            # are unchanged.
+            sport_id=53232,
             name=name,
             abbreviation=abbrev,
             location=location,
