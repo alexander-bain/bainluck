@@ -22821,6 +22821,7 @@ def _extend_win_prob_history_to_live_edge(
     *,
     is_live: bool,
     now: datetime,
+    speaking_sources: Optional[Sequence[str]],
     min_stale_seconds: float = 30.0,
 ) -> int:
     """Carry each win-prob series forward to ``now`` on a live game (#920).
@@ -22833,12 +22834,45 @@ def _extend_win_prob_history_to_live_edge(
     clock. Spend-free: no snapshots written, no API calls. No-op when not live or
     when the real edge is already within ``min_stale_seconds`` of now. Mutates
     ``win_prob_history`` in place; returns the number of series extended.
+
+    🔴 **ONLY for a source the hero still counts (#6863).** The premise above is
+    that no new point means the VALUE did not change — a stable game. It reads
+    identically when the source stopped reporting altogether, and then carrying
+    the line forward stops being an inference and becomes a fabrication: on
+    `/events/15316643` (Gibson v Anisimova, live, read 07:54Z 2026-09-23) the
+    detail payload served ``hero_probability: null`` with
+    ``hero_probability_source: null`` — "No price" on the badge — while
+    this function planted a point at the request's own wall-clock instant
+    carrying a Polymarket 0.495 last seen three hours earlier, and the chart drew
+    to it. One screen, two answers, and only the channel that DECLINED carried a
+    marker.
+
+    ``speaking_sources`` is the hero's own answer to "which readings does this
+    event rest on" — ``effective_source_weights``' keys, i.e. exactly the entries
+    ``_tier1_readings`` admits (in ``SOURCE_WEIGHTS``, parseable, not refused by
+    the #5311 eligibility gate). That function's docstring already claims to be
+    the one place deciding which stored readings reach "the hero, the chart edge,
+    the divergence gate and the Discover card"; the chart edge was the one
+    surface that never asked it. A source absent from it is one the page will not
+    price, so its line does not get carried to now.
+
+    ``None`` means *cannot say*, and fails OPEN (every series extends, the
+    pre-#6863 behaviour). The caller passes it for a FOLDED event, whose hero may
+    rest on a reading stored on a sibling row: proving silence there needs a
+    query this endpoint does not buy, and a gate that cannot see the sibling
+    would withhold a line that is perfectly correct. Measured on the live
+    population 2026-09-23 07:33Z — 59 live events with snapshots, 55 unaffected
+    by the gate, 4 withheld and all 4 serving no hero price at all; 1 folded, and
+    its canonical's own bag already carried the chart's source.
     """
     if not is_live:
         return 0
+    speaking = None if speaking_sources is None else set(speaking_sources)
     live_now = now.replace(microsecond=0)
     extended = 0
     for source_key, pts in win_prob_history.items():
+        if speaking is not None and source_key not in speaking:
+            continue
         if not pts:
             continue
         last = pts[-1]
@@ -24373,11 +24407,27 @@ async def get_event_odds_history(
     # so the chart tracks the live clock instead of freezing at the last value-
     # change (the snapshot dedup only emits a row on a probability change). Placed
     # before aggregate_line (computed from win_prob_history) so it propagates there.
+    #
+    # #6863: and only for a source the HERO still counts, asked of the hero's own
+    # function rather than re-derived here — a second opinion about which readings
+    # are live is the drift `_tier1_readings` was extracted to prevent. A folded
+    # event passes None (fail open): its hero can rest on a sibling row's reading,
+    # which `event` alone cannot see, and withholding on a blind spot would delete
+    # a correct line. `series_event_ids` is the canonical alone when untagged.
+    from app.utils.aggregation import effective_source_weights
+
+    if len(series_event_ids) > 1:
+        _hero_sources = None
+    else:
+        _hero_sources, _, _ = effective_source_weights(
+            event, getattr(event, "status", None)
+        )
     _extend_win_prob_history_to_live_edge(
         win_prob_history,
         win_prob_sources_meta,
         is_live=_is_live_now,
         now=now,
+        speaking_sources=_hero_sources,
     )
 
     # #4976/#1999: pre-game buckets do not decay — the hero's own gate, asked
