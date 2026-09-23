@@ -2869,10 +2869,35 @@ def generate_futures_context_summary(
             if leader
             else "Resolves within a week"
         )
-    if (
-        "resolving_soon_30d" in reasons
-        and headline == RESOLVING_WITHIN_MONTH_HEADLINE
-    ):
+    # #8127 — TWO headlines mean "the headline chose the 30d rung", not one.
+    # This gate used to admit only `RESOLVING_WITHIN_MONTH_HEADLINE`, which is
+    # that rung's NO-LEADER fallback. Whenever a leader exists,
+    # `generate_futures_headline` returns its own leader form instead, so the
+    # gate missed and this generator fell through to `if headline: return
+    # headline` — echoing the one string in this module that carries the verb
+    # WITHOUT a percent. Production 2026-09-23, 390px, card 19:
+    #
+    #     Flávio Bolsonaro leads          over a board reading 59 / 41 / 1 / <1
+    #
+    # while `reason` for the same card already said "leads at 59%" and the
+    # `Presidents Cup - Winner` card one slot above said "Jackson Koivun leads
+    # at 6%; resolves within a week". The 1d/2d/7d rungs take no headline gate,
+    # which is exactly why only the 30d cards lost the number.
+    #
+    # RECONSTRUCTED, NOT SUFFIX-MATCHED. `leader_name` and `_verb` here are the
+    # same rebound values (`_answering_side_label`, `leader_agreement_verb`) the
+    # headline composed with, so this matches that one branch and nothing else.
+    # A looser "endswith the suffix" test would also admit the
+    # `_no_leader_subject` headline (`"{market} resolves within a month"`,
+    # #6470's deadline-fallback shape), whose copy this ship did not measure and
+    # deliberately leaves byte-identical. The tie form
+    # (`"{leader} at {pct}%; resolves within a month"`, #6187) is left out for
+    # the same reason and loses nothing: it already states the percent, so the
+    # fall-through echoes the string this branch would have built.
+    _headline_is_month_rung = headline == RESOLVING_WITHIN_MONTH_HEADLINE or (
+        bool(leader) and headline == f"{leader_name} {_verb}; resolves within a month"
+    )
+    if "resolving_soon_30d" in reasons and _headline_is_month_rung:
         return (
             f"{leader}; resolves within a month"
             if leader
