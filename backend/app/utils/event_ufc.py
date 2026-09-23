@@ -78,6 +78,10 @@ UFC_CONFIG = make_combat_config(
     promotion_label="UFC",
     schedule_label="MMA",
     generic_label="Combat",
+    # #4485: an events-only MMA card may take its name from ESPN's published UFC
+    # card listing, joined on a shared bout. Boxing does not opt in — ESPN's
+    # boxing board is a different shape and nobody has read it.
+    venue_card_names=True,
 )
 
 

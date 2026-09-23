@@ -327,6 +327,10 @@ class TestBeatScheduleCompleteness:
         # LAT-P122 cached and left with nothing to rebuild it. Gotcha #12: this
         # allowlist is the reason a new beat entry cannot land silently.
         "warm-futures-categories",
+        # #4485 — the venue's own names for upcoming fight cards, so a Discover
+        # card stops being named after one of its fights. Gotcha #12: this
+        # allowlist is the reason a new beat entry cannot land silently.
+        "refresh-espn-combat-cards",
         "warm-tag-counts",
         "warm-prop-families",
         "warm-typeahead",

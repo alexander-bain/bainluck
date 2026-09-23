@@ -802,6 +802,37 @@ class ESPNAPIService:
         logger.info(f"Fetched {len(events)} events for {sport_key}")
         return events
 
+    async def get_combat_card_board(
+        self, sport_key: str, dates: Optional[str] = None
+    ) -> Optional[dict]:
+        """The RAW scoreboard body for a combat sport (#4485).
+
+        Deliberately not `get_scoreboard`. On a combat board ESPN models a CARD
+        as the event and its BOUTS as `competitions[]`, so `_parse_event` — which
+        reads one competition and two teams — collapses a thirteen-fight card
+        into whichever bout sorted first and drops the card's own `name`, which
+        is the only field this caller wants.
+
+        Returns the body, ``{}`` when ESPN answered with nothing, or ``None``
+        when the authority is dark. `None` is not an empty board: a card's
+        absence from a dark read proves nothing, and the caller must not publish
+        a listing built from one.
+        """
+        path = self._get_espn_path(sport_key)
+        if not path:
+            return {}
+
+        sport, league = path
+        url = f"{ESPN_API_BASE}/{sport}/{league}/scoreboard"
+        if dates:
+            url += f"?dates={dates}"
+
+        try:
+            data = await self._get(url)
+        except ESPNAuthorityDark:
+            return None
+        return data or {}
+
     def _parse_event(self, event_data: dict) -> Optional[ESPNEvent]:
         """Parse ESPN event data into ESPNEvent object."""
         try:

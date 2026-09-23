@@ -1124,6 +1124,24 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     appear in its NAME — luck, not method, and the fourth lane in a row to find
     that out. The rule that actually works is the one in bold: a change touching
     `beat_schedule` runs `grep -rl beat_schedule tests/`.
+
+    🔴 **RE-DERIVED at discover/430 (2026-09-23, #4485): 127 → 128, explicit
+    84 → 85.** `refresh-espn-combat-cards` (`crontab(minute=5, hour="*/6")`,
+    publishing the venue's own names for upcoming fight cards) names
+    `background` explicitly, so the fall-through half is UNMOVED at **43** — the
+    benign direction this docstring reserves. Obtained by RUNNING the census
+    below over the assembled schedule, which printed `explicit 85 implicit 43
+    total 128`, never by adding one to 127 (#1910). The cost declaration — four
+    fires a day, one ~26 KB HTTP GET and one Redis write each, no database work
+    at all, and why the cadence is deliberately slow — is on
+    `BACKGROUND_BEAT_COUNT`.
+
+    **And the bolded rule paid out again, exactly as written.** This lane's band
+    was the combat/ufc/espn suites plus `test_tasks_wiring.py`; 1,941 tests
+    passed and none of them was this one. CI's shards 1 and 2 caught it. The
+    `grep -rl beat_schedule tests/` rule would have caught it locally first —
+    the fifth lane in a row to learn that, and the first to be told so in
+    advance by this very docstring.
     """
     from app.tasks import celery_app
     from app.utils.typeahead_beat_budget import BACKGROUND_BEAT_COUNT
@@ -1140,9 +1158,9 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
         elif named is None and conf.task_default_queue == "background":
             implicit += 1
 
-    assert explicit == 84, f"explicitly-routed background beats moved: {explicit}"
+    assert explicit == 85, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 43, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 127
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 128
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
