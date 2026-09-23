@@ -110,46 +110,56 @@ NFL_PUBLISHED = datetime(2026, 9, 15, 3, 15, tzinfo=UTC)
 #: arms, which is what makes it an INELIGIBLE sibling rather than an agreeing
 #: one. (42h from the Sep 7 stand-in, so the stand-in arm's 36h bound refuses
 #: it too: the row is inert on run 1 and on every run after.)
-OUT_OF_TICKER_DAY = datetime(2026, 9, 9, 18, 0, tzinfo=UTC)
+#: An hour outside the day its own ticker names — two days past Sep 20 — so the
+#: window refuses it on both arms. On the Sep 20 soccer ticker day because
+#: CERT-3342 moved `ineligible_first` there; the arm it pins is the revision
+#: arm, which only runs for a sport whose occurrence is recoverable.
+OUT_OF_TICKER_DAY_SEP20 = datetime(2026, 9, 22, 18, 0, tzinfo=UTC)
 
 
 # (key, event_source, event_commence,
-#  [(external_id, source, status, market_commence, llm_sport_category), ...])
+#  [(external_id, source, status, market_commence, llm_sport_category), ...],
+#  sports.key)
+#
+# CERT-3342: the last element is load-bearing, not decoration. The REVISION arm
+# writes only for a sport whose Kalshi occurrence is recoverable as a start, so
+# an event's sport decides whether a restatement of it is adopted or refused.
+# The tennis rows are the refusal control; `soccer_revision` is the positive one.
 _EVENTS = [
     ("refines", "kalshi_ticker", STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07ZVEDAR", "kalshi", "open", PUBLISHED, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("two_markets", "kalshi_ticker", STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07AAAZZZ", "kalshi", "open", PUBLISHED, "tennis"),
         ("KXATPMATCH-26SEP07BBBZZZ", "kalshi", "open", PUBLISHED_LATER, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("itf_next_day", "kalshi_ticker", STAND_IN_SEP06, [
         ("KXITFMATCH-26SEP06STOISH-STO", "kalshi", "open", ITF_PUBLISHED, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("espn_event", "espn", STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07ESPESP", "kalshi", "open", PUBLISHED, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("no_source_event", None, STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07NULNUL", "kalshi", "open", PUBLISHED, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("closed_market", "kalshi_ticker", STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07CLOCLO", "kalshi", "closed", PUBLISHED, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("backstop_market", "kalshi_ticker", STAND_IN_SEP07, [
         ("KXATPMATCH-26SEP07FARFAR", "kalshi", "open", BACKSTOP, "tennis"),
-    ]),
+    ], "tennis_atp"),
     ("outright_market", "kalshi_ticker", STAND_IN_SEP07, [
         ("KXWTA-26USO", "kalshi", "open", BACKSTOP, "tennis"),
-    ]),
+    ], "tennis_atp"),
     # ---- #3562 -----------------------------------------------------------
     ("soccer_fixture", "kalshi_ticker", STAND_IN_SEP20, [
         ("KXLIGUE1GAME-26SEP20OLMPSG", "kalshi", "open", LIGUE1_PUBLISHED,
          "soccer"),
-    ]),
+    ], "soccer_france_ligue_one"),
     ("nfl_prop", "kalshi_ticker", STAND_IN_SEP14, [
         ("KXNFLRACE-26SEP14DENKC-35", "kalshi", "open", NFL_PUBLISHED,
          "football"),
-    ]),
+    ], "americanfootball_nfl"),
     # ---- #3565 -----------------------------------------------------------
     # An event whose FIRST market by `external_id` is not an eligible speaker:
     # its ticker names Sep 7 but its stored hour is Sep 9, so it falls outside
@@ -157,11 +167,24 @@ _EVENTS = [
     # market is the real fixture. The pair exists so that "the first market
     # decides" can never be implemented as "the first ROW decides" — see
     # `test_an_ineligible_first_sibling_does_not_freeze_a_restatement`.
-    ("ineligible_first", "kalshi_ticker", STAND_IN_SEP07, [
-        ("KXATPMATCH-26SEP07AAAOUT", "kalshi", "open", OUT_OF_TICKER_DAY,
-         "tennis"),
-        ("KXATPMATCH-26SEP07BBBVAL", "kalshi", "open", PUBLISHED, "tennis"),
-    ]),
+    #
+    # CERT-3342 moved it to SOCCER: the behaviour it pins is revision-arm
+    # ordering, which only runs for a recoverable sport. On tennis the whole
+    # event is refused and the test would pass while proving nothing.
+    ("ineligible_first", "kalshi_ticker", STAND_IN_SEP20, [
+        ("KXLIGUE1GAME-26SEP20AAAOUT", "kalshi", "open", OUT_OF_TICKER_DAY_SEP20,
+         "soccer"),
+        ("KXLIGUE1GAME-26SEP20BBBVAL", "kalshi", "open", LIGUE1_PUBLISHED,
+         "soccer"),
+    ], "soccer_france_ligue_one"),
+    # CERT-3342: the revision arm's POSITIVE control, on a sport whose
+    # occurrence hour is recoverable. `refines` above is the same shape on
+    # tennis and must be REFUSED — the pair is what proves the gate reads the
+    # sport rather than simply having switched the arm off.
+    ("soccer_revision", "kalshi_ticker", STAND_IN_SEP20, [
+        ("KXLIGUE1GAME-26SEP20REVREV", "kalshi", "open", LIGUE1_PUBLISHED,
+         "soccer"),
+    ], "soccer_france_ligue_one"),
 ]
 
 #: Events whose commence_time the repair must leave exactly where it found it.
@@ -182,7 +205,8 @@ _MUST_MOVE = {
     "nfl_prop": NFL_PUBLISHED,
     # #3565: BBBVAL is reached only because AAAOUT is skipped rather than
     # treated as having spoken for the event.
-    "ineligible_first": PUBLISHED,
+    "ineligible_first": LIGUE1_PUBLISHED,
+    "soccer_revision": LIGUE1_PUBLISHED,
 }
 
 
@@ -218,17 +242,29 @@ async def _seed(conn) -> dict[str, int]:
     against live ORM metadata and this file is registered in its `COVERED`
     tuple, so the check is on the real statement rather than a copied list.
     """
-    sport_id = (
-        await conn.execute(
-            text(
-                "INSERT INTO sports (key, name, active) "
-                "VALUES ('tennis_atp', 'ATP', true) RETURNING id"
+    # CERT-3342: the fixture needs MORE THAN ONE SPORT now, because the
+    # revision arm is gated on the sport having a measured expiration->start
+    # pad. One shared `tennis_atp` row would make every revision assertion
+    # below a refusal and the positive control unwritable.
+    sport_ids: dict[str, int] = {}
+    for _key, _name in (
+        ("tennis_atp", "ATP"),
+        ("soccer_france_ligue_one", "Ligue 1"),
+        ("americanfootball_nfl", "NFL"),
+    ):
+        sport_ids[_key] = (
+            await conn.execute(
+                text(
+                    "INSERT INTO sports (key, name, active) "
+                    "VALUES (:k, :n, true) RETURNING id"
+                ),
+                {"k": _key, "n": _name},
             )
-        )
-    ).scalar_one()
+        ).scalar_one()
 
     ids: dict[str, int] = {}
-    for key, event_source, event_commence, markets in _EVENTS:
+    for key, event_source, event_commence, markets, sport_key in _EVENTS:
+        sport_id = sport_ids[sport_key]
         event_id = (
             await conn.execute(
                 text(
@@ -460,6 +496,8 @@ async def test_the_unscoped_query_redates_events_for_matches_already_over(
 
 #: A restated order of play: same ticker day as PUBLISHED, a later hour.
 RESTATED = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+#: The same restatement on the Sep 20 soccer ticker day.
+RESTATED_SEP20 = datetime(2026, 9, 20, 21, 45, tzinfo=UTC)
 
 
 @needs_postgres
@@ -469,7 +507,13 @@ async def test_a_restated_venue_hour_is_adopted_on_the_next_run(
     """Arm 1. The first published hour is not frozen forever: when Kalshi
     restates `occurrence_datetime` on the same ticker day, the event follows.
     On the pre-#3565 code the second run moves 0 and the page keeps advertising
-    a time the venue itself has withdrawn."""
+    a time the venue itself has withdrawn.
+
+    CERT-3342 moved the specimen to SOCCER. The arm only writes where the
+    occurrence hour is recoverable as a start; the tennis twin of this test is
+    `test_a_restated_tennis_hour_is_refused_against_real_postgres` below, and
+    the two together are what prove the gate reads the sport.
+    """
     from app.tasks.kalshi import _refine_stand_in_event_starts
     from app.utils.event_completion import KALSHI_OCCURRENCE_COMMENCE_SOURCE
 
@@ -479,20 +523,23 @@ async def test_a_restated_venue_hour_is_adopted_on_the_next_run(
     _install_real_session(monkeypatch, pg_engine)
     assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
 
-    # The venue moves the match 18:00Z -> 20:30Z, same ticker day.
+    # The venue moves the fixture 19:00Z -> 21:45Z, same ticker day.
     async with pg_engine.begin() as conn:
         await conn.execute(
             text("UPDATE futures_markets SET commence_time = :ct "
                  "WHERE external_id = :ext"),
-            {"ct": RESTATED, "ext": "KXATPMATCH-26SEP07ZVEDAR"},
+            {"ct": RESTATED_SEP20, "ext": "KXLIGUE1GAME-26SEP20REVREV"},
         )
 
     moved = await _refine_stand_in_event_starts()
     assert moved == 1, moved
 
     after = await _read_back(pg_engine, ids)
-    assert after["refines"].commence_time == RESTATED
-    assert after["refines"].commence_time_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+    assert after["soccer_revision"].commence_time == RESTATED_SEP20
+    assert (
+        after["soccer_revision"].commence_time_source
+        == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+    )
 
     # ...and a third run is quiet again: the adopted hour is a fixed point,
     # not the first half of a flap between disagreeing sibling markets
@@ -500,8 +547,52 @@ async def test_a_restated_venue_hour_is_adopted_on_the_next_run(
     # after the first).
     assert await _refine_stand_in_event_starts() == 0
     settled = await _read_back(pg_engine, ids)
-    assert settled["refines"].commence_time == RESTATED
+    assert settled["soccer_revision"].commence_time == RESTATED_SEP20
     assert settled["two_markets"].commence_time == PUBLISHED
+
+
+@needs_postgres
+async def test_a_restated_tennis_hour_is_refused_against_real_postgres(
+    pg_engine, monkeypatch
+):
+    """🔴 CERT-3342, against the real schema and the real LEFT JOIN.
+
+    The refusal control for the test above, and it needs a real server for a
+    reason the unit version cannot cover: the gate reads `sports.key` through a
+    join this file is the only place that actually executes. A join that
+    silently yielded NULL would refuse EVERYTHING and the positive control
+    above is what would catch it; a join that was dropped would adopt
+    everything and this is what catches that.
+
+    `refines` is the identical shape to `soccer_revision` — stand-in repaired
+    on run 1, venue restates on the same ticker day — differing only in sport.
+    Kalshi's occurrence IS its expected expiration, and tennis has no measured
+    pad, so adopting the restatement would persist a second expiration and
+    stamp it as the start the venue published.
+    """
+    from app.tasks.kalshi import _refine_stand_in_event_starts
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+    assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET commence_time = :ct "
+                 "WHERE external_id = :ext"),
+            {"ct": RESTATED, "ext": "KXATPMATCH-26SEP07ZVEDAR"},
+        )
+
+    assert await _refine_stand_in_event_starts() == 0
+
+    after = await _read_back(pg_engine, ids)
+    assert after["refines"].commence_time == PUBLISHED, (
+        "a restated TENNIS occurrence must not be adopted: the number on "
+        "offer is an expected expiration and there is no measured pad to "
+        "turn it into a start"
+    )
 
 
 @needs_postgres
@@ -538,7 +629,7 @@ async def test_an_ineligible_first_sibling_does_not_freeze_a_restatement(
     # the event lands on BBBVAL's hour and its provenance becomes a revision.
     assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
     first = await _read_back(pg_engine, ids)
-    assert first["ineligible_first"].commence_time == PUBLISHED
+    assert first["ineligible_first"].commence_time == LIGUE1_PUBLISHED
     assert (
         first["ineligible_first"].commence_time_source
         == KALSHI_OCCURRENCE_COMMENCE_SOURCE
@@ -550,7 +641,7 @@ async def test_an_ineligible_first_sibling_does_not_freeze_a_restatement(
         await conn.execute(
             text("UPDATE futures_markets SET commence_time = :ct "
                  "WHERE external_id = :ext"),
-            {"ct": RESTATED, "ext": "KXATPMATCH-26SEP07BBBVAL"},
+            {"ct": RESTATED_SEP20, "ext": "KXLIGUE1GAME-26SEP20BBBVAL"},
         )
 
     # Run 2: the revision arm must reach BBBVAL past AAAOUT.
@@ -558,11 +649,11 @@ async def test_an_ineligible_first_sibling_does_not_freeze_a_restatement(
     assert moved == 1, moved
 
     after = await _read_back(pg_engine, ids)
-    assert after["ineligible_first"].commence_time == RESTATED
+    assert after["ineligible_first"].commence_time == RESTATED_SEP20
 
     # The ineligible sibling is inert in both directions: it never ends a turn,
     # and it is never adopted either.
-    assert after["ineligible_first"].commence_time != OUT_OF_TICKER_DAY
+    assert after["ineligible_first"].commence_time != OUT_OF_TICKER_DAY_SEP20
 
     # Run 3 is quiet: BBBVAL now agrees, and an agreeing eligible market DOES
     # end the turn. Without that half this rail would rewrite forever.

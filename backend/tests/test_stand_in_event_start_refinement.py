@@ -82,12 +82,23 @@ PUBLISHED = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)  # occurrence_datetime
 BACKSTOP = datetime(2026, 9, 21, 6, 5, tzinfo=UTC)   # close_time, +14d
 
 
+#: The revision arm's specimen is SOCCER, and that is the ship, not a detail.
+#: CERT-3342: Kalshi's occurrence IS its expected expiration, recoverable as a
+#: start only where the pad is measured exact. The tennis ticker above stays the
+#: STAND-IN arm's specimen (that arm is ungated, exactly as #3544 shipped it) and
+#: becomes the revision arm's REFUSAL control further down.
+SOCCER_TICKER = "KXEPLGAME-26SEP07FULMUN"
+SOCCER_KEY = "soccer_epl"
+TENNIS_KEY = "tennis_atp"
+
+
 def _target(**kw):
     args = {
         "external_id": TICKER,
         "event_commence": STAND_IN,
         "event_commence_source": TICKER_DERIVED_COMMENCE_SOURCE,
         "market_commence": PUBLISHED,
+        "sport_key": TENNIS_KEY,
     }
     args.update(kw)
     return _stand_in_refinement_target(**args)
@@ -292,10 +303,11 @@ REVISED_FROM = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
 
 def _revision(**kw):
     args = {
-        "external_id": TICKER,
+        "external_id": SOCCER_TICKER,
         "event_commence": REVISED_FROM,
         "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
         "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+        "sport_key": SOCCER_KEY,
     }
     args.update(kw)
     return _stand_in_refinement_target(**args)
@@ -456,10 +468,11 @@ def test_a_missing_time_is_no_signal(missing):
 def _reason(**kw):
     """The revision specimen's REASON, defaulting to a restatement."""
     args = {
-        "external_id": TICKER,
+        "external_id": SOCCER_TICKER,
         "event_commence": REVISED_FROM,
         "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
         "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+        "sport_key": SOCCER_KEY,
     }
     args.update(kw)
     return _stand_in_refinement_decision(**args)[1]
@@ -467,6 +480,101 @@ def _reason(**kw):
 
 def test_an_adopted_restatement_reports_adopt():
     assert _reason() == _REFINE_ADOPT
+
+
+# ---------------------------------------------------------------------------
+# CERT-3342: the hour must be RECOVERABLE as a start before it may be written.
+#
+# Kalshi's `occurrence_datetime` is byte-identical to `expected_expiration_time`
+# (venue-read, #5905). It is a kick-off NOWHERE — only, for soccer, a fixed
+# 180 minutes after one. Tennis has no such measurement, so adopting a restated
+# tennis occurrence persists an expiration and stamps it as the venue's
+# published start. These are the refusal controls.
+# ---------------------------------------------------------------------------
+
+def test_a_restated_tennis_hour_is_refused_not_adopted():
+    """🔴 THE CERT-3342 DEFECT, on the arm this SHA adds.
+
+    Same restatement, same ticker day, same everything the revision arm asks
+    for — and it must still be refused, because the number on offer is an
+    expected expiration and tennis has no measured pad to turn it into a
+    start. Production specimen 15317314 stored 09:10Z while play was in the
+    07:00Z hour.
+
+    Delete the gate and this returns `_REFINE_ADOPT`: the event takes the new
+    expiration, and `commence_time_source = 'kalshi_occurrence'` then asserts
+    the venue published it as the kick-off. Nothing downstream can tell.
+    """
+    assert _reason(
+        external_id=TICKER, sport_key=TENNIS_KEY
+    ) == _REFINE_INELIGIBLE
+
+
+def test_the_refusal_is_the_sport_and_not_the_ticker():
+    """Pin WHICH input does the refusing.
+
+    The test above moves the ticker and the sport together, so on its own it
+    cannot say whether the gate reads the sport or merely dislikes a tennis
+    ticker. Hold the soccer ticker and change only the sport: still refused.
+    The gate is the sport key, which is what `kalshi_occurrence_scheduled_start`
+    keys on and therefore the only thing that predicts recoverability.
+    """
+    assert _reason(sport_key=TENNIS_KEY) == _REFINE_INELIGIBLE
+    assert _reason(external_id=TICKER, sport_key=SOCCER_KEY) == _REFINE_ADOPT
+
+
+@pytest.mark.parametrize("unknown", [None, "", "mma_ufc", "boxing_boxing"])
+def test_an_unrecoverable_or_unknown_sport_fails_closed(unknown):
+    """Fails CLOSED, and the unmeasured sports are named for a reason.
+
+    MMA's ghost/real delta is 255/265/275/285/295/345 minutes and boxing's is
+    ~14 days — spreads, not pads, so there is nothing to recover. `None` is the
+    caller that could not say what it holds: a writer that does not know the
+    sport must not write.
+    """
+    assert _reason(sport_key=unknown) == _REFINE_INELIGIBLE
+
+
+def test_the_stand_in_arm_is_deliberately_NOT_gated_on_recoverability():
+    """The scope line of this repair, pinned so a later edit states its intent.
+
+    Copying an occurrence onto a MIDNIGHT stand-in is master's behaviour since
+    #3544 and reaches the 104 non-tennis stand-ins #3562 measured. It has the
+    same expiration-vs-start problem, but narrowing it here would re-date all
+    of them as a side effect of a revision-arm repair — a different ship, filed
+    rather than smuggled. This SHA gates only the arm it adds.
+
+    If a later change DOES gate the stand-in arm, this test is the one that
+    should fail and be deliberately rewritten — not quietly deleted.
+    """
+    assert _target(sport_key=TENNIS_KEY) == PUBLISHED
+    assert _target(sport_key=None) == PUBLISHED
+
+
+async def test_the_loop_writes_nothing_for_a_restated_tennis_fixture():
+    """The refusal at the rail, not just the predicate.
+
+    The reachability repair means these rows now genuinely arrive here — that
+    was the whole of CERT-3339 — so the gate has to hold on the loop that
+    writes, not only on the pure function under it.
+    """
+    moved, written = await _run_loop([
+        _row("KXATPMATCH-26SEP07AAAZZZ", RESTATED_HOUR, REVISED_FROM,
+             KALSHI_OCCURRENCE_COMMENCE_SOURCE, sport_key=TENNIS_KEY),
+    ])
+    assert (moved, written) == (0, [])
+
+
+async def test_the_loop_still_writes_for_a_restated_soccer_fixture():
+    """The positive control for the test above.
+
+    Without it, "the loop wrote nothing" is satisfied by a loop that writes
+    nothing ever — including one where the reachability repair has regressed.
+    """
+    moved, written = await _run_loop([
+        _row(AAA, RESTATED_HOUR, REVISED_FROM, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+    ])
+    assert (moved, written) == (1, [RESTATED_HOUR])
 
 
 def test_an_eligible_market_holding_the_stored_hour_reports_agrees():
@@ -507,12 +615,15 @@ def test_the_stand_in_arm_reports_the_same_vocabulary():
     a second, divergent notion of "nothing to say"."""
     assert _stand_in_refinement_decision(
         TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, PUBLISHED,
+        sport_key=TENNIS_KEY,
     ) == (PUBLISHED, _REFINE_ADOPT)
     assert _stand_in_refinement_decision(
         TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, STAND_IN,
+        sport_key=TENNIS_KEY,
     )[1] == _REFINE_AGREES
     assert _stand_in_refinement_decision(
         TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, BACKSTOP,
+        sport_key=TENNIS_KEY,
     )[1] == _REFINE_INELIGIBLE
 
 
@@ -527,10 +638,11 @@ def test_the_value_half_still_answers_exactly_what_it_used_to():
         {"event_commence_source": "espn"},
     ):
         args = {
-            "external_id": TICKER,
+            "external_id": SOCCER_TICKER,
             "event_commence": REVISED_FROM,
             "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
             "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+            "sport_key": SOCCER_KEY,
         }
         args.update(kw)
         assert (
@@ -577,20 +689,25 @@ async def _run_loop(rows):
     return moved, [w["dt"] for w in session.writes]
 
 
-def _row(external_id, market_commence, event_commence, source):
+def _row(external_id, market_commence, event_commence, source,
+         sport_key=SOCCER_KEY):
     from types import SimpleNamespace
 
     return SimpleNamespace(
         event_id=1,
         event_commence=event_commence,
         event_source=source,
+        sport_key=sport_key,
         external_id=external_id,
         market_commence=market_commence,
     )
 
 
-AAA = "KXATPMATCH-26SEP07AAAZZZ"
-BBB = "KXATPMATCH-26SEP07BBBZZZ"
+#: The loop specimens are SOCCER for the same reason the predicate ones are
+#: (CERT-3342): these arms drive the REVISION arm, which only serves sports
+#: whose occurrence hour is recoverable as a start.
+AAA = "KXEPLGAME-26SEP07AAAZZZ"
+BBB = "KXEPLGAME-26SEP07BBBZZZ"
 RESTATED_HOUR = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
 OFF_TICKER_DAY = datetime(2026, 9, 9, 18, 0, tzinfo=UTC)
 
@@ -774,7 +891,8 @@ _REV_STORED = _REV_DAY + timedelta(hours=21, minutes=45)
 _REV_RESTATED = _REV_DAY + timedelta(hours=19)
 
 
-async def _run_refresh(event_source, event_commence=_REV_STORED):
+async def _run_refresh(event_source, event_commence=_REV_STORED,
+                       sport_key="soccer_france_ligue_one"):
     """Drive the REAL `_refresh_dated_fixture_starts` for one seeded fixture.
 
     Returns `(stats, market_writes, event_writes, restated, selects)`. The
@@ -812,6 +930,7 @@ async def _run_refresh(event_source, event_commence=_REV_STORED):
                     event_id=1,
                     event_commence=event_commence,
                     event_source=event_source,
+                    sport_key=sport_key,
                 )])
             (event_writes if "UPDATE events" in body else market_writes).append(args)
             return SimpleNamespace(rowcount=1)

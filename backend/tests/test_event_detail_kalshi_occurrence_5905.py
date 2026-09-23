@@ -206,6 +206,83 @@ async def test_two_reads_of_the_same_event_do_not_stack_two_pads():
     assert first == second == KICKOFF
 
 
+# ── CERT-3342: the write rail and the serve rail, composed ──────────────────
+#
+# #3565 gives `_refine_stand_in_event_starts` a REVISION arm, so the stored
+# column is no longer written once and left alone — the venue can restate its
+# occurrence and the rail follows it. That makes the serve-time pad a moving
+# target for the first time, and the failure it can produce is arithmetic:
+# a revision that is applied to an ALREADY-CORRECTED value instead of to the
+# stored occurrence serves a kick-off three hours further out on every
+# restatement. The ladder authority/179 measured on the double-fold route is
+# the same defect from the other end (21:45 → 18:45 → 15:45 → 12:45).
+
+
+#: The venue restates the fixture: 45 minutes later, same day. What the refine
+#: rail would write into `events.commence_time` on its next pass.
+RESTATED_EXPIRATION = datetime(2026, 9, 13, 23, 15, tzinfo=timezone.utc)
+RESTATED_KICKOFF = datetime(2026, 9, 13, 20, 15, tzinfo=timezone.utc)
+
+
+async def test_a_revised_occurrence_serves_one_pad_off_the_NEW_stored_hour():
+    """One revision: the page follows the venue, still exactly one pad back."""
+    row = _kalshi_minted_row(9905020, commence_time=RESTATED_EXPIRATION)
+    assert _served_commence(await _serve(row)) == RESTATED_KICKOFF
+
+
+async def test_two_successive_revisions_do_not_compound_the_pad():
+    """🔴 The two-revision regression CERT-3342 required.
+
+    The rail revises the stored hour twice — 22:30 → 23:15 → 23:45 — and the
+    page must read each one as `stored - 3h`. The number that must never
+    appear is a compounded one: 23:45 served as 17:45 (two pads) or 14:45
+    (three) would be a kick-off advertised hours before the match, which is
+    precisely the class #5905 was filed for.
+
+    Each revision is served on a freshly hydrated row, because that is what
+    production does — the rail writes, the next request re-reads. The
+    in-request stamp cannot help here: it dies with the request, so the only
+    thing keeping the arithmetic honest is that the pad comes off the STORED
+    column rather than off whatever was served last time.
+    """
+    second_expiration = datetime(2026, 9, 13, 23, 45, tzinfo=timezone.utc)
+    second_kickoff = datetime(2026, 9, 13, 20, 45, tzinfo=timezone.utc)
+
+    served = [
+        _served_commence(await _serve(_kalshi_minted_row(9905021 + i,
+                                                         commence_time=stored)))
+        for i, stored in enumerate(
+            (EXPECTED_EXPIRATION, RESTATED_EXPIRATION, second_expiration)
+        )
+    ]
+
+    assert served == [KICKOFF, RESTATED_KICKOFF, second_kickoff]
+    # ...and say the failure out loud, so a regression names itself.
+    assert served[-1] != second_expiration - 2 * (EXPECTED_EXPIRATION - KICKOFF)
+    assert served[-1] != second_expiration - 3 * (EXPECTED_EXPIRATION - KICKOFF)
+
+
+async def test_the_served_hour_tracks_the_venue_rather_than_drifting_one_way():
+    """A restatement that moves the fixture EARLIER must move the page earlier.
+
+    The revision arm accepts either direction inside the ticker day (an
+    order-of-play reshuffle moves matches forward as often as back), so a serve
+    path that only ever added time would quietly disagree with the venue on
+    half the restatements.
+    """
+    earlier_expiration = datetime(2026, 9, 13, 21, 0, tzinfo=timezone.utc)
+    earlier_kickoff = datetime(2026, 9, 13, 18, 0, tzinfo=timezone.utc)
+
+    later = _served_commence(
+        await _serve(_kalshi_minted_row(9905030, commence_time=RESTATED_EXPIRATION))
+    )
+    earlier = _served_commence(
+        await _serve(_kalshi_minted_row(9905031, commence_time=earlier_expiration))
+    )
+    assert (later, earlier) == (RESTATED_KICKOFF, earlier_kickoff)
+    assert earlier < later
+
+
 # ── the strawman: prove this rig can fail ───────────────────────────────────
 
 

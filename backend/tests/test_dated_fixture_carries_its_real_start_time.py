@@ -346,6 +346,10 @@ class TestTheVenueSpecimensGetTheirRealStart:
             event_commence=stand_in,
             event_commence_source="kalshi_ticker",
             market_commence=occ,
+            # CERT-3342 gates the REVISION arm on the sport having a measured
+            # expiration→start pad. This is the STAND-IN arm and is ungated, so
+            # `None` — "the caller cannot say" — must still be repaired here.
+            sport_key=None,
         )
         assert moved == occ
         # ...and the move really is the long one the docstring claims.
@@ -390,6 +394,7 @@ class TestTheVenueSpecimensGetTheirRealStart:
             event_commence=stand_in,
             event_commence_source="kalshi_ticker",
             market_commence=close,          # not yet re-timed
+            sport_key=None,
         ) is None
 
     def test_an_occurrence_after_its_own_close_is_still_refused(self):

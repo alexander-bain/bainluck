@@ -44,6 +44,9 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     DERIVED_COMMENCE_SOURCES,
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
+from app.utils.kalshi_occurrence_start import (  # noqa: E402  # CERT-3342 #3565
+    kalshi_occurrence_hour_is_recoverable,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.settled_price import (  # noqa: E402  # #5246
@@ -3465,6 +3468,8 @@ def _stand_in_refinement_target(
     event_commence: datetime | None,
     event_commence_source: Optional[str],
     market_commence: datetime | None,
+    *,
+    sport_key: Optional[str],
 ):
     """The published start to write onto a linked Event, or None to leave it.
 
@@ -3488,8 +3493,16 @@ def _stand_in_refinement_target(
       writes itself under two names. Only `odds_api`/`espn` outrank, and tennis
       has no ESPN anchor. So the stand-in is permanent by construction.
 
-    THE THREE GATES, all three required:
+    THE GATES, all required:
 
+    0. **A same-provider REVISION additionally needs the hour to be
+       RECOVERABLE as a start** (`kalshi_occurrence_hour_is_recoverable`,
+       CERT-3342). Kalshi's occurrence IS its expected expiration, so it is a
+       kick-off nowhere and a recoverable instant only where the pad has been
+       measured exact — soccer. Tennis has no measurement, so a restated tennis
+       occurrence is refused rather than persisted as a start. The stand-in arm
+       below is NOT gated on this: that is master's behaviour since #3544 and
+       changing it is its own ship. Fails closed on an unknown sport.
     1. **The event's start must be a derived stand-in — or the venue's own
        earlier hour.** This is the non-overwrite control and it fails CLOSED:
        only the named `DERIVED_COMMENCE_SOURCES` provenance qualifies, plus
@@ -3520,6 +3533,7 @@ def _stand_in_refinement_target(
     """
     return _stand_in_refinement_decision(
         external_id, event_commence, event_commence_source, market_commence,
+        sport_key=sport_key,
     )[0]
 
 
@@ -3528,6 +3542,8 @@ def _stand_in_refinement_decision(
     event_commence: datetime | None,
     event_commence_source: Optional[str],
     market_commence: datetime | None,
+    *,
+    sport_key: Optional[str],
 ):
     """`(target, reason)` — the gates above, plus WHY a None is a None.
 
@@ -3575,6 +3591,32 @@ def _stand_in_refinement_decision(
     # q066b `same_record_revision` shape, which the string-equality clause in
     # `commence_time_write_authorized` cannot express because Kalshi writes
     # itself under two names (`kalshi_ticker` -> `kalshi_occurrence`).
+    #
+    # 🔴 GATE 0, AND IT COMES FIRST: THE HOUR MUST BE RECOVERABLE AS A START.
+    # CERT-3342. Kalshi's `occurrence_datetime` is byte-identical to
+    # `expected_expiration_time` (venue-read, #5905) — it is never a kick-off,
+    # only sometimes convertible into one. Soccer has an exact measured pad
+    # (180 min, 11/11 anchored); tennis has NO measurement, and the specimen
+    # 15317314 stored 09:10Z for play in the 07:00Z hour. Adopting a restated
+    # occurrence for such a sport would persist a SECOND expiration and stamp
+    # it `kalshi_occurrence`, i.e. assert the venue published it as the start.
+    #
+    # Gated HERE, on the revision arm only, and deliberately not on the SELECT:
+    # narrowing the query would strand this refusal with nothing to refuse and
+    # make its control vacuous. The stand-in arm above is untouched — that is
+    # master's behaviour since #3544 and widening this repair into it would
+    # re-date the 104 non-tennis stand-ins #3562 reaches, which is a different
+    # ship (see the issue). What this SHA adds, this SHA gates.
+    #
+    # Fails CLOSED: an unknown or unloaded `sport_key` is not recoverable, so a
+    # caller that cannot say what sport it holds gets a refusal, never a write.
+    # `_REFINE_INELIGIBLE` (not `_REFINE_AGREES`) is the right None: this market
+    # has not spoken, so it must not end the event's turn on a later sibling's
+    # behalf — though in practice every market on an event shares its sport, so
+    # the whole event is refused either way.
+    if not kalshi_occurrence_hour_is_recoverable(sport_key):
+        return None, _REFINE_INELIGIBLE
+
     from app.utils.prediction_market_matching import extract_game_date_from_ticker
 
     ticker_day = extract_game_date_from_ticker(external_id)
@@ -3630,10 +3672,12 @@ async def _refine_stand_in_event_starts() -> int:
                 SELECT e.id            AS event_id,
                        e.commence_time AS event_commence,
                        e.commence_time_source AS event_source,
+                       s.key           AS sport_key,
                        fm.external_id,
                        fm.commence_time AS market_commence
                 FROM events e
                 JOIN futures_markets fm ON fm.event_id = e.id
+                LEFT JOIN sports s ON s.id = e.sport_id
                 WHERE (e.commence_time_source = ANY(:derived)
                        OR e.commence_time_source = :occurrence)
                   AND fm.source = 'kalshi'
@@ -3653,6 +3697,7 @@ async def _refine_stand_in_event_starts() -> int:
                 continue
             target, reason = _stand_in_refinement_decision(
                 r.external_id, r.event_commence, r.event_source, r.market_commence,
+                sport_key=r.sport_key,
             )
             if target is None:
                 if (
@@ -4588,9 +4633,11 @@ async def _refresh_dated_fixture_starts(
                        fm.commence_time        AS market_commence,
                        e.id                    AS event_id,
                        e.commence_time         AS event_commence,
-                       e.commence_time_source  AS event_source
+                       e.commence_time_source  AS event_source,
+                       s.key                   AS sport_key
                 FROM futures_markets fm
                 JOIN events e ON e.id = fm.event_id
+                LEFT JOIN sports s ON s.id = e.sport_id
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'open'
                   AND fm.external_id = ANY(:tickers)
@@ -4635,6 +4682,7 @@ async def _refresh_dated_fixture_starts(
                 continue
             event_target = _stand_in_refinement_target(
                 r.external_id, r.event_commence, r.event_source, target,
+                sport_key=r.sport_key,
             )
             if event_target is None:
                 continue
