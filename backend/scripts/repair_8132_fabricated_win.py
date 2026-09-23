@@ -378,7 +378,7 @@ def guard_is_live() -> bool:
     )
 
 
-async def derive(session, include_new: bool) -> list[dict]:
+async def derive(session) -> list[dict]:
     """Re-derive the population and grade every row against :data:`EXPECTED`."""
     found: dict[int, dict] = {}
     for slice_mod in range(7):
@@ -420,9 +420,6 @@ async def derive(session, include_new: bool) -> list[dict]:
         if expected is None:
             row["verdict"] = NEW
             row["why"] = "evidenced but not in the pinned table"
-            if not include_new:
-                plan.append(row)
-                continue
         else:
             _, exp_market, exp_ticker, exp_result, exp_source = expected
             if (exp_market, exp_ticker, exp_result) != (
@@ -528,6 +525,19 @@ async def apply_plan(session, writable: list[dict]) -> dict[str, int]:
     return stats
 
 
+def writable_rows(plan: list[dict], include_new: bool) -> list[dict]:
+    """The rows `--apply` will actually write.
+
+    Kept OUT of :func:`derive` deliberately. `include_new` used to be a
+    parameter there, and it changed nothing the plan could show: a NEW row came
+    back identically either way, so a mutation that made the flag inert survived
+    the whole suite. The switch belongs where it acts, which is here, where a
+    test can drive both of its branches against one plan.
+    """
+    allowed = {REPAIR} | ({NEW} if include_new else set())
+    return [row for row in plan if row["verdict"] in allowed]
+
+
 def _summarise(plan: list[dict]) -> dict[str, int]:
     out: dict[str, int] = {}
     for row in plan:
@@ -551,11 +561,9 @@ async def run(apply: bool, include_new: bool) -> int:
             )
             return 2
 
-        plan = await derive(session, include_new)
+        plan = await derive(session)
         summary = _summarise(plan)
-        writable = [r for r in plan if r["verdict"] == REPAIR] + (
-            [r for r in plan if r["verdict"] == NEW] if include_new else []
-        )
+        writable = writable_rows(plan, include_new)
 
         print(f"#8132 fabricated-win retraction — {'APPLY' if apply else 'DRY RUN'}")
         print(f"  pinned EXPECTED legs : {len(EXPECTED)}")
