@@ -1343,14 +1343,58 @@ async def update_event_fields_from_espn(
     # reads as "we do not know", a 0-0 reads as a fact, and it is false.
     #
     # These four columns describe a match IN PLAY. A row admitted to this door
-    # only by `allow_unstarted`, whose board does not report it finished, is by
-    # construction neither in play nor finished, so it receives none of them.
+    # only by `allow_unstarted`, whose board reports it NEITHER in play NOR
+    # finished, is by construction neither, so it receives none of them.
     #
-    # The refusal is keyed on the FLAG, not on the status, and that is the whole
-    # confinement: every caller that does not pass `allow_unstarted` is
-    # bit-identical, including the liveness pass — which also sees `scheduled`
+    # ── WHY "not post/final" IS NOT THE PREDICATE (CERT-3343's required repair) ──
+    #
+    # The deep-straggler batch `allow_unstarted` travels with is not all
+    # never-started rows: a SUSPENDED row resumes, and the board then reports it
+    # in progress. `ee.status not in ("post", "final")` is true of that row too,
+    # so the first cut of this fix promoted a resumed game to `live` (the settle
+    # block below is outside this gate) and then refused it a score, a clock and
+    # a period — a live game with a blank scoreboard, which is the SAME "we do
+    # not know" defect pointed the other way.
+    #
+    # So the question is not "did the board say final", it is "does the board
+    # report play" — and the answer has to come from the board, not from a
+    # denylist of status tokens.
+    #
+    # ── WHY `play_evidence` IS CALLED ON THE SCORES ALONE ────────────────────
+    #
+    # `play_evidence` is THE ONE DEFINITION of "is this being played" and the
+    # obvious call is the full four-argument one. It is WRONG here, and inertly
+    # so. Measured at the venue 2026-09-23 (notice 26 — ESPN's own board, not our
+    # mirror), `scoreboard?dates=20260402` publishes for the postponed specimen
+    # 401814780:
+    #
+    #     status.type = STATUS_POSTPONED / state "post" / completed false
+    #     status.period = 1        status.displayClock = "0:00"
+    #
+    # A period and a clock on a game that was never played. `play_evidence`
+    # short-circuits `if period or game_clock: return True`, so the full call
+    # returns True for the very specimen this exists to refuse and the fix would
+    # have shipped INERT. ESPN's filler period/clock cannot testify here; its
+    # SCORES can, because a non-zero score is not a value a board invents. So
+    # the two positional arguments are passed and the other two are deliberately
+    # withheld — the shared definition, restricted to the half that is evidence
+    # on this population.
+    #
+    # The non-zero-score clause is also the safety valve for status tokens
+    # neither branch names — STATUS_DELAYED, which ESPN publishes both before a
+    # start and mid-game, reaches this line as `status_delayed`, and a delayed
+    # game already carrying 5-2 keeps taking its scoreboard on the strength of
+    # the score alone.
+    #
+    # The refusal is keyed on the FLAG, never on our own `event.status`, and that
+    # is the whole confinement: every caller that does not pass `allow_unstarted`
+    # is bit-identical, including the liveness pass — which also sees `scheduled`
     # rows and must go on writing a score onto one as its game starts.
-    _unstarted_and_unsettled = allow_unstarted and ee.status not in ("post", "final")
+    _board_reports_play = (
+        ee.status in ("in", "post", "final")
+        or play_evidence(ee.home_score, ee.away_score)
+    )
+    _unstarted_and_unsettled = allow_unstarted and not _board_reports_play
     if _unstarted_and_unsettled:
         stats["unstarted_live_writes_refused"] = (
             stats.get("unstarted_live_writes_refused", 0) + 1

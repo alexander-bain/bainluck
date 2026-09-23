@@ -59,7 +59,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.espn_api import ESPNEvent
-from app.utils.espn_helpers import update_event_fields_from_espn
+from app.utils.espn_helpers import play_evidence, update_event_fields_from_espn
 
 from tests.test_the_anchored_straggler_past_the_window_6280 import (
     _FakeEvent,
@@ -70,7 +70,7 @@ from tests.test_the_anchored_straggler_past_the_window_6280 import (
 FIRST_PITCH = datetime(2026, 4, 2, 20, 10, tzinfo=timezone.utc)
 
 
-def _board(status, home_score, away_score, *, clock=None, detail=None):
+def _board(status, home_score, away_score, *, clock=None, detail=None, period=None):
     """One row of an ESPN board, in whatever state the board reports."""
     return ESPNEvent(
         espn_id="401814780",
@@ -81,7 +81,7 @@ def _board(status, home_score, away_score, *, clock=None, detail=None):
         status_detail=detail if detail is not None else (
             "Final" if status == "post" else "Scheduled"
         ),
-        period=None,
+        period=period,
         clock=clock,
         home_team=None,
         away_team=None,
@@ -128,15 +128,39 @@ def _written(session, column):
 
 # ── THE DEFECT ───────────────────────────────────────────────────────────────
 
+def _postponed_board(home_score=0, away_score=0):
+    """The specimen's board, VERBATIM as ESPN publishes it.
+
+    Read 2026-09-23 from ESPN's own `scoreboard?dates=20260402` for 401814780
+    (notice 26 — the venue, not our mirror):
+
+        status.type   STATUS_POSTPONED / state "post" / completed false
+        status.detail "Postponed"
+        status.period 1          status.displayClock "0:00"
+
+    Every value here is measured, and two of them are the point. `status_name`
+    is none of the three the parser names, and `espn_terminal_state` returns
+    None for a postponed board, so `ee.status` arrives as the raw lowercased
+    token `"status_postponed"` — NOT the `"pre"` an invented fixture would
+    reach for. And the period/clock are ESPN's filler on a game that was never
+    played, which is why `play_evidence`'s period/clock clause cannot be
+    consulted on this population.
+    """
+    return _board(
+        "status_postponed", home_score, away_score,
+        clock="0:00", detail="Postponed", period=1,
+    )
+
+
 @pytest.mark.asyncio
 async def test_an_unstarted_row_whose_board_did_not_finish_takes_no_scoreboard():
     """The regression, at its specimen: a 2026-04-02 game must not take `0-0`."""
     row = _white_sox_at_blue_jays()
 
-    session = await _door(row, _board("pre", 0, 0), allow_unstarted=True)
+    session = await _door(row, _postponed_board(), allow_unstarted=True)
 
     assert _written(session, "home_score") == [], (
-        "the board did not report this game finished, so its scoreboard is not "
+        "the board did not report this game played, so its scoreboard is not "
         "a fact about it — /events/15290171 printed a 0-0 hero on a game played "
         "six months earlier"
     )
@@ -146,16 +170,41 @@ async def test_an_unstarted_row_whose_board_did_not_finish_takes_no_scoreboard()
 
 @pytest.mark.asyncio
 async def test_the_refusal_covers_the_clock_and_the_period_too():
-    """All four live-state columns describe a match IN PLAY. This row is not."""
+    """All four live-state columns describe a match IN PLAY. This row is not.
+
+    The production rows carried `period='Postponed'` and `game_clock='0:00'`
+    alongside the 0-0 — all four columns were written, so all four are asserted.
+    """
     row = _white_sox_at_blue_jays()
 
-    session = await _door(
-        row, _board("pre", 0, 0, clock="0:00", detail="Top 1st"),
-        allow_unstarted=True,
-    )
+    session = await _door(row, _postponed_board(), allow_unstarted=True)
 
     assert _written(session, "game_clock") == []
     assert _written(session, "period") == []
+
+
+@pytest.mark.asyncio
+async def test_the_filler_period_and_clock_do_not_buy_the_board_a_scoreboard():
+    """A four-argument `play_evidence` call here would ship the fix INERT.
+
+    ESPN publishes `period=1` and `displayClock="0:00"` on the postponed board
+    (measured above), and `play_evidence` short-circuits on `period or
+    game_clock`. So the shared definition, called in full, answers True for the
+    exact specimen this refuses — and the refusal would never fire.
+
+    This arm pins the restriction to the SCORE clause. It fails the moment
+    someone "tidies" the call by passing the other two arguments through, which
+    is the tidy-up that looks most correct from the outside.
+    """
+    board = _postponed_board()
+    assert play_evidence(board.home_score, board.away_score) is False
+    assert play_evidence(
+        board.home_score, board.away_score, board.period, board.clock
+    ) is True, "if this ever goes False, ESPN stopped sending filler — re-measure"
+
+    session = await _door(_white_sox_at_blue_jays(), board, allow_unstarted=True)
+
+    assert _written(session, "home_score") == []
 
 
 # ── THE POSITIVE CONTROL: the rig CAN express the write it is asked to refuse ─
@@ -178,7 +227,59 @@ async def test_the_same_rig_writes_the_scoreboard_when_the_board_says_final():
     assert _written(session, "away_score") == [5]
 
 
-# ── THE CONFINEMENT: the fix must not reach any caller that did not opt in ───
+# ── THE CONFINEMENT, PART ONE: not every deep straggler is never-started ────
+#
+# CERT-3343's required repair. The batch `allow_unstarted` travels with also
+# holds SUSPENDED rows, and a suspended game resumes.
+
+@pytest.mark.asyncio
+async def test_a_resumed_suspended_row_keeps_its_live_scoreboard():
+    """The board says 4-3, Top 8th. The permission must not blank that.
+
+    This row is admitted to the door by the same `allow_unstarted=True` as the
+    postponed specimen, and the settle block below this gate promotes it to
+    `live`. The first cut of this fix keyed on `ee.status not in ("post",
+    "final")`, which is true of an in-progress board too — so it promoted the
+    game and then refused it a score, a clock and a period. A live game with a
+    blank scoreboard is the same "we do not know" defect as the 0-0, pointed the
+    other way, and it is the one a reader meets while the game is on.
+    """
+    row = _white_sox_at_blue_jays()
+
+    session = await _door(
+        row, _board("in", 4, 3, clock="0:00", detail="Top 8th"),
+        allow_unstarted=True,
+    )
+
+    assert _written(session, "home_score") == [4], (
+        "a resumed suspended game was promoted to live and then refused its "
+        "own score — the permission blanked a board that was reporting play"
+    )
+    assert _written(session, "away_score") == [3]
+    assert _written(session, "period") == ["Top 8th"]
+
+
+@pytest.mark.asyncio
+async def test_an_unnamed_status_token_still_scores_on_a_non_zero_board():
+    """STATUS_DELAYED reaches this line as `status_delayed` and is not named.
+
+    ESPN publishes delayed both before a start and mid-game, so the token alone
+    cannot say which. The score can: a board carrying 5-2 has reported play
+    whatever it calls itself. This is the clause that keeps the refusal from
+    being a denylist that silently blanks every token nobody thought of.
+    """
+    row = _white_sox_at_blue_jays()
+
+    session = await _door(
+        row, _board("status_delayed", 5, 2, detail="Delayed"),
+        allow_unstarted=True,
+    )
+
+    assert _written(session, "home_score") == [5]
+    assert _written(session, "away_score") == [2]
+
+
+# ── THE CONFINEMENT, PART TWO: no caller that did not opt in is touched ──────
 
 @pytest.mark.asyncio
 async def test_the_liveness_pass_still_scores_a_scheduled_row_as_its_game_starts():
@@ -212,3 +313,33 @@ async def test_a_default_caller_is_bit_identical_to_before_the_fix():
     )
 
     assert _written(session, "home_score") == [4]
+
+
+@pytest.mark.asyncio
+async def test_a_default_caller_on_the_SPECIMEN_board_is_untouched_too():
+    """The arm that actually pins the refusal to the flag.
+
+    Every other confinement arm hands a default caller a board that REPORTS
+    PLAY, so `_board_reports_play` carries them on its own and they pass
+    whether the gate reads `allow_unstarted` or our `event.status`. Keyed on
+    `event.status == "scheduled"` the whole suite still went 8/8 — the mutant
+    survived, because nothing asked what a caller that did not opt in sees on
+    the one board where the gate can actually bite.
+
+    This is that question. `scheduled` row, postponed board, no permission
+    requested: #5501 did not change what this caller does, so neither may this
+    fix. A refusal that reached here would be blanking scoreboards for every
+    ESPN pass in the system, not for the deep-straggler batch.
+    """
+    row = _white_sox_at_blue_jays()
+    session = _FakeSession([row])
+
+    await update_event_fields_from_espn(
+        session, row, _postponed_board(), {"401814780"},
+        {"authority_dark_sports": 0, "errors": []},
+    )
+
+    assert _written(session, "home_score") == [0], (
+        "the refusal escaped its permission and reached a default caller — "
+        "this is the whole system's ESPN path, not the straggler batch"
+    )
