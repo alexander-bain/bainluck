@@ -41,6 +41,8 @@ import {
   anchorPeriodLabels,
   choosePeriodStripBand,
   periodLabelPlacement,
+  isEstimatedBoundary,
+  periodBoundaryChipLabel,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 
@@ -1225,16 +1227,26 @@ export default function ScoreDifferentialChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(0,0,0,0.25)"
+                // #3348 — an ESTIMATE is drawn as one. The server places a
+                // tier-4 marker by arithmetic on `commence_time`; it used to
+                // reach this rule byte-identical to an observed transition.
+                // Dotted and fainter, with a `~` on the chip, so a reader can
+                // tell "we saw the 2nd half start here" from "halves usually
+                // start about here". Observed markers render exactly as before.
+                stroke={isEstimatedBoundary(b) ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.25)"}
                 strokeWidth={1.5}
-                strokeDasharray="6 4"
+                strokeDasharray={isEstimatedBoundary(b) ? "2 4" : "6 4"}
                 label={{
-                  value: b.label,
+                  value: periodBoundaryChipLabel(b),
                   // #6882 — see the twin in OddsChart. Row 0 passes 0.
                   // #7940 — and the band follows the series, so the `Actual
                   // Score Diff` step line no longer rules through the glyphs.
                   ...periodLabelPlacement(b as { labelPosition?: string; labelRow?: number }, periodStripBand),
-                  style: { fontSize: 10, fill: "rgba(0,0,0,0.5)", fontWeight: 600 },
+                  style: {
+                    fontSize: 10,
+                    fill: isEstimatedBoundary(b) ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.5)",
+                    fontWeight: isEstimatedBoundary(b) ? 500 : 600,
+                  },
                 }}
               />
             ))}

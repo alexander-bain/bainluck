@@ -6,11 +6,75 @@
 
 import type { ESPNHistoryPoint, WinProbHistoryPoint, ScoringPlay } from "./types";
 
+/**
+ * One entry of the served `period_markers` array (`routes/events.py`,
+ * `app/utils/period_markers.py`). Everything past `period` is additive and
+ * optional on the wire, so an older cached payload still decodes.
+ */
+export interface ServedPeriodMarker {
+  timestamp: string;
+  period: string;
+  source?: string;
+  precision?: string;
+  not_before?: string | null;
+}
+
 export interface PeriodBoundary {
   /** ISO timestamp of the period transition */
   timestamp: string;
   /** Short display label (e.g., "Q2", "P2", "5", "2H") */
   label: string;
+  /**
+   * #3348 — WHO SAW THIS BOUNDARY. The server's `period_markers` carry a
+   * `source` (`statpal` | `espn_box` | `win_prob` | `espn_state` are
+   * instruments; `estimated` is arithmetic on `commence_time`) and, on the
+   * observed-transition tier, a `precision` and a `not_before` lower bound.
+   * `derivePeriodBoundaries` used to map every marker to `{timestamp, label}`,
+   * so a tier-4 guess and an observed transition were byte-identical by the
+   * time they reached a chart. Measured by ux/1319 on production 2026-09-17:
+   * 46 of 60 completed soccer charts drew confident `1H`/`2H` rules nobody
+   * observed, and `/events/15307941` (CFL) ruled `Q1 Q2 Q3 Q4` over
+   * `espn_history: []`, `scoring_plays: []`, `win_prob_history: {}`.
+   *
+   * All three are OPTIONAL and ADDITIVE: a boundary the client derives from an
+   * occurrence log (`espn_history`, `win_prob_history`, `scoring_plays`) names
+   * that log as its source; a fixture written as `{timestamp, label}` is still
+   * a valid boundary and reads as "provenance unknown", never as "estimated".
+   */
+  source?: string;
+  /**
+   * How much `timestamp` can be trusted AS A PERIOD START: `boundary_observed`
+   * (bracketed inside one poll), `first_seen` (an instrument saw the period in
+   * progress; it began at or before this) or `first_score` (the period's first
+   * score, not its start). A first observed state is not an exact period start
+   * — every client-derived boundary is `first_seen`.
+   */
+  precision?: string;
+  /**
+   * The period began AFTER this instant (the last observation that showed an
+   * earlier state), or `null` when nothing bounds it from below.
+   */
+  notBefore?: string | null;
+}
+
+/** The server's word for "nobody observed this; it was placed by arithmetic". */
+export const PERIOD_SOURCE_ESTIMATED = "estimated";
+
+/** A boundary an instrument observed — anything provenance-less counts as observed
+ * only in the sense that it was never MARKED an estimate; see `PeriodBoundary`. */
+export function isEstimatedBoundary(b: { source?: string | null }): boolean {
+  return b.source === PERIOD_SOURCE_ESTIMATED;
+}
+
+/**
+ * The text a chart prints on a boundary's chip. An estimate is CLEARLY an
+ * estimate (`~Q2`); an observed boundary prints exactly what it printed before
+ * this field existed, so every pinned label in the test corpus is unchanged.
+ * The `~` is the same mark `GamePlayCard` puts on a carried-forward clock
+ * (#925): one glyph, one meaning — "not observed at this instant".
+ */
+export function periodBoundaryChipLabel(b: PeriodBoundary): string {
+  return isEstimatedBoundary(b) ? `~${b.label}` : b.label;
 }
 
 /**
@@ -1067,12 +1131,28 @@ function fillMissingPeriods(
   fallback: PeriodBoundary[],
 ): PeriodBoundary[] {
   const claimed = new Set(primary.map((b) => periodIdentity(b.label)));
+  // #3348 — an ESTIMATE does not get to silence an observation of the same
+  // period. A tier-4 marker is `commence_time + offset`; if an occurrence log
+  // actually saw that period, the observed time replaces the guess (and the
+  // chip loses its `~`). Only estimates are superseded: an observed primary
+  // marker keeps the #7917 guarantee that nothing it supplies is moved.
+  const estimated = new Map<string, number>();
+  primary.forEach((b, i) => {
+    if (isEstimatedBoundary(b)) estimated.set(periodIdentity(b.label), i);
+  });
+  const kept = [...primary];
   const filled: PeriodBoundary[] = [];
 
   for (const b of fallback) {
     const id = periodIdentity(b.label);
-    if (claimed.has(id)) continue;
     if (!FILLABLE_PERIOD_LABEL.test(b.label)) continue;
+    if (claimed.has(id)) {
+      const at = estimated.get(id);
+      if (at === undefined || isEstimatedBoundary(b)) continue;
+      kept[at] = b;
+      estimated.delete(id);
+      continue;
+    }
     // Claim it here, not after the loop: the fallback holds `Q1` AND `/Q1`, and
     // without this the end marker is admitted by the same hole the start just
     // filled.
@@ -1080,9 +1160,10 @@ function fillMissingPeriods(
     filled.push(b);
   }
 
-  if (filled.length === 0) return primary;
+  // Nothing filled and nothing superseded: the same array, not a copy.
+  if (filled.length === 0 && kept.every((b, i) => b === primary[i])) return primary;
 
-  return [...primary, ...filled].sort(
+  return [...kept, ...filled].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 }
@@ -1162,7 +1243,7 @@ export function derivePeriodBoundaries(
   espnHistory?: ESPNHistoryPoint[],
   winProbHistory?: Record<string, WinProbHistoryPoint[]>,
   scoringPlays?: ScoringPlay[],
-  periodMarkers?: Array<{ timestamp: string; period: string }>,
+  periodMarkers?: ServedPeriodMarker[],
   /** #4888: event sport key, so a bare period number can name its own unit. */
   sport?: string | null,
 ): PeriodBoundary[] {
@@ -1177,16 +1258,23 @@ export function derivePeriodBoundaries(
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       )
     );
-    const firstSeen = new Map<string, string>();
+    const firstSeen = new Map<string, PeriodBoundary>();
     for (const m of sorted) {
       const label = normalizePeriodLabel(m.period, sport);
       if (label && !firstSeen.has(label)) {
-        firstSeen.set(label, m.timestamp);
+        // #3348 — the marker's provenance rides with it. `source` is carried
+        // verbatim (an unknown vocabulary word is still not "estimated");
+        // `precision` and `not_before` only when the server sent them.
+        const b: PeriodBoundary = { timestamp: m.timestamp, label };
+        if (typeof m.source === "string" && m.source) b.source = m.source;
+        if (typeof m.precision === "string" && m.precision) b.precision = m.precision;
+        if (m.not_before !== undefined) b.notBefore = m.not_before;
+        firstSeen.set(label, b);
       }
     }
-    primary = Array.from(firstSeen.entries())
-      .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
-      .map(([label, timestamp]) => ({ timestamp, label }));
+    primary = Array.from(firstSeen.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
   }
 
   // The occurrence-log cascade, unchanged. It is still first-non-empty-wins
@@ -1232,6 +1320,58 @@ function deriveFallbackBoundaries(
   return [];
 }
 
+/**
+ * #3348 — the three occurrence logs the client can derive a boundary from,
+ * named so a boundary can say which log saw it. These are the CLIENT's names for
+ * the payload keys; the server's tier names (`espn_state`, `win_prob`, …) live on
+ * markers the server built. Neither vocabulary contains `estimated`.
+ */
+export const CLIENT_SOURCE_ESPN_HISTORY = "espn_history";
+export const CLIENT_SOURCE_WIN_PROB_HISTORY = "win_prob_history";
+export const CLIENT_SOURCE_SCORING_PLAYS = "scoring_plays";
+
+/** What every client-derived boundary can honestly claim about its timestamp. */
+export const CLIENT_PRECISION_FIRST_SEEN = "first_seen";
+
+/**
+ * One boundary per distinct period label, at the first observation carrying it.
+ *
+ * `session` is timestamp-ascending and already session-trimmed. Each boundary
+ * is `first_seen`: the log saw the period IN PROGRESS at `timestamp`, so the
+ * period began at or before it — never "exactly here". `notBefore` is the
+ * observation immediately before it in the same log (which showed a different
+ * period), or `null` for the first label the log ever carried. That is the same
+ * bracket shape the server's observed-transition tier serves (`not_before` /
+ * `timestamp`), so a consumer can read either without caring who built it.
+ */
+function firstSeenBoundaries(
+  session: Array<{ timestamp: string; period: string }>,
+  sport: string | null | undefined,
+  source: string,
+): PeriodBoundary[] {
+  const firstSeen = new Map<string, PeriodBoundary>();
+  let previous: string | null = null;
+
+  for (const point of session) {
+    const label = normalizePeriodLabel(point.period, sport);
+    if (!label) continue;
+    if (!firstSeen.has(label)) {
+      firstSeen.set(label, {
+        timestamp: point.timestamp,
+        label,
+        source,
+        precision: CLIENT_PRECISION_FIRST_SEEN,
+        notBefore: previous,
+      });
+    }
+    previous = point.timestamp;
+  }
+
+  return Array.from(firstSeen.values()).sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+}
+
 function deriveBoundariesFromEspn(history: ESPNHistoryPoint[], sport?: string | null): PeriodBoundary[] {
   // Sort by timestamp, then drop any stale earlier-game segment (L2-163).
   const sorted = keepLatestSession(
@@ -1240,24 +1380,14 @@ function deriveBoundariesFromEspn(history: ESPNHistoryPoint[], sport?: string | 
     )
   );
 
-  // Collect the first timestamp we see for each unique period label
-  const firstSeen = new Map<string, string>();
-
-  for (const point of sorted) {
-    if (!point.period) continue;
-    const label = normalizePeriodLabel(point.period, sport);
-    if (!label) continue;
-    if (!firstSeen.has(label)) {
-      firstSeen.set(label, point.timestamp);
-    }
-  }
-
   // Every unique period we observed gets a boundary at its first occurrence.
   // This handles missed transitions (e.g., ESPN sync started in Q2 — we still
   // mark Q2 even though we never saw Q1→Q2).
-  return Array.from(firstSeen.entries())
-    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
-    .map(([label, timestamp]) => ({ timestamp, label }));
+  return firstSeenBoundaries(
+    sorted.flatMap((p) => (p.period ? [{ timestamp: p.timestamp, period: p.period }] : [])),
+    sport,
+    CLIENT_SOURCE_ESPN_HISTORY,
+  );
 }
 
 function deriveBoundariesFromWinProb(
@@ -1302,19 +1432,7 @@ function deriveBoundariesFromWinProb(
 
   // Collect the first timestamp we see for each unique period label.
   // This handles missed transitions (e.g., ESPN sync started in Q2).
-  const firstSeen = new Map<string, string>();
-
-  for (const point of session) {
-    const label = normalizePeriodLabel(point.period, sport);
-    if (!label) continue;
-    if (!firstSeen.has(label)) {
-      firstSeen.set(label, point.timestamp);
-    }
-  }
-
-  return Array.from(firstSeen.entries())
-    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
-    .map(([label, timestamp]) => ({ timestamp, label }));
+  return firstSeenBoundaries(session, sport, CLIENT_SOURCE_WIN_PROB_HISTORY);
 }
 
 function deriveBoundariesFromScoringPlays(plays: ScoringPlay[], sport?: string | null): PeriodBoundary[] {
@@ -1328,18 +1446,9 @@ function deriveBoundariesFromScoringPlays(plays: ScoringPlay[], sport?: string |
 
   if (sorted.length === 0) return [];
 
-  const firstSeen = new Map<string, string>();
-
-  for (const play of sorted) {
-    if (!play.period) continue;
-    const label = normalizePeriodLabel(play.period, sport);
-    if (!label) continue;
-    if (!firstSeen.has(label)) {
-      firstSeen.set(label, play.timestamp);
-    }
-  }
-
-  return Array.from(firstSeen.entries())
-    .sort((a, b) => new Date(a[1]).getTime() - new Date(b[1]).getTime())
-    .map(([label, timestamp]) => ({ timestamp, label }));
+  return firstSeenBoundaries(
+    sorted.map((p) => ({ timestamp: p.timestamp, period: p.period as string })),
+    sport,
+    CLIENT_SOURCE_SCORING_PLAYS,
+  );
 }

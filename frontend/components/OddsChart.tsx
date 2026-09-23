@@ -53,6 +53,8 @@ import {
   anchorPeriodLabels,
   choosePeriodStripBand,
   periodLabelPlacement,
+  isEstimatedBoundary,
+  periodBoundaryChipLabel,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -2971,11 +2973,17 @@ export default function OddsChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(0,0,0,0.25)"
+                // #3348 — an ESTIMATE is drawn as one. The server places a
+                // tier-4 marker by arithmetic on `commence_time`; it used to
+                // reach this rule byte-identical to an observed transition.
+                // Dotted and fainter, with a `~` on the chip, so a reader can
+                // tell "we saw the 2nd half start here" from "halves usually
+                // start about here". Observed markers render exactly as before.
+                stroke={isEstimatedBoundary(b) ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.25)"}
                 strokeWidth={1.5}
-                strokeDasharray="6 4"
+                strokeDasharray={isEstimatedBoundary(b) ? "2 4" : "6 4"}
                 label={{
-                  value: b.label,
+                  value: periodBoundaryChipLabel(b),
                   // #6882: `dy` shifts the whole text block down from whatever
                   // `position` computed — recharts keeps `dy` through
                   // `filterProps` (it is an SVG text attribute) and `Text` adds it
@@ -2987,7 +2995,11 @@ export default function OddsChart({
                   // the `Q4` glyphs. `periodStripBand` is "top" for every chart
                   // whose series is not decisively pinned to one end.
                   ...periodLabelPlacement(b as { labelPosition?: string; labelRow?: number }, periodStripBand),
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
+                  style: {
+                    fontSize: 11,
+                    fill: isEstimatedBoundary(b) ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.65)",
+                    fontWeight: isEstimatedBoundary(b) ? 500 : 700,
+                  },
                 }}
               />
             ))}
