@@ -13,6 +13,11 @@ import {
   formatSourceStamp,
   sourceIsStale,
 } from "@/lib/sourceAge";
+import { drawableChartSources } from "@/lib/event/chartDrawableSources";
+import {
+  EVENT_BOOT_HISTORY_HOURS,
+  EVENT_BOOT_HISTORY_RANGE,
+} from "@/lib/event/detailBoot";
 
 /** Fallback source info for legacy events without win_prob_sources.
  *  Colors come from the one source-color registry (@/lib/sourceColors). */
@@ -80,6 +85,36 @@ export default function ModelsPage({ params }: ModelsPageProps) {
     () => fetchEventHistory(eventId)
   );
 
+  /**
+   * #8182: the SECOND read is the one that knows what the chart is drawing.
+   *
+   * Everything this page prints — the numbers, the counts, the legacy ESPN
+   * card — comes from the untrimmed payload above and is left exactly as it
+   * was. But "Shown as this line on the chart" is a claim about the CHART, and
+   * the chart's first paint asks for a different payload: `hours=48` at
+   * `range=since_start`, which drops the pre-kick-off half. Answering a
+   * question about that plot from this page's whole-journey payload is what
+   * put a green dashed swatch under Kalshi on a chart with no Kalshi line.
+   *
+   * Asked as a separate request rather than by moving the page onto the
+   * chart's range, deliberately: that range also re-scopes `points` (604 -> 45
+   * on the specimen) and can empty `espn_history`, which would silently
+   * restate every count on the page and drop the legacy ESPN card — a second,
+   * unmeasured change riding a footer fix. The constants are the shared ones,
+   * so the URL this issues and the URL the chart issues are one expression.
+   */
+  const { data: chartRangeData } = useSWR(
+    event
+      ? `/api/events/${eventId}/history?hours=${EVENT_BOOT_HISTORY_HOURS}&range=${EVENT_BOOT_HISTORY_RANGE}`
+      : null,
+    () =>
+      fetchEventHistory(
+        eventId,
+        EVENT_BOOT_HISTORY_HOURS,
+        EVENT_BOOT_HISTORY_RANGE
+      )
+  );
+
   if (eventError) {
     return (
       <div className="max-w-5xl mx-auto px-4 py-8">
@@ -119,6 +154,9 @@ export default function ModelsPage({ params }: ModelsPageProps) {
    */
   const stampFor = (key: string): string | null =>
     event.win_probability_sources?.[key]?.updated_at ?? null;
+
+  /** #8182: the sources the chart actually strokes, read off the chart's range. */
+  const drawable = drawableChartSources(chartRangeData);
 
   // Build the display list: always show betting, then any model sources
   const displaySources: Array<{
@@ -277,14 +315,29 @@ export default function ModelsPage({ params }: ModelsPageProps) {
               </div>
             )}
             {meta.snapshot_count > 0 && (
-              <p className="text-xs text-text-muted">
-                {meta.snapshot_count} data points captured for this event
+              <p className="text-xs text-text-muted" data-testid="model-source-count">
+                {/* #8182: the count is rendered, so it agrees with itself —
+                    "1 data points" was printing on the specimen. */}
+                {meta.snapshot_count} data point
+                {meta.snapshot_count === 1 ? "" : "s"} captured for this event
               </p>
             )}
           </div>
 
-          {/* Chart line preview */}
-          <div className="px-5 py-3 bg-surface-secondary border-t border-surface-border flex items-center gap-2">
+          {/* Chart line preview — #8182: only for a source the chart draws.
+              This strip is not decoration, it is an assertion: it names a line,
+              gives its dash pattern, and sends the reader to the chart to find
+              it. On the specimen it said that of Kalshi, whose series is one
+              point in the range the chart shows and is therefore stroked as
+              nothing at all. `drawableChartSources` answers off the chart's own
+              payload; an unknown answer draws no strip, so the page under-claims
+              rather than pointing at a line that is not there. */}
+          {drawable.has(key) && (
+          <div
+            className="px-5 py-3 bg-surface-secondary border-t border-surface-border flex items-center gap-2"
+            data-testid="model-source-chart-key"
+            data-source={key}
+          >
             <svg width="30" height="4" className="shrink-0">
               <line
                 x1="0"
@@ -300,6 +353,7 @@ export default function ModelsPage({ params }: ModelsPageProps) {
               Shown as this line on the chart
             </span>
           </div>
+          )}
         </div>
         );
       })}
