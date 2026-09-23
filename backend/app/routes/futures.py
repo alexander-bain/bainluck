@@ -34,6 +34,7 @@ from app.utils.futures_unsupported_price import (
     needs_trade_evidence,
     needs_unbacked_ask_evidence,
     price_is_an_unbacked_ask,
+    price_is_an_unbacked_majority,
     price_is_unlocated_in_broken_field,
     price_is_unsupported,
     price_refuted_by_live_book,
@@ -3818,9 +3819,10 @@ def _unsupported_price_verdicts(
             and latest_trade[o.id] is not None,
             in_exclusive_field=in_exclusive_field,
         )
-        # #7747. An OR, so the two arms are independent screens over one
-        # candidate list: a leg either arm refuses is withheld, and neither can
-        # acquit what the other caught.
+        # #7747. An OR, so the arms are independent screens over one candidate
+        # list: a leg ANY arm refuses is withheld, and none can acquit what
+        # another caught. #8210 added a third below and relies on that property —
+        # it deliberately OVERLAPS the arm above on legs printing at their ask.
         or price_is_an_unbacked_ask(
             market.source,
             o.resolution_source,
@@ -3834,6 +3836,26 @@ def _unsupported_price_verdicts(
             # `getattr` throughout: a caller may hand this a market whose
             # outcomes never loaded these columns, and an absent stamp must read
             # as "do not withhold" rather than raise.
+            volume_24h=getattr(o, "volume_24h", None),
+            volume_24h_at=getattr(o, "volume_24h_at", None),
+            last_seen_at=getattr(o, "last_updated", None),
+        )
+        # #8210. The third independent screen over the same candidate list, and
+        # the one that reaches rule 2's trade-evidence exemption: the arm above
+        # needs the price AT its own ask, so a stale trade locating a price
+        # strictly INSIDE an unbid spread is acquitted by every other arm. Same
+        # book shape and same volume term as its sibling; only the position of
+        # the print in the spread differs.
+        or price_is_an_unbacked_majority(
+            market.source,
+            o.resolution_source,
+            _as_float(getattr(o, "current_probability", None)),
+            _as_float(getattr(o, "current_yes_bid", None)),
+            _as_float(getattr(o, "current_yes_ask", None)),
+            _as_float(latest_trade.get(o.id)),
+            has_trade_evidence=o.id in latest_trade
+            and latest_trade[o.id] is not None,
+            in_exclusive_field=in_exclusive_field,
             volume_24h=getattr(o, "volume_24h", None),
             volume_24h_at=getattr(o, "volume_24h_at", None),
             last_seen_at=getattr(o, "last_updated", None),
