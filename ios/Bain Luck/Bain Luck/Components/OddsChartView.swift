@@ -34,6 +34,38 @@ private struct PeriodMarker: Identifiable {
     let date: Date
     let label: String
     let isGameStart: Bool
+    /// #3348 — who saw this boundary. Carried, not yet drawn: the chip strip
+    /// prints observed markers exactly as before; estimated markers are never
+    /// admitted to this type (see `extractPeriodMarkers`).
+    var provenance: PeriodProvenance? = nil
+}
+
+/// #3348 — the provenance of one period boundary, whichever side of the wire
+/// built it. `source` is an instrument name (the server's `statpal` /
+/// `espn_box` / `win_prob` / `espn_state`, or this client's `espn_history` /
+/// `win_prob_history`); `precision` is `boundary_observed`, `first_seen` or
+/// `first_score`; `notBefore` is the last observation that showed an EARLIER
+/// state, or nil when nothing bounds the start from below. A first observed
+/// state is not an exact period start, and this is where that is written down.
+struct PeriodProvenance: Equatable {
+    /// Nil when the server sent a marker with no `source` at all — carried as
+    /// unknown, never invented (#4135: a view names a source or draws none).
+    let source: String?
+    let precision: String?
+    let notBefore: Date?
+
+    static let clientPrecisionFirstSeen = "first_seen"
+    static let clientSourceEspnHistory = "espn_history"
+    static let clientSourceWinProbHistory = "win_prob_history"
+}
+
+/// #3348 — a served `period_markers` entry the client could read, normalised to
+/// this chart's label vocabulary. Internal so the decode path is unit-testable.
+struct ServedPeriodBoundary: Equatable {
+    let label: String
+    let date: Date
+    let isEstimated: Bool
+    let provenance: PeriodProvenance
 }
 
 // MARK: - Plot Width
@@ -902,6 +934,9 @@ struct OddsChartView: View {
     private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
         var firstSeen: [(label: String, date: Date)] = []
         var seenLabels: Set<String> = []
+        // #3348 — provenance per label, kept beside `firstSeen` rather than
+        // widening the tuple every existing line reads.
+        var provenance: [String: PeriodProvenance] = [:]
 
         // Try ESPN history first (has explicit period field)
         if let espnHistory = history.espnHistory, espnHistory.count >= 2 {
@@ -913,11 +948,21 @@ struct OddsChartView: View {
                 }
                 .sorted { $0.date < $1.date }
 
+            // The previous period-bearing observation in THIS series: the
+            // period began after it (#3348 `notBefore`).
+            var previous: Date?
             for point in sorted {
                 let label = normalizePeriodLabel(point.period)
-                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                seenLabels.insert(label)
-                firstSeen.append((label, point.date))
+                guard !label.isEmpty else { continue }
+                if !seenLabels.contains(label) {
+                    seenLabels.insert(label)
+                    firstSeen.append((label, point.date))
+                    provenance[label] = PeriodProvenance(
+                        source: PeriodProvenance.clientSourceEspnHistory,
+                        precision: PeriodProvenance.clientPrecisionFirstSeen,
+                        notBefore: previous)
+                }
+                previous = point.date
             }
         }
 
@@ -938,13 +983,51 @@ struct OddsChartView: View {
                     }
                     .sorted { $0.date < $1.date }
 
+                var previous: Date?
                 for point in sorted {
                     let label = normalizePeriodLabel(point.period)
-                    guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                    seenLabels.insert(label)
-                    firstSeen.append((label, point.date))
+                    guard !label.isEmpty else { continue }
+                    if !seenLabels.contains(label) {
+                        seenLabels.insert(label)
+                        firstSeen.append((label, point.date))
+                        provenance[label] = PeriodProvenance(
+                            source: PeriodProvenance.clientSourceWinProbHistory,
+                            precision: PeriodProvenance.clientPrecisionFirstSeen,
+                            notBefore: previous)
+                    }
+                    previous = point.date
                 }
             }
+        }
+
+        // #3348 — the served `period_markers`, read for the first time.
+        //
+        // OBSERVED markers only. A period this client did not see in either
+        // log above is added at the time the server's instrument saw it; a
+        // period it did see keeps its own chip where it is and gains the
+        // server's provenance (`precision`, `not_before`) — nothing already
+        // drawn moves. ESTIMATED markers (`source: "estimated"`, arithmetic on
+        // the scheduled start) are NOT admitted: this chart has never drawn a
+        // period nobody observed (#6718), and the web labels them `~Q1` while
+        // this side keeps them absent — both are "not presented as observed";
+        // whether the phone should also draw the labelled estimate is a
+        // product call, recorded as open in the #3348 delivery, not decided
+        // here. Unknown stays unknown.
+        let servedMarkers = Self.servedPeriodMarkers(from: history.periodMarkers, sportKey: sportKey)
+        for served in servedMarkers where !served.isEstimated {
+            if seenLabels.contains(served.label) {
+                if let own = provenance[served.label], own.precision == PeriodProvenance.clientPrecisionFirstSeen,
+                   served.provenance.notBefore != nil || served.provenance.precision != nil {
+                    provenance[served.label] = PeriodProvenance(
+                        source: own.source,
+                        precision: served.provenance.precision ?? own.precision,
+                        notBefore: served.provenance.notBefore ?? own.notBefore)
+                }
+                continue
+            }
+            seenLabels.insert(served.label)
+            firstSeen.append((served.label, served.date))
+            provenance[served.label] = served.provenance
         }
 
         // #6718 — NOTHING IS INSERTED HERE, AND THAT IS THE FIX.
@@ -1033,7 +1116,35 @@ struct OddsChartView: View {
 
         return deduped
             .enumerated()
-            .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false) }
+            .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false,
+                                provenance: provenance[$1.label]) }
+    }
+
+    /// #3348 — the served `period_markers` this client can read, in date order.
+    ///
+    /// Pure and internal so the decode path is testable without a view. Drops a
+    /// marker with no parseable timestamp or no period label this chart can
+    /// print; keeps estimated markers, FLAGGED, so the caller decides — the
+    /// caller above holds them back. `source` is carried verbatim; an unknown
+    /// word is still not `estimated`.
+    static func servedPeriodMarkers(from markers: [PeriodMarkerPayload]?, sportKey: String?) -> [ServedPeriodBoundary] {
+        guard let markers, !markers.isEmpty else { return [] }
+        return markers
+            .compactMap { m -> ServedPeriodBoundary? in
+                guard let raw = m.timestamp, let date = raw.asDate,
+                      let period = m.period, !period.isEmpty else { return nil }
+                let label = PeriodLabel.normalize(period, sport: sportKey)
+                guard !label.isEmpty else { return nil }
+                return ServedPeriodBoundary(
+                    label: label,
+                    date: date,
+                    isEstimated: m.isEstimated,
+                    provenance: PeriodProvenance(
+                        source: m.source,
+                        precision: m.precision,
+                        notBefore: m.notBefore?.asDate))
+            }
+            .sorted { $0.date < $1.date }
     }
 
     // `inferFirstPeriodLabel(from:)` was removed with #6718. It answered "which

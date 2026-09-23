@@ -100,6 +100,20 @@ enum PeriodLabel {
             return inning(s[match].filter(\.isNumber))
         }
 
+        // Inning WITH its noun: "4th Inning" → "4th" (#3348, codex 2026-09-22).
+        //
+        // ESPN's status text says `End of 4th Inning`; the prefix strip above
+        // leaves `4th Inning`, which matched nothing here and fell out of the
+        // bottom of this function verbatim. So a live MLB chart drew `4th` (from
+        // `Top 4th`) AND `4th Inning` as two chips for one inning — read directly
+        // off Native297's frame `n297-836-kalshi-t300.png`. The web strips the
+        // same noun (`periodMarkers.ts`, the `"End of 8th Inning"` note in #7982).
+        // Whole-inning identity is what the chip strip carries; the half is kept
+        // for the scrub readout, which reads the raw period string.
+        if let match = s.range(of: #"^(\d+)(?:st|nd|rd|th)\s+inning$"#, options: [.regularExpression, .caseInsensitive]) {
+            return inning(s[match].filter(\.isNumber))
+        }
+
         // Golf round labels: "R1", "R2", "R3", "R4", "PO" (playoff)
         if s.range(of: #"^R\d$"#, options: [.regularExpression, .caseInsensitive]) != nil {
             return s.uppercased()
