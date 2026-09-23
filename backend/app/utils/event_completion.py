@@ -758,6 +758,110 @@ def suspended_row_is_unreachable(
     return commence_time < now - floor
 
 
+def venue_voided_row_is_retirable(
+    status,
+    commence_time,
+    home_score,
+    away_score,
+    completed_at,
+    now,
+    floor,
+    *,
+    every_market_venue_voided,
+    has_graded_outcome,
+) -> bool:
+    """Has the venue already given its terminal answer for this fixture? (#7035)
+
+    THE SECOND WARRANT FOR THE SAME WRITE, AND IT IS A DIFFERENT QUESTION FROM
+    THE ONE ABOVE. :func:`suspended_row_is_unreachable` asks *can anything ever
+    reach this row again* and retires on the answer "no". This asks *has the
+    thing that would reach it already spoken* and retires on the answer "yes,
+    and it said there was no result". Both end at
+    :data:`UNREACHABLE_SUSPENDED_TERMINAL`; neither subsumes the other, and
+    folding this into the sibling would make that function's name false for
+    every row it returned on this ground.
+
+    🔴 IT IS A SEPARATE PREDICATE BECAUSE THE SIBLING STRUCTURALLY CANNOT REACH
+    THE FIXTURE #7035 WAS FILED FOR, AND THAT IS MEASURED, NOT ARGUED. Event
+    15312871 (Levante v Bilbao, ``soccer_spain_la_liga``, postponed Sep 16) is
+    held by the sibling twice over: its four Kalshi legs make it
+    ``market_anchored``, and ``soccer_spain_la_liga`` is one of the 26 keys of
+    ``ESPN_SPORT_MAPPING``, so ``anchor_acquirable`` refuses it and the caller's
+    ``sport_id.notin_(espn_covered_ids)`` screen refuses it again. Opening the
+    market door alone would leave the named specimen exactly where it is. Opening
+    the ESPN door inside the sibling would widen an arm that has retired 13,595
+    rows in five days across all 26 covered sports, on a reachability argument
+    that is still true. So the fact gets its own rule, its own population and its
+    own refusals, and the sibling is not touched by one row.
+
+    WHY THE SIBLING'S ID AND ANCHOR REFUSALS DO NOT APPLY HERE. Every one of them
+    exists to answer "could some writer still arrive with a result for this
+    row?" — ``espn_id`` dereferences to a feed that can speak, ``anchor_acquirable``
+    is ``_backfill_espn_ids`` going and getting the id, ``market_anchored`` is a
+    live venue door. That question is moot once the venue has settled the event
+    and declined to grade it: an ESPN backfill that arrives tomorrow and anchors
+    this row cannot conjure a result for a match that was not played. The venue's
+    word is upstream of all of them, so requiring the row to ALSO be unreachable
+    would be requiring evidence for a question this rule does not ask.
+
+    THE REFUSALS IT DOES KEEP, AND WHY EACH IS NOT DECORATION:
+
+    * ``every_market_venue_voided`` — EVERY market on the event, not any. One
+      market the capture has not answered, or has answered with
+      ``venue_void_checked_at`` (the venue named a result), and this row is not a
+      void; it is a row we are mid-way through asking about. Measured at the
+      venue on a 14-ticker sample of this exact population: **4 voided, 10
+      graded**. A rule keyed on "any leg voided" would retire seven games in ten
+      that were played.
+    * ``has_graded_outcome`` — asked of our own rows as well as the venue's
+      answer, and it is the contradiction test. A graded outcome means a result
+      WAS reported and something wrote it down; the void stamp and the grade
+      cannot both be right, and when two facts disagree this arm declines rather
+      than picks. It is measured empty on the population today, which is what
+      makes it cheap to keep and worth keeping: it fails closed on the one state
+      that would make a retirement destroy a result.
+    * ``home_score`` / ``away_score`` / ``completed_at`` — the sibling's
+      evidence-of-a-played-game refusals, kept verbatim for the reason it gives:
+      a row that acquired a result between the census and the write refutes the
+      premise directly. Measured 0 and 0 across the whole 93-row candidate
+      population, and this predicate is what keeps that true.
+    * ``floor`` — the same :func:`~app.tasks.espn_sync.unreachable_suspended_floor`
+      the sibling derives, PASSED IN rather than restated, and it earns its place
+      on its own argument rather than by inheritance: while a row is inside
+      ``SUSPENDED_RESUME_WINDOW`` the ``suspended → live`` arm can still re-select
+      it, and retiring a row a live arm is about to resume is a race this rule
+      would lose. Past the floor no resume arm can select it, so the only writer
+      left is this one.
+
+    THE PLAYED CONTROL IS ``status``, AND IT IS THE FIRST TEST FOR A REASON.
+    ``suspended`` is what separates a postponed fixture from a played one. On
+    production, ``completed`` events hold 2,843 resolved rows with no graded leg
+    — "played, we simply have not graded it yet" — identical to this population
+    on every other axis. Stamping one of those would put "this game was never
+    played" on a game that was. The event status is the only thing that tells
+    them apart before the venue is asked, so it is a refusal and not an ordering.
+
+    Both keyword arguments are REQUIRED with no default, and both are tested
+    against a literal rather than for truthiness, exactly as the sibling's
+    ``market_anchored`` is: a call site that has not been taught to ask these
+    questions gets a ``TypeError``, and "the caller is out of date" must never be
+    able to look like "the venue voided this fixture".
+    """
+    if status != EVENT_SUSPENDED:
+        return False
+    if commence_time is None or now is None or floor is None:
+        return False
+    if every_market_venue_voided is not True:
+        return False
+    if has_graded_outcome is not False:
+        return False
+    if home_score is not None or away_score is not None:
+        return False
+    if completed_at is not None:
+        return False
+    return commence_time < now - floor
+
+
 #: How far into the future a retired row's start must move before the evidence
 #: that retired it is agreed to be refuted. Same hour
 #: :func:`~app.tasks.espn_sync._is_bogus_future_settled` uses, and for the same

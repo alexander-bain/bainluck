@@ -172,16 +172,15 @@ async def _dry_run():
 async def _create_backup():
     from app.tasks.base import get_task_session
 
+    # The DDL is IMPORTED, not spelled here — #7035. Two arms now insert into
+    # this table and a real-Postgres gate stands one up to drive them; a second
+    # copy of the column list is a gate that can pass against a table this
+    # script does not create.
+    from app.tasks.espn_sync import UNREACHABLE_SUSPENDED_BACKUP_DDL
+
     c = _constants()
     async with get_task_session() as session:
-        await session.execute(text(
-            f"CREATE TABLE IF NOT EXISTS {c['table']} ("
-            "  event_id BIGINT PRIMARY KEY,"
-            "  previous_status TEXT NOT NULL,"
-            "  commence_time TIMESTAMPTZ,"
-            "  retired_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
-            ")"
-        ))
+        await session.execute(text(UNREACHABLE_SUSPENDED_BACKUP_DDL))
         await session.commit()
     print(f"{c['table']} ready — the arm's restore rail is in place.")
     return 0

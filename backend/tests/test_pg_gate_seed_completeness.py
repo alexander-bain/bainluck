@@ -129,6 +129,25 @@ COVERED = (
     #     ungraded screen. Left to its default, the graded control is not graded
     #     and the screen is never exercised.
     "test_kalshi_resolved_void_selection_pg.py",
+    # #7035, CERT-3326's repair — the CONSUMER half of the gate above. Where
+    # that one proves the capture reaches the fixture, this one runs the real
+    # retirement arm over the fact it wrote and reads `events.status` back.
+    # Enrolled the session it was written; both arms of this file found it
+    # before CI did. Its seed carries four hazards of its own:
+    #
+    #   * `sports.active` is NOT NULL with a PYTHON-side default, which a raw
+    #     INSERT bypasses and `server_default` scanning cannot see — the trap
+    #     this file is named after, and it cost a full CI round trip on the
+    #     sibling gate.
+    #   * `events.status` is the PLAYED control's only difference from the
+    #     specimen, exactly as above.
+    #   * `events.home_score` / `away_score` / `completed_at` are named so the
+    #     evidence-of-a-played-game refusals have controls at all.
+    #   * `futures_markets.source` and `.status` are named because the screen's
+    #     selective clause is "no market that is NOT kalshi+resolved" — a seed
+    #     that let either default would make the foreign-market control
+    #     indistinguishable from the subject.
+    "test_venue_void_retirement_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`

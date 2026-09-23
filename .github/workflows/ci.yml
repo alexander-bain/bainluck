@@ -1156,6 +1156,46 @@ jobs:
             exit 1
           fi
 
+      - name: "#7035 the void fact retires the postponed fixture (real Postgres)"
+        # CERT-3326's required repair, and the gate that answers the BLOCK.
+        #
+        # The step above proves the CAPTURE reaches the named families. The
+        # BLOCK was about the other half: "the SHA has no runtime consumer of
+        # that fact ... event 15312871 therefore remains suspended/served and
+        # its card still says 'No result reported'." So this runs the consumer —
+        # the real `_retire_venue_voided_suspended_rows` the beat calls — over a
+        # seeded specimen and reads `events.status` back.
+        #
+        # It MUST be a real server on two counts, and they are different counts
+        # from the sibling's. The fact lives in a `jsonb` column and is written
+        # here by the capture's own `VOID_UPDATE_SQL` rather than by a fixture
+        # literal, so the two halves meet on real storage: the capture stamps a
+        # JSON *boolean*, and a consumer that compared against the string
+        # `'true'` would satisfy a hand-built fake and select nothing in
+        # production. And the arm's D51 restore rail is a `to_regclass` on a
+        # backup table that exists only on Postgres — the gate drops it to prove
+        # the rail refuses, which no source scan can do.
+        #
+        # The load-bearing arm is `test_the_arm_is_inert_before_the_capture_
+        # stamps`: the specimen with everything true EXCEPT the stamp, requiring
+        # 0 retirements. Without it, an arm that retired every suspended Kalshi
+        # row would pass every other arm in the file. The PLAYED control (a
+        # `completed` event with the same resolved, stamped families) is the
+        # second — 2,843 such rows in production, and retiring one would tell a
+        # reader a game that WAS played was never played.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_venue_void_retirement_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/venue_void_retirement.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/venue_void_retirement.txt; then
+            echo "::error::#7035 venue-void retirement SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4057 Kalshi settlement recency band (real Postgres)"
         # WHICH settled Kalshi markets a cycle asks the venue about is decided by
         # two WHERE clauses and nothing else. The old selection was an

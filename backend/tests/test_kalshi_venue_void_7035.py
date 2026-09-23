@@ -217,6 +217,27 @@ class _FakeResult:
     def first(self):
         return self._rows[0] if self._rows else None
 
+    def scalars(self):
+        """#7035's retirement phase reads its screen through `.scalars()`.
+
+        Added when the consumer was composed into `run_resolved_voids`, and it
+        answers with the SAME rows rather than an empty list on purpose: a
+        double that hard-codes "no candidates" for the retirement screen would
+        make every arm in `TestTheCaptureSpendsTheFactItWrote` pass whether the
+        phase ran or not. The retirement's own behaviour is proved on a real
+        Postgres in `tests/integration/test_venue_void_retirement_pg.py`; what
+        these arms prove is that it is REACHED.
+        """
+        return _FakeScalars(self._rows)
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
 
 class _FakeSession:
     """Records every statement and its parameters, in order."""
@@ -655,4 +676,87 @@ class TestThePhaseIsReachedFromTheBeat:
         answer this terminal can give."""
         report, _, _ = self._run(resolved_rows=[ROW])
 
+        assert report["terminal"] == "complete"
+
+
+class TestTheCaptureSpendsTheFactItWrote:
+    """🔴 CERT-3326's BLOCK, in one class: the capture must have a CONSUMER.
+
+    The blocked presentation wrote `market_metadata.venue_voided` and stopped.
+    The grader's finding was not that the write was wrong — it was that "the
+    SHA has no runtime consumer of that fact outside the capture task", so the
+    postponed fixture went on being served with "No result reported" under it.
+    These arms prove the consumer is REACHED from the beat; what it then does
+    is proved on a real Postgres in `test_venue_void_retirement_pg.py`.
+
+    The discriminator is the report: `_retire_venue_voided_suspended_rows`
+    always returns both counters, so their presence cannot be faked by a phase
+    that was skipped, and a future edit that makes the call conditional deletes
+    them from the report and reddens these arms.
+    """
+
+    def _run(self, *, resolved_rows, legs=None):
+        recorder: list = []
+        venue = _Venue(VOIDED_LEGS if legs is None else legs)
+
+        def maker():
+            return _TwoPhaseSession(recorder, [], resolved_rows)
+
+        report = asyncio.run(
+            sweep.run_resolved_voids(
+                apply=True,
+                session_maker=maker,
+                client_factory=lambda: venue,
+                now=NOW,
+            )
+        )
+        return report, [s for s, _ in recorder]
+
+    def test_the_beat_runs_the_retirement_after_the_capture(self):
+        report, statements = self._run(resolved_rows=[ROW])
+
+        assert "venue_voided_suspended_screened" in report, (
+            "the capture wrote the fact and nothing spent it — this is the "
+            "exact shape CERT-3326 blocked"
+        )
+        assert "venue_voided_suspended_retired" in report
+        assert [s for s in statements if "ORDER BY events.commence_time ASC" in s], (
+            "the retirement screen never executed: the consumer exists and the "
+            "beat does not reach it"
+        )
+
+    def test_the_retirement_runs_on_the_DRAINED_path_too(self):
+        """🔴 THE LOAD-BEARING ARM, AND THE ONE A PLAUSIBLE SHIP FAILS.
+
+        The natural place to hang a consumer is the write path — retire what we
+        just stamped. That ship works for about four hours. The capture's own
+        sizing says a 489-row band drains at 60 a run, after which `rows` is
+        empty on every beat forever; that is the intended steady state. A
+        consumer reached only when the capture stamped something would then
+        never run again, while the rows it exists to retire are exactly the
+        ones already stamped — and a stamped row commonly is not retirable
+        until the retirement floor passes it, hours after the stamp.
+
+        So the drained path is not an edge case. It is where this ship spends
+        almost all of its life.
+        """
+        report, statements = self._run(resolved_rows=[])
+
+        assert report["candidates"] == 0, "precondition: the band is drained"
+        assert "venue_voided_suspended_screened" in report, (
+            "the retirement is hung off the write path: once the band drains "
+            "it never runs again, and the stamped rows are never spent"
+        )
+        assert [s for s in statements if "ORDER BY events.commence_time ASC" in s]
+
+    def test_the_retirement_does_not_change_the_captures_terminal(self):
+        """A pass that retires nothing is the normal reading, not a fault.
+
+        The terminal is a verdict on the VENUE half — did every selected row
+        get a durable answer. Folding the retirement counters into it would
+        make a healthy capture that simply had nothing retirable read `partial`.
+        """
+        report, _ = self._run(resolved_rows=[ROW])
+
+        assert report["venue_voided_suspended_retired"] == 0
         assert report["terminal"] == "complete"

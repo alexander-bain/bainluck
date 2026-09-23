@@ -204,6 +204,47 @@ VENUE_DORMANT_STATUSES = frozenset({"inactive"})
 VENUE_UNGRADED_RESULTS = frozenset({"", "scalar"})
 
 
+#: The ``market_metadata`` key the void capture stamps, and the ONLY name any
+#: reader of that fact may spell — #7035.
+#:
+#: WHY A CONSTANT IN THIS MODULE AND NOT A LITERAL AT EACH END. The capture
+#: (``kalshi_resolution_sweep.VOID_UPDATE_SQL``) writes the fact and the
+#: retirement arm (``espn_sync``'s venue-void door) reads it, and the two sit in
+#: different task modules that import nothing from each other. A literal at each
+#: end is a contract enforced by nobody: rename it on the writer and the reader
+#: goes on selecting zero rows forever, green, with no test able to see it. This
+#: module is the one both ends already depend on for the void vocabulary, it
+#: imports only the standard library, and so it is where the name lives.
+#:
+#: 🔴 IT IS STAMPED AS A JSON BOOLEAN, AND THE RETIREMENT READER TAKES IT IN
+#: PYTHON RATHER THAN IN SQL. ``jsonb_build_object('venue_voided', true)`` stores
+#: boolean ``true``, so ``market_metadata->>'venue_voided'`` yields the STRING
+#: ``'true'`` — a reader that writes ``= true`` gets an operator error, and one
+#: that writes ``->>`` at all is writing Postgres-only SQL into a query whose
+#: band guards execute against ``sqlite://``. The consumer therefore loads the
+#: event's markets and tests ``(md or {}).get(KEY) is True`` in Python, which is
+#: dialect-free and round-trips the boolean as a boolean. Its screen is plain
+#: columns and returns 30 rows on production, so there is no cost to paying for
+#: the portability.
+VENUE_VOIDED_METADATA_KEY = "venue_voided"
+
+#: The negative half — "we asked the venue and it named a result". Named here
+#: for the same reason, and read by the capture's own idempotency screen.
+VENUE_VOID_CHECKED_METADATA_KEY = "venue_void_checked_at"
+
+#: The two ``futures_markets`` column values that say "this is a Kalshi leg the
+#: venue has finished with" — the pair the void capture selects on and the pair
+#: the retirement screen must select on to reach the same rows.
+#:
+#: Named for :data:`VENUE_VOIDED_METADATA_KEY`'s reason and one step further: the
+#: capture spells them inside a SQL string literal where no importer can see
+#: them, so the binding guard asserts that string CONTAINS these values. That is
+#: a check that can fail in both directions — rename the constant, or retune the
+#: capture's screen, and the guard reddens — which a literal at each end is not.
+KALSHI_MARKET_SOURCE = "kalshi"
+KALSHI_RESOLVED_STATUS = "resolved"
+
+
 @dataclass(frozen=True)
 class VenueSettlement:
     """Whether the VENUE considers one event over. A status read, never a grade.

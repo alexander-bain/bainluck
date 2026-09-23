@@ -1923,6 +1923,44 @@ async def run_recent_finals(
     return report
 
 
+async def _retire_rows_the_venue_voided(maker, now) -> dict:
+    """Spend the fact the capture just wrote — #7035, CERT-3326's repair.
+
+    THE CONSUMER, AND WITHOUT IT THE CAPTURE IS A COLUMN RATHER THAN A SHIP.
+    CERT-3326 blocked the capture-only presentation on exactly this: "the SHA
+    has no runtime consumer of that fact … event 15312871 therefore remains
+    suspended/served and its card still says 'No result reported'." This is the
+    line that closes `capture → retirement`; the route exclusion at the far end
+    already refuses :data:`UNREACHABLE_SUSPENDED_TERMINAL` and is guarded.
+
+    🔴 IT IS CALLED ON BOTH OF `run_resolved_voids`'S PATHS, INCLUDING THE
+    DRAINED ONE, AND THAT IS THE WHOLE DIFFERENCE BETWEEN A SHIP AND AN ARM THAT
+    WORKS FOR FOUR HOURS. The capture's own sizing says the standing 489-row
+    band drains in ~4 hours at 60 a run, after which `rows` is empty on every
+    subsequent beat forever — that is the intended steady state, not a fault.
+    Hung off the write path only, this consumer would then never run again,
+    while the rows it exists to retire are precisely the ones already stamped.
+    The two halves keep different clocks on purpose: a stamp is written once,
+    and the row it describes may not become retirable until the retirement
+    floor passes it, hours later. So the retirement re-screens the table every
+    beat and is deliberately independent of whether this beat stamped anything.
+
+    Its own session, and the `async with` is what commits (the same contract
+    `_transition_event_statuses_impl` documents at its own close). Kept separate
+    from the capture's sessions so a retirement can never widen a venue-write
+    transaction, and so a failure here cannot roll back a stamp that was correct.
+    """
+    from app.tasks.espn_sync import (
+        _retire_venue_voided_suspended_rows,
+        unreachable_suspended_floor,
+    )
+
+    async with maker() as session:
+        return await _retire_venue_voided_suspended_rows(
+            session, now, unreachable_suspended_floor()
+        )
+
+
 async def run_resolved_voids(
     *,
     limit: int = RESOLVED_VOID_BATCH_LIMIT,
@@ -1987,7 +2025,12 @@ async def run_resolved_voids(
         # it is the expected reading most of the time — but it is reported as a
         # shape rather than an absence, because "the band is empty" and "the
         # query never ran" must not look the same to a reader (gotcha #53).
-        return {
+        #
+        # THE RETIREMENT STILL RUNS ON THIS PATH. Nothing new to stamp is the
+        # normal state within hours of the band draining, and it says nothing
+        # about whether an already-stamped row has become retirable since. See
+        # `_retire_rows_the_venue_voided`.
+        drained = {
             "selection": "resolved_void",
             "mode": "APPLY" if apply else "DRY_RUN",
             "measured_at": now.isoformat(),
@@ -2007,6 +2050,8 @@ async def run_resolved_voids(
                 "This is the drained steady state, not a failure."
             ),
         }
+        drained.update(await _retire_rows_the_venue_voided(maker, now))
+        return drained
 
     sub = await run_backfill(
         session_maker=maker,
@@ -2063,4 +2108,11 @@ async def run_resolved_voids(
         )
     else:
         report["terminal"] = "complete"
+
+    # AFTER the terminal verdict, and it does not change it. The terminal is a
+    # statement about the VENUE half — did every selected row get a durable
+    # answer — and a retirement pass that retires nothing is the normal reading
+    # (a stamped row is only retirable once the floor passes it). Folding these
+    # counters into that verdict would make a healthy capture read `partial`.
+    report.update(await _retire_rows_the_venue_voided(maker, now))
     return report
