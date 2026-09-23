@@ -88,6 +88,7 @@ import Tooltip from "@/components/Tooltip";
 import RelatedByTag from "@/components/RelatedByTag";
 import { getLeagueDisplay } from "@/lib/sportCategories";
 import { relatedRailQuery } from "@/lib/relatedRailQuery";
+import { participantNames } from "@/lib/railParticipantOrder";
 import {
   completedSetsForTennis,
   decidedSetsWinnerFor,
@@ -2875,7 +2876,16 @@ export default function EventPage({ params }: EventPageProps) {
           futures under a heading promising more of what it was looking at.
           `relatedRailQuery` adds the `league:` tag the event's own payload
           already carries, and keeps today's query as the fallback for the
-          leagues that have no content of their own. */}
+          leagues that have no content of their own.
+
+          #5973: AND THE RIGHT LEAGUE IS STILL THE SAME RAIL ON EVERY PAGE IN
+          IT. The feed ranks a tag generically, so both WNBA pages and both NHL
+          pages measured on 2026-09-22 drew an identical four — `Will Dallas
+          Stars advance…` among them, on a Columbus v Buffalo game. Handing the
+          rail the two sides lets cards that name one of them sort ahead of the
+          rest. A preference, not a filter: the same cards in the same number,
+          so no page loses the section the way an #8093-style narrowing would
+          have. */}
       {(() => {
         const rail = relatedRailQuery(event.sport, event.event_tags);
         return rail ? (
@@ -2888,6 +2898,7 @@ export default function EventPage({ params }: EventPageProps) {
               limit={4}
               title={rail.title}
               fallbackTitle={rail.fallbackTitle}
+              preferNames={participantNames(event.away_team, event.home_team)}
             />
           </SectionErrorBoundary>
         ) : null;
