@@ -174,9 +174,9 @@ class TestTheBoundsThatRemain:
 
         assert fixes >= 1
         assert team["cells"]["pennant"]["merged_probability"] == 0.30
-        assert all(
-            s["probability"] <= 0.30 for s in team["cells"]["pennant"]["sources"]
-        )
+        # #8251: the cell says it was capped; its sources keep their markets' quotes.
+        assert team["cells"]["pennant"]["capped_by"] == "make_playoffs"
+        assert [s["probability"] for s in team["cells"]["pennant"]["sources"]] == [0.55, 0.60]
 
     def test_championship_is_still_capped_at_the_pennant(self):
         team = _boston()

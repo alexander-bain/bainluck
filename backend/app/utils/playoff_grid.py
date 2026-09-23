@@ -93,10 +93,13 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
                     continue
                 if curr_p > prev_p:
                     curr_cell["merged_probability"] = prev_p
-                    # Also cap individual source probabilities
-                    for src in curr_cell.get("sources", []):
-                        if src["probability"] > prev_p:
-                            src["probability"] = round(prev_p, 4)
+                    # #8251: the cell's number is now its bound, not a quote, so
+                    # say so. `sources` is left alone on purpose: each entry
+                    # names a market, and a reader who taps the row reads that
+                    # entry as what the market says (D91). Clamping it too
+                    # credited "CFP Semifinals Qualifiers" with 0.1275 while the
+                    # market quoted 0.1800 — on 15 of 38 semifinal cells.
+                    curr_cell["capped_by"] = prev_key
                     violations_fixed += 1
                     logger.debug(
                         "Monotonicity fix: %s %s %.4f > %s %.4f -> capped to %.4f",

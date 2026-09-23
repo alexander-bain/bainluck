@@ -886,9 +886,12 @@ class TestProbabilityConsistency:
             },
         }
         enforce_monotonicity([team], NHL_CONFIG.columns)
-        # Conference sources should all be capped at Make Playoffs (0.20)
-        for src in team["cells"]["conference"]["sources"]:
-            assert src["probability"] <= 0.20
+        # The cell is capped at Make Playoffs (0.20) and says so; its sources
+        # keep the quotes their markets gave (#8251 — a source is a truth claim).
+        conf = team["cells"]["conference"]
+        assert conf["merged_probability"] == 0.20
+        assert conf["capped_by"] == "make_playoffs"
+        assert [s["probability"] for s in conf["sources"]] == [0.35, 0.30]
 
 
 # ============================================================================

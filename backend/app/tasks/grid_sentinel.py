@@ -444,6 +444,16 @@ def check_envelope_invariant(grid: dict, league: str, sample: int = SELFCHECK_SA
             # Single-source cells cannot invert, so they stay strict.
             if not inside and len(probs) >= 2:
                 inside = (1.0 - hi) - ENVELOPE_TOL <= merged <= (1.0 - lo) + ENVELOPE_TOL
+            # #8251: a cell the monotonicity cap lowered says so (`capped_by`) and
+            # keeps its markets' own quotes in `sources`, so its number sits BELOW
+            # the envelope by design. A cap only ever lowers, and only to the
+            # bound: accept it when it exceeds neither its highest source nor the
+            # bound column's number. Anything above either is still corruption.
+            if not inside and cell.get("capped_by"):
+                bound = _merged(cells.get(cell["capped_by"]))
+                inside = (bound is not None
+                          and merged <= hi + ENVELOPE_TOL
+                          and merged <= bound + ENVELOPE_TOL)
             if not inside:
                 findings.append(_finding(
                     "grid_envelope_violation", "critical",
