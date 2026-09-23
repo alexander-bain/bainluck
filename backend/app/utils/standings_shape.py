@@ -156,6 +156,61 @@ def record_text(current_record, standings):
     return parsed
 
 
+def reconciled_record_and_standings(current_record, standings):
+    """One payload, one record. Returns `(record, standings)` that agree.
+
+    #8070. `record_text` above settles WHICH rail is right, but only for the
+    caller that asks it. `_format_team_data` serves the team's season TWICE in
+    one payload — `record` off `current_record`, and a `standings` blob whose
+    `wins`/`losses` every client composes into a record string itself — and
+    asked neither. Measured on production `/api/feed?limit=120` (cache miss,
+    2026-09-22 19:44Z), 2 of the 8 MLB teams on the page disagreed with
+    themselves, and the two were the two sides of ONE game: BAL served
+    `record` **76-81** beside `standings` **75-81**, TOR **77-80** beside
+    **77-79**. An Orioles event page prints the first in its hero and the
+    second in the team card one scroll down, neither labelled, so a reader
+    reads it as us not knowing our own record.
+
+    The alignment is deliberately confined to the three keys a client composes
+    — `wins`, `losses`, and whichever of `draws`/`ties` the row uses:
+
+    * **The ranks keep the board's vintage**, which is #5520's own ruled shape
+      ("taking the fresher record alongside it is strictly less wrong than
+      printing a stale record next to that same rank"), not a new choice here.
+    * **`pct` and `games_behind` are left exactly as the board wrote them.**
+      Nothing renders either — `StandingsCard` draws record + conference rank +
+      division rank, and the two-column team cards draw record + seed — so
+      recomputing `pct` would buy a reader nothing while overwriting StatPal's
+      own `percentage` with our formula, and `games_behind` is a fact about the
+      division that one team's record cannot re-derive at all.
+    * **A record with no draw component REMOVES the draw key rather than
+      writing a 0.** Setting zero would claim a thing the chosen rail never
+      said; absent composes the same string and claims nothing (notice 34).
+
+    Never mutates its argument. `teams.py` hands this a live SQLAlchemy JSONB
+    value, and mutating one in place is the silent-write failure of gotcha #4.
+    """
+    record = record_text(current_record, standings)
+    if record is None or not isinstance(standings, dict):
+        return record, standings
+    if _snapshot_record(standings) == record:
+        # The common case by a distance: the two rails already agree, so the
+        # blob is returned by identity and the payload allocates nothing.
+        return record, standings
+    parts = record.split("-")
+    aligned = dict(standings)
+    aligned["wins"] = int(parts[0])
+    aligned["losses"] = int(parts[1])
+    if len(parts) == 3:
+        # Write back through whichever spelling this row already used, so a
+        # client reading `ties` does not start reading a `draws` we invented.
+        aligned["ties" if "ties" in standings else "draws"] = int(parts[2])
+    else:
+        for key in ("draws", "ties"):
+            aligned.pop(key, None)
+    return record, aligned
+
+
 def _snapshot_record(standings):
     """The W-L(-D) string `standings_data` alone would have produced."""
     if not isinstance(standings, dict):
