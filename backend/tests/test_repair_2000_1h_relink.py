@@ -97,7 +97,17 @@ def _market(**over):
         source="kalshi",
         status="resolved",
         market_tier=5,
-        llm_sport_category="game_prop",
+        # 🔴 THESE TWO WERE ONE FIELD, AND THE FAKE IS WHY THE BUG SURVIVED.
+        # `llm_sport_category="game_prop"` was written to satisfy the CODE rather
+        # than copied off production, where the row reads `category=game_prop`
+        # and `llm_sport_category=soccer`. A fake built from the code cannot
+        # disagree with the code, so every arm below was green while the guard
+        # compared a constant to the wrong column — found only by the first real
+        # production dry run (`RESPORTED: category=soccer`, 2026-09-23 01:32Z,
+        # which could not run until `bainluck-heavy` carried the script).
+        # Re-measured on production 2026-09-23 01:4xZ across all five siblings.
+        category="game_prop",
+        llm_sport_category="soccer",
         sport_key="soccer_spain_la_liga",
         outcome_count=3,
     )
@@ -534,7 +544,10 @@ class TestChangedStateRefuses:
             ("source", "polymarket"),
             ("status", "open"),
             ("market_tier", 3),
-            ("llm_sport_category", "player_prop"),
+            # BOTH category columns, because the guard checks both and a
+            # parametrize naming only one is how the mismatch stayed invisible.
+            ("category", "player_prop"),
+            ("llm_sport_category", "basketball"),
             ("sport_key", "soccer_epl"),
         ],
     )
@@ -542,6 +555,24 @@ class TestChangedStateRefuses:
         session = _FakeSession(markets=[_market(**{field: value})])
         verdict, _ = _plan(repair, session)
         assert verdict == repair.RESPORTED
+
+    def test_the_registered_shape_is_the_one_production_actually_carries(self, repair):
+        """🔴 THE ARM THAT WOULD HAVE CAUGHT IT, AND IT IS NOT A TAUTOLOGY.
+
+        The two constants are asserted against the values MEASURED on production
+        (2026-09-23 01:4xZ, all five `26MAY09RSORBB` siblings), on the columns
+        they are compared against in the plan. Written as literals rather than
+        by reading the constants, so the file states the reading and a future
+        edit to either constant has to disagree with a number somebody took.
+        """
+        assert repair.TARGET_CATEGORY == "game_prop"
+        assert repair.TARGET_LLM_SPORT_CATEGORY == "soccer"
+        # And the happy path must clear the guard with exactly those values.
+        session = _FakeSession(
+            markets=[_market(category="game_prop", llm_sport_category="soccer")]
+        )
+        verdict, _ = _plan(repair, session)
+        assert verdict == repair.RELINK
 
     def test_the_id_and_the_ticker_must_name_one_row(self, repair):
         session = _FakeSession(

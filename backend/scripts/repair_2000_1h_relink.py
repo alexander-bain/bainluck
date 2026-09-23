@@ -135,7 +135,8 @@ WHAT IT REFUSES
                            not predict is a decision by something it cannot see.
   * `IDENTITY_CHANGED`     the id and the ticker no longer name the same single
                            row.
-  * `RESPORTED`            no longer resolved tier-5 Kalshi La Liga.
+  * `RESPORTED`            no longer resolved tier-5 Kalshi La Liga, on BOTH
+                           category columns — see TARGET_CATEGORY.
   * `CHILD_COUNT_MOVED`    the outcome count is not the 3 that were measured.
   * `SIBLINGS_DISAGREE`    Arm A no longer returns exactly one event with the
                            four siblings on it.
@@ -246,8 +247,33 @@ TARGET_ESPN_ID = "748485"
 OUTCOME_COUNT = 3
 SIBLING_COUNT = 4
 TARGET_SPORT_KEY = "soccer_spain_la_liga"
-TARGET_CATEGORY = "game_prop"
 TARGET_TIER = 5
+
+#: 🔴 TWO COLUMNS, AND THEY WERE ONE CONSTANT UNTIL THE FIRST PRODUCTION DRY RUN.
+#: `TARGET_CATEGORY = "game_prop"` was measured off `futures_markets.category`
+#: and compared against `futures_markets.llm_sport_category`, which on this row
+#: and on all four siblings reads `soccer`. Nothing in the world moved: the
+#: mismatch was latent from the start and could not surface locally, because
+#: `--backup`/`--apply` refuse off `bainluck-heavy` and heavy did not carry this
+#: script until v76 (2026-09-22 17:46 PDT). The FIRST real dry run, 01:32Z on
+#: 2026-09-23, refused `RESPORTED: category=soccer` — the guard doing its job on
+#: its own registration.
+#:
+#: Re-measured on production 2026-09-23 01:4xZ, the whole `26MAY09RSORBB` family:
+#:
+#:     15207257  KXLALIGATOTAL   llm_sport_category=soccer  category=game_prop
+#:     15207258  KXLALIGASPREAD  llm_sport_category=soccer  category=game_prop
+#:     15207259  KXLALIGABTTS    llm_sport_category=soccer  category=game_prop
+#:     15207268  KXLALIGAGAME    llm_sport_category=soccer  category=championship
+#:     15207269  KXLALIGA1H      llm_sport_category=soccer  category=game_prop
+#:
+#: Both are now registered and both are CHECKED, rather than the comparison being
+#: moved to the column that happens to hold the old value — swapping one blind
+#: spot for another is not a repair. `category` is the market's shape and
+#: `llm_sport_category` is its sport; this repair depends on both still being
+#: what was measured, so both are named.
+TARGET_CATEGORY = "game_prop"
+TARGET_LLM_SPORT_CATEGORY = "soccer"
 
 BACKUP_TABLE = "backup_2000_1h_relink_markets"
 
@@ -295,6 +321,7 @@ SELECT f.id,
        f.source,
        f.status,
        f.market_tier,
+       f.category,
        f.llm_sport_category,
        s.key AS sport_key,
        (SELECT count(*) FROM futures_outcomes o WHERE o.market_id = f.id)
@@ -425,13 +452,15 @@ async def plan(session):
         m.source != "kalshi"
         or m.status != "resolved"
         or m.market_tier != TARGET_TIER
-        or m.llm_sport_category != TARGET_CATEGORY
+        or m.category != TARGET_CATEGORY
+        or m.llm_sport_category != TARGET_LLM_SPORT_CATEGORY
         or m.sport_key != TARGET_SPORT_KEY
     ):
         return (
             RESPORTED,
             f"source={m.source} status={m.status} tier={m.market_tier} "
-            f"category={m.llm_sport_category} sport={m.sport_key}",
+            f"category={m.category} llm_sport_category={m.llm_sport_category} "
+            f"sport={m.sport_key}",
         )
 
     if m.outcome_count != OUTCOME_COUNT:
