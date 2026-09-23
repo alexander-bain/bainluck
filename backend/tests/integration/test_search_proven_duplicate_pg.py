@@ -271,14 +271,43 @@ async def client(seeded):
 
 
 async def _untag_the_twin(maker, twin_id):
-    """Clear the tag and change NOTHING else — the kill control's whole point."""
+    """Make the twin returnable by every suppressor EXCEPT the one under test.
+
+    Until #8100 that was one field — clear the tag, change nothing else. It is
+    now two, and the second is not a weakening of this control but the reason it
+    still works.
+
+    `event_twin_fold._merge_anchored_claim_kickoffs` folds an id-less CLAIM onto
+    the anchored row it names when the two share a league and exact squashed
+    names and sit inside twelve minutes. This fixture is that shape *precisely*
+    — it was drawn from the same production specimen: a good row holding
+    `espn_id` 401816721 and "a bare twin ONE MINUTE earlier holding nothing". So
+    since #8100 the twin is suppressed by TWO independent and independently
+    correct mechanisms, and clearing only the tag leaves it hidden by the other
+    one. The kill control then fails while the thing it certifies is perfectly
+    healthy — and, worse, would have gone on "passing" in the other direction if
+    the assertion had been loosened instead.
+
+    Giving the twin an `external_id` is the narrowest possible neutralisation:
+    it is the one field the new pass reads, and two ANCHORED rows are the
+    symmetric case that pass refuses by construction. The row is otherwise
+    untouched, so the tag fold remains the only thing this file is testing.
+
+    🔴 DO NOT "SIMPLIFY" THIS BACK TO A BARE UNTAG. The assertions downstream
+    say what they are for: "with the tag cleared the twin must return —
+    otherwise the suppression above is a coincidence and this file certifies
+    nothing." A control that cannot make its subject reappear proves nothing
+    about why it disappeared.
+    """
     from sqlalchemy import update
 
     from app.models.models import Event
 
     async with maker() as session:
         await session.execute(
-            update(Event).where(Event.id == twin_id).values(event_tags=None)
+            update(Event)
+            .where(Event.id == twin_id)
+            .values(event_tags=None, external_id=f"kill-control-{twin_id}")
         )
         await session.commit()
 
