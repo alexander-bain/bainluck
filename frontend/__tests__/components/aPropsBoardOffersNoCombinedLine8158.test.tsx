@@ -33,7 +33,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
-import { readFileSync, readdirSync, statSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { FuturesChart } from "../../components/FuturesChart";
 import { EvolutionView } from "../../components/EvolutionView";
@@ -264,16 +264,22 @@ describe("#8158 EvolutionView also forwards its verdict, and that is not redunda
 
 describe("#8158 the wiring: only one call site asks for this line", () => {
   it("EvolutionView is the sole passer of showCombinedProbability", () => {
-    // The component floor above protects the other seven call sites; this census
-    // is what says there are only seven to protect, and fails loudly if an
-    // eighth starts requesting the line without hiding its own control.
+    // FuturesChart judges nothing, so the ONLY thing standing between a future call
+    // site and a fabricated line is that the caller checks `fieldIsOneQuestion`
+    // itself. This census is what makes that a rule rather than a convention: an
+    // eighth call site requesting the line reddens here, in this file, by name.
+    //
+    // `withFileTypes` rather than `statSync(p).isDirectory()` — the pair is a
+    // check-then-use on the same path, which CodeQL flags `js/file-system-race` at
+    // HIGH and notice 32 refuses the whole sha for. The Dirent carries the kind, so
+    // there is no second look at the filesystem to race with.
     const hits: string[] = [];
     const walk = (dir: string) => {
-      for (const entry of readdirSync(dir)) {
-        if (entry === "node_modules" || entry === ".next") continue;
-        const p = join(dir, entry);
-        if (statSync(p).isDirectory()) walk(p);
-        else if (/\.tsx?$/.test(entry) && readFileSync(p, "utf8").includes("showCombinedProbability")) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === ".next") continue;
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) walk(p);
+        else if (/\.tsx?$/.test(entry.name) && readFileSync(p, "utf8").includes("showCombinedProbability")) {
           hits.push(p.slice(ROOT.length + 1));
         }
       }
