@@ -127,13 +127,27 @@ const INSTRUMENT_NAVIGATION_ABORT = Object.freeze({
  *
  * Matched narrowly and case-insensitively — an abort code, not a substring of
  * an arbitrary message.
+ *
+ * #1679 P1 (C244): this set used to admit `net::err_blocked_by_client`,
+ * `interrupted`, and `context or browser has been closed`. None of them is a
+ * navigation teardown — a blocked request is an extension/privacy action, an
+ * interruption is a transport event, a closed browser is a dead runner — and
+ * the collector stamps an abort packet (resource type, elapsed, frame) ONLY
+ * for ERR_ABORTED/aborted, so nothing about those three proved a teardown.
+ * Admitting them was the false-negative sequel to #1648: a genuinely blocked
+ * request on a declared-allowance URL vanished from
+ * `network.no_unexpected_failures`, and from the volume count unconditionally.
+ * They stay graded now. The measured teardown phenomenon (event-page 7-12
+ * `net::ERR_ABORTED` per journey, 8 of 8 journeys) is untouched.
+ *
+ * NOT closed by that change: the bare `navigationCancelled === true` clause
+ * below is still trusted with no proof. Nothing writes the flag today, so it
+ * excuses nothing in a real run — but the allowance as a whole is not
+ * provenance-safe until it is removed or proved (#1679).
  */
 const NAVIGATION_CANCEL_FAILURES = new Set([
   "net::err_aborted",
-  "net::err_blocked_by_client",
   "aborted",
-  "interrupted",
-  "context or browser has been closed",
 ]);
 
 function isNavigationCancellation(failure) {
