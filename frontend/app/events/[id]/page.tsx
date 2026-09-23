@@ -1026,6 +1026,41 @@ export default function EventPage({ params }: EventPageProps) {
     Math.round(projectedFinalPair.home_score) !==
       Math.round(projectedFinalPair.away_score);
 
+  // ── #4885 — A PROJECTED FINAL CANNOT BE BELOW THE SCORE ALREADY ON THE BOARD ─
+  //
+  // `/events/15316846`, Blue Jays @ Orioles, LIVE, Bottom 8th, 390px, production
+  // 2026-09-23 20:06Z: the hero read `4 – 2` and, two lines under it,
+  // `Projected final: 3 – 2`. The Orioles were projected to finish with fewer
+  // runs than they already had. The pair was `3.3 / 1.9` from sportsbook odds
+  // last captured four minutes BEFORE first pitch — the issue's own "pre-game
+  // number wearing a live label" — and it passed all five gates above, because
+  // none of them compares the forecast with the game.
+  //
+  // native/150's invariant on the issue, and the reason this is decidable here
+  // with no ground truth: runs, goals and points are never taken back, so a
+  // final below the current score is always false — whichever book is stale,
+  // however the aggregate averaged (#5455's mechanism, backend, untouched).
+  //
+  // PER SIDE, AFTER THE SAME ROUNDING THE LINE PRINTS. `3.6` under a score of
+  // `4` prints `4` and is reachable; comparing the raw float would withhold a
+  // line the reader would have read as correct. EQUAL IS REACHABLE: `4 – 2`
+  // projected at `4 – 2` is a game with no more scoring, which is a real final.
+  //
+  // THE PAIR THE HERO PRINTS. `bestHomeScore`/`bestAwayScore` are the exact
+  // values rendered in the score slots. On the specimen the event ROW still
+  // held `0 – 0` (#8278) while the hero read `4 – 2` from the chart's live arm;
+  // a gate reading the row would have passed the photographed defect.
+  //
+  // No score pair (pre-game, or #5697's live-without-score) ⇒ nothing to
+  // contradict, and the other gates decide. Notice 34: the space is left empty,
+  // not explained.
+  const projectedPairIsReachableFromTheScore =
+    projectedFinalPair == null ||
+    bestHomeScore === null ||
+    bestAwayScore === null ||
+    (Math.round(projectedFinalPair.home_score) >= bestHomeScore &&
+      Math.round(projectedFinalPair.away_score) >= bestAwayScore);
+
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
   // `lastChartPoint` runs the same cascade internally and reports the clock of
@@ -2190,12 +2225,18 @@ export default function EventPage({ params }: EventPageProps) {
                   projection gates and rounds exactly the way this line does —
                   the two must never drift, which is why the rounding is not
                   written out twice in two different expressions. */}
+              {/* #4885: and gated on the pair being reachable from the score
+                  the hero prints: `Projected final: 3 – 2` under a live `4 – 2`
+                  is always false. `projectedPairIsReachableFromTheScore` rounds
+                  the way this line does and reads `bestHomeScore`/`bestAwayScore`,
+                  the values in the score slots, never the event row. */}
               {sportVocab(event.sport || undefined).hasDerivedSpread &&
                 historyData?.pm_spread_data?.projected_final &&
                 event.status !== "completed" && event.status !== "closed" &&
                 !isSuspended &&
                 projectionHasGameStateToFrame &&
                 projectedPairIsAPossibleResult &&
+                projectedPairIsReachableFromTheScore &&
                 historyData.pm_spread_data.projected_final.home_score > 0 &&
                 historyData.pm_spread_data.projected_final.away_score > 0 && (
                 <div className="mt-1.5">
