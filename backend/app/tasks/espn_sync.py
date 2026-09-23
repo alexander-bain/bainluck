@@ -21,6 +21,8 @@ from app.utils import authority_failover as _failover
 from app.utils.event_completion import (
     AUTHORITY_BACKFILL_STATUS_SQL,
     AUTHORITY_BACKFILL_STATUSES,
+    SETTLEABLE_STATUSES,
+    UNSTARTED_SETTLEABLE_STATUSES,
     espn_board_date,
 )
 from app.utils.team_binding_invariant import accept_team_binding
@@ -948,7 +950,26 @@ MAX_DEEP_STRAGGLER_BOARDS_PER_PASS = 4
 #: Ceiling on rows loaded into memory. The population is structurally small and
 #: measured at seven, but a SELECT with no bound is a promise about the future
 #: rather than a fact about now.
+#:
+#: ⚠️ THE "SEVEN" ABOVE WAS A PROPERTY OF THE STATUS FILTER, NOT OF THE WORLD
+#: (#5501). It was measured over `live`/`suspended`, which is the set this arm
+#: selected, so it could not count the rows stranded in the third state. On
+#: 2026-09-23 those numbered 328 MLB rows with an `espn_id`, all past 48h. The
+#: ceiling now binds on a cold start; it drains rather than starves, because a
+#: settled row leaves the candidate states and frees its slot for an older one.
 MAX_DEEP_STRAGGLER_CANDIDATES = 200
+
+#: The states this arm reaches. `scheduled` is here and NOT in
+#: :data:`~app.utils.event_completion.SETTLEABLE_STATUSES` — see
+#: :func:`~app.utils.event_completion.authority_may_settle` for why the
+#: permission is this arm's alone: 48h past kickoff, matched by `espn_id`, and
+#: settled only on ESPN's own `post`/`completed` (#5501).
+#: Derived, not spelled out, so a state added to either set reaches this arm
+#: without a second edit here — the bug this arm exists to fix is a status
+#: filter that fell out of step with the states rows actually sit in.
+DEEP_STRAGGLER_STATUSES = sorted(
+    SETTLEABLE_STATUSES | UNSTARTED_SETTLEABLE_STATUSES
+)
 
 #: Where the last-asked stamp lives. `win_probability_sources` carries
 #: non-probability facts already — `statpal_end_time` and `ESPN_NOT_STARTED_KEY`
@@ -1999,7 +2020,7 @@ async def _settle_authority_stragglers(session, espn, now, stats, update_fields_
 
 async def _ask_boards_by_espn_id(
     session, espn, ordered_groups, stats, update_fields_fn, *,
-    stat_prefix, log_tag, on_asked=None,
+    stat_prefix, log_tag, on_asked=None, allow_unstarted=False,
 ):
     """Fetch each (sport, board day) board and settle its rows BY ``espn_id``.
 
@@ -2008,6 +2029,14 @@ async def _ask_boards_by_espn_id(
     place. ``ordered_groups`` is an already-ordered sequence of
     ``((sport_key, board_date), [event, ...])``; each arm decides its own
     candidates and its own order, and neither decides how a board is read.
+
+    ``allow_unstarted`` is forwarded verbatim to ``update_fields_fn`` and read
+    by nobody here. It is part of that collaborator's CONTRACT, stated in this
+    signature rather than bound into the callable by the one arm that sets it
+    (#5501) — a ``partial`` at the call site passes the same keyword while
+    leaving every stand-in door looking compatible, and a stand-in that does not
+    accept it raises ``TypeError`` into the per-row ``except`` below, where it
+    is indistinguishable from a bad row and settles nothing.
 
     ``on_asked`` is called with each group's events once the board has been
     ASKED FOR, whether or not it answered. The deep arm advances its queue on
@@ -2059,7 +2088,8 @@ async def _ask_boards_by_espn_id(
             was = event.status
             try:
                 await update_fields_fn(
-                    session, event, matched, claimed_espn_ids, stats
+                    session, event, matched, claimed_espn_ids, stats,
+                    allow_unstarted=allow_unstarted,
                 )
             except Exception as e:
                 stats["errors"].append(
@@ -2118,6 +2148,20 @@ async def _settle_deep_authority_stragglers(
     population described at :data:`AUTHORITY_DEEP_STRAGGLER_REASK`, which nothing
     else selects.
 
+    ── IT ALSO REACHES ``scheduled`` NOW, AND THAT IS WHERE THE ROWS WERE (#5501) ──
+
+    The arm shipped selecting ``live``/``suspended``, and its measured population
+    of seven was taken over that same pair — so the census could only ever count
+    the states the filter named. A row that never got its ``scheduled → live``
+    promotion is stranded in the identical way and by the identical mechanism,
+    and was invisible to the arm built for the gap. Measured 2026-09-23: 820 rows
+    over seven days past kickoff sat ``scheduled``, 328 of them with an
+    ``espn_id`` this arm can anchor on, and NONE of those 328 shared that id with
+    any other row — so settling them by id cannot mint a second row for a game.
+    :data:`DEEP_STRAGGLER_STATUSES` is the widened set; the permission to write a
+    Final onto one of them is passed to the door explicitly at the call below and
+    is this arm's alone.
+
     ── STRICTLY DISJOINT FROM THE SHALLOW ARM, WHICH IS THE WHOLE SAFETY CASE ──
 
     The candidate window is ``commence_time < now - AUTHORITY_STRAGGLER_LOOKBACK``
@@ -2147,7 +2191,7 @@ async def _settle_deep_authority_stragglers(
     """
     from sqlalchemy import update as sql_update
 
-    from app.utils.event_completion import EVENT_SUSPENDED, espn_board_date
+    from app.utils.event_completion import espn_board_date
 
     stats["deep_straggler_candidates"] = 0
     stats["deep_straggler_eligible"] = 0
@@ -2160,7 +2204,7 @@ async def _settle_deep_authority_stragglers(
         select(Event)
         .options(selectinload(Event.sport))
         .where(
-            Event.status.in_(["live", EVENT_SUSPENDED]),
+            Event.status.in_(DEEP_STRAGGLER_STATUSES),
             Event.espn_id.isnot(None),
             Event.commence_time < now - AUTHORITY_STRAGGLER_LOOKBACK,
         )
@@ -2209,11 +2253,17 @@ async def _settle_deep_authority_stragglers(
 
         Rows the ask SETTLED are skipped: they have left the candidate states,
         so they can never be selected again and a stamp on them is residue.
-        """
-        from app.utils.event_completion import authority_may_settle
 
+        THE PREDICATE IS THE ARM'S OWN CANDIDATE SET, NOT THE SETTLE DOOR'S
+        (#5501). Those were the same thing while the arm selected exactly the
+        settleable states. They are not now: a `scheduled` candidate the board
+        did not settle would fail a bare `authority_may_settle`, be read as
+        "already left the candidate states", and go unstamped — so it would
+        re-ask its board every pass forever, which is the livelock the stamp
+        exists to prevent.
+        """
         for event in events:
-            if not authority_may_settle(event.status):
+            if event.status not in DEEP_STRAGGLER_STATUSES:
                 continue
             updated = dict(getattr(event, "win_probability_sources", None) or {})
             updated[DEEP_STRAGGLER_ASKED_KEY] = now.isoformat()
@@ -2233,13 +2283,19 @@ async def _settle_deep_authority_stragglers(
             event.win_probability_sources = updated
             stats["deep_straggler_asked"] += 1
 
+    # THE PERMISSION IS GRANTED HERE AND NOWHERE ELSE (#5501). By this line the
+    # row has cleared every condition the flag's contract names: past the 48h
+    # window (the SELECT), and about to be matched BY `espn_id` against its own
+    # board day and settled only on ESPN's `post`/`completed` (the door). The
+    # shallow arm and the liveness pass call the same door without it.
     await _ask_boards_by_espn_id(
         session, espn, ordered, stats, update_fields_fn,
+        allow_unstarted=True,
         stat_prefix="deep_straggler",
         log_tag=(
-            "#6280 deep straggler: event %d (%s vs %s, %s) %s → %s from the %s "
-            "board — anchored, past the 48h settle window, and stranded until "
-            "now."
+            "#6280/#5501 deep straggler: event %d (%s vs %s, %s) %s → %s from "
+            "the %s board — anchored, past the 48h settle window, and stranded "
+            "until now."
         ),
         on_asked=_stamp_asked,
     )

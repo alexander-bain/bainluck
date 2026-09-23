@@ -529,7 +529,9 @@ async def test_the_stamp_merges_into_what_the_settle_door_just_wrote():
     """
     row = _michigan()
 
-    async def _door_writes_a_probability(session, event, matched, claimed, stats):
+    async def _door_writes_a_probability(
+        session, event, matched, claimed, stats, *, allow_unstarted=False
+    ):
         merged = dict(event.win_probability_sources or {})
         merged["espn"] = 0.61
         event.win_probability_sources = merged  # what espn_helpers does
@@ -645,12 +647,18 @@ async def test_one_bad_row_does_not_wipe_the_pass(monkeypatch):
     rows = [_illinois(), _fsu_smu()]
     calls = {"n": 0}
 
-    async def _explode_once(session, event, matched, claimed, stats):
+    # `allow_unstarted` is part of the door's contract (#5501), so a stand-in
+    # takes it and hands it on. A double that omitted it would raise TypeError
+    # into the per-row `except` and read as the bad row this test injects.
+    async def _explode_once(
+        session, event, matched, claimed, stats, *, allow_unstarted=False
+    ):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
         return await update_event_fields_from_espn(
-            session, event, matched, claimed, stats
+            session, event, matched, claimed, stats,
+            allow_unstarted=allow_unstarted,
         )
 
     session = _FakeSession(rows)

@@ -1207,10 +1207,18 @@ def orient_espn_event_to_row(event, ee, stats=None):
 # Live event field updates
 # ---------------------------------------------------------------------------
 
-async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, stats):
+async def update_event_fields_from_espn(
+    session, event, ee, claimed_espn_ids, stats, *, allow_unstarted: bool = False
+):
     """Update clock, scores, broadcast, importance, and commence_time from ESPN.
 
     Returns True if any field changed.
+
+    ``allow_unstarted`` is handed straight to :func:`authority_may_settle` and
+    nothing else reads it. Default False, so every existing caller keeps today's
+    refusal to settle a ``scheduled`` row; only the deep straggler arm passes it
+    True, and only for rows it matched by ``espn_id`` on a board day more than
+    48 hours past (#5501).
     """
     from app.models.models import Event
 
@@ -1460,7 +1468,9 @@ async def update_event_fields_from_espn(session, event, ee, claimed_espn_ids, st
     # `live` and `suspended` and refuses a row already settled; a match that
     # went quiet, was suspended, and is then reported `post` settles here in one
     # hop, which is exactly the path the six US Open rows in CERT-752 needed.
-    if ee.status in ("post", "final") and authority_may_settle(event.status):
+    if ee.status in ("post", "final") and authority_may_settle(
+        event.status, allow_unstarted=allow_unstarted
+    ):
         _completed_at = event.completed_at or datetime.now(timezone.utc)
         # #190 guard: don't stamp a completion that predates the event's own
         # commence_time (the earlier-game-folded-onto-later-sibling class). A
