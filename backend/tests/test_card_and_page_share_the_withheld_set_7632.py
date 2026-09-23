@@ -438,6 +438,28 @@ class TestTheBatchedAnswerMatchesThePerMarketOne:
         assert own_only == with_foreign
         assert set(with_foreign) <= {o.id for o in candidates}
 
+    def test_the_midpoint_verdict_half_is_also_blind_to_foreign_ids(self):
+        """The sibling of the unsupported-arm control, and it needs its own.
+
+        `_closest_trade_by_outcome` filters foreign rows out of the FOLD; this
+        asserts the VERDICT half is independently keyed on the leg's own id, so
+        the two halves are not relying on each other to be safe. Caught as an
+        unused import — the arm was split and only one of its two pure halves
+        had a test.
+        """
+        legs = [_leg(1, "Yes", 0.5, bid=0.2, ask=0.8)]
+        market = _market(7, "board", legs, source="polymarket")
+        candidates = _refuted_midpoint_candidates(market)
+        assert candidates, "fixture must produce a midpoint candidate"
+
+        narrow = _refuted_midpoint_verdicts(market, candidates, {1: 0.5})
+        wide = _refuted_midpoint_verdicts(
+            market, candidates, {1: 0.5, 999: 0.01, 1000: 0.99}
+        )
+
+        assert narrow == wide
+        assert wide <= {o.id for o in candidates}
+
     def test_a_non_midpoint_venue_has_no_candidates_so_sends_no_ids(self):
         """The venue gate moved into the candidate helper; it must still bite."""
         # Byte-identical to the fixture one test up, venue apart — so the
