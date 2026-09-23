@@ -109,6 +109,12 @@ class CombatSportConfig:
     promotion_label: str = ""  # a venue's own series/title proves it, e.g. "UFC"
     schedule_label: str = ""  # all the schedule source asserts, e.g. "MMA"
     generic_label: str = ""  # a venue names some OTHER promotion, e.g. "Combat"
+    # #4485: may an events-only card take its name from the venue's published
+    # card listing (`app.utils.combat_card_names`)? Off by default, so a sport
+    # opts in rather than inheriting a naming source nobody checked for it. The
+    # join itself is bout evidence and cannot cross sports, but the gate is here
+    # because "which venue board names MY cards" is a per-sport claim.
+    venue_card_names: bool = False
 
 
 def make_combat_config(
@@ -127,6 +133,7 @@ def make_combat_config(
     promotion_label: str = "",
     schedule_label: str = "",
     generic_label: str = "",
+    venue_card_names: bool = False,
 ) -> CombatSportConfig:
     """Build a config, compiling the `<PREFIX>-<YYMONDD>` date-token regexes.
 
@@ -153,6 +160,7 @@ def make_combat_config(
         promotion_label=promotion_label,
         schedule_label=schedule_label,
         generic_label=generic_label,
+        venue_card_names=venue_card_names,
     )
 
 
@@ -2005,6 +2013,16 @@ async def list_card_concepts(
         cards, event_bouts, fold_rollover_tokens(_spans)
     )
 
+    # #4485: the venue's published card listing, read ONCE for the whole pass
+    # rather than per card — it is one small Redis value and the loop below runs
+    # per token. `[]` on anything unexpected, which disables the naming and
+    # leaves every card named exactly as it was before this shipped.
+    _venue_cards: list[dict] = []
+    if cfg.venue_card_names:
+        from app.utils.combat_card_names import load_card_names
+
+        _venue_cards = load_card_names()
+
     concepts: list[dict] = []
     # The main event's start, carried forward from the scan that already read
     # it. `_attach_headline_bouts` needs it and must not re-read
@@ -2091,6 +2109,28 @@ async def list_card_concepts(
             main_id = None
             fight_count = len(bouts)
             name = label or headline
+            # #4485: the venue's own name for this card, when its published
+            # listing shares a BOUT with ours — "UFC 333: Volkanovski vs.
+            # Evloev" for the card we would otherwise name after one of its
+            # fights. `match_card_name` returns None on every uncertain reading,
+            # and None is exactly the name computed above, so a cold Redis, a
+            # dark ESPN or an unlisted card all land on today's behaviour.
+            #
+            # `is_major` is deliberately NOT touched. It is the marquee key this
+            # function sorts on, so moving it would re-rank the feed — a
+            # different claim from naming a card, and not the one this issue
+            # filed. A numbered card that ought to rank as a major is its own
+            # question.
+            if cfg.venue_card_names and _venue_cards:
+                from app.utils.combat_card_names import match_card_name
+
+                venue_name = match_card_name(
+                    [f"{b.home_team_name} vs {b.away_team_name}" for b in bouts],
+                    _venue_cards,
+                    span=(earliest, latest),
+                )
+                if venue_name:
+                    name = venue_name
 
         # #5603: the chip, from THIS card's own evidence. Absent for a config
         # that declares no labels (boxing) so an older renderer and every other

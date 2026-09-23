@@ -5545,6 +5545,28 @@ def warm_futures_categories(self):
 
 @celery_app.task(
     bind=True,
+    soft_time_limit=120,
+    time_limit=150,
+    name="app.tasks.refresh_espn_combat_cards",
+)
+def refresh_espn_combat_cards(self):
+    """Publish the venue's own names for upcoming fight cards (#4485, every 6h).
+
+    Budget: one ESPN scoreboard read per combat sport — currently one, ~26 KB,
+    and the client's own 10 s timeout is the longest uninterrupted op. The soft
+    limit sits far above it because a dark read must come back as this task's
+    own "published nothing" verdict rather than as a kill with no reason.
+
+    NOTE the module is `espn_combat_cards`, not `refresh_espn_combat_cards`: a
+    submodule sharing a name with a registered task is shadowed by the task on
+    `from app.tasks import <name>`, the trap `warm_event_concepts` records above.
+    """
+    from app.tasks.espn_combat_cards import _refresh_espn_combat_cards
+    return _tracked_run("refresh_espn_combat_cards", _refresh_espn_combat_cards())
+
+
+@celery_app.task(
+    bind=True,
     soft_time_limit=300,
     time_limit=330,
     name="app.tasks.warm_tag_counts",
@@ -6783,6 +6805,19 @@ celery_app.conf.beat_schedule = {
         # inserted between the two drifts that sibling harness. Keeping the
         # pair adjacent costs nothing and re-targets nobody else's guard.
         "schedule": crontab(minute=f"*/{_tag_counts_warm_minutes()}"),
+        "options": {"queue": "background"},
+    },
+    "refresh-espn-combat-cards": {
+        "task": "app.tasks.refresh_espn_combat_cards",
+        # #4485. The venue's own names for upcoming fight cards, so a Discover
+        # card stops being named after one of its fights.
+        #
+        # COST, stated: one ~26 KB ESPN read per pass, four passes a day. The
+        # cadence is slow ON PURPOSE and the TTL (7 days) is an order of
+        # magnitude longer — a card name is announced once and does not move, so
+        # what this must survive is a run of missed deliveries, not a stale
+        # value. Polling it faster would buy nothing a reader could see.
+        "schedule": crontab(minute=5, hour="*/6"),
         "options": {"queue": "background"},
     },
     "warm-futures-categories": {
