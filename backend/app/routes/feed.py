@@ -6441,7 +6441,7 @@ def _drop_stale_observation_legs(market, outcomes: list) -> list:
     return survivors or outcomes
 
 
-def _drop_withheld_price_legs(market, outcomes: list) -> list:
+def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list:
     """Legs whose price the DETAIL PAGE refuses, gone from the card too (#7632).
 
     🔴 THE CARD USED TO PRINT PRICES THE PAGE WITHHOLDS. `/futures/{id}` screens
@@ -6498,6 +6498,27 @@ def _drop_withheld_price_legs(market, outcomes: list) -> list:
     such a board as an all-`-` table; the card shows the prices and is at worst
     no worse than today, which is where it already is.
 
+    ═══ TWO CARRIER SHAPES, ONE RULE (CERT-3330) ═══
+
+    `withheld_ids` is for the caller that computed the set but has nowhere to
+    put it. Discover hydrates PLAIN carriers through the snapshot builder, so
+    its set arrives on `withheld_outcome_ids` and the `__dict__` read below
+    finds it. Sports mode (`_score_sports_mode_futures`) loads ORM rows
+    directly and never passes through that builder, so on the first cut of
+    #7632 its call to this function read `None` on every board and dropped
+    nothing — the ship was INERT on the live Sports path while a source-order
+    guard reported it present. CERT-3330 blocked exactly that.
+
+    An argument rather than a second field because the ORM row has no honest
+    place to keep one: stamping an unmapped key into a mapped instance's
+    `__dict__` would make the two surfaces differ in how the set ARRIVES while
+    claiming they share how it is APPLIED, which is the drift this function
+    exists to prevent. Passing it keeps one rule and makes the wiring visible
+    to a test — `None` still means "the arms never ran for this carrier" and
+    still drops nothing, so a board the builder omitted (it raised; see
+    `withheld_price_outcome_ids_for_markets`) serves at its pre-#7632 numbers
+    on both paths.
+
     OPEN MARKETS ONLY, the sibling's bound and #7274's: a settled board is a
     RESULT, and a result shows what ran.
     """
@@ -6507,8 +6528,12 @@ def _drop_withheld_price_legs(market, outcomes: list) -> list:
     # attribute (it is in `DERIVED_MARKET_COLUMNS`), and a carrier that does NOT
     # must answer `None` rather than lazy-load or raise inside the per-item
     # serializer (gotcha #42, and the module's rule one file over).
-    withheld = getattr(market, "__dict__", _NO_MARKET_DICT).get(
-        "withheld_outcome_ids"
+    withheld = (
+        withheld_ids
+        if withheld_ids is not None
+        else getattr(market, "__dict__", _NO_MARKET_DICT).get(
+            "withheld_outcome_ids"
+        )
     )
     if not withheld:
         return outcomes
@@ -10523,6 +10548,34 @@ async def _score_sports_mode_futures(
     # has to be answerable in both or the fix lands on one surface only.
     team_names = await _team_names_by_id(db, [o for m in markets for o in m.outcomes])
 
+    # #7632 / CERT-3330: THE DETAIL PAGE'S WITHHELD SET FOR THIS POOL TOO.
+    # Discover gets this on the carrier out of the snapshot builder; sports mode
+    # loads ORM rows directly and so has to ask for it, or `_drop_withheld_price_legs`
+    # below reads `None` and the whole #7632 contract is inert on /sports — which
+    # is what it was, on the surface the three filed specimens were seen on
+    # (WTA Singapore's card led with Kasatkina 31%, a leg the page refuses).
+    #
+    # Batched for the same reason and by the same helper as the Discover call
+    # site: FOUR QUERIES AT MOST whatever the pool size, never two per board.
+    # Measured on the live sports pool 2026-09-23 (120 boards / 4,238 legs, of
+    # which the pure screens admit 603 candidate legs across 13 Kalshi boards):
+    # the Kalshi arm is a fully index-supported ~150-260 ms, and the midpoint
+    # arm is the same shape over a subset. That is real against this function's
+    # "<200 ms" docstring claim and is stated here rather than hidden — but the
+    # gate this pass actually runs under is `_futures_budget_s()`, the remainder
+    # of `FEED_TOTAL_BUDGET_MS` (25 s), and the whole build sits behind the feed
+    # singleflight cache, so the cost lands per BUILD on a miss, never per card
+    # and never per request. A card that names a leader the page refuses is not
+    # worth keeping to protect a docstring's round number.
+    #
+    # The load projection is `_futures_feed_load_options()`, which is
+    # `market_load_options()` — the same list the snapshot builder uses — so the
+    # four columns this helper warns it needs (`resolution_source`,
+    # `volume_24h`, `volume_24h_at`, `is_winner`, all in `OUTCOME_LOAD_ONLY_EXTRA`)
+    # are loaded here. That is not luck: it is the ONE-list contract in
+    # `_futures_feed_load_options`'s own docstring paying out.
+    withheld_by_market = await withheld_price_outcome_ids_for_markets(db, markets)
+
     user_team_ids = set(ctx.team_relations.keys()) if ctx.team_relations else set()
 
     scored_items: list[dict] = []
@@ -10559,7 +10612,15 @@ async def _score_sports_mode_futures(
         # sibling, in both serializers, for #4610's reason: these two print the
         # same card type, so a membership rule landing in one of them only moves
         # the disagreement from card-vs-page to card-vs-card.
-        sorted_outcomes = _drop_withheld_price_legs(market, sorted_outcomes)
+        #
+        # CERT-3330: the set is PASSED here, not read off the row. `.get` yields
+        # `None` for a board the builder omitted because evaluating it raised,
+        # which the helper reads as "the arms never ran" and serves at its
+        # pre-#7632 numbers — one bad board never empties a card, and never
+        # wipes the pass (gotcha #42).
+        sorted_outcomes = _drop_withheld_price_legs(
+            market, sorted_outcomes, withheld_by_market.get(market.id)
+        )
         # UX-P126/F5: nothing UNRANKABLE may hold a leader or top-N slot. Runs BEFORE
         # the top-10 slice and leader pick, same reason the phantom-book filter in
         # `_score_futures` does: a placeholder that outranks the real prices doesn't

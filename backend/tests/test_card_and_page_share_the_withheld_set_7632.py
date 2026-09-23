@@ -53,10 +53,12 @@ from __future__ import annotations
 import inspect
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.routes.feed import _drop_withheld_price_legs
+from app.routes.feed import _drop_withheld_price_legs, _score_sports_mode_futures
+from app.utils.personalization import PersonalizationContext
 from app.routes.futures import (
     _closest_trade_by_outcome,
     _refuted_midpoint_candidates,
@@ -262,7 +264,12 @@ class TestTheBoardVerdictSeesTheWholeBoard:
 
         source = inspect.getsource(feed_module._score_futures)
         verdict_at = source.index("phantom_keep_mask, phantom_drop_card")
-        drop_at = source.index("_drop_withheld_price_legs(market")
+        # The open paren and no further: the ARGUMENTS are not this assertion's
+        # business and spelling them out is how a source guard breaks on a
+        # legitimate edit and then reports the wrong defect (CERT-3330 wrapped
+        # the sports call across lines and these three `index` calls all raised
+        # ValueError, which reads as "the filter is gone").
+        drop_at = source.index("_drop_withheld_price_legs(")
 
         assert verdict_at < drop_at, (
             "the withheld-price drop must not thin the field before "
@@ -273,10 +280,37 @@ class TestTheBoardVerdictSeesTheWholeBoard:
         from app.routes import feed as feed_module
 
         source = inspect.getsource(feed_module._score_sports_mode_futures)
-        drop_at = source.index("_drop_withheld_price_legs(market")
+        drop_at = source.index("_drop_withheld_price_legs(")
         rank_at = source.index("display_rank_order(")
 
         assert drop_at < rank_at
+
+    def test_the_sports_serializer_passes_the_set_rather_than_reading_the_row(self):
+        """🔴 CERT-3330's REGRESSION GUARD, and the one the first cut needed.
+
+        The ORM rows this scorer loads never went through the snapshot builder,
+        so they carry no `withheld_outcome_ids` and the two-argument call reads
+        `None` on every board — present, ordered correctly, and completely
+        inert. Reverting to it is a one-token edit that every other assertion in
+        this class still passes, so the third argument is pinned by name.
+
+        `TestTheSportsCardDropsWhatThePageRefuses` is the behavioural half and
+        is what should fail first; this names the mechanism so the next reader
+        does not have to re-derive why a two-argument call is wrong HERE and
+        right in `_score_futures`.
+        """
+        from app.routes import feed as feed_module
+
+        source = inspect.getsource(feed_module._score_sports_mode_futures)
+        assert "withheld_price_outcome_ids_for_markets(db, markets)" in source, (
+            "the sports scorer must ASK for the pool's withheld set"
+        )
+        call_at = source.index("_drop_withheld_price_legs(")
+        call = source[call_at : source.index(")", source.index("withheld_by_market.get", call_at))]
+        assert "withheld_by_market.get(market.id" in call, (
+            "the sports drop must be PASSED the board's set — a two-argument "
+            "call reads None on an ORM row and drops nothing"
+        )
 
     def test_both_serializers_actually_call_it(self):
         """#4610: a membership rule in ONE serializer only moves the split.
@@ -292,7 +326,7 @@ class TestTheBoardVerdictSeesTheWholeBoard:
             feed_module._score_futures,
             feed_module._score_sports_mode_futures,
         ):
-            assert "_drop_withheld_price_legs(market" in inspect.getsource(
+            assert "_drop_withheld_price_legs(" in inspect.getsource(
                 serializer
             ), f"{serializer.__name__} does not share the page's withheld set"
 
@@ -603,3 +637,260 @@ class TestControls:
         market.withheld_outcome_ids = [1]
 
         assert _drop_withheld_price_legs(market, []) == []
+
+
+# ── The Sports path: the half CERT-3330 caught inert ──────────────────────────
+
+
+class _SportsBoard:
+    """A real object, because the drop reads `__dict__` and the scorer reads ~30
+    columns. `SimpleNamespace` would answer every one of them and prove nothing
+    about a row the ORM actually produced."""
+
+    def __init__(self, market_id, name, outcomes):
+        now = datetime.now(timezone.utc)
+        self.id = market_id
+        self.name = name
+        self.source = "kalshi"
+        self.external_id = "KXWTASINGAPORE-25"
+        self.sport_id = None
+        self.sport = None
+        self.category = "sports"
+        self.llm_sport_category = "tennis"
+        self.market_tier = 1
+        self.canonical_market_key = SINGAPORE_KEY
+        self.group_id = None
+        self.group_type = None
+        self.image_url = None
+        self.hook_description = None
+        self.hook_generated_at = None
+        self.hook_leader_at_generation = None
+        self.market_type = None
+        self.market_metadata = {}
+        self.curation_score_adj = 0
+        self.volume_24h = 250000
+        self.updated_at = now
+        self.commence_time = now - timedelta(days=1)
+        self.resolution_date = now + timedelta(days=30)
+        self.status = "open"
+        self.created_at = now - timedelta(days=10)
+        self.llm_league = None
+        self.llm_gender = None
+        self.llm_level = None
+        self.outcomes = outcomes
+
+
+class _SportsLeg:
+    def __init__(self, leg_id, name, probability):
+        self.id = leg_id
+        self.name = name
+        self.external_id = f"ext-{leg_id}"
+        self.current_probability = probability
+        self.probability_change_24h = 0.0
+        self.opening_probability = None
+        self.rank = None
+        self.rank_change_24h = None
+        self.team_id = None
+        self.calibration_probability = None
+        self.current_yes_bid = None
+        self.current_yes_ask = None
+        self.resolution_source = None
+        self.is_winner = None
+        self.volume_24h = None
+        self.volume_24h_at = None
+        self.last_updated = datetime.now(timezone.utc) - timedelta(minutes=5)
+        self.opening_captured_at = None
+
+
+#: 61437318 as served. Kasatkina and Tjen are the two the page refuses; Eala is
+#: its hero. Built here rather than shared with the drop-level fixtures above so
+#: this class stands alone when one of them is retired.
+KASATKINA, TJEN, EALA = 9001, 9002, 9003
+_REFUSED = {KASATKINA, TJEN}
+
+#: `sport::type:year`, which is the shape production actually stores — measured
+#: 2026-09-23, e.g. `basketball::championship:2026`. Named constants rather than
+#: literals at the assignment, matching `SUPER_BOWL_KEY` in the #6479 suite: a
+#: `canonical_market_key = "some-slug"` line is read by gitleaks' generic-api-key
+#: rule as an assignment of a secret to something called a key, and it failed the
+#: scan on the first cut of this class. Nothing here was ever a credential — the
+#: original value was also simply the wrong format for the column.
+SINGAPORE_KEY = "tennis::championship:2025"
+SINGAPORE_KEY_B = "tennis::championship:2026"
+
+
+def _singapore():
+    return _SportsBoard(
+        61437318,
+        "WTA Singapore Singles Winner",
+        [
+            _SportsLeg(KASATKINA, "Daria Kasatkina", 0.31),
+            _SportsLeg(TJEN, "Janice Tjen", 0.29),
+            _SportsLeg(EALA, "Alexandra Eala", 0.285),
+            _SportsLeg(9004, "Suzan Lamens", 0.06),
+            _SportsLeg(9005, "Lucia Bronzetti", 0.055),
+        ],
+    )
+
+
+def _sports_db(markets):
+    db = AsyncMock()
+
+    def make_result(*a, **k):
+        r = MagicMock()
+        scalars = MagicMock()
+        scalars.all.return_value = [m.id for m in markets]
+        unique = MagicMock()
+        unique.all.return_value = markets
+        scalars.unique.return_value = unique
+        r.scalars.return_value = scalars
+        r.all.return_value = []
+        return r
+
+    db.execute = AsyncMock(side_effect=make_result)
+    return db
+
+
+async def _serve_sports(markets, withheld_by_market):
+    """`/api/feed?mode=sports`, with the builder's answer pinned.
+
+    The ARMS are not re-exercised here — `TestTheBatchedAnswerMatchesThePerMarketOne`
+    owns that, and re-deriving them through a faked snapshot table would test the
+    fake. What is under test is the half that was missing: that the scorer ASKS,
+    and that the answer reaches the leader pick and the printed list.
+    """
+    with (
+        patch(
+            "app.routes.feed._get_canonical_source_counts",
+            new=AsyncMock(return_value={SINGAPORE_KEY: 2}),
+        ),
+        patch(
+            "app.routes.feed._team_names_by_id", new=AsyncMock(return_value={})
+        ),
+        patch(
+            "app.routes.feed.withheld_price_outcome_ids_for_markets",
+            new=AsyncMock(return_value=withheld_by_market),
+        ),
+        patch(
+            "app.tasks.redis_state.get_async_redis_client",
+            side_effect=Exception("no redis in test"),
+        ),
+    ):
+        return await _score_sports_mode_futures(
+            _sports_db(markets),
+            datetime.now(timezone.utc),
+            None,
+            PersonalizationContext(),
+        )
+
+
+def _printed(card) -> list[str]:
+    """Every outcome name the sports card puts in front of a reader."""
+    data = card["data"]
+    names = [o["name"] for o in (data.get("top_outcomes") or [])]
+    dc = data.get("discover_card") or {}
+    names += [o["label"] for o in (dc.get("distribution_outcomes") or [])]
+    return names
+
+
+class TestTheSportsCardDropsWhatThePageRefuses:
+    """🔴 CERT-3330. THE FIRST CUT OF #7632 WAS INERT ON THIS PATH.
+
+    `_score_futures` carries the withheld set on a plain carrier out of the
+    snapshot builder; `_score_sports_mode_futures` loads ORM rows that have no
+    such field, so its `_drop_withheld_price_legs` call read `None` and returned
+    the list unchanged. The guards that shipped with it asserted the CALL was
+    present — true, and true of a call that does nothing — so the ship passed
+    its own tests while three named boards on `mode=sports` kept printing
+    prices the page refuses.
+
+    Every assertion here is therefore on the scorer's OUTPUT: the leader it
+    names and the legs it prints. A source-order test cannot tell a live filter
+    from a dead one, and that is the whole lesson of this cert.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_refused_leg_is_not_on_the_sports_card(self):
+        cards = await _serve_sports([_singapore()], {61437318: set(_REFUSED)})
+        printed = _printed(cards[0])
+
+        assert "Daria Kasatkina" not in printed
+        assert "Janice Tjen" not in printed
+        assert "Alexandra Eala" in printed
+
+    @pytest.mark.asyncio
+    async def test_the_sports_card_stops_naming_a_leader_the_page_refuses(self):
+        """The worst kind: the story inverts on the tap."""
+        cards = await _serve_sports([_singapore()], {61437318: set(_REFUSED)})
+
+        assert _printed(cards[0])[0] == "Alexandra Eala"
+
+    @pytest.mark.asyncio
+    async def test_control_the_same_board_keeps_its_leader_when_nothing_is_refused(
+        self,
+    ):
+        """THE ARM THAT MAKES THE TWO ABOVE MEAN SOMETHING.
+
+        Identical fixture, identical rig, empty verdict — Kasatkina leads and is
+        printed. Without this the ship's assertions pass on any change that
+        drops the top leg for any reason at all, including a broken sort.
+        """
+        cards = await _serve_sports([_singapore()], {61437318: set()})
+        printed = _printed(cards[0])
+
+        assert printed[0] == "Daria Kasatkina"
+        assert "Janice Tjen" in printed
+
+    @pytest.mark.asyncio
+    async def test_a_board_the_builder_omitted_serves_its_pre_7632_numbers(self):
+        """`None` IS NOT `[]`, on this path too.
+
+        A board the builder left out of the map (evaluating it raised) must read
+        as "the arms never ran" and keep every leg — one unreadable board can
+        neither empty a card nor wipe the pass (gotcha #42).
+        """
+        cards = await _serve_sports([_singapore()], {})
+        printed = _printed(cards[0])
+
+        assert printed[0] == "Daria Kasatkina"
+        assert "Janice Tjen" in printed
+
+    @pytest.mark.asyncio
+    async def test_the_scorer_asks_the_builder_for_its_whole_pool_at_once(self):
+        """ONE call for the pool, not one per board — decision (b)'s bound.
+
+        The naive repair is a call inside the per-market loop, which is two
+        queries per card on the feed's build path. Pinned as a count because
+        the cheap wiring and the forbidden one are otherwise identical at the
+        call site.
+        """
+        boards = [_singapore(), _singapore()]
+        boards[1].id = 61437319
+        boards[1].canonical_market_key = SINGAPORE_KEY_B
+
+        builder = AsyncMock(return_value={})
+        with (
+            patch(
+                "app.routes.feed._get_canonical_source_counts",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.routes.feed._team_names_by_id", new=AsyncMock(return_value={})
+            ),
+            patch(
+                "app.routes.feed.withheld_price_outcome_ids_for_markets", new=builder
+            ),
+            patch(
+                "app.tasks.redis_state.get_async_redis_client",
+                side_effect=Exception("no redis in test"),
+            ),
+        ):
+            await _score_sports_mode_futures(
+                _sports_db(boards),
+                datetime.now(timezone.utc),
+                None,
+                PersonalizationContext(),
+            )
+
+        assert builder.await_count == 1
+        assert [m.id for m in builder.await_args.args[1]] == [61437318, 61437319]
