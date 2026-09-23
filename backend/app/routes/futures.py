@@ -20,7 +20,10 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
-from app.utils.futures_history_basis import devigged_consensus_by_time
+from app.utils.futures_history_basis import (
+    carry_forward_quotes,
+    devigged_consensus_by_time,
+)
 from app.utils.futures_market_snapshot import dated_movement_points
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
@@ -7389,8 +7392,20 @@ async def get_futures_history(
                 row.probability
             )
 
+    # #7935: read the grades ONCE for the whole board rather than per line — 74
+    # outcomes on this market, and the mutex-contradiction check inside it is a
+    # property of the MARKET, so asking per outcome would answer it 74 times.
+    # Read HERE, above the squeeze, because #8296's carry needs the graded set.
+    _settled_grades = _settled_graded_values(market)
+
+    # #8296 — THE COLUMN IS THE FIELD, NOT THE LEGS THAT MOVED. Snapshots are
+    # de-duplicated at write time, so an instant's rows are the legs whose price
+    # changed; squeezing that partial column divided the chart by a different
+    # number from the hero above it (KBO 59698965: 7 of 10 legs, sum 0.89, printed
+    # raw under a hero squeezed by 1.268). Graded legs are not carried — see the
+    # helper for why neither their last price nor their grade may be.
     devigged = devigged_consensus_by_time(
-        raw_by_time,
+        carry_forward_quotes(raw_by_time, do_not_carry=set(_settled_grades)),
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
     )
@@ -7442,10 +7457,6 @@ async def get_futures_history(
             venue_by_outcome = defaultdict(list)
     venue_rows_served: list = []
 
-    # #7935: read the grades ONCE for the whole board rather than per line — 74
-    # outcomes on this market, and the mutex-contradiction check inside it is a
-    # property of the MARKET, so asking per outcome would answer it 74 times.
-    _settled_grades = _settled_graded_values(market)
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}

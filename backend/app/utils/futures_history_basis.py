@@ -83,6 +83,71 @@ from typing import Mapping
 logger = logging.getLogger(__name__)
 
 
+def carry_forward_quotes(
+    raw_by_time: Mapping[datetime, Mapping[str, Mapping[int, float]]],
+    *,
+    do_not_carry: frozenset | set = frozenset(),
+) -> dict[datetime, dict[str, dict[int, float]]]:
+    """Complete each book's column at each instant from that book's last quotes (#8296).
+
+    ``futures_odds_snapshots`` is de-duplicated at WRITE time: a poll that finds a
+    leg's price unchanged writes no row for it. So the rows stamped with one
+    instant are the legs that MOVED, not the field — and handing that partial
+    column to the #23 squeeze asks it about a distribution that never existed.
+
+    WHAT A READER SAW. ``/futures/59698965`` (*KBO Korean Series Champion*)
+    printed **LG Twins 37%** in its hero and ended the same line at **47%** in
+    the Probability Trend directly below, both stamped 2026-09-23T21:50:32Z —
+    every leg off by the same 1.27. The hero divides each leg's standing price
+    by the whole board (sum 1.268). The chart's last instant held rows for 7 of
+    10 legs (Samsung, Kia and NC had not moved since 9/21-9/23), summing to
+    0.89, which is under the squeeze's threshold, so the chart printed RAW. Same
+    board, same second, two divisors.
+
+    THE READING THIS APPLIES IS THE ONE THE DEDUP ALREADY MEANS: no row means
+    "unchanged", so a leg's standing price at instant ``t`` is its last quote at
+    or before ``t``. That is the price the hero divides by, so a completed column
+    at the final instant is the hero's own column.
+
+    Three bounds, each deliberate:
+
+    * **Only a book that quoted at this instant is completed.** A book with no
+      row at ``t`` contributes nothing at ``t``, exactly as before; this never
+      resurrects a book that stopped quoting.
+    * **Only inside the served window.** A leg whose last quote is older than
+      the window is not seeded from before it — and needs no seed: at the 168 h
+      window that leg is more than seven days behind its own board, which is
+      #7537's ``stale_observation_keys`` withhold, so ``field_complete`` is
+      already False and neither the hero nor this chart squeezes.
+    * **Graded legs are not carried** (``do_not_carry``). A graded leg's
+      standing value changed at a moment no snapshot row records, so carrying
+      its last price would print a loser alive after elimination, and carrying
+      its grade backwards would squeeze a finalist to certainty before the final
+      was played. Such a leg keeps exactly today's behaviour: present at its own
+      rows, absent between them.
+    """
+    completed: dict[datetime, dict[str, dict[int, float]]] = {}
+    last: dict[str, dict[int, float]] = {}
+    for captured_at in sorted(raw_by_time):
+        books = raw_by_time[captured_at]
+        column_by_book: dict[str, dict[int, float]] = {}
+        for bookmaker, column in books.items():
+            standing = last.setdefault(bookmaker, {})
+            if not column:
+                continue
+            filled = {
+                key: value
+                for key, value in standing.items()
+                if key not in do_not_carry
+            }
+            filled.update(column)
+            standing.update(column)
+            column_by_book[bookmaker] = filled
+        if column_by_book:
+            completed[captured_at] = column_by_book
+    return completed
+
+
 def devigged_consensus_by_time(
     raw_by_time: Mapping[datetime, Mapping[str, Mapping[int, float]]],
     *,
