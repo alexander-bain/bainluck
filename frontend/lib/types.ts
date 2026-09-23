@@ -573,7 +573,16 @@ export interface EventHistoryResponse {
    * Optional because a client may be reading an older payload. Markers that fall
    * off the drawn line are no longer served at all — the server drops them.
    */
-  period_markers?: Array<{ timestamp: string; period: string; source?: string }>;
+  /** #3348 — `source` names the tier that answered (`estimated` = nobody
+   * observed it); `precision`/`not_before` ride only on observed transitions.
+   * See `ServedPeriodMarker` in `lib/periodMarkers.ts`. */
+  period_markers?: Array<{
+    timestamp: string;
+    period: string;
+    source?: string;
+    precision?: string;
+    not_before?: string | null;
+  }>;
   aggregate_line?: Array<{ timestamp: string; home_probability: number }>;
   /**
    * #3911: true iff the backend PINNED the last point of `aggregate_line` — i.e.

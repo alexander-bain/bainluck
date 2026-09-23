@@ -101,11 +101,13 @@ describe("#5140 — corrected football markers reach the chart", () => {
     expect(drawn.some((b) => b.label === "HT")).toBe(false);
   });
 
-  it("keeps the additive keys off the drawn boundary", () => {
-    // `precision` and `not_before` are new keys on each marker. The chart takes
-    // `{timestamp, label}` and nothing else, so an old client reads exactly what
-    // it read before — asserted rather than assumed, since this is the claim
-    // that let the backend half ship without a client change.
+  it("carries the additive keys onto the drawn boundary without moving it (#3348)", () => {
+    // `precision` and `not_before` are additive keys on each marker. When the
+    // backend half of #5140 shipped, this test pinned that the chart DROPPED
+    // them, which is what let it ship without a client change. #3348 is the
+    // client change: the keys now ride on the boundary (`source`, `precision`,
+    // `notBefore`), and what must stay byte-identical is the part a reader
+    // sees — every label and every timestamp exactly where it was.
     const withKeys = CHIEFS_BRONCOS_AFTER.map((m) => ({
       ...m,
       precision: "boundary_observed",
@@ -113,8 +115,21 @@ describe("#5140 — corrected football markers reach the chart", () => {
       source: "win_prob",
     }));
 
-    expect(draw(withKeys)).toEqual(
-      draw(CHIEFS_BRONCOS_AFTER),
+    const before = draw(CHIEFS_BRONCOS_AFTER);
+    const after = draw(withKeys);
+    expect(after.map((b) => [b.label, b.timestamp])).toEqual(
+      before.map((b) => [b.label, b.timestamp]),
     );
+    for (const b of after) {
+      expect(b.source).toBe("win_prob");
+      expect(b.precision).toBe("boundary_observed");
+      expect(b.notBefore).toBe("2026-09-15T00:53:43+00:00");
+    }
+    // A marker served WITHOUT the keys still says nothing about them — it is
+    // not promoted to "observed" and not demoted to "estimated".
+    for (const b of before) {
+      expect(b.precision).toBeUndefined();
+      expect(b.notBefore).toBeUndefined();
+    }
   });
 });

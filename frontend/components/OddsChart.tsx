@@ -46,13 +46,15 @@ import type {
   ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
-import { carryGameStateForward } from "@/lib/chartGameState";
+import { carriedStateDisclosure, carryGameStateForward } from "@/lib/chartGameState";
 import {
   collapseDuplicateTransitions,
   placePeriodLabels,
   anchorPeriodLabels,
   choosePeriodStripBand,
   periodLabelPlacement,
+  isEstimatedBoundary,
+  periodBoundaryChipLabel,
   PERIOD_LABEL_ROW_HEIGHT_PX,
 } from "@/lib/periodMarkers";
 import { formatLiveClockLabel } from "@/lib/gameTimeLabel";
@@ -2014,6 +2016,26 @@ export default function OddsChart({
       // Look up game state from chartData for this time label
       const matchingPoint = chartData.find((d) => d.time === label);
       const hasGameState = matchingPoint && (matchingPoint._homeScore != null || matchingPoint._period);
+      // #925 — the tooltip prints the same carried period/clock the readout
+      // under the chart does, and until this said nothing about their age. One
+      // rule (`lib/chartGameState.ts`), one sibling line: the period/clock span
+      // below is pinned by #7860 to the bare `formatLiveClockLabel` call and
+      // is not touched.
+      const carriedDisclosure =
+        matchingPoint && hasGameState
+          ? carriedStateDisclosure({
+              timestamp: matchingPoint.timestamp as string,
+              period: matchingPoint._period as string | null | undefined,
+              clock: matchingPoint._clock as string | null | undefined,
+              hasScore: matchingPoint._homeScore != null && matchingPoint._awayScore != null,
+              periodObservedAt: matchingPoint._periodObservedAt as string | null | undefined,
+              clockObservedAt: matchingPoint._clockObservedAt as string | null | undefined,
+              scoreObservedAt: matchingPoint._scoreObservedAt as string | null | undefined,
+              periodApprox: matchingPoint._periodApprox as boolean | undefined,
+              clockApprox: matchingPoint._clockApprox as boolean | undefined,
+              scoreApprox: matchingPoint._scoreApprox as boolean | undefined,
+            })
+          : null;
 
       // Bain Luck aggregated line (multi-source mode)
       const bainLuckEntry = showBlendLine
@@ -2131,6 +2153,14 @@ export default function OddsChart({
               </div>
               {!(matchingPoint._homeScore != null && matchingPoint._awayScore != null) && (
                 <p className="text-[10px] text-text-muted mt-0.5">{label}</p>
+              )}
+              {carriedDisclosure && (
+                <p
+                  className="text-[10px] text-text-muted mt-0.5 tabular-nums"
+                  data-testid="chart-tooltip-state-as-of"
+                >
+                  {carriedDisclosure.text}
+                </p>
               )}
             </div>
           ) : (
@@ -2971,11 +3001,17 @@ export default function OddsChart({
               <ReferenceLine
                 key={`period-${b.label}-${b.timestamp}`}
                 x={b.time}
-                stroke="rgba(0,0,0,0.25)"
+                // #3348 — an ESTIMATE is drawn as one. The server places a
+                // tier-4 marker by arithmetic on `commence_time`; it used to
+                // reach this rule byte-identical to an observed transition.
+                // Dotted and fainter, with a `~` on the chip, so a reader can
+                // tell "we saw the 2nd half start here" from "halves usually
+                // start about here". Observed markers render exactly as before.
+                stroke={isEstimatedBoundary(b) ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.25)"}
                 strokeWidth={1.5}
-                strokeDasharray="6 4"
+                strokeDasharray={isEstimatedBoundary(b) ? "2 4" : "6 4"}
                 label={{
-                  value: b.label,
+                  value: periodBoundaryChipLabel(b),
                   // #6882: `dy` shifts the whole text block down from whatever
                   // `position` computed — recharts keeps `dy` through
                   // `filterProps` (it is an SVG text attribute) and `Text` adds it
@@ -2987,7 +3023,11 @@ export default function OddsChart({
                   // the `Q4` glyphs. `periodStripBand` is "top" for every chart
                   // whose series is not decisively pinned to one end.
                   ...periodLabelPlacement(b as { labelPosition?: string; labelRow?: number }, periodStripBand),
-                  style: { fontSize: 11, fill: "rgba(0,0,0,0.65)", fontWeight: 700 },
+                  style: {
+                    fontSize: 11,
+                    fill: isEstimatedBoundary(b) ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.65)",
+                    fontWeight: isEstimatedBoundary(b) ? 500 : 700,
+                  },
                 }}
               />
             ))}
