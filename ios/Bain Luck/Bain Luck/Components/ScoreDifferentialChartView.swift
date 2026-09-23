@@ -23,6 +23,10 @@ struct ScoreDifferentialChartView: View {
     var homeTeamLogo: String?
     var awayTeamLogo: String?
     var forcedDomain: ClosedRange<Date>?
+    /// #1833 — the narrowest inline plot on the page (`PageAxisPlotWidthPreferenceKey`),
+    /// so this axis takes the SAME stride as the Win Probability chart above it
+    /// rather than the one rung finer its wider plot would clear alone.
+    var pageAxisPlotWidth: CGFloat = 0
 
     /// The chart's height and its gutter's width, named because the gutter's
     /// label run is derived from the height (#2903) — two literals that have to
@@ -463,8 +467,16 @@ struct ScoreDifferentialChartView: View {
             // times line up, drew 12:30 · 12:40 · 12:50 · 1:00 · 1:10 above and
             // 12:30 · 12:45 · 1:00 below. Two clocks, one page. The font matches
             // for the same reason: the plan's fit is measured at 9pt (#3269).
+            //
+            // #1833: one planner was not enough — the INPUT differed too. This
+            // plot is ~14pt wider than the one above (narrower y-gutter), and on
+            // a sub-90-minute domain that cleared one more rung of the ladder:
+            // 10-minute ticks under 15-minute ones. Both now plan on the page's
+            // narrowest plot.
             let plan = OddsChartView.xAxisPlan(
-                for: chartXDomain(dataPoints: dataPoints), plotWidth: plotWidth)
+                for: chartXDomain(dataPoints: dataPoints),
+                plotWidth: OddsChartView.axisPlanWidth(
+                    own: plotWidth, pageNarrowest: pageAxisPlotWidth))
             AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
@@ -498,8 +510,9 @@ struct ScoreDifferentialChartView: View {
                     plotWidth: plotFrame.width,
                     metrics: .score
                 )
-                Color.clear.preference(
-                    key: PlotWidthPreferenceKey.self, value: plotFrame.width)
+                Color.clear
+                    .preference(key: PlotWidthPreferenceKey.self, value: plotFrame.width)
+                    .preference(key: PageAxisPlotWidthPreferenceKey.self, value: plotFrame.width)
                 ForEach(placements, id: \.key) { placement in
                     Text(periodMarkers[placement.key].label)
                         .font(.system(size: 8, weight: .semibold))
