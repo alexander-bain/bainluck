@@ -25,6 +25,26 @@ struct ChartDataPoint: Identifiable {
     var period: String?
     var clock: String?
     var scoringPlay: ScoringPlay?
+    /// #925 — WHEN each of period / clock / score on this point was observed:
+    /// the game-state row that supplied THAT field, carried forward with it, so
+    /// the readout can date what it shows ("as of 7:41 PM") instead of
+    /// presenting an old game clock as something seen at this point's own time.
+    ///
+    /// Three dates and not one, because the three are observed by different
+    /// rows — MLB serves a period with no clock, ESPN emits score-only rows, a
+    /// clock-only row is the normal mid-period shape — and a row that observed
+    /// one of them says nothing about the age of the other two (codex
+    /// 2026-09-23: the reviewed candidate's shared date let a period-only row
+    /// refresh a carried clock's age, and a clock-only row refresh a carried
+    /// period's). Mirrors the web's `lib/chartGameState.ts`.
+    var periodObservedAt: Date?
+    var clockObservedAt: Date?
+    var scoreObservedAt: Date?
+    /// True when that field was carried from a row a minute or more older than
+    /// this point (`OddsChartView.carriedStateIsApproximate`).
+    var periodApprox: Bool = false
+    var clockApprox: Bool = false
+    var scoreApprox: Bool = false
 }
 
 // MARK: - Period Marker
@@ -34,6 +54,42 @@ private struct PeriodMarker: Identifiable {
     let date: Date
     let label: String
     let isGameStart: Bool
+    /// #3348 — who saw this boundary. Carried, not yet drawn: the chip strip
+    /// prints observed markers exactly as before; estimated markers are never
+    /// admitted to this type (see `extractPeriodMarkers`).
+    var provenance: PeriodProvenance? = nil
+}
+
+/// #3348 — the provenance of one period boundary, whichever side of the wire
+/// built it. `source` is an instrument name (the server's `statpal` /
+/// `espn_box` / `win_prob` / `espn_state`, or this client's `espn_history` /
+/// `win_prob_history`); `precision` is `boundary_observed`, `first_seen` or
+/// `first_score`; `notBefore` is the last observation that showed an EARLIER
+/// state, or nil when nothing bounds the start from below. A first observed
+/// state is not an exact period start, and this is where that is written down.
+struct PeriodProvenance: Equatable {
+    /// Nil when the server sent a marker with no `source` at all — carried as
+    /// unknown, never invented (#4135: a view names a source or draws none).
+    let source: String?
+    let precision: String?
+    let notBefore: Date?
+
+    static let clientPrecisionFirstSeen = "first_seen"
+    static let clientSourceEspnHistory = "espn_history"
+    static let clientSourceWinProbHistory = "win_prob_history"
+}
+
+/// #3348 — a served `period_markers` entry the client could read, normalised to
+/// this chart's label vocabulary. Internal so the decode path is unit-testable.
+struct ServedPeriodBoundary: Equatable {
+    let label: String
+    let date: Date
+    /// The server said `estimated`: arithmetic, seen by nobody.
+    let isEstimated: Bool
+    /// A NAMED instrument saw it. Neither flag set = source missing = unknown,
+    /// and unknown is drawn by nobody (`PeriodMarkerPayload.isObserved`).
+    let isObserved: Bool
+    let provenance: PeriodProvenance
 }
 
 // MARK: - Plot Width
@@ -505,7 +561,7 @@ struct OddsChartView: View {
                     .frame(height: chartHeight)
             } else if let history = vm.history {
                 let allPoints = buildDataPoints(history)
-                let enrichedPoints = enrichWithGameState(allPoints, history: history)
+                let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
                 let dataPoints = filterPoints(enrichedPoints)
                 let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                 let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -611,7 +667,7 @@ struct OddsChartView: View {
             Group {
                 if let history = vm.history {
                     let allPoints = buildDataPoints(history)
-                    let enrichedPoints = enrichWithGameState(allPoints, history: history)
+                    let enrichedPoints = Self.enrichWithGameState(allPoints, history: history)
                     let dataPoints = filterPoints(enrichedPoints)
                     let periodMarkers = extractPeriodMarkers(history, filteredPoints: dataPoints)
                     let moments = Self.chartMoments(from: history.moments, points: dataPoints)
@@ -902,6 +958,9 @@ struct OddsChartView: View {
     private func extractPeriodMarkers(_ history: EventHistoryResponse, filteredPoints: [ChartDataPoint]) -> [PeriodMarker] {
         var firstSeen: [(label: String, date: Date)] = []
         var seenLabels: Set<String> = []
+        // #3348 — provenance per label, kept beside `firstSeen` rather than
+        // widening the tuple every existing line reads.
+        var provenance: [String: PeriodProvenance] = [:]
 
         // Try ESPN history first (has explicit period field)
         if let espnHistory = history.espnHistory, espnHistory.count >= 2 {
@@ -913,11 +972,21 @@ struct OddsChartView: View {
                 }
                 .sorted { $0.date < $1.date }
 
+            // The previous period-bearing observation in THIS series: the
+            // period began after it (#3348 `notBefore`).
+            var previous: Date?
             for point in sorted {
                 let label = normalizePeriodLabel(point.period)
-                guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                seenLabels.insert(label)
-                firstSeen.append((label, point.date))
+                guard !label.isEmpty else { continue }
+                if !seenLabels.contains(label) {
+                    seenLabels.insert(label)
+                    firstSeen.append((label, point.date))
+                    provenance[label] = PeriodProvenance(
+                        source: PeriodProvenance.clientSourceEspnHistory,
+                        precision: PeriodProvenance.clientPrecisionFirstSeen,
+                        notBefore: previous)
+                }
+                previous = point.date
             }
         }
 
@@ -938,14 +1007,51 @@ struct OddsChartView: View {
                     }
                     .sorted { $0.date < $1.date }
 
+                var previous: Date?
                 for point in sorted {
                     let label = normalizePeriodLabel(point.period)
-                    guard !label.isEmpty, !seenLabels.contains(label) else { continue }
-                    seenLabels.insert(label)
-                    firstSeen.append((label, point.date))
+                    guard !label.isEmpty else { continue }
+                    if !seenLabels.contains(label) {
+                        seenLabels.insert(label)
+                        firstSeen.append((label, point.date))
+                        provenance[label] = PeriodProvenance(
+                            source: PeriodProvenance.clientSourceWinProbHistory,
+                            precision: PeriodProvenance.clientPrecisionFirstSeen,
+                            notBefore: previous)
+                    }
+                    previous = point.date
                 }
             }
         }
+
+        // #3348 — the served `period_markers`, read for the first time.
+        //
+        // OBSERVED markers only. A period this client did not see in either
+        // log above is added at the time the server's instrument saw it; a
+        // period it did see keeps its own chip where it is and gains the
+        // server's provenance (`precision`, `not_before`) — nothing already
+        // drawn moves. ESTIMATED markers (`source: "estimated"`, arithmetic on
+        // the scheduled start) are NOT admitted: this chart has never drawn a
+        // period nobody observed (#6718), and the web labels them `~Q1` while
+        // this side keeps them absent — both are "not presented as observed";
+        // whether the phone should also draw the labelled estimate is a
+        // product call, recorded as open in the #3348 delivery, not decided
+        // here. Unknown stays unknown.
+        //
+        // ONE EVIDENCE TUPLE PER CHIP. `timestamp / source / precision /
+        // notBefore` describe ONE observation; a chip this client placed from
+        // its own first-seen row keeps its own tuple, and the server's
+        // `precision` / `not_before` — which describe the server's timestamp,
+        // not the client's — are never copied onto it (codex 2026-09-23: the
+        // reviewed candidate transplanted server certainty onto a local marker
+        // at a potentially different time). A served marker for a label already
+        // drawn is therefore ignored entirely; the chip does not move and its
+        // provenance does not change.
+        //
+        // `isObserved`, not `!isEstimated`: a marker with no `source` is
+        // unknown, and unknown is not admitted as observed.
+        let servedMarkers = Self.servedPeriodMarkers(from: history.periodMarkers, sportKey: sportKey)
+        Self.admitServedMarkers(servedMarkers, firstSeen: &firstSeen, seenLabels: &seenLabels, provenance: &provenance)
 
         // #6718 — NOTHING IS INSERTED HERE, AND THAT IS THE FIX.
         //
@@ -1033,7 +1139,57 @@ struct OddsChartView: View {
 
         return deduped
             .enumerated()
-            .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false) }
+            .map { PeriodMarker(date: $1.date, label: $1.label, isGameStart: false,
+                                provenance: provenance[$1.label]) }
+    }
+
+    /// #3348 — the admission rule for served markers, pure so it is testable
+    /// without a view: only an OBSERVED marker is admitted, only for a label
+    /// nothing has drawn yet, and it arrives with its own evidence tuple. A
+    /// label already drawn is skipped whole — its chip does not move and its
+    /// provenance is not rewritten with the server's.
+    static func admitServedMarkers(
+        _ served: [ServedPeriodBoundary],
+        firstSeen: inout [(label: String, date: Date)],
+        seenLabels: inout Set<String>,
+        provenance: inout [String: PeriodProvenance]
+    ) {
+        for marker in served where marker.isObserved {
+            guard !seenLabels.contains(marker.label) else { continue }
+            seenLabels.insert(marker.label)
+            firstSeen.append((marker.label, marker.date))
+            provenance[marker.label] = marker.provenance
+        }
+    }
+
+    /// #3348 — the served `period_markers` this client can read, in date order.
+    ///
+    /// Pure and internal so the decode path is testable without a view. Drops a
+    /// marker with no parseable timestamp or no period label this chart can
+    /// print; keeps estimated AND unknown-source markers, FLAGGED, so the
+    /// caller decides — the caller above admits only `isObserved`. `source` is
+    /// carried verbatim; an unknown word names an instrument this client has
+    /// not heard of and still counts as observed, while a MISSING source does
+    /// not.
+    static func servedPeriodMarkers(from markers: [PeriodMarkerPayload]?, sportKey: String?) -> [ServedPeriodBoundary] {
+        guard let markers, !markers.isEmpty else { return [] }
+        return markers
+            .compactMap { m -> ServedPeriodBoundary? in
+                guard let raw = m.timestamp, let date = raw.asDate,
+                      let period = m.period, !period.isEmpty else { return nil }
+                let label = PeriodLabel.normalize(period, sport: sportKey)
+                guard !label.isEmpty else { return nil }
+                return ServedPeriodBoundary(
+                    label: label,
+                    date: date,
+                    isEstimated: m.isEstimated,
+                    isObserved: m.isObserved,
+                    provenance: PeriodProvenance(
+                        source: m.source,
+                        precision: m.precision,
+                        notBefore: m.notBefore?.asDate))
+            }
+            .sorted { $0.date < $1.date }
     }
 
     // `inferFirstPeriodLabel(from:)` was removed with #6718. It answered "which
@@ -1801,7 +1957,9 @@ struct OddsChartView: View {
 
     /// Enrich chart data points with game state (score, period, clock, scoring play)
     /// by matching against ESPN history and scoring plays, then forward-filling.
-    private func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
+    /// Static and internal (was a private instance method) so #925's dating of
+    /// carried state can be pinned on the exact shape it runs on.
+    static func enrichWithGameState(_ points: [ChartDataPoint], history: EventHistoryResponse) -> [ChartDataPoint] {
         // Build time-indexed lookups from ESPN history
         var espnByTime: [(date: Date, point: ESPNHistoryPoint)] = []
         for ep in history.espnHistory ?? [] {
@@ -1825,22 +1983,74 @@ struct OddsChartView: View {
         var lastScore: (home: Int, away: Int)?
         var lastPeriod: String?
         var lastClock: String?
+        // #925 — THREE observation clocks, one per field the readout prints,
+        // because the three are observed by different rows: MLB serves
+        // `period: null` on most ESPN rows (a score row must not refresh the
+        // AGE of a half-inning last seen minutes earlier), and a clock-only
+        // row is the normal mid-period shape (it must not refresh the age of
+        // the period it never saw). Same contract as the web's
+        // `carryGameStateForward` (`lib/chartGameState.ts`).
+        var lastPeriodObservedAt: Date?
+        var lastClockObservedAt: Date?
+        var lastScoreObservedAt: Date?
+        /// Cursor into `espnByTime`: every row strictly before the current
+        /// point's cutoff has already been folded into the accumulators above.
+        var espnIdx = 0
 
         for i in sorted.indices {
             let pointDate = sorted[i].date
 
-            // Find nearest ESPN history point (within 90s)
-            if let nearest = espnByTime.last(where: { $0.date <= pointDate.addingTimeInterval(90) }) {
-                if let hs = nearest.point.homeScore { lastScore = (hs, nearest.point.awayScore ?? lastScore?.away ?? 0) }
-                if let p = nearest.point.period, !p.isEmpty { lastPeriod = p }
-                if let c = nearest.point.gameClock, !c.isEmpty { lastClock = c }
+            // The latest ESPN row this point may read. Rows up to the END OF
+            // THE POINT'S OWN MINUTE count as this point's observation (the
+            // web keys its rows by minute and calls a same-minute row exact by
+            // construction); a row in a LATER minute never reaches an earlier
+            // point. The +90s look-ahead this replaces let a first observation
+            // at 20:32:30 stand, unmarked and exact, on the 20:31:00 price —
+            // a state nobody had seen yet, at a minute the reader can tell
+            // apart (codex 2026-09-23 correction).
+            let cutoff = Self.observationCutoff(for: pointDate)
+
+            // EVERY row this point may read, not just the newest one. The three
+            // `last*` values above are ACCUMULATORS — each field keeps the last
+            // row that actually carried it — so every row has to be walked for
+            // them to accumulate. Sampling only `espnByTime.last(where:)` reads
+            // one row per point and silently drops every row that falls BETWEEN
+            // two points, which is most of them: prices are sparser than ESPN
+            // rows, and the rows that go missing are exactly the ones this ship
+            // is about (a score-only row is the common MLB shape, so the period
+            // seen three minutes earlier never reached the accumulator and the
+            // reader got NO half-inning at all rather than a dated one).
+            // Points and rows are both sorted ascending and `cutoff` rises with
+            // them, so one cursor over the rows visits each exactly once.
+            while espnIdx < espnByTime.count, espnByTime[espnIdx].date < cutoff {
+                let row = espnByTime[espnIdx]
+                if let hs = row.point.homeScore {
+                    lastScore = (hs, row.point.awayScore ?? lastScore?.away ?? 0)
+                    // A row that REPEATS the score is still an observation of it.
+                    lastScoreObservedAt = row.date
+                }
+                if let p = row.point.period, !p.isEmpty {
+                    lastPeriod = p
+                    lastPeriodObservedAt = row.date
+                }
+                if let c = row.point.gameClock, !c.isEmpty {
+                    lastClock = c
+                    lastClockObservedAt = row.date
+                }
+                espnIdx += 1
             }
 
-            // Forward-fill game state
+            // Forward-fill game state, each field dated by the row that saw IT.
             sorted[i].homeScore = lastScore?.home
             sorted[i].awayScore = lastScore?.away
             sorted[i].period = lastPeriod
             sorted[i].clock = lastClock
+            sorted[i].periodObservedAt = lastPeriod == nil ? nil : lastPeriodObservedAt
+            sorted[i].clockObservedAt = lastClock == nil ? nil : lastClockObservedAt
+            sorted[i].scoreObservedAt = lastScore == nil ? nil : lastScoreObservedAt
+            sorted[i].periodApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].periodObservedAt)
+            sorted[i].clockApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].clockObservedAt)
+            sorted[i].scoreApprox = Self.carriedStateIsApproximate(pointDate: pointDate, observedAt: sorted[i].scoreObservedAt)
 
             // Check for scoring play at this timestamp (within 60s)
             sorted[i].scoringPlay = playsByTime.first(where: {
@@ -1849,6 +2059,30 @@ struct OddsChartView: View {
         }
 
         return sorted
+    }
+
+    /// #925 — the first instant an ESPN row is TOO NEW for a point to read:
+    /// the start of the minute after the point's own. A row inside the point's
+    /// minute is the same observation at the chart's resolution; a row in the
+    /// next minute is a later observation and belongs to later points.
+    static func observationCutoff(for pointDate: Date) -> Date {
+        let minute = floor(pointDate.timeIntervalSince1970 / 60) * 60
+        return Date(timeIntervalSince1970: minute + 60)
+    }
+
+    /// #925 — is a field on a point CARRIED from an older observation?
+    ///
+    /// The row that supplied the field is `observedAt`; the point the reader is
+    /// scrubbing is `pointDate`. Sixty seconds is the chart's own resolution
+    /// (the web keys its rows by minute and calls a same-minute carry exact by
+    /// construction). No observation at all is not "approximate": there is
+    /// nothing to be stale about (a late first observation leaves the minutes
+    /// before it with no state, not with a doubtful one).
+    static let carriedStateApproximateAfterSeconds: TimeInterval = 60
+
+    static func carriedStateIsApproximate(pointDate: Date, observedAt: Date?) -> Bool {
+        guard let observedAt else { return false }
+        return pointDate.timeIntervalSince(observedAt) >= carriedStateApproximateAfterSeconds
     }
 
     /// Update the selected play point binding based on chart selection.
@@ -1870,7 +2104,13 @@ struct OddsChartView: View {
             awayScore: nearest.awayScore,
             period: nearest.period,
             clock: nearest.clock,
-            scoringPlay: nearest.scoringPlay
+            scoringPlay: nearest.scoringPlay,
+            periodObservedAt: nearest.periodObservedAt,
+            clockObservedAt: nearest.clockObservedAt,
+            scoreObservedAt: nearest.scoreObservedAt,
+            periodApprox: nearest.periodApprox,
+            clockApprox: nearest.clockApprox,
+            scoreApprox: nearest.scoreApprox
         )
     }
 

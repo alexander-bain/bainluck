@@ -28,16 +28,36 @@ struct GamePlayCardView: View {
                     .padding(.bottom, 8)
 
                 HStack(alignment: .top, spacing: 10) {
-                    // Time/Period badge
-                    if !point.timeDisplay.isEmpty {
-                        Text(point.timeDisplay)
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.gray.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    // Game-state badge (period + clock) over the wall-clock time
+                    // of the scrubbed point, and — when the state is carried
+                    // from an older row — the time it was actually seen (#925).
+                    if !point.timeDisplay.isEmpty || !point.wallClockDisplay.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if !point.timeDisplay.isEmpty {
+                                Text(point.timeDisplay)
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Color.gray.opacity(0.15))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                            if !point.wallClockDisplay.isEmpty {
+                                Text(point.wallClockDisplay)
+                                    .font(.caption2)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 6)
+                            }
+                            if let asOf = point.stateAsOfDisplay {
+                                Text(asOf)
+                                    .font(.caption2)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 6)
+                            }
+                        }
                     }
 
                     // Score
@@ -157,9 +177,107 @@ struct GamePlayPoint {
     var period: String?
     var clock: String?
     var scoringPlay: ScoringPlay?
+    /// #925 — when each of period / clock / score above was OBSERVED. On a
+    /// point whose field was carried forward from an older row this is that
+    /// row's time; the matching `*Approx` says the carry is a minute or more
+    /// old. One date per field, never one shared date: a clock-only row
+    /// refreshes the clock's age and nothing else (codex 2026-09-23). All
+    /// default so every existing construction site (the resting "last point"
+    /// in `EventDetailView`) is an exact observation, which is what it is.
+    var periodObservedAt: Date? = nil
+    var clockObservedAt: Date? = nil
+    var scoreObservedAt: Date? = nil
+    var periodApprox: Bool = false
+    var clockApprox: Bool = false
+    var scoreApprox: Bool = false
 
     var hasScore: Bool {
         homeScore != nil && awayScore != nil
+    }
+
+    /// The point's own wall-clock time — "7:44 PM" — the third thing #925 asks
+    /// the readout to say beside the score and the game clock. Empty when the
+    /// timestamp does not parse, which is the card's cue to draw nothing.
+    var wallClockDisplay: String {
+        guard let date = timestamp.asDate else { return "" }
+        return Self.clockText(date)
+    }
+
+    /// Which halves of the badge `liveStatusText` actually printed. Decided
+    /// over what is RENDERED, not what the point carries: when ESPN's period
+    /// detail already spells the clock the standalone clock is dropped, and a
+    /// clock the reader cannot see must not date, or mark, the badge.
+    private var renderedBadgeParts: (period: String, clock: String) {
+        let full = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+        let periodOnly = PeriodLabel.liveStatusText(period: period, gameClock: nil) ?? ""
+        let clockOnly = PeriodLabel.liveStatusText(period: nil, gameClock: clock) ?? ""
+        if !periodOnly.isEmpty, !clockOnly.isEmpty, full == "\(periodOnly) \(clockOnly)" {
+            return (periodOnly, clockOnly)
+        }
+        if !clockOnly.isEmpty, full == clockOnly { return ("", clockOnly) }
+        if !periodOnly.isEmpty, full == periodOnly { return (periodOnly, "") }
+        return (full, "")
+    }
+
+    private var periodIsCarried: Bool { periodApprox && !renderedBadgeParts.period.isEmpty }
+    private var clockIsCarried: Bool { clockApprox && !renderedBadgeParts.clock.isEmpty }
+
+    /// "as of 7:41 PM" — the OLDEST observation among the components actually
+    /// on screen that were carried here, printed only when at least one of
+    /// them is a minute or more older than the point. Oldest, not per-field:
+    /// it is the one choice that can never make a stale readout look fresher
+    /// than it is, and the `~` on the badge says which half is old. The score
+    /// joins the set only when the badge has nothing else — then the score IS
+    /// the readout being dated. Nil when everything shown is fresh, or when a
+    /// carried field has no date to name (the mark stays; no time is invented).
+    ///
+    /// Reader copy, not implementation: it names a time, not a mechanism.
+    var stateAsOfDisplay: String? {
+        var carried: [Date] = []
+        if periodIsCarried, let d = periodObservedAt { carried.append(d) }
+        if clockIsCarried, let d = clockObservedAt { carried.append(d) }
+        let parts = renderedBadgeParts
+        if parts.period.isEmpty, parts.clock.isEmpty, hasScore, scoreApprox, let d = scoreObservedAt {
+            carried.append(d)
+        }
+        guard let oldest = carried.min() else { return nil }
+        return "as of \(Self.asOfText(oldest, pointDate: timestamp.asDate))"
+    }
+
+    /// One clock format for both lines, so "7:44 PM" and "as of 7:41 PM" read as
+    /// the same kind of time.
+    static func clockText(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// The `as of` time, carrying a day only when it needs one.
+    ///
+    /// A bare clock is right for the ordinary case — a state carried a few
+    /// minutes inside the point's own day — and wrong the moment the two fall
+    /// on different days, because `date: .omitted` renders 11:58 PM yesterday
+    /// and 11:58 PM today identically. A game still going after local midnight
+    /// then prints `as of 11:58 PM` directly beneath a `12:30 AM` point, and a
+    /// state THIRTY-TWO MINUTES old reads as twelve hours in the FUTURE: the
+    /// two lines sit one above the other in the badge, so the reader compares
+    /// them whether or not we meant them to be compared.
+    ///
+    /// Codex found this same defect in the web half on 2026-09-23 —
+    /// `carriedStateDisclosure` compared formatted `h:mm a` strings, so
+    /// yesterday-20:00 and today-20:00 disclosed nothing — and corrected it
+    /// there (CODEX-0007). This is the native counterpart; the native half
+    /// reached it by a different route (`date: .omitted`) and had no test
+    /// crossing a day boundary, because every `as of` expectation in the 925
+    /// suite was built by calling `clockText`, the code under test.
+    ///
+    /// The date style matches the chart's own multi-day axis label
+    /// (`OddsChartView.labelStyle` / `.calendarDay`), so a reader who scrubs
+    /// across midnight sees the same vocabulary on the axis and in the badge.
+    static func asOfText(_ observed: Date, pointDate: Date?,
+                         calendar: Calendar = .current) -> String {
+        guard let pointDate, !calendar.isDate(observed, inSameDayAs: pointDate) else {
+            return clockText(observed)
+        }
+        return observed.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 
     /// The badge above the score: the period, and the clock when the clock says
@@ -188,6 +306,25 @@ struct GamePlayPoint {
     /// the hero capsule two hundred points up this same page already prints
     /// (`StatusBadge`, same helper): one vocabulary for the pair, not two.
     var timeDisplay: String {
-        PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+        let parts = renderedBadgeParts
+        // #925 — a carried half wears the same `~` the web's badge does, and
+        // the `~` marks the ODD ONE OUT so the badge never carries two: the
+        // clock takes it when the clock is carried ("Q4 ~1:09"); the period
+        // takes it only when it is the stale half of a badge whose clock is
+        // fresh, or when it is alone ("~Top 8th", baseball). One glyph, one
+        // meaning — "not observed at this instant". The exact time it WAS
+        // observed is `stateAsOfDisplay`.
+        //
+        // The join itself stays `liveStatusText`'s (#4880 guard,
+        // `periodLabelSingleSource.test.ts`): the mark is placed INTO the
+        // string that rule printed, never by re-joining the pair here.
+        var text = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+        if clockIsCarried, let clockRange = text.range(of: parts.clock, options: .backwards) {
+            text.replaceSubrange(clockRange, with: "~" + parts.clock)
+        }
+        if periodIsCarried, !clockIsCarried, !text.isEmpty {
+            text = "~" + text
+        }
+        return text
     }
 }
