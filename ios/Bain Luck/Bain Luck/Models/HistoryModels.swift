@@ -76,6 +76,12 @@ nonisolated struct WinProbHistoryPoint: Decodable, Sendable {
     let timestamp: String
     let homeProbability: Double?
     let gameState: WinProbGameState?
+    /// `true` on the ONE point the backend synthesises at "now" on a live game,
+    /// carrying the series' last real value forward
+    /// (`_extend_win_prob_history_to_live_edge`, #920). A delivery time, not an
+    /// observation: never a dot, never cadence, never a reading. Absent on
+    /// every real row.
+    let liveEdge: Bool?
 }
 
 /// Game-state fields paired with a win-probability snapshot.

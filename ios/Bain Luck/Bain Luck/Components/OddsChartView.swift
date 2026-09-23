@@ -45,6 +45,11 @@ struct ChartDataPoint: Identifiable {
     var periodApprox: Bool = false
     var clockApprox: Bool = false
     var scoreApprox: Bool = false
+    /// The backend's synthetic right-edge point (`WinProbHistoryPoint.liveEdge`):
+    /// the last real value re-served at the request's own "now". It may end a
+    /// line whose trailing interval is supported (`observationSegments`) and is
+    /// otherwise not a reading — never a lone mark, never cadence.
+    var isLiveEdge: Bool = false
 }
 
 // MARK: - Period Marker
@@ -1529,7 +1534,9 @@ struct OddsChartView: View {
             for wp in sourcePoints {
                 guard let date = wp.timestamp.asDate,
                       let prob = wp.homeProbability else { continue }
-                points.append(ChartDataPoint(date: date, probability: prob, source: sourceKey))
+                var point = ChartDataPoint(date: date, probability: prob, source: sourceKey)
+                point.isLiveEdge = wp.liveEdge == true
+                points.append(point)
             }
         }
 
@@ -1700,41 +1707,70 @@ struct OddsChartView: View {
     /// — the caller draws those as a mark rather than dropping them, because a
     /// lone observation is something we genuinely saw and a `LineMark` needs two
     /// points to render.
+    ///
+    /// **The synthetic live edge is not an observation** (`isLiveEdge`, codex
+    /// 2026-09-23 on #7547/#7878 D). It is the last real value re-served at the
+    /// request's "now", so it neither seeds the cadence nor splits a run, and
+    /// it is never returned alone — a run of one there would be a mark at an
+    /// instant nobody read. It is kept for one job only, the web's
+    /// (`chartObservationSupport.ts`): the anchor of the TRAILING interval. A
+    /// supported trailing interval ends the last run at it, as today; an
+    /// unsupported one ends the line at the last real observation, with nothing
+    /// drawn after it.
     static func observationSegments(
         _ points: [ChartDataPoint],
         gameStart: Date?,
         floor: TimeInterval = OddsChartView.gapFloor,
         cadenceMultiple: Double = OddsChartView.gapCadenceMultiple
     ) -> [[ChartDataPoint]] {
-        guard points.count > 1 else { return points.isEmpty ? [] : [points] }
-        let ordered = points.sorted { $0.date < $1.date }
-        guard let gameStart else { return [ordered] }
+        let ordered = points.filter { !$0.isLiveEdge }.sorted { $0.date < $1.date }
+        guard !ordered.isEmpty else { return [] }
+        let liveEdge = points.filter(\.isLiveEdge).max { $0.date < $1.date }
 
-        // The series' own in-game rhythm. Taken over exactly the intervals the
-        // rule can act on, so a long pre-match sleep cannot inflate it and
-        // thereby excuse a real in-game hole.
-        var inGameIntervals: [TimeInterval] = []
-        for (previous, current) in zip(ordered, ordered.dropFirst())
-        where previous.date >= gameStart {
-            inGameIntervals.append(current.date.timeIntervalSince(previous.date))
-        }
-        guard !inGameIntervals.isEmpty else { return [ordered] }
-        let sortedIntervals = inGameIntervals.sorted()
-        let median = sortedIntervals[sortedIntervals.count / 2]
+        var segments: [[ChartDataPoint]] = [ordered]
+        var median: TimeInterval?
+        if ordered.count > 1, let gameStart {
+            // The series' own in-game rhythm. Taken over exactly the intervals
+            // the rule can act on, so a long pre-match sleep cannot inflate it
+            // and thereby excuse a real in-game hole.
+            var inGameIntervals: [TimeInterval] = []
+            for (previous, current) in zip(ordered, ordered.dropFirst())
+            where previous.date >= gameStart {
+                inGameIntervals.append(current.date.timeIntervalSince(previous.date))
+            }
+            if !inGameIntervals.isEmpty {
+                let sortedIntervals = inGameIntervals.sorted()
+                let cadence = sortedIntervals[sortedIntervals.count / 2]
+                median = cadence
 
-        var segments: [[ChartDataPoint]] = []
-        var run: [ChartDataPoint] = [ordered[0]]
-        for (previous, current) in zip(ordered, ordered.dropFirst()) {
-            let interval = current.date.timeIntervalSince(previous.date)
-            let inGame = previous.date >= gameStart && current.date >= gameStart
-            if inGame, interval > floor, interval > cadenceMultiple * median {
+                segments = []
+                var run: [ChartDataPoint] = [ordered[0]]
+                for (previous, current) in zip(ordered, ordered.dropFirst()) {
+                    let interval = current.date.timeIntervalSince(previous.date)
+                    let inGame = previous.date >= gameStart && current.date >= gameStart
+                    if inGame, interval > floor, interval > cadenceMultiple * cadence {
+                        segments.append(run)
+                        run = [current]
+                    } else {
+                        run.append(current)
+                    }
+                }
                 segments.append(run)
-                run = [current]
-            } else {
-                run.append(current)
             }
         }
-        segments.append(run)
+
+        // The trailing interval, judged by the same three conditions. No
+        // in-game cadence (or no `gameStart`) means nothing is judged.
+        if let liveEdge, let lastReal = ordered.last, liveEdge.date > lastReal.date {
+            let interval = liveEdge.date.timeIntervalSince(lastReal.date)
+            var unsupported = false
+            if let gameStart, let median, lastReal.date >= gameStart {
+                unsupported = interval > floor && interval > cadenceMultiple * median
+            }
+            if !unsupported {
+                segments[segments.count - 1].append(liveEdge)
+            }
+        }
         return segments
     }
 
