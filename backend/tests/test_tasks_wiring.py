@@ -385,6 +385,12 @@ class TestBeatScheduleCompleteness:
         # `realtime`, keyed on `events.completed_at` rather than on a population
         # page, so a finished game's legs are reached inside 30 minutes.
         "settle-kalshi-recent-finals",
+        # #7035 / CERT-3324. The already-resolved void capture: records that the
+        # venue voided a postponed fixture, so a page can stop reporting "No
+        # result reported" forever. Separate from the beat above because it
+        # selects `status='resolved'` and must not spend that one's 30-minute
+        # bar.
+        "capture-kalshi-resolved-voids",
         # #1121 residual: the GRADING twin of the entry above, which writes no
         # grade. `:09/:39` on `realtime`, band 1 only, so a finished game's props
         # are graded inside half an hour instead of waiting for the 6-hourly

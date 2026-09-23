@@ -1123,6 +1123,39 @@ jobs:
             exit 1
           fi
 
+      - name: "#7035 already-resolved void selection (real Postgres)"
+        # CERT-3324's required repair, and the gate that answers the BLOCK.
+        #
+        # The blocked presentation had a correct classifier and a correct write
+        # behind a selection that could not reach the fixture: both sweep arms
+        # open with `fm.status = 'open'` and the named Levante–Bilbao families
+        # are already `resolved`. Its guard handed the specimen straight to
+        # `run_backfill`, so nothing in the suite could see that.
+        #
+        # The subject here is `RESOLVED_VOID_SELECT_SQL` itself, executed by
+        # Postgres. It MUST be a real server: the predicate screens on
+        # `market_metadata->>'venue_voided'` and `->>'venue_void_checked_at'`
+        # against a jsonb column, which sqlite cannot answer, so the unit suite
+        # is structurally unable to host it.
+        #
+        # The load-bearing arm is the PLAYED control — a resolved, ungraded row
+        # whose event is `completed` instead of `suspended` (2,843 such rows in
+        # production). It is identical to the specimen on every other axis, and
+        # stamping one `venue_voided` would tell a reader no result was ever
+        # reported about a game that was played.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_resolved_void_selection_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/resolved_void_selection.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/resolved_void_selection.txt; then
+            echo "::error::#7035 already-resolved void selection SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4057 Kalshi settlement recency band (real Postgres)"
         # WHICH settled Kalshi markets a cycle asks the venue about is decided by
         # two WHERE clauses and nothing else. The old selection was an

@@ -396,3 +396,263 @@ class TestTheGradeBoundary:
         """A plain assignment would blank ``market_metadata["shape"]``."""
         assert "COALESCE(market_metadata" in VOID_UPDATE_SQL
         assert "||" in VOID_UPDATE_SQL
+
+
+# ---------------------------------------------------------------------------
+# CERT-3324's repair — the already-resolved arm's WRITE POLICY
+# ---------------------------------------------------------------------------
+#
+# The selection itself is Postgres-only (it screens on `market_metadata->>`) and
+# is gated by `tests/integration/test_kalshi_resolved_void_selection_pg.py`.
+# What is checkable here is the other half of the repair: what the arm is
+# allowed to WRITE once that selection has handed it a row.
+
+
+def _drive_mode(legs, *, void_capture_only, apply=True):
+    """Same driver as above, with the arm's write policy as the only variable."""
+    recorder: list = []
+    venue = _Venue(legs)
+
+    def maker():
+        return _FakeSession(recorder, [ROW], (1, 0, 0, 1, 0))
+
+    report = asyncio.run(
+        sweep.run_backfill(
+            session_maker=maker,
+            client_factory=lambda: venue,
+            limit=500,
+            apply=apply,
+            now=NOW,
+            rows=[ROW],
+            void_capture_only=void_capture_only,
+        )
+    )
+    statements = [s for s, _ in recorder]
+    return report, statements
+
+
+def _ran(statements, needle):
+    return [s for s in statements if needle in s]
+
+
+class TestTheAlreadyResolvedArmWritesOneFact:
+    """#7035 / CERT-3324. `void_capture_only` bounds the blast radius.
+
+    These rows are ALREADY `resolved`, so `UPDATE_SQL`'s status and `settled_at`
+    arms are no-ops on them — but its two date columns are not. This arm exists
+    to explain 489 settled rows, not to re-date them.
+    """
+
+    def test_the_settlement_write_is_withheld_from_this_population(self):
+        report, statements = _drive_mode(VOIDED_LEGS, void_capture_only=True)
+
+        assert _ran(statements, "SET resolution_date") == [], (
+            "the already-resolved arm ran the shared settlement UPDATE. Its "
+            "COALESCEd date columns OVERWRITE a stored date whenever the venue "
+            "yields one, so this would silently re-date every row it explains."
+        )
+        assert report["stats"]["writes_applied"] == 0
+
+    def test_the_void_fact_is_still_written(self):
+        """The withholding above must not cost the arm its entire point."""
+        report, statements = _drive_mode(VOIDED_LEGS, void_capture_only=True)
+
+        assert report["stats"]["venue_voided"] == 1
+        assert report["stats"]["void_writes_applied"] == 1
+        assert len(_ran(statements, "'venue_voided', true")) == 1
+
+    def test_the_default_still_runs_the_settlement_write(self):
+        """🔴 THE STRAWMAN. Without this arm the two above pass on a function
+        that never writes anything, and the flag would be proven by a mode that
+        is broken in both positions."""
+        report, statements = _drive_mode(VOIDED_LEGS, void_capture_only=False)
+
+        assert _ran(statements, "SET resolution_date") != []
+        assert report["stats"]["writes_applied"] == 1
+
+
+class TestTheRefusalIsRememberedOnlyWhereItIsTerminal:
+    """The idempotency stamp. 10 of 14 sampled rows are graded at the venue, and
+    a refusal that leaves no trace is re-asked every 10 minutes for 14 days."""
+
+    def test_a_graded_row_is_stamped_so_it_is_never_asked_again(self):
+        report, statements = _drive_mode(PLAYED_LEGS, void_capture_only=True)
+
+        assert report["stats"]["void_refused_graded"] == 1
+        assert report["stats"]["void_checked_writes_applied"] == 1
+        assert len(_ran(statements, "venue_void_checked_at")) == 1
+
+    def test_a_graded_row_is_never_stamped_voided(self):
+        """The two stamps are different facts and must not blur."""
+        _, statements = _drive_mode(PLAYED_LEGS, void_capture_only=True)
+
+        assert _ran(statements, "'venue_voided', true") == []
+
+    def test_the_open_row_population_is_never_stamped_checked(self):
+        """🔴 THE BLAST-RADIUS CONTROL, and the reason the stamp is gated on the
+        mode rather than written wherever a row is graded.
+
+        `run_backfill` classifies EVERY row it reads, including the ~12,000
+        healthy open rows of the population sweep and the 200-row batches of the
+        10-minute arm. Writing this bookkeeping key there would mark thousands of
+        rows "checked" to record a question that arm never asked, and would put a
+        jsonb write on a path that must stay SQLite-drivable.
+        """
+        report, statements = _drive_mode(PLAYED_LEGS, void_capture_only=False)
+
+        assert _ran(statements, "venue_void_checked_at") == []
+        assert report["stats"]["void_checked_writes_applied"] == 0
+
+    def test_an_unfinished_event_is_left_re_askable(self):
+        """Only the answer that CANNOT change is durable.
+
+        `not_settled` means the venue has not finished, so a stamp here would
+        retire a row that may yet void. This is the arm that fails if the
+        `graded` branch is ever loosened to a bare `else`.
+        """
+        open_legs = [dict(leg, status="active", result=None) for leg in VOIDED_LEGS]
+
+        report, statements = _drive_mode(open_legs, void_capture_only=True)
+
+        assert _ran(statements, "venue_void_checked_at") == []
+        assert _ran(statements, "'venue_voided', true") == []
+        assert report["stats"]["void_checked_writes_applied"] == 0
+
+    def test_a_dry_run_records_nothing(self):
+        report, statements = _drive_mode(
+            PLAYED_LEGS, void_capture_only=True, apply=False
+        )
+
+        assert _ran(statements, "venue_void_checked_at") == []
+        assert report["stats"]["void_refused_graded"] == 1, (
+            "a dry run must still COUNT the refusal — the counter is how an "
+            "operator sees the arm reached anything at all"
+        )
+
+    def test_the_checked_stamp_writes_no_grade_and_merges(self):
+        lowered = sweep.VOID_CHECKED_UPDATE_SQL.lower()
+        for word in ("is_winner", "resolution_source", "probability", "status ="):
+            assert word not in lowered, (
+                f"#1852: {word!r} appears in the checked stamp. It records that "
+                "a question was answered, never what the answer was."
+            )
+        assert "COALESCE(market_metadata" in sweep.VOID_CHECKED_UPDATE_SQL
+        assert "||" in sweep.VOID_CHECKED_UPDATE_SQL
+
+
+class _TwoPhaseSession:
+    """A session that can tell the beat's TWO selections apart.
+
+    `run_recent_finals` now runs two statements with different predicates and
+    different write policies. A double that answered both with the same rows
+    could not see which one reached the specimen — which is the exact blindness
+    CERT-3324 blocked the first presentation for.
+    """
+
+    def __init__(self, recorder, recent_rows, resolved_rows):
+        self._recorder = recorder
+        self._recent = recent_rows
+        self._resolved = resolved_rows
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self._recorder.append((sql, params))
+        if sql.strip().upper().startswith("UPDATE"):
+            return _FakeResult([])
+        if "fm.status = 'resolved'" in sql:
+            return _FakeResult(self._resolved)
+        return _FakeResult(self._recent)
+
+    async def commit(self):
+        return None
+
+
+class TestThePhaseIsReachedFromTheBeat:
+    """🔴 THE REACHABILITY CLAIM ITSELF.
+
+    CERT-3324: "Its composed guard injects the specimen after selection, so
+    classifier/write correctness cannot make the existing postponed-game card
+    acquire `market_metadata.venue_voided`." A repair that adds a selection
+    nothing calls repeats that defect with an extra statement. So these arms
+    drive `run_resolved_voids` — the function the beat calls, which does its own
+    selecting — and never hand it rows.
+    """
+
+    def _run(self, *, resolved_rows, legs=None, apply=True):
+        recorder: list = []
+        venue = _Venue(VOIDED_LEGS if legs is None else legs)
+
+        def maker():
+            return _TwoPhaseSession(recorder, [], resolved_rows)
+
+        report = asyncio.run(
+            sweep.run_resolved_voids(
+                apply=apply,
+                session_maker=maker,
+                client_factory=lambda: venue,
+                now=NOW,
+            )
+        )
+        return report, [s for s, _ in recorder], venue
+
+    def test_the_beat_runs_the_already_resolved_selection(self):
+        report, statements, _ = self._run(resolved_rows=[ROW])
+
+        assert [s for s in statements if "fm.status = 'resolved'" in s], (
+            "the beat never executed the already-resolved selection: the arm "
+            "exists and nothing reaches it"
+        )
+        assert report["candidates"] == 1
+
+    def test_the_specimen_reaches_the_void_write_through_the_beat(self):
+        """End to end on the seam that was missing: selection -> venue -> stamp."""
+        report, statements, venue = self._run(resolved_rows=[ROW])
+
+        assert venue.asked == ["KXLALIGAGAME-26SEP16LEVATH"]
+        assert report["venue_voided"] == 1
+        assert report["void_writes_applied"] == 1
+        assert len([s for s in statements if "'venue_voided', true" in s]) == 1
+
+    def test_the_arm_withholds_the_settlement_write_through_the_beat(self):
+        """The mode survives the call chain, not just a direct invocation."""
+        report, _, _ = self._run(resolved_rows=[ROW])
+
+        assert report["settlement_writes_applied"] == 0
+
+    def test_an_empty_band_reports_a_shape_rather_than_an_absence(self):
+        """gotcha #53: "drained" and "never ran" must not read the same."""
+        report, _, venue = self._run(resolved_rows=[])
+
+        assert venue.asked == []
+        assert report["candidates"] == 0
+        assert report["selection"] == "resolved_void"
+        assert "venue_voided_samples" in report
+        assert report["terminal"] == "complete"
+
+    def test_a_batch_nobody_could_answer_is_partial_not_complete(self):
+        """#1515's contract: an invocation that returned is not proof of work.
+
+        Every selected row that gets neither stamp is selected again next run.
+        A batch made entirely of those is the CAL-P998 jam, and it must not
+        report as a clean pass.
+        """
+        unfinished = [dict(leg, status="active", result=None) for leg in VOIDED_LEGS]
+
+        report, _, _ = self._run(resolved_rows=[ROW], legs=unfinished)
+
+        assert report["terminal"] == "partial"
+        assert report["void_writes_applied"] == 0
+        assert report["void_checked_writes_applied"] == 0
+
+    def test_a_draining_batch_is_complete(self):
+        """🔴 The strawman for the arm above: `partial` must not be the only
+        answer this terminal can give."""
+        report, _, _ = self._run(resolved_rows=[ROW])
+
+        assert report["terminal"] == "complete"

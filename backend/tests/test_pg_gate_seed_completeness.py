@@ -113,6 +113,22 @@ COVERED = (
     #     seed that left it NULL would exercise only the empty case, and the
     #     assignment-vs-merge bug it exists to catch would pass.
     "test_kalshi_sweep_void_bind_pg.py",
+    # #7035 / CERT-3324's required repair. Seeds `events`, `futures_markets` and
+    # `futures_outcomes` by raw INSERT to run `RESOLVED_VOID_SELECT_SQL` — the
+    # selection seam the BLOCK found untested — against a real server. Three
+    # hazards live in this seed, and each one would turn a screen vacuous rather
+    # than loud:
+    #
+    #   * `market_metadata` must be bound through `CAST(:metadata AS jsonb)`.
+    #     Two of the predicate's screens ARE jsonb key tests, so an untyped NULL
+    #     kills the fixture before the arms that matter run.
+    #   * `events.status` is the played-game control's ONLY difference from the
+    #     specimen. A seed that let it default would make the control and the
+    #     subject the same row and the most important arm would prove nothing.
+    #   * `futures_outcomes.is_winner` is named explicitly on both sides of the
+    #     ungraded screen. Left to its default, the graded control is not graded
+    #     and the screen is never exercised.
+    "test_kalshi_resolved_void_selection_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`
