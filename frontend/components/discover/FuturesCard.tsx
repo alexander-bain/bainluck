@@ -669,6 +669,17 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // served 0 over a live 0.003 prints `<1%` and not `0%`. That composition lives
   // in `formatProbabilityPercent`; passing `{ rendered }` does not opt out of it.
   const pctDisplay = prob != null ? formatProbabilityPercent(prob, { rendered: heroPercent }) : null;
+  // #8151 — the caption stops saying the hero's number back to it.
+  //
+  // THIS LINE'S POSITION IS THE GATE. Only the two roots below (variant B at the
+  // `if (variantB)` branch, variant A at the tail) render `pctDisplay`; the
+  // heatmap and leaderboard roots have already returned by here, and they keep
+  // the component-level `contextSnippet` verbatim because their caption is the
+  // reader's ONLY statement of the number. Reading `pctDisplay` at the shared
+  // computation near the top of this component would have subtracted it from
+  // those two as well — the same trap `stripResolutionWindowClause` records for
+  // `FuturesCompactRow`, which prints this caption and no eyebrow at all.
+  const heroContextSnippet = feedContextSnippet(item, resolveText, pctDisplay);
   // UX-P052 (#1690) — the verbatim census finding names THIS number: rendered
   // "at full visual authority regardless of provenance", so a single 48h-old
   // print and a 3-source consensus look identical at the same 62%. Both hero
@@ -764,9 +775,12 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
               id and the market id — and only one of them said anything. */}
           <ForYouChip cue={cue} />
 
-          {contextSnippet && (
+          {/* #8151 — `heroContextSnippet`, not `contextSnippet`: this root
+              prints `pctDisplay` above, so it is one of the two that may
+              subtract it. */}
+          {heroContextSnippet && (
             <ExpandableContextText
-              text={contextSnippet}
+              text={heroContextSnippet}
               expandedText={expandedContext}
               className="text-[13px] leading-relaxed text-text-secondary mb-2.5"
               onExpand={onContextExpand}
@@ -881,9 +895,11 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
             category pill, the probability and the movement delta. */}
         <ForYouChip cue={cue} />
 
-        {contextSnippet && (
+        {/* #8151 — `heroContextSnippet`, not `contextSnippet`: this root prints
+            `pctDisplay` above, so it is one of the two that may subtract it. */}
+        {heroContextSnippet && (
           <ExpandableContextText
-            text={contextSnippet}
+            text={heroContextSnippet}
             expandedText={expandedContext}
             className="text-[13px] leading-relaxed text-text-secondary mb-3"
             onExpand={onContextExpand}
