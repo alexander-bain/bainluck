@@ -4743,13 +4743,29 @@ _SETTLED_COLUMNS = {"make_playoffs", "division"}
 # cell (Nebraska's Final Four, ask 0.22 having last traded 0.19) — counted here
 # as it was measured, not as the stored population suggested.
 #
-# 🔴 `semifinal` IS DESCOPED AND THE REASON IS AN INSTRUMENT ONE, NOT A VERDICT.
-# On `ncaa-football` its served cells cannot be reproduced from the stored
-# outcomes at all: Missouri renders 0.1275 against a stored 0.1800, Houston
-# 0.0825 against 0.2000, and the served values drift between rebuilds while the
-# stored rows sit still. The column is NOT renormalised (38 cells sum to 5.92
-# against 4 seats), so that is unexplained rather than benign. Nothing may be
-# withheld from a cell whose number we cannot yet account for — #8251.
+# #8257. `semifinal` WAS DESCOPED FOR AN INSTRUMENT REASON, AND #8251 PAID IT.
+# On `ncaa-football` its served cells could not be reproduced from the stored
+# outcomes: Missouri rendered 0.1275 against a stored 0.1800, Houston 0.0825
+# against 0.2000. That was the monotonicity cap (Semifinal <= Make Playoff),
+# which clamped the SOURCE numbers too, so the payload credited Kalshi with the
+# Make Playoff blend. #8251 keeps each source at its own quote and stamps
+# `capped_by`, so every served cell is now accounted for, and nothing is being
+# withheld from a number we can't explain.
+#
+# Admitted on the same three gates as #8243, measured 2026-09-23 ~23:55Z by a
+# replay of the real route on the #8251 head plus the production book read:
+# (1) every one of the 38 served football Semifinal cells has exactly ONE
+# source, so a withheld leg CLEARS its cell and never moves a mean. The rigs'
+# "Arizona is ambiguous" was their own loose name join. The route binds plain
+# "Arizona" to the Wildcats and "Arizona St." to the Sun Devils. (2) Every
+# affected team keeps its Make Playoff and Champion cells. (3) The trade read
+# spares every leg that has traded. 15 legs are withheld: 8 land on grid rows
+# (Missouri, Florida St, Arizona, Kansas St, Virginia Tech, Arizona St, Houston,
+# NC State), which stop printing the Make Playoff number twice, and 7 name teams
+# with no row. The column goes from 5.98 to 5.23 against 4 seats. The 8 capped
+# cells that remain have traded and keep their number, marked `capped_by`.
+# `champions-league` also has a `semifinal` column: 0 of its 36 legs are
+# withheld today.
 #
 # `championship` is excluded for two independent reasons. (1) BLENDING: all 68 of
 # its cells carry a non-Kalshi source, so withholding one contributor is a
@@ -4770,6 +4786,8 @@ _ADVANCEMENT_COLUMNS = frozenset(
         # and no affected team loses its last populated cell to the grid's
         # `if not cells: continue`.
         "relegation", "quarterfinal",
+        # #8257. Admitted on the same gates once #8251 made its cells accountable.
+        "semifinal",
     }
 )
 

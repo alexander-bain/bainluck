@@ -176,6 +176,9 @@ def test_the_frame_set_is_exactly_the_measured_columns():
         {
             "round_of_32", "sweet_16", "elite_eight", "final_four", "title_game",
             "relegation", "quarterfinal",
+            # #8257: admitted on the same gates once #8251 made its cells
+            # accountable. See the route's `_ADVANCEMENT_COLUMNS` note.
+            "semifinal",
         }
     )
 
@@ -184,21 +187,14 @@ def test_the_frame_set_is_exactly_the_measured_columns():
 #: production measurement (2026-09-23, #8243) that excludes it.
 #:
 #: The trade term is no longer the reason — the batched read answers it. What is
-#: left is columns where the withholding would reach nobody, or where the served
-#: number cannot be accounted for at all.
+#: left is columns where the withholding would reach nobody. (`semifinal` sat here
+#: until #8251 accounted for its served numbers; #8257 admitted it.)
 _MEASURED_EXCLUSIONS = (
     ("conference", "nba/nfl/nhl/mls — 0 legs survive the trade read; every "
                    "ask-only leg in all four grids has traded"),
     ("pennant", "mlb — 0 legs survive the trade read"),
     ("top_4", "epl 0 + la-liga 2, and both la-liga legs name teams with no grid "
               "row, so 0 cells reach a reader"),
-    ("semifinal", "ncaa-football — 7 cells WOULD change, but the served numbers "
-                  "cannot be reproduced from the stored outcomes at all: Missouri "
-                  "renders 0.1275 against a stored 0.1800, Houston 0.0825 against "
-                  "0.2000, and they drift between rebuilds while the rows sit "
-                  "still. Not renormalisation either — 38 cells sum to 5.92 "
-                  "against 4 seats. Nothing may be withheld from a cell whose "
-                  "number is unexplained. #8251"),
 )
 
 
