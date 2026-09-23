@@ -532,8 +532,21 @@ function firstMeaningful(candidates: (string | null | undefined)[]): string {
 }
 
 /** The backend's word-boundary truncation mark, as `_short_market_name` writes
- *  it: a run of text followed by `...` (never a single `…` glyph). */
-const TRUNCATED_HEAD_RE = /^(.{12,}?)\.\.\.(?=\s|$)/;
+ *  it: a run of text followed by `...` (never a single `…` glyph).
+ *
+ *  #8151 — THE LOOKAHEAD USED TO BE `(?=\s|$)`, WHICH THE BACKEND'S OWN REASON
+ *  TEMPLATE CANNOT SATISFY. `generate_futures_reason` composes `f"{title}:
+ *  {context}"`, so on a truncated title the mark is followed by a COLON and
+ *  never by a space:
+ *
+ *      Will Tatyana Ali be eliminated in week 2 of Dancing...: 38% chance, …
+ *
+ *  `stripCardTitleHead` therefore returned that whole string unchanged — the
+ *  card saying its own heading back to it, which is the defect #6903 closed for
+ *  the un-truncated shape and left open here for want of one character class.
+ *  The class below is the same one the `rest` slice already trims after the cut,
+ *  so the two ends of that function now agree on what a separator is. */
+const TRUNCATED_HEAD_RE = /^(.{12,}?)\.\.\.(?=[\s:,;–—-]|$)/;
 
 /**
  * Drop a leading restatement of the card's own heading.
@@ -655,14 +668,86 @@ export function stripResolutionWindowClause(
 }
 
 /**
+ * Drop a `{pct}% chance` clause when the card's own hero already prints `{pct}`.
+ *
+ * #8151, and the same subtraction as #7872 one field over: the hero and the
+ * caption are two renderings of ONE number. Production 2026-09-23 01:5xZ, 390px
+ * (`artifacts-discover/d426/hero-06.png`):
+ *
+ *     18%   ↓ 52.0 pts                                  ← hero, 48pt
+ *     Will Netflix, Inc. (NFLX) hit (HIGH) $75 …?
+ *     Down 52 points today — now 18% chance             ← caption
+ *
+ * THIS IS #4056's OWN RULING, APPLIED TO THE CLAUSE IT LEFT BEHIND.
+ * `binary_card_copy` builds `answer = f"{pct}% chance"` once and glues it onto
+ * four of its five rungs. #4056 deleted the fifth — the one where `answer` was
+ * the WHOLE caption — and its comment is still in `feed_reasons.py`: *"a bare
+ * '42% chance' above a 42% hero IS the empty case, wearing text."* The clause
+ * form is the residual: 28 of 89 served futures captions, and 5 of the 7 hero
+ * cards a reader meets on page one.
+ *
+ * BUILT FROM THE HERO STRING, NOT FROM A PERCENT PATTERN. The expressions are
+ * composed out of the very characters the caller says it rendered, so this can
+ * only ever delete a number the reader is already looking at. A caption stating
+ * a DIFFERENT percent than the hero is left alone — that is two numbers on one
+ * card, which is a defect to report and never one to hide by deletion. The same
+ * property makes the `<1%` / `>99%` heroes a deliberate no-op: `_display_pct`
+ * returns an int, so the caption says `0% chance` under a `<1%` hero, the
+ * strings differ, and nothing is removed.
+ *
+ * THE GATE IS THE CALLER'S, exactly as `stripResolutionWindowClause` records.
+ * Only two of `FuturesCard`'s four `<article>` roots render `pctDisplay`; the
+ * heatmap and leaderboard roots print no hero, so for them the caption is the
+ * reader's only statement of the number and they pass nothing.
+ *
+ * NARROWER THAN THE RESTATEMENT IT COULD CATCH, on purpose:
+ *  - `"Democratic Party leads at 66%"` under a `66%` hero is UNTOUCHED. The hero
+ *    is a bare number with no subject, so `Democratic Party` is the only thing
+ *    saying which side owns the 66 — stripping it re-creates #8127.
+ *  - `"{pct}% chance by {date}"` (#6470's deadline level) is untouched: the
+ *    remainder would be a bare `"By December 31"`, and the date is the eyebrow's
+ *    field, not this one. 0 of 89 carried that shape today, so it is out of
+ *    scope rather than unmeasured-and-ignored.
+ *
+ * A DELETION, NOT A REWRITE (ruling 003). Every remaining word is a word the
+ * backend served, and when the clause was the entire candidate this returns `""`
+ * so the chain moves to its next door rather than printing a blank line.
+ */
+export function stripHeroProbabilityRestatement(
+  text: string | null | undefined,
+  heroPercent: string | null | undefined,
+): string {
+  const raw = (text ?? "").trim();
+  // No hero on screen, no duplication: the caption is the only number there is.
+  const hero = (heroPercent ?? "").trim();
+  if (!raw || !hero) return raw;
+  const answer = `${hero} chance`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // `"38% chance"` — the whole caption, which is what #7872's window strip
+  // leaves behind on the two `resolving_soon_*` rungs.
+  if (new RegExp(`^${answer}\\.?$`, "i").test(raw)) return "";
+  const rest = raw
+    // `"Down 52 points today — now 18% chance"` (`feed_reasons.py:1119, :1154`)
+    .replace(new RegExp(`\\s*—\\s*now ${answer}\\.?\\s*$`, "i"), "")
+    // `"68% chance, up 53 points since Apr 29"` (`feed_reasons.py:1152`)
+    .replace(new RegExp(`^${answer}\\s*,\\s*`, "i"), "")
+    .trim();
+  if (!rest) return "";
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/**
  * @param resolutionLabel the resolution eyebrow THIS CALLER RENDERS, verbatim
  *   (`resolvesLabel(data.resolution_date)`), or nothing if it renders none.
  *   Futures only, and it can only ever subtract — see
  *   `stripResolutionWindowClause` for why the caller has to be the one to say.
+ * @param heroPercent the hero probability THIS CALLER RENDERS, verbatim
+ *   (`pctDisplay`), or nothing if it renders none. Same contract, same reason —
+ *   see `stripHeroProbabilityRestatement` (#8151).
  */
 export function feedContextSnippet(
   item: FeedItem,
   resolutionLabel?: string | null,
+  heroPercent?: string | null,
 ): string {
   if (item.type === "futures") {
     // #4265 — ONE chain with iOS (`DiscoverCaption.feedCaption`), graded
@@ -688,12 +773,23 @@ export function feedContextSnippet(
     const heading = data.name;
     // #7872 — the second subtraction, hoisted for exactly the reason `heading`
     // is: it is what the card already prints, so it can only be taken away.
-    // Both live OUTSIDE the array literal so the four doors stay the four doors
-    // the backend guard counts.
+    // #8151 adds the third, the card's own hero number, on the same contract.
+    // All three live OUTSIDE the array literal so the four doors stay the four
+    // doors the backend guard counts.
+    //
+    // ORDER: the hero strip runs LAST, on text the other two have already cut
+    // down. That is what makes `"38% chance, resolving within a day"` reach ""
+    // rather than stopping at a bare `"38% chance"` — #7872's tail strip leaves
+    // exactly the string #4056 ruled was the empty case, and this is the pass
+    // that sees it. (The reverse order also terminates at ""; this one states
+    // the dependency instead of relying on both paths agreeing.)
     const strip = (candidate: string | null | undefined): string =>
-      stripResolutionWindowClause(
-        stripCardTitleHead(candidate, heading),
-        resolutionLabel,
+      stripHeroProbabilityRestatement(
+        stripResolutionWindowClause(
+          stripCardTitleHead(candidate, heading),
+          resolutionLabel,
+        ),
+        heroPercent,
       );
     return firstMeaningful([
       strip(item.context_summary),
