@@ -953,6 +953,13 @@ _REPAIRS = {
     # `paused_target_timeout`, `paused_pool_timeout`, `paused_write_timeout`.
     # Paging is a keyset on `futures_outcomes.id`: `?after_id=` from
     # `next_cursor`. Read `scan_exhausted`, not `remaining_legs`.
+    # 🔴 #7701 rung 2: the page is ordered by `(fm.id, fo.id)` and walks the
+    # MARKET side, because the widened scope hash-joined 4.34M outcomes against
+    # 463K markets and needed 14s or a timeout on every page. The operator
+    # contract did not change — still one `?after_id=` leg id — but an
+    # `?after_id=` naming a leg that no longer exists now comes back
+    # `terminal: refused`, `code: CURSOR_DANGLING` instead of an empty page,
+    # because an empty page at the end of a 212-page drain reads as "done".
     # Capped at APPLY_LEG_CAP=120 legs per call, by module constant — the whole
     # 1,153-leg cohort is ten calls. Accepts ?limit=&sport=&after_id=
     # &status_scope=&band=.

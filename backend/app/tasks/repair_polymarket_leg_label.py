@@ -265,6 +265,13 @@ CENSUS_STATEMENT_TIMEOUT_SECONDS = 12
 #: never reports zero.
 REMAINING_COUNT_MIN_BUDGET_SECONDS = 0.5
 
+#: Bound on the #7701 rung 2 dangling-cursor probe. A single primary-key lookup
+#: on ``futures_outcomes``, run ONLY when a page came back empty under an
+#: ``?after_id=`` — so at most once per drain, with the venue budget untouched.
+#: Small because a pk lookup that needs longer than this is a sick database, not
+#: a slow query, and the caller fails closed either way.
+CURSOR_PROBE_BUDGET_SECONDS = 2
+
 #: 🔴 THE POPULATION PREDICATE, WRITTEN ONCE. The census and the pager must not
 #: be able to disagree about what a collapsed leg is.
 #:
@@ -276,7 +283,30 @@ REMAINING_COUNT_MIN_BUDGET_SECONDS = 0.5
 #: so the planner drops the name index and probes ``ix_futures_outcomes_market_id``
 #: alone: **10s timeout → 152ms** measured on production 2026-09-01, and ~2.5s
 #: for the full per-category GROUP BY. Same answer, no index, no migration.
-COLLAPSED_LEG_PREDICATE = "fo.name IS NOT DISTINCT FROM fm.name"
+#:
+#: 🔴 THAT REASONING IS SCOPED TO THE COHORT IT WAS MEASURED ON, AND #7701 RUNG 2
+#: WALKED OUT OF IT. Being non-indexable is what makes the NARROW
+#: ``status = 'open'`` scope probe one index, and it is also exactly what makes
+#: the WIDENED scope a double sequential scan: with ~463K resolved Polymarket
+#: markets on the inner side the planner stops probing and hash-joins 4.34M
+#: outcomes against them (measured 2026-09-23: EXPLAIN cost **603,538**, up from
+#: 451's 483,632 on 2026-09-21 — it degrades on its own as the tables grow).
+#: The predicate is still right. What changed is which side the join must be
+#: DRIVEN from; see ``_page_sql_for`` below. Do not "fix" this by restoring
+#: ``=`` — that is the 86,006 plan, and it was measured worse.
+def collapsed_leg_predicate(outcome_alias: str = "fo") -> str:
+    """The population rule, written once, rendered under whichever alias asks.
+
+    The census, ``_out_of_scope_legs`` and the pager must not be able to
+    disagree about what a collapsed leg is, and rung 2 needs the same sentence
+    under a second alias because the pager now names the outcome table inside a
+    LATERAL. A function rather than a second constant, so there is exactly one
+    place the rule can be edited and no way to edit one copy of it.
+    """
+    return f"{outcome_alias}.name IS NOT DISTINCT FROM fm.name"
+
+
+COLLAPSED_LEG_PREDICATE = collapsed_leg_predicate()
 
 #: 🔴 THE SCOPE, WRITTEN ONCE BESIDE THE POPULATION. This rail was built for the
 #: cohort as it stood on 2026-09-01: markets we still held ``open`` that the
@@ -712,6 +742,13 @@ async def repair(
     ``sport`` filters ``llm_sport_category`` — an operator draining the tennis
     cohort before the Setka backlog is choosing an order, not a different
     population. ``after_id`` is a keyset cursor on ``futures_outcomes.id``.
+    Since #7701 rung 2 the page is ORDERED by ``(fm.id, fo.id)`` and the market
+    half of the keyset is derived from ``after_id`` inside the statement, so the
+    operator-facing contract is unchanged — one leg id, from ``next_cursor`` —
+    while the walk itself runs down the market side. A cursor naming a leg that
+    no longer exists is REFUSED (``CURSOR_DANGLING``) rather than answered with
+    an empty page, because those two are the same page and only one of them
+    means the drain is finished.
 
     ``status_scope`` (``open`` default, or ``not_open``) and ``band``
     (``MIN-MAX`` ages in days over ``fm.resolution_date``) are #7701 rung 1: they
@@ -823,6 +860,56 @@ async def repair(
     # the slice next to the one asked for — a page that looks entirely
     # plausible. Both bounds are on the SAME column the buckets are folded from,
     # so `by_age_bucket` is a direct control on this clause having bound at all.
+    # 🔴 #7701 RUNG 2: THE JOIN IS DRIVEN FROM THE MARKET SIDE, AND EVERY PIECE
+    # OF THAT SENTENCE IS LOAD BEARING. Measured on production 2026-09-23,
+    # widened scope, 120-leg page:
+    #
+    #     driven by            head page   deep resume   terminal page
+    #     planner (was)        14.0s / timeout on every page, cost 603,538
+    #     futures_outcomes     626ms       —             20.5s  ⛔
+    #     futures_markets      102ms       738ms         2.57s  ✅
+    #
+    # The arithmetic behind it: the cohort is ~1 collapsed leg per 20 resolved
+    # Polymarket markets but ~1 per 427 outcomes, and there are 4.34M outcomes
+    # against 463K markets. Driving from the smaller, denser side is ~9x less
+    # keyspace at ~20x the hit density, and that margin is what buys the
+    # TERMINAL page — the one that must scan to the end of the keyspace to prove
+    # the drain is finished. An outcome-driven scan is quick at the head and
+    # needs 20.5s to walk the 1,251,774 outcome rows above the last collapsed
+    # leg, so it could never say "done" inside the budget. A rail that cannot
+    # report exhaustion is the rung-1 failure mode wearing the opposite costume.
+    #
+    # 🔴 `OFFSET 0` IS AN OPTIMIZATION FENCE AND DELETING IT SILENTLY RESTORES
+    # THE 603,538 PLAN. Postgres pulls a simple LATERAL subquery up into the
+    # outer join and re-derives the identical hash join — measured, the plan is
+    # byte-identical to the one above this change. `OFFSET 0` blocks the pull-up
+    # and nothing else; it reads like a no-op, it changes no row, and no test
+    # that only checks results can see it go. `test_the_offset_0_fence_is_load_bearing`
+    # pins the token itself for that reason.
+    #
+    # 🔴 THE `fm.id >=` BOUND IS DELIBERATELY REDUNDANT WITH THE ROW-WISE
+    # COMPARISON BESIDE IT. The row-wise `(fm.id, fo.id) > (...)` is correct on
+    # its own but cannot be an index condition, because `fo.id` is produced by
+    # the LATERAL — so a resume was applied as a FILTER and re-walked the whole
+    # market keyspace from zero: 302,453 markets and 5.1s at a mid-cohort
+    # cursor. Adding the scalar `fm.id >=` gives the pk scan a range start
+    # (`Index Cond: (id >= (InitPlan 1).col1)`) and the same resume walks 11,652
+    # markets in 738ms. Both clauses stay: the bound makes it fast, the row-wise
+    # comparison makes it correct.
+    #
+    # 🔴 ORDERING BY `(fm.id, fo.id)` IS WHAT MAKES A SPLIT MARKET SAFE. The
+    # cursor stays a single `?after_id=` on `futures_outcomes.id` — unchanged
+    # contract, no new dispatcher parameter — and the market half is derived
+    # from it in the statement. Because the order is total over the cohort, a
+    # market whose legs straddle a page boundary (67 of the 25,402 hold more
+    # than one collapsed leg) resumes at its own next leg rather than being
+    # stepped over, and the SAME mechanism carries the mid-market venue stop
+    # that `last_examined` already records. There is no trimming rule to get
+    # wrong because there is no page to trim.
+    cursor_market = (
+        "(SELECT c.market_id FROM futures_outcomes c "
+        "WHERE c.id = CAST(:after_id AS bigint))"
+    )
     page_sql = f"""
         SELECT fo.id           AS outcome_id,
                fo.market_id    AS market_id,
@@ -833,13 +920,22 @@ async def repair(
                fm.resolution_date    AS resolution_date,
                fm.status             AS market_status
           FROM futures_markets fm
-          JOIN futures_outcomes fo
-            ON fo.market_id = fm.id
-           AND {COLLAPSED_LEG_PREDICATE}
+          JOIN LATERAL (
+                 SELECT leg.id          AS id,
+                        leg.market_id   AS market_id,
+                        leg.external_id AS external_id,
+                        leg.name        AS name
+                   FROM futures_outcomes leg
+                  WHERE leg.market_id = fm.id
+                    AND {collapsed_leg_predicate("leg")}
+                 OFFSET 0
+               ) fo ON TRUE
          WHERE fm.source = 'polymarket'
            AND {STATUS_SCOPE_SQL[scope]}
            AND (CAST(:after_id AS bigint) IS NULL
-                OR fo.id > CAST(:after_id AS bigint))
+                OR (fm.id >= {cursor_market}
+                    AND (fm.id, fo.id) > ({cursor_market},
+                                          CAST(:after_id AS bigint))))
            AND (CAST(:sport AS text) IS NULL
                 OR fm.llm_sport_category = CAST(:sport AS text))
            AND (CAST(:band_max_age AS double precision) IS NULL
@@ -848,7 +944,7 @@ async def repair(
            AND (CAST(:band_min_age AS double precision) IS NULL
                 OR fm.resolution_date <= NOW()
                    - (CAST(:band_min_age AS double precision) * INTERVAL '1 day'))
-         ORDER BY fo.id
+         ORDER BY fm.id, fo.id
          LIMIT CAST(:cap AS int)
     """
     try:
@@ -888,6 +984,60 @@ async def repair(
             terminal="paused_target_timeout",
             reason=f"page select did not finish: {type(exc).__name__}: {exc}",
         )
+
+    if not page and after_id:
+        # 🔴 #7701 RUNG 2: AN UNRESOLVABLE CURSOR AND A DRAINED COHORT RETURN THE
+        # SAME EMPTY PAGE, AND ONLY ONE OF THEM MEANS "FINISHED". Rung 2 derives
+        # the market half of the keyset from `?after_id=` inside the statement
+        # (see `cursor_market` above). If that outcome row has gone, the scalar
+        # subquery is NULL, every comparison against it is NULL, the page is
+        # empty — and the branches below would read that as the scope being
+        # exhausted and bank a finish this rail never earned. That is gotcha #53
+        # in the one place it would cost the most: at the END of a 212-page
+        # drain, where "done" is the answer everybody is waiting for.
+        #
+        # The check is one primary-key lookup and it runs ONLY on the empty-page
+        # path — once per drain, with the whole venue budget unspent — so the
+        # common case pays nothing for it. It FAILS CLOSED: if the lookup itself
+        # cannot complete we pause rather than fall through, because "I could
+        # not check" is not "the cursor was fine".
+        try:
+            probe = await _bounded_statement(
+                session,
+                timeout_literal=f"'{CURSOR_PROBE_BUDGET_SECONDS}s'",
+                server_budget_s=CURSOR_PROBE_BUDGET_SECONDS,
+                sql=(
+                    "SELECT 1 FROM futures_outcomes "
+                    "WHERE id = CAST(:after_id AS bigint)"
+                ),
+                params={"after_id": after_id},
+            )
+            cursor_resolves = bool(probe.fetchall())
+        except Exception as exc:  # noqa: BLE001 — see FAILS CLOSED above
+            await _safe_rollback(session)
+            return _paused_before_examining(
+                incoming_cursor=incoming_cursor,
+                started=started,
+                terminal="paused_target_timeout",
+                reason=(
+                    "the page was empty and the cursor could not be checked, so "
+                    "this call cannot tell an exhausted scan from a dangling "
+                    f"?after_id={after_id}: {type(exc).__name__}: {exc}"
+                ),
+            )
+        if not cursor_resolves:
+            return _refused(
+                incoming_cursor=incoming_cursor,
+                started=started,
+                code="CURSOR_DANGLING",
+                reason=(
+                    f"?after_id={after_id} names no row in futures_outcomes, so "
+                    "the keyset has no market to resume from and this page is "
+                    "empty for that reason ALONE. It is not an exhausted scan. "
+                    "Re-run without ?after_id= to restart the walk, or hand the "
+                    "`next_cursor` from the last call that examined a leg."
+                ),
+            )
 
     if not page and (band_ages is not None or scope != DEFAULT_STATUS_SCOPE):
         # 🔴 AN EMPTY BANDED PAGE IS "THIS SLICE IS EMPTY" AND NOTHING ELSE, AND
@@ -1202,7 +1352,7 @@ async def repair(
         terminal = write_terminal
         scan_exhausted = False
     elif stopped_before is not None:
-        # The cursor is EXCLUSIVE (`fo.id > :after_id`), so it names the last leg
+        # The cursor is EXCLUSIVE (`(fm.id, fo.id) > (…, :after_id)`), so it names the last leg
         # actually examined and the next call resumes at `stopped_before`. When
         # the very first batch failed, nothing was examined and the cursor the
         # operator handed in is returned unchanged — a retry repeats the page
