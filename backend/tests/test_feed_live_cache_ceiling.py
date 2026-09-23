@@ -1154,7 +1154,16 @@ async def test_a_build_from_fresh_artifacts_keeps_the_full_window(monkeypatch):
     )
 
     real_time = rc.time.time
-    rc.time.time = lambda: real_time() + 59.0
+    # Anchor the shift to the payload's OWN origin, not to real wall clock.
+    # `recall_last_good` refuses when `time.time() - origin > max_age_s`, so a
+    # `real_time() + 59.0` stub leaves only 60 - 59 = ONE SECOND of real slack
+    # for everything between the build above and this recall — and the build is
+    # a full `_drive_feed`. On a loaded CI box that second is not there, and the
+    # test fails claiming "the live fallback no longer works at all" when the
+    # only thing that happened is that CI was slow (gotcha #44: a test anchor
+    # must not be a clock reading). Anchored to `origin`, the age under test is
+    # exactly 59.0s on every box, which is the number the assertion names.
+    rc.time.time = lambda: origin + 59.0
     try:
         recalled = rc.recall_last_good(
             SHARED_KEY, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
