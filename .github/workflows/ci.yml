@@ -3529,6 +3529,75 @@ jobs:
           print("#7351 generic-market history acceptance GREEN on all", t, "tests")
           PY
 
+      - name: "#8000 supported venue history survives display selection"
+        # PILLAR: TRUTH / FORMATTING. SHIP: the ten displayed lines keep their
+        # supported venue history when the exclusive field has eleven or twelve
+        # members — a recovered bank stops rebuilding itself empty into
+        # "Only 2 numbers so far".
+        #
+        # ITS OWN STEP, REUSING THE #7351 PROVISION RATHER THAN JOINING ITS
+        # INVOCATION. The `GENERIC_HISTORY_*` vars are already in `$GITHUB_ENV`
+        # from the provision step above, so this needs no new infrastructure; it
+        # is separate so the 53-test count that gate pins stays exactly what it
+        # pins. Folding this file into that pytest call would have made every
+        # future change to either suite re-tune one shared constant, and a
+        # pinned count that two files can move is a count nobody trusts.
+        #
+        # WHY A STEP AT ALL, GIVEN THE FILE IS ALSO COLLECTED BY AN ORDINARY
+        # SHARD: with no `GENERIC_HISTORY_*` the file SKIPS (its `pytestmark`),
+        # and a skipped shard is not a route gate — it is the absence of one
+        # wearing a green check. This step is the only place these ten tests can
+        # actually execute, which is why it refuses a skip as loudly as a
+        # failure.
+        #
+        # Same three refusals as the #7351 step (skip / zero / short count), and
+        # pytest's exit code is read for its VALUE, not its truthiness
+        # (gotcha #54).
+        env:
+          REDIS_URL: redis://localhost:56379/15
+          KALSHI_API_KEY: ""
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_supported_history_survives_display_selection_8000_real_pg_redis.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/shds8000-junit.xml 2>&1 | tee /tmp/shds8000.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          # R1-R9 plus R2b: the twelve-leg bank served at the default top ten,
+          # the density tiers counting the drawn rows, a hole in an UNDRAWN leg
+          # still refusing the series whole, an undrawn leg that moves the field
+          # off the raw scale still refusing it, the squeezed and unsqueezed
+          # boards, the phone reader, a non-exclusive ladder, and twelve legs at
+          # twelve different minutes being twelve holes. The refusal arms are the
+          # ones that matter: this change widens the population a verdict is
+          # asked of, so the gate has to prove it did not widen what is ADMITTED.
+          EXPECTED = 10
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/shds8000-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#8000 acceptance produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#8000 acceptance collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#8000 acceptance SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#8000 acceptance ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#8000 acceptance RED: {f} failed, {e} errors")
+          print("#8000 display-selection acceptance GREEN on all", t, "tests")
+          PY
+
       - name: "#7548 trade-print refusal — provision the disposable Postgres + Redis"
         # Same bargain as the #7351 step above: the suite DROPS AND RECREATES THE
         # WHOLE SCHEMA and FLUSHES ITS REDIS DB, so it gets a database of its own

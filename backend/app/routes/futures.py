@@ -5337,19 +5337,23 @@ def _venue_points_countable_as_density(
     """
     if not venue_rows:
         return 0
+    # #8000 — `venue_rows` is the FIELD's rows in the window (every leg the bank
+    # holds), not only the drawn ones: the hole question is about the field, and
+    # a leg this chart does not draw is still a member of the denominator. The
+    # COUNT is of the drawn rows — the density a reader will actually see — so
+    # the healthy path counts exactly what it counted before.
     by_outcome: dict[int, list] = defaultdict(list)
     for row in venue_rows:
-        if row.outcome_id in charted_ids and row.probability is not None:
+        if row.probability is not None:
             by_outcome[row.outcome_id].append(row)
     if not by_outcome:
         return 0
     hole, _columns = _venue_field_columns(
         market, charted_outcomes, by_outcome, field_complete=field_complete
     )
-    # The FULL row count when admitted, so the healthy path counts exactly what it
-    # counted before: `in_window` already filtered to the charted ids, and the
-    # regroup above exists to ask the hole question, never to re-filter the total.
-    return 0 if hole else len(venue_rows)
+    if hole:
+        return 0
+    return sum(1 for row in venue_rows if row.outcome_id in charted_ids)
 
 
 def _venue_scale_refusal(
@@ -6826,14 +6830,42 @@ async def get_futures_history(
     venue = await _load_generic_venue_history(
         market, charted_outcomes, _history_field_ids, db
     )
-    venue_rows = venue.in_window(cutoff, snapshots, outcome_ids)
+    # #8000 — VALIDATE ON THE WHOLE FIELD, THEN SELECT WHAT IS DRAWN. The scale
+    # contract below asks whether every leg of the BOARD was observed at a venue
+    # instant (`_venue_field_columns` is handed `charted_outcomes`, the deduped
+    # field, because the squeeze divides by the field's sum). This read used to
+    # narrow to the ten selected ids FIRST — `in_window(..., outcome_ids)` — so
+    # the validator never saw the two legs the chart does not draw, and a bank
+    # holding all twelve legs of a 12-leg exclusive field at one shared instant
+    # was whole at `top_n=12` and refused at the default `top_n=10`, the same
+    # bytes at the same instants. Codex constructed the counterexample on
+    # cdba3e9f; `test_supported_history_survives_display_selection_8000` runs it
+    # through this handler.
+    #
+    # So the venue rows are read for EVERY leg of the field, each leg
+    # claim-filtered against its OWN captures (`_supported_field` holds the
+    # whole field's supported captures; a capture still stands, and a drawn
+    # leg's rows are exactly what they were). The drawn subset is taken out of
+    # the SAME rows afterwards and is the only thing served. Nothing is
+    # loosened: a hole in an undrawn leg still refuses the series whole, and
+    # an undrawn leg that moves the field off the raw scale still refuses it.
+    #
+    # THE DRAWN SUBSET IS TAKEN ONCE, AT `venue_by_outcome` BELOW, AND NOWHERE
+    # ELSE. An earlier cut of this change also kept a `venue_rows` list here (the
+    # charted rows, narrowed off `field_venue_rows`) to mirror the old shape, but
+    # after the grouping below moved to `field_venue_by_outcome` nothing read it
+    # — ruff F841 — and a second, separately-maintained expression of "which rows
+    # are drawn" is exactly the drift this bug was: two populations that must
+    # agree, kept in two places. One selection, one place.
+    _field_outcome_ids = [o.id for o in charted_outcomes]
+    field_venue_rows = venue.in_window(cutoff, _supported_field, _field_outcome_ids)
     # #7936 second half — the count the TIERS below are allowed to read, which is
     # not the same number as the rows served. See
     # `_venue_points_countable_as_density`: a series this reader will refuse whole
     # is density nobody draws, and counting it held the gate shut over the exact
     # empty chart #7936's first half was built to fill.
     venue_density = _venue_points_countable_as_density(
-        market, charted_outcomes, venue_rows, charted_ids,
+        market, charted_outcomes, field_venue_rows, charted_ids,
         # #7954's flag, the same one the reader's refusal is asked with below.
         field_complete=_field_complete,
     )
@@ -6900,21 +6932,26 @@ async def get_futures_history(
             extended_snapshots = [
                 r for r in extended_supported if r.outcome_id in ext_charted_ids
             ]
-            extended_venue_rows = venue.in_window(
-                extended_cutoff, extended_snapshots, ext_outcome_ids
+            # #8000 — the field's whole population for the verdict, exactly as
+            # the first read does. The drawn subset is not taken here either: the
+            # grouping below re-selects from whichever `field_venue_rows` wins
+            # this comparison, so taking it now would be the same duplicated
+            # selection removed above.
+            extended_field_venue_rows = venue.in_window(
+                extended_cutoff, extended_supported, _field_outcome_ids
             )
             # THE SAME RULE ON BOTH SIDES OF THE COMPARISON, or the widening is
             # scored against a density the narrow window does not have either.
             # The wider window re-selects, so its refusal verdict is its own.
             extended_venue_density = _venue_points_countable_as_density(
-                market, charted_outcomes, extended_venue_rows, ext_charted_ids,
+                market, charted_outcomes, extended_field_venue_rows, ext_charted_ids,
                 field_complete=_field_complete,
             )
             if (len(extended_snapshots) + extended_venue_density) > (
                 len(snapshots) + venue_density
             ):
                 snapshots = extended_snapshots
-                venue_rows = extended_venue_rows
+                field_venue_rows = extended_field_venue_rows
                 venue_density = extended_venue_density
                 field_rows = extended_field
                 actual_hours = extended_hours
@@ -7021,14 +7058,22 @@ async def get_futures_history(
     # the squeeze (#7747/#7103) and the printed scale is the raw column — so the
     # completeness half of the contract would be guarding an arithmetic that is
     # not happening, and it refused 45 banked points on `61308736` for it.
+    # #8000 — the verdict is asked of the FIELD's rows (every leg the bank holds
+    # in the window, `field_venue_rows`), and only then is the drawn subset kept
+    # for serving. A verdict asked of the drawn subset alone would be answering
+    # a question about a denominator this page does not print with.
+    field_venue_by_outcome: dict[int, list] = defaultdict(list)
+    for row in sorted(field_venue_rows, key=lambda r: r.captured_at):
+        if row.probability is not None:
+            field_venue_by_outcome[row.outcome_id].append(row)
     venue_by_outcome: dict[int, list] = defaultdict(list)
-    for row in sorted(venue_rows, key=lambda r: r.captured_at):
-        if row.outcome_id in charted_ids and row.probability is not None:
-            venue_by_outcome[row.outcome_id].append(row)
+    for oid, rows in field_venue_by_outcome.items():
+        if oid in charted_ids:
+            venue_by_outcome[oid] = rows
     venue_scale_refusal: Optional[str] = None
-    if venue_by_outcome:
+    if field_venue_by_outcome:
         venue_scale_refusal = _venue_scale_refusal(
-            market, charted_outcomes, venue_by_outcome, outcome_time_groups, devigged,
+            market, charted_outcomes, field_venue_by_outcome, outcome_time_groups, devigged,
             # #7954: the SAME flag the line above was printed with, never a
             # re-derivation — a second predicate here would be free to answer
             # differently from the arithmetic this has to agree with, which is
