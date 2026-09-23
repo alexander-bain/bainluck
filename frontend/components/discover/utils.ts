@@ -1135,3 +1135,22 @@ export function feedItemCanBeGuessed(item: FeedItem | null | undefined): boolean
   }
   return false;
 }
+
+// #8277 — THE PRE-GAME SLOT BETWEEN THE CRESTS NEVER COUNTS PAST ZERO. It used to
+// be `Math.round(diffH * 60)m` with no floor, so the last 30 seconds printed `0m`
+// and every minute after the scheduled start — until the server flips the event
+// to live (poll lag, a rain delay, a late kickoff) — printed `-3m`, `-45m`, and a
+// game delayed two hours read `-120m`. A scheduled start is not proof the game
+// began (Alex, 9/14), so the slot does not say "Started": once the time passes it
+// shows the scheduled time of day, which stays true however long the wait.
+export function pregameSlotLabel(commenceTime: string, nowMs: number = Date.now()): string {
+  const d = new Date(commenceTime);
+  const ms = d.getTime();
+  if (Number.isNaN(ms)) return "";
+  const diffH = (ms - nowMs) / 36e5;
+  if (diffH <= 0) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (diffH < 1) return `${Math.max(1, Math.ceil(diffH * 60))}m`;
+  if (diffH < 24) return `${Math.round(diffH)}h`;
+  if (diffH < 48) return "Tomorrow";
+  return d.toLocaleDateString("en-US", { weekday: "short" });
+}

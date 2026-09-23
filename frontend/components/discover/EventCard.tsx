@@ -7,7 +7,7 @@ import { formatProbability } from "@/lib/api";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, chipCategory, getCat } from "./constants";
-import { feedContextSnippet, feedExpandedContext } from "./utils";
+import { feedContextSnippet, feedExpandedContext, pregameSlotLabel } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
 import type { CardActionCallbacks } from "./types";
@@ -214,14 +214,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // is sized for "Q3". The full sentence lives in the row below the crests,
   // where the settled card puts its winner line — same place, same weight, so a
   // reader's eye finds the state in the position it already looks for it.
-  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : isSuspended ? "Paused" : (() => {
-    const d = new Date(data.commence_time);
-    const diffH = (d.getTime() - Date.now()) / 36e5;
-    if (diffH < 1) return `${Math.round(diffH * 60)}m`;
-    if (diffH < 24) return `${Math.round(diffH)}h`;
-    if (diffH < 48) return "Tomorrow";
-    return d.toLocaleDateString("en-US", { weekday: "short" });
-  })();
+  const timeLabel = isLive ? (formatLiveClockLabel(data.espn?.period, null) || "Live") : isDone ? "Final" : isSuspended ? "Paused" : pregameSlotLabel(data.commence_time);
 
   // Build context blurb from tags
   const contextLines: string[] = [];
