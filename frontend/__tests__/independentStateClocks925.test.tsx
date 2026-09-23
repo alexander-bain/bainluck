@@ -127,6 +127,37 @@ test("the carried half is the marked half, and only one half is ever marked", ()
   expect(bothCarried).toContain("as of 8:00 PM");
 });
 
+test("a carry inside one displayed minute prints no age line (nothing to say)", () => {
+  // The rows are minute-keyed but their timestamps are raw, so a carried state
+  // can be seconds old and format to the same wall-clock minute as the price.
+  // "8:03 PM / as of 8:03 PM" is two lines saying one thing — noise under a
+  // badge that has three lines already, and exactly the diagnostic clutter D102
+  // forbids. The `~` still does its job.
+  const html = card([
+    { timestamp: "2026-09-22T20:03:10Z", _period: "1", _clock: "7:41",
+      _periodObservedAt: "2026-09-22T20:03:10Z", _clockObservedAt: "2026-09-22T20:03:10Z" },
+    { timestamp: "2026-09-22T20:03:50Z" },
+  ]);
+  expect(badge(html)).toBe("Q1 ~7:41"); // carried, and marked as carried
+  expect(html).not.toContain("as of"); // but there is no age worth printing
+});
+
+test("when both halves are carried from DIFFERENT minutes, the age names the older", () => {
+  // Without this arm "oldest" and "newest" agree on every other case in this
+  // file — both halves are carried from the same row everywhere else — so the
+  // rule would have no specimen that can tell the two apart and a reversal
+  // would be invisible. Period last seen 7:58, clock last seen 8:00, scrubbing
+  // at 8:03: the badge is at least five minutes old, and saying "8:00" would
+  // make it look three.
+  const html = card([
+    { timestamp: "2026-09-22T19:58:00Z", _period: "1", _periodObservedAt: "2026-09-22T19:58:00Z" },
+    { timestamp: t0, _clock: "7:41", _clockObservedAt: t0 },
+    { timestamp: t3 },
+  ]);
+  expect(html).toContain("as of 7:58 PM");
+  expect(html).not.toContain("as of 8:00 PM");
+});
+
 test("a clock the badge does not show cannot date the badge (#7860 interaction)", () => {
   // ESPN's period detail already spells the clock — `period: "9:44 - 2nd
   // Quarter"` arrives beside `game_clock: "9:44"` — and `trustedLiveClock`
