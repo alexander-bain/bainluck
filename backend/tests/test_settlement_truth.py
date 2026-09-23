@@ -448,6 +448,23 @@ def test_an_unattributable_body_yields_no_claim_about_the_market(label, shape):
 _ALL_NON_SETTLED_SHAPES = [
     ("kalshi_open", lambda: classify_kalshi(200, {"market": {"result": ""}})),
     ("kalshi_void", lambda: classify_kalshi(200, {"market": {"result": "void"}})),
+    # #2077. Both are SETTLEMENTS — the venue answered — and neither may produce a
+    # winner or a grading licence at BOARD level. That is the whole risk the
+    # per-leg reader introduces, so both ride this sweep rather than only the
+    # dedicated suite.
+    (
+        "kalshi_scalar_settled_no_verdict",
+        lambda: classify_kalshi(200, {"market": {"result": "scalar", "status": "finalized"}}),
+    ),
+    (
+        "kalshi_board_settled_per_leg",
+        lambda: classify_kalshi(
+            404,
+            None,
+            200,
+            {"markets": [{"ticker": "KXX-26AUG01-T1", "status": "finalized", "result": "yes"}]},
+        ),
+    ),
     ("kalshi_bare_404", lambda: classify_kalshi(404, None)),
     ("kalshi_purged", lambda: classify_kalshi(404, None, 200, {"markets": []})),
     ("kalshi_not_found", lambda: classify_kalshi(404, None, 404, None)),

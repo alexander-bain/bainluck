@@ -85,8 +85,22 @@ SWEEP_SOURCE = "kalshi"
 #: enum rather than typed out, so a disposition added later must be classified
 #: deliberately (see the test that asserts this partition is exhaustive) instead of
 #: silently defaulting into the re-probe set.
+#:
+#: The two ``settled_*`` members are terminal for the same reason ``SETTLED`` is:
+#: the venue answered and will not change its mind. ``SETTLED_NO_VERDICT`` settled
+#: on a number, and no re-probe will turn a number into a side.
+#: ``SETTLED_PER_LEG`` is only ever emitted when EVERY leg has declared — a board
+#: with one leg still trading answers ``OPEN_NO_SETTLEMENT`` and stays in the
+#: re-probe set, carrying its verdicts, precisely so the straggler is not
+#: stranded by its settled siblings.
 TERMINAL_DISPOSITIONS: frozenset[str] = frozenset(
-    {Disposition.SETTLED.value, Disposition.PURGED.value, Disposition.NOT_FOUND.value}
+    {
+        Disposition.SETTLED.value,
+        Disposition.SETTLED_NO_VERDICT.value,
+        Disposition.SETTLED_PER_LEG.value,
+        Disposition.PURGED.value,
+        Disposition.NOT_FOUND.value,
+    }
 )
 
 #: Dispositions that are NOT answers about the market and must be tried again.

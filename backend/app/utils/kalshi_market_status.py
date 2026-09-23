@@ -59,6 +59,42 @@ TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"closed", "settled"} | RESULT_CARRYING_STATUSES
 )
 
+#: Every market ``status`` this codebase knows how to read — the left column of
+#: the measured table above, plus the two retained-but-unobserved values from
+#: :data:`TERMINAL_STATUSES`. Transcribed from the measurement, not invented.
+#:
+#: Its only job is to answer "can I read this payload at all?". A nested market
+#: carrying a status outside this set is not "open" and not "settled" — it is
+#: UNREADABLE, and a caller must say so rather than fall through to whichever
+#: branch happens to be last. That distinction is what keeps gotcha #53's
+#: "do not interpret" reachable after a per-leg reader exists.
+KNOWN_STATUSES: frozenset[str] = frozenset(
+    {"active", "inactive", "closed", "determined", "finalized", "settled", "open"}
+)
+
+#: Result strings that can never be a winning OUTCOME LABEL, however truthy.
+#:
+#: THE DENYLIST AND :data:`GRADEABLE_RESULTS` ANSWER DIFFERENT QUESTIONS, and
+#: collapsing them is a capability regression waiting to happen:
+#:
+#: * :data:`GRADEABLE_RESULTS` is an ALLOWLIST for a BINARY leg — the only two
+#:   values that map onto ``is_winner``. Right for a nested market; wrong for a
+#:   market whose ``result`` is an outcome NAME (Kalshi answers ``"Sevilla"``),
+#:   which an allowlist would silently discard.
+#: * This is a DENYLIST for "is this string a verdict at all". It admits
+#:   ``"Sevilla"`` and refuses ``"scalar"``.
+#:
+#: ``scalar`` is the member that matters and the reason this set is here rather
+#: than private to one module. It is a settlement TYPE, not a side: a market with
+#: ``status=finalized result=scalar`` is SETTLED AND HAS NO WINNER. Read as a
+#: verdict it becomes the string ``"scalar"`` written into a winning-outcome
+#: column; read as "no settlement" it leaves a live-looking price on a question
+#: that is over (#7987). It is neither. Three modules each learned this
+#: separately (#1852, #7987, CAL-P053) before it was named once.
+NON_VERDICT_RESULTS: frozenset[str] = frozenset(
+    {"", "scalar", "no_result", "void", "voided", "cancelled", "canceled"}
+)
+
 #: Result values a binary grader can map to a winner. MEASURED (CAL-P053,
 #: 2026-08-14): a live probe of 46 settled events returned ``result`` values
 #: ``no`` (126), ``yes`` (39) and **``scalar`` (39)** — so roughly one settled
