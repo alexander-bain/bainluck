@@ -22815,6 +22815,65 @@ def _omit_pre_kickoff_points(
     return omitted > 0
 
 
+def _withhold_undrawable_source_series(
+    win_prob_history: dict,
+    win_prob_sources_meta: dict,
+) -> int:
+    """A source the chart cannot draw does not get a legend entry.
+
+    #2000's residue, and the general case behind it. `OddsChart.tsx:861` admits
+    a source to the legend on `points.length === 0` — the only series it refuses
+    is an empty one — and every series is stroked `dot={false}`. So a ONE-POINT
+    series renders literally nothing and is named in the legend anyway, which is
+    the defect the source-drop at L23755 already calls "a legend naming a curve
+    that is not drawn", one point short of the case it handles.
+
+    🔴 THE ONE POINT IS USUALLY NOT THE SOURCE'S OWN READING. The terminal point
+    (L24582) is appended to every series that is non-empty, carrying OUR resolved
+    result, and `_omit_pre_kickoff_points` then removes the pre-kick-off readings
+    that made the series non-empty. A source that stopped quoting at kick-off
+    therefore arrives at the reader as a single synthesised point in that source's
+    colour — the legend crediting a venue for a number the venue never published.
+    Measured on production 2026-09-23 over 50 recent completed events (134 served
+    source-series, `?range=since_start`, the view a finished game opens on):
+    4 series were one point, ALL polymarket, and all four had **zero** rows at or
+    after kick-off — every one the synthesised point alone. Two of them
+    (`15316869`, `15316876`) hold 386 and 450 pre-kick-off readings apiece.
+    Specimen `15011303` (Real Sociedad 4-1 Real Betis) is the same shape on
+    kalshi, and its expanded legend on production named "Kalshi" over a plot with
+    no Kalshi mark on it.
+
+    🔴 IT CANNOT BE READ OFF THE SERVED PAYLOAD, so do not try to re-measure it
+    there. `_project_served_game_state` narrows `game_state` to
+    `_SERVED_GAME_STATE_KEYS`, which does not include `final`, so the terminal
+    point's `{"final": True}` is served as `None` — indistinguishable from a real
+    reading. The discriminator is `win_prob_snapshots`, not the response.
+
+    🔴 THE SERIES IS EMPTIED, NOT POPPED, and its metadata entry stays. That is
+    this route's existing convention for a series something has hollowed out
+    (`_omit_pre_kickoff_points`, #1828's `_filter_state_bearing_rows`), and it is
+    load-bearing HERE because `win_prob_sources` has a second consumer that does
+    NOT read the series: `app/events/[id]/models/page.tsx:145` iterates the
+    metadata with no count filter. Popping the key would silently drop a card off
+    that page too — a second, unmeasured change riding a chart fix. Emptying
+    leaves `/models` exactly as it is today.
+
+    Returns the number of series withheld. An already-empty series is not one of
+    them: nothing was withheld from a reader who was never going to see it.
+    """
+    withheld = 0
+    for source in list(win_prob_history):
+        points = win_prob_history[source]
+        if not points or len(points) >= 2:
+            continue
+        win_prob_history[source] = []
+        withheld += 1
+        # Keep the advertised count honest — it is rendered.
+        if source in win_prob_sources_meta:
+            win_prob_sources_meta[source]["snapshot_count"] = 0
+    return withheld
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -24916,6 +24975,13 @@ async def get_event_odds_history(
             aggregate_line=aggregate_line,
             espn_history=espn_history,
         )
+
+    # #2000 — after the trim, never before it: the trim is what strands a
+    # source on its single synthesised point, so asking "can this draw?" ahead
+    # of it would answer about a series the reader is not the one being served.
+    # OUTSIDE the `if` on purpose — a one-point series cannot draw a line in
+    # either range, and the rule is about the plot, not about the caller.
+    _withhold_undrawable_source_series(win_prob_history, win_prob_sources_meta)
 
     return {
         "event_id": event_id,
