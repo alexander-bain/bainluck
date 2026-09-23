@@ -46,6 +46,7 @@ import type {
   ActiveChartPoint,
 } from "@/lib/types";
 import type { PeriodBoundary } from "@/lib/periodMarkers";
+import { carryGameStateForward } from "@/lib/chartGameState";
 import {
   collapseDuplicateTransitions,
   placePeriodLabels,
@@ -385,6 +386,17 @@ interface ChartDataPoint {
   _clock?: string | null;
   /** True when `_clock` was carried forward from an earlier snapshot (#925). */
   _clockApprox?: boolean;
+  /**
+   * #925 — WHEN each field was observed, tracked separately per field because
+   * a row that saw one of them says nothing about the age of the others (see
+   * `lib/chartGameState.ts`). Written by the enrich step below on the rows that
+   * observed each, then carried by `carryGameStateForward`.
+   */
+  _periodObservedAt?: string | null;
+  _clockObservedAt?: string | null;
+  _scoreObservedAt?: string | null;
+  _periodApprox?: boolean;
+  _scoreApprox?: boolean;
   _scoringPlay?: ScoringPlay | null;
   [key: string]: string | number | boolean | null | undefined | ScoringPlay;
 }
@@ -1257,6 +1269,15 @@ export default function OddsChart({
         if (snap.away_score != null) dp._awayScore = snap.away_score;
         if (snap.period) dp._period = snap.period;
         if (snap.game_clock) dp._clock = snap.game_clock;
+        // #925 — remember WHICH snapshot supplied each field. Stamped per
+        // field, never once for "state": a score row with no period must not
+        // refresh the age of a period seen minutes earlier, and a clock row
+        // with no period must not either.
+        if (snap.period) dp._periodObservedAt = snap.timestamp;
+        if (snap.game_clock) dp._clockObservedAt = snap.timestamp;
+        if (snap.home_score != null || snap.away_score != null) {
+          dp._scoreObservedAt = snap.timestamp;
+        }
       }
     }
 
@@ -1274,6 +1295,14 @@ export default function OddsChart({
             dp._awayScore = gs.away_score as number;
           if (!dp._period && gs.period) dp._period = gs.period as string;
           if (!dp._clock && gs.clock) dp._clock = gs.clock as string;
+          // #925 — same per-field stamping for the secondary source. Guarded
+          // on the stamp's own absence so an ESPN observation above is never
+          // re-dated by a win-prob row that only echoed it.
+          if (!dp._periodObservedAt && gs.period) dp._periodObservedAt = pt.timestamp;
+          if (!dp._clockObservedAt && gs.clock) dp._clockObservedAt = pt.timestamp;
+          if (!dp._scoreObservedAt && (gs.home_score != null || gs.away_score != null)) {
+            dp._scoreObservedAt = pt.timestamp;
+          }
         }
       }
     }
@@ -1414,28 +1443,13 @@ export default function OddsChart({
       }
     }
 
-    // Forward-fill game state: carry most recent score/period/clock to subsequent points
-    let lastScore: { home: number | null; away: number | null } = { home: null, away: null };
-    let lastPeriod: string | null = null;
-    let lastClock: string | null = null;
-    for (const pt of sorted) {
-      if (pt._homeScore != null) lastScore.home = pt._homeScore as number;
-      else pt._homeScore = lastScore.home;
-      if (pt._awayScore != null) lastScore.away = pt._awayScore as number;
-      else pt._awayScore = lastScore.away;
-      if (pt._period) lastPeriod = pt._period as string;
-      else pt._period = lastPeriod;
-      // Track clock exactness: a point that carries its OWN clock is exact; a
-      // gap-filled minute inherits the last clock and must be flagged approximate
-      // so the readout never shows a stale carry-forward as if live (#925).
-      if (pt._clock) {
-        lastClock = pt._clock as string;
-        pt._clockApprox = false;
-      } else {
-        pt._clock = lastClock;
-        pt._clockApprox = lastClock != null;
-      }
-    }
+    // Forward-fill game state: carry most recent score/period/clock to
+    // subsequent points, dating each field by the row that actually observed
+    // it (#925 — `lib/chartGameState.ts`, pure and tested; this component is
+    // its only mounted consumer). `_clockApprox` keeps the meaning it has had
+    // since `8bf2bf8d`; the period/score flags and the three `_*ObservedAt`
+    // stamps are what let `GamePlayCard` say how old a carried readout is.
+    carryGameStateForward(sorted);
 
     return sorted;
   // #1003: `resolvedSources` and `isMultiSource` dropped — both were read only
@@ -2488,6 +2502,11 @@ export default function OddsChart({
                 period: pt._period as string | null | undefined,
                 clock: pt._clock as string | null | undefined,
                 clockApprox: pt._clockApprox as boolean | undefined,
+                periodObservedAt: pt._periodObservedAt as string | null | undefined,
+                periodApprox: pt._periodApprox as boolean | undefined,
+                clockObservedAt: pt._clockObservedAt as string | null | undefined,
+                scoreObservedAt: pt._scoreObservedAt as string | null | undefined,
+                scoreApprox: pt._scoreApprox as boolean | undefined,
                 scoringPlay: pt._scoringPlay as ScoringPlay | null | undefined,
               });
             }}

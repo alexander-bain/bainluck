@@ -178,13 +178,65 @@ export default function GamePlayCard({
   const clockText = trusted.gameClock
     ? `${point.clockApprox ? "~" : ""}${trusted.gameClock}`
     : "";
+  // #925 — A CARRIED READOUT SAYS HOW OLD IT IS. A gap-filled minute inherits
+  // the last observed period / clock / score, and until now the only mark was
+  // the `~` on the clock: `Q4 ~1:09` under `7:44 PM` reads as "1:09 left at
+  // 7:44" when the clock was last seen at 7:41. Two rules, and they are chosen
+  // together so the badge never carries two tildes:
+  //
+  //   1. The `~` marks the ODD ONE OUT. The clock keeps the mark it has had
+  //      since `8bf2bf8d`. The period takes one only when it is the stale half
+  //      of a badge whose clock is fresh, or when it is alone (baseball, where
+  //      there is no clock to carry the mark).
+  //   2. The line under the badge names the OLDEST observation among the
+  //      components actually on screen that were carried here. Oldest, not
+  //      per-field: it is the one choice that can never make a stale readout
+  //      look fresher than it is, and the `~` already says which half is old.
+  //
+  // Each field is dated by the row that observed IT (`lib/chartGameState.ts`);
+  // a clock-only row must not refresh the age of the period it never saw.
+  const periodIsCarried = point.periodApprox === true && !!trusted.period;
+  const clockIsCarried = point.clockApprox === true && !!trusted.gameClock;
+  const periodText = trusted.period
+    ? `${periodIsCarried && !clockIsCarried ? "~" : ""}${trusted.period}`
+    : "";
   const gameState =
-    [trusted.period, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
+    [periodText, clockText].filter(Boolean).join(" ") || (hasScore ? "—" : "");
   let timeOfDay = "";
   try {
     timeOfDay = format(parseISO(point.timestamp), "h:mm a");
   } catch {
     timeOfDay = "";
+  }
+
+  // The observations behind whatever the badge is showing. A score joins the
+  // set only when the badge has nothing else — then the "—" and the score ARE
+  // the readout being dated. A fresh field contributes nothing; a field with
+  // no observation timestamp contributes nothing (a producer that does not
+  // date its state leaves the card exactly as it was before this ship).
+  const carriedObservations: string[] = [];
+  if (periodIsCarried && point.periodObservedAt) {
+    carriedObservations.push(point.periodObservedAt);
+  }
+  if (clockIsCarried && point.clockObservedAt) {
+    carriedObservations.push(point.clockObservedAt);
+  }
+  if (!trusted.period && !trusted.gameClock && hasScore && point.scoreApprox && point.scoreObservedAt) {
+    carriedObservations.push(point.scoreObservedAt);
+  }
+  let stateAsOf = "";
+  if (carriedObservations.length > 0) {
+    try {
+      const oldest = carriedObservations.reduce((a, b) =>
+        parseISO(a).getTime() <= parseISO(b).getTime() ? a : b,
+      );
+      const observed = format(parseISO(oldest), "h:mm a");
+      // Minute-keyed rows, so a carry never spans less than a minute; when the
+      // two read the same minute the line would only repeat the time above it.
+      if (observed !== timeOfDay) stateAsOf = observed;
+    } catch {
+      stateAsOf = "";
+    }
   }
 
   return (
@@ -201,6 +253,14 @@ export default function GamePlayCard({
             {timeOfDay && (
               <span className="text-[10px] text-text-muted px-2 tabular-nums">
                 {timeOfDay}
+              </span>
+            )}
+            {stateAsOf && (
+              <span
+                className="text-[10px] text-text-muted px-2 tabular-nums"
+                data-testid="game-play-card-state-as-of"
+              >
+                as of {stateAsOf}
               </span>
             )}
           </div>

@@ -644,6 +644,24 @@ export interface ActiveChartPoint {
    * minute) rather than observed at this point — render it as approximate (#925). */
   clockApprox?: boolean;
   /**
+   * #925 — WHEN each half of the readout was last OBSERVED, and whether the
+   * value shown here was carried to this point rather than seen at it.
+   *
+   * Three independent pairs, because the three fields are observed by
+   * different rows: MLB serves a period with no clock, ESPN emits score-only
+   * rows, and a clock-only row is the normal mid-period shape. A single shared
+   * "state was observed at" would let a period-only row refresh the age of a
+   * clock it never saw, and a clock-only row present a stale period as fresh.
+   *
+   * Absent means "this producer does not date its state" — the readout then
+   * behaves exactly as it did before #925's dating layer.
+   */
+  periodObservedAt?: string | null;
+  periodApprox?: boolean;
+  clockObservedAt?: string | null;
+  scoreObservedAt?: string | null;
+  scoreApprox?: boolean;
+  /**
    * #3459 — is `homeProb`/`awayProb` a READING, or the layout placeholder?
    *
    * `computeLastChartPoint` has to hand back numbers (the field is not nullable
