@@ -36,6 +36,10 @@ struct EventDetailView: View {
     /// UNCLAMPED, so the books column would have quietly lost the bar's floor.
     @State private var sourceRowWidth: Double = 0
     @State private var refreshCountdown: Int = 0
+    /// #1833 — the narrower of the two stacked charts' inline plots, published by
+    /// each (`PageAxisPlotWidthPreferenceKey`) and handed back to both, so one
+    /// page draws one clock. Only this view can see both charts.
+    @State private var pageAxisPlotWidth: CGFloat = 0
     @State private var refreshCountdownTimer: Timer?
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
@@ -320,6 +324,7 @@ struct EventDetailView: View {
                                      refreshInterval: refreshInterval,
                                      refreshStreaming: vm.streamDelivering,
                                      forcedDomain: sharedChartDomain,
+                                     pageAxisPlotWidth: pageAxisPlotWidth,
                                      selectedPlayPoint: $selectedPlayPoint,
                                      preloadedHistory: vm.history,
                                      // #920 — the pushed blends the hero is
@@ -382,7 +387,8 @@ struct EventDetailView: View {
                             awayTeamAbbrev: event.awayTeamData?.abbreviation,
                             homeTeamLogo: event.homeTeamData?.logoSmall,
                             awayTeamLogo: event.awayTeamData?.logoSmall,
-                            forcedDomain: sharedChartDomain
+                            forcedDomain: sharedChartDomain,
+                            pageAxisPlotWidth: pageAxisPlotWidth
                         )
                     }
                     // Market Maps (margin + total density curves)
@@ -525,6 +531,9 @@ struct EventDetailView: View {
                 .padding(.bottom)
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity)
+                .onPreferenceChange(PageAxisPlotWidthPreferenceKey.self) { width in
+                    pageAxisPlotWidth = width
+                }
             }
         }
     }

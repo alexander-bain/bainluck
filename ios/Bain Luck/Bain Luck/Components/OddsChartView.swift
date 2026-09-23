@@ -107,6 +107,31 @@ struct PlotWidthPreferenceKey: PreferenceKey {
     }
 }
 
+/// #1833 — the NARROWEST inline plot on the event page, carried up to the page
+/// so both stacked charts plan their time axis from one width.
+///
+/// `ScoreDifferentialChartView.swift`'s "two clocks, one page" note records the
+/// planner being unified; the INPUT was not. Each chart still planned from its
+/// own plot, and Score Differential's `+6…-6` y-gutter is narrower than Win
+/// Probability's `75%…0%`, so its plot is ~14pt wider. Measured on Nationals @
+/// Tigers (15317535) at 440pt: 323pt vs 337pt, and on a 50-minute domain that
+/// straddles a rung of the stride ladder — 15-minute ticks above, 10-minute
+/// below, the lower axis run down to the 6pt label floor at both ends
+/// (`n308-w440-s350.png`). Planning both on the narrower width gives the lower
+/// chart the upper chart's stride, which is the one with slack.
+///
+/// Only the INLINE plots publish (see `OddsChartView.chartView`); the
+/// fullscreen sheet keeps planning from its own width. `0` is "not measured"
+/// and never wins the minimum, so a page with one chart plans exactly as before.
+struct PageAxisPlotWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        guard next > 0 else { return }
+        value = value > 0 ? min(value, next) : next
+    }
+}
+
 // MARK: - Chart Moment
 
 /// One Moments-Engine annotation placed on the drawn line (#1168 consumer 3, #3196).
@@ -283,6 +308,10 @@ struct OddsChartView: View {
     /// `xAxisPlan`. One per chart — see `chartView`.
     @State private var inlinePlotWidth: CGFloat = 0
     @State private var fullscreenPlotWidth: CGFloat = 0
+    /// #1833 — the narrowest inline plot on the page, handed back down by
+    /// `EventDetailView` (`PageAxisPlotWidthPreferenceKey`). Caps the INLINE
+    /// axis only; `0` leaves it on its own width.
+    var pageAxisPlotWidth: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var chartHeight: CGFloat {
@@ -338,6 +367,7 @@ struct OddsChartView: View {
          refreshCountdown: Int = 0, refreshInterval: Int = 30,
          refreshStreaming: Bool = false,
          forcedDomain: ClosedRange<Date>? = nil,
+         pageAxisPlotWidth: CGFloat = 0,
          selectedPlayPoint: Binding<GamePlayPoint?> = .constant(nil),
          preloadedHistory: EventHistoryResponse? = nil,
          liveFrames: [LiveBlendPoint] = []) {
@@ -357,6 +387,7 @@ struct OddsChartView: View {
         self.refreshInterval = refreshInterval
         self.refreshStreaming = refreshStreaming
         self.forcedDomain = forcedDomain
+        self.pageAxisPlotWidth = pageAxisPlotWidth
         self.liveFrames = liveFrames
         self.preloadedHistory = preloadedHistory
         _selectedPlayPoint = selectedPlayPoint
@@ -621,7 +652,7 @@ struct OddsChartView: View {
 
                         chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                   periodMarkers: periodMarkers, moments: moments,
-                                  plotWidth: $inlinePlotWidth)
+                                  plotWidth: $inlinePlotWidth, sharesPageAxis: true)
                             .onChange(of: selectedDate) { _, newDate in
                                 updateSelectedPoint(date: newDate, dataPoints: dataPoints, history: history)
                             }
@@ -749,7 +780,7 @@ struct OddsChartView: View {
 
                                 chartView(dataPoints: dataPoints, sources: history.winProbSources ?? [:],
                                           periodMarkers: periodMarkers, moments: moments,
-                                          plotWidth: $fullscreenPlotWidth)
+                                          plotWidth: $fullscreenPlotWidth, sharesPageAxis: false)
                             }
                             legendView(dataPoints: dataPoints, sources: history.winProbSources ?? [:])
                             momentCaption(moments)
@@ -1309,9 +1340,14 @@ struct OddsChartView: View {
     /// single `@State` between them would let the sheet's 800pt plot decide the
     /// inline chart's axis for as long as it takes the inline chart to re-report
     /// its 293pt. Two bindings, no crosstalk.
+    ///
+    /// `sharesPageAxis` is the same separation for #1833's page-level width: the
+    /// inline chart publishes its plot to the page and plans on the page's
+    /// narrowest, so it keeps one clock with the score chart beneath it; the
+    /// sheet does neither, and its 800pt axis stays its own.
     private func chartView(dataPoints: [ChartDataPoint], sources: [String: WinProbSourceInfo],
                            periodMarkers: [PeriodMarker], moments: [ChartMoment],
-                           plotWidth: Binding<CGFloat>) -> some View {
+                           plotWidth: Binding<CGFloat>, sharesPageAxis: Bool) -> some View {
         // Filter period markers to visible data range
         let visibleMarkers: [PeriodMarker]
         if let minDate = dataPoints.map(\.date).min(),
@@ -1361,8 +1397,10 @@ struct OddsChartView: View {
                     plotWidth: plotFrame.width
                 )
                 // The x-axis needs the same width the chips do (#3269).
-                Color.clear.preference(
-                    key: PlotWidthPreferenceKey.self, value: plotFrame.width)
+                Color.clear
+                    .preference(key: PlotWidthPreferenceKey.self, value: plotFrame.width)
+                    .preference(key: PageAxisPlotWidthPreferenceKey.self,
+                                value: sharesPageAxis ? plotFrame.width : 0)
                 // Small floating period chips near the top of the chart
                 ForEach(placements, id: \.key) { placement in
                     let marker = visibleMarkers[placement.key]
@@ -1391,7 +1429,10 @@ struct OddsChartView: View {
         }
         .chartXAxis {
             let plan = Self.xAxisPlan(
-                for: xAxisDomain(for: dataPoints), plotWidth: plotWidth.wrappedValue)
+                for: xAxisDomain(for: dataPoints),
+                plotWidth: Self.axisPlanWidth(
+                    own: plotWidth.wrappedValue,
+                    pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0))
             AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                     .foregroundStyle(.secondary.opacity(0.3))
@@ -2468,6 +2509,17 @@ struct OddsChartView: View {
         }
         let last = xAxisStrides[xAxisStrides.count - 1]
         return XAxisPlan(component: last.component, count: last.count, labelStyle: .calendarDay)
+    }
+
+    /// The width a chart's time axis is PLANNED on (#1833): its own plot, capped
+    /// by the narrowest inline plot on the page so stacked charts sharing one
+    /// `forcedDomain` also share one stride. Either input at `0` means "not
+    /// measured" and falls back to the other — never to a zero width, which
+    /// `xAxisPlan` would read as "use the count budget".
+    static func axisPlanWidth(own: CGFloat, pageNarrowest: CGFloat) -> CGFloat {
+        guard pageNarrowest > 0 else { return own }
+        guard own > 0 else { return pageNarrowest }
+        return min(own, pageNarrowest)
     }
 
     /// Where a time label hangs off its own tick (#3237).
