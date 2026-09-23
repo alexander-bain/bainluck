@@ -1,8 +1,12 @@
 """#999 slice 1: generic event-concept core (key parsing + golf envelope)."""
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+import pytest
 
 from app.utils.event_concept import (
+    list_golf_tournament_concepts,
     parse_event_key,
     golf_detail_to_envelope,
     get_adapter,
@@ -250,6 +254,120 @@ class TestGolfEnvelope:
         assert _golf_status(
             {"schedule_status": "in-progress", "end_date": "2026-01-01"}, now
         ) == "live"
+
+    def test_long_dated_market_does_not_false_settle_via_commence_proxy(self):
+        """#8141: a 2027 event badged SETTLED off a 2026 market-opening date.
+
+        `commence_time` is the EARLIEST commence across a tournament's markets, so a
+        long-dated futures market carries its OPENING, not the event's start. Ryder
+        Cup 2027's market opened 2026-08-28; seven days later the concept page began
+        reading `settled` and would have stayed so for the ~13 months until the event
+        was played, while the same payload advertised "returns September 17-19, 2027".
+
+        Guarded in BOTH directions (gotcha #43), because each half of the condition
+        has a real counter-example that must keep settling:
+          - short span + future resolution  -> BMW, finished, still resolving (e')
+          - long span + PAST resolution     -> the ~400 stale "1st Round 3-Ball" rows
+        """
+        now = datetime(2026, 9, 22, tzinfo=timezone.utc)
+
+        # THE DEFECT: long span AND still resolving in the future -> upcoming.
+        assert _golf_status(
+            {"schedule_status": None, "start_date": None, "end_date": None,
+             "commence_time": "2026-08-28T20:16:51+00:00",
+             "resolution_date": "2027-09-30T14:00:00+00:00"}, now
+        ) == "upcoming"
+
+        # MUST STILL SETTLE (a): long span but resolution already PAST — a finished
+        # event whose commence_time is a stale artifact. Un-settling these would
+        # re-open the hub-rail leak L2-124 closed.
+        assert _golf_status(
+            {"schedule_status": None, "start_date": None, "end_date": None,
+             "commence_time": "2024-11-01T00:00:00+00:00",
+             "resolution_date": "2026-08-12T00:00:00+00:00"}, now
+        ) == "settled"
+
+        # MUST STILL SETTLE (b): future resolution but a plausible tournament span.
+        # This is (e')'s BMW row re-anchored to this test's clock.
+        assert _golf_status(
+            {"schedule_status": None,
+             "commence_time": "2026-09-01T18:59:53+00:00",
+             "resolution_date": "2026-10-01T00:00:00+00:00"}, now
+        ) == "settled"
+
+        # MUST STILL SETTLE (c): a REAL schedule start_date is a schedule signal, not
+        # a market artifact — it settles on its own however long the market's span.
+        assert _golf_status(
+            {"schedule_status": None, "start_date": "2026-05-01T00:00:00+00:00",
+             "commence_time": "2026-05-01T00:00:00+00:00",
+             "resolution_date": "2027-12-31T00:00:00+00:00"}, now
+        ) == "settled"
+
+        # FAIL-OPEN: an unparseable date on either side falls through to the ordinary
+        # path rather than inventing a verdict (consistent with (d)).
+        assert _golf_status(
+            {"schedule_status": None, "start_date": None,
+             "commence_time": "2026-08-28T20:16:51+00:00",
+             "resolution_date": "not-a-date"}, now
+        ) == "settled"
+
+        # BOUNDARY: the span threshold is 180 days and the comparison is strict, so a
+        # span of exactly 180 still settles and 181 does not. Pins the constant against
+        # a silent widening.
+        assert _golf_status(
+            {"schedule_status": None, "start_date": None,
+             "commence_time": "2026-09-01T00:00:00+00:00",
+             "resolution_date": "2027-02-28T00:00:00+00:00"}, now  # exactly 180d
+        ) == "settled"
+        assert _golf_status(
+            {"schedule_status": None, "start_date": None,
+             "commence_time": "2026-09-01T00:00:00+00:00",
+             "resolution_date": "2027-03-01T00:00:00+00:00"}, now  # 181d
+        ) == "upcoming"
+
+    @pytest.mark.asyncio
+    async def test_hub_rail_does_not_sort_a_long_dated_event_above_this_week(self):
+        """#8141, second arm: admitting Ryder Cup must not reorder the rail.
+
+        Flipping the status to "upcoming" ADMITS the row to /hub/golf, which sorts on
+        "soonest start". Emitting the market-opening date as `start_date` would have
+        put a 2027 event at the TOP of the rail, above a tournament starting this
+        week — trading one reader-visible defect for another. The artifact is
+        suppressed to None, which sorts last via the "9999" fallback.
+        """
+        rows = {
+            "tournaments": [
+                # The long-dated row: market opened 2026-08-28, resolves 2027-09-30.
+                {"name": "Ryder Cup", "slug": "ryder-cup", "is_major": False,
+                 "schedule_status": None, "start_date": None, "end_date": None,
+                 "commence_time": "2026-08-28T20:16:51+00:00",
+                 "resolution_date": "2027-09-30T14:00:00+00:00", "golfers": []},
+                # A genuinely imminent card carrying a real schedule start_date.
+                {"name": "Presidents Cup", "slug": "presidents-cup", "is_major": False,
+                 "schedule_status": "upcoming",
+                 "start_date": "2026-09-24T00:00:00+00:00",
+                 "end_date": "2026-09-27T00:00:00+00:00",
+                 "commence_time": "2026-09-24T00:00:00+00:00",
+                 "resolution_date": "2026-09-27T00:00:00+00:00", "golfers": []},
+            ]
+        }
+        with patch("app.routes.golf.get_golf", return_value=rows):
+            out = await list_golf_tournament_concepts(db=None)
+
+        names = [c["name"] for c in out]
+        # Admitted at all (the status fix reached this rail)…
+        assert "Ryder Cup" in names, "the long-dated event should enter the upcoming rail"
+        # …and the artifact is not emitted as its start date…
+        ryder = next(c for c in out if c["name"] == "Ryder Cup")
+        assert ryder["start_date"] is None
+        assert ryder["status"] == "upcoming"
+        # …so the imminent card still leads. This is the assertion that fails if the
+        # suppression is dropped: "2026-08-28" < "2026-09-24" would invert the rail.
+        assert names.index("Presidents Cup") < names.index("Ryder Cup")
+        # The real schedule date on the imminent card is untouched.
+        assert next(c for c in out if c["name"] == "Presidents Cup")["start_date"] == (
+            "2026-09-24T00:00:00+00:00"
+        )
 
     def test_envelope_carries_as_of_slot(self):
         # L2-66: the freshness slot always exists (None until live fusion sets it).

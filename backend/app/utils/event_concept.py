@@ -51,7 +51,7 @@ ELIMINATION FROM STRUCTURE (#210 — Alex's ruling; the bracketed-Container cont
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 
 # Build-loss vocabulary. Safe at module level and deliberately not deferred:
@@ -143,6 +143,64 @@ def strip_competitor_wire_leaks(envelope: dict | None) -> dict | None:
 # Golf adapter — the reference implementation (delegates to routes/golf.py).
 # ---------------------------------------------------------------------------
 
+# Longest commence→resolution span a real golf tournament can plausibly have.
+# Measured over the 8,242 golf markets carrying both fields: the mass ends at 34.9
+# days and the next populated bucket starts at 74, so 180 sits in open space on both
+# sides (Ryder Cup 2027, the row that prompted this, spans 398).
+_MAX_PLAUSIBLE_TOURNAMENT_SPAN = timedelta(days=180)
+
+
+def _commence_is_market_opening(tournament: dict, now_date: date) -> bool:
+    """True when `commence_time` is a market's OPENING, not the event's start (#8141).
+
+    `commence_time` on a tournament dict is the EARLIEST commence across all of its
+    markets (routes/golf.py ~2667), so a futures market opened long before its event
+    contributes the date it opened. Ryder Cup 2027's market opened 2026-08-28 and
+    resolves 2027-09-30: seven days after the market opened, `_golf_status` began
+    calling the event `settled` and would have kept doing so for the ~13 months until
+    it was played — while the same payload advertised "returns September 17-19, 2027".
+
+    Two conditions, and each one ALONE is measurably insufficient. Both
+    counter-examples are real rows, not hypotheticals:
+
+    * A future `resolution_date` alone does not mean "not concluded". The BMW
+      International Open card commenced 2026-07-03 and resolved 2026-08-02 — finished,
+      but still resolving 18 days out. That is the exact row L2-124 was built for, and
+      test (e') pins it.
+    * An implausibly long span alone does not mean it either. ~400 golf markets sit at
+      635-667 days ("1st Round 3-Ball: …") — finished events whose commence_time is a
+      stale artifact. Their resolution_date is in the PAST, and un-settling them would
+      re-open the very hub-rail leak L2-124 closed.
+
+    Together they separate cleanly: still resolving in the future AND spanning longer
+    than any tournament plausibly can ⇒ the date is the market's, not the event's.
+
+    Note what this does NOT do: it never derives the event's DATE from
+    `resolution_date`. That is a rejected repair (#8139) — Ryder Cup's is 2027-09-30,
+    eleven days after the event ends, so it would trade a wrong-by-a-year error for a
+    harder-to-spot wrong-by-ten-days one. This reads resolution_date only as a SIGN.
+    A real schedule `start_date` is never second-guessed: it is a schedule signal
+    rather than a market artifact, so its presence makes this False outright.
+
+    Fail-open on anything unparseable, consistent with `_golf_status` case (d).
+    """
+    if tournament.get("start_date"):
+        return False
+    commence_time = tournament.get("commence_time")
+    resolution_date = tournament.get("resolution_date")
+    if not commence_time or not resolution_date:
+        return False
+    try:
+        resolves = datetime.fromisoformat(resolution_date)
+        commences = datetime.fromisoformat(commence_time)
+    except (ValueError, TypeError):
+        return False
+    return (
+        resolves.date() >= now_date
+        and resolves - commences > _MAX_PLAUSIBLE_TOURNAMENT_SPAN
+    )
+
+
 def _golf_status(tournament: dict, now: datetime | None = None) -> str:
     """Normalize golf's schedule_status into upcoming/live/settled.
 
@@ -173,10 +231,46 @@ def _golf_status(tournament: dict, now: datetime | None = None) -> str:
     # finished DP-World-Tour cards that leaked (BMW International Open, US Senior
     # Open) carry NO schedule start_date — their date lives in commence_time — so
     # a start_date-only check missed them and they fell through to a FUTURE Kalshi
-    # resolution_date (gotcha #14) and stayed "upcoming". For an upcoming event a
-    # Kalshi commence/close time is in the future, so it never false-settles.
+    # resolution_date (gotcha #14) and stayed "upcoming".
+    #
+    # #8141: the sentence that used to end this paragraph — "for an upcoming event a
+    # Kalshi commence/close time is in the future, so it never false-settles" — is
+    # measurably FALSE for a long-dated futures market. `commence_time` here is the
+    # EARLIEST commence across the tournament's markets (routes/golf.py ~2667), so a
+    # market opened well before its event carries an opening date, not a start date.
+    # Ryder Cup 2027 opened 2026-08-28 and resolves 2027-09-30: seven days after the
+    # market opened, the concept page began reading SETTLED and would have stayed
+    # that way for the ~13 months until the event was actually played, while the same
+    # payload advertised "returns September 17-19, 2027".
+    #
+    # So the commence_time PROXY may not settle an event when BOTH of these hold.
+    # Each clause alone is measurably insufficient, and the counter-example to each
+    # is a real row, not a hypothetical:
+    #
+    #   * a FUTURE resolution_date alone does not mean "not concluded". BMW above is
+    #     the case: commence 2026-07-03, resolution 2026-08-02 — finished, but still
+    #     resolving 18 days out. Test (e') pins it and would catch this.
+    #   * an implausibly LONG commence→resolution span alone does not mean it either.
+    #     Measured over 8,242 golf markets carrying both fields, ~400 sit at 635-667
+    #     days ("1st Round 3-Ball: …") — finished events whose commence_time is a
+    #     stale artifact. Their resolution_date is in the PAST, and un-settling them
+    #     would re-open the very hub-rail leak L2-124 closed.
+    #
+    # Together they separate cleanly: still resolving in the future AND spanning
+    # longer than any golf tournament plausibly can ⇒ commence_time is the market's
+    # opening, not the event's start. The span mass ends at 34.9 days and the next
+    # populated bucket is 74; 180 leaves a wide gap on both sides (Ryder Cup: 398).
+    #
+    # Note what this does NOT do: it never derives the event's DATE from
+    # resolution_date. That is a REJECTED repair (#8139) — Ryder Cup's is 2027-09-30,
+    # eleven days after the event ends, so it would trade a wrong-by-a-year error for
+    # a harder-to-spot wrong-by-ten-days one. A real schedule `start_date` is
+    # untouched: it is a schedule signal, not a market artifact, and still settles on
+    # its own.
     start_date = tournament.get("start_date") or tournament.get("commence_time")
     resolution_date = tournament.get("resolution_date")
+    if _commence_is_market_opening(tournament, now_date):
+        return "upcoming"
     if end_date:
         try:
             if datetime.fromisoformat(end_date).date() < now_date - timedelta(days=1):
@@ -1424,6 +1518,7 @@ async def list_golf_tournament_concepts(
         return []
 
     concepts: list[dict] = []
+    now_date = datetime.now(timezone.utc).date()
     for t in data.get("tournaments") or []:
         name = t.get("name")
         slug = t.get("slug")
@@ -1439,7 +1534,17 @@ async def list_golf_tournament_concepts(
                 "name": name,
                 "domain": "golf",
                 "status": status,
-                "start_date": t.get("start_date") or t.get("commence_time"),
+                # #8141: the same artifact `_golf_status` refuses to settle on must
+                # not be emitted as a start date either. Ryder Cup 2027 enters this
+                # rail as "upcoming" now, and its commence_time (2026-08-28, the
+                # market's opening) would have sorted a 2027 event ABOVE this week's
+                # Presidents Cup under the "soonest start" key below. None sorts to
+                # "9999" — last, which is where the furthest-out event belongs — and
+                # is the honest answer: this row does not carry a start we can trust.
+                # One predicate feeds both sites deliberately; golf.py ~3931 records
+                # what happens when a status rule lives in two places.
+                "start_date": None if _commence_is_market_opening(t, now_date)
+                else (t.get("start_date") or t.get("commence_time")),
                 "is_major": bool(t.get("is_major")),
                 "entry_count": len(t.get("golfers") or []),
             }
