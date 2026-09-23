@@ -132,10 +132,26 @@ interface PropsSectionProps {
   matchup?: MatchupNames | null;
 }
 
+/**
+ * #8147 — THE SCRIPT's blurb was the one sentence here that could never be true.
+ *
+ * `deriveState` below sends "completed"/"closed"/"settled"/"final" to `graded`
+ * and "live"/"in_progress" to `divergence`, so `script` is reachable ONLY for an
+ * event that has not started — and both production callers pass the real status
+ * and no explicit `state` (`app/event/[domain]/[slug]/page.tsx`,
+ * `app/events/[id]/page.tsx`). The blurb read "What the market expected before
+ * the event.", past tense in both halves, so on `/event/golf/presidents-cup` it
+ * sat four rows under the page's own `UPCOMING · STARTS IN 1 DAY` badge telling
+ * the reader that the cup starting tomorrow was already over.
+ *
+ * The present tense is what this file's own state-machine docblock says (line
+ * 13, "what the market expects before the event") and what `PropTravelBar`
+ * describes the same row as. Only the rendered string had drifted.
+ */
 const STATE_META: Record<PropsState, { eyebrow: string; blurb: string }> = {
   script: {
     eyebrow: "The script",
-    blurb: "What the market expected before the event.",
+    blurb: "What the market expects before the event.",
   },
   divergence: {
     eyebrow: "The divergence",
@@ -505,7 +521,9 @@ function isUnchanged(item: PropMark): boolean {
  * On the 209 rows carrying both, on an event that had NOT started, the two
  * fields differ by a median of 4pts and by up to 22.5pts (George Holani 30+:
  * script 36.5%, current 59%). Printing the live price under a section that
- * says "What the market expected before the event" would fabricate the script.
+ * says "What the market expects before the event" would fabricate the script.
+ * (#8147 moved that sentence off the past tense; the argument is unchanged —
+ * the heading promises the pregame baseline either way.)
  *
  * D111 (Alex, 2026-09-10 10:35am PT) OVERRULES THE WORDING, NOT THE REASONING.
  * The label is now "More props (N)". Everything above still holds and is why
