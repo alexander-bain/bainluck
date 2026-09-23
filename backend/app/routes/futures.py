@@ -22,7 +22,7 @@ from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import devigged_consensus_by_time
 from app.utils.futures_market_snapshot import dated_movement_points
-from app.utils.generic_market_history import captures_are_coarse
+from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     MIDPOINT_TRADE_SOURCES,
@@ -6147,6 +6147,9 @@ async def get_probability_timeline(
         (20, 720),   # <20 snapshots -> try 30 days
         (10, 2160),  # <10 snapshots -> try 90 days
     ]
+    # #7547: where the served window actually begins, so a cell straddling it is
+    # judged only on the part a capture could have reached.
+    window_start = cutoff
     for threshold, extended_hours in _TIMELINE_EXTEND_TIERS:
         # #7351: an admitted venue observation IS an observation, so it counts
         # toward "is this window sparse" exactly as a capture does. A market the
@@ -6175,6 +6178,7 @@ async def get_probability_timeline(
                 snapshots = extended_snapshots
                 venue_rows = extended_venue_rows
                 actual_hours = extended_hours
+                window_start = extended_cutoff
 
     if not snapshots and not venue_rows:
         return {
@@ -6219,11 +6223,12 @@ async def get_probability_timeline(
         lambda: defaultdict(list)
     )
 
-    # #7547 — the cell's capture INSTANTS travel with its readings. How many
-    # distinct instants a cell holds is what decides, below, whether the venue's
-    # minutes may be admitted around them.
-    capture_instants: dict[int, dict[int, set[datetime]]] = defaultdict(
-        lambda: defaultdict(set)
+    # #7547 — the cell's capture INSTANTS travel with their readings. Whether the
+    # instants cover the cell decides, below, whether the venue's minutes may be
+    # admitted around them; and when they are, each capture is served at its own
+    # instant with its own reading(s).
+    capture_instants: dict[int, dict[int, dict[datetime, list[float]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
     )
 
     for snap in snapshots:
@@ -6233,7 +6238,9 @@ async def get_probability_timeline(
             outcome_buckets[snap.outcome_id][bucket_key].append(
                 float(snap.probability)
             )
-            capture_instants[snap.outcome_id][bucket_key].add(snap.captured_at)
+            capture_instants[snap.outcome_id][bucket_key][snap.captured_at].append(
+                float(snap.probability)
+            )
 
     # Collect all bucket keys across all outcomes
     all_bucket_keys = set()
@@ -6268,44 +6275,69 @@ async def get_probability_timeline(
     # hour was tried and rejected: it dropped its own specimen's 0.38 trough.
     #
     # THE BUCKET STILL DECIDES ONE THING: whether our own polls already fill the
-    # cell. A cell holding TWO OR MORE capture instants is a cell our live poll
-    # draws (two-minute cadence, fifteen-minute buckets in play): it keeps its
-    # median at the bucket start and admits no venue row, byte-for-byte as
-    # before — `test_C9`'s fence, and the reason a finely captured market
-    # cannot change shape under this. A cell holding ONE capture instant, or
-    # none, admits the venue's minutes at their own recorded instants.
+    # cell. A cell our captures COVER — two or more instants and no stretch of
+    # the cell, head and tail included, ten minutes long without one — is a
+    # cell our live poll draws (two-minute cadence, fifteen-minute buckets in
+    # play): it keeps its median at the bucket start and admits no venue row,
+    # byte-for-byte as before — `test_C9`'s fence, and the reason a finely
+    # captured market cannot change shape under this. Every other cell admits
+    # the venue's minutes at their own recorded instants.
     #
-    # 🔴 AND THE ONE CAPTURE IN SUCH A CELL IS SERVED AT ITS OWN INSTANT TOO.
+    # 🔴 #7547 — IT USED TO BE "TWO OR MORE INSTANTS", AND TWO IS NOT DENSE. The
+    # ordinary pre-kickoff cadence lands two hourly-ish polls in one hour
+    # (61097129 *over 9.5*, 2026-09-18T20Z: 20:20 and 20:48), and the count
+    # fenced seventeen venue minutes holding the hour's .425 trough and .435
+    # peak. `captures_cover_cell` asks for coverage, and only ever releases a
+    # cell the count fenced — see its docstring for why a spacing median is not
+    # the same question.
+    #
+    # 🔴 AND EVERY CAPTURE IN SUCH A CELL IS SERVED AT ITS OWN INSTANT TOO.
     # This route stamps a capture at its bucket start; alone in its hour that
     # is a rounding nobody can see. Put real 21:2x minutes beside a capture
     # stamped 21:00 that was taken at 21:5x and the line draws a move nobody
     # observed at an instant nobody observed it — the same fabrication #7351
-    # refused to commit on venue rows, now on our own. The value is unchanged
-    # (the median of one reading is that reading); `/history` has always served
-    # this capture at this instant. A cell that gains no venue row is not
-    # touched, so a market with no venue history is byte-for-byte what it was.
+    # refused to commit on venue rows, now on our own. With several captures
+    # the median is refused for the same reason: 20:20 and 20:48 folded to one
+    # value at 20:00 is a reading nobody took. Each instant keeps its own value
+    # (the median of the readings AT that instant — one per source that polled
+    # it); `/history` has always served these captures at these instants. A
+    # cell that gains no venue row is not touched, so a market with no venue
+    # history is byte-for-byte what it was.
     #
     # ONLY THE CHARTED TOP-N. A venue point never feeds "Field": the fill fetches
     # a bounded top-N, so a Field summed from venue points would be a partial sum
     # presented as the rest of the market.
+    covered: dict[tuple[int, int], bool] = {}
+
+    def _cell_is_covered(oid: int, bucket_key: int) -> bool:
+        key = (oid, bucket_key)
+        if key not in covered:
+            bucket_at = datetime.fromtimestamp(bucket_key, tz=timezone.utc)
+            covered[key] = captures_cover_cell(
+                capture_instants[oid].get(bucket_key, {}).keys(),
+                cell_start=max(bucket_at, window_start),
+                cell_end=min(bucket_at + timedelta(seconds=bucket_seconds), now),
+            )
+        return covered[key]
+
     venue_cells: dict[int, dict[int, list]] = defaultdict(lambda: defaultdict(list))
     for row in sorted(venue_rows, key=lambda r: r.captured_at):
         if row.outcome_id not in top_outcome_ids or row.probability is None:
             continue
         bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
-        if len(capture_instants[row.outcome_id].get(bucket_key, ())) >= 2:
+        if _cell_is_covered(row.outcome_id, bucket_key):
             continue
         venue_cells[row.outcome_id][bucket_key].append(row)
 
-    # The captures that leave the bucket start for their own instant: one per
-    # (outcome, cell) whose single capture shares the cell with admitted venue
+    # The captures that leave the bucket start for their own instants: every
+    # capture of each (outcome, cell) that shares the cell with admitted venue
     # rows. Read once here so the loop below and the Field sum agree on them.
-    relocated: dict[tuple[int, int], datetime] = {}
+    relocated: dict[tuple[int, int], dict[datetime, list[float]]] = {}
     for oid, cells in venue_cells.items():
         for bucket_key in cells:
             instants = capture_instants[oid].get(bucket_key)
-            if instants and len(instants) == 1:
-                relocated[(oid, bucket_key)] = next(iter(instants))
+            if instants:
+                relocated[(oid, bucket_key)] = instants
 
     # Build timeline: for each time bucket, compute median probability per outcome
     entries_by_instant: dict[datetime, dict] = {}
@@ -6324,14 +6356,19 @@ async def get_probability_timeline(
             med_prob = median(probs)
 
             if oid in top_outcome_ids:
-                served_at = relocated.get((oid, bucket_key))
-                if served_at is not None and served_at != bucket_at:
+                own_instants = relocated.get((oid, bucket_key))
+                if own_instants is None:
+                    entry["outcomes"][outcome_names[oid]] = round(med_prob, 6)
+                    continue
+                for served_at in sorted(own_instants):
+                    value = round(median(own_instants[served_at]), 6)
+                    if served_at == bucket_at:
+                        entry["outcomes"][outcome_names[oid]] = value
+                        continue
                     own = entries_by_instant.setdefault(
                         served_at, {"timestamp": served_at.isoformat(), "outcomes": {}}
                     )
-                    own["outcomes"][outcome_names[oid]] = round(med_prob, 6)
-                else:
-                    entry["outcomes"][outcome_names[oid]] = round(med_prob, 6)
+                    own["outcomes"][outcome_names[oid]] = value
             else:
                 field_prob += med_prob
 
