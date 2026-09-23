@@ -240,6 +240,39 @@ WNCAA_2026_BRACKET: dict[str, dict] = {
 }
 
 
+# #8142: the fuzzy arms below used to accept "2+ shared words" as identity. A
+# shared word between two college teams is usually a MASCOT, not a school:
+# measured over all 690 `basketball_ncaab`/`basketball_wncaab` names in `teams`,
+# that test answered 29 and got 25 of them wrong — `Grambling St Tigers` wore
+# Tennessee State's Midwest 15, `Norfolk St Spartans` wore Michigan State's 3
+# on the live grid, and `Central Connecticut St Blue Devils` matched DUKE.
+# The four it got RIGHT differ from their bracket key by an honorific alone
+# (`Georgia Bulldogs` → `Georgia Lady Bulldogs`), so the rule that keeps those
+# and refuses the other 25 is token CONTAINMENT modulo honorifics — never a
+# count. The replacement is purely subtractive: over the same 690 names it
+# removes 25 matches and adds or redirects none.
+_BRACKET_HONORIFICS = frozenset({"lady", "red", "fighting", "the"})
+
+
+def _bracket_tokens(name: str) -> set[str]:
+    """The distinguishing tokens of a team name, honorifics dropped."""
+    return {
+        w for w in name.lower().replace(".", "").split() if w
+    } - _BRACKET_HONORIFICS
+
+
+def _same_institution_marker(name_a: str, name_b: str) -> bool:
+    """False when a `State` on one side only makes these different schools.
+
+    `Michigan` and `Michigan State` are two institutions, as are `South
+    Carolina` and `South Carolina State`. Containment alone cannot tell them
+    apart — the shorter name is a subset of the longer one either way — so the
+    marker is checked first and vetoes the match. Both sides must already be
+    abbreviation-expanded (`St` → `State`) or the veto reads the wrong token.
+    """
+    return ("state" in name_a.lower().split()) == ("state" in name_b.lower().split())
+
+
 def _lookup_wncaa_bracket(team_name: str) -> dict | None:
     """Look up Women's NCAA tournament region/seed for a team."""
     if team_name in WNCAA_2026_BRACKET:
@@ -257,11 +290,16 @@ def _lookup_wncaa_bracket(team_name: str) -> dict | None:
     name_lower = _expand(team_name).lower()
     for bracket_name, info in WNCAA_2026_BRACKET.items():
         bn = bracket_name.lower()
+        # #8142: a `State` on one side only names a different school — veto
+        # before either fuzzy arm can read the two names as one.
+        if not _same_institution_marker(name_lower, _expand(bracket_name)):
+            continue
         if bn in name_lower or name_lower in bn:
             return info
-        a_words = set(name_lower.split())
-        b_words = set(bn.split())
-        if len(a_words & b_words) >= 2:
+        # #8142: containment of the distinguishing tokens, not a shared count.
+        a_words = _bracket_tokens(name_lower)
+        b_words = _bracket_tokens(bn)
+        if a_words and b_words and (a_words <= b_words or b_words <= a_words):
             return info
     return None
 
@@ -290,12 +328,16 @@ def _lookup_ncaa_bracket(team_name: str) -> dict | None:
     name_lower = _expand(team_name).lower()
     for bracket_name, info in NCAA_2026_BRACKET.items():
         bn = bracket_name.lower()
+        # #8142: a `State` on one side only names a different school — veto
+        # before either fuzzy arm can read the two names as one.
+        if not _same_institution_marker(name_lower, _expand(bracket_name)):
+            continue
         if bn in name_lower or name_lower in bn:
             return info
-        # Word overlap: 2+ shared words
-        a_words = set(name_lower.split())
-        b_words = set(bn.split())
-        if len(a_words & b_words) >= 2:
+        # #8142: containment of the distinguishing tokens, not a shared count.
+        a_words = _bracket_tokens(name_lower)
+        b_words = _bracket_tokens(bn)
+        if a_words and b_words and (a_words <= b_words or b_words <= a_words):
             return info
     return None
 
