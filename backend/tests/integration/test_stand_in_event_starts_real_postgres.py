@@ -496,8 +496,84 @@ async def test_the_unscoped_query_redates_events_for_matches_already_over(
 
 #: A restated order of play: same ticker day as PUBLISHED, a later hour.
 RESTATED = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
-#: The same restatement on the Sep 20 soccer ticker day.
-RESTATED_SEP20 = datetime(2026, 9, 20, 21, 45, tzinfo=UTC)
+#: The same restatement on the Sep 20 soccer ticker day: LATER than
+#: `LIGUE1_PUBLISHED`, which is the whole point of a restatement fixture.
+#:
+#: 🔴 It was 21:45 — byte-identical to `LIGUE1_PUBLISHED` — for exactly as long
+#: as CERT-3342 took to move the revision specimens off tennis onto soccer. The
+#: "restatement" then wrote the hour the market already held, the revision arm
+#: correctly answered `agrees`, and both arm-1 tests asserted `moved == 1`
+#: against a venue that had said nothing. `test_every_restatement_fixture_
+#: actually_restates` below is the guard for that class; it deliberately needs
+#: no Postgres, because these tests SKIP without a server and that is why a
+#: local 434/434 could not see it.
+RESTATED_SEP20 = datetime(2026, 9, 20, 23, 15, tzinfo=UTC)
+
+
+#: (label, ticker, sport, hour the market holds after run 1, restated hour)
+#: — every restatement an arm-1 test performs, as data the guard below can read.
+_RESTATEMENTS = (
+    ("soccer_revision", "KXLIGUE1GAME-26SEP20REVREV",
+     "soccer_france_ligue_one", LIGUE1_PUBLISHED, RESTATED_SEP20),
+    ("ineligible_first", "KXLIGUE1GAME-26SEP20BBBVAL",
+     "soccer_france_ligue_one", LIGUE1_PUBLISHED, RESTATED_SEP20),
+)
+
+
+@pytest.mark.parametrize(
+    "label, ticker, sport, stored, restated",
+    _RESTATEMENTS,
+    ids=[r[0] for r in _RESTATEMENTS],
+)
+def test_every_restatement_fixture_actually_restates(
+    label, ticker, sport, stored, restated
+):
+    """🔴 NO POSTGRES ON PURPOSE. The guard for the class CERT-3342 introduced.
+
+    An arm-1 test proves "a restated hour is adopted" by writing `restated` onto
+    the market and asserting the event moves. That proves nothing at all if
+    `restated` is the hour the market already holds: the revision arm answers
+    `agrees`, `moved` is 0, and the test fails for a reason that looks like a
+    broken gate rather than a broken fixture. That is exactly what happened when
+    the revision specimens moved from tennis to soccer and `RESTATED_SEP20` was
+    left byte-identical to `LIGUE1_PUBLISHED`.
+
+    So this asserts the fixture pair is a real restatement, through the REAL
+    predicate rather than a re-derived inequality — a pair inside the window but
+    under `_STAND_IN_REFINEMENT_MIN_MOVE`, or outside its own ticker day, is just
+    as inert as an identical one and neither is visible to `!=`.
+
+    It takes no server BECAUSE the tests it guards take one: they SKIP wherever
+    Postgres is absent, so a lane's local run is green while CI is red. A guard
+    that skipped in the same places could not have caught this.
+    """
+    from app.tasks.kalshi import (
+        _STAND_IN_REFINEMENT_MIN_MOVE,
+        _stand_in_refinement_decision,
+    )
+
+    assert restated != stored, (
+        f"{label}: the restatement writes the hour the market already holds "
+        f"({stored.isoformat()}) — the venue says nothing and the arm-1 "
+        f"assertion cannot fail"
+    )
+    assert abs(restated - stored) >= _STAND_IN_REFINEMENT_MIN_MOVE, (
+        f"{label}: restatement moves {abs(restated - stored)}, under the "
+        f"{_STAND_IN_REFINEMENT_MIN_MOVE} floor, so the arm reads it as agreement"
+    )
+
+    # The real thing: run 2's own decision, on run 2's own inputs.
+    target, reason = _stand_in_refinement_decision(
+        ticker,
+        stored,                                 # event, as run 1 left it
+        "kalshi_occurrence",                    # ...and run 1's source stamp
+        restated,                               # what the venue now publishes
+        sport_key=sport,
+    )
+    assert (target, reason) == (restated, "adopt"), (
+        f"{label}: the revision arm answers {reason!r}, not 'adopt', so the "
+        f"arm-1 test asserting moved == 1 cannot pass for the intended reason"
+    )
 
 
 @needs_postgres
@@ -523,7 +599,7 @@ async def test_a_restated_venue_hour_is_adopted_on_the_next_run(
     _install_real_session(monkeypatch, pg_engine)
     assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
 
-    # The venue moves the fixture 19:00Z -> 21:45Z, same ticker day.
+    # The venue moves the fixture 21:45Z -> 23:15Z, same ticker day.
     async with pg_engine.begin() as conn:
         await conn.execute(
             text("UPDATE futures_markets SET commence_time = :ct "
