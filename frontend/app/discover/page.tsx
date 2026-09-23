@@ -32,6 +32,7 @@ import {
   dedupeById,
   reconcilePage1,
   shouldLoadNextPage,
+  shouldAdvanceWindow,
 } from "@/lib/discover/feedPaging";
 import {
   FEED_RESTORE_LANDING_TIMEOUT_MS,
@@ -609,6 +610,11 @@ export default function DiscoverPage() {
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // #8176 — whether the infinite-scroll sentinel is inside the observer's band
+  // right now. A LEVEL, deliberately: the advance that reads it must be
+  // re-askable on every commit, because the transition that used to drive it
+  // cannot be produced once the document stops growing.
+  const [sentinelVisible, setSentinelVisible] = useState(false);
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [dailyGuesses, setDailyGuesses] = useState(0);
   const [allItems, setAllItems] = useState<FeedItem[]>([]);
@@ -954,27 +960,32 @@ export default function DiscoverPage() {
   // would never re-run, `sentinelRef.current` would stay null, and infinite
   // scroll would be dead on every cold load — the fix would trade one uninvited
   // fetch for no pagination at all.
+  // 🔴 #8176 — THIS OBSERVER RECORDS A LEVEL AND ADVANCES NOTHING. It used to
+  // call `setVisibleCount` directly from the intersection callback, which made
+  // the window advance EDGE-triggered. Because rendering is capped at
+  // `visibleCount` (`processedItems.slice(0, visibleCount)`), the window is the
+  // only thing that makes the document taller — so a window that stopped
+  // advancing froze the document, which kept the sentinel inside the 400px
+  // band, which meant no further transition was ever delivered to re-start it.
+  // Measured on production: the feed died at 40 of 115 cards behind a spinner
+  // that could never resolve. See `shouldAdvanceWindow` for the full account.
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting) return;
-        // 🔴 #7417 — THIS GUARD IS THE ONE THAT BREAKS THE LOOP. While a restore
-        // is landing, the browser has the reader clamped at the bottom of a
-        // document that is still growing, so the sentinel is in view for
-        // reasons that have nothing to do with the reader running out of cards.
-        // Left ungated it advances the window, which fetches a page, which
-        // makes the document taller, which keeps the sentinel in view — the
-        // 20→40 card doubling measured in the defect. The reader never asked
-        // for any of it, and the restore is about to move them away.
-        if (restorePendingRef.current) return;
-        setVisibleCount((c) => c + PAGE_SIZE);
-      },
+      ([entry]) => setSentinelVisible(entry.isIntersecting),
       { rootMargin: "400px" }
     );
     observer.observe(sentinel);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      // 🔴 The sentinel is conditionally rendered (LAT-P172 gates it on
+      // `!isLoading`, L2-238 swaps it for a retry). A disconnected observer
+      // delivers no exit event, so without this the level would stay stuck
+      // `true` after the node it describes has gone and the advance effect
+      // would keep firing against a sentinel nobody can see.
+      setSentinelVisible(false);
+    };
   }, [feedUnavailable, isLoading]);
 
   /**
@@ -1364,6 +1375,28 @@ export default function DiscoverPage() {
   // made "no page has landed" and "every row was filtered" the same state, and
   // the auto-pager stopped for good — a blank tab that L2-215 (see the comment
   // above `processedItems`) exists to prevent.
+  // #8176 — the level-triggered half of infinite scroll. Declared here, below
+  // `processedItems`, because the dependency array is evaluated during render:
+  // referencing it from the observer effect above would be a TDZ error.
+  //
+  // `pendingScrollY` is a dependency because `restorePendingRef` is a ref and
+  // cannot re-trigger anything. Without it a window suppressed during a restore
+  // would stay suppressed after the restore RESOLVED, until something else
+  // happened to move — the same class of freeze this fix is removing.
+  useEffect(() => {
+    if (
+      shouldAdvanceWindow({
+        sentinelVisible,
+        visibleCount,
+        renderedCount: processedItems.length,
+        restorePending: restorePendingRef.current,
+        pageSize: PAGE_SIZE,
+      })
+    ) {
+      setVisibleCount((c) => c + PAGE_SIZE);
+    }
+  }, [sentinelVisible, visibleCount, processedItems.length, pendingScrollY]);
+
   const loadedCount = page1Items.length + allItems.length;
   useEffect(() => {
     if (

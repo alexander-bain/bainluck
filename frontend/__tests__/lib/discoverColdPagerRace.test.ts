@@ -272,11 +272,62 @@ describe("LAT-P172 — the second uninvited feed build, at first paint", () => {
     // With the node now absent on the first commit, an effect that does not
     // depend on `isLoading` never re-runs, the ref stays null, and infinite
     // scroll never arms on ANY cold load.
+    //
+    // #8176 widened this pattern: the cleanup grew from a single expression to
+    // a block (it now also resets the sentinel level), so the old regex — which
+    // spelled `return () => observer.disconnect();` out literally — stopped
+    // matching and reported a missing dependency that was still there. The
+    // contract this guard exists for is the DEPENDENCY, not the cleanup's
+    // shape, so match any cleanup that disconnects and keep asserting the dep.
     const observerDeps = PAGE_SOURCE.match(
-      /observer\.observe\(sentinel\);\s*\n\s*return \(\) => observer\.disconnect\(\);\s*\n\s*\}, \[([^\]]*)\]\);/
+      /observer\.observe\(sentinel\);[\s\S]*?observer\.disconnect\(\);[\s\S]*?\}, \[([^\]]*)\]\);/
     );
     expect(observerDeps).not.toBeNull();
     expect(observerDeps![1]).toContain("isLoading");
+  });
+
+  // 🪤 `page.tsx` builds TWO `IntersectionObserver`s. Anchoring on that
+  // constructor matches the FIRST one and a lazy span then swallows everything
+  // up to the sentinel's — which is how the first draft of these guards
+  // "found" a `setVisibleCount` that belongs to neither. Slice the sentinel
+  // effect out by its own unique first line and assert inside that.
+  const sentinelEffect = () => {
+    const block = PAGE_SOURCE.match(
+      /const sentinel = sentinelRef\.current;[\s\S]*?\n {2}\}, \[([^\]]*)\]\);/
+    );
+    expect(block).not.toBeNull();
+    return block!;
+  };
+
+  it("🔴 #8176 — the observer cleanup resets the sentinel level", () => {
+    // The sentinel is conditionally rendered (gated on `!isLoading` here, and
+    // swapped for a retry by L2-238). A disconnected observer delivers no exit
+    // event, so a level left `true` after the node unmounts would keep the
+    // advance effect firing against a sentinel that is no longer on the page —
+    // reintroducing the uninvited-window-growth class from the other side.
+    const block = sentinelEffect()[0];
+    expect(block).toContain("observer.disconnect();");
+    expect(block).toContain("setSentinelVisible(false)");
+  });
+
+  it("🔴 #8176 — the window advance is driven by a level, not the callback", () => {
+    // The deadlock this replaced: `setVisibleCount` called straight from the
+    // intersection callback is EDGE-triggered, and the window is the only thing
+    // that grows the document, so a window that stopped froze the document,
+    // which kept the sentinel in the band, which meant no further edge. The
+    // callback must therefore record state and advance nothing.
+    const block = sentinelEffect()[0];
+    expect(block).toContain("setSentinelVisible(entry.isIntersecting)");
+    expect(block).not.toContain("setVisibleCount");
+
+    // ...and the advance must re-evaluate on the level and the content, or it
+    // cannot be re-asked after the document stops growing.
+    const advanceDeps = PAGE_SOURCE.match(
+      /shouldAdvanceWindow\(\{[\s\S]*?\}, \[([^\]]*)\]\);/
+    );
+    expect(advanceDeps).not.toBeNull();
+    expect(advanceDeps![1]).toContain("sentinelVisible");
+    expect(advanceDeps![1]).toContain("processedItems.length");
   });
 });
 
