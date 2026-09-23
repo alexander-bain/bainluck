@@ -807,7 +807,7 @@ pr_state_scan () {
 # ─────────────────────────────────────────────────────────────────────────────
 RCS_VERDICT=""; RCS_DETAIL=""; RCS_MISSING=""
 required_contexts_scan () {
-  local required="$1" present="$2"
+  local required="$1" present="$2" skipped="${3:-}"
   # Fail CLOSED on an unreadable protection list. An empty required list and a
   # failed read arrive as the same empty string, and "no contexts are required"
   # is the answer that would wave through precisely the sha this exists to stop.
@@ -833,6 +833,28 @@ required_contexts_scan () {
   if [ -n "$RCS_MISSING" ]; then
     RCS_VERDICT=missing
     RCS_DETAIL="$(printf '%s\n' "$RCS_MISSING" | /usr/bin/grep -c .) of $n_req required contexts were NEVER CREATED on this sha: $(printf '%s' "$RCS_MISSING" | tr '\n' ';' | /usr/bin/sed 's/;$//') — absent, not failed, so notices 28 and 32 cannot see them"
+    # WHY they are absent, when the evidence says so. ux/1464 measured it: a
+    # scope=frontend sha has `backend-tests` SKIPPED at job level by the CI
+    # change-scope classifier, a skipped matrix job never expands, so its legs
+    # `backend-tests (1)`–`(4)` are never created — on EVERY purely-frontend sha.
+    # The classifier reads the changed file set, so a rebase cannot create them;
+    # the desk asked for one once and it was a wasted cycle. So: if every missing
+    # context is a matrix leg `NAME (N)` whose parent `NAME` is present and
+    # SKIPPED, say so. Still a STOP — GitHub is still refusing — but the reader
+    # stops reaching for the remedy that cannot work.
+    if [ -n "$skipped" ]; then
+      local leg parent explained=1
+      while IFS= read -r leg; do
+        [ -z "$leg" ] && continue
+        parent="$(printf '%s' "$leg" | /usr/bin/sed -nE 's/^(.+) \([0-9]+\)$/\1/p')"
+        if [ -z "$parent" ] || ! printf '%s\n' "$skipped" | /usr/bin/grep -qxF -- "$parent"; then
+          explained=0; break
+        fi
+      done <<< "$RCS_MISSING"
+      if [ "$explained" = 1 ]; then
+        RCS_DETAIL="$RCS_DETAIL. CAUSE: each is a matrix leg whose parent job ran and was SKIPPED at job level (CI change-scope), so the legs were never expanded — structural for every scope=frontend sha; a REBASE CANNOT create them. Landing it past protection is a desk policy call, not a lane repair"
+      fi
+    fi
   else
     RCS_VERDICT=ok
     # "present" means CREATED, not concluded. That is deliberately the whole
@@ -2047,6 +2069,29 @@ FIXEOF
   check "required_contexts_scan: a near-miss name does NOT satisfy a required context" \
     "printf '%s' \"\$RCS_MISSING\" | /usr/bin/grep -qx 'backend-tests (1)'"
 
+  # The specimen's actual shape: the matrix parent is PRESENT and SKIPPED. Still
+  # a STOP, but the detail must say a rebase cannot help (ux/1464's proof).
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nbackend-tests (2)\nfrontend-build\n')" \
+    "$(printf 'backend-tests\nfrontend-build\n')" \
+    "$(printf 'backend-tests\nsearch-recall\n')"
+  check "required_contexts_scan: legs of a SKIPPED matrix parent still refuse" \
+    "[ \"$RCS_VERDICT\" = missing ]"
+  check "required_contexts_scan: and the detail names the skipped-parent cause and that a rebase cannot fix it" \
+    "printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'REBASE CANNOT create them'"
+  # Over-claim arm: one missing context that is NOT a leg of a skipped parent
+  # means the cause is not (only) scope, and the row must not say it is.
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\nsearch-recall\n')" \
+    "$(printf 'backend-tests\n')" \
+    "$(printf 'backend-tests\n')"
+  check "required_contexts_scan: a missing context with no skipped parent withholds the scope explanation" \
+    "[ \"$RCS_VERDICT\" = missing ] && ! printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'CAUSE:'"
+  required_contexts_scan \
+    "$(printf 'backend-tests (1)\n')" "$(printf 'backend-tests\n')" "$(printf 'frontend-build\n')"
+  check "required_contexts_scan: a parent that is present but NOT skipped withholds it too" \
+    "! printf '%s' \"\$RCS_DETAIL\" | /usr/bin/grep -q 'CAUSE:'"
+
   # Anti-vacuity: the healthy sha must pass, or the gate is a permanent STOP that
   # everyone learns to skip. Extra present contexts are normal and irrelevant.
   required_contexts_scan \
@@ -3086,7 +3131,9 @@ present_ctx="$(
   gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" --jq '.check_runs[].name' 2>/dev/null
   gh api "repos/$REPO_SLUG/commits/$SHA/status?per_page=100"     --jq '.statuses[].context' 2>/dev/null
 )"
-required_contexts_scan "$req_ctx" "$present_ctx"
+skipped_ctx="$(gh api "repos/$REPO_SLUG/commits/$SHA/check-runs?per_page=100" \
+  --jq '.check_runs[]|select(.conclusion=="skipped")|.name' 2>/dev/null)"
+required_contexts_scan "$req_ctx" "$present_ctx" "$skipped_ctx"
 case "$RCS_VERDICT" in
   ok)         pass  "required contexts" "$RCS_DETAIL" ;;
   unanswered) stopq "required contexts" "$RCS_DETAIL" ;;
