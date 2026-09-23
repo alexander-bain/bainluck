@@ -844,3 +844,142 @@ class TestTheCoverageNumberReachesAReader:
         assert stats["assets_served"] > 0, (
             "the fake socket served assets, so the client must have counted them"
         )
+
+
+class TestTheCoverageVectorSaysWhereTheDarkHalfIs:
+    """#837 — the aggregate says HOW MUCH is dark; the vector says WHERE.
+
+    Measured in production 2026-09-23 01:11Z/01:12Z: `served=1880/3793`,
+    8/8 shards connected, the count identical across a full minute (it is a
+    cumulative set union, so identical means saturated, not idle) and zero
+    coverage warnings — no shard was at literally zero, so the warning could
+    not fire. Half the subscribed slate had never been served one frame and
+    the only emitted number could not say which half.
+
+    That distinction is not cosmetic here. `_shard_asset_ids` fills shards
+    contiguously and the asset list is built market by market, so one game's
+    tokens land in one shard. An under-served shard therefore takes whole
+    GAMES dark together, which is what production showed at the same instant:
+    eight live MLB games with 1 of ~79 outcomes fresh, and one — Phillies /
+    Brewers — with 50 of 79. A thinly-traded prop costs a leg here and there
+    and makes the same aggregate. Only the vector separates them.
+    """
+
+    def _blend(self):
+        return {"stamped": 1, "no_reading": 2, "throttled": 3, "errors": 0}
+
+    def _task_stats(self):
+        return {
+            "price_updates": 10,
+            "trade_updates": 4,
+            "resolutions": 0,
+            "errors": 0,
+        }
+
+    def _line(self, caplog, ws_stats):
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), ws_stats, self._blend())
+        return caplog.text
+
+    def test_two_shapes_with_one_aggregate_are_told_apart(self, caplog):
+        """The discriminating case: same `served=`, different repair.
+
+        Both populations are 3000 of 4000 served. One is two wholly starved
+        shards beside six healthy ones — the oversized-subscribe cliff, whole
+        games gone. The other is every shard uniformly light — quiet books.
+        The aggregate is byte-identical, so a test that asserted only on it
+        would pass with the vector deleted.
+        """
+        cliff = {
+            "messages": 10,
+            "shards": 8,
+            "shards_connected": 8,
+            "assets_subscribed": 4000,
+            "assets_served": 3000,
+            "subscribed_by_shard": {i: 500 for i in range(8)},
+            "served_by_shard": {i: (0 if i < 2 else 500) for i in range(8)},
+        }
+        spread = dict(
+            cliff, served_by_shard={i: 375 for i in range(8)}
+        )
+
+        cliff_line = self._line(caplog, cliff)
+        spread_line = self._line(caplog, spread)
+
+        assert "served=3000/4000" in cliff_line
+        assert "served=3000/4000" in spread_line
+
+        assert "0:0/500" in cliff_line and "1:0/500" in cliff_line
+        assert "2:500/500" in cliff_line
+        assert "0:375/500" in spread_line
+        assert "0:0/500" not in spread_line
+
+    def test_a_shard_that_was_never_served_is_printed_not_omitted(self, caplog):
+        """`served_by_shard` can lack the key entirely; absence must still show.
+
+        The starved shard is the one the reader needs, so rendering only the
+        keys that were served would drop exactly it.
+        """
+        line = self._line(
+            caplog,
+            {
+                "messages": 1,
+                "shards": 3,
+                "shards_connected": 3,
+                "assets_subscribed": 1500,
+                "assets_served": 1000,
+                "subscribed_by_shard": {0: 500, 1: 500, 2: 500},
+                "served_by_shard": {0: 500, 1: 500},
+            },
+        )
+        assert "2:0/500" in line
+
+    def test_the_shadow_consumer_without_shards_does_not_raise(self, caplog):
+        """Shares this line and subscribes with no shards at all.
+
+        An exception here kills the stats loop, which is the socket's only
+        heartbeat — so the no-shard case degrades to a placeholder.
+        """
+        line = self._line(caplog, {})
+        assert "by_shard=-" in line
+        assert "served=0/0" in line
+
+    @pytest.mark.asyncio
+    async def test_the_real_client_exposes_both_halves_of_the_pair(
+        self, monkeypatch, caplog
+    ):
+        """Ties the vector to the client, so the keys cannot quietly vanish.
+
+        A hand-built dict would keep passing if `stats` stopped exposing
+        `subscribed_by_shard` — which is half of what makes a served count
+        readable, since 40 is healthy on a 45-asset shard and a cliff on 500.
+        """
+        served_frames = [
+            json.dumps({"event_type": "best_bid_ask", "asset_id": a})
+            for a in _ids(1500)[:7]
+        ]
+
+        def connect(*args, **kwargs):
+            return _FakeSocket(served_frames, [])
+
+        monkeypatch.setattr("websockets.connect", connect, raising=False)
+
+        ws = PolymarketWebSocket()
+        task = asyncio.create_task(ws.run(asset_ids=_ids(1500)))
+        await asyncio.sleep(0.3)
+        stats = ws.stats
+        task.cancel()
+        with pytest.raises((asyncio.CancelledError, Exception)):
+            await task
+
+        assert stats["subscribed_by_shard"], "the client must expose shard sizes"
+        assert sum(stats["subscribed_by_shard"].values()) == 1500, (
+            "the shard sizes must account for every subscribed asset"
+        )
+
+        line = self._line(caplog, stats)
+        for shard, size in stats["subscribed_by_shard"].items():
+            assert f"{shard}:{stats['served_by_shard'].get(shard, 0)}/{size}" in line

@@ -471,4 +471,9 @@ class PolymarketWebSocket:
             "assets_subscribed": sum(self._shard_subscribed.values()),
             "assets_served": sum(served.values()),
             "served_by_shard": served,
+            # Paired with the served counts because a shard's served number is
+            # uninterpretable alone: 40 is healthy on a 45-asset shard and a
+            # cliff on a 500-asset one. The aggregate ratio cannot tell those
+            # apart, and the aggregate is the only thing a reader had.
+            "subscribed_by_shard": dict(self._shard_subscribed),
         }

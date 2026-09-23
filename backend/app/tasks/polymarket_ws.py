@@ -100,6 +100,31 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
+def _shard_coverage_field(ws_stats: dict) -> str:
+    """Render the per-shard served/subscribed pairs for the stats line.
+
+    The aggregate ratio says HOW MUCH is dark and cannot say WHERE, and for this
+    socket those are different questions with different repairs. `_shard_asset_ids`
+    fills shards contiguously and the asset list is built market by market, so one
+    game's tokens land in one shard: a shard the venue under-serves takes whole
+    games dark together, while a genuinely quiet book costs a leg here and there.
+    Those two produce the same aggregate and a different vector.
+
+    Its own function, like `_log_stats_line` above it, so the rendering is
+    assertable without a socket — and total: any shard named by either side is
+    printed, so a shard that subscribed and has never been served (the shape the
+    zero-only coverage warning exists for) still appears, as `N:0/500`.
+    """
+    served = ws_stats.get("served_by_shard") or {}
+    subscribed = ws_stats.get("subscribed_by_shard") or {}
+    shards = sorted(set(served) | set(subscribed), key=str)
+    if not shards:
+        return "-"
+    return " ".join(
+        f"{i}:{served.get(i, 0)}/{subscribed.get(i, 0)}" for i in shards
+    )
+
+
 def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     """The once-a-minute socket line, including #837's coverage ratio.
 
@@ -118,7 +143,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     """
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
-        "%d msgs | coverage shards=%d/%d served=%d/%d "
+        "%d msgs | coverage shards=%d/%d served=%d/%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -126,6 +151,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         ws_stats.get("shards_connected", 0), ws_stats.get("shards", 0),
         ws_stats.get("assets_served", 0),
         ws_stats.get("assets_subscribed", 0),
+        _shard_coverage_field(ws_stats),
         blend["stamped"], blend["no_reading"],
         blend["throttled"], blend["errors"],
     )
