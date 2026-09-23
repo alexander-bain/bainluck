@@ -648,18 +648,68 @@ def resolved_home_from_score(home_score: int, away_score: int) -> float:
     return 0.5
 
 
-def _identity_matches(our_home, our_away, espn_home, espn_away) -> bool:
+def _is_soccer(sport_key) -> bool:
+    return bool(sport_key) and str(sport_key).startswith("soccer")
+
+
+def _soccer_same_club_by_identity(ours, espn) -> bool:
+    """One soccer club under two spellings, proven by IDENTITY — nothing looser.
+
+    #8190: ``names_match("PSG", "Paris Saint-Germain")`` is False (no shared
+    token, below the suffix floor), so a settled Marseille-vs-PSG row holding
+    the correct id on the correct slate read as ``espn_id_drifted`` and was
+    prescribed a linkage repair that would have CORRUPTED it.
+
+    Two readings, and deliberately only two:
+
+    * the two names are EQUAL after the soccer alias tables (the whole-name
+      table is keyed on the full token tuple — a statement about one name);
+    * one side is a one-token initialism of the other (``psg`` = p-s-g).
+
+    NOT the subset tier of ``soccer_team_matches``. That tier elects
+    ``Manchester`` -> ``Manchester United`` and ``Inter`` -> ``Inter Miami``
+    (Codex's falsifier on the first candidate), which is harmless where the
+    matcher pairs whole fixtures and wrong here, where a hit elects a REPAIR
+    TARGET. A squad marker on one side only (``Paris Saint-Germain W``) refuses
+    without a guard of its own: both readings compare the marker as a token, so
+    it breaks the equality and adds a letter to the initials.
+    """
+    from app.utils.soccer_team_matching import (
+        CLUB_FORM_TOKENS,
+        _initials_match,
+        club_alias_tokens,
+    )
+
+    a, b = club_alias_tokens(ours), club_alias_tokens(espn)
+    if not (set(a) - CLUB_FORM_TOKENS) or not (set(b) - CLUB_FORM_TOKENS):
+        return False
+    return a == b or _initials_match(a, b) or _initials_match(b, a)
+
+
+def _side_matches(ours, espn, predicate, sport_key) -> bool:
+    """One side of the fixture: ``predicate``, or — soccer only — identity."""
+    if predicate(ours or "", espn or ""):
+        return True
+    return _is_soccer(sport_key) and _soccer_same_club_by_identity(ours, espn)
+
+
+def _identity_matches(our_home, our_away, espn_home, espn_away, *, sport_key=None) -> bool:
     """Does this ESPN game describe the SAME fixture as our event?
 
     Guards the case the census found: an ``espn_id`` pointing at a different game.
     Without this, "repair" would import a wrong score instead of removing one.
+
+    Per side and in orientation: home against home, away against away. A soccer
+    ``sport_key`` adds :func:`_soccer_same_club_by_identity` as a second reading
+    of each side (#8190); every other sport, and ``None``, is the exact old
+    predicate.
     """
     from app.utils.name_normalization import names_match
 
     if not (espn_home and espn_away):
         return False
-    return bool(
-        names_match(our_home or "", espn_home) and names_match(our_away or "", espn_away)
+    return _side_matches(our_home, espn_home, names_match, sport_key) and _side_matches(
+        our_away, espn_away, names_match, sport_key
     )
 
 
@@ -832,7 +882,9 @@ def _names_match_strict(a: str, b: str) -> bool:
     return len(shorter) >= 4 and len(sw) < len(lw) and lw[-len(sw):] == sw
 
 
-def same_fixture_games(home_team_name, away_team_name, board, game_date=None) -> list:
+def same_fixture_games(
+    home_team_name, away_team_name, board, game_date=None, *, sport_key=None
+) -> list:
     """Every game on the slate WE ALREADY FETCHED that is OUR fixture, strictly.
 
     This is the second signal gotcha #53 demands, and it costs nothing: the
@@ -846,6 +898,12 @@ def same_fixture_games(home_team_name, away_team_name, board, game_date=None) ->
       never proposed as the game a row "actually is";
     * date — the caller's own ET game date, so a board that happens to carry more
       than one day cannot contribute a candidate from the wrong one.
+
+    A soccer ``sport_key`` lets a side that fails the strict predicate pass on
+    :func:`_soccer_same_club_by_identity` instead (#8190) — equality after the
+    alias tables or an initialism, never a subset, so it stays strict enough to
+    elect a target. Two identity-matched games on one slate are still two, and
+    the callers still refuse to pick between them.
     """
     out = []
     for g in board or []:
@@ -853,10 +911,16 @@ def same_fixture_games(home_team_name, away_team_name, board, game_date=None) ->
             game_date, getattr(g, "date", None)
         ):
             continue
-        if _names_match_strict(
-            home_team_name, _espn_team_name(getattr(g, "home_team", None))
-        ) and _names_match_strict(
-            away_team_name, _espn_team_name(getattr(g, "away_team", None))
+        if _side_matches(
+            home_team_name,
+            _espn_team_name(getattr(g, "home_team", None)),
+            _names_match_strict,
+            sport_key,
+        ) and _side_matches(
+            away_team_name,
+            _espn_team_name(getattr(g, "away_team", None)),
+            _names_match_strict,
+            sport_key,
         ):
             out.append(g)
     return out
@@ -870,6 +934,7 @@ def classify_espn_link(
     home_team_name,
     away_team_name,
     board,
+    sport_key=None,
 ) -> tuple[str, object, str]:
     """Which FIELD is wrong — the score, or the ``espn_id`` that names the game?
 
@@ -879,6 +944,9 @@ def classify_espn_link(
 
     Only ``LINK_PROVEN`` may proceed to a score comparison. Everything else is a
     linkage finding and is reported with the linkage remedy.
+
+    ``sport_key`` enables the soccer identity reading (#8190); ``None`` keeps the
+    exact legacy predicate.
 
     THE DOUBLEHEADER ARM IS NOT DECORATION. Both games of a doubleheader sit on
     the same slate with the same two teams, so ``espn_date_matches`` passes and
@@ -891,7 +959,9 @@ def classify_espn_link(
     """
     by_id = {str(g.espn_id): g for g in (board or []) if getattr(g, "espn_id", None) is not None}
     held = by_id.get(str(espn_id))
-    sibs = same_fixture_games(home_team_name, away_team_name, board, game_date)
+    sibs = same_fixture_games(
+        home_team_name, away_team_name, board, game_date, sport_key=sport_key
+    )
 
     if held is None:
         if len(sibs) == 1:
@@ -928,6 +998,7 @@ def classify_espn_link(
         away_team_name,
         _espn_team_name(getattr(held, "home_team", None)),
         _espn_team_name(getattr(held, "away_team", None)),
+        sport_key=sport_key,
     ):
         return (
             ESPN_ID_DRIFTED,
@@ -1153,6 +1224,7 @@ async def repair(
                 home_team_name=r.home_team_name,
                 away_team_name=r.away_team_name,
                 board=board,
+                sport_key=sport_key,
             )
             if verdict != LINK_PROVEN:
                 held = by_id.get(str(r.espn_id))
@@ -1165,6 +1237,7 @@ async def repair(
                 elif not _identity_matches(
                     r.home_team_name, r.away_team_name,
                     _espn_team_name(held.home_team), _espn_team_name(held.away_team),
+                    sport_key=sport_key,
                 ):
                     stats["identity_blocked"] += 1
                     action = "skip_identity_mismatch"
