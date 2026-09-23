@@ -401,6 +401,7 @@ export default function EventConceptPage() {
         marketsTracked={marketsTracked(data)}
         nav={nav}
         fallbackName={decodedKey}
+        nextEdition={data.competition?.next_edition}
       />
 
       {/* Same-day live feature (2026-07-19): AI live-commentary box — TOP of page,

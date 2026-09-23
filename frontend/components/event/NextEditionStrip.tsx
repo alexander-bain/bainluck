@@ -17,7 +17,15 @@
 //
 // Honest-empty (ruling 027): no next edition → no strip.
 
+import { formatEditionWindow, daysUntil } from "@/lib/eventConceptDisplay";
 import type { EventConceptResponse } from "@/lib/types";
+
+// #8139 (ux/1455): these two moved to `lib/eventConceptDisplay` so the concept
+// HEADER can print the same edition window when a standing competition has no
+// dates of its own — one date grammar for both surfaces, not two (notice 35).
+// Re-exported here because this component was their home and callers import
+// them from it; the implementations are unchanged.
+export { formatEditionWindow, daysUntil };
 
 interface NextEditionStripProps {
   competition: EventConceptResponse["competition"];
@@ -25,52 +33,6 @@ interface NextEditionStripProps {
   // upcoming edition already IS the next edition, and telling a reader watching
   // the Masters that the Masters returns in April is nonsense.
   settled: boolean;
-}
-
-/** "April 8–11, 2027" · "April 8, 2027" · "December 30, 2026 – January 2, 2027". */
-export function formatEditionWindow(
-  startISO: string | null | undefined,
-  endISO: string | null | undefined,
-): string | null {
-  const start = parseISODate(startISO);
-  if (!start) return null;
-  const end = parseISODate(endISO) ?? start;
-  const month = (d: Date) => d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
-  const day = (d: Date) => d.getUTCDate();
-  if (start.getTime() === end.getTime()) {
-    return `${month(start)} ${day(start)}, ${start.getUTCFullYear()}`;
-  }
-  if (start.getUTCFullYear() !== end.getUTCFullYear()) {
-    return `${month(start)} ${day(start)}, ${start.getUTCFullYear()} – ${month(end)} ${day(
-      end,
-    )}, ${end.getUTCFullYear()}`;
-  }
-  if (start.getUTCMonth() !== end.getUTCMonth()) {
-    return `${month(start)} ${day(start)} – ${month(end)} ${day(end)}, ${end.getUTCFullYear()}`;
-  }
-  return `${month(start)} ${day(start)}–${day(end)}, ${end.getUTCFullYear()}`;
-}
-
-/**
- * Whole days from `now` until the edition starts, or null when that is not a
- * forward-looking number. The countdown is computed HERE, in the client, and
- * never read off the payload: the envelope is mirrored for up to 24h and served
- * stale on a miss, so a server-stamped "240 days" would be wrong for most of the
- * life of the response it rode in on (the gotcha #118 shape — a number with no
- * window is not a measurement).
- */
-export function daysUntil(startISO: string | null | undefined, now: Date): number | null {
-  const start = parseISODate(startISO);
-  if (!start) return null;
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const days = Math.round((start.getTime() - today) / 86_400_000);
-  return days > 0 ? days : null;
-}
-
-function parseISODate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  const ms = Date.parse(`${value.slice(0, 10)}T00:00:00Z`);
-  return Number.isNaN(ms) ? null : new Date(ms);
 }
 
 export default function NextEditionStrip({ competition, settled }: NextEditionStripProps) {
