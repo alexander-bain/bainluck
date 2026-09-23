@@ -975,12 +975,13 @@ _REPAIRS = {
     # 🔴 #7701 rung 1: `status_scope` (`open` default | `not_open`) points the
     # PAGER at the exact complement `_out_of_scope_legs` counts — measured
     # 2026-09-21 at 25,469 legs / 25,402 markets while the writable `open`
-    # cohort measured 0. It is READ-ONLY and an apply against it is refused BY
-    # NAME (`STATUS_SCOPE_APPLY_REFUSED`), for two independent reasons: Gamma's
-    # retention edge for RESOLVED markets is unmeasured, so a drain across it
-    # would count the purged tail `not_at_venue` and stop — indistinguishable
-    # from a finished drain — and this rail stages no undo receipt, which is not
-    # a thing to debut on 25,469 rows. `band=MIN-MAX` (two ages in days over
+    # cohort measured 0. #7701 rung 3b made it WRITABLE, having paid both of the
+    # reasons it was read-only: Gamma's retention edge was measured on production
+    # 2026-09-23 and there is none (six bands x 120 legs, `not_at_venue: 0`
+    # throughout, youngest slice as the transport control), and the rail now
+    # stages an undo receipt inside the write's own transaction — no receipt, no
+    # write. Restore with `?undo_identity=<id>&apply=true`; every apply prints
+    # the command in its own response (D51(b)). `band=MIN-MAX` (two ages in days over
     # `fm.resolution_date`, youngest edge first) is how that bound gets read: one
     # call samples one age slice and its `not_at_venue` IS that slice's retention
     # reading. A banded page NEVER reports `scan_exhausted` — `band_exhausted` is
