@@ -595,7 +595,24 @@ export function stripCardTitleHead(
   }
   if (cut < 0) return raw;
 
-  const rest = raw.slice(cut).replace(/^[\s:,;–—-]+/, "");
+  // `?` IS A SEPARATOR HERE, AND ONLY HERE (#2096's residual). `name` is matched
+  // with its trailing `?` already removed — the heading prints without one — so a
+  // backend string that spliced the title WITH its mark leaves that mark as the
+  // first character of `rest`, where the capitalisation below promotes it to the
+  // first character of the sentence the reader reads:
+  //
+  //     backend  "Saudi Arabia military action against Yemen? resolves within a month"
+  //     heading  "Saudi Arabia military action against Yemen?"
+  //     printed  "? resolves within a month"
+  //
+  // Photographed at 390px on production /categories/geopolitics 2026-09-22.
+  // `feed_reasons._market_name_as_subject` is the real repair and removes the
+  // mark at the source; this is the belt, because the cut is only ever one
+  // character from the title the reader has already read, so a `?` in this exact
+  // position is always that title's own punctuation and never a word of copy.
+  // Still a pure DELETION (ruling 003) — it can shorten this string and can
+  // never mint one.
+  const rest = raw.slice(cut).replace(/^[\s:,;?–—-]+/, "");
   // Nothing but the heading: the caller falls through to its next candidate
   // rather than printing an empty badge or a blank caption line.
   if (!rest) return "";

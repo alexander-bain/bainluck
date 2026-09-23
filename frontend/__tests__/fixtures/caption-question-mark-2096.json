@@ -1,0 +1,505 @@
+{
+ "captured": "2026-09-22 (production GET /api/feed, six surfaces)",
+ "findings": [
+  60653756,
+  59133792,
+  61300653,
+  61300917,
+  61433291,
+  59699944
+ ],
+ "controls": [
+  112894,
+  62003056,
+  113212,
+  21003185,
+  61398391,
+  61615944,
+  61300958,
+  61441989
+ ],
+ "items": [
+  {
+   "type": "futures",
+   "score": 43,
+   "reason": "How low will the 30Y US Treasury yield get by Sep 30, 2026? resolves within a month",
+   "headline": "How low will the 30Y US Treasury yield get by Sep 30, 2026 resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 60653756,
+    "name": "How low will the 30Y US Treasury yield get by Sep 30, 2026?",
+    "resolution_date": "2026-09-30T19:30:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 227003200,
+      "name": "5.23% or below",
+      "probability": 0.495,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 50
+     },
+     {
+      "id": 227003201,
+      "name": "5.22% or below",
+      "probability": 0.43,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 43
+     },
+     {
+      "id": 227003202,
+      "name": "5.21% or below",
+      "probability": 0.34,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 34
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 72,
+   "reason": "\"Digger\" Rotten Tomatoes Score? resolves within a month",
+   "headline": "\"Digger\" Rotten Tomatoes Score resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 59133792,
+    "name": "\"Digger\" Rotten Tomatoes Score?",
+    "resolution_date": "2026-10-05T23:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 219577329,
+      "name": "60+",
+      "probability": 0.298,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 30
+     },
+     {
+      "id": 219577331,
+      "name": "75+",
+      "probability": 0.085,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 9
+     },
+     {
+      "id": 219577332,
+      "name": "80+",
+      "probability": 0.08,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 8
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 77,
+   "reason": "Saudi Arabia military action against Yemen? resolves within a month",
+   "headline": "Saudi Arabia military action against Yemen resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 61300653,
+    "name": "Saudi Arabia military action against Yemen?",
+    "resolution_date": "2026-09-30T20:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 230771115,
+      "name": "September 24",
+      "probability": 0.715,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 72
+     },
+     {
+      "id": 230771110,
+      "name": "September 26",
+      "probability": 0.71,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 71
+     },
+     {
+      "id": 230771111,
+      "name": "September 30",
+      "probability": 0.66,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 66
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 77,
+   "reason": "Houthi military action against Saudi Arabia? resolves within a month",
+   "headline": "Houthi military action against Saudi Arabia resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 61300917,
+    "name": "Houthi military action against Saudi Arabia?",
+    "resolution_date": "2026-09-30T20:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 230749273,
+      "name": "September 24",
+      "probability": 0.64,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 64
+     },
+     {
+      "id": 230749275,
+      "name": "September 26",
+      "probability": 0.62,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 62
+     },
+     {
+      "id": 230749276,
+      "name": "September 27",
+      "probability": 0.5,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 50
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 69,
+   "reason": "Greenland deal text released? resolves within a month",
+   "headline": "Greenland deal text released resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 61433291,
+    "name": "Greenland deal text released?",
+    "resolution_date": "2026-10-01T03:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 231281568,
+      "name": "September 30",
+      "probability": 0.835,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 84
+     },
+     {
+      "id": 231281567,
+      "name": "September 23",
+      "probability": 0.405,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 41
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 81,
+   "reason": "How many times will Donald Trump visit Trump Bedminster in Sep 2026? resolves within a month",
+   "headline": "How many times will Donald Trump visit Trump Bedminster... resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 59699944,
+    "name": "How many times will Donald Trump visit Trump Bedminster in Sep 2026?",
+    "resolution_date": "2026-09-30T14:00:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 226018339,
+      "name": "1",
+      "probability": 0.93,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 93
+     },
+     {
+      "id": 226018338,
+      "name": "2",
+      "probability": 0.08,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 8
+     },
+     {
+      "id": 226018340,
+      "name": "3",
+      "probability": 0.02,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 2
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 82,
+   "reason": "Xi Jinping out before 2027: 4% chance, down 4.2 points since Feb 19",
+   "headline": "Down 4.2 points since Feb 19",
+   "context_summary": "4% chance, down 4.2 points since Feb 19",
+   "data": {
+    "id": 112894,
+    "name": "Xi Jinping out before 2027?",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 1625874,
+      "name": "Yes",
+      "probability": 0.0425,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 4
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Big odds movement in Will Ukraine target Moscow?",
+   "headline": "Will Ukraine target Moscow resolves within a month",
+   "context_summary": "Resolves within a month",
+   "data": {
+    "id": 62003056,
+    "name": "Will Ukraine target Moscow?",
+    "resolution_date": "2026-09-30T20:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 234087317,
+      "name": "September 28",
+      "probability": 0.2902,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 29
+     },
+     {
+      "id": 234081378,
+      "name": "September 30",
+      "probability": 0.2863,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 29
+     },
+     {
+      "id": 234087316,
+      "name": "September 24",
+      "probability": 0.1412,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 14
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Ukraine signs peace deal with Russia before 2027: 8% chance, down 22.5 points since Feb 19",
+   "headline": "Down 22.5 points since Feb 19",
+   "context_summary": "8% chance, down 22.5 points since Feb 19",
+   "data": {
+    "id": 113212,
+    "name": "Ukraine signs peace deal with Russia before 2027?",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 1628849,
+      "name": "Yes",
+      "probability": 0.075,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 8
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Russia x Ukraine ceasefire by December 31, 2026: 13% chance, down 21 points since May 16",
+   "headline": "Down 21 points since May 16",
+   "context_summary": "13% chance, down 21 points since May 16",
+   "data": {
+    "id": 21003185,
+    "name": "Russia x Ukraine ceasefire by December 31, 2026?",
+    "resolution_date": "2026-12-31T00:00:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 110562379,
+      "name": "No",
+      "probability": 0.865,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 87
+     },
+     {
+      "id": 110562378,
+      "name": "Yes",
+      "probability": 0.135,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 13
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "Saudi-Houthi ceasefire agreement announced? has shifted since Sep 18",
+   "headline": "Saudi-Houthi ceasefire agreement announced shifted since Sep 18",
+   "context_summary": "Shifted since Sep 18",
+   "data": {
+    "id": 61398391,
+    "name": "Saudi-Houthi ceasefire agreement announced?",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 231176849,
+      "name": "October 31",
+      "probability": 0.265,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 27
+     },
+     {
+      "id": 231176850,
+      "name": "September 30",
+      "probability": 0.08,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 8
+     },
+     {
+      "id": 231176851,
+      "name": "September 23",
+      "probability": 0.005,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 1
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 95,
+   "reason": "US x Iran ceasefire continues through November 30: Up 10.5 points today \u2014 now 59% chance",
+   "headline": "Up 10.5 points today",
+   "context_summary": "Up 10.5 points today \u2014 now 59% chance",
+   "data": {
+    "id": 61615944,
+    "name": "US x Iran ceasefire continues through November 30?",
+    "resolution_date": "2026-10-31T23:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 232135228,
+      "name": "Yes",
+      "probability": 0.585,
+      "rank": 1,
+      "movement": 0.10499999999999998,
+      "rendered_percent": 59
+     },
+     {
+      "id": 232135229,
+      "name": "No",
+      "probability": 0.415,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 41
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 92,
+   "reason": "Big odds movement in Houthi x Saudi Arabia effective ceasefire begins by...? (2 week pause)",
+   "headline": "Big odds movement",
+   "context_summary": "Big odds movement",
+   "data": {
+    "id": 61300958,
+    "name": "Houthi x Saudi Arabia effective ceasefire begins by...? (2 week pause)",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 230777128,
+      "name": "October 31",
+      "probability": 0.42,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 42
+     },
+     {
+      "id": 230777129,
+      "name": "September 30",
+      "probability": 0.285,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 29
+     },
+     {
+      "id": 232135262,
+      "name": "September 23",
+      "probability": 0.02,
+      "rank": 3,
+      "movement": null,
+      "rendered_percent": 2
+     }
+    ]
+   }
+  },
+  {
+   "type": "futures",
+   "score": 92,
+   "reason": "Russia military action against EU country? has shifted since Sep 19",
+   "headline": "Russia military action against EU country shifted since Sep 19",
+   "context_summary": "Shifted since Sep 19",
+   "data": {
+    "id": 61441989,
+    "name": "Russia military action against EU country?",
+    "resolution_date": "2027-01-01T04:59:00+00:00",
+    "hook_description": null,
+    "top_outcomes": [
+     {
+      "id": 231340498,
+      "name": "December 31",
+      "probability": 0.185,
+      "rank": 1,
+      "movement": null,
+      "rendered_percent": 19
+     },
+     {
+      "id": 231340499,
+      "name": "September 30",
+      "probability": 0.02,
+      "rank": 2,
+      "movement": null,
+      "rendered_percent": 2
+     }
+    ]
+   }
+  }
+ ]
+}
