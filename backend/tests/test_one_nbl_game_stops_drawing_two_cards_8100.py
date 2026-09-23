@@ -41,12 +41,14 @@ ways this pass can go wrong and reach Alex, in both directions:
 * it widens the soccer populations #5918 and #5905 own, or takes something off
   the same-minute case #2866 already closed.
 
-WHAT IT DELIBERATELY DOES NOT CLOSE, pinned below so the next session does not
-believe the issue is finished: the two NPB pairs (`Hiroshima Carp` v
-`Hiroshima Toyo Carp`, `Yokohama BayStars` v `Yokohama DeNA BayStars`) are at
-the SAME minute and differ on NAMES. This pass keeps the strict key's exact
-squashed names, so it cannot reach them. That is #8100's proposal 2 and it is
-not shipped here.
+WHAT THIS PASS DELIBERATELY DOES NOT CLOSE, pinned below: the two NPB pairs
+(`Hiroshima Carp` v `Hiroshima Toyo Carp`, `Yokohama BayStars` v `Yokohama DeNA
+BayStars`) are at the SAME minute and differ on NAMES, and this pass keeps the
+strict key's exact squashed names. That is #8100's proposal 2. It HAS since
+shipped, as its own pass with its own census —
+`_merge_anchored_claim_name_variants`, guarded by
+`test_the_npb_league_page_stops_drawing_two_cards_8100.py` — so the arm below
+now asks THIS pass the question instead of asking the whole fold.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -54,7 +56,9 @@ from datetime import datetime, timedelta, timezone
 from app.utils.event_twin_fold import (
     ANCHORED_CLAIM_KICKOFF_DRIFT,
     SOCCER_KICKOFF_DRIFT,
+    _merge_anchored_claim_kickoffs,
     fold_twin_events,
+    twin_fold_key,
 )
 
 #: The measured kick-off of the production specimen, to the second.
@@ -313,15 +317,22 @@ def test_a_different_opponent_in_the_same_bucket_never_folds():
     assert len(result.events) == 2
 
 
-def test_a_name_variant_is_not_reached_and_that_is_on_purpose():
-    """🟡 THE NPB HALF OF #8100 IS NOT SHIPPED HERE.
+def test_the_clock_pass_still_cannot_reach_a_name_variant():
+    """🟡 THIS PASS WIDENS THE CLOCK ONLY, AND THAT IS STILL TRUE.
 
     `Hiroshima Carp` and `Hiroshima Toyo Carp` are one club and two rows, at the
-    same minute, and this pass keeps the strict key's EXACT squashed names. A
-    token-subset rule fleet-wide meets the `tennis_other` cluster first (~25
-    rows for one match, `Abe` v `Lu` beside `Hiromi Abe` v `Jia-Jing Lu`), so it
-    is its own ship with its own measurement. If this arm ever goes green,
-    somebody has widened the name rule and owes that measurement.
+    same minute. This pass keeps the strict key's EXACT squashed names, so it
+    cannot reach them and must not start to.
+
+    🔴 THE SUBJECT MOVED, AND THE ASSERTION DID NOT WEAKEN. Until #8100's second
+    half shipped, this arm asked `fold_twin_events` — the whole fold — because
+    no pass in it could reach a name variant, so the front door was a faithful
+    proxy for this one. `_merge_anchored_claim_name_variants` now closes exactly
+    this specimen through that same front door (the NPB suite is where that ship
+    is proven), so the proxy became a confound: asked end to end, this arm would
+    now be reporting the new pass's behaviour under the old pass's name. It is
+    asked of the clock pass directly instead. If IT ever folds a name variant,
+    somebody has merged the two licences without the census for the composition.
     """
     claim = _Row(15313545, home="Hiroshima Carp", away="Yomiuri Giants")
     anchored = _Row(
@@ -330,10 +341,14 @@ def test_a_name_variant_is_not_reached_and_that_is_on_purpose():
         away="Yomiuri Giants",
         external_id="3dee8218",
     )
+    groups = {}
+    for row in (claim, anchored):
+        groups.setdefault(twin_fold_key(row), []).append(row)
+    assert len(groups) == 2, "the strict key splits them on the NAME"
 
-    result = fold_twin_events([claim, anchored])
-
-    assert len(result.events) == 2
+    assert (
+        _merge_anchored_claim_kickoffs(groups) is groups
+    ), "the clock half of #8100 has no name rule and must merge nothing here"
 
 
 def test_a_chain_of_three_is_discarded_whole():

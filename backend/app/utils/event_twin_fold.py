@@ -669,6 +669,18 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             "twin fold: anchored-claim merge failed; serving strict groups"
         )
 
+    # #8100 second half — the same licence, asked about the NAMES instead of the
+    # clock. It sits after the clock pass only because a merge can make a group
+    # more anchored and never less; the two populations do not overlap (that pass
+    # needs the names identical, this one needs the minute identical), so the
+    # order is a reading order and not a dependency.
+    try:
+        groups = _merge_anchored_claim_name_variants(groups)
+    except Exception:  # noqa: BLE001 — gotcha #42; the groups above are today's
+        logger.exception(
+            "twin fold: anchored-claim name merge failed; serving strict groups"
+        )
+
     # #5918 — the strict key has now grouped every pair that SPELLS its clubs the
     # same way. The soccer pass below is the only thing that can reach a pair
     # that NAMES them differently, and it runs on the groups rather than on the
@@ -998,9 +1010,7 @@ def _season_variant_clusters(
         variant[key] = _group_has_season_variant(members)
 
     eligible = [
-        key
-        for key in bucket_keys
-        if collapsible[key] and variant[key] is not None
+        key for key in bucket_keys if collapsible[key] and variant[key] is not None
     ]
     if len(eligible) < 2:
         return []
@@ -1289,6 +1299,323 @@ def _anchored_claim_clusters(
             for right in members[i + 1 :]
         ):
             out.append(members)
+    return out
+
+
+def _name_tokens(name: Optional[str]) -> frozenset:
+    """The WORDS of a team name, diacritic-free and lowercased.
+
+    The same normalisation :func:`_squash` applies, stopped one step earlier: it
+    keeps the word boundaries instead of deleting them, so `Hiroshima Toyo Carp`
+    is `{hiroshima, toyo, carp}` rather than `hiroshimatoyocarp`.
+
+    NOT :func:`app.utils.soccer_team_matching.club_alias_tokens`, which is the
+    tokenizer the soccer pass uses. That one also applies two soccer alias tables
+    and strips club-form words, and both of those are statements about football
+    clubs that nobody has measured on `baseball_npb` or `basketball_wncaab`. This
+    pass runs on every sport, so it uses the plainest rule there is — and the
+    plain rule is the one the #8100 census below was taken with, which is the
+    whole reason to prefer it. :func:`_names_a_different_squad` still gets the
+    alias tokenizer, because the marker it looks for is a soccer marker.
+    """
+    return frozenset(_NON_ALNUM.sub(" ", strip_diacritics(name or "").lower()).split())
+
+
+def _one_club_named_twice(left: Optional[str], right: Optional[str]) -> bool:
+    """Is one of these two names the other's, with extra words? #8100.
+
+    `Hiroshima Carp` ⊆ `Hiroshima Toyo Carp`; `Tottenham` ⊆ `Tottenham Hotspur`;
+    `Atletico` ⊆ `Atlético Madrid`. A SET containment in either direction, so
+    which provider wrote the longer form does not matter, and equality of the
+    token sets counts — `Long Beach State Beach` and `Long Beach State Dirtbags`
+    reach each other only because the repeated word collapses, and two spellings
+    that differ only in word ORDER are one club by the same reading.
+
+    The empty-token branch is a PRECONDITION, not a control, and is stated that
+    way because mutation says so: deleting it changes no test.
+    :func:`twin_fold_key` returns ``None`` for a row whose squashed name is
+    empty, so such a row is never keyed, never grouped and never reaches this
+    function — the branch is unreachable from :func:`fold_twin_events`. It is
+    kept for a direct caller, since an empty set is a subset of everything and
+    the answer would otherwise be ``True``.
+
+    THIS PREDICATE IS NOT SAFE ON ITS OWN AND IS NEVER ASKED ON ITS OWN.
+    `Georgia` ⊆ `West Georgia` and `Florida` ⊆ `North Florida` are both true, and
+    production holds the pair that proves it: `14706238` *Georgia v Florida* and
+    `14707767` *West Georgia v North Florida*, same league, same minute
+    (2026-05-14 22:05Z), asymmetric provenance, no score on either row and no
+    `espn_id` conflict — so neither of this module's objective controls refuses
+    it. It is two real games. :func:`_anchored_claim_name_clusters` is what keeps
+    that pair apart, by refusing to ask this question about BOTH sides of a
+    fixture at once; see its docstring, which is where the licence lives.
+    """
+    left_tokens = _name_tokens(left)
+    right_tokens = _name_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    # `issubset`, not `<=`, and the spelling is load-bearing. CodeQL raised
+    # `py/redundant-comparison` on `a <= b or b <= a` because for a TOTAL order
+    # that disjunction is a tautology — which is exactly how a human skims it
+    # too, and the "simplification" it invites is `return True`. Sets are a
+    # PARTIAL order, so the disjunction is the whole rule: `{hiroshima, carp}`
+    # and `{yokohama, baystars}` satisfy neither side. The mutation sweep kills
+    # both the one-directional and the equality narrowings, so the two arms are
+    # each doing work; this spells that out where the reader is, rather than
+    # leaving a static analyser's "redundant" label sitting on the licence.
+    return left_tokens.issubset(right_tokens) or right_tokens.issubset(left_tokens)
+
+
+def _merge_anchored_claim_name_variants(groups: dict[tuple, list]) -> dict[tuple, list]:
+    """Merge an id-less claim onto the anchored row it names, spelled longer. #8100.
+
+    THE SHIP. `bainluck.com/sports/baseball_npb` at 390px, 2026-09-23 00:5xZ,
+    served tomorrow's Carp game as two adjacent cards with two different answers
+    — `Hiroshima Toyo Carp 54% / Yomiuri Giants 46%` directly above `Hiroshima
+    Carp 56% / Yomiuri Giants 44%` — and the BayStars game the same way
+    (`Yokohama BayStars 61%` above `Yokohama DeNA BayStars 60%`). Same league,
+    the SAME MINUTE, one club named two ways. `/api/leagues/baseball_npb` →
+    `upcoming_games` carries all four rows; frame in
+    `artifacts-lane1-606/BEFORE-npb-league-8100.png`.
+
+    THIS IS #8100's SECOND PROPOSAL AND THE OTHER HALF OF ITS FIRST.
+    :func:`_merge_anchored_claim_kickoffs` widened the CLOCK and kept the names
+    exact; this widens the NAMES and keeps the clock exact — element 3 of the
+    strict key, untouched, which is why the two passes cannot reach each other's
+    population and why neither inherits the other's bound. Both take the same
+    licence, and that is the finding this pass exists on rather than a
+    convenience: the PROVENANCE ASYMMETRY carries the name question too.
+
+    THE MEASUREMENT #8100 ASKED FOR, AND IT ANSWERS THE OBJECTION IN THE ISSUE.
+    The issue's reason for not building this was that "a token-subset rule
+    applied fleet-wide meets the `tennis_other` cluster first" — ~25 rows for one
+    match at one instant, `Abe v Lu` beside `Hiromi Abe v Jia-Jing Lu`. Taken on
+    production 2026-09-23 00:5x–01:2xZ over the WHOLE `events` table, all time,
+    every sport, counting adjacent pairs inside one `(sport_id, minute)` bucket
+    whose names are token-subset related, split by whether the two sides agree
+    about carrying a provider id:
+
+        BOTH sides differ        3,810 pairs      135 asymmetric
+          of which tennis_other  3,111 pairs        0 asymmetric
+          of which tennis_atp      687 pairs      127 asymmetric
+          of which esports           0 pairs        0 asymmetric
+        ONE side IDENTICAL         251 pairs       22 asymmetric
+
+    The asymmetry refuses the entire `tennis_other` cluster — 3,111 pairs, not
+    one of them asymmetric — so the thing the issue could not bound is bounded by
+    the licence and not by a sport name, exactly as the 954 id-less `esports`
+    pairs were on the clock half.
+
+    AND THEN THE NARROWER SHAPE IS TAKEN ANYWAY, BECAUSE THE ASYMMETRY IS NOT
+    ENOUGH BY ITSELF. Of the 135 asymmetric both-sides pairs, 134 are one fixture
+    named two ways (127 are `tennis_atp` surname-versus-full-name, `Zhang v
+    Pinnington Jones` beside `Zhizhen Zhang v Jack Pinnington Jones`) and ONE is
+    two real games: the `West Georgia v North Florida` / `Georgia v Florida` pair
+    quoted in :func:`_one_club_named_twice`. One measured false fold is one too
+    many when the alternative costs nothing the ship needs, so this pass requires
+    ONE SIDE TO BE SQUASH-IDENTICAL and lets the token rule adjudicate only the
+    other. All 22 asymmetric pairs in that population were read by hand and all
+    22 are one fixture; both NPB pairs are in it and the `West Georgia` pair is
+    structurally out of reach rather than merely absent.
+
+    AND IT IS OFF IN SOCCER, WHICH IS A COLLISION RULE AND NOT A HAZARD RULE.
+    `_merge_soccer_name_variants` is already a token-subset rule with its own
+    measured bound and its own non-clique rescue, and it reaches every one of
+    the twelve soccer pairs in the census above. Two owners on one question cost
+    #6047's page; the skip and the measurement behind it are in the loop below.
+
+    WHY "ONE SIDE EXACT" IS A LICENCE AND NOT A THRESHOLD. Exact agreement on one
+    club is independent corroboration that survives the name rule being wrong.
+    Two genuinely different games that agree on a league, on the exact minute and
+    on one team EXACTLY would be that team playing two fixtures at one instant,
+    which is not a thing; two games that agree on a league and a minute and
+    nothing else — the both-sides case — is `West Georgia v North Florida`. So
+    the pass does not weigh how alike the names are; it asks for a fact the names
+    cannot fake, and only then reads the names.
+
+    NOTHING HERE WRITES, ABSORBS, OR TOUCHES THE REGISTRY. Both rows stay in the
+    table and stay correct — they exist because ruling 048 / gotcha #32 make an
+    id-less Polymarket-minted row unable to absorb the later `odds_api` claim,
+    which is the same story #8100's first half records. Loosening absorption was
+    put to Alex on 2026-08-20 and REJECTED.
+
+    It runs immediately after :func:`_merge_anchored_claim_kickoffs`, on the same
+    dict, for the same reason that pass runs on one: same shape of step. Order
+    between the two does not change any outcome — the clock pass only ever makes
+    a group hold MORE rows and this pass reads anchoring and names, both of which
+    a merge can only strengthen — and it is written this way round so the soccer
+    pass downstream still receives a dict keyed the way it expects. With nothing
+    to merge the same object is handed back, so a caller whose page holds no such
+    pair gets byte-identical behaviour to before #8100.
+    """
+    buckets: dict[tuple, list[tuple]] = {}
+    for key in groups:
+        # THE BUCKET IS THE STRICT KEY'S OWN CLOCK — league and exact minute.
+        # This pass widens names only; the drift question is the sibling's.
+        buckets.setdefault((key[0], key[3]), []).append(key)
+
+    merged_into: dict[tuple, tuple] = {}
+    for bucket_keys in buckets.values():
+        if len(bucket_keys) < 2:
+            continue
+        sport_key = loaded_sport_key(_group_representative(groups[bucket_keys[0]]))
+        if not sport_key or sport_key.startswith("soccer"):
+            # SOCCER ALREADY HAS A NAME PASS, AND A SECOND ONE MAKES THAT PAGE
+            # WORSE RATHER THAN BETTER. Measured: all twelve soccer pairs in the
+            # census above are reached by `soccer_pair_matches` today, so this
+            # pass has nothing to add there — and it has something to BREAK.
+            # #6047's La Liga triple is `Athletic Bilbao v Alavés` (anchored),
+            # `Athletic Club v Alaves` and `Bilbao v Alaves` (both id-less); the
+            # rule here folds the anchored row with `Bilbao` (a token subset,
+            # asymmetric, home side exact) and leaves `Athletic Club` outside,
+            # whereupon the soccer pass reads the merged group by its lowest-id
+            # member — `Bilbao` — and `Bilbao` ≡ `Athletic Club` is the one pair
+            # its name rule cannot make. The star rescue never fires and the
+            # reader gets two cards instead of one. Running this pass after the
+            # soccer one instead would be the other repair; it is not taken
+            # because there is no measured pair it would win.
+            #
+            # An unloaded `Event.sport` is skipped for the same reason, fail
+            # closed: this pass cannot prove the bucket is not soccer. That
+            # branch is unreachable from `fold_twin_events`, which eager-loads.
+            continue
+        for cluster in _anchored_claim_name_clusters(bucket_keys, groups):
+            target = cluster[0]
+            for other in cluster[1:]:
+                merged_into[other] = target
+
+    if not merged_into:
+        return groups
+
+    out: dict[tuple, list] = {}
+    for key, members in groups.items():
+        target = merged_into.get(key, key)
+        if target in out:
+            out[target].extend(members)
+            continue
+        out[target] = list(members)
+    return out
+
+
+def _anchored_claim_name_clusters(
+    bucket_keys: list[tuple], groups: dict[tuple, list]
+) -> list[list]:
+    """Cliques of same-minute keys that are one fixture under the name licence.
+
+    FOUR REFUSALS, and each leaves both rows standing — two cards, today's
+    behaviour — rather than risking one card holding two games:
+
+    * :func:`_variant_group_is_collapsible` — a LIVE row is not folded. Measured
+      inert on this pass's population (every one of the 22 asymmetric pairs is
+      `scheduled`, `completed` or `closed`) and kept for the reason its two
+      sibling passes keep it: while a game is live, the asymmetry this can read
+      is outranked by one it cannot — which row's score is current — and electing
+      the stale copy shows a wrong score as the only score.
+    * THE PROVENANCE ASYMMETRY, which is the licence, and which refuses 3,675 of
+      the 3,810 measured pairs including all 3,111 of `tennis_other`.
+    * THE EXACT SIDE, which is the other half of the licence. `same_away ==
+      same_home` is the whole clause: both False is the both-sides case and is
+      where the one measured false fold lives, and both True is unreachable —
+      two keys agreeing on league, minute and BOTH squashed names are one key,
+      so the strict key never made them two groups.
+    * :func:`_objectively_different_games`, whose scoreline half is what refuses
+      a pair the names cannot tell apart.
+
+    THERE IS NO SQUAD REFUSAL HERE, AND ITS ABSENCE IS A FINDING RATHER THAN AN
+    OVERSIGHT. A reserve side's name is a strict token SUPERSET of its first
+    team's — `Ajax` ⊆ `Jong Ajax` — so :func:`_names_a_different_squad` looks
+    like exactly the guard this pass's name rule needs, and it was written in
+    before the soccer skip was. It is UNREACHABLE from here: `jong` and
+    `amateurs` are Dutch football markers, every football key begins `soccer`,
+    and this pass skips every one of them. An unreachable copy of a rule reads
+    as protection and is not protection — the same thing
+    :func:`_season_variant_clusters` deleted rather than kept as a decoration —
+    so it is gone, and the soccer skip is what actually answers the case.
+    (`soccer_pair_matches(('Feyenoord','Ajax'), ('Feyenoord','Jong Ajax'))` is
+    `True` on master, so the soccer pass has its own answer and this is not it.)
+
+    CHAINING IS REFUSED BY THE CLIQUE TEST, AND UNLIKE THE SIBLING PASS THAT IS
+    LOAD-BEARING HERE. :func:`_anchored_claim_clusters` could prove a surviving
+    cluster is always exactly two groups, because anchored and id-less are the
+    only two sides there are. That argument does NOT hold once the bucket is a
+    minute: production has one id-less esports row at 2026-04-21 21:30Z beside
+    THREE anchored Kalshi rows spelled `Outfit 49 (900FPSvsECO)`, so three pairs
+    are asymmetric, the three anchored-to-anchored pairs are not, and the clique
+    test discards the cluster whole. That is the right answer — a fold would have
+    had to choose which of three anchored rows the claim belongs to — and it is
+    the reason the test is here rather than an argument for removing it.
+    """
+    collapsible: dict[tuple, bool] = {}
+    anchored: dict[tuple, bool] = {}
+    names: dict[tuple, tuple] = {}
+    for key in bucket_keys:
+        members = groups[key]
+        collapsible[key] = _variant_group_is_collapsible(members)
+        anchored[key] = _group_is_id_anchored(members)
+        rep = _group_representative(members)
+        names[key] = (
+            getattr(rep, "away_team_name", None),
+            getattr(rep, "home_team_name", None),
+        )
+
+    eligible = [key for key in bucket_keys if collapsible[key]]
+    if len(eligible) < 2:
+        return []
+
+    def same_fixture(left: tuple, right: tuple) -> bool:
+        """The asymmetry, the exact side, the names and the evidence."""
+        # The asymmetry first: a dict lookup, and the clause that makes this pass
+        # legal at all. It alone refuses 96.5% of the measured population.
+        if anchored[left] == anchored[right]:
+            return False
+        # Elements 1 and 2 are the squashed away and home names the strict key
+        # already built, orientation kept. EXACTLY one of them must be equal.
+        same_away = left[1] == right[1]
+        same_home = left[2] == right[2]
+        if same_away == same_home:
+            return False
+        disputed = 1 if same_away else 0
+        if not _one_club_named_twice(names[left][disputed], names[right][disputed]):
+            return False
+        return not _objectively_different_games(groups[left], groups[right])
+
+    # Every key in a bucket shares element 3, so there is no time order to walk
+    # and no sliding window to have: the bucket IS the clock rule. Sorted on the
+    # two name elements purely so the surviving cluster's target does not depend
+    # on dict order — `_elect` picks the survivor, this only picks the label.
+    ordered = sorted(eligible, key=lambda key: (key[1], key[2]))
+    parent = {key: key for key in ordered}
+
+    def find(key: tuple) -> tuple:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for index, left in enumerate(ordered):
+        for right in ordered[index + 1 :]:
+            if same_fixture(left, right):
+                parent[find(right)] = find(left)
+
+    clusters: dict[tuple, list] = {}
+    for key in ordered:
+        clusters.setdefault(find(key), []).append(key)
+
+    out: list[list] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Clique or nothing — a merely connected chain is discarded whole.
+        if all(
+            same_fixture(left, right)
+            for i, left in enumerate(members)
+            for right in members[i + 1 :]
+        ):
+            out.append(members)
+        else:
+            logger.info(
+                "twin fold: refused a non-clique anchored-claim name cluster %s",
+                [names[key] for key in members],
+            )
     return out
 
 
