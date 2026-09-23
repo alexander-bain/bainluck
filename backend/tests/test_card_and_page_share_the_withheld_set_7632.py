@@ -503,6 +503,24 @@ class TestTheWireCarriesTheVerdictAndNotTheColumns:
 
         assert rebuilt.withheld_outcome_ids == [3, 5, 9]
 
+    def test_the_artifact_is_still_eligible_for_the_shared_cache(self):
+        """A nested list of ints is new for this payload — prove it passes.
+
+        `assert_plain_data` is what makes the artifact shareable across workers
+        at all. If the new column made it INELIGIBLE the failure would be
+        invisible to every other test here: the cache would simply never store,
+        `/api/feed` would rebuild on every request, and the only symptom would
+        be latency. So the gate is asserted directly rather than inferred from
+        a passing round trip.
+        """
+        from app.utils.principal_independent_cache import assert_plain_data
+
+        market = _market(1, "board", [_leg(1, "A", 0.5), _leg(2, "B", 0.5)])
+
+        assert_plain_data(to_plain([market], withheld_by_market={1: {2}}))
+        assert_plain_data(to_plain([market], withheld_by_market={1: set()}))
+        assert_plain_data(to_plain([market]))
+
     def test_a_market_absent_from_the_map_serializes_as_unknown_not_clean(self):
         """Gotcha #53: the honest answer to a builder bug is "I do not know"."""
         market = _market(1, "board", [_leg(1, "A", 0.5)])

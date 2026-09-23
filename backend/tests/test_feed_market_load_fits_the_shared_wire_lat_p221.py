@@ -421,7 +421,19 @@ NULL_RATE = 0.23
 #: market row, which is the whole check on this number: a scalar column is worth
 #: one node each and nothing else moved. The fixture derives its own shape from
 #: `fs.MARKET_COLUMNS`, so the constant is the only thing that needed a human.
-MEASURED_NODES = 188_653
+#: 2026-09-23, #7632: 188,653 -> 191,443. `withheld_outcome_ids` joins
+#: `DERIVED_MARKET_COLUMNS`, and it is THE FIRST DERIVED COLUMN THAT IS NOT A
+#: SCALAR — so unlike #7808's +1-per-market this one is worth 1 + len(list).
+#: Decomposed and checked rather than asserted: the fixture realises 700 list
+#: nodes + 2,090 int nodes = 2,790 exactly, on 104 of 700 markets carrying at
+#: least one id. That is the whole delta and nothing else moved.
+#:
+#: The realised mean is 2.99 ids per market against the 2.45 of the measured
+#: sample behind `_MEASURED_WITHHELD_COUNTS` — 104 non-empty of 700 (14.9%)
+#: where the sample had 12 of 87 (13.8%). That is this seed drawing slightly
+#: heavy, and it is left alone because it errs toward a HEAVIER artifact, which
+#: is the safe direction for a budget guard.
+MEASURED_NODES = 191_443
 
 #: The alarm fires BEFORE breakage, not at it. A guard that goes red at the
 #: moment the share stops working has told us nothing the latency would not
@@ -692,7 +704,12 @@ def _row_at_kinds(
         # fixture that left a column empty which production always fills, which
         # is the failure `_column_kinds` was written to stop, one column over.
         nulled = nullable[i] and rng.random() < NULL_RATE
-        if nulled and kind != "json":
+        # `ids` joins `json` in ignoring the verdict, and for the same censused
+        # reason (#7632): `withheld_outcome_ids` is `None` only for a board the
+        # builder could not GRADE, which its own per-market guard makes rare.
+        # Every other board carries a list, empty or not. Nulling 23% of them
+        # would be a fixture that leaves a column empty which production fills.
+        if nulled and kind not in ("json", "ids"):
             # A `None` is four bytes and no tag. Production rows are full of
             # them (no image, no hook, no closing line), so a fixture that
             # fills every nullable column is not a heavier version of the real
@@ -708,9 +725,41 @@ def _row_at_kinds(
             row.append(rng.randrange(1, 900_000))
         elif kind == "json":
             row.append(_metadata_at(_texty(rng, meta_budget)))
+        elif kind == "ids":
+            row.append(_withheld_ids_at(rng))
         else:
             row.append(_texty(rng, per_text))
     return row
+
+
+#: The MEASURED per-board withheld-leg counts (#7632), taken from the 87 futures
+#: cards `/api/feed?limit=250` actually served at 2026-09-23 06:09Z, each board's
+#: detail payload read by outcome id: 213 withheld legs over 1,303, i.e. 16.3% of
+#: legs, on 12 of 87 boards. The 75 boards that refuse nothing carry `[]`.
+#:
+#: ⚠️ THE HONEST BOUND ON THIS SAMPLE. It is the SERVED set — score-ranked — and
+#: the artifact covers the wider candidate pool, so the two populations are not
+#: proved identical. The sample is used as-is rather than scaled down because
+#: that is the conservative direction here: a fixture that under-sizes this
+#: column would pass a budget the real artifact then misses, which is the exact
+#: failure `_column_kinds` exists to prevent one column over. Re-measure if the
+#: withheld arms change.
+_MEASURED_WITHHELD_COUNTS: tuple[int, ...] = (
+    (0,) * 75 + (1, 1, 1, 1, 1, 11, 13, 13, 15, 15, 41, 100)
+)
+
+
+def _withheld_ids_at(rng: random.Random) -> list[int]:
+    """One board's `withheld_outcome_ids`, at the measured production shape.
+
+    Untagged ints in a list, which is what `to_plain` writes — the outcome ids
+    are real row ids, so they are drawn at the width production's ids actually
+    have rather than as small integers that would encode cheaper.
+    """
+    return [
+        rng.randrange(1, 900_000)
+        for _ in range(rng.choice(_MEASURED_WITHHELD_COUNTS))
+    ]
 
 
 #: The kinds of `DERIVED_MARKET_COLUMNS`, declared BY NAME because they are not
@@ -720,9 +769,13 @@ def _row_at_kinds(
 #: which is the whole reason the loaded kinds are introspected in the first
 #: place. `price_polled_at` is a `datetime`, and a datetime is a TAGGED value on
 #: this wire (~31 bytes of codec around it), so it must be measured as one.
+#: `withheld_outcome_ids` (#7632) is a LIST OF UNTAGGED INTS, the third kind on
+#: this row and the first that is not a scalar — so it is measured as one rather
+#: than approximated by an int, which would price a 100-element list as 5 bytes.
 _DERIVED_KINDS = {
     "price_polled_at": "dt",
     "opening_baseline_at": "dt",
+    "withheld_outcome_ids": "ids",
 }
 
 #: The kinds of `DERIVED_OUTCOME_COLUMNS`, by name and for the same reason as
@@ -1179,8 +1232,26 @@ async def test_a_node_cap_breach_defeats_even_the_local_tier(payload, monkeypatc
 #: nodes. Nothing about the per-row node arithmetic changed; the population did.
 #: The ordering invariant still holds — 460,673 against a 500,000 cap, 92.1% of
 #: it, where LAT-P276 left it at 92%.
-DECODE_BUDGET_OUTCOMES = 28_755
-DECODE_BUDGET_NODES = 460_673
+#: 2026-09-23, #7632, `withheld_outcome_ids`: 28,755 -> 28,686 outcomes and
+#: 460,673 -> 461,737 nodes. Re-bisected by the documented method and NOT scaled
+#: — ceiling proven over the cap by doubling (32,000 encodes over), then
+#: one-outcome granularity: 28,686 encodes to 6,291,362 B against the 6,291,456 B
+#: cap (94 B of margin) and 28,687 to 6,291,641 B, which does not fit.
+#:
+#: 🔴 THE TWO CONSTANTS MOVED IN OPPOSITE DIRECTIONS AGAIN, BUT NOT FOR #7808's
+#: REASON, AND THE DIFFERENCE IS THE POINT. #7808 added a scalar: rows got
+#: heavier, fewer outcomes fit, and the artifact at the lower crossing walked
+#: FEWER nodes. This column is a LIST, so it adds 1 + len() nodes per market
+#: independently of the outcome population — the crossing falls 69 outcomes AND
+#: the node count at that crossing RISES by 1,064. A future derived column that
+#: is also non-scalar will do the same; a scalar one will not.
+#:
+#: The ordering invariant still holds — 461,737 against a 500,000 cap, 92.3% of
+#: it, where #7808 left it at 92.1%. The 94 B of envelope margin is thinner than
+#: #7808's 612 B; that is a statement about the bisect's granularity at this
+#: scale, not spare room, and the guard below is what keeps it honest.
+DECODE_BUDGET_OUTCOMES = 28_686
+DECODE_BUDGET_NODES = 461_737
 
 def test_the_decode_budget_scale_is_what_it_says():
     """Control for the two constants above.

@@ -454,8 +454,8 @@ def test_the_ladder_withholds_the_amount_once_the_SQUEEZE_moves_the_column():
     fails there.
     """
     market = _game_awards_market(basis_at=LIVE_BASIS_AT)
-    market.outcomes[1].current_probability = 0.45
-    market.outcomes[2].current_probability = 0.30
+    _reprice(market.outcomes[1], 0.45)
+    _reprice(market.outcomes[2], 0.30)
     detail = _format_market_detail(market, ["kalshi"], set())
     by_name = {o["name"]: o for o in detail["outcomes"]}
     gta = by_name["Grand Theft Auto VI"]
@@ -482,7 +482,7 @@ async def test_a_price_write_between_sweeps_moves_the_badge_to_the_new_truth():
     a price that moved, a badge that follows it.
     """
     market = _game_awards_market()
-    market.outcomes[0].current_probability = 0.60
+    _reprice(market.outcomes[0], 0.60)
     card = await _served_card(market)
     assert _row(card, "Grand Theft Auto VI")["movement"] == pytest.approx(
         0.60 - 0.705
@@ -790,6 +790,30 @@ def test_the_number_is_on_the_STORED_scale_not_a_display_scaled_one():
 # that drops the scale argument and always dates, fails one side or the other.
 
 
+def _reprice(outcome, probability):
+    """Move a leg's price AND the book under it (#7632).
+
+    🔴 THE BOOK IS NOT DECORATION ANY MORE. `_Outcome` derives a readable
+    two-sided book from the price it is constructed with, precisely so the
+    fabricated-midpoint gate keeps every leg and this file is not vacuous. A
+    test that then reassigns `current_probability` alone leaves a served price
+    its own bid/ask contradicts — 0.60 under a 0.64 bid, or 0.45 over a 0.13
+    ask — and `price_refuted_by_live_book` refuses exactly that. The detail page
+    has always refused those legs; before #7632 the CARD did not consult the
+    book at all, which is the whole defect that issue closes, so the fixtures
+    got away with it.
+
+    Repriced here rather than by exempting these markets from the screen: a card
+    whose legs the page would withhold is not a specimen of movement-badge or
+    normalization behaviour, it is a specimen of #7632. Keeping the book honest
+    keeps each test about the thing it names.
+    """
+    outcome.current_probability = probability
+    outcome.current_yes_bid = max(0.01, probability - 0.02)
+    outcome.current_yes_ask = min(0.99, probability + 0.02)
+    return outcome
+
+
 def _normalized_market(*, market_id, sports=False):
     """The specimen priced into `_feed_display_scale`'s band.
 
@@ -800,8 +824,8 @@ def _normalized_market(*, market_id, sports=False):
     variants under one id inside one event loop compare a card with itself.
     """
     market = (_sports_market if sports else _game_awards_market)(market_id=market_id)
-    market.outcomes[1].current_probability = 0.45
-    market.outcomes[2].current_probability = 0.30
+    _reprice(market.outcomes[1], 0.45)
+    _reprice(market.outcomes[2], 0.30)
     return market
 
 
