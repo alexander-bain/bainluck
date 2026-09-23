@@ -341,23 +341,36 @@ struct ScoreDifferentialChartView: View {
 
         // Fallback: win_prob_history game states (when ESPN scores are null)
         if actualByMinute.isEmpty {
-            for (_, points) in history.winProbHistory ?? [:] {
-                for pt in points {
-                    guard let gs = pt.gameState,
-                          let hs = gs.homeScore, let as_ = gs.awayScore,
-                          let date = pt.timestamp.asDate else { continue }
-                    if let start = startDate, date < start { continue }
-                    let bucket = Int(date.timeIntervalSince1970 / 60)
-                    if actualByMinute[bucket] == nil {
-                        actualByMinute[bucket] = (date, Double(hs - as_))
-                    }
-                }
-            }
+            actualByMinute = Self.winProbStateScoreDiffs(history: history, since: startDate)
         }
 
         return mergeDiffPoints(projectedByMinute: projectedByMinute,
                                actualByMinute: actualByMinute,
                                endDate: endDate)
+    }
+
+    /// Actual score differentials read off `win_prob_history` game states, one
+    /// per minute (first row wins) — the fallback when ESPN serves no scores.
+    ///
+    /// The synthetic live edge re-serves the last row's score at the request's
+    /// own "now" (#920): a delivery time, not a score anyone observed then, so
+    /// it is never an actual-score point.
+    static func winProbStateScoreDiffs(history: EventHistoryResponse,
+                                       since startDate: Date?) -> [Int: (date: Date, diff: Double)] {
+        var byMinute: [Int: (date: Date, diff: Double)] = [:]
+        for (_, points) in history.winProbHistory ?? [:] {
+            for pt in points where pt.liveEdge != true {
+                guard let gs = pt.gameState,
+                      let hs = gs.homeScore, let as_ = gs.awayScore,
+                      let date = pt.timestamp.asDate else { continue }
+                if let start = startDate, date < start { continue }
+                let bucket = Int(date.timeIntervalSince1970 / 60)
+                if byMinute[bucket] == nil {
+                    byMinute[bucket] = (date, Double(hs - as_))
+                }
+            }
+        }
+        return byMinute
     }
 
     /// Merge projected and actual into unified points. Extracted so the
