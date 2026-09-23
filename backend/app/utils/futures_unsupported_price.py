@@ -1041,6 +1041,201 @@ def price_is_an_unbacked_ask(
     return True
 
 
+#: The highest probability a book NOBODY IS BIDDING may state about an outcome,
+#: and the one bound in this module that needed no measurement to justify (#8210).
+#:
+#: NOT FITTED, AND THE POPULATION IS THE PROOF. Every other constant here was
+#: chosen against a measured distribution and says so. This one is the boundary of
+#: the word "probably": above a half we are telling a reader the outcome is MORE
+#: LIKELY THAN NOT while the venue records nobody willing to pay a single cent for
+#: it, and that claim refutes itself without reference to any band. Below a half
+#: the same book shape is the "honest longshot line" that
+#: ``feed_market_quality.is_empty_book_midpoint`` defends and this module has
+#: never retracted — an unbid 3% is a defensible longshot, an unbid 58% is not a
+#: longshot at all.
+#:
+#: It coincides numerically with :data:`SECOND_FAVOURITE_CEILING` and is
+#: deliberately a SEPARATE constant, because that one answers a different
+#: question: it is the bound TWO legs cannot share, and is a statement about a
+#: column's arithmetic. This is a statement about ONE leg's own book, and the two
+#: would have to move independently if either ever moved.
+UNBID_CLAIM_CEILING = 0.50
+
+
+def needs_unbacked_majority_evidence(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    *,
+    in_exclusive_field: bool,
+    volume_24h: Optional[int] = None,
+    volume_24h_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
+) -> bool:
+    """The row-only half of :func:`price_is_an_unbacked_majority` (#8210).
+
+    Same role and same reason as :func:`needs_unbacked_ask_evidence` has for its
+    own arm: every column read here is already on the outcome row, so the
+    serializer settles the overwhelming majority of legs without touching the
+    snapshot table and only survivors cost a trade read. The trade term is the
+    sole thing the full predicate adds, so this is stated as a delegation rather
+    than a second copy of the rule.
+
+    All three volume arguments default to ``None`` — which
+    :func:`venue_reports_no_recent_trading` reads as "do not withhold" — so a
+    caller that has not been taught to pass them screens NOTHING IN rather than
+    screening everything in on an absent reading.
+    """
+    if (source or "").strip().lower() != KALSHI_BOOKMAKER:
+        return False
+    if not in_exclusive_field:
+        return False
+    if row_carries_a_verdict(resolution_source):
+        return False
+    if probability is None or yes_bid is None or yes_ask is None:
+        return False
+    # NOBODY IS PAYING ANYTHING. A missing bid is not a zero bid (gotcha #53 and
+    # `_is_ask_only_book`'s own note): `None` means the poller never recorded a
+    # book, and this rule must not claim to know anything about those rows. The
+    # `is None` guard above has already dropped them.
+    if float(yes_bid) > 0:
+        return False
+    # A book at all, matching `_is_ask_only_book`'s last term: an ask of zero is
+    # not an untaken offer, it is no offer.
+    if float(yes_ask) <= 0:
+        return False
+    # THE CLAIM ITSELF, and the only term that is not shared with the sibling arm.
+    if float(probability) <= UNBID_CLAIM_CEILING:
+        return False
+    return venue_reports_no_recent_trading(volume_24h, volume_24h_at, last_seen_at)
+
+
+def price_is_an_unbacked_majority(
+    source: Optional[str],
+    resolution_source: Optional[str],
+    probability: Optional[float],
+    yes_bid: Optional[float],
+    yes_ask: Optional[float],
+    last_price: Optional[float],
+    *,
+    has_trade_evidence: bool,
+    in_exclusive_field: bool,
+    volume_24h: Optional[int] = None,
+    volume_24h_at: Optional[datetime] = None,
+    last_seen_at: Optional[datetime] = None,
+) -> bool:
+    """True when a stale trade is the only thing calling an unbid leg a favourite (#8210).
+
+    WHAT A READER SAW. ``/futures/61003887`` ("Australian Open Women's Singles
+    Winner") crowned **Karolina Muchova at 58%** in the page's largest type, rank
+    1 of a 25-name field, above **Elena Rybakina 25%**, **Aryna Sabalenka 23%**
+    and **Coco Gauff 18%** — and repeated the board as a card in TOURNAMENT
+    WINNERS on ``/hub/tennis``, where her bar is more than twice the length of
+    every other. Read at the venue the same morning (``KXWTA-27AO-MUC``, notices
+    26/27 — Kalshi's own API, not our mirror): ``yes_bid 0.0000`` at size 0,
+    ``yes_ask 0.7000``, ``last_price 0.5800``, ``volume_fp 1.00`` — **one
+    contract, lifetime** — ``volume_24h_fp 0.00``, ``liquidity_dollars 0.0000``,
+    last touched 2026-09-13. Nobody is bidding anything, and the 58 is a single
+    contract that changed hands ten days earlier.
+
+    🔴 THIS IS RULE 2's EXEMPTION, AND #7747 DELIBERATELY LEFT IT WHOLE ON A
+    MEASUREMENT THAT COULD NOT SEE THIS LEG. :func:`price_is_unsupported` spares
+    any leg carrying a positive ``last_price``, and
+    :func:`price_is_an_unbacked_ask`'s docstring declined to re-litigate that on
+    a production cross-tab whose last row reads ``either | INSIDE the spread |
+    0``. That row is not wrong and it is not evidence: its population is screened
+    on *the price sitting at its own ask*, so "a trade inside the spread" is
+    empty **by construction**. Muchova is that empty cell — a trade locating a
+    price strictly BELOW the ask — and the exemption acquits her because it has
+    no activity term at all.
+
+    🔴 EVERY SHIPPED ARM ACQUITS THIS ROW AND EVERY ONE OF THEM IS RIGHT, which
+    is why this is a new question and not a loosened threshold. Measured by
+    calling each on the specimen's own stored columns:
+
+      * :func:`price_is_unsupported` / ``_is_ask_only_book`` — returns False the
+        moment ``last_price > 0``. That IS rule 2.
+      * :func:`price_is_an_unbacked_ask` — its screen needs the price AT its own
+        ask; 0.58 sits twelve points below 0.70, so it declines by construction.
+      * :func:`price_refuted_by_live_book` — fires only ABOVE the ask.
+      * :func:`price_is_unlocated_in_broken_field` — its gate
+        (:func:`field_names_two_favourites`) needs two legs above a half; this
+        board has exactly one, which is the defect.
+      * ``is_empty_book_midpoint`` — needs the price on the midpoint, which is
+        0.35 here.
+
+    WHY A HALF AND NOT THE SPREAD, WHICH WAS THE FIRST DRAFT AND WAS TOO WIDE.
+    Requiring only "an unbid book whose ask is at least
+    :data:`kalshi_empty_book.ASK_ONLY_TRUSTED_MAX` away" — the sibling arm's own
+    fence — withholds **33 legs on 15 boards**, and reading them one by one is
+    what refuted it: most are 1–3% longshots (eight of eleven priced legs on
+    "YouTube Charts: Weekly Top Song USA", seven of twenty-four on the 2027 US
+    Open men's board) whose stale print agrees with everything its book says and
+    whose position at the foot of the column harms no reader. Blanking twenty-odd
+    honest longshots to reach two inverted favourites is the exact
+    over-refusal CERT-3242 and CERT-3244 punished on the sibling arm, one venue
+    shape over. :data:`UNBID_CLAIM_CEILING` is the bound that separates them and
+    it is argued from the reader, not fitted to the rows.
+
+    MEASURED REACH ON THE SERVED PAYLOAD, NEVER THE TABLE — the correction
+    CERT-3246 asked for by name. Production 2026-09-23: **six** legs in proved
+    exclusive Kalshi fields are served above a half on a zero bid with the venue
+    reporting no 24-hour trading, and **four of them are already withheld today**
+    by :func:`price_is_an_unbacked_ask` (Deportivo Tachira 0.85, Mirra Andreeva
+    0.72, Amanda Anisimova 0.71, Paper Rex 0.69 — each printing AT its ask). The
+    marginal population this arm adds is therefore **two legs on two boards**:
+    Muchova (0.58 under a 0.70 ask) and **Nongshim RedForce 0.52** under a 0.59
+    ask on ``/futures/61485086`` ("VALORANT Champions Shanghai Group D winner").
+    **Both are rank 1 on their board**, so both change the name the hero crowns —
+    Rybakina at 25% and Karmine Corp at 39.5% inherit the top — and **neither
+    board is left without a number**, so #6846's "no price discovery to show"
+    cost is not paid again here.
+
+    SCOPED TO A ZERO BID, AND THE BID>0 CASE IS AN EXPLICIT NON-CLAIM. A leg bid
+    at four cents under a 74c ask is a real book that locates a floor, and it is
+    :func:`price_is_an_unbacked_ask`'s population, not this one. Whether a stale
+    trade strictly inside a WIDE two-sided spread should also fall is a question
+    this lane has not measured and therefore does not answer — widening to it
+    unmeasured is precisely the mistake this module was falsified for twice.
+
+    ``has_trade_evidence`` carries gotcha #53's distinction exactly as it does on
+    both sibling arms: an absent snapshot is "we never looked", not "it never
+    traded", and it FAILS OPEN. A ``last_price`` of zero is "never traded", which
+    is #6846's arm and not this one — requiring a positive trade here keeps this
+    arm strictly complementary to the rule whose exemption it qualifies.
+
+    WITHHOLDING, NEVER REWRITING (gotcha #21). Serving the bid would be a number
+    we invented, and ``calibration_probability`` coalesces to stored values
+    (gotcha #144 / ruling 103), so an invented price becomes a forecast we are
+    graded on. The leg keeps its name and loses its number.
+
+    SCOPED TO OPEN MARKETS BY ITS CALL SITE and to ungraded rows here: a settled
+    board is a RESULT, and settled means settled.
+    """
+    if not needs_unbacked_majority_evidence(
+        source,
+        resolution_source,
+        probability,
+        yes_bid,
+        yes_ask,
+        in_exclusive_field=in_exclusive_field,
+        volume_24h=volume_24h,
+        volume_24h_at=volume_24h_at,
+        last_seen_at=last_seen_at,
+    ):
+        return False
+    if not has_trade_evidence:
+        return False
+    if last_price is None:
+        return False
+    # A trade is what rule 2's exemption is protecting, so this arm only fires
+    # where there IS one. A zero is "never traded" — already #6846's arm — and a
+    # leg with no trade at all never reached the exemption in the first place.
+    return float(last_price) > 0
+
+
 #: What "the last trade supports the served price" means, and it is anchored to
 #: the READER rather than chosen. The detail page prints whole percents, so two
 #: numbers that round to the same percent are the same number to the person
