@@ -84,6 +84,19 @@ class _Result:
         return list(self._rows)
 
 
+class _FakeSavepoint:
+    """What `AsyncSession.begin_nested()` returns: release it or roll it back."""
+
+    def __init__(self, db: "FakeDB") -> None:
+        self._db = db
+
+    async def commit(self):
+        self._db.savepoints.append("release")
+
+    async def rollback(self):  # pragma: no cover - this suite never cancels
+        self._db.savepoints.append("rollback")
+
+
 class FakeDB:
     """Answers a candidate marker from a corpus under the ONE shared ORDER BY.
 
@@ -95,6 +108,8 @@ class FakeDB:
     def __init__(self, corpus: list[Row]) -> None:
         self.corpus = corpus
         self.executed: list[frozenset] = []
+        #: LAT-P278/#1619 savepoint bookkeeping — see `begin_nested`.
+        self.savepoints: list[str] = []
 
     async def execute(self, marker):
         _tag, arms = marker
@@ -102,6 +117,17 @@ class FakeDB:
         rows = [r for r in self.corpus if r.arms & arms]
         rows.sort(key=lambda r: (r.tier, r.sort))
         return _Result(rows[:WINDOW])
+
+    async def begin_nested(self):
+        """LAT-P278/#1619: the outcome arm runs inside a SAVEPOINT.
+
+        Nothing in this suite cancels a statement, so the savepoint is always
+        released. It is still recorded, because an unreleased savepoint would leave
+        every later stage of the request nested inside the arm's — a leak the
+        equivalence assertions here would otherwise be blind to.
+        """
+        self.savepoints.append("begin")
+        return _FakeSavepoint(self)
 
 
 def _candidates_in(arms):
@@ -238,6 +264,11 @@ async def test_the_outcome_arm_is_queried_when_it_can_matter():
         1,
         2,
     ], "tier<=1 rows must lead the page — tier is the first ORDER BY key"
+    # LAT-P278/#1619: the arm is isolated in a savepoint, and on the path where it
+    # succeeds that savepoint must be RELEASED. Left open, every later stage of the
+    # request would run nested inside the arm's — which changes nothing this
+    # suite's row assertions can see, so it is asserted directly.
+    assert db.savepoints == ["begin", "release"]
     assert len(rows) == WINDOW
 
 

@@ -25,10 +25,24 @@ THE TWO FAILURE MODES THIS SUITE IS AIMED AT, both of which are invisible:
 2. **Returning expired ORM rows.** A `statement_timeout` cancellation aborts the
    transaction, so recovery must roll back (gotcha #6: async rollback expires
    every ORM object the session holds). Rows fetched *before* that rollback
-   cannot be handed to the serialiser; they must be re-read. A test that only
-   checks the row IDs would pass on rows that raise the moment anything renders
-   them, so the fake below marks post-rollback rows and the assertion is on the
-   MARK, not on the ids.
+   cannot be handed to the serialiser. A test that only checks the row IDs would
+   pass on rows that raise the moment anything renders them, so the fake below
+   marks the rows each read hands out and the assertions are on the MARK.
+
+   LAT-P278 changed the ANSWER to this without weakening the requirement: the arm
+   runs inside a SAVEPOINT, so a blown budget rolls back only the arm and the
+   outer transaction — with every row already loaded into it — survives. The rows
+   are therefore returned WITHOUT a re-read, and the assertion flips from "these
+   are fresh" to "these are the originals, and tier1 ran exactly once".
+
+   Why that mattered enough to change: the re-read was justified in a comment as
+   re-reading "the cheap arm (114-204 ms)", but 114-204 ms was measured on HEALTHY
+   queries and this path only ever runs on pathological ones. The tier<=1 name
+   predicate is synonym-expanded too — production `EXPLAIN (ANALYZE)` 2026-09-23
+   put it at 1,124 ms for `f1 champion` and 1,362 ms for `f1 winner` against 42 ms
+   for `f1 masters` — so the recovery was paying the most expensive thing in the
+   stage a second time. ⭐ A fallback's cost must be costed on the inputs that
+   reach it, never on the healthy population.
 
 The suite drives the real `_fetch_futures_window` against a model of the ORDER BY,
 the same way `test_search_futures_tier_split.py` does, because the seeded CI
@@ -95,6 +109,28 @@ class _Result:
         return list(self._rows)
 
 
+class _FakeSavepoint:
+    """What `AsyncSession.begin_nested()` hands back: release it or roll it back.
+
+    Rolling back to a savepoint does NOT expire the outer transaction's rows, so
+    unlike `FakeDB.rollback` this deliberately leaves `rolled_back` alone — the
+    `fresh` mark on rows must stay False through a savepoint rollback, which is
+    what lets the assertions tell the two recoveries apart.
+    """
+
+    def __init__(self, db: "FakeDB"):
+        self._db = db
+
+    async def commit(self):
+        self._db.savepoints.append("release")
+
+    async def rollback(self):
+        if self._db.savepoint_rollback_fails:
+            self._db.savepoints.append("rollback-failed")
+            raise RuntimeError("cannot roll back to savepoint")
+        self._db.savepoints.append("rollback")
+
+
 class FakeDB:
     """Answers arms from a corpus; optionally cancels the outcome-arm statement.
 
@@ -102,12 +138,22 @@ class FakeDB:
     applied, and what was it" is answerable without reading the route.
     """
 
-    def __init__(self, corpus: list[Row], *, cancel_outcome_arm: bool = False):
+    def __init__(
+        self,
+        corpus: list[Row],
+        *,
+        cancel_outcome_arm: bool = False,
+        savepoint_rollback_fails: bool = False,
+    ):
         self.corpus = corpus
         self.cancel_outcome_arm = cancel_outcome_arm
+        self.savepoint_rollback_fails = savepoint_rollback_fails
         self.executed: list[frozenset] = []
         self.timeouts_ms: list[int] = []
         self.rolled_back = False
+        #: SAVEPOINT bookkeeping, in order, so "was the arm isolated, and was the
+        #: savepoint released either way" is answerable without reading the route.
+        self.savepoints: list[str] = []
 
     async def execute(self, marker):
         tag, arms = marker
@@ -119,8 +165,9 @@ class FakeDB:
             raise QueryCanceledError("canceling statement due to statement timeout")
         rows = [r for r in self.corpus if r.arms & arms]
         rows.sort(key=lambda r: (r.tier, r.sort))
-        # Post-rollback reads hand back FRESH copies — an expired instance and a
-        # re-read one are indistinguishable by id, which is exactly the trap.
+        # Reads taken after a FULL rollback hand back fresh copies — an expired
+        # instance and a re-read one are indistinguishable by id, which is exactly
+        # the trap. Under LAT-P278 the blown-budget path must produce NO such read.
         return _Result(
             [
                 Row(r.id, r.arms, r.sort, fresh=self.rolled_back)
@@ -130,6 +177,10 @@ class FakeDB:
 
     async def rollback(self):
         self.rolled_back = True
+
+    async def begin_nested(self):
+        self.savepoints.append("begin")
+        return _FakeSavepoint(self)
 
 
 def _candidates_in(arms):
@@ -260,25 +311,95 @@ async def test_a_blown_budget_keeps_the_name_matches(caplog):
 
     assert state == "budget_exceeded"
     assert [r.id for r in rows] == [0, 1, 2]
-    assert db.rolled_back, "a cancelled statement poisons the transaction"
+    assert db.savepoints == ["begin", "rollback"], (
+        "a cancelled statement poisons the transaction, so the arm must have been "
+        "isolated inside a savepoint and that savepoint rolled back"
+    )
+    assert not db.rolled_back, (
+        "LAT-P278: the OUTER transaction must survive a blown arm budget"
+    )
 
 
-async def test_the_returned_rows_are_read_after_the_rollback_not_before():
-    """Gotcha #6, asserted on the MARK and not on the ids.
+async def test_the_name_matches_survive_the_blown_arm_without_a_second_read():
+    """LAT-P278: gotcha #6 is answered by the savepoint, not by paying twice.
 
-    `db.rollback()` expires every ORM instance the session holds, so the rows
-    fetched before the arm ran cannot be returned — they would lazy-load on a
-    rolled-back async session the moment the serialiser touched them. Ids alone
-    cannot tell an expired row from a re-read one, so the fake tags the copies it
-    hands out after the rollback and this asserts on the tag.
+    The rows must still be safe to serialise — that requirement has not moved. What
+    moved is how it is met: rolling back to a savepoint leaves the outer
+    transaction intact, so the rows loaded before the arm ran are still live and
+    are returned as they stand.
+
+    Asserted on the MARK and on the statement log, not on the ids: ids alone cannot
+    tell a re-read row from an original, which is the trap the `fresh` flag exists
+    for. `fresh` is only ever set by a read taken after a FULL rollback, so
+    `not fresh` here is positive evidence that no full rollback happened.
+
+    The statement log is the part that carries the ship. The old shape executed the
+    tier<=1 arm TWICE, and on the queries that reach this path that arm measured
+    1,124-1,362 ms in production — so the second execution was the single most
+    expensive thing in the stage.
     """
     db, rows, state = await _run(_thin_corpus(), cancel=True)
 
     assert state == "budget_exceeded"
-    assert rows, "the re-read returned nothing"
-    assert all(r.fresh for r in rows), (
-        "these rows were fetched before the recovery rollback expired them"
+    assert rows, "the name matches were dropped"
+    assert not any(r.fresh for r in rows), (
+        "these rows came from a read taken after a full rollback — the savepoint "
+        "should have made that re-read unnecessary"
     )
+    assert db.executed == [
+        frozenset(TIER1_ARMS),
+        frozenset({OUTCOME_ARM}),
+    ], "the tier<=1 arm must run exactly once, even when the budget blows"
+
+
+async def test_the_stage_bound_is_restored_after_a_blown_arm():
+    """The arm's budget must not silently become the bound for the whole request.
+
+    `SET LOCAL statement_timeout` is applied OUTSIDE the savepoint, so rolling back
+    to the savepoint does NOT undo it. Without an explicit re-arm, every remaining
+    stage of the request would inherit the arm's 1,000 ms budget — a bound narrowed
+    fleet-wide by a fix aimed at one arm, and invisible from outside.
+
+    The old shape got this for free because `_recover_search_session` re-applied it
+    after its full rollback; the savepoint path has to do it deliberately.
+    """
+    db, _rows, state = await _run(_thin_corpus(), cancel=True)
+
+    assert state == "budget_exceeded"
+    assert db.timeouts_ms[0] == _SEARCH_OUTCOME_ARM_TIMEOUT_MS, (
+        "the arm should have been bounded by its own budget"
+    )
+    assert db.timeouts_ms[-1] == -1, (
+        "the stage bound (deadline-derived, so -1 through this fixture) must be put "
+        "back after the arm blows"
+    )
+
+
+async def test_a_savepoint_that_will_not_roll_back_falls_back_to_the_re_read():
+    """If the savepoint cannot be released the transaction's state is unknown.
+
+    Returning `tier1_rows` then would hand the serialiser rows that may raise — the
+    exact failure the re-read existed to prevent. So this path keeps the old shape:
+    full rollback, re-read, and the rows come back marked `fresh`.
+    """
+    db = FakeDB(
+        _thin_corpus(), cancel_outcome_arm=True, savepoint_rollback_fails=True
+    )
+    rows, state = await _fetch_futures_window(
+        db,
+        _window_query,
+        _candidates_in,
+        list(TIER1_ARMS),
+        OUTCOME_ARM,
+        events_module.time.monotonic() + 60,
+    )
+
+    assert state == "budget_exceeded"
+    assert rows, "the fallback returned nothing"
+    assert all(r.fresh for r in rows), (
+        "the fallback must re-read, because the rows it holds cannot be trusted"
+    )
+    assert db.rolled_back, "the fallback is the full-rollback recovery"
     assert db.executed == [
         frozenset(TIER1_ARMS),
         frozenset({OUTCOME_ARM}),
@@ -313,6 +434,11 @@ async def test_a_non_timeout_failure_still_raises():
             events_module.time.monotonic() + 60,
         )
 
+    # LAT-P278: the error is re-raised, but the savepoint is still released on the
+    # way out — an open savepoint over an aborted statement would leave the
+    # caller's own recovery fighting a transaction it cannot use.
+    assert db.savepoints == ["begin", "rollback"]
+
 
 async def test_the_healthy_path_is_untouched():
     """LAT-P005's lesson: this buys no speed for a healthy query, and must not.
@@ -327,3 +453,9 @@ async def test_the_healthy_path_is_untouched():
     assert [r.id for r in rows[:3]] == [0, 1, 2]
     assert len(rows) == WINDOW
     assert db.executed == [frozenset(TIER1_ARMS), frozenset({OUTCOME_ARM})]
+    # LAT-P278 costs the healthy path one SAVEPOINT and one RELEASE. That is the
+    # whole price of the change and it is pinned here rather than left implicit —
+    # in particular the savepoint must be RELEASED, not left open for the rest of
+    # the request to carry.
+    assert db.savepoints == ["begin", "release"]
+    assert not db.rolled_back
