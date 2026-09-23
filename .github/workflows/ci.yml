@@ -157,12 +157,25 @@ jobs:
   # `shard-completeness` job below proves that claim on every run against pytest's
   # own collection — read its header for why that check is not optional.
   backend-tests:
-    # #5007 — skipped only when change-scope PROVED the candidate cannot reach
-    # anything these shards test. The comparison is `!= 'frontend'`, not
-    # `== 'full'`, so an empty or unset output (a cancelled or failed
-    # change-scope job) still runs the shards.
+    # #5007 — the shards do no work only when change-scope PROVED the candidate
+    # cannot reach anything they test. The comparison is `!= 'frontend'`, not
+    # `== 'full'`, so an empty or unset output still runs the shards.
+    #
+    # THE SKIP IS ON EVERY STEP, NOT ON THE JOB, AND THAT IS LOAD-BEARING.
+    # A matrix job skipped at JOB level never expands: GitHub records one check
+    # named bare `backend-tests` and never creates `backend-tests (1)`..`(4)`.
+    # Those four are REQUIRED contexts in master's branch protection, so every
+    # frontend-only PR read MERGEABLE/BLOCKED with CI green and every notice
+    # passing (ux/1464, 2026-09-23; #8253, #8261). Absent is not failed, so
+    # nothing reddened, and a rebase could not help: the classifier reads the
+    # file set only. Step-level skips let the legs expand, report `success`, and
+    # still do no work (~20s of runner start per leg against #5007's ~11 min).
+    #
+    # `deploy` is unchanged by this: on a frontend scope `shard-completeness`
+    # and `search-recall` still skip at job level (non-matrix, so their skipped
+    # context satisfies protection) and `release-required` reads `false`.
+    # Guarded by backend/tests/test_ci_matrix_required_contexts.py.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend'
     runs-on: ubuntu-latest
     strategy:
       # Every shard runs even when one fails. With fail-fast the first red
@@ -176,6 +189,13 @@ jobs:
         working-directory: backend
 
     steps:
+      # Says so in the log, so a green leg that did no work never reads as a
+      # tested one. Runs from the workspace root: nothing is checked out.
+      - name: Frontend-only candidate — this leg runs no tests (#5007)
+        if: needs.change-scope.outputs.scope == 'frontend'
+        working-directory: .
+        run: echo "change scope is 'frontend'; shard ${{ matrix.shard }} intentionally ran nothing."
+
       # THE MUTATION-RESIDUE SCAN NEEDS A MERGE BASE, AND THE DEFAULT CHECKOUT
       # DOES NOT HAVE ONE.
       #
@@ -192,20 +212,24 @@ jobs:
       # blobs stay on the server and are fetched lazily if something else asks.
       # `fetch-depth: 0` alone would pull the whole 850 MiB on all four shards.
       - uses: actions/checkout@v6
+        if: needs.change-scope.outputs.scope != 'frontend'
         with:
           fetch-depth: 0
           filter: blob:none
 
       - uses: actions/setup-python@v7
+        if: needs.change-scope.outputs.scope != 'frontend'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
+        if: needs.change-scope.outputs.scope != 'frontend'
         run: pip install -r requirements.txt
 
       - name: Run tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        if: needs.change-scope.outputs.scope != 'frontend'
         # `strategy.job-total` rather than a literal 4: the matrix list is then
         # the single place the shard count is written, so growing it to 5 cannot
         # leave a stale divisor here silently running the wrong partition.
