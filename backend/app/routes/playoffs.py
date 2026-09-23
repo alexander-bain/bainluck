@@ -273,6 +273,40 @@ def _same_institution_marker(name_a: str, name_b: str) -> bool:
     return ("state" in name_a.lower().split()) == ("state" in name_b.lower().split())
 
 
+# A SEED IS A FACT ABOUT A DRAW, AND IT EXPIRES WHEN THE DRAW DOES (#8184).
+#
+# Both dictionaries above describe exactly one tournament: the bracket drawn on
+# Selection Sunday 2026. The season each one speaks for is written here so a
+# grid can ask, rather than assume, whether it is looking at its own bracket.
+NCAA_BRACKET_SEASON = "2026"
+WNCAA_BRACKET_SEASON = "2026"
+
+
+def _bracket_metadata_applies(config, bracket_season: str) -> bool:
+    """True when the grid being built is the season its bracket describes.
+
+    #8184. Both grids moved to season 2027 while these dictionaries still held
+    the 2026 draw, so 64 of 68 men's rows and 30 of 30 women's rows printed last
+    March's seed under next March's title — and because the region that would
+    tell them apart is served but never rendered, the page showed four different
+    "#1" seeds with nothing to distinguish them, for a bracket that will not be
+    drawn until March 2027.
+
+    THIS GATES THE SEED AND REGION METADATA ONLY, NOT THE `_in_bracket` FIELD
+    FILTER further down. The same dictionary is put to two different uses and
+    only one of them is a claim to the reader. A seed and a region assert a fact
+    about a draw. "These are the teams worth listing" is a heuristic, and it
+    survives the season turning over: last March's 68 is a far better field than
+    all 239 Division I teams that carry a championship price. Ungating the
+    filter would put 239 rows on the page, which is a product question and not a
+    truth fix — so it is deliberately left alone and tracked separately.
+
+    When the 2027 draw lands, replace the dictionaries and bump the two
+    constants above; both uses come back together and this returns True again.
+    """
+    return config is not None and config.season_pattern == bracket_season
+
+
 def _lookup_wncaa_bracket(team_name: str) -> dict | None:
     """Look up Women's NCAA tournament region/seed for a team."""
     if team_name in WNCAA_2026_BRACKET:
@@ -2281,14 +2315,23 @@ async def _get_team_metadata(
         meta["conference"] = _canonical_conference(league_slug, meta["conference"])
         meta["division"] = _canonical_division(league_slug, meta["division"])
 
-        # NCAA Tournament: look up region and seed from bracket data
-        if league_slug == "ncaa-basketball" and team.name:
+        # NCAA Tournament: look up region and seed from bracket data, but only
+        # while the grid is still the season that bracket was drawn for (#8184).
+        if (
+            league_slug == "ncaa-basketball"
+            and team.name
+            and _bracket_metadata_applies(config, NCAA_BRACKET_SEASON)
+        ):
             bracket_info = _lookup_ncaa_bracket(team.name)
             if bracket_info:
                 meta["region"] = bracket_info["region"]
                 if not meta["seed"]:
                     meta["seed"] = bracket_info["seed"]
-        elif league_slug == "ncaa-women-basketball" and team.name:
+        elif (
+            league_slug == "ncaa-women-basketball"
+            and team.name
+            and _bracket_metadata_applies(config, WNCAA_BRACKET_SEASON)
+        ):
             bracket_info = _lookup_wncaa_bracket(team.name)
             if bracket_info:
                 meta["region"] = bracket_info["region"]
@@ -5980,12 +6023,20 @@ async def get_playoff_grid(
         # Fallback: try bracket lookup on display_name if meta didn't have region
         region = meta.get("region")
         seed = meta.get("seed")
-        if league_slug == "ncaa-basketball" and not region:
+        if (
+            league_slug == "ncaa-basketball"
+            and not region
+            and _bracket_metadata_applies(config, NCAA_BRACKET_SEASON)
+        ):
             bracket_info = _lookup_ncaa_bracket(display_name)
             if bracket_info:
                 region = bracket_info["region"]
                 seed = seed or bracket_info["seed"]
-        elif league_slug == "ncaa-women-basketball" and not region:
+        elif (
+            league_slug == "ncaa-women-basketball"
+            and not region
+            and _bracket_metadata_applies(config, WNCAA_BRACKET_SEASON)
+        ):
             bracket_info = _lookup_wncaa_bracket(display_name)
             if bracket_info:
                 region = bracket_info["region"]
