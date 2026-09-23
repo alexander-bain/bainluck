@@ -1993,6 +1993,9 @@ struct OddsChartView: View {
         var lastPeriodObservedAt: Date?
         var lastClockObservedAt: Date?
         var lastScoreObservedAt: Date?
+        /// Cursor into `espnByTime`: every row strictly before the current
+        /// point's cutoff has already been folded into the accumulators above.
+        var espnIdx = 0
 
         for i in sorted.indices {
             let pointDate = sorted[i].date
@@ -2006,20 +2009,35 @@ struct OddsChartView: View {
             // a state nobody had seen yet, at a minute the reader can tell
             // apart (codex 2026-09-23 correction).
             let cutoff = Self.observationCutoff(for: pointDate)
-            if let nearest = espnByTime.last(where: { $0.date < cutoff }) {
-                if let hs = nearest.point.homeScore {
-                    lastScore = (hs, nearest.point.awayScore ?? lastScore?.away ?? 0)
+
+            // EVERY row this point may read, not just the newest one. The three
+            // `last*` values above are ACCUMULATORS — each field keeps the last
+            // row that actually carried it — so every row has to be walked for
+            // them to accumulate. Sampling only `espnByTime.last(where:)` reads
+            // one row per point and silently drops every row that falls BETWEEN
+            // two points, which is most of them: prices are sparser than ESPN
+            // rows, and the rows that go missing are exactly the ones this ship
+            // is about (a score-only row is the common MLB shape, so the period
+            // seen three minutes earlier never reached the accumulator and the
+            // reader got NO half-inning at all rather than a dated one).
+            // Points and rows are both sorted ascending and `cutoff` rises with
+            // them, so one cursor over the rows visits each exactly once.
+            while espnIdx < espnByTime.count, espnByTime[espnIdx].date < cutoff {
+                let row = espnByTime[espnIdx]
+                if let hs = row.point.homeScore {
+                    lastScore = (hs, row.point.awayScore ?? lastScore?.away ?? 0)
                     // A row that REPEATS the score is still an observation of it.
-                    lastScoreObservedAt = nearest.date
+                    lastScoreObservedAt = row.date
                 }
-                if let p = nearest.point.period, !p.isEmpty {
+                if let p = row.point.period, !p.isEmpty {
                     lastPeriod = p
-                    lastPeriodObservedAt = nearest.date
+                    lastPeriodObservedAt = row.date
                 }
-                if let c = nearest.point.gameClock, !c.isEmpty {
+                if let c = row.point.gameClock, !c.isEmpty {
                     lastClock = c
-                    lastClockObservedAt = nearest.date
+                    lastClockObservedAt = row.date
                 }
+                espnIdx += 1
             }
 
             // Forward-fill game state, each field dated by the row that saw IT.
