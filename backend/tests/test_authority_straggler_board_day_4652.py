@@ -401,12 +401,17 @@ async def test_one_bad_row_does_not_wipe_the_pass(monkeypatch):
 
     calls = {"n": 0}
 
-    async def _explode_once(session, event, ee, claimed, stats):
+    # `allow_unstarted` is part of the door's contract (#5501). The shallow arm
+    # passes it False, but it passes it — a double that omits it raises
+    # TypeError into the per-row `except` and reads as the injected bad row.
+    async def _explode_once(
+        session, event, ee, claimed, stats, *, allow_unstarted=False
+    ):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
         return await update_event_fields_from_espn(
-            session, event, ee, claimed, stats
+            session, event, ee, claimed, stats, allow_unstarted=allow_unstarted
         )
 
     session = _FakeSession(rows)

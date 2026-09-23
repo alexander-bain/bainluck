@@ -137,17 +137,35 @@ class TestTheDefectReproduces:
     """The specimen is selected by NO writer. Without this the suite is air."""
 
     def test_no_espn_arm_can_see_it(self):
-        """All three suspended-admitting ESPN arms require an espn_id."""
+        """Every status-admitting ESPN arm requires an espn_id.
+
+        Re-aimed for #5501, which did not move an arm — it renamed one arm's
+        status set to :data:`DEEP_STRAGGLER_STATUSES` (a derived constant) so the
+        deep straggler arm also reaches `scheduled`. A scan for one spelling
+        counted 2 where 3 arms stand, which reads as an arm having been deleted.
+
+        THE INVARIANT IS UNCHANGED AND IS WHAT THIS ASSERTS: whatever set of
+        states an arm admits, the very next line requires a provider id. This
+        specimen has none, so widening any arm by STATUS can never reach it —
+        only widening it by ANCHOR could, and that is the thing forbidden here.
+        """
         from app.tasks import espn_sync
 
         src = inspect.getsource(espn_sync)
-        admits = src.count('Event.status.in_(["live", EVENT_SUSPENDED])')
+        spellings = (
+            'Event.status.in_(["live", EVENT_SUSPENDED])',
+            "Event.status.in_(DEEP_STRAGGLER_STATUSES)",
+        )
+        admits = sum(src.count(s) for s in spellings)
         assert admits >= 3, "the ESPN arms moved — re-aim this scan"
         # Each one is immediately followed by the espn_id requirement.
-        assert src.count(
-            'Event.status.in_(["live", EVENT_SUSPENDED]),\n'
-            "            Event.espn_id.isnot(None),"
-        ) == admits, "an ESPN arm admits suspended WITHOUT requiring an espn_id"
+        guarded = sum(
+            src.count(f"{s},\n            Event.espn_id.isnot(None),")
+            for s in spellings
+        )
+        assert guarded == admits, (
+            "an ESPN arm admits a status WITHOUT requiring an espn_id"
+        )
 
     def test_the_odds_settle_loop_only_selects_live(self):
         from app.tasks import odds_polling

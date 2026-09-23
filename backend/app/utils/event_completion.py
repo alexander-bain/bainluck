@@ -333,6 +333,12 @@ SETTLED_STATUSES = frozenset({"completed", "closed"})
 #: hop back through ``live``.
 SETTLEABLE_STATUSES = frozenset({"live", EVENT_SUSPENDED})
 
+#: The one extra state a terminal verdict may be written onto, and ONLY for a
+#: caller that has earned it by asking :func:`authority_may_settle` with
+#: ``allow_unstarted=True``. See that function for why ``scheduled`` is not in
+#: :data:`SETTLEABLE_STATUSES` and must never be moved into it (#5501).
+UNSTARTED_SETTLEABLE_STATUSES = frozenset({"scheduled"})
+
 #: Rows the ESPN backfills must still be able to REACH — the ones whose record
 #: is incomplete and might yet be completed: a missing ``espn_id``, a missing
 #: box score, a missing win-probability history. #3790.
@@ -1115,14 +1121,44 @@ def is_retired_event_status(status) -> bool:
     return status in RETIRED_STATUSES
 
 
-def authority_may_settle(status) -> bool:
+def authority_may_settle(status, *, allow_unstarted: bool = False) -> bool:
     """May a terminal verdict be written onto a row in this state? (live/048)
 
     True for ``live`` and ``suspended``; False for a row already settled
     (churning ``closed`` into ``completed`` rewrites history for no reader) and
     for ``scheduled`` (a match nobody has started cannot have finished).
+
+    ── ``allow_unstarted``: THE REASON ABOVE EXPIRES, THE REFUSAL DOES NOT (#5501) ──
+
+    "A match nobody has started cannot have finished" reads ``scheduled`` as an
+    OBSERVATION — we watched, and it had not begun. For most rows it is one.
+    It is not one here. ``Event.status`` is ``mapped_column(default="scheduled")``,
+    so ``scheduled`` is also what a row is born holding when nobody has looked at
+    it yet, and the two are indistinguishable in the column.
+
+    MEASURED on production 2026-09-23: 820 rows sat ``scheduled`` with a
+    ``commence_time`` more than seven days past, and **448 of them were created
+    AFTER their own kickoff** — 328 MLB rows minted in a single pass on
+    2026-08-20 for games played between April and August. For those the word was
+    never an observation about the match; it was the column default. Every
+    settle path is bounded to 48h past kickoff, so none of them can be reached
+    again: too anchored to be retired, too old to be settled, and — unlike the
+    ``live``/``suspended`` stragglers of #6280 — invisible even to the deep arm
+    built for exactly that gap, because its status filter names the two states
+    this population is not in.
+
+    So the flag is opt-in and stays narrow. It is for a caller that has already
+    established, on its own evidence, that the row is late rather than unplayed:
+    matched to the authority BY ``espn_id`` (never by name), on a board day more
+    than 48 hours past, with ESPN reporting ``post``/``completed``. The refusal
+    is unchanged for every other caller, and ``scheduled`` deliberately does NOT
+    join :data:`SETTLEABLE_STATUSES` — moving it there would hand the same
+    permission to the live pass, where "nobody has started it" really is an
+    observation and the guard is still doing work.
     """
-    return status in SETTLEABLE_STATUSES
+    if status in SETTLEABLE_STATUSES:
+        return True
+    return allow_unstarted and status in UNSTARTED_SETTLEABLE_STATUSES
 
 
 def play_resumes(status) -> bool:
