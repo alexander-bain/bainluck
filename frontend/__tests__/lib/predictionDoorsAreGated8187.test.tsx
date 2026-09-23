@@ -69,18 +69,35 @@ const FLAG_TOKEN = "CHALLENGE_SURFACES_ENABLED";
  * `href`, and the imperative router verbs. Deliberately NOT a bare search for
  * the route string — `/play` appears inside prose, class names and unrelated
  * paths, and a matcher that fires on those would be turned off within a week.
+ * The CLOSING QUOTE is what does that work: `href="/play"` matches and
+ * `href="/players/mahomes"` does not.
+ *
+ * LITERAL NEEDLES, NOT A CONSTRUCTED RegExp. The first cut built a pattern per
+ * route and escaped the route into it with `route.replace(/\//g, "\\/")`, which
+ * CodeQL correctly flagged `js/incomplete-sanitization` at HIGH: a replace-based
+ * escape that handles one metacharacter and not the rest is a real hole, not a
+ * style note. The escape was also pointless — `/` is not a metacharacter inside
+ * a `RegExp` constructor. Since the route list is a fixed set of literals, the
+ * regex bought nothing that `String.includes` does not, so the whole escaping
+ * question is deleted rather than answered.
+ *
+ * Known reach, stated rather than implied: the needles are tight, so a call
+ * split across lines (`.push(\n  "/play")`) would not match. Adding one is a
+ * deliberate act by someone editing routing code, and the inventory test below
+ * is the backstop for the case this misses.
  */
 function navigationsInto(source: string): string[] {
   const hits: string[] = [];
   for (const route of PREDICTION_ROUTES) {
-    const escaped = route.replace(/\//g, "\\/");
-    const patterns = [
-      // href="/play"  |  href='/play'  |  href={"/play"}
-      new RegExp(`href=\\{?["'\`]${escaped}["'\`]`),
-      // router.push("/play") | .replace("/play") | .prefetch("/play")
-      new RegExp(`\\.(push|replace|prefetch)\\(\\s*["'\`]${escaped}["'\`]`),
-    ];
-    if (patterns.some((p) => p.test(source))) hits.push(route);
+    const needles: string[] = [];
+    for (const q of ['"', "'", "`"]) {
+      needles.push(`href=${q}${route}${q}`); // href="/play"
+      needles.push(`href={${q}${route}${q}`); // href={"/play"}
+      for (const verb of ["push", "replace", "prefetch"]) {
+        needles.push(`.${verb}(${q}${route}${q}`); // router.push("/play")
+      }
+    }
+    if (needles.some((n) => source.includes(n))) hits.push(route);
   }
   return hits;
 }
