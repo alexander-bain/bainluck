@@ -350,6 +350,18 @@ _SPORTS_POSTSEASON_STORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# #8298 — the anchor phrases above also sit inside the name of an EARLIER round:
+# "advance to the Second Round of the 2027 **Stanley Cup** Playoffs", "make
+# **College Football Playoff** Quarterfinals". Those are per-team ladder rungs —
+# one near-untraded binary per team per round — not the title story the boost is
+# for, and on 2026-09-23 two of them held Discover slots (Dallas at assembled
+# rank 6) seven months before the playoffs start.
+_POSTSEASON_EARLY_ROUND_RE = re.compile(
+    r"\b(first|second|third|opening|divisional|wild[- ]?card)\s+round\b"
+    r"|\bquarter-?finals?\b|\bsemi-?finals?\b|\bconference\s+finals?\b",
+    re.IGNORECASE,
+)
+
 
 class _NameVerdicts(NamedTuple):
     """Every pattern question this module asks of a market NAME, answered once.
@@ -367,6 +379,7 @@ class _NameVerdicts(NamedTuple):
     cultural_gravity_t2: bool
     compelling_hits: int
     sports_postseason_story: bool
+    postseason_early_round: bool
     minor_league: bool
     top_tier_soccer: bool
 
@@ -401,6 +414,7 @@ def _name_verdicts(market_name: str) -> _NameVerdicts:
         cultural_gravity_t2=bool(_CULTURAL_GRAVITY_T2.search(market_name)),
         compelling_hits=sum(1 for p in _COMPELLING_PATTERNS if p.search(market_name)),
         sports_postseason_story=bool(_SPORTS_POSTSEASON_STORY_RE.search(market_name)),
+        postseason_early_round=bool(_POSTSEASON_EARLY_ROUND_RE.search(market_name)),
         minor_league=bool(_MINOR_LEAGUE_PATTERNS.search(market_name)),
         top_tier_soccer=bool(_TOP_TIER_SOCCER_RE.search(market_name)),
     )
@@ -773,7 +787,13 @@ def compute_futures_highlight(
     _postseason_is_this_era = (
         days_until is None or days_until <= SPORTS_POSTSEASON_STORY_HORIZON_DAYS
     )
-    if _market_name and _v.sports_postseason_story and _postseason_is_this_era:
+    #
+    # #8298 — and a story about THE postseason, not one round of it: a market that
+    # names an earlier round is a ladder rung (see `_POSTSEASON_EARLY_ROUND_RE`).
+    # It keeps every other term and is still served on its own merits.
+    if _market_name and _v.sports_postseason_story and _v.postseason_early_round:
+        result.reasons.append("postseason_story_early_round")
+    elif _market_name and _v.sports_postseason_story and _postseason_is_this_era:
         result.score += SPORTS_POSTSEASON_STORY_BOOST
         result.reasons.append("sports_postseason_story")
     elif _market_name and _v.sports_postseason_story:
