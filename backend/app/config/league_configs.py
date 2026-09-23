@@ -250,7 +250,7 @@ NHL_CONFIG = LeagueConfig(
 
 NCAA_BASKETBALL_CONFIG = LeagueConfig(
     slug="ncaa-basketball",
-    name="NCAA Tournament 2026",
+    name="NCAA Tournament 2027",
     sport_category="basketball",
     sport_keys=["basketball_ncaab"],
     stage_key="ncaa_basketball",
@@ -263,7 +263,43 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     ],
     # Kalshi ticker prefixes that belong to this league — used when market names
     # don't contain league keywords (e.g., "Men's Semifinals Qualifiers").
-    external_id_prefixes=["KXMARMADROUND"],
+    #
+    # #8166. `KXMARMAD-2` is the CHAMPION series. Only the round markets were
+    # listed here, so Kalshi's `KXMARMAD-27` ("Men's 2027 College Basketball
+    # Champion", 73/73 priced) never reached the candidate set and the Champion
+    # column was served by odds_api alone — while the other five columns were
+    # already Kalshi 2027. The championship rule below has carried
+    # `College\s+Basketball\s+Champion\b` commented "Kalshi: Men's College
+    # Basketball Champion" the whole time: the pattern was unreachable at THIS
+    # gate, not missing.
+    #
+    # ═══ WHY NOT THE BARE `KXMARMAD` (measured, not argued) ═══
+    #
+    # Over the real candidate population (44 rows, census 2026-09-23) a bare
+    # `KXMARMAD` admits 33 further markets and FOUR reach a column:
+    # `KXMARMADSEEDROUND-26S1F4` / `-26S2F4` and `KXMARMADSEED-26F4` land in
+    # `final_four`, `KXMARMADSEED-26R32` in `round_of_32` — seed-COUNT props, not
+    # teams. Those four happen to contribute nothing today (all 33 of their
+    # outcomes are either past the 7-day stale cutoff or caught by the numeric-
+    # outcome filter), so they are not the reason for the narrowing. The reason is
+    # their OPEN 2027 siblings: `KXMARMADSEED-27T2/T3/T4/T5` and `KXMARMAD1SEED-27`
+    # carry 293 fresh, team-NAMED, fully-priced outcomes ("Michigan St.", "FDU")
+    # that neither the stale cutoff nor the numeric filter touches. They reach no
+    # column today only because `_match_market_to_column` finds no pattern for
+    # "Top 2 Seeds" — a single name-shaped defence. Narrowing here keeps them out
+    # of the candidate set entirely, which is a second and structural one.
+    #
+    # The trailing `2` is a decade bound, not a season pin: it covers
+    # `KXMARMAD-26` through `-29` and excludes every `KXMARMADSEED*` /
+    # `KXMARMAD1SEED*` / `KXMARMADUPSET*` / `KXMARMADPTS*` sibling, which insert
+    # LETTERS where the champion series puts its season. It is also what keeps
+    # this arm index-served: `external_id_prefix_range` refuses a prefix ending in
+    # punctuation (`-` is ignorable at the primary level under en_US.UTF-8), so a
+    # bare `KXMARMAD-` yields NO range and drops this league back to the 266K-row
+    # Kalshi scan LAT-P132 measured at 24,465 ms. `KXMARMAD-2` ranges to
+    # `['KXMARMAD-', 'KXMARMAD-3')`. The same decade bound is already assumed by
+    # `_YEAR_RE` in `routes/playoffs.py`.
+    external_id_prefixes=["KXMARMADROUND", "KXMARMAD-2"],
     columns=[
         GridColumn(key="round_of_32", label="R32", order=1),
         GridColumn(key="sweet_16", label="Sweet 16", order=2),
@@ -337,7 +373,23 @@ NCAA_BASKETBALL_CONFIG = LeagueConfig(
     region_split=False,  # Flat list — easier to compare across regions
     trend_hours=72,  # Tournament is ~3 weeks, show recent window
     max_teams=68,
-    season_pattern="2026",
+    # #8166. The 2026 men's tournament finished in April 2026. Every market this
+    # grid actually serves is the 2027 one: the five round columns are fed by
+    # `KXMARMADROUND-27*`, and their 2026 twins are `resolved` with outcomes last
+    # written in March/April 2026 — beyond the grid's 7-day stale cutoff, so they
+    # contribute nothing. The grid was therefore already forecasting March 2027
+    # while `name` said 2026 and the two NCAA basketball grids contradicted each
+    # other about what season it is.
+    #
+    # The pattern is load-bearing as well as a label, which is the second half of
+    # the same defect: at "2026", `_is_future_season_market` dropped the one
+    # market whose name carries its year — Kalshi's "Men's 2027 College Basketball
+    # Champion". Same mechanism, same repair, as the women's config below.
+    #
+    # BOTH gates were necessary and neither was sufficient: with only this pattern
+    # moved the champion market is still excluded by the ticker prefix above, and
+    # with only the prefix widened it is still dropped here.
+    season_pattern="2027",
 )
 
 WNCAA_BASKETBALL_CONFIG = LeagueConfig(
