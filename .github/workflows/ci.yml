@@ -4013,6 +4013,66 @@ jobs:
             exit 1
           }
 
+      - name: "#837 subscription slate — provision the disposable database"
+        # Its own database for the reason the #7617 step above gives: this
+        # contract creates and drops the six tables the slate predicate joins,
+        # and `bl_searchtest` has inbound foreign keys on `futures_markets` that
+        # make that drop die with `DependentObjectsStillExist`. Created empty and
+        # thrown away with the runner.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_ws_slate_837"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "WS_SLATE_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_ws_slate_837"
+
+      - name: "#837 the socket does not subscribe to finished sport (real Postgres)"
+        # The Polymarket slate was bounded at one end only, so `scheduled` meant
+        # "the status updater last wrote scheduled" rather than "not started
+        # yet": 1,248 of 1,888 markets on production were events that began more
+        # than six hours ago, back to 2026-06-01. 27 of 30 sampled stale tokens
+        # have no orderbook at the venue at all, which is what `served=1413/3367`
+        # was made of — and the capped token top-up was spending 253 of its 299
+        # slots on them while 42 markets on games in progress had no tokens.
+        #
+        # Postgres answers this one or nobody does. A compiled-SQL assertion
+        # passes for a floor written inside the `scheduled` arm, which leaves the
+        # unbounded `live` arm to re-admit every stuck event — the single most
+        # likely way to get this wrong, and the case this file exists for.
+        #
+        # Skip detection plus a count: four of the six cases are controls that
+        # pass with OR without the fix, so a run that lost the two ship cases
+        # would still print green.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_ws_slate_age_floor_pg_837.py \
+            -v -rs 2>&1 | tee /tmp/slate837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/slate837.txt; then
+            echo "::error::#837 slate contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+          # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
+          grep -qE "[^0-9]6 passed," /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all six cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:

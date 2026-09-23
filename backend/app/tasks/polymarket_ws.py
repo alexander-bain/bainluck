@@ -100,6 +100,85 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
+#: How long after its scheduled start an event may still hold a place in the
+#: subscription. A start time is not a finish time (gotcha: "scheduled kickoff
+#: timestamps are not actual start/finish"), so this is deliberately far longer
+#: than any game: a rain-delayed baseball game, a five-set match and a full day
+#: of status-updater lag all stay subscribed.
+#:
+#: The exact value is not a judgement call, because the population it cuts is a
+#: CLIFF rather than a gradient. Measured on production 2026-09-23 02:5xZ, the
+#: slate held nothing at all between 6 h and 48 h old — a floor of 6, 12, 24 or
+#: 48 hours each kept the identical 594 markets — while the nearest stale event
+#: was 2 days old and the bulk (101 events, 1,175 markets) was the US Open,
+#: three weeks finished. 24 h is the widest margin that still costs nothing.
+SLATE_MAX_AGE_HOURS = 24
+
+
+def _slate_event_window():
+    """The event window the socket subscribes to — bounded at BOTH ends.
+
+    The upper bound (start within 6 h) was always here. The floor was not, and
+    without it ``status='scheduled'`` is not a statement about the future: it is
+    whatever the status updater last managed to write. Every event that never
+    left ``scheduled`` stayed in the subscription forever, so the slate silently
+    accumulated months of finished sport.
+
+    Measured on production 2026-09-23 02:5xZ, before this floor existed:
+
+        CURRENT (live, or starting within 6 h) ....  640 markets,  79 events
+        STALE   (started > 6 h ago, still
+                 'scheduled') ....................  1,248 markets, 107 events
+                 oldest commence_time 2026-06-01 — nearly four months
+
+    So **66 % of the subscription was finished sport**, and the venue confirms
+    those rows are not merely quiet but gone: of 30 randomly sampled stale
+    tokens, 27 answered ``/book`` with *"No orderbook exists for the requested
+    token id"*, against 30 of 30 alive for a same-size current control. That is
+    the whole of #837's unexplained ``served=1413/3367`` — four contiguous
+    shards reading 14/500, 26/500, 36/500, 39/500 while the two holding current
+    sport read 500/500 and 488/500. The subscription was not being truncated by
+    the venue; we were asking it for dead tokens.
+
+    What that cost a reader, which is why this is a fix and not hygiene: the
+    token top-up that gives a market its ``clob_token_ids`` is capped per
+    recycle, and its queue was **253 stale against 46 current**. It is ordered
+    by a rotating cursor, not by whether anyone is watching, so live games
+    waited behind finished ones for a budget 85 % of which could never pay.
+    At the moment of the measurement 42 markets on games *in progress* had no
+    tokens and therefore no price stream at all — eight MLB games among them,
+    including the Dodgers/Padres game filed as #8156.
+
+    The floor is applied ONCE, above the ``or_()``, so it binds both arms. A
+    floor inside the ``scheduled`` arm alone would be re-admitted through the
+    wider ``live`` sibling the first time an event sticks at ``status='live'``
+    — that arm has no time bound of its own and is only clean today by luck
+    (measured: 60 live events, all started within 12 h, 0 stale).
+    """
+    # Imported in-function like every other SQLAlchemy use in this module: the
+    # consumer is started by `run_kalshi_ws.py`, and module scope here stays
+    # light on purpose.
+    from sqlalchemy import text, or_, and_
+
+    from app.models.models import Event
+
+    return and_(
+        Event.commence_time.isnot(None),
+        # int() by construction: the interval literal can never carry anything
+        # but a number, whatever a future edit does to the constant.
+        Event.commence_time >= text(
+            f"NOW() - INTERVAL '{int(SLATE_MAX_AGE_HOURS)} hours'"
+        ),
+        or_(
+            Event.status == "live",
+            and_(
+                Event.status == "scheduled",
+                Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+            ),
+        ),
+    )
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -215,7 +294,9 @@ def _log_unserved_sample(ws) -> None:
 
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
-    from sqlalchemy import select, update, text, or_, and_, func
+    # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
+    # only expression in this consumer that needed them.
+    from sqlalchemy import select, update, func
 
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
@@ -254,14 +335,7 @@ async def _run_polymarket_ws_consumer():
             .where(
                 FuturesMarket.source == "polymarket",
                 FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status == "live",
-                    and_(
-                        Event.status == "scheduled",
-                        Event.commence_time.isnot(None),
-                        Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
-                    ),
-                ),
+                _slate_event_window(),
             )
         )
         rows = result.all()
