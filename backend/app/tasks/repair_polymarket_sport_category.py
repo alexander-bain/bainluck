@@ -253,7 +253,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -284,7 +286,13 @@ FETCH_TIMEOUT_SECONDS = 8
 #: the response were free after it, but the LAST event still classifies, UPDATEs
 #: and commits after its fetch, and the terminal count then runs — see
 #: ``POST_LOOP_RESERVE_SECONDS``.
-DEADLINE_SECONDS = 15
+#:
+#: #2526 lowered it again, from 15 to 11, to pay for the undo receipt: the last
+#: event's write now also stages a receipt and commits separately, and that time
+#: comes out of the loop, not out of the headroom. 11 is the floor two guards
+#: set — the page SELECT's client bound plus its rollback (11.0) must fit under
+#: it, and the cap's sleep alone (5.25s) must stay under half of it.
+DEADLINE_SECONDS = 11
 
 #: Pause between venue calls. Polymarket's Gamma limiter is real.
 VENUE_PAUSE = 0.35
@@ -304,7 +312,10 @@ VENUE_PAUSE = 0.35
 #: has already committed to finishing. ``repair()`` arms a Postgres
 #: ``statement_timeout`` from the budget genuinely remaining at that moment, so
 #: the count cannot outlive its reservation even if this estimate is wrong.
-POST_LOOP_RESERVE_SECONDS = 4.0
+#:
+#: #2526 raised it from 4.0 to 7.5: the non-count slice below grew by 3.5s to
+#: hold the undo receipt and its separate commit; the count keeps its 1.5s.
+POST_LOOP_RESERVE_SECONDS = 7.5
 
 #: The slice of ``POST_LOOP_RESERVE_SECONDS`` that is NOT the terminal count: the
 #: last event's write and commit, response serialization, and the request
@@ -327,7 +338,14 @@ POST_LOOP_RESERVE_SECONDS = 4.0
 #: the reserve — nothing left for the serialization and dependency commit this
 #: same reserve names. "The failure path costs more than the success path" is the
 #: easy thing to forget when sizing a budget from the happy case.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 2.5
+#:
+#: #2526 raised it from 2.5 to 6.0. The last event's write is now THREE bounded
+#: units, not one — the UPDATE, the undo receipt staged in the same transaction,
+#: and the commit that carries both — so the charge is
+#: ``client(WRITE) + RECEIPT + client(COMMIT) + ROLLBACK`` = 1.5 + 2.0 + 1.0 +
+#: 0.5 = 5.0s, leaving 1.0s for serialization and the dependency commit. A guard
+#: recomputes that sum from the constants.
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.0
 
 #: CERT-667 (`Q496-END-TO-END-DB-DEADLINE`): bound on the page SELECT, which was
 #: the FIRST unbounded statement in the request and ran before any deadline the
@@ -357,6 +375,70 @@ TARGET_SELECT_BUDGET_SECONDS = 10.0
 #: it; only the LAST write is charged to the reserve, which is why one constant
 #: covers both cases.
 WRITE_BUDGET_SECONDS = 1.0
+
+#: #2526: bound on the commit that carries the write AND its undo receipt. Its
+#: own unit (``SELECT 1`` + commit) rather than folded into the UPDATE's, because
+#: the receipt has to be staged BETWEEN the two — the leg-label rail's shape
+#: (#7701 rung 3b), which CERT-3349/3352 graded.
+COMMIT_BUDGET_SECONDS = 0.5
+
+#: #2526: client bound on staging the undo receipt. The store arms its own
+#: server timeout; this is the bound the rail can count on. The failure is safe
+#: BY CONSTRUCTION: the receipt is staged inside the write's own open
+#: transaction, so a bound that fires rolls the UPDATE back with it. Slow store
+#: ⇒ nothing written, never a write nobody can undo.
+RECEIPT_BUDGET_SECONDS = 2.0
+
+# ---------------------------------------------------------------------------
+# #2526 — the status scope. The rail was built for OPEN rows (Q495), and every
+# one of them it could fix is fixed: on 2026-09-23 the open population was 1,605
+# markets, all genuine table tennis. The mis-filed tennis RESOLVED before this
+# rail reached it (9,364 resolved ITF/Challenger/WTA markets, created
+# 2026-07-24 → 09-01, i.e. before the 9/1 classifier fix), and a resolved row
+# leaves `status = 'open'` without ever being repaired. `not_open` addresses it.
+# ---------------------------------------------------------------------------
+
+#: Keyed by the name an operator types. ``not_open`` and not ``resolved``: the
+#: complement also admits ``suspended``, and naming it ``resolved`` would be a
+#: claim about rows the rail has not looked at. Same vocabulary as the leg-label
+#: rail's ``STATUS_SCOPE_SQL`` so one operator habit serves both.
+STATUS_SCOPE_SQL = {
+    "open": "fm.status = 'open'",
+    "not_open": "fm.status IS DISTINCT FROM 'open'",
+}
+DEFAULT_STATUS_SCOPE = "open"
+
+#: Schema of the undo record. Its OWN name, never another rail's: two rails
+#: sharing a schema string would let one rail's restore read the other's receipt
+#: and "put back" values it never wrote.
+UNDO_SCHEMA = "polymarket-sport-category-undo/v1"
+
+#: The store refuses to overwrite an owned identity from a different owner
+#: (CERT-856); the owner is the per-invocation token that also salts the identity.
+UNDO_OWNER_KEY = "invocation"
+
+#: A category repair is reversible for as long as the row exists. The store's
+#: 7-day default would type a three-week-old receipt as too old to read.
+UNDO_MAX_AGE_S = 365 * 86400
+
+REASON_UNDO_MISSING = "UNDO_MISSING"
+REASON_UNDO_CORRUPT = "UNDO_CORRUPT"
+REASON_UNDO_UNREADABLE = "UNDO_UNREADABLE"
+
+#: Bounds on the restore's read and its single compare-and-set UPDATE. A restore
+#: reverses ONE event's receipt, so both touch a handful of rows by primary key.
+RESTORE_SELECT_BUDGET_SECONDS = 5.0
+RESTORE_WRITE_BUDGET_SECONDS = 2.0
+
+#: Every row of a receipt lands in exactly one of these on the way back, and
+#: every one is COUNTED — a reversal that reported the receipt's LENGTH would
+#: print a full restore over a run that put nothing back (gotcha #53).
+RESTORE_VERDICTS = (
+    "restored",
+    "already_old",
+    "refused_changed_since",
+    "missing",
+)
 
 #: Events touched per apply call. A module constant, deliberately: the operator
 #: re-invokes with the returned cursor, the operator does not raise the ceiling.
@@ -617,18 +699,302 @@ def budget_headroom_seconds() -> float:
     )
 
 
+def parse_status_scope(status_scope: Optional[str]) -> Optional[str]:
+    """The scope key, or ``None`` for a value this rail does not know.
+
+    Never a silent fallback to the default: an unrecognised scope served from
+    ``open`` returns a truthful page over a population that is all genuine table
+    tennis and reads as "the resolved cohort is clean" — the strongest wrong
+    answer this rail could give (gotcha #53).
+    """
+    if status_scope is None:
+        return DEFAULT_STATUS_SCOPE
+    key = str(status_scope).strip().lower()
+    return key if key in STATUS_SCOPE_SQL else None
+
+
+def _scope_refused(status_scope: Any, repair_name: str, started: float) -> dict[str, Any]:
+    return {
+        "repair": repair_name,
+        "applied": False,
+        "terminal": "refused_status_scope",
+        "reason": (
+            f"?status_scope={status_scope!r} is not a cohort this rail knows. "
+            f"Known: {sorted(STATUS_SCOPE_SQL)}. Nothing was read or written."
+        ),
+        "elapsed_s": round(time.monotonic() - started, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The undo receipt (D51, #2526). The shape is the leg-label rail's (#7701 rung
+# 3b, CERT-3352), which reused the single-leg rail's (CERT-851/856/1979). What
+# is NOT shared is the schema string, the identity prefix and the restore
+# endpoint — those must differ or one rail's restore could read the other's
+# receipt. One receipt per EVENT, because this rail commits per event.
+# ---------------------------------------------------------------------------
+
+
+def new_invocation() -> str:
+    return secrets.token_hex(8)
+
+
+def undo_identity_for(event_id: str, *, at: datetime, invocation: str) -> str:
+    stamp = at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"repair:polymarket_sport_category:undo:{stamp}:{event_id}:{invocation}"
+
+
+def restore_command(identity: str) -> str:
+    """The one command that puts this event back (D51). Printed by every apply."""
+    return (
+        "source ~/.claude/.env && curl -s -X POST -H "
+        '"Authorization: Bearer $ADMIN_TOKEN" '
+        f'"$BAINLUCK_API/api/admin/repairs/polymarket-sport-category'
+        f'?apply=true&undo_identity={identity}"'
+    )
+
+
+def _undo_envelope(identity: str, payload: dict[str, Any]):
+    from app.utils.durable_state import DurableEnvelope
+
+    return DurableEnvelope.build(
+        identity=identity,
+        schema_version=UNDO_SCHEMA,
+        payload=payload,
+        # A property of the ARTIFACT, not of the run: an incomplete envelope
+        # decodes as MALFORMED, so a partial page's receipt would be unreadable
+        # (CERT-1979).
+        complete=True,
+        source="repair:polymarket-sport-category:undo",
+    )
+
+
+async def _save_undo_co_commit(
+    session, identity: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Stage the receipt in the WRITE'S OWN open transaction — never its own.
+
+    Before the UPDATE it would claim rows that may roll back; after the commit
+    it would leave a durable change whose old values exist nowhere. Here one
+    commit carries both. Never raises: a bound that fires returns ``error`` and
+    the caller rolls the UPDATE back with it.
+    """
+    from app.services.durable_snapshots import publish_owned_snapshot_in_txn
+
+    try:
+        return await asyncio.wait_for(
+            publish_owned_snapshot_in_txn(
+                session,
+                _undo_envelope(identity, payload),
+                owner_key=UNDO_OWNER_KEY,
+                owner=payload[UNDO_OWNER_KEY],
+            ),
+            timeout=RECEIPT_BUDGET_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "identity": identity,
+            "error_class": "TimeoutError",
+            "error": (
+                f"the receipt did not persist inside its {RECEIPT_BUDGET_SECONDS}s "
+                f"client bound"
+            ),
+        }
+
+
+async def _read_undo(identity: str) -> tuple[Optional[dict[str, Any]], str]:
+    """``(payload, reason)`` — "I could not read" is never "it is not there".
+
+    ``read_snapshot_standalone`` never raises; a store outage comes back as a
+    status. Only the store's own MISSING is reported missing; everything else is
+    UNREADABLE, which says try again rather than give up (gotcha #53).
+    """
+    from app.services.durable_snapshots import read_snapshot_standalone
+    from app.utils.durable_state import MISSING
+
+    try:
+        got = await read_snapshot_standalone(
+            identity, expected_version=UNDO_SCHEMA, max_age_s=UNDO_MAX_AGE_S
+        )
+    except Exception:  # noqa: BLE001 — a raise is UNREADABLE, not MISSING
+        logger.warning("repair_polymarket_sport_category: undo read raised for %s", identity)
+        return None, REASON_UNDO_UNREADABLE
+    if not got.ok or got.envelope is None:
+        if got.status == MISSING:
+            return None, REASON_UNDO_MISSING
+        return None, REASON_UNDO_UNREADABLE
+    payload = got.envelope.payload
+    if not isinstance(payload, dict) or not isinstance(payload.get("changes"), list):
+        return None, REASON_UNDO_CORRUPT
+    return payload, "ok"
+
+
+async def _restore(session, apply: bool, undo_identity: str) -> dict[str, Any]:
+    """Put ONE earlier apply's event back, compare-and-set on what it wrote.
+
+    🔴 THE PREDICATE IS THE WHOLE SAFETY ARGUMENT. Each market goes back only
+    while it still carries BOTH values this rail wrote (``llm_sport_category``
+    and ``category``). A row the poller re-ingested or a later repair moved is
+    refused and counted ``refused_changed_since``, never dragged back. The venue
+    is never called and no page is selected. ``restored`` is counted from what
+    Postgres RETURNED, never from the receipt's length.
+    """
+    started = time.monotonic()
+    out: dict[str, Any] = {
+        "repair": "polymarket-sport-category",
+        "mode": "restore",
+        "undo_identity": undo_identity,
+        "applied": False,
+        "counts": {"in_receipt": 0, **{v: 0 for v in RESTORE_VERDICTS}},
+        "samples": [],
+        "refused": None,
+        "taken_at": None,
+    }
+
+    payload, reason = await _read_undo(undo_identity)
+    if payload is None:
+        out["refused"] = reason
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    changes = [c for c in payload.get("changes") or [] if c.get("market_id") is not None]
+    out["taken_at"] = payload.get("taken_at")
+    out["counts"]["in_receipt"] = len(changes)
+    if not changes:
+        out["refused"] = "UNDO_EMPTY"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    by_id = {int(c["market_id"]): c for c in changes}
+    try:
+        result = await _bounded_statement(
+            session,
+            timeout_literal=str(int(RESTORE_SELECT_BUDGET_SECONDS * 1000)),
+            server_budget_s=RESTORE_SELECT_BUDGET_SECONDS,
+            # `= ANY(:ids)`: the array-bind spelling with a production history on
+            # this driver (the leg-label restore uses it for the same reason).
+            sql=(
+                "SELECT fm.id, fm.llm_sport_category, fm.category "
+                "FROM futures_markets fm WHERE fm.id = ANY(:ids)"
+            ),
+            params={"ids": sorted(by_id)},
+        )
+        current = {int(r[0]): (r[1], r[2]) for r in result.fetchall()}
+    except Exception as exc:  # noqa: BLE001 — a restore that cannot look says so
+        await _safe_rollback(session)
+        out["refused"] = f"RESTORE_READ_FAILED: {type(exc).__name__}: {exc}"[:300]
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    restorable: list[dict[str, Any]] = []
+    for market_id, change in sorted(by_id.items()):
+        if market_id not in current:
+            out["counts"]["missing"] += 1
+            continue
+        now = current[market_id]
+        if now == (change.get("to_llm"), change.get("to_category")):
+            restorable.append(change)
+        elif now == (change.get("from_llm"), change.get("from_category")):
+            out["counts"]["already_old"] += 1
+        else:
+            out["counts"]["refused_changed_since"] += 1
+
+    out["samples"] = [
+        {
+            "market_id": c["market_id"],
+            "from": c.get("to_llm"),
+            "to": c.get("from_llm"),
+        }
+        for c in restorable[:20]
+    ]
+
+    if not apply:
+        out["would_restore"] = len(restorable)
+        out["apply_hint"] = "re-invoke with &apply=true"
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    if not restorable:
+        out["applied"] = True
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    values = ", ".join(
+        f"(CAST(:id{i} AS bigint), CAST(:ollm{i} AS text), CAST(:ocat{i} AS text), "
+        f"CAST(:nllm{i} AS text), CAST(:ncat{i} AS text))"
+        for i in range(len(restorable))
+    )
+    params: dict[str, Any] = {}
+    for i, c in enumerate(restorable):
+        params[f"id{i}"] = int(c["market_id"])
+        params[f"ollm{i}"] = c.get("from_llm")
+        params[f"ocat{i}"] = c.get("from_category")
+        params[f"nllm{i}"] = c.get("to_llm")
+        params[f"ncat{i}"] = c.get("to_category")
+
+    # The two columns the apply wrote, and only those. `updated_at` is not put
+    # back: it is a touch-stamp, and the reversal is itself a touch.
+    undo_sql = f"""
+        UPDATE futures_markets fm
+           SET llm_sport_category = v.old_llm,
+               category = v.old_cat
+          FROM (VALUES {values}) AS v(id, old_llm, old_cat, new_llm, new_cat)
+         WHERE fm.id = v.id
+           AND fm.llm_sport_category IS NOT DISTINCT FROM v.new_llm
+           AND fm.category IS NOT DISTINCT FROM v.new_cat
+     RETURNING fm.id
+    """
+    try:
+        result = await _bounded_statement(
+            session,
+            timeout_literal=str(int(RESTORE_WRITE_BUDGET_SECONDS * 1000)),
+            server_budget_s=RESTORE_WRITE_BUDGET_SECONDS,
+            sql=undo_sql,
+            params=params,
+        )
+        put_back = {int(r[0]) for r in result.fetchall()}
+        await _bounded_statement(
+            session,
+            timeout_literal=str(int(COMMIT_BUDGET_SECONDS * 1000)),
+            server_budget_s=COMMIT_BUDGET_SECONDS,
+            sql="SELECT 1",
+            commit=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — a lock on these very rows
+        await _safe_rollback(session)
+        out["refused"] = f"RESTORE_WRITE_FAILED: {type(exc).__name__}: {exc}"[:300]
+        out["elapsed_s"] = round(time.monotonic() - started, 2)
+        return out
+
+    out["applied"] = True
+    out["counts"]["restored"] = len(put_back)
+    # Lost its compare between the SELECT and the UPDATE: same bucket, never
+    # vanishing from the arithmetic.
+    out["counts"]["refused_changed_since"] += len(restorable) - len(put_back)
+    out["elapsed_s"] = round(time.monotonic() - started, 2)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Census — read-only. Never writes; `apply` is accepted and ignored.
 # ---------------------------------------------------------------------------
 
 
-async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
+async def census(
+    session, apply: bool = False, status_scope: str = None, **_ignored
+) -> dict[str, Any]:
     """Size the mis-filed population and how stale it is. Writes nothing.
 
     `apply` is accepted and ignored so the census can never be turned into a
-    write by a stray query parameter.
+    write by a stray query parameter. ``status_scope`` (#2526) is ``open``
+    (default, unchanged) or ``not_open``; an unknown value is refused by name.
     """
     started = time.monotonic()
+    scope = parse_status_scope(status_scope)
+    if scope is None:
+        return _scope_refused(status_scope, "polymarket-sport-category-census", started)
+    status_sql = STATUS_SCOPE_SQL[scope]
     try:
         # CERT-667 (`Q496-CENSUS-SET-LOCAL`) — THIS USED TO BE A PLAIN `SET`, AND A
         # PLAIN `SET` OUTLIVES THE REQUEST THAT ISSUED IT.
@@ -663,7 +1029,7 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                 session,
                 timeout_literal=f"'{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'",
                 server_budget_s=CENSUS_STATEMENT_TIMEOUT_SECONDS,
-                sql="""
+                sql=f"""
                     SELECT
                       (CURRENT_DATE - fm.updated_at::date) AS days_since_touch,
                       count(*)                             AS markets,
@@ -671,7 +1037,7 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                                                            AS events
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
-                      AND fm.status = 'open'
+                      AND {status_sql}
                       AND fm.llm_sport_category = :cat
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
                     GROUP BY 1
@@ -695,11 +1061,11 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
                 session,
                 timeout_literal=f"'{CENSUS_STATEMENT_TIMEOUT_SECONDS}s'",
                 server_budget_s=CENSUS_STATEMENT_TIMEOUT_SECONDS,
-                sql="""
+                sql=f"""
                     SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
-                      AND fm.status = 'open'
+                      AND {status_sql}
                       AND fm.llm_sport_category = :cat
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
                     """,
@@ -740,7 +1106,8 @@ async def census(session, apply: bool = False, **_ignored) -> dict[str, Any]:
     return {
         "repair": "polymarket-sport-category-census",
         "measured": True,
-        "population": f"source=polymarket status=open llm_sport_category={SUSPECT_CATEGORY}",
+        "status_scope": scope,
+        "population": f"source=polymarket {status_sql} llm_sport_category={SUSPECT_CATEGORY}",
         "markets": total_markets,
         "events": int(total_events),
         "markets_stale_4d_plus": stale_4d_plus,
@@ -837,6 +1204,8 @@ async def repair(
     limit: int = None,
     after_date: str = None,
     after_id: int = None,
+    status_scope: str = None,
+    undo_identity: str = None,
     **_ignored,
 ) -> dict[str, Any]:
     """Re-ask the venue for each mis-filed event and store the shipped cascade's answer.
@@ -844,8 +1213,24 @@ async def repair(
     Dry-run by default. Resumable by KEYSET (``after_date`` + ``after_id``
     from ``next_cursor``), never by offset — this repair removes rows from its
     own population.
+
+    ``status_scope`` (#2526): ``open`` (default — the Q495 population, SQL
+    unchanged) or ``not_open`` (the resolved cohort the open rail can never
+    reach). Both write, because since #2526 every write banks an undo receipt in
+    its own transaction. ``undo_identity`` switches the rail into RESTORE mode
+    and nothing else runs — see ``_restore``.
     """
     started = time.monotonic()
+
+    # FIRST, before any selector: a restore reverses an event already chosen,
+    # and must not depend on the flags of the call it is undoing.
+    if undo_identity:
+        return await _restore(session, bool(apply), str(undo_identity))
+
+    scope = parse_status_scope(status_scope)
+    if scope is None:
+        return _scope_refused(status_scope, "polymarket-sport-category", started)
+    status_sql = STATUS_SCOPE_SQL[scope]
     cap = min(int(limit or APPLY_EVENT_CAP), APPLY_EVENT_CAP)
 
     # CERT-666 (P1): the cursor starts where the OPERATOR already was, not at
@@ -929,7 +1314,7 @@ async def repair(
                     count(*)                                   AS markets
                   FROM futures_markets fm
                   WHERE fm.source = 'polymarket'
-                    AND fm.status = 'open'
+                    AND {status_sql}
                     AND fm.llm_sport_category = :cat
                     AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
                   GROUP BY 1
@@ -1034,6 +1419,12 @@ async def repair(
     # waits and retries, and an operator who reads "the pool was empty" goes and
     # looks at what else is holding twenty connections.
     stopped_at_pool_timeout: Optional[str] = None
+    # #2526: the event whose undo receipt did not persist, so its write was rolled
+    # back with it. Behind the cursor, like every other paused arm.
+    stopped_at_receipt_unpersisted: Optional[str] = None
+    #: #2526: one entry per event this page actually re-filed, each with the one
+    #: command that puts it back (D51). Appended only after the commit lands.
+    receipts: list[dict[str, Any]] = []
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         for t in targets:
@@ -1149,27 +1540,46 @@ async def repair(
             # event that did commit matches no rows (`llm_sport_category` is no
             # longer `:cat_old`), writes nothing, and reports rowcount 0. The
             # ambiguity costs a wasted venue call, never a wrong row.
+            #
+            # #2526: the write is now THREE bounded units — UPDATE, undo receipt,
+            # then a `SELECT 1` unit that carries the commit — because the
+            # receipt has to be staged between the statement and its commit.
+            # Each unit keeps both bounds; the reserve that pays for the last
+            # event's three is `POST_LOOP_NON_COUNT_RESERVE_SECONDS`. An
+            # ambiguous commit is still safe, and its receipt is not lost: it
+            # rode the same transaction, so if the write landed so did the
+            # receipt, findable by the event id inside its identity
+            # (`repair:polymarket_sport_category:undo:<stamp>:<event_id>:...`).
             try:
                 # Core UPDATE, never ORM attribute assignment (gotchas #4/#5).
                 # Compare-and-set on the category we selected on, so a concurrent
                 # re-ingest that already corrected the row is never clobbered by a
                 # verdict computed before it landed.
+                # #2526: a self-join on the row's own pre-update snapshot so
+                # RETURNING can hand back the `category` it replaced — the one
+                # value the receipt needs and the compare-and-set does not
+                # already pin (`llm_sport_category` was `:cat_old` by
+                # construction). `status_sql` is the scope the page selected on,
+                # so the write can never reach past the population it read.
                 r = await _bounded_statement(
                     session,
                     timeout_literal=str(int(WRITE_BUDGET_SECONDS * 1000)),
                     server_budget_s=WRITE_BUDGET_SECONDS,
-                    sql="""
-                        UPDATE futures_markets
+                    sql=f"""
+                        UPDATE futures_markets fm
                         SET llm_sport_category = :llm,
                             category = CASE
                                 WHEN :cat_new = 'championship' THEN 'championship'
-                                ELSE category
+                                ELSE fm.category
                             END,
                             updated_at = NOW()
-                        WHERE source = 'polymarket'
-                          AND status = 'open'
-                          AND llm_sport_category = :cat_old
-                          AND market_metadata->>'polymarket_event_id' = :eid
+                        FROM futures_markets prev
+                        WHERE prev.id = fm.id
+                          AND fm.source = 'polymarket'
+                          AND {status_sql}
+                          AND fm.llm_sport_category = :cat_old
+                          AND fm.market_metadata->>'polymarket_event_id' = :eid
+                        RETURNING fm.id, prev.category, fm.category
                         """,
                     params={
                         "llm": llm_sport_category,
@@ -1177,6 +1587,64 @@ async def repair(
                         "cat_old": SUSPECT_CATEGORY,
                         "eid": str(t.event_id),
                     },
+                )
+                # Read BEFORE the commit: the result is bound to the transaction.
+                landed_rows = list(r.fetchall())
+
+                # 🔴 THE RECEIPT, BUILT FROM `RETURNING`, STAGED IN THIS SAME OPEN
+                # TRANSACTION. Built from the rows Postgres vouches for, never
+                # from the plan. A receipt that does not persist takes the write
+                # down with it: no ordering of crash, pool timeout or store
+                # outage leaves a re-filed row whose old value is recorded
+                # nowhere. That is what makes this rail D51(b)-eligible.
+                event_identity: Optional[str] = None
+                if landed_rows:
+                    invocation = new_invocation()
+                    event_identity = undo_identity_for(
+                        str(t.event_id), at=datetime.now(timezone.utc), invocation=invocation
+                    )
+                    staged = await _save_undo_co_commit(
+                        session,
+                        event_identity,
+                        {
+                            UNDO_OWNER_KEY: invocation,
+                            "taken_at": datetime.now(timezone.utc).isoformat(),
+                            "repair": "polymarket-sport-category",
+                            "status_scope": scope,
+                            "event_id": str(t.event_id),
+                            "changes": [
+                                {
+                                    "market_id": int(row[0]),
+                                    "from_llm": SUSPECT_CATEGORY,
+                                    "to_llm": llm_sport_category,
+                                    "from_category": row[1],
+                                    "to_category": row[2],
+                                }
+                                for row in landed_rows
+                            ],
+                        },
+                    )
+                    if staged.get("status") != "ok":
+                        await _safe_rollback(session)
+                        counts["write_failed"] += 1
+                        stopped_at_receipt_unpersisted = (
+                            f"event_id={t.event_id} "
+                            f"({staged.get('status')}: {staged.get('error')})"
+                        )[:300]
+                        logger.warning(
+                            "repair_polymarket_sport_category: receipt %s was %s — "
+                            "rolled the event back; stopping with the cursor BEFORE it",
+                            event_identity,
+                            staged.get("status"),
+                        )
+                        break
+
+                # The one commit that carries the write AND its receipt.
+                await _bounded_statement(
+                    session,
+                    timeout_literal=str(int(COMMIT_BUDGET_SECONDS * 1000)),
+                    server_budget_s=COMMIT_BUDGET_SECONDS,
+                    sql="SELECT 1",
                     commit=True,
                 )
             except ClientDeadlineExceeded:
@@ -1213,7 +1681,18 @@ async def repair(
                 # work that did not happen.
                 break
 
-            counts["markets_written"] += r.rowcount
+            counts["markets_written"] += len(landed_rows)
+            # Only now, after the commit: before it the identity names a receipt
+            # that may still roll back.
+            if event_identity is not None:
+                receipts.append(
+                    {
+                        "event_id": str(t.event_id),
+                        "markets": len(landed_rows),
+                        "undo_identity": event_identity,
+                        "restore_command": restore_command(event_identity),
+                    }
+                )
             next_cursor = resolved_cursor
 
     # CERT-666 (P2) — THE TERMINAL COUNT WAS THE LAST UNBOUNDED STATEMENT IN THE
@@ -1243,11 +1722,11 @@ async def repair(
                 session,
                 timeout_literal=str(int(count_budget_s * 1000)),
                 server_budget_s=count_budget_s,
-                sql="""
+                sql=f"""
                     SELECT count(DISTINCT fm.market_metadata->>'polymarket_event_id')
                     FROM futures_markets fm
                     WHERE fm.source = 'polymarket'
-                      AND fm.status = 'open'
+                      AND {status_sql}
                       AND fm.llm_sport_category = :cat
                       AND fm.market_metadata->>'polymarket_event_id' IS NOT NULL
                     """,
@@ -1318,6 +1797,7 @@ async def repair(
         and stopped_at_unresolved is None
         and stopped_at_write_timeout is None
         and stopped_at_pool_timeout is None
+        and stopped_at_receipt_unpersisted is None
         and counts["indeterminate"] == 0
         and counts["write_failed"] == 0
     )
@@ -1325,6 +1805,7 @@ async def repair(
     result: dict[str, Any] = {
         "repair": "polymarket-sport-category",
         "applied": bool(apply),
+        "status_scope": scope,
         "counts": counts,
         "changed_to": to_category,
         "samples": samples,
@@ -1357,6 +1838,9 @@ async def repair(
         # pooled connection came free inside the client bound. Also not a verdict,
         # also behind the cursor — and a different thing to go and look at.
         "stopped_at_pool_timeout": stopped_at_pool_timeout,
+        "stopped_at_receipt_unpersisted": stopped_at_receipt_unpersisted,
+        # #2526 (D51): the undo receipts this page banked, one per re-filed event.
+        "receipts": receipts,
         "cap": cap,
         "ordering": (
             "newest commence_time first — the user-visible rows. Gotcha #41's "
@@ -1376,6 +1860,8 @@ async def repair(
             # is unchanged by them, which is a claim a guard checks.
             "target_select_budget_s": TARGET_SELECT_BUDGET_SECONDS,
             "write_budget_s": WRITE_BUDGET_SECONDS,
+            "receipt_budget_s": RECEIPT_BUDGET_SECONDS,
+            "commit_budget_s": COMMIT_BUDGET_SECONDS,
             # CERT-670: the two SERVER bounds above are only reachable once a
             # connection is, so the client-side slack that wraps every unit is
             # published alongside them. Reported as the slack rather than as two
@@ -1423,6 +1909,19 @@ async def repair(
             "with `next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN: the "
             "event may still be mis-filed, and anything already counted above it "
             "on this page is real and still applies."
+        )
+    elif stopped_at_receipt_unpersisted is not None:
+        # #2526: ranked with the other paused arms, above every success arm —
+        # the classification is real and the write is NOT, because it was rolled
+        # back rather than left unreversible.
+        result["terminal"] = "paused_receipt_unpersisted"
+        result["reason"] = (
+            f"the undo receipt for {stopped_at_receipt_unpersisted} did not "
+            "persist, so that event's write was rolled back rather than left "
+            "unreversible. The cursor deliberately stops BEFORE it, so re-running "
+            "with `next_cursor` retries it. THIS IS NOT A COMPLETED DRAIN. "
+            "Everything committed above it on this page is durable, receipted "
+            "and still applies."
         )
     elif stopped_at_write_timeout is not None:
         # CERT-667: ranked with `paused_unresolved`, above every success arm, for

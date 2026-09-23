@@ -1238,8 +1238,10 @@ async def test_the_event_whose_pool_starved_is_revisited_by_the_cursor_it_emits(
     row1 = _Row("1", _Ts("2026-08-30T18:00:00+00:00"), 11)
     row2 = _Row("2", _Ts("2026-08-30T17:00:00+00:00"), 12)
 
-    # Arm index 2: page SELECT (0), event 1's write (1), event 2's write (2).
-    s1 = _ArmStarves(arm_index=2, targets=[row1, row2], remaining=40)
+    # Arm index 4: page SELECT (0), event 1's write (1), its undo receipt (2)
+    # and its commit (3) — #2526 made one event's write three bounded units —
+    # then event 2's write (4).
+    s1 = _ArmStarves(arm_index=4, targets=[row1, row2], remaining=40)
     _venue(monkeypatch, {"1": _TENNIS, "2": _TENNIS})
     first, _ = await _answers_within(rail.repair(s1, apply=True))
     assert first["terminal"] == "paused_pool_timeout"

@@ -475,7 +475,8 @@ _REPAIRS = {
     # 283 rows it did not reach had not been re-ingested in four days, so they
     # cannot self-heal. A census timeout returns `measured: false` with a
     # reason, NEVER a zero (gotcha #54) — a zero here would read as "drained".
-    # Never writes: `apply` is accepted and ignored.
+    # Never writes: `apply` is accepted and ignored. #2526: accepts
+    # ?status_scope= (`open` default | `not_open`) to size the resolved cohort.
     "polymarket-sport-category-census": (
         "app.tasks.repair_polymarket_sport_category",
         "census",
@@ -526,6 +527,16 @@ _REPAIRS = {
     # client bound, so the statement never reached PostgreSQL at all — retrying
     # immediately usually just queues behind the same saturation). Re-invoke with
     # `next_cursor` on any of them. None of the four is a verdict on any event.
+    # #2526 adds a fifth, `paused_receipt_unpersisted`: the undo receipt did not
+    # persist, so that event's write was rolled back with it — same retry rule.
+    # #2526: `?status_scope=` (`open` default, SQL unchanged | `not_open`) points
+    # the census AND the drain at the RESOLVED cohort the open rail can never
+    # reach — the mis-filed tennis resolved before Q495 got to it. An unknown
+    # value is refused by name, never defaulted. Every apply now banks one undo
+    # receipt per re-filed event IN THE WRITE'S OWN TRANSACTION and prints its
+    # restore command under `receipts`; restore with
+    # `?undo_identity=<id>&apply=true` (dry-run without `apply`).
+    # Accepts ?limit=&after_date=&after_id=&status_scope=&undo_identity=.
     # ATTENDED ONLY: never wire this to a beat — it is a drain with an end
     # state, not a standing job.
     "polymarket-sport-category": (

@@ -87,10 +87,24 @@ class _Result:
     def scalar(self):
         return self._scalar
 
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def fetchall(self):
+        return self._rows
+
 
 class _Update:
-    def __init__(self, rowcount):
+    """#2526: the write now reads ``RETURNING fm.id, prev.category, fm.category``,
+    so the fake answers ``fetchall`` with that many rows. ``rowcount`` is kept
+    so a count-shaped assertion still reads the same number."""
+
+    def __init__(self, rowcount, first_id=1000):
         self.rowcount = rowcount
+        self._rows = [(first_id + i, "futures", "futures") for i in range(rowcount)]
+
+    def fetchall(self):
+        return list(self._rows)
 
 
 class _Session:
@@ -109,6 +123,11 @@ class _Session:
         self.writes: list[tuple[str, dict]] = []
         self.commits = 0
         self.rollbacks = 0
+        #: #2526: decoded payloads of the undo receipts the rail staged, read
+        #: from the JSON it actually bound — never from a mock's call args.
+        self.receipts: list[dict] = []
+        #: What the store's owned upsert returns; ``None`` is a failed publish.
+        self.receipt_generation = 1
 
     @property
     def target_sql(self) -> str:
@@ -132,6 +151,11 @@ class _Session:
         sql = " ".join(str(stmt).split())
         self.statements.append((sql, dict(params or {})))
         upper = sql.upper()
+        if "INSERT INTO DURABLE_STATE_SNAPSHOTS" in upper:
+            import json as _json
+
+            self.receipts.append(_json.loads((params or {})["payload"]))
+            return _Result(scalar=self.receipt_generation)
         if upper.startswith("UPDATE"):
             self.writes.append((sql, dict(params or {})))
             return _Update(self.update_rowcount)
