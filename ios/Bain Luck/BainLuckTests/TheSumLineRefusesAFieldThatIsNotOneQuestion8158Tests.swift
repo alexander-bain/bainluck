@@ -114,8 +114,9 @@ final class TheSumLineRefusesAFieldThatIsNotOneQuestion8158Tests: XCTestCase {
     }
 
     /// Overround must not cost a real market its control. #2582 photographed every
-    /// two-way market on one UFC card summing to 101–102%, and p95 for a
-    /// flagged-exclusive field is 1.025.
+    /// two-way market on one UFC card summing to 101–102%, and the median
+    /// flagged-exclusive field sits at 1.014 — so a ceiling at parity would strip
+    /// the control off legitimate markets for vig alone.
     func testVigDoesNotStripTheControlFromATwoWayMarket() {
         let twoWay = [outcome("Fighter A", 0.66), outcome("Fighter B", 0.36)]
         XCTAssertEqual(twoWay.compactMap(\.currentProbability).reduce(0, +), 1.02, accuracy: 0.001)
@@ -152,11 +153,15 @@ final class TheSumLineRefusesAFieldThatIsNotOneQuestion8158Tests: XCTestCase {
     // MARK: - The ladder class, where the database flag is wrong
 
     /// Cumulative threshold ladders carry `mutually_exclusive = true` in the
-    /// database and their rungs contain one another, so their totals run to 150–182%
-    /// and a sum over them is meaningless however the flag reads. This is the
-    /// population that decided the policy reads the field's arithmetic rather than
-    /// the (unserved) flag — a later ship that gates on the flag reintroduces the
-    /// lie here, and this test is what would catch it.
+    /// database and their rungs contain one another, so a sum over them is
+    /// meaningless however the flag reads.
+    ///
+    /// They are one of TWO populations that decided the policy reads the field's
+    /// arithmetic rather than the (unserved) flag: the 2026-09-22 census found **646
+    /// flagged-exclusive markets above the ceiling**, ladders plus large award and
+    /// matchup boards whose per-outcome prices never normalise (see
+    /// `EvolutionCombinedLinePolicy`). A later ship that gates on the flag
+    /// reintroduces the lie on all of them, and this test is what would catch it.
     func testACumulativeDateLadderIsRefusedThoughTheDatabaseCallsItExclusive() {
         let gemini = [
             outcome("by October 31", 0.12), outcome("by November 30", 0.28),

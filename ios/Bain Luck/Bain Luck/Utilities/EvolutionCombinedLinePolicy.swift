@@ -20,45 +20,79 @@ import Foundation
 ///
 /// ## Why the field's own arithmetic, and not `futures_markets.mutually_exclusive`
 ///
-/// The database HAS an exclusivity flag, it is fully populated (13,051 false /
-/// 25,620 true on open markets) and the timeline payload does not serve it — so the
-/// obvious fix looks like "serve the flag". Measured over 211 open markets with ≥3
-/// outcomes, **the flag is the weaker signal**:
+/// The database HAS an exclusivity flag and the timeline payload does not serve it,
+/// so the obvious fix looks like "serve the flag". Censused 2026-09-22 over **every**
+/// open market with ≥3 priced outcomes — 11,095 of them, complete keyset walk, raw
+/// rows banked at `artifacts/native-303/8158-ceiling-census.json` — **the flag is
+/// informative but nowhere near sufficient**:
 ///
-/// | `mutually_exclusive` | markets | median sum | p95 | worst |
-/// |---|---|---|---|---|
-/// | `true`  | 123 | 0.980 | 1.025 | 1.82 |
-/// | `false` | 88  | 2.645 | 7.270 | 12.81 |
+/// | `mutually_exclusive` | markets | median sum | p95 | worst | above 1.3 |
+/// |---|---|---|---|---|---|
+/// | `true`  | 4,764 | 1.014 | 2.500 | 21.64 | 646 (13.6%) |
+/// | `false` | 6,331 | 3.610 | 12.310 | 179.87 | 5,576 (88.1%) |
 ///
-/// The separation is enormous, and every one of the three `true` markets above this
-/// ceiling is a CUMULATIVE THRESHOLD LADDER whose rungs contain each other — "Next
-/// Gemini Pro model released on…?" (24 rungs, 1.82), "Israel × Lebanon diplomatic
-/// meeting by October 31?" (1.63), "Lowest Mississippi level at St. Louis by
-/// November 30?" (1.50). Their rungs are not alternatives however the flag is set,
-/// and their sums are not probabilities. So the arithmetic is not a stand-in for the
-/// flag pending a producer change: on this population **it is right where the flag
-/// is wrong**, and a later ship that gates on the served flag would reintroduce the
-/// lie on exactly those three shapes.
+/// Flagged-exclusive fields do cluster where they should (median 1.014). But **646
+/// of them still cannot be summed**, and they are not a rounding error or one exotic
+/// shape. Two distinct populations sit up there:
 ///
-/// ## What this deliberately does NOT catch
+///   * **Cumulative threshold ladders** whose rungs contain one another — a
+///     "by October 31 / by November 30 / …" date board is flagged exclusive and its
+///     rungs are not alternatives however the flag reads.
+///   * **Large fields whose per-outcome YES prices never normalise** — "Maxwell
+///     Award Winner" (63 outcomes, 20.39), "College Football Playoff: #12 Seed"
+///     (50, 21.64), "ACC Conference Championship Matchup" (136, 20.71). These ARE
+///     one question; their prices are simply not a distribution, so adding any
+///     subset of them is adding numbers that were never shares of anything.
 ///
-/// 33 of the 88 non-exclusive markets sum UNDER the ceiling, and they keep their
-/// `Sum` control. Two independent props at 40 and 45 add to 85 — still not a
-/// probability, and indistinguishable from a legitimately exclusive field that was
-/// truncated to its top rows. Arithmetic cannot separate those two, so the honest
-/// boundary is drawn where the sum stops being able to be one at all. This closes
-/// the class where the line is provably a fabrication, not every case where a sum is
-/// semantically odd.
+/// So the arithmetic is not a stand-in for the flag pending a producer change: on
+/// this population it is right where the flag is wrong, and a later ship that gates
+/// on the served flag would reintroduce the lie on all 646.
+///
+/// ## What this deliberately does NOT catch, and what it costs
+///
+/// 755 of the non-exclusive markets sum UNDER the ceiling and keep their `Sum`
+/// control. Two independent props at 40 and 45 add to 85 — still not a probability,
+/// and indistinguishable from a legitimately exclusive field truncated to its top
+/// rows. Arithmetic cannot separate those two, so the honest boundary is drawn where
+/// the sum stops being able to be one at all.
+///
+/// 🪤 **The cost is not zero and is worth stating plainly.** 6,222 markets (56.1%)
+/// lose the control. For **5,877 of them (94.5%) the line was already a flat clamped
+/// 100** — there the refusal is purely the repair. The other **345 were drawing a
+/// moving line under 100**, and those readers lose something that looked like it
+/// worked: they are overwhelmingly 100+-outcome boards ("ACC Conference Championship
+/// Matchup", top-3 = 0.72 of a field totalling 20.71) where the sub-total reads as a
+/// probability but sits on prices inflated roughly twentyfold. A plausible wrong
+/// number is the worse failure of the two, which is why they are refused too — but
+/// it is a judgement, not a free win.
 enum EvolutionCombinedLinePolicy {
 
     /// The largest served-field total that can still be one question's alternatives.
     ///
-    /// Above 1.0 because a real two-way market carries overround — #2582 photographed
-    /// every two-way market on one UFC card summing to 101–102% — and p95 for a
-    /// flagged-exclusive field is 1.025, so a ceiling at parity would strip the
-    /// control off legitimate markets for vig alone. 1.3 sits an order of magnitude
-    /// below the non-exclusive median of 2.645 and comfortably above the exclusive
-    /// p95, which is why it is not a tuned number: nothing measured lands near it.
+    /// **Principled, not fitted.** One question's alternatives sum to 1 by
+    /// construction; the only legitimate excess is overround, and #2582 photographed
+    /// every two-way market on one UFC card summing to 101–102%. 1.3 allows thirty
+    /// points of vig and pricing noise on top of a well-formed field — comfortably
+    /// clear of the flagged-exclusive median of 1.014, and far below the
+    /// non-exclusive median of 3.610.
+    ///
+    /// 🪤 **It is NOT a natural boundary, and the measurement says so.** Sweeping the
+    /// ceiling across the full 11,095-market census produces no cliff — the curve is
+    /// smooth, so any claim that "nothing lands near it" would be false:
+    ///
+    /// | ceiling | markets refused | already flat | working lines lost |
+    /// |---|---|---|---|
+    /// | 1.0 | 8,638 | 6,914 | 1,724 |
+    /// | 1.2 | 6,500 | 6,013 | 487 |
+    /// | **1.3** | **6,222** | **5,877** | **345** |
+    /// | 1.5 | 5,903 | 5,670 | 233 |
+    /// | 3.0 | 3,988 | 3,941 | 47 |
+    ///
+    /// Raising it buys a better ratio and leaves more flat lines unfixed; lowering it
+    /// fixes more and costs more working ones. 1.3 is therefore a judgement defended
+    /// by what a probability IS, and the table is here so the next person changing it
+    /// argues with the trade rather than rediscovering it. The reported specimen
+    /// (56775596, field sum 3.91) is caught by every row above.
     static let singleQuestionSumCeiling: Double = 1.3
 
     /// Whether `servedOutcomes` are alternatives to one question.
