@@ -262,20 +262,29 @@ CLEANUP_RESERVE_SECONDS = 3.0
 SERIALIZATION_RESERVE_SECONDS = 0.5
 
 #: Time reserved for everything that happens AFTER the loop's last fetch: the
-#: single bulk write, its commit, at most one cleanup, the ``remaining_legs``
-#: terminal count, response serialization, and the dependency's commit.
-POST_LOOP_RESERVE_SECONDS = 8.0
+#: single bulk write, its undo receipt, its commit, at most one cleanup, the
+#: ``remaining_legs`` terminal count, response serialization, and the
+#: dependency's commit.
+#:
+#: 10.0, up from 8.0 when rung 3b added the receipt (CERT-3349): the receipt is
+#: staged between the write and the commit, so its 2.0s bound sits on the same
+#: post-loop path, and at 8.0 the commit-failure path cost 8.5s — a declared
+#: worst case of 30.5s against the 30s wall, i.e. an H12 that swallows the cursor
+#: AND the only surfaced undo identity. The 1.5s gap to the non-count slice is
+#: unchanged, so the terminal count keeps the room it had.
+POST_LOOP_RESERVE_SECONDS = 10.0
 
 #: The slice of the reserve that is NOT the terminal count. The count is armed
 #: with whatever is left of the wall once this is set aside, so an over-running
 #: loop shortens the count's timeout instead of borrowing against work that
 #: still has to run. It must cover the CLIENT bound of both post-loop database
-#: units — the update and the commit — plus one cleanup and the serialization:
+#: units — the update and the commit — the receipt staged between them
+#: (``RECEIPT_BUDGET_SECONDS``, CERT-3349), plus one cleanup and the serialization:
 #: "the failure path costs more than the success path" is the easy thing to
 #: forget when sizing a budget from the happy case, and it is what CERT-681
 #: withheld a token over. A guard asserts the DERIVED client bounds fit inside
 #: it, rather than trusting five numbers to be edited together.
-POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.5
+POST_LOOP_NON_COUNT_RESERVE_SECONDS = 8.5
 
 #: Bound on the page SELECT. It does not widen the worst case: ``started`` is
 #: captured BEFORE this query, so a slow SELECT does not add to the total, it
@@ -463,6 +472,11 @@ _BAND_FORM = re.compile(r"^\s*(\d+)\s*-\s*(\d+)\s*$")
 #: mode is the safe one BY CONSTRUCTION: the receipt is staged inside the write's
 #: own open transaction, so a bound that fires takes the UPDATE down with it on
 #: the rollback. Slow store ⇒ nothing written, not a write nobody can undo.
+#:
+#: Charged against ``POST_LOOP_NON_COUNT_RESERVE_SECONDS``. The safe failure mode
+#: is only safe if the response still ARRIVES: a bound that fits nowhere in the
+#: reserve turns "rolled back, re-invoke with this cursor" into an H12 with no
+#: body (CERT-3349).
 RECEIPT_BUDGET_SECONDS = 2.0
 
 #: Schema of the undo record. Versioned because ``read_snapshot_standalone``
@@ -640,9 +654,10 @@ def budget_headroom_seconds() -> float:
     """Seconds left under the router wall in the rail's WORST case.
 
     The deadline is checked at the top of the loop, so after it passes the rail
-    may still start one whole batch pair and one pause; and after that the write,
-    its commit, ONE cleanup, the terminal count, serialization and the
-    dependency's commit still run. The cleanup is in that list because of
+    may still start one whole batch pair and one pause; and after that the
+    completeness count (derived from what is left, so it spends headroom rather
+    than wall), the write, its receipt, its commit, ONE cleanup, the terminal
+    count, serialization and the dependency's commit still run. The cleanup is in that list because of
     CERT-681 — see ``CLEANUP_RESERVE_SECONDS``. It appears once and not twice
     because ``repair()`` skips the count after a failed write, which
     ``test_a_failed_write_does_not_also_start_the_terminal_count`` pins.

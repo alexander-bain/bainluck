@@ -1238,18 +1238,59 @@ def test_everything_the_non_count_reserve_names_actually_fits_inside_it():
     how the sibling rail's bound came to be described but not enforced
     (CERT-670). Sizing from the happy path and forgetting the cleanup is how its
     round two reached a 31.10s declared worst path against a 30s wall
-    (CERT-681). This asserts both, on the four things the reserve names.
+    (CERT-681). This asserts both, on the five things the reserve names.
+
+    🔴 CERT-3349: rung 3b staged the undo receipt BETWEEN the write and the
+    commit and this sum did not charge it, so the guard stayed green over a
+    commit-failure path of 8.5s against an 8.0s reserve — 30.5s against the wall.
     """
     charged = (
         rail.client_db_budget_seconds(rail.WRITE_BUDGET_SECONDS)
+        + rail.RECEIPT_BUDGET_SECONDS
         + rail.client_db_budget_seconds(rail.COMMIT_BUDGET_SECONDS)
         + rail.CLEANUP_RESERVE_SECONDS
         + rail.SERIALIZATION_RESERVE_SECONDS
     )
     assert charged <= rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS, (
-        f"the write, its commit, one cleanup and the serialization are charged "
-        f"{charged}s against a {rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve"
+        f"the write, its receipt, its commit, one cleanup and the serialization "
+        f"are charged {charged}s against a "
+        f"{rail.POST_LOOP_NON_COUNT_RESERVE_SECONDS}s reserve"
     )
+
+
+def test_the_post_receipt_commit_failure_path_fits_under_the_router_wall():
+    """🔴 CERT-3349, walked end to end rather than slice by slice.
+
+    The two slice guards above can each pass while the whole path does not —
+    that is exactly how the receipt went unbudgeted. So this adds up the ONE
+    path the certifier named, in execution order, from the rail's own
+    constants: the loop overruns its deadline by a whole batch pair and a pause;
+    the completeness count takes every second its derivation allows; then the
+    write, the receipt, and a commit that FAILS, its one cleanup, and the
+    serialization. Every term is a client bound, not a server budget.
+    """
+    worst_loop = rail.DEADLINE_SECONDS + rail.BATCH_PAIR_BUDGET_SECONDS + rail.VENUE_PAUSE
+    completeness_server = (
+        rail.ROUTER_WALL_SECONDS
+        - worst_loop
+        - rail.POST_LOOP_RESERVE_SECONDS
+        - rail.client_db_budget_seconds(0.0)
+    )
+    path = (
+        worst_loop
+        + rail.client_db_budget_seconds(completeness_server)
+        + rail.client_db_budget_seconds(rail.WRITE_BUDGET_SECONDS)
+        + rail.RECEIPT_BUDGET_SECONDS
+        + rail.client_db_budget_seconds(rail.COMMIT_BUDGET_SECONDS)
+        + rail.CLEANUP_RESERVE_SECONDS
+        + rail.SERIALIZATION_RESERVE_SECONDS
+    )
+    assert path <= rail.ROUTER_WALL_SECONDS, (
+        f"the post-receipt commit-failure path is declared at {path:.2f}s against "
+        f"a {rail.ROUTER_WALL_SECONDS}s router wall: an H12 with no body, which "
+        "loses the cursor on a paused page"
+    )
+    assert rail.budget_headroom_seconds() > 0
 
 
 def test_the_terminal_count_has_a_budget_left_after_everything_else():
@@ -2386,6 +2427,39 @@ async def test_the_receipt_names_the_rows_that_landed_not_the_rows_planned(
     assert [c["outcome_id"] for c in session.receipts[0]["changes"]] == [1], (
         "the receipt named the PLAN, not the rows Postgres returned"
     )
+
+
+async def test_a_commit_that_fails_after_the_receipt_is_staged_surfaces_no_undo(
+    monkeypatch, fast
+):
+    """CERT-3349's named path, driven. The write lands, the receipt stages, and
+    the COMMIT fails: both roll back together, so the page must say it wrote
+    nothing, hand out no restore command for a receipt that no longer exists,
+    and not start the terminal count on top of the cleanup it already paid.
+    """
+    page = [_resolved_row(1, "0xa", "A vs B", age_days=10)]
+
+    class _CommitDies(_Session):
+        async def commit(self):
+            raise RuntimeError("canceling statement due to statement timeout")
+
+    session = _CommitDies(page=page, remaining=99)
+    _venue(monkeypatch, _FakeService([_Market("0xa", "A vs B", ["A", "B"])]))
+
+    out = await rail.repair(session, apply=True, status_scope="not_open")
+
+    assert len(session.writes) == 1 and len(session.receipts) == 1, (
+        "the write or its receipt never ran, so this is not the post-receipt "
+        "commit path and every assertion below would be vacuous"
+    )
+    assert out["terminal"] == "paused_write_timeout"
+    assert out["counts"]["relabelled"] == 0
+    assert out["undo_identity"] is None
+    assert out["restore_command"] is None
+    assert session.rollbacks >= 1, "the failed commit was not rolled back"
+    counts = [s for s, _p in session.statements if s.upper().startswith("SELECT COUNT(")]
+    assert counts == [], f"the terminal count ran after a failed commit: {counts!r}"
+    assert out["remaining_legs_measured"] is False
 
 
 async def test_a_receipt_that_cannot_persist_takes_the_write_down_with_it(
