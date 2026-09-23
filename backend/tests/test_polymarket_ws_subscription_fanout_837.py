@@ -45,7 +45,9 @@ from app.services.polymarket_ws import (
     COVERAGE_GRACE_SECONDS,
     MAX_ASSETS_PER_CONNECTION,
     MAX_SUBSCRIBE_BYTES,
+    UNSERVED_SAMPLE_PER_SHARD,
     PolymarketWebSocket,
+    _evenly_spaced,
     _frame_overheads,
     _shard_asset_ids,
     _subscribe_frame,
@@ -621,7 +623,7 @@ class TestCoverageIsCountedOnTheWire:
         # would be the instrument accusing the shard of the instrument's own
         # impatience.
         ws = PolymarketWebSocket()
-        ws._shard_subscribed = {0: 500, 1: 500}
+        ws._shard_ids = {0: _ids(500), 1: _ids(500)}
         ws._shard_served = {0: {"served"}, 1: set()}
         ws._shards_connected = {0, 1}
         ws._shard_connected_at = {0: 0.0, 1: 1_000.0}
@@ -637,7 +639,7 @@ class TestCoverageIsCountedOnTheWire:
         # it a starved subscription would send the next reader hunting #837 in a
         # shard that simply is not connected.
         ws = PolymarketWebSocket()
-        ws._shard_subscribed = {0: 500, 1: 500}
+        ws._shard_ids = {0: _ids(500), 1: _ids(500)}
         ws._shard_served = {0: {"served"}, 1: set()}
         ws._shards_connected = {0}
         ws._shard_connected_at = {0: 0.0}
@@ -844,3 +846,202 @@ class TestTheCoverageNumberReachesAReader:
         assert stats["assets_served"] > 0, (
             "the fake socket served assets, so the client must have counted them"
         )
+
+
+class TestTheUnservedIdsAreNamed:
+    """#837 follow-up — WHICH ids the venue never sent, not just how many.
+
+    The first production read of the coverage ratio came back `served=1832/3738`
+    (49%), broken down per shard as {0:14, 1:26, 2:36, 3:39, 4:492, 5:500,
+    6:500, 7:230}. That is measured BREADTH and it is not a finding, because
+    `assets_served` counts assets that sent at least one message: a book nobody
+    traded and a subscription the venue truncated produce the identical number.
+
+    Worse, the bimodality has an innocent explanation that must be ruled out
+    before it is reported as a venue defect. `_shard_asset_ids` slices the
+    caller's list CONTIGUOUSLY, and that list is built by a query with no
+    `ORDER BY` — heap order, which tracks insertion order, which tracks market
+    age. "Shards 0-3 are old long-tail futures and 4-7 are today's slate" fits
+    the numbers with nothing wrong at the venue at all.
+
+    The database cannot settle it: `handle_price` skips untradeable books
+    through early returns that increment no counter, so quiet and starved are
+    indistinguishable there too. Only the wire separates them, and only if the
+    ids are named — they exist in memory at the recycle and were discarded.
+
+    So what is pinned here is that the ids come out, that they are the right
+    ones, and that they are sampled in a way that does not select on the very
+    variable under test.
+    """
+
+    def _client(self, shard_ids, served):
+        ws = PolymarketWebSocket()
+        ws._shard_ids = dict(shard_ids)
+        ws._shard_served = {i: set(s) for i, s in served.items()}
+        return ws
+
+    def test_the_sample_names_ids_that_were_subscribed_and_never_served(self):
+        ids = _ids(10)
+        ws = self._client({0: ids}, {0: {ids[0], ids[1]}})
+
+        sample = ws.unserved_sample(limit=4)
+
+        assert set(sample[0]).isdisjoint({ids[0], ids[1]}), (
+            "a served id in the unserved sample sends the next reader to ask "
+            "the venue about a book it demonstrably did serve"
+        )
+        assert set(sample[0]) <= set(ids[2:])
+
+    def test_a_fully_served_shard_is_omitted_rather_than_reported_empty(self):
+        ids = _ids(4)
+        ws = self._client({0: ids, 1: ids}, {0: set(ids), 1: set()})
+
+        sample = ws.unserved_sample()
+
+        assert 0 not in sample, "a healthy shard does not need a line"
+        assert sample[1] == ids, "the starved shard is still named in full"
+
+    def test_the_sample_is_spread_across_the_shard_not_taken_off_its_head(self):
+        """The mutation this exists to kill is `unserved[:limit]`.
+
+        Caller order tracks market age, so the first few ids of a shard are its
+        oldest corner. A sample drawn from there and found uniformly quiet
+        would be reported as "this shard is starved" when all it showed was
+        that old long-tail futures do not trade — the exact confound that stops
+        49% from being a finding.
+        """
+        ids = _ids(100)
+        ws = self._client({0: ids}, {0: set()})
+
+        sample = ws.unserved_sample(limit=5)[0]
+
+        assert len(sample) == 5
+        assert sample[0] == ids[0] and sample[-1] == ids[-1], (
+            "a spread sample reaches both ends of the shard"
+        )
+        assert len(set(sample)) == 5, "spacing must not pick the same id twice"
+        positions = [ids.index(a) for a in sample]
+        assert positions == sorted(positions)
+        assert max(positions) > len(ids) // 2, (
+            "a head-only slice ([:limit]) never reaches past the midpoint — "
+            "that is the selection bias this assertion convicts"
+        )
+
+    def test_a_short_unserved_list_is_reported_whole(self):
+        ids = _ids(3)
+        ws = self._client({0: ids}, {0: set()})
+
+        assert ws.unserved_sample(limit=UNSERVED_SAMPLE_PER_SHARD)[0] == ids
+
+    def test_evenly_spaced_handles_the_degenerate_limits(self):
+        assert _evenly_spaced([], 5) == []
+        assert _evenly_spaced(_ids(5), 0) == []
+        assert _evenly_spaced(_ids(5), -1) == []
+        assert _evenly_spaced(_ids(9), 1) == [_ids(9)[4]]
+
+    def test_the_counts_are_exact_on_both_halves(self):
+        ws = self._client(
+            {0: _ids(10), 1: _ids(4)},
+            {0: set(_ids(10)[:3]), 1: set()},
+        )
+
+        stats = ws.stats
+
+        assert stats["subscribed_by_shard"] == {0: 10, 1: 4}
+        assert stats["unserved_by_shard"] == {0: 7, 1: 4}
+        assert stats["assets_subscribed"] == 14
+
+    def test_a_frame_for_an_id_we_never_asked_for_does_not_credit_the_shard(self):
+        """Coverage is measured against the SUBSCRIPTION, not against traffic.
+
+        The venue may send an id that is not in this shard's subscribe. Counted
+        as coverage, it would shrink the unserved set without a single
+        subscribed book having been served — the instrument reporting progress
+        made by somebody else's traffic.
+        """
+        ids = _ids(5)
+        ws = self._client({0: ids}, {0: {"an-id-we-never-subscribed"}})
+
+        assert ws.stats["unserved_by_shard"] == {0: 5}
+        assert ws.unserved_sample()[0] == ids
+
+    def test_the_sample_reaches_a_reader(self, caplog):
+        """#837's own lesson: a number that is computed and never emitted is
+        not measurable from production. `assets_served` sat in `stats` and in
+        no log line for the whole of that ship."""
+        from app.tasks.polymarket_ws import _log_unserved_sample
+
+        ids = _ids(6)
+        ws = self._client({0: ids}, {0: {ids[0]}})
+
+        with caplog.at_level(logging.INFO):
+            _log_unserved_sample(ws)
+
+        assert "unserved sample (#837)" in caplog.text
+        assert ids[-1] in caplog.text, "the ids themselves must be in the line"
+
+    def test_nothing_is_logged_when_every_subscribed_id_was_served(self, caplog):
+        from app.tasks.polymarket_ws import _log_unserved_sample
+
+        ids = _ids(6)
+        ws = self._client({0: ids}, {0: set(ids)})
+
+        with caplog.at_level(logging.INFO):
+            _log_unserved_sample(ws)
+
+        assert "unserved sample" not in caplog.text
+
+    def test_a_raising_client_does_not_take_the_recycle_down(self, caplog):
+        """This runs in the resubscribe path. A diagnostic that can crash the
+        consumer costs the socket to save a log line."""
+        from app.tasks.polymarket_ws import _log_unserved_sample
+
+        class _Broken:
+            def unserved_sample(self, *a, **k):
+                raise RuntimeError("boom")
+
+        with caplog.at_level(logging.ERROR):
+            _log_unserved_sample(_Broken())
+
+        assert "unserved sample failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_the_real_client_excludes_what_the_socket_actually_served(
+        self, monkeypatch
+    ):
+        """Ties it to the wire rather than to seeded state: a hand-set
+        `_shard_served` would pass even if `run` stopped recording ids."""
+        assets = _ids(1500)
+        served_ids = assets[:7]
+        frames = [
+            json.dumps({"event_type": "best_bid_ask", "asset_id": a})
+            for a in served_ids
+        ]
+
+        def connect(*args, **kwargs):
+            return _FakeSocket(frames, [])
+
+        monkeypatch.setattr("websockets.connect", connect, raising=False)
+
+        ws = PolymarketWebSocket()
+        task = asyncio.create_task(ws.run(asset_ids=assets))
+        await asyncio.sleep(0.3)
+        stats = ws.stats
+        sample = ws.unserved_sample()
+        task.cancel()
+        with pytest.raises((asyncio.CancelledError, Exception)):
+            await task
+
+        assert stats["assets_served"] > 0, "sanity: the fake socket served ids"
+        # Against the ids the socket was KNOWN to send, not against
+        # `assets_served`. Every shard here shares one fake socket, so all three
+        # connections receive frames for shard 0's seven ids and
+        # `assets_served` sums to 21 — a shard credited with a sibling's
+        # traffic. The unserved accounting must be immune to that, and 1493 is
+        # the number that proves it.
+        assert sum(stats["unserved_by_shard"].values()) == len(assets) - len(
+            served_ids
+        ), "subscribed minus served must account for every id, losing none"
+        flat = [a for picks in sample.values() for a in picks]
+        assert flat, "1500 ids and 7 served: there is plenty unserved to name"
+        assert set(flat).isdisjoint(set(served_ids))
