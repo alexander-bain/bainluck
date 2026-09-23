@@ -71,7 +71,7 @@ import {
   buildOutcomeLadderRungs,
   ladderNeedsWideLabels,
   ladderOrderFor,
-  thresholdLadderTitle,
+  thresholdLadderTitles,
 } from "@/lib/futuresLadder";
 import { buildAmbientPoints } from "@/lib/futuresAmbient";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
@@ -285,6 +285,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const groupMarkets = Array.isArray(groupData?.markets) ? groupData.markets : [];
   const thresholdGroups = groupData?.threshold_groups ?? {};
   const thresholdEntries = Object.entries(thresholdGroups).filter(([, outcomes]) => outcomes.length >= 2);
+  // #8167 — one decision for the whole set: a card's heading can depend on what
+  // its SIBLINGS are called, so the headings are computed together and consumed
+  // positionally beside the same array.
+  const thresholdLadderHeadings = thresholdLadderTitles(
+    thresholdEntries.map(([stem, outcomes]) => ({
+      stem,
+      outcomeNames: outcomes.map((o) => o.name),
+    })),
+    groupData?.group_title,
+    market?.name,
+  );
 
   // Q478 — dispatch on the SHAPE FIELD (`market_type`, #194), the one value every
   // surface is supposed to key off (lib/marketShape.ts). Until now the detail page
@@ -1114,15 +1125,16 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           so without the fourth argument the reader meets 32 unlabelled stacks,
           two of them identical. The outcome names are the only place the team
           survives. */}
-      {thresholdEntries.map(([stem, outcomes]) => (
+      {/* #8167 — a SPREAD board writes the same fact without a colon ("Atlanta
+          wins by over 2.5 runs"), so #8019's separator rule finds nothing and
+          the two sides drew as identical unlabelled stacks. The headings are
+          decided for the whole page at once because what distinguishes these
+          cards is the words their siblings do NOT share — see
+          `thresholdLadderTitles`. Each card is still decided on its own first. */}
+      {thresholdEntries.map(([stem, outcomes], i) => (
         <QuantityGroup
           key={stem}
-          title={thresholdLadderTitle(
-            stem,
-            groupData?.group_title,
-            market.name,
-            outcomes.map((o) => o.name),
-          )}
+          title={thresholdLadderHeadings[i]}
           rungs={buildThresholdRungs(outcomes)}
         />
       ))}

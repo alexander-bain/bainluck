@@ -394,6 +394,139 @@ export function thresholdLadderTitle(
 }
 
 /**
+ * ── #8167: THE SUBJECT IS NOT ALWAYS BEHIND A COLON ──
+ *
+ * #8019's rule reads the subject off a `"<subject>: "` prefix, which is Kalshi's
+ * shape for a team-wins board. A SPREAD board writes the same fact as prose:
+ * `/futures/59319183` ("San Diego vs Atlanta: Spread") serves
+ *
+ *     Atlanta wins by over 1.5 / 2.5 / 3.5 runs
+ *     San Diego wins by over 1.5 / 2.5 / 3.5 runs
+ *
+ * — no colon anywhere, so every refusal in this file fires in turn (the stems
+ * `atlanta wins by over #` / `san diego wins by over #` hold `#`, the
+ * `group_title` echoes the `<h1>`, and `ladderSubjectHeading` finds no
+ * separator) and the reader meets TWO IDENTICAL, COMPLETELY UNLABELLED cards
+ * reading `≥ 1.5 / 2.5 / 3.5 runs` twice. Settled, every leg reads `0%` and the
+ * two are literally pixel-alike (lane1b/517, production `83a20bc7`, 390px, two
+ * independent boards).
+ *
+ * THE RULE. What distinguishes sibling ladders is whatever their outcome names
+ * do NOT share. So: take each group's common leading words, then strip the
+ * trailing run those prefixes all share. "Atlanta wins by over" and "San Diego
+ * wins by over" both end "wins by over"; what is left is "Atlanta" and "San
+ * Diego". No prose knowledge, no verb list, no market-type special case — the
+ * page's own siblings say which words are the subject.
+ *
+ * WHY IT IS PAGE-LEVEL AND ALL-OR-NOTHING. The strip is a property of the set,
+ * not of one card, and a rule that fires coherently or not at all cannot leave a
+ * board half-labelled. It refuses unless it can name at least two DIFFERENT
+ * subjects (one repeated subject distinguishes nothing, and an echo is what
+ * #7398 exists to refuse), and it refuses anything longer than a subject —
+ * 4 words / 24 chars, against #8019's measured longest of 22 ("Deportivo De La
+ * Coruna"). A single group returns nothing: with no sibling there is nothing to
+ * tell apart, and the `<h1>` already says it.
+ *
+ * It only ever fills a heading that is otherwise BLANK — `thresholdLadderTitle`
+ * runs first and unchanged — so no ladder that reads correctly today moves.
+ */
+const MAX_SUBJECT_WORDS = 4;
+const MAX_SUBJECT_CHARS = 24;
+
+function splitWords(value: string): string[] {
+  return value.trim().split(/\s+/).filter(Boolean);
+}
+
+function sameWord(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * The leading words every name in one group shares, in the first name's casing
+ * (the payload's own — the stems are lowercased and would print "san diego").
+ */
+function commonPrefixWords(
+  names: readonly (string | null | undefined)[],
+): string[] | undefined {
+  const lists = names.map((n) => splitWords(n ?? "")).filter((w) => w.length > 0);
+  if (lists.length === 0) return undefined;
+  let prefix = lists[0];
+  for (const list of lists.slice(1)) {
+    let i = 0;
+    while (i < prefix.length && i < list.length && sameWord(prefix[i], list[i])) i++;
+    prefix = prefix.slice(0, i);
+    if (prefix.length === 0) return [];
+  }
+  return prefix;
+}
+
+/**
+ * One subject per group — what tells these ladders apart — or `undefined` for
+ * every group when they cannot be told apart honestly.
+ */
+export function ladderDistinguishingSubjects(
+  groups: readonly (readonly (string | null | undefined)[])[],
+): (string | undefined)[] {
+  const none = groups.map(() => undefined);
+  if (groups.length < 2) return none;
+
+  const prefixes = groups.map((g) => commonPrefixWords(g));
+  if (prefixes.some((p) => p === undefined || p.length === 0)) return none;
+  const known = prefixes as string[][];
+
+  // The strip is MAXIMAL, and a prefix stripped empty means "refuse", not "keep
+  // the last word" (the empty subject is caught below). Stopping one word short
+  // instead looks safer and is worse: given prefixes "wins by over" and "Atlanta
+  // wins by over" — one side of a board whose payload omits its subject — it
+  // keeps a verb as the heading and labels two cards "wins" and "Atlanta wins".
+  // There is no honest subject there, so the honest answer is none.
+  const maxStrip = Math.min(...known.map((p) => p.length));
+  let strip = 0;
+  while (strip < maxStrip) {
+    const word = known[0][known[0].length - 1 - strip];
+    if (!known.every((p) => sameWord(p[p.length - 1 - strip], word))) break;
+    strip++;
+  }
+
+  const subjects = known.map((p) => p.slice(0, p.length - strip).join(" "));
+  // EVERY subject distinct, not merely two of them. On a three-ladder board two
+  // cards can strip to the same word while a third differs, and "at least two
+  // are different" waves that through — which is the reported defect (two
+  // identical headings) wearing a heading. All-or-nothing: if any pair collides
+  // the whole page falls back to no headings rather than to a wrong one.
+  if (new Set(subjects.map((s) => s.toLowerCase())).size !== subjects.length) return none;
+  if (
+    subjects.some(
+      (s) =>
+        !s || s.length > MAX_SUBJECT_CHARS || splitWords(s).length > MAX_SUBJECT_WORDS,
+    )
+  ) {
+    return none;
+  }
+  return subjects;
+}
+
+/**
+ * Every ladder heading on one page, in the order the groups are given.
+ *
+ * `thresholdLadderTitle` decides each card on its own first, exactly as before;
+ * only a card left blank by all of its refusals falls through to the
+ * page-level subject, and that goes through the same two refusals.
+ */
+export function thresholdLadderTitles(
+  groups: readonly { stem: string; outcomeNames: readonly (string | null | undefined)[] }[],
+  groupTitle: string | null | undefined,
+  pageTitle: string | null | undefined,
+): (string | undefined)[] {
+  const subjects = ladderDistinguishingSubjects(groups.map((g) => g.outcomeNames));
+  return groups.map(
+    (g, i) =>
+      thresholdLadderTitle(g.stem, groupTitle, pageTitle, g.outcomeNames) ??
+      printableHeading(subjects[i] ?? "", pageTitle),
+  );
+}
+
+/**
  * True when a rung set wants the roomy label track — any label that is not a short
  * numeric threshold. Dates ("Before October", "2029 or later") need it; "≥ 80"
  * does not.
