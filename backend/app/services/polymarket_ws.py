@@ -593,6 +593,14 @@ class PolymarketWebSocket:
         was not: the 98.3% and 97.8% coverage figures this instrument reported
         are upper bounds, not readings.
 
+        AN INTERSECTION AND NOT A CAP, which codex's counterexample settles
+        (review 2026-09-23 06:38Z): one subscribed id never sent, one foreign id
+        received, and the old counter read `assets_served=1` of
+        `assets_subscribed=1` while `unserved_by_shard` said 1 in the same
+        breath. That shard never crossed its own denominator, so there was no
+        excess to subtract and a cap would have left `1/1` exactly as it was.
+        The over-count does not require an overfull shard.
+
         Keyed on `_shard_ids` so the population is the subscription even for a
         shard that has been sent nothing, and so this and `_unserved_by_shard`
         below partition that subscription exactly — served + unserved is the
@@ -681,9 +689,11 @@ class PolymarketWebSocket:
             },
             # The raw wire count, kept as its own field rather than folded into
             # `served_by_shard`, because narrowing the numerator to the
-            # subscription would otherwise make the excess unreadable: with
-            # served capped at subscribed, `2:375/375` looks like perfect
-            # coverage whether the wire carried 375 ids or 394. Stated
+            # subscription would otherwise make the excess unreadable: served
+            # can no longer exceed its denominator — a consequence of the
+            # intersection, NOT a cap, which would leave the counterexample
+            # below untouched — so `2:375/375` reads the same whether the wire
+            # carried 375 ids or 394. Stated
             # separately, `on_wire - served` is the count of ids the venue sent
             # this shard unasked — the thing that was being scored AS coverage —
             # and it is also the only served-ish number the shadow consumer has,

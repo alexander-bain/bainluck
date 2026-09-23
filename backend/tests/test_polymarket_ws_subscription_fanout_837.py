@@ -1311,6 +1311,30 @@ class TestCoverageCountsOnePopulation:
             "394 was the number the old counter printed against a 375 denominator"
         )
 
+    def test_codexs_counterexample_one_wanted_id_one_foreign_id(self):
+        # CODEX'S RECORDED COUNTEREXAMPLE, verbatim (review of 2026-09-23
+        # 06:38Z, artifacts/codex-837-coverage-review-20260923/). It is the
+        # minimal case and it is the one that settles the shape of the repair:
+        # ONE subscribed id never sent, ONE foreign id received. The old
+        # counter reported `assets_served=1` against `assets_subscribed=1` —
+        # apparently perfect coverage — while `unserved_by_shard` simultaneously
+        # said 1 of the 1 subscribed ids had never been served. Both numbers
+        # from the same object, in the same read, contradicting each other.
+        #
+        # This is also why the repair is an INTERSECTION and not a cap or a
+        # subtraction: this shard never crossed its own denominator, so there
+        # was no excess to subtract and capping would have left `1/1` exactly
+        # as it was. Codex's finding is precisely that capping yields upper
+        # bounds and is not a fix.
+        ws = self._client({0: ["wanted"]}, {0: {"foreign"}})
+
+        stats = ws.stats
+        assert stats["assets_served"] == 0, (
+            "the one id we asked for never arrived; 1/1 was the bug"
+        )
+        assert stats["unserved_by_shard"][0] == 1
+        assert stats["assets_on_wire"] == 1, "the foreign id is still counted"
+
     def test_served_and_unserved_partition_the_subscription(self):
         # The invariant the old counter could not satisfy, and the reason this
         # is a partition rather than two independent counts: with a foreign id
