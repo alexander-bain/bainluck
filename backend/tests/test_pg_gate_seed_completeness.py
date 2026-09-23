@@ -99,6 +99,55 @@ COVERED = (
     "test_kalshi_fabricated_loss_bind_contract_pg.py",
     "test_kalshi_settlement_recency_band_pg.py",
     "test_kalshi_sweep_settlement_bind_pg.py",
+    # #7035. Seeds `futures_markets` by raw INSERT to prove the void write
+    # PREPARES — its bind sits inside `jsonb_build_object`, which is
+    # `VARIADIC "any"`, so an untyped parameter there cannot be inferred. Two
+    # seeding hazards the NOT-NULL arm cannot see, both about the one column
+    # the gate is actually about:
+    #
+    #   * `market_metadata` is bound through `CAST(:metadata AS jsonb)`. An
+    #     untyped NULL into a `jsonb` column is the SAME inference failure one
+    #     layer down, so a seed written the obvious way dies in the fixture and
+    #     reports the gate's own bug as a red deploy.
+    #   * the merge arm's whole subject is metadata the row ALREADY carries. A
+    #     seed that left it NULL would exercise only the empty case, and the
+    #     assignment-vs-merge bug it exists to catch would pass.
+    "test_kalshi_sweep_void_bind_pg.py",
+    # #7035 / CERT-3324's required repair. Seeds `events`, `futures_markets` and
+    # `futures_outcomes` by raw INSERT to run `RESOLVED_VOID_SELECT_SQL` — the
+    # selection seam the BLOCK found untested — against a real server. Three
+    # hazards live in this seed, and each one would turn a screen vacuous rather
+    # than loud:
+    #
+    #   * `market_metadata` must be bound through `CAST(:metadata AS jsonb)`.
+    #     Two of the predicate's screens ARE jsonb key tests, so an untyped NULL
+    #     kills the fixture before the arms that matter run.
+    #   * `events.status` is the played-game control's ONLY difference from the
+    #     specimen. A seed that let it default would make the control and the
+    #     subject the same row and the most important arm would prove nothing.
+    #   * `futures_outcomes.is_winner` is named explicitly on both sides of the
+    #     ungraded screen. Left to its default, the graded control is not graded
+    #     and the screen is never exercised.
+    "test_kalshi_resolved_void_selection_pg.py",
+    # #7035, CERT-3326's repair — the CONSUMER half of the gate above. Where
+    # that one proves the capture reaches the fixture, this one runs the real
+    # retirement arm over the fact it wrote and reads `events.status` back.
+    # Enrolled the session it was written; both arms of this file found it
+    # before CI did. Its seed carries four hazards of its own:
+    #
+    #   * `sports.active` is NOT NULL with a PYTHON-side default, which a raw
+    #     INSERT bypasses and `server_default` scanning cannot see — the trap
+    #     this file is named after, and it cost a full CI round trip on the
+    #     sibling gate.
+    #   * `events.status` is the PLAYED control's only difference from the
+    #     specimen, exactly as above.
+    #   * `events.home_score` / `away_score` / `completed_at` are named so the
+    #     evidence-of-a-played-game refusals have controls at all.
+    #   * `futures_markets.source` and `.status` are named because the screen's
+    #     selective clause is "no market that is NOT kalshi+resolved" — a seed
+    #     that let either default would make the foreign-market control
+    #     indistinguishable from the subject.
+    "test_venue_void_retirement_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`

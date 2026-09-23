@@ -181,6 +181,69 @@ VENUE_SETTLED_STATUSES = frozenset({"settled", "finalized"})
 #: and every sweep after it.
 VENUE_DORMANT_STATUSES = frozenset({"inactive"})
 
+#: The venue's ``result`` words that are NOT a grade — #7035.
+#:
+#: Kalshi settles a leg on ``yes`` or ``no``. ``scalar`` is what it writes when
+#: the question was retired at a fair price instead of decided, and the ticker's
+#: own ``rules_secondary`` says when that happens: *"If the game is cancelled or
+#: rescheduled to over 48 hours away, the market will resolve to a fair price."*
+#:
+#: MEASURED AT THE VENUE 2026-09-22 (notice 26 — series read, not our mirror).
+#: ``KXLALIGAGAME-26SEP16LEVATH``, the Levante v Athletic fixture postponed from
+#: Sep 16 to Oct 21, is three legs, every one ``finalized`` with
+#: ``result='scalar'`` — settling $0.29 / $0.43 / $0.28, which sums to 1.00
+#: because each leg paid its own last trading price. The played control
+#: ``KXBUNDESLIGASCORE-26SEP12SCFBMG`` is 30 ``finalized`` legs carrying
+#: ``yes``/``no``. That is the whole discriminator, and it is the venue's word
+#: rather than an inference from our own grading state.
+#:
+#: THE EMPTY STRING IS HERE AND ``None`` IS NOT. An empty ``result`` on a
+#: terminal leg is the venue declining to name an outcome, which is the same
+#: fact ``scalar`` states. A MISSING key is a different thing — we did not read
+#: it — and :func:`derive_venue_void` refuses on it rather than guessing.
+VENUE_UNGRADED_RESULTS = frozenset({"", "scalar"})
+
+
+#: The ``market_metadata`` key the void capture stamps, and the ONLY name any
+#: reader of that fact may spell — #7035.
+#:
+#: WHY A CONSTANT IN THIS MODULE AND NOT A LITERAL AT EACH END. The capture
+#: (``kalshi_resolution_sweep.VOID_UPDATE_SQL``) writes the fact and the
+#: retirement arm (``espn_sync``'s venue-void door) reads it, and the two sit in
+#: different task modules that import nothing from each other. A literal at each
+#: end is a contract enforced by nobody: rename it on the writer and the reader
+#: goes on selecting zero rows forever, green, with no test able to see it. This
+#: module is the one both ends already depend on for the void vocabulary, it
+#: imports only the standard library, and so it is where the name lives.
+#:
+#: 🔴 IT IS STAMPED AS A JSON BOOLEAN, AND THE RETIREMENT READER TAKES IT IN
+#: PYTHON RATHER THAN IN SQL. ``jsonb_build_object('venue_voided', true)`` stores
+#: boolean ``true``, so ``market_metadata->>'venue_voided'`` yields the STRING
+#: ``'true'`` — a reader that writes ``= true`` gets an operator error, and one
+#: that writes ``->>`` at all is writing Postgres-only SQL into a query whose
+#: band guards execute against ``sqlite://``. The consumer therefore loads the
+#: event's markets and tests ``(md or {}).get(KEY) is True`` in Python, which is
+#: dialect-free and round-trips the boolean as a boolean. Its screen is plain
+#: columns and returns 30 rows on production, so there is no cost to paying for
+#: the portability.
+VENUE_VOIDED_METADATA_KEY = "venue_voided"
+
+#: The negative half — "we asked the venue and it named a result". Named here
+#: for the same reason, and read by the capture's own idempotency screen.
+VENUE_VOID_CHECKED_METADATA_KEY = "venue_void_checked_at"
+
+#: The two ``futures_markets`` column values that say "this is a Kalshi leg the
+#: venue has finished with" — the pair the void capture selects on and the pair
+#: the retirement screen must select on to reach the same rows.
+#:
+#: Named for :data:`VENUE_VOIDED_METADATA_KEY`'s reason and one step further: the
+#: capture spells them inside a SQL string literal where no importer can see
+#: them, so the binding guard asserts that string CONTAINS these values. That is
+#: a check that can fail in both directions — rename the constant, or retune the
+#: capture's screen, and the guard reddens — which a literal at each end is not.
+KALSHI_MARKET_SOURCE = "kalshi"
+KALSHI_RESOLVED_STATUS = "resolved"
+
 
 @dataclass(frozen=True)
 class VenueSettlement:
@@ -256,6 +319,104 @@ def derive_venue_settlement(statuses: Sequence[Optional[str]]) -> VenueSettlemen
     if settled_legs:
         return VenueSettlement(False, len(legs), settled_legs, "partially_settled")
     return VenueSettlement(False, len(legs), settled_legs, "open_at_venue")
+
+
+@dataclass(frozen=True)
+class VenueVoid:
+    """Did the venue settle this event WITHOUT grading any leg? (#7035)
+
+    A companion to :class:`VenueSettlement` rather than a field on it. That
+    class says in its own docstring that it "carries no winner, no result and
+    no price on purpose", and the reason (#1852: moving a date and a grade in
+    one pass) is still good. This is a THIRD question — not "is it over" and not
+    "who won", but "did the venue decline to say" — so it gets its own type and
+    the older one comes out byte-identical.
+
+    🔴 WHY THE VENUE'S WORD AND NOT OUR OWN GRADING STATE. The obvious cheaper
+    reading is "every family ``resolved`` and no ``futures_outcomes`` leg
+    graded", which needs no venue read at all. MEASURED ON PRODUCTION
+    2026-09-22, ``suspended`` past events carrying Kalshi families over 14 days:
+    1,434 are resolved-and-graded, 77 are resolved-and-ungraded — but the
+    ungraded FRACTION falls with age, 10.8% under 24h, 5.6% at 1-3d, 4.5% at
+    3-7d, 2.5% past a week. A stable void population would not decay like that;
+    a grading LAG does exactly this. So our own grading state confounds "the
+    venue voided it" with "we have not got to it yet", and the confound is
+    largest on the freshest rows, which are the ones a reader is looking at.
+    The venue's ``result`` has no such lag: it is ``scalar`` the moment the leg
+    is ``finalized``.
+    """
+
+    #: True only when the event is terminal at the venue AND not one leg of it
+    #: carries a yes/no. Never true on a partially-settled or still-open event:
+    #: a void is not knowable until the venue has finished.
+    voided: bool
+
+    #: How many legs the venue sent, and how many carry a real yes/no grade.
+    #: Reported so "nothing graded yet" stays legible next to "nothing to grade".
+    legs_total: int
+    legs_graded: int
+
+    #: Which branch answered, in one word, for the run's report.
+    reason: str
+
+
+def derive_venue_void(
+    statuses: Sequence[Optional[str]],
+    results: Sequence[Optional[str]],
+) -> VenueVoid:
+    """Read "the venue settled this and graded nothing" off one event's legs.
+
+    Two parallel sequences rather than the payload's dicts, for the reason
+    :func:`derive_venue_settlement` gives: this module stays free of the
+    payload's shape and a guard can state its cases in a few words each. The
+    caller zips them off the same ``event["markets"]`` list, so they are the
+    same legs in the same order by construction.
+
+    FOUR REFUSALS, ALL FAIL-CLOSED, because the cost of being wrong here is
+    hiding a real match a reader is waiting on:
+
+    * a length mismatch answers ``mismatched_inputs`` — the two sequences did
+      not come off one payload and nothing below them can be trusted;
+    * an event the venue has not finished answers ``not_settled``. The
+      settlement question is delegated to :func:`derive_venue_settlement`
+      outright rather than re-derived, so "every leg terminal" cannot come to
+      mean two different things in one module;
+    * a MISSING result on a terminal leg answers ``result_absent``. ``None`` is
+      "we did not read it", which is not the same fact as the venue declining
+      to name an outcome (see :data:`VENUE_UNGRADED_RESULTS`);
+    * any leg carrying a yes/no answers ``graded`` — one graded leg is enough to
+      prove the event was decided, however many of its siblings were not.
+
+    A DORMANT LEG CARRIES NO RESULT AND MUST NOT COUNT AS EVIDENCE EITHER WAY.
+    :data:`VENUE_DORMANT_STATUSES` legs are listed but never traded and
+    ``kalshi_market_status``'s measured table has them carrying no ``result``
+    forever, so counting one as "ungraded" would let a dormant leg vote for a
+    void. They are dropped before the result test, exactly as #5024 drops them
+    before the terminal test, and an event of nothing BUT dormant legs is
+    refused by the settlement question above.
+    """
+    statuses = list(statuses)
+    results = list(results)
+    if len(statuses) != len(results):
+        return VenueVoid(False, len(statuses), 0, "mismatched_inputs")
+
+    settlement = derive_venue_settlement(statuses)
+    if not settlement.settled:
+        return VenueVoid(False, settlement.legs_total, 0, "not_settled")
+
+    terminal = [
+        result
+        for status, result in zip(statuses, results)
+        if (status or "").strip().lower() not in VENUE_DORMANT_STATUSES
+    ]
+    if any(result is None for result in terminal):
+        return VenueVoid(False, settlement.legs_total, 0, "result_absent")
+
+    words = [(result or "").strip().lower() for result in terminal]
+    graded = [word for word in words if word not in VENUE_UNGRADED_RESULTS]
+    if graded:
+        return VenueVoid(False, settlement.legs_total, len(graded), "graded")
+    return VenueVoid(True, settlement.legs_total, 0, "voided_ungraded")
 
 
 def _max_or_none(values: Iterable[Optional[datetime]]) -> Optional[datetime]:

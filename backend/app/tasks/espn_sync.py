@@ -1057,6 +1057,26 @@ UNREACHABLE_SUSPENDED_BUDGET_KEY = "events:unreachable_suspended_budget"
 #: cannot write a terminal anybody is unable to take back.
 UNREACHABLE_SUSPENDED_BACKUP_TABLE = "backup_unreachable_suspended_5532"
 
+#: The backup table's shape, in ONE place — #7035.
+#:
+#: The enable script owns the `CREATE TABLE`, two arms insert into it, and the
+#: real-Postgres gate has to stand one up to drive them. Three copies of four
+#: column declarations is three chances for the gate to prove a retirement
+#: against a table the script does not create. The script imports this and the
+#: gate imports this, so the table under test is the table production gets.
+#:
+#: `IF NOT EXISTS` is part of the statement rather than the caller's problem: the
+#: enable step is re-runnable by a person who does not remember whether they ran
+#: it, which is the state that step is usually invoked in.
+UNREACHABLE_SUSPENDED_BACKUP_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {UNREACHABLE_SUSPENDED_BACKUP_TABLE} ("
+    "  event_id BIGINT PRIMARY KEY,"
+    "  previous_status TEXT NOT NULL,"
+    "  commence_time TIMESTAMPTZ,"
+    "  retired_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+    ")"
+)
+
 #: Ceiling on whatever the key says, so a fat-fingered value cannot turn one beat
 #: into an unreviewable mass write. The key chooses a rate; this bounds the blast
 #: radius of choosing it wrong.
@@ -1234,6 +1254,323 @@ async def _row_has_market_anchor(session, event_id) -> bool:
             )
         ).scalar()
     )
+
+
+#: Per-pass ceiling on the #7035 venue-void retirement arm.
+#:
+#: SIZED OFF THE MEASURED POPULATION, not off a cadence. The arm's own screen —
+#: suspended, past the floor, no score, no `completed_at`, every market a Kalshi
+#: resolved one, nothing graded — returns **30 rows on production** (2026-09-23),
+#: of which the venue voids roughly three in ten on a 14-ticker sample. So the
+#: standing backlog is a couple of dozen and the inflow is a postponement rate,
+#: which is rare against the rate games finish. 25 drains it in two passes and
+#: keeps the per-pass cost of the Python-side void read bounded at 25 events'
+#: worth of markets however the screen's population moves later.
+VENUE_VOIDED_SUSPENDED_MAX_PER_PASS = 25
+
+
+async def _row_markets_all_venue_voided(session, event_id) -> bool:
+    """Did the venue settle EVERY market on this event without grading it?
+
+    The ``every_market_venue_voided`` argument of
+    :func:`~app.utils.event_completion.venue_voided_row_is_retirable` — #7035.
+
+    READ IN PYTHON, DELIBERATELY. ``venue_voided`` is a key inside a ``jsonb``
+    column and the operator that reaches it, ``->>``, is Postgres-only, while
+    this task's band guards execute against ``sqlite://``. The caller's screen is
+    plain columns and cuts the table to 30 rows, so loading each survivor's
+    markets and asking in Python costs nothing and keeps the arm dialect-free.
+
+    🔴 EVERY, AND THE EMPTY CASE IS FALSE. ``all()`` over an empty list is True,
+    which would make a legless event "fully voided" and retire a row the venue
+    was never asked about — the vacuous-satisfaction trap the capture's own
+    selection carries an ``EXISTS`` to avoid one layer up. The explicit emptiness
+    test here is the second guard against it, and it is not redundant with the
+    caller's ``EXISTS``: this function is the one that states the rule, and a
+    rule that only exists as a WHERE clause is a rule no test can put a
+    counter-example to.
+
+    ``is True`` rather than a truth test. The capture writes a JSON boolean, so a
+    correctly stamped row round-trips as Python ``True``; a string ``"true"``, a
+    ``1``, or the timestamp that the NEGATIVE stamp
+    (``venue_void_checked_at``) writes are all truthy and none of them is this
+    fact. The identity test is what keeps "the venue declined to grade it" from
+    being satisfied by "we asked and it graded it".
+    """
+    from app.models import FuturesMarket
+    from app.utils.kalshi_resolution_window import VENUE_VOIDED_METADATA_KEY
+
+    rows = (
+        await session.execute(
+            select(FuturesMarket.market_metadata).where(
+                FuturesMarket.event_id == event_id
+            )
+        )
+    ).all()
+    if not rows:
+        return False
+    return all(
+        (metadata or {}).get(VENUE_VOIDED_METADATA_KEY) is True
+        for (metadata,) in rows
+    )
+
+
+async def _row_has_graded_outcome(session, event_id) -> bool:
+    """Has anything already written a winner against this event? (#7035)
+
+    The ``has_graded_outcome`` argument of
+    :func:`~app.utils.event_completion.venue_voided_row_is_retirable`, and it is
+    the CONTRADICTION test rather than a duplicate of the screen's. A graded
+    outcome says a result was reported; the void stamp says none ever was. Both
+    cannot be true, and when our own data disagrees with the venue's word this
+    arm declines to write a terminal rather than choosing a side.
+
+    Fail-closed direction: the caller refuses on anything that is not literally
+    ``False``, so a read that cannot answer stops a retirement rather than
+    permitting one.
+    """
+    from app.models import FuturesMarket, FuturesOutcome
+
+    return bool(
+        (
+            await session.execute(
+                select(FuturesOutcome.id)
+                .join(
+                    FuturesMarket,
+                    FuturesMarket.id == FuturesOutcome.market_id,
+                )
+                .where(
+                    FuturesMarket.event_id == event_id,
+                    FuturesOutcome.is_winner.is_(True),
+                )
+                .limit(1)
+            )
+        ).scalar()
+    )
+
+
+async def _retire_venue_voided_suspended_rows(session, now, floor) -> dict:
+    """Retire suspended rows the VENUE has already answered with "no result".
+
+    The consumer of the #7035 void capture, and the reason that capture is a
+    ship rather than a column. `kalshi_resolution_sweep` reads Kalshi's own
+    `result='scalar'` off a settled event and stamps
+    `market_metadata.venue_voided`; nothing acted on it, so the postponed
+    fixture went on being served with "No result reported" under it. This is
+    what acts on it.
+
+    🔴 IT LIVES HERE AND IS CALLED FROM `kalshi_resolution_sweep`, NOT FROM
+    `_transition_event_statuses_impl` — AND THAT IS MEASURED, NOT TIDINESS. It
+    was composed into that task first, which is the obvious home: this is the
+    second `suspended →` retirement arm and the first one is there. It reddened
+    **79 guards across seven other ships** (#2772, #2591, #5324, #4075, q076,
+    the staleness net and `test_event_completion`) that this ship does not
+    touch. The cause is not a missing method on a double: those doubles answer
+    `session.execute` POSITIONALLY — `rows = self._selects.pop(0)` — so ANY new
+    statement anywhere in that thousand-line function shifts every later
+    statement onto the wrong canned result and exhausts the list. There is no
+    version of this arm that can be added to that task without rewriting seven
+    other ships' fixtures.
+
+    `run_resolved_voids` is the right caller on its own merits, which is why
+    this is not a workaround. That task IS the capture that writes the fact;
+    running the consumer at the end of it makes the chain a read-after-write in
+    one beat instead of two arms agreeing about a column. Its own docstring
+    already records this exact lesson being learned once — composing this
+    capture into `run_recent_finals` "broke six guards belonging to #5024,
+    #4655 and #5596 … Loosening three other ships' guards to fit this one in
+    would have been the wrong repair for the right complaint." Same complaint,
+    same repair, one layer out.
+
+    A MODULE-LEVEL FUNCTION, NOT A BLOCK IN THE TASK, AND THAT IS THE POINT.
+    `_transition_event_statuses_impl` is a thousand lines that need a whole
+    session's worth of fixtures to enter, so an arm living inside it can only be
+    guarded by reading its source — and a `getsource` scan cannot tell a screen
+    that selects the specimen from one that selects nothing. Here a gate seeds a
+    real Postgres, calls this, and reads the row's status back. That is the
+    difference between guarding that the code exists and guarding that it works.
+
+    THE SECOND WARRANT FOR AN EXISTING WRITE. `suspended_row_is_unreachable`
+    retires a row nothing can reach; this retires a row whose answer has already
+    arrived. Same terminal, same backup-first ordering, same restore script — a
+    different reason to be sure, argued in `venue_voided_row_is_retirable`.
+
+    WHY NOT WIDEN THE SIBLING. The fixture #7035 was filed for is held by it
+    twice over — market-anchored AND in an ESPN-covered sport — so opening one
+    of those doors would not move it and opening both would widen a rule that
+    retired 13,595 rows in five days, in order to move four. The predicate's
+    docstring carries the measurement.
+
+    Returns the two counters the caller merges into its stats. `screened` beside
+    `retired` on purpose: a pass where the screen returned rows and the verdict
+    refused every one of them is the arm working, and it must not read the same
+    as a pass that selected nothing (`app/utils/task_verdict.py`'s line — "it
+    returned" is not "it worked").
+    """
+    from sqlalchemy import text as _sql_text
+
+    from app.models import FuturesMarket, FuturesOutcome
+    from app.utils.event_completion import (
+        EVENT_SUSPENDED,
+        UNREACHABLE_SUSPENDED_TERMINAL,
+        venue_voided_row_is_retirable,
+    )
+    from app.utils.kalshi_resolution_window import (
+        KALSHI_MARKET_SOURCE,
+        KALSHI_RESOLVED_STATUS,
+    )
+
+    stats = {
+        "venue_voided_suspended_screened": 0,
+        "venue_voided_suspended_retired": 0,
+    }
+
+    # THE SCREEN IS PLAIN COLUMNS, AND THE VOID QUESTION IS NOT IN IT.
+    # `venue_voided` lives inside a `jsonb` column and the operator that reaches
+    # it, `->>`, is Postgres-only, while this task's band guards execute against
+    # `sqlite://`. So the screen asks everything it can ask portably — enough to
+    # cut the table to 30 rows on production — and the void question is answered
+    # in Python off the loaded markets, once per surviving row.
+    #
+    # `NOT EXISTS (a market that is not kalshi-and-resolved)` is the selective
+    # one, and it is deliberately the NEGATIVE form: "every market is
+    # kalshi+resolved". The positive spelling (`EXISTS (a kalshi resolved
+    # market)`) would admit an event carrying one voided leg and one OPEN market
+    # of another source, whose open market is a door still standing. `EXISTS (any
+    # market)` beside it is what stops a legless row satisfying the NOT EXISTS
+    # vacuously — the same refusal, for the same reason, that the capture's own
+    # selection makes one layer up.
+    any_market = (
+        select(FuturesMarket.id)
+        .where(FuturesMarket.event_id == Event.id)
+        .exists()
+    )
+    foreign_market = (
+        select(FuturesMarket.id)
+        .where(
+            FuturesMarket.event_id == Event.id,
+            ~and_(
+                FuturesMarket.source == KALSHI_MARKET_SOURCE,
+                FuturesMarket.status == KALSHI_RESOLVED_STATUS,
+            ),
+        )
+        .exists()
+    )
+    graded_outcome = (
+        select(FuturesOutcome.id)
+        .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+        .where(
+            FuturesMarket.event_id == Event.id,
+            FuturesOutcome.is_winner.is_(True),
+        )
+        .exists()
+    )
+    result = await session.execute(
+        select(Event)
+        .where(
+            Event.status == EVENT_SUSPENDED,
+            Event.commence_time.is_not(None),
+            Event.commence_time < now - floor,
+            Event.home_score.is_(None),
+            Event.away_score.is_(None),
+            Event.completed_at.is_(None),
+            any_market,
+            ~foreign_market,
+            ~graded_outcome,
+        )
+        # Oldest first, for the reason the sibling gives: the fixture a reader
+        # has been staring at longest is the one to fix first.
+        .order_by(Event.commence_time.asc())
+        .limit(VENUE_VOIDED_SUSPENDED_MAX_PER_PASS)
+    )
+    candidates = result.scalars().all()
+    if not candidates:
+        return stats
+
+    # THE RESTORE RAIL IS A GATE, NOT A LOG, AND IT IS THIS ARM'S OWN. The
+    # sibling arm computes its `backup_present` only while its Redis budget is
+    # non-zero, so reading that variable would tie this arm's safety to whether
+    # that arm happens to be switched on — and would read a stale True if its
+    # budget were later zeroed. One `to_regclass`, asked for this arm, answering
+    # only for this arm. Asked BEFORE the loop, so a missing table refuses the
+    # whole pass rather than the first row of it.
+    #
+    # THE SAME TABLE ON PURPOSE. Its shape (event_id, previous_status,
+    # commence_time, retired_at) is exactly what a restore needs,
+    # `scripts/unreachable_suspended_door.py --restore` already gives these rows
+    # back, and a second table would be DDL nobody has run — the ship would not
+    # pay until someone remembered. The consequence is stated rather than
+    # discovered: a row retired here is also a member of #7260's revival ledger,
+    # so a void whose clock later moves into the future with no surviving
+    # counterpart can be revived. That IS the rescheduled fixture and reviving it
+    # is right; it cannot flap back here, because this arm's floor test
+    # (`commence_time < now - floor`) is false for a future clock.
+    backup_present = (await session.execute(
+        _sql_text("SELECT to_regclass(:t) IS NOT NULL"),
+        {"t": f"public.{UNREACHABLE_SUSPENDED_BACKUP_TABLE}"},
+    )).scalar()
+    if not backup_present:
+        logger.warning(
+            "#7035 venue-voided arm skipped: backup table %s does not exist, "
+            "so a retirement could not be undone. Run "
+            "scripts/unreachable_suspended_door.py --create-backup.",
+            UNREACHABLE_SUSPENDED_BACKUP_TABLE,
+        )
+        return stats
+
+    for event in candidates:
+        stats["venue_voided_suspended_screened"] += 1
+        if not venue_voided_row_is_retirable(
+            event.status,
+            event.commence_time,
+            event.home_score,
+            event.away_score,
+            event.completed_at,
+            now,
+            floor,
+            # Re-asked rather than trusted off the screen, the way the sibling
+            # re-asks its market test — and #6927 is why that sentence is worth
+            # anything only when the two askings do not hang from the same hook.
+            # These do not: the screen asked `source`/`status` columns and said
+            # nothing whatever about `venue_voided`, which is the whole verdict.
+            every_market_venue_voided=(
+                await _row_markets_all_venue_voided(session, event.id)
+            ),
+            has_graded_outcome=(
+                await _row_has_graded_outcome(session, event.id)
+            ),
+        ):
+            continue
+        # BACKUP FIRST, IN THE SAME TRANSACTION — the sibling's ordering, and
+        # D51's, stated as code rather than as a runbook step: if this insert
+        # raises, the status write never happens.
+        await session.execute(
+            _sql_text(
+                f"INSERT INTO {UNREACHABLE_SUSPENDED_BACKUP_TABLE} "
+                "(event_id, previous_status, commence_time, retired_at) "
+                "VALUES (:id, :prev, :commence, NOW()) "
+                "ON CONFLICT (event_id) DO NOTHING"
+            ),
+            {
+                "id": event.id,
+                "prev": event.status,
+                "commence": event.commence_time,
+            },
+        )
+        event.status = UNREACHABLE_SUSPENDED_TERMINAL
+        stats["venue_voided_suspended_retired"] += 1
+        logger.info(
+            "#7035 retired event %s (%s vs %s) suspended→%s: every market on it "
+            "is a Kalshi market the venue settled without naming an outcome, no "
+            "graded outcome of ours contradicts it, no score, no completed_at, "
+            "and %.0fh past its own start. The venue reported no result because "
+            "there was none.",
+            event.id, event.home_team_name, event.away_team_name,
+            UNREACHABLE_SUSPENDED_TERMINAL,
+            (now - event.commence_time).total_seconds() / 3600,
+        )
+    return stats
+
 
 
 #: How far apart two rows for one fixture may sit and still be the same fixture.

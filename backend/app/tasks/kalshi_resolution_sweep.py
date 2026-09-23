@@ -54,6 +54,7 @@ from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.kalshi_resolution_window import (
     derive_resolution_window,
     derive_venue_settlement,
+    derive_venue_void,
 )
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
@@ -227,6 +228,91 @@ FROZEN_BOOK_GAP = 0.10
 #: window drains at 1,200 legs/hour against a population that refills at the
 #: rate games finish.
 RECENT_FINAL_BATCH_LIMIT = 200
+
+#: What ONE run of the ALREADY-RESOLVED void arm may ask the venue — #7035,
+#: CERT-3324's required repair.
+#:
+#: 🔴 WHY THIS ARM HAD TO EXIST AT ALL, and the reason is a reachability failure
+#: rather than a tuning one. Both selections above open with `fm.status = 'open'`
+#: — that screen IS the drain, and it is right for them. But the fixture #7035
+#: was filed for is already `resolved`: measured on production 2026-09-23 04:2xZ,
+#: all four Levante–Bilbao legs (60481773, 60636796, 60636798, 60636800) read
+#: `status='resolved'` with `settled_at` set, on an event still `suspended`, with
+#: `venue_voided` NULL. The sweep marked them over and never recorded WHY, so the
+#: page has nothing to say but "No result reported". No batch size reaches them:
+#: the capture ran on a population its own selection excluded.
+#:
+#: 60 AGAINST A MEASURED 489. Production, same minute, the exact predicate below:
+#: 489 rows over 324 events in the 14-day band, 0 of them legless. At 60 a run
+#: and a 10-minute beat the standing population is drained inside two hours, and
+#: it does not refill at that rate — a postponement is rare against the rate
+#: games finish. It is deliberately small: this arm rides #4655's beat and must
+#: never be the reason that beat misses its 30-minute bar.
+RESOLVED_VOID_BATCH_LIMIT = 60
+
+#: The already-resolved void selection — #7035.
+#:
+#: FOUR SCREENS, AND EACH ONE IS A MEASUREMENT RATHER THAN A GUESS.
+#:
+#: 1. `e.status = 'suspended'` is what separates a postponed fixture from a
+#:    played one, and it is the screen that REFUSES THE PLAYED CONTROL the cert
+#:    asked for. Same minute, same band: `completed` events hold 11,512 resolved
+#:    rows with a graded leg and **2,843 with none** — that second bucket is
+#:    "played, we simply have not graded it yet", it is identical to this arm's
+#:    population on every other axis, and stamping one of them `venue_voided`
+#:    would put "no result was ever reported" on a game that WAS played. The
+#:    event status is the only thing that tells them apart before the venue is
+#:    asked, so it is a screen and not an ordering.
+#: 2. The ungraded test, `NOT EXISTS (... is_winner IS TRUE)`: a row we have
+#:    already graded had its result reported, so there is nothing to capture.
+#: 3. The legs test, `EXISTS (...)`: without it a row with NO outcomes satisfies
+#:    the ungraded test vacuously, and "we never priced this" is not "nobody
+#:    reported a result" (#5024's own note, one screen up, for the same reason).
+#:    Measured 0 such rows today; it is here because 0 is a reading, not a law.
+#: 4. THE IDEMPOTENCY SCREEN, and it is load-bearing rather than hygiene. 🔴 A
+#:    14-ticker venue sample of this exact population answered **4 voided / 10
+#:    graded** — so 71% of the selection is a row the venue WILL name a result
+#:    for, which this arm must refuse and must then never ask about again. With
+#:    no stamp those ~350 rows would be re-read every 10 minutes for 14 days.
+#:    That is precisely the jam CAL-P998 measured one screen below: a row that
+#:    gets no write never rotates, and 500 of them are enough to wedge a beat.
+#:    So a terminal answer is RECORDED either way — `venue_voided` when the venue
+#:    declined to grade, `venue_void_checked_at` when it did grade — and both
+#:    spellings drop the row out of this selection permanently. A NON-terminal
+#:    answer is stamped with neither, so a market the venue has not finished is
+#:    re-asked, which is the one case that must stay open.
+#:
+#: The band is `SUSPENDED_EVENT_WINDOW_HOURS`, READ and not retuned — the same
+#: 14 days the suspended arm above already reaches over the same population,
+#: rather than a second number that could drift away from it.
+#:
+#: Ordered oldest-commence first: a postponement that has sat unexplained the
+#: longest is the one a reader has been staring at the longest.
+RESOLVED_VOID_SELECT_SQL = """
+    SELECT fm.id, fm.external_id, fm.resolution_date, fm.commence_time,
+           fm.market_tier
+    FROM futures_markets fm
+    JOIN events e ON e.id = fm.event_id
+    WHERE fm.source = 'kalshi'
+      AND fm.status = 'resolved'
+      AND fm.external_id LIKE 'KX%'
+      AND fm.market_metadata->>'venue_voided' IS NULL
+      AND fm.market_metadata->>'venue_void_checked_at' IS NULL
+      AND e.status = 'suspended'
+      AND e.commence_time IS NOT NULL
+      AND e.commence_time >= :suspended_floor
+      AND EXISTS (
+            SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id
+      )
+      AND NOT EXISTS (
+            SELECT 1
+              FROM futures_outcomes fo
+             WHERE fo.market_id = fm.id
+               AND fo.is_winner IS TRUE
+      )
+    ORDER BY e.commence_time ASC, fm.id ASC
+    LIMIT :limit
+"""
 
 #: The event-driven selection — #4655.
 #:
@@ -567,8 +653,18 @@ SELECT_SQL = """
 # are worth ranking, so the token list is at most `PAST_EVENT_BAND_DAYS` long.
 
 _BAND_MONTHS = (
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
 )
 
 
@@ -839,6 +935,67 @@ UPDATE_SQL = """
 """
 
 
+#: The void fact, #7035 — a SECOND statement rather than two more columns on the
+#: one above, and the separation is deliberate on three counts.
+#:
+#: 1. :data:`UPDATE_SQL` runs for EVERY row in the batch and must come out
+#:    byte-identical for the rows the venue still lists as open; its bind set is
+#:    pinned by ``tests/integration/test_kalshi_sweep_settlement_bind_pg.py``.
+#:    This one runs only for the rows that voided — 77 events in 14 days,
+#:    measured — so the hot path is untouched.
+#: 2. :data:`UPDATE_SQL` is deliberately SQLite-drivable, because the band
+#:    guards execute it against ``sqlite://``. ``jsonb`` is not, and forcing the
+#:    merge into that statement would either break those guards or push the
+#:    write into Python, where gotcha #4 (a JSONB ORM assignment that silently
+#:    does nothing) is waiting.
+#: 3. It writes ``market_metadata`` and nothing else — no status, no date, and
+#:    above all no grade. #1852's line holds: a void says the venue named NO
+#:    outcome, which is the opposite of a winner, and nothing here may be read
+#:    as one.
+#:
+#: MERGED, NOT ASSIGNED. ``COALESCE(...) || jsonb_build_object(...)`` so a row
+#: already carrying ``market_metadata["shape"]`` keeps it. A plain assignment
+#: would blank the side-kind metadata the serializers read in order to record a
+#: status fact, which is the same class of loss the COALESCEd dates above exist
+#: to avoid.
+VOID_UPDATE_SQL = """
+    UPDATE futures_markets
+    SET market_metadata = COALESCE(market_metadata, '{}'::jsonb)
+                          || jsonb_build_object(
+                                 'venue_voided', true,
+                                 'venue_voided_at', CAST(:updated_at AS text)
+                             )
+    WHERE id = :id
+"""
+
+
+#: The NEGATIVE half of the same fact — #7035, CERT-3324's repair.
+#:
+#: "We asked the venue about this row and it named a result." Written ONLY by the
+#: already-resolved arm (:data:`RESOLVED_VOID_SELECT_SQL`), and it exists because
+#: that arm's refusals must be as durable as its findings: 10 of 14 sampled rows
+#: are graded at the venue, and a refusal that leaves no trace is re-asked every
+#: 10 minutes forever.
+#:
+#: 🔴 IT IS NOT A GRADE AND MUST NEVER BE READ AS ONE. It records that a QUESTION
+#: was answered, not what the answer was — no winner, no price, no status.
+#: #1852's line is unchanged: the row stays exactly as ungraded as it was, and
+#: the rail that grades it is band 1 of `_backfill_kalshi_winners`, untouched
+#: here. The only thing this stamp may ever do is stop THIS arm asking again.
+#:
+#: Merged, not assigned, for :data:`VOID_UPDATE_SQL`'s reason: a plain assignment
+#: would blank the side-kind metadata the serializers read in order to record a
+#: bookkeeping fact.
+VOID_CHECKED_UPDATE_SQL = """
+    UPDATE futures_markets
+    SET market_metadata = COALESCE(market_metadata, '{}'::jsonb)
+                          || jsonb_build_object(
+                                 'venue_void_checked_at', CAST(:updated_at AS text)
+                             )
+    WHERE id = :id
+"""
+
+
 async def run_backfill(
     *,
     session_maker: Callable,
@@ -849,6 +1006,7 @@ async def run_backfill(
     concurrency: int = 6,
     now: Optional[datetime] = None,
     rows: Optional[list] = None,
+    void_capture_only: bool = False,
 ) -> dict:
     """Select, derive and (optionally) write. Every dependency is a parameter.
 
@@ -869,6 +1027,27 @@ async def run_backfill(
     predicate and a targeted batch is not a page of it; they report `-1`, the
     module's existing "not measured" value, rather than a number from the wrong
     denominator.
+
+    `void_capture_only` (#7035, CERT-3324's repair) is the already-resolved arm's
+    write policy, and it is a SUBTRACTION from this function rather than an
+    addition to it: the batch is read and classified exactly as any other, and
+    then `UPDATE_SQL` is not run for it.
+
+    🔴 THE FLAG EXISTS TO BOUND A BLAST RADIUS, NOT TO SAVE A STATEMENT. Those
+    rows are already `resolved`, so `UPDATE_SQL`'s status and `settled_at` arms
+    are no-ops on them by construction — but its two date columns are NOT:
+    `resolution_date = COALESCE(:resolution_date, resolution_date)` OVERWRITES a
+    stored date whenever the venue yields one. That is right for a row this sweep
+    is closing and wrong for a row it is only explaining. #7035 ships one fact and
+    writes one fact; a capture that quietly re-dated 489 settled rows would be a
+    different change wearing this one's name.
+
+    It also turns the refusals durable: with the flag set, a row the venue has
+    SETTLED but GRADED is stamped `venue_void_checked_at`
+    (:data:`VOID_CHECKED_UPDATE_SQL`) so this arm never asks again. Without it,
+    that stamp is never written — the open-row population must stay re-askable,
+    and marking thousands of healthy rows "checked" to record a question nobody
+    asked of them is exactly the silent widening this flag prevents.
     """
     now = now or datetime.now(timezone.utc)
     purge_floor = now - timedelta(days=PROVABLY_PURGED_AGE_DAYS)
@@ -943,8 +1122,30 @@ async def run_backfill(
         "venue_settled": 0,
         "venue_partially_settled": 0,
         "settled_without_date": 0,
+        # #7035, the void half. A SUBSET of `venue_settled`, never a sibling of
+        # it: a void is a settlement the venue declined to grade, so every row
+        # counted here is already counted above. Reported apart because the two
+        # need opposite repairs downstream — a graded settlement wants its
+        # winner backfilled, a void wants the fixture to stop claiming a result
+        # nobody ever reported.
+        "venue_voided": 0,
+        # The refusals, so a run that voids nothing is legible. `void_refused`
+        # is dominated by `graded` on a healthy population; a run where it is
+        # dominated by `result_absent` is reading a payload shape that has
+        # moved, which is the failure this counter exists to make loud
+        # (gotcha #53 — "it returned" is not "it worked").
+        "void_refused_result_absent": 0,
+        # #7035 / CERT-3324. The already-resolved arm's OTHER terminal answer:
+        # the venue settled this row and named a result. Counted because it is
+        # the majority answer on that population (10 of 14 sampled) and a run
+        # where it is 0 while `venue_voided` is also 0 means the arm asked
+        # nothing, which is a different fact from "nothing voided".
+        "void_refused_graded": 0,
     }
     samples: list[dict] = []
+    void_samples: list[dict] = []
+    void_ids: list[int] = []
+    void_checked_ids: list[int] = []
 
     if not rows:
         # Not a success. Either the migration has not run, or the floor has
@@ -962,8 +1163,8 @@ async def run_backfill(
                 # denominator, so the population sentence would be four numbers
                 # of `-1` dressed up as a diagnosis. Say the one true thing.
                 "no rows supplied: the caller's selection matched nothing"
-                if supplied else
-                f"no candidates at offset {offset}: {eligible_total} rows still "
+                if supplied
+                else f"no candidates at offset {offset}: {eligible_total} rows still "
                 f"eligible ({never_swept} never swept, {provisional_recheck} holding "
                 f"a provisional date), {excluded_purged} of them past the purge "
                 "floor. If eligible_total is 0 the migration may not have run; if it "
@@ -971,6 +1172,10 @@ async def run_backfill(
             ),
             "stats": stats,
             "newly_past_samples": [],
+            # Same keys as the full report below. An empty batch and a batch
+            # that voided nothing must be the same SHAPE to a reader, or every
+            # consumer grows a `.get`.
+            "venue_voided_samples": [],
         }
 
     sem = asyncio.Semaphore(concurrency)
@@ -1002,6 +1207,49 @@ async def run_backfill(
             stats["venue_settled"] += 1
         elif settlement.reason == "partially_settled":
             stats["venue_partially_settled"] += 1
+
+        # #7035 — off the SAME payload, for no extra venue call, exactly as the
+        # settlement read above was added to the date read before it. `result`
+        # is the one field that separates "the venue decided this" from "the
+        # venue retired it at a fair price", and we were discarding it: a
+        # postponed fixture stored as `status='resolved'` with every leg
+        # ungraded, indistinguishable from a played game we had simply not
+        # graded yet, and so it sat under "No result reported" forever.
+        #
+        # `.get("result")` and not `["result"]`: a payload that omits the key
+        # reaches `derive_venue_void` as None and is REFUSED there, which is the
+        # answer we want. A leg we did not read is not a leg the venue declined
+        # to grade.
+        void = derive_venue_void(
+            [m.get("status") for m in markets],
+            [m.get("result") for m in markets],
+        )
+        if void.voided:
+            stats["venue_voided"] += 1
+            void_ids.append(market_id)
+            if len(void_samples) < 15:
+                void_samples.append(
+                    {
+                        "id": market_id,
+                        "ticker": ticker,
+                        "tier": tier,
+                        "legs": void.legs_total,
+                    }
+                )
+        elif void.reason == "result_absent":
+            stats["void_refused_result_absent"] += 1
+        elif void.reason == "graded" and void_capture_only:
+            # #7035 / CERT-3324 — the refusal that must be remembered. `graded`
+            # is TERMINAL at the venue: a finalized leg carrying yes/no does not
+            # later become ungraded, so this row will never be a void and asking
+            # it again can only cost a call. Recorded here and written below.
+            #
+            # Deliberately NOT `else`. The other refusals — `not_settled`,
+            # `result_absent`, `mismatched_inputs` — are all "we could not tell
+            # yet", and stamping one of those would retire a row the venue has
+            # simply not finished. Only the answer that cannot change is durable.
+            stats["void_refused_graded"] += 1
+            void_checked_ids.append(market_id)
 
         window = derive_resolution_window(
             [
@@ -1071,7 +1319,7 @@ async def run_backfill(
     writes = [r for r in results if r]
     stats["writes_prepared"] = len(writes)
 
-    if apply and writes:
+    if apply and writes and not void_capture_only:
         async with session_maker() as session:
             for chunk_start in range(0, len(writes), 500):
                 chunk = writes[chunk_start : chunk_start + 500]
@@ -1082,6 +1330,46 @@ async def run_backfill(
     else:
         stats["writes_applied"] = 0
 
+    # #7035. Its own pass, after the settlement writes have committed, so a
+    # failure here can never leave a row stamped "the venue voided this" that
+    # is not also stamped "the venue settled this" — the void is a refinement
+    # of the settlement and must not be able to outrun it. Chunked and
+    # committed on the same 500 boundary as the loop above, for the same
+    # reason (gotcha #13: long transactions on this table deadlock).
+    if apply and void_ids:
+        async with session_maker() as session:
+            for chunk_start in range(0, len(void_ids), 500):
+                for market_id in void_ids[chunk_start : chunk_start + 500]:
+                    await session.execute(
+                        text(VOID_UPDATE_SQL),
+                        {"id": market_id, "updated_at": now.isoformat()},
+                    )
+                await session.commit()
+        stats["void_writes_applied"] = len(void_ids)
+    else:
+        stats["void_writes_applied"] = 0
+
+    # #7035 / CERT-3324 — the refusal stamp, LAST of the three passes and after
+    # the void write has committed. The ordering is the same argument the void
+    # pass makes against the settlement write one level up: these two statements
+    # are mutually exclusive per row by construction (`voided` and `graded` are
+    # different branches of one classifier), so the order cannot matter for
+    # correctness — but if it ever did, the fact worth keeping is the finding,
+    # not the bookkeeping, so the bookkeeping goes last and a failure here costs
+    # a re-ask rather than a lost void.
+    if apply and void_checked_ids:
+        async with session_maker() as session:
+            for chunk_start in range(0, len(void_checked_ids), 500):
+                for market_id in void_checked_ids[chunk_start : chunk_start + 500]:
+                    await session.execute(
+                        text(VOID_CHECKED_UPDATE_SQL),
+                        {"id": market_id, "updated_at": now.isoformat()},
+                    )
+                await session.commit()
+        stats["void_checked_writes_applied"] = len(void_checked_ids)
+    else:
+        stats["void_checked_writes_applied"] = 0
+
     report = {
         "mode": "APPLY" if apply else "DRY_RUN",
         "measured_at": now.isoformat(),
@@ -1090,6 +1378,11 @@ async def run_backfill(
         "zero_yield": len(writes) == 0,
         "stats": stats,
         "newly_past_samples": samples,
+        # #7035. Named tickers rather than a bare count, because the claim
+        # "the venue voided this" is checkable at the venue in one request
+        # (`/events/{ticker}?with_nested_markets=true`) and a report that only
+        # carries a number cannot be audited that way.
+        "venue_voided_samples": void_samples,
     }
     if stats["unresolvable_at_venue"] == len(rows) and not writes:
         # Every slot in the batch went to a row this script may not write. Those
@@ -1405,7 +1698,9 @@ async def run_sweep(
         )
     elif candidates and errors >= candidates:
         report["terminal"] = "failed"
-        report["terminal_reason"] = f"all {candidates} selected rows errored at the venue"
+        report["terminal_reason"] = (
+            f"all {candidates} selected rows errored at the venue"
+        )
     elif candidates and applied == 0:
         report["terminal"] = "partial"
         report["terminal_reason"] = (
@@ -1529,6 +1824,14 @@ async def run_recent_finals(
     So this ship makes the market stop claiming to be open; the VERDICT the
     reader sees is a separate write on a separate rung, and #5024 stays open for
     it.
+
+    WHAT THIS ARM DELIBERATELY DOES NOT REACH — #7035. All three selections here
+    open with ``fm.status = 'open'``. A POSTPONED fixture has usually already
+    been closed by one of them, so it reads ``resolved`` while its event stays
+    ``suspended`` and no leg is graded. Those rows are past every screen in this
+    statement, and they belong to :func:`run_resolved_voids`, which is a separate
+    task on a slower beat for the reasons written there — chiefly that this one
+    carries a 30-minute bar and must not spend it explaining postponements.
     """
     now = now or datetime.now(timezone.utc)
     final_floor = now - timedelta(hours=window_hours)
@@ -1617,4 +1920,199 @@ async def run_recent_finals(
         )
     else:
         report["terminal"] = "complete"
+    return report
+
+
+async def _retire_rows_the_venue_voided(maker, now) -> dict:
+    """Spend the fact the capture just wrote — #7035, CERT-3326's repair.
+
+    THE CONSUMER, AND WITHOUT IT THE CAPTURE IS A COLUMN RATHER THAN A SHIP.
+    CERT-3326 blocked the capture-only presentation on exactly this: "the SHA
+    has no runtime consumer of that fact … event 15312871 therefore remains
+    suspended/served and its card still says 'No result reported'." This is the
+    line that closes `capture → retirement`; the route exclusion at the far end
+    already refuses :data:`UNREACHABLE_SUSPENDED_TERMINAL` and is guarded.
+
+    🔴 IT IS CALLED ON BOTH OF `run_resolved_voids`'S PATHS, INCLUDING THE
+    DRAINED ONE, AND THAT IS THE WHOLE DIFFERENCE BETWEEN A SHIP AND AN ARM THAT
+    WORKS FOR FOUR HOURS. The capture's own sizing says the standing 489-row
+    band drains in ~4 hours at 60 a run, after which `rows` is empty on every
+    subsequent beat forever — that is the intended steady state, not a fault.
+    Hung off the write path only, this consumer would then never run again,
+    while the rows it exists to retire are precisely the ones already stamped.
+    The two halves keep different clocks on purpose: a stamp is written once,
+    and the row it describes may not become retirable until the retirement
+    floor passes it, hours later. So the retirement re-screens the table every
+    beat and is deliberately independent of whether this beat stamped anything.
+
+    Its own session, and the `async with` is what commits (the same contract
+    `_transition_event_statuses_impl` documents at its own close). Kept separate
+    from the capture's sessions so a retirement can never widen a venue-write
+    transaction, and so a failure here cannot roll back a stamp that was correct.
+    """
+    from app.tasks.espn_sync import (
+        _retire_venue_voided_suspended_rows,
+        unreachable_suspended_floor,
+    )
+
+    async with maker() as session:
+        return await _retire_venue_voided_suspended_rows(
+            session, now, unreachable_suspended_floor()
+        )
+
+
+async def run_resolved_voids(
+    *,
+    limit: int = RESOLVED_VOID_BATCH_LIMIT,
+    concurrency: int = SWEEP_CONCURRENCY,
+    apply: bool = True,
+    suspended_window_hours: int = SUSPENDED_EVENT_WINDOW_HOURS,
+    session_maker: Optional[Callable] = None,
+    client_factory: Optional[Callable[[], object]] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """The ALREADY-RESOLVED void arm — #7035, CERT-3324's required repair.
+
+    THE REACHABILITY FAILURE THIS EXISTS FOR. Every selection in this module
+    opens with ``fm.status = 'open'`` — that screen IS the drain and it is right
+    for all three arms of :func:`run_recent_finals`. But a POSTPONED fixture has
+    usually already been closed by one of them: measured on production
+    2026-09-23 04:2xZ, all four Levante–Bilbao families (market ids 60481773,
+    60636796, 60636798, 60636800, event 15312871) read ``status='resolved'`` with
+    ``settled_at`` set, on an event still ``suspended``, every leg ungraded, and
+    ``venue_voided`` NULL. The sweep recorded that the venue was finished and
+    never recorded that it had named no outcome, so the page can only say "No
+    result reported" — and no batch size or cadence reaches those rows, because
+    the capture ran on a population its own selection excluded. CERT-3324
+    blocked the first presentation of #7035 for exactly this, and was right to.
+
+    🔴 A SEPARATE TASK, NOT A PHASE OF :func:`run_recent_finals`, and the first
+    attempt at this repair WAS that phase. Two reasons it was withdrawn:
+
+    * that beat carries #4655's 30-minute bar, and hanging up to
+      :data:`RESOLVED_VOID_BATCH_LIMIT` extra venue reads off it makes this arm
+      a latency risk to a promise it has nothing to do with. Explaining a
+      postponement is not urgent; closing a finished game is;
+    * it selects the OPPOSITE ``status`` and writes under a different policy
+      (``void_capture_only``), so the two share a name and nothing else.
+
+    Composed, it also broke six guards belonging to #5024, #4655 and #5596 —
+    their session doubles answer any statement with one canned batch, so the
+    second selection re-served the same specimen and the venue was asked twice.
+    Loosening three other ships' guards to fit this one in would have been the
+    wrong repair for the right complaint.
+
+    WHAT IT WRITES: one fact, and never a grade. ``venue_voided`` when the venue
+    settled the event and declined to grade it; ``venue_void_checked_at`` when it
+    settled and DID grade it, so a refusal is as durable as a finding (10 of 14
+    sampled rows are graded, and an unrecorded refusal is re-asked forever). A
+    venue that has NOT finished is stamped with neither and is asked again.
+    """
+    now = now or datetime.now(timezone.utc)
+    suspended_floor = now - timedelta(hours=suspended_window_hours)
+    maker = session_maker or default_session_maker()
+
+    async with maker() as session:
+        rows = (
+            await session.execute(
+                text(RESOLVED_VOID_SELECT_SQL),
+                {"suspended_floor": suspended_floor, "limit": limit},
+            )
+        ).all()
+
+    if not rows:
+        # A selection that matched nothing is the DRAINED steady state here, and
+        # it is the expected reading most of the time — but it is reported as a
+        # shape rather than an absence, because "the band is empty" and "the
+        # query never ran" must not look the same to a reader (gotcha #53).
+        #
+        # THE RETIREMENT STILL RUNS ON THIS PATH. Nothing new to stamp is the
+        # normal state within hours of the band draining, and it says nothing
+        # about whether an already-stamped row has become retirable since. See
+        # `_retire_rows_the_venue_voided`.
+        drained = {
+            "selection": "resolved_void",
+            "mode": "APPLY" if apply else "DRY_RUN",
+            "measured_at": now.isoformat(),
+            "batch_limit": limit,
+            "suspended_floor": suspended_floor.isoformat(),
+            "candidates": 0,
+            "venue_voided": 0,
+            "void_refused_graded": 0,
+            "void_writes_applied": 0,
+            "void_checked_writes_applied": 0,
+            "venue_voided_samples": [],
+            "terminal": "complete",
+            "terminal_reason": (
+                "no already-resolved candidates in the band: every postponed "
+                "fixture inside "
+                f"{suspended_window_hours}h has already been asked about once. "
+                "This is the drained steady state, not a failure."
+            ),
+        }
+        drained.update(await _retire_rows_the_venue_voided(maker, now))
+        return drained
+
+    sub = await run_backfill(
+        session_maker=maker,
+        client_factory=client_factory or KalshiAPIService,
+        apply=apply,
+        concurrency=concurrency,
+        now=now,
+        rows=rows,
+        void_capture_only=True,
+    )
+    stats = sub.get("stats") or {}
+    candidates = int(stats.get("candidates") or 0)
+    errors = int(stats.get("errors") or 0)
+    report = {
+        "selection": "resolved_void",
+        "mode": "APPLY" if apply else "DRY_RUN",
+        "measured_at": now.isoformat(),
+        "batch_limit": limit,
+        "suspended_floor": suspended_floor.isoformat(),
+        "candidates": int(stats.get("candidates") or 0),
+        "venue_voided": int(stats.get("venue_voided") or 0),
+        "void_refused_graded": int(stats.get("void_refused_graded") or 0),
+        "void_refused_result_absent": int(stats.get("void_refused_result_absent") or 0),
+        "errors": int(stats.get("errors") or 0),
+        "void_writes_applied": int(stats.get("void_writes_applied") or 0),
+        "void_checked_writes_applied": int(
+            stats.get("void_checked_writes_applied") or 0
+        ),
+        # The settlement write is withheld from this population by construction.
+        # Reported so the claim is checkable in the run report rather than only
+        # in a docstring.
+        "settlement_writes_applied": int(stats.get("writes_applied") or 0),
+        "venue_voided_samples": sub.get("venue_voided_samples") or [],
+    }
+
+    # The same three-way contract the arms above use (#1515): an invocation that
+    # returned is not proof of work. The SUCCESS SIGNAL here is that every
+    # selected row got a durable answer — voided or checked — because a row that
+    # gets neither is one this arm will ask about again next run, and a batch
+    # made entirely of those is the jam CAL-P998 measured, not progress.
+    answered = report["void_writes_applied"] + report["void_checked_writes_applied"]
+    if candidates and errors >= candidates:
+        report["terminal"] = "failed"
+        report["terminal_reason"] = (
+            f"all {candidates} already-resolved candidates errored at the venue"
+        )
+    elif candidates and apply and answered == 0:
+        report["terminal"] = "partial"
+        report["terminal_reason"] = (
+            f"{candidates} already-resolved candidates asked, 0 given a durable "
+            "answer. Every one of them is selected again next run. Expected only "
+            "while the venue has not finished these events; a batch that stays "
+            "here is not draining."
+        )
+    else:
+        report["terminal"] = "complete"
+
+    # AFTER the terminal verdict, and it does not change it. The terminal is a
+    # statement about the VENUE half — did every selected row get a durable
+    # answer — and a retirement pass that retires nothing is the normal reading
+    # (a stamped row is only retirable once the floor passes it). Folding these
+    # counters into that verdict would make a healthy capture read `partial`.
+    report.update(await _retire_rows_the_venue_voided(maker, now))
     return report

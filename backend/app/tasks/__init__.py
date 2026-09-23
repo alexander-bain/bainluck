@@ -1879,6 +1879,52 @@ def settle_kalshi_recent_finals(self, limit: int = 200, concurrency: int = 6):
     )
 
 
+@celery_app.task(
+    bind=True,
+    soft_time_limit=240,
+    time_limit=300,
+    name="app.tasks.capture_kalshi_resolved_voids",
+)
+def capture_kalshi_resolved_voids(self, limit: int = 60, concurrency: int = 6):
+    """#7035: record that the VENUE VOIDED a postponed fixture, so the page can
+    stop saying "No result reported" about a game nobody ever played.
+
+    Every selection in `kalshi_resolution_sweep` opens with
+    `futures_markets.status = 'open'`, and a postponed fixture has usually
+    already been closed by one of them. Measured on production 2026-09-23:
+    event 15312871 (Levante v Bilbao) holds four Kalshi families, all four
+    `status='resolved'` with `settled_at` set, event `suspended`, every leg
+    ungraded, and nothing recording WHY. Kalshi's own payload says it plainly —
+    all three moneyline legs `finalized` with `result='scalar'` — and the sweep
+    was reading `status` off that payload and discarding `result`.
+
+    489 such rows over 324 events sit in the 14-day band. They are unreachable
+    from every existing arm, so this is a separate task rather than another
+    screen: it wants the opposite `status`, and it must not spend
+    `settle_kalshi_recent_finals`'s 30-minute bar explaining postponements
+    (CERT-3324, which blocked the first presentation for injecting its specimen
+    past the selection instead of through it).
+
+    ON `realtime`, for the reason its sibling measured and wrote down:
+    `background` runs `--concurrency=2` against ~57 beats with
+    `task_acks_late=False`, so a release destroys a reserved message leaving no
+    success, no failure and no start marker.
+
+    Bounded and self-draining: one batch of `limit`, oldest kick-off first, and
+    every row gets a DURABLE answer — `venue_voided` when the venue declined to
+    grade, `venue_void_checked_at` when it did — so nothing is asked twice. A
+    sampled 4-in-14 of this band is a real void; the other 10 are the refusals
+    that stamp must remember. Writes NO grade: never `is_winner`, never a price
+    (#1852 / CAL-P061), and it withholds the shared settlement UPDATE from this
+    population so an explanation can never re-date a settled row.
+    """
+    from app.tasks.kalshi_resolution_sweep import run_resolved_voids
+    return _tracked_run(
+        "kalshi_resolved_voids",
+        run_resolved_voids(limit=limit, concurrency=concurrency),
+    )
+
+
 @celery_app.task(bind=True, soft_time_limit=420, time_limit=480, name="app.tasks.backfill_settled_gap_creation")
 def backfill_settled_gap_creation(self, limit: int = 1500):
     """#138/#995: create Kalshi markets that opened+settled during the 2026-06-09→
@@ -7735,6 +7781,31 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="*/10"),
         "kwargs": {"limit": 200},
         "options": {"queue": "realtime", "expires": 600},
+    },
+    # #7035 — the already-resolved void capture. Deliberately NOT folded into
+    # the beat above: that one carries a 30-minute bar on finished games and
+    # this one explains postponements, which is not urgent.
+    #
+    # `:17/:47` for the reason the `:09/:39` pair below documents. Every `*/5`,
+    # `*/10`, `*/15` and `*/30` beat in this schedule fires on a multiple of
+    # five, so a minute ending in 7 collides with none of them; `:09/:39` is
+    # already taken by the grading twin; and both fires sit in the `:00`-`:44`
+    # half, clear of `backfill_winners` (starts `:45`, runs ~818s), whose
+    # `prob_and_datagolf` phase writes `is_winner` across every source. The
+    # 240s soft limit puts the worst case at `:21`/`:51` — the second is inside
+    # the omnibus window, but this task writes no grade and touches no column
+    # that phase reads, so the two cannot disagree about a row.
+    #
+    # Twice an hour against a measured 489-row band at 60 a run drains the
+    # standing population in ~4 hours and then idles, because a postponement is
+    # rare against the rate games finish. `expires` is one period: a message
+    # this beat could not deliver is worthless once the next selection would
+    # pick the same head.
+    "capture-kalshi-resolved-voids": {
+        "task": "app.tasks.capture_kalshi_resolved_voids",
+        "schedule": crontab(minute="17,47"),
+        "kwargs": {"limit": 60},
+        "options": {"queue": "realtime", "expires": 1800},
     },
     # #1121 residual — the grading twin of the beat above, which flips `status`
     # every 10 min and writes no grade.
