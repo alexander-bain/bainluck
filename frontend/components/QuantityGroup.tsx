@@ -229,7 +229,18 @@ export default function QuantityGroup({
           // red claim of near-impossibility. An unpriced rung draws no fill —
           // the track below stays, so the ladder keeps its shape and the `—`
           // in the number cell is the only thing that speaks.
-          const width = heat.known ? Math.max(2, Math.round(rung.probability! * 100)) : 0;
+          // #8167 — and the same coercion fires on an exact ZERO. A settled
+          // spread board prices every losing rung at `0`, which is `known`, so
+          // the floor drew a solid red pill on a row whose own number cell says
+          // `0%`. At a glance that reads as a small non-zero value — the #4660
+          // defect with a different input: the floor turning "nothing" into a
+          // visible red claim. Gated on the PROBABILITY, not the rounded
+          // percent, so a genuine long shot that rounds to 0% (0.004) keeps its
+          // sliver and only a true zero loses it.
+          const width =
+            heat.known && rung.probability! > 0
+              ? Math.max(2, Math.round(rung.probability! * 100))
+              : 0;
           const RowTag = interactive ? "button" : "div";
           return (
             <RowTag

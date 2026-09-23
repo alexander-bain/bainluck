@@ -120,10 +120,27 @@ describe("UX-P010 #1574(c) — bar tracks align and fills match printed values",
     // for a rung with no price. Coercing the absent case to 0 puts it in the
     // danger band and the floor makes that claim visible, so the width must be
     // gated on the heat's `known` flag and must not re-introduce the coercion.
+    // Stated as the PROPERTY — "the width gate opens with `heat.known`" — and not
+    // as the whole expression. Pinning `const width = heat.known ?` verbatim made
+    // this assertion fail #8167, which ADDS a conjunct to the very gate it is
+    // guarding. That is the third time in this file (see the two notes above):
+    // a guard that hard-codes an implementation string fails the fix for the bug
+    // inside it. `\s*` spans the line break the added conjunct introduces.
     assert.ok(
-      /const width = heat\.known \?/.test(src),
+      /const width =\s*heat\.known\b/.test(src),
       "an unpriced rung must draw NO fill — gate the width on `heat.known` so the " +
         "2% floor cannot paint a near-impossibility claim where there is no number",
+    );
+
+    // #8167 — the same floor, the other absent-shaped input. `probabilityHeat(0)`
+    // returns `known: true`, so a rung measured at exactly zero walked past the
+    // clause above and the floor drew a solid red pill beside a `0%` numeral. The
+    // gate is on the PROBABILITY and not on the rounded percent, so a long shot
+    // that rounds to 0% (0.004) keeps its sliver.
+    assert.ok(
+      /heat\.known && rung\.probability!?\s*>\s*0/.test(src),
+      "a rung priced at exactly 0 must draw NO fill (#8167) — the 2% floor turns " +
+        "a measured zero into a visible claim of a small non-zero value",
     );
     assert.ok(
       !/rung\.probability \?\? 0/.test(src),
