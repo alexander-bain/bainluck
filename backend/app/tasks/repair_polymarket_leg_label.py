@@ -253,6 +253,15 @@ COMMIT_BUDGET_SECONDS = 0.5
 #: exception it is meant to be. The whole 1,153-leg cohort is ten calls.
 APPLY_LEG_CAP = 120
 
+#: 🔴 #7701 rung 3a: how many EXTRA legs a capped page may take on so its trailing
+#: market arrives whole. The collision guard groups by market and is only sound on
+#: a complete group, but `LIMIT` cuts the leg stream wherever 120 falls, not on a
+#: market boundary. Measured 2026-09-21: the widened cohort is 25,469 legs across
+#: 25,402 markets, so the surplus is ~67 legs in total and the realistic top-up is
+#: ONE row. The cap is a rail against a pathological market, not a working bound —
+#: a market that overruns it is refused by name rather than written half-checked.
+GROUP_COMPLETION_CAP = 500
+
 #: Statement timeout for the census, which runs TWO queries under ONE router
 #: wall. At 12s its own permitted worst case is 24s, inside the wall — a census
 #: that H12s returns no body, so its honest "we could not look" answer would
@@ -370,6 +379,11 @@ LEG_VERDICTS = (
     "not_at_venue",
     "no_condition_id",
     "refused_collision",
+    # #7701 rung 3a: the market arrived PARTIAL, so distinctness could not be
+    # tested at all. Its own verdict, not folded into `refused_collision`: one
+    # says two legs would collide, the other says we could not tell, and an
+    # operator reading a drain needs to know which.
+    "refused_group_incomplete",
     "raced",
 )
 
@@ -759,7 +773,9 @@ async def repair(
     """
     started = time.monotonic()
     cap = min(int(limit), APPLY_LEG_CAP) if limit else APPLY_LEG_CAP
-    incoming_cursor = {"after_id": int(after_id)} if after_id else None
+    # `is not None`, not truthiness: `?after_id=0` is a cursor the operator
+    # actually typed, and the refusal below has to be able to echo it back.
+    incoming_cursor = {"after_id": int(after_id)} if after_id is not None else None
 
     # ---- the selectors, validated BEFORE anything is read ----------------
     # Ordered so the most dangerous misreading is refused first: a scope the
@@ -806,7 +822,34 @@ async def repair(
             ),
         )
 
-    if band_ages is not None and after_id:
+    # 🔴 #7701 rung 3a: `?after_id=0` IS A CURSOR IN SQL AND AN ABSENT ONE IN
+    # PYTHON, AND THAT DISAGREEMENT REPORTS A WALK THAT EXAMINED NOTHING AS A
+    # FINISHED DRAIN. The page select tests `CAST(:after_id AS bigint) IS NULL`,
+    # which `0` is not, so it takes the cursor arm: `cursor_market` resolves to
+    # NULL, every comparison against NULL is NULL, and the page comes back empty.
+    # Python then tested the SAME parameter for truthiness — `if after_id` — which
+    # `0` is falsy for, so the `CURSOR_DANGLING` probe below was skipped and the
+    # empty page fell through to the branch that says `scan_exhausted`. The route
+    # hands `0` straight through (`admin_repairs.py` filters on `is not None`, and
+    # the Query has no `ge=`), and initialising a cursor variable to 0 is the
+    # ordinary way to script a 212-page drain, so this is the FIRST call such a
+    # script makes. Refused here, under the name a missing row already gets, which
+    # is what lets the three tests below be `is not None`.
+    if after_id is not None and int(after_id) < 1:
+        return _refused(
+            incoming_cursor=incoming_cursor,
+            started=started,
+            code="CURSOR_DANGLING",
+            reason=(
+                f"?after_id={after_id} is not a row id — `futures_outcomes.id` "
+                "starts at 1 — so the keyset has no market to resume from and the "
+                "page would be empty for that reason ALONE. It is not an exhausted "
+                "scan. Omit ?after_id= to start the walk, or hand the `next_cursor` "
+                "from the last call that examined a leg."
+            ),
+        )
+
+    if band_ages is not None and after_id is not None:
         # CERT-1935 on the sibling rail: a band's two ages are measured from an
         # instant, and re-measuring them from today on every call moves the old
         # edge forward while the keyset stays put — the rows sharing the cursor's
@@ -985,7 +1028,64 @@ async def repair(
             reason=f"page select did not finish: {type(exc).__name__}: {exc}",
         )
 
-    if not page and after_id:
+    # 🔴 #7701 rung 3a: COMPLETE THE TRAILING MARKET. The collision guard below
+    # groups the page by market and refuses a market whose legs would take the
+    # same label — but `LIMIT :cap` cuts the leg stream wherever 120 falls, and
+    # nothing aligns that cut to a market boundary. A market whose two collapsed
+    # legs straddle the cut is seen as two groups of one, each trivially distinct,
+    # so BOTH legs are written the same label and `refused_collision` stays 0: the
+    # guard is not weakened at the boundary, it is bypassed, silently. Topping the
+    # page up to the end of its last market is what keeps the common case whole
+    # AND keeps the walk moving; the completeness test at the guard itself is what
+    # catches every other way a group can arrive partial.
+    overrun_market: Optional[int] = None
+    if page and len(page) >= cap:
+        topup_sql = f"""
+            SELECT leg.id, leg.market_id, leg.external_id, leg.name,
+                   fm.name, fm.llm_sport_category, fm.resolution_date, fm.status
+              FROM futures_markets fm
+              JOIN futures_outcomes leg ON leg.market_id = fm.id
+             WHERE fm.id = CAST(:mid AS bigint)
+               AND leg.id > CAST(:last_leg AS bigint)
+               AND {collapsed_leg_predicate("leg")}
+             ORDER BY leg.id
+             LIMIT CAST(:topup_cap AS int)
+        """
+        try:
+            topup = await _bounded_statement(
+                session,
+                timeout_literal=f"'{TARGET_SELECT_BUDGET_SECONDS}s'",
+                server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
+                sql=topup_sql,
+                params={
+                    "mid": int(page[-1][1]),
+                    "last_leg": int(page[-1][0]),
+                    "topup_cap": GROUP_COMPLETION_CAP,
+                },
+            )
+            tail = topup.fetchall()
+        except Exception as exc:  # noqa: BLE001 — see FAILS CLOSED below
+            await _safe_rollback(session)
+            return _paused_before_examining(
+                incoming_cursor=incoming_cursor,
+                started=started,
+                terminal="paused_target_timeout",
+                reason=(
+                    "the page was read but its trailing market could not be "
+                    "completed, and writing a market the collision guard has only "
+                    "half of is the defect this rung closes: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+        if tail:
+            # Only the LAST market can be short here, so one probe completes the
+            # page. A tail that fills the cap has not proven it is the whole
+            # market, so that market is named and the guard refuses it below.
+            if len(tail) >= GROUP_COMPLETION_CAP:
+                overrun_market = int(page[-1][1])
+            page = list(page) + list(tail)
+
+    if not page and after_id is not None:
         # 🔴 #7701 RUNG 2: AN UNRESOLVABLE CURSOR AND A DRAINED COHORT RETURN THE
         # SAME EMPTY PAGE, AND ONLY ONE OF THEM MEANS "FINISHED". Rung 2 derives
         # the market half of the keyset from `?after_id=` inside the statement
@@ -1226,8 +1326,66 @@ async def repair(
     by_market: dict[int, list[dict[str, Any]]] = {}
     for p in planned:
         by_market.setdefault(p["market_id"], []).append(p)
+
+    # 🔴 #7701 rung 3a: A GROUP IS ONLY TESTABLE IF IT IS WHOLE, AND A PAGE CUT IS
+    # NOT THE ONLY WAY IT ARRIVES PARTIAL. The top-up above fixes the `LIMIT` cut,
+    # but a venue pause or the deadline `break`s the loop mid-market and the write
+    # below still runs on what was planned, and a cursor handed in mid-market
+    # starts the page there. All three present as a group of one that is trivially
+    # distinct. So the test is not "are this page's labels distinct" but "did this
+    # call examine every collapsed leg this market has" — measured against the
+    # table, at the same instant, before anything is written.
+    #
+    # FAILS CLOSED. If the count cannot be taken, nothing is written: the whole
+    # point of the guard is that an unprovable group is indistinguishable from a
+    # safe one, and writing on "we could not check" is the bug, not the fallback.
+    examined_by_market: dict[int, int] = {}
+    for r in examined_rows:
+        examined_by_market[r["market_id"]] = examined_by_market.get(r["market_id"], 0) + 1
+
+    collapsed_by_market: dict[int, int] = {}
+    count_failed: Optional[str] = None
+    if by_market:
+        try:
+            counted = await _bounded_statement(
+                session,
+                timeout_literal=f"'{TARGET_SELECT_BUDGET_SECONDS}s'",
+                server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
+                sql=f"""
+                    SELECT leg.market_id, COUNT(*)
+                      FROM futures_markets fm
+                      JOIN futures_outcomes leg ON leg.market_id = fm.id
+                     WHERE fm.id = ANY(CAST(:mids AS bigint[]))
+                       AND {collapsed_leg_predicate("leg")}
+                     GROUP BY leg.market_id
+                """,
+                params={"mids": sorted(by_market)},
+            )
+            collapsed_by_market = {int(r[0]): int(r[1]) for r in counted.fetchall()}
+        except Exception as exc:  # noqa: BLE001 — unprovable is not writable
+            await _safe_rollback(session)
+            count_failed = f"{type(exc).__name__}: {exc}"
+
     writable: list[dict[str, Any]] = []
     for market_id, group in by_market.items():
+        whole = (
+            count_failed is None
+            and market_id != overrun_market
+            and market_id in collapsed_by_market
+            and examined_by_market.get(market_id, 0) == collapsed_by_market[market_id]
+        )
+        if not whole:
+            counts["refused_group_incomplete"] += len(group)
+            logger.warning(
+                "repair_polymarket_leg_label: market %s arrived partial "
+                "(examined %d of %s collapsed legs%s); refusing the whole group "
+                "because distinctness cannot be tested on a fragment",
+                market_id,
+                examined_by_market.get(market_id, 0),
+                collapsed_by_market.get(market_id, "?"),
+                f", count failed: {count_failed}" if count_failed else "",
+            )
+            continue
         names = [g["new_name"] for g in group]
         if len(names) != len(set(names)):
             counts["refused_collision"] += len(group)

@@ -84,8 +84,17 @@ class _Session:
         census_rows=(),
         out_of_scope=(0, 0),
         cursor_resolves=True,
+        table_legs=None,
     ):
         self.page = list(page)
+        #: #7701 rung 3a: what the TABLE holds, when that differs from what the
+        #: page select returned. Defaults to ``None`` = "the same rows", which is
+        #: what every guard written before this rung means: their fixture page IS
+        #: the population, so each market in it is whole and the completeness
+        #: test passes without any of them restating it. A fixture sets this
+        #: explicitly to build the case the rung exists for — a market whose legs
+        #: the page only has SOME of.
+        self.table_legs = list(table_legs) if table_legs is not None else None
         self.remaining = remaining
         #: Whether the #7701 rung 2 dangling-cursor probe finds its row.
         #: DEFAULTS TO TRUE so that every guard written before rung 2 keeps
@@ -134,6 +143,10 @@ class _Session:
                 f"vacuous. Statements seen: {self.statements!r}"
             )
         return self.writes[0][0]
+
+    def _table(self) -> list:
+        """Every collapsed leg the table holds — the page's rows unless told otherwise."""
+        return self.table_legs if self.table_legs is not None else self.page
 
     def _selected(self, sql: str, params: dict) -> list:
         """The page rows a real Postgres would have returned for THIS statement.
@@ -194,6 +207,27 @@ class _Session:
             if self.landed is not None:
                 ids = [i for i in ids if i in self.landed]
             return _Result(rows=[(i,) for i in ids])
+        # #7701 rung 3a. BOTH routed BEFORE the `GROUP BY` census arm below,
+        # which the per-market count would otherwise be swallowed by — it groups
+        # too, and being answered with `census_rows` is not a wrong number, it is
+        # a wrong SHAPE that takes the whole suite down an IndexError.
+        if "LIMIT CAST(:topup_cap AS int)" in sql:
+            mid, last = params.get("mid"), params.get("last_leg")
+            tail = [r for r in self._table() if r[1] == mid and r[0] > last]
+            # 🔴 THE FAKE APPLIES THE TOP-UP'S OWN LIMIT, for the same reason it
+            # applies the scope and the band: the rail reads a FULL tail as "this
+            # market may be bigger than I can prove" and refuses it, so a fake
+            # that handed back every remaining leg regardless of `:topup_cap`
+            # would make that arm unreachable and let a rail which dropped the
+            # LIMIT — an unbounded page — pass every assertion here.
+            return _Result(rows=sorted(tail)[: params.get("topup_cap")])
+        if "SELECT leg.market_id, COUNT(*)" in sql:
+            mids = set(params.get("mids") or [])
+            tally: dict[int, int] = {}
+            for r in self._table():
+                if r[1] in mids:
+                    tally[r[1]] = tally.get(r[1], 0) + 1
+            return _Result(rows=sorted(tally.items()))
         # Routed BEFORE the complement count, which it also looks like: the
         # census selects the same two aggregates and is told apart by its
         # GROUP BY and nothing else.
@@ -617,6 +651,155 @@ async def test_two_legs_of_DIFFERENT_markets_sharing_a_label_are_both_written(
 
 
 @pytest.mark.asyncio
+async def test_a_market_the_page_cut_in_half_is_completed_before_the_guard_runs(
+    monkeypatch, fast
+):
+    """#7701 rung 3a. The collision guard groups the PAGE, and `LIMIT` cuts the
+    leg stream wherever the cap falls — not on a market boundary. A market whose
+    two collapsed legs straddle that cut arrives as two groups of one, each
+    trivially distinct, so BOTH were written the same label and
+    `refused_collision` stayed 0: not a weakened guard, a bypassed one.
+
+    Here the page select returns only the first leg (cap 1) while the table holds
+    both. The trailing market must be completed before the guard runs, so the
+    collision is seen and refused — against the unfixed rail this writes leg 1."""
+    same = "Manacor: A vs B"
+    markets = [
+        _Market("0xaa", same, ["Anna Player", "Bea Player"]),
+        _Market("0xbb", same, ["Anna Player", "Bea Player"]),
+    ]
+    _venue(monkeypatch, _FakeService(markets))
+    leg1, leg2 = _row(1, 10, "0xaa", same), _row(2, 10, "0xbb", same)
+    session = _Session(page=[leg1], table_legs=[leg1, leg2])
+
+    out = await rail.repair(session, apply=True, limit=1)
+
+    assert out["counts"]["refused_collision"] == 2, (
+        "the split market was not reassembled, so the guard tested a fragment"
+    )
+    assert out["counts"]["relabelled"] == 0
+    assert session.writes == [], "a page-boundary split wrote the colliding pair"
+
+
+@pytest.mark.asyncio
+async def test_a_market_examined_only_in_part_is_refused_rather_than_written(
+    monkeypatch, fast
+):
+    """#7701 rung 3a, the general case the top-up does NOT cover. A venue pause
+    or the deadline breaks the loop mid-market, and a cursor handed in mid-market
+    starts the page there; both present the guard with a fragment that is
+    trivially distinct. The page here is under the cap, so no top-up fires — the
+    completeness test against the table is the only thing standing between a
+    half-examined market and the write. Unfixed, this writes leg 1."""
+    same = "Manacor: A vs B"
+    markets = [_Market("0xaa", same, ["Anna Player", "Bea Player"])]
+    _venue(monkeypatch, _FakeService(markets))
+    leg1, leg2 = _row(1, 10, "0xaa", same), _row(2, 10, "0xbb", same)
+    session = _Session(page=[leg1], table_legs=[leg1, leg2])
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["counts"]["refused_group_incomplete"] == 1
+    assert out["counts"]["relabelled"] == 0
+    assert session.writes == [], "a market only half examined was written anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_whole_market_is_still_written_when_the_table_holds_no_more_legs(
+    monkeypatch, fast
+):
+    """The control for the two guards above, and the one that keeps them honest:
+    the completeness test refuses what it cannot prove, so a bug making it refuse
+    EVERYTHING would pass both of them. The table here holds exactly the legs the
+    page returned, which is the ordinary case for all 212 pages of the drain."""
+    markets = [
+        _Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea"]),
+        _Market("0xbb", "Lujan: A vs C", ["Anna Player", "Cara"]),
+    ]
+    _venue(monkeypatch, _FakeService(markets))
+    legs = [
+        _row(1, 10, "0xaa", "Manacor: A vs B"),
+        _row(2, 11, "0xbb", "Lujan: A vs C"),
+    ]
+    session = _Session(page=list(legs), table_legs=list(legs))
+
+    out = await rail.repair(session, apply=True)
+
+    assert out["counts"]["refused_group_incomplete"] == 0
+    assert out["counts"]["relabelled"] == 2, "the completeness test refuses everything"
+
+
+@pytest.mark.asyncio
+async def test_a_market_too_large_for_the_top_up_is_refused_not_half_written(
+    monkeypatch, fast
+):
+    """The top-up is bounded, so it can come back full without having proven it
+    reached the end of the market. That is "we could not tell", and the rung's
+    whole claim is that we do not write on it — counted, and named, rather than
+    passed through as a group that happened to look distinct."""
+    monkeypatch.setattr(rail, "GROUP_COMPLETION_CAP", 1)
+    same = "Manacor: A vs B"
+    markets = [
+        _Market("0xaa", same, ["Anna Player", "Bea Player"]),
+        _Market("0xbb", same, ["Anna Player", "Bea Player"]),
+        _Market("0xcc", same, ["Anna Player", "Bea Player"]),
+    ]
+    _venue(monkeypatch, _FakeService(markets))
+    legs = [
+        _row(1, 10, "0xaa", same),
+        _row(2, 10, "0xbb", same),
+        _row(3, 10, "0xcc", same),
+    ]
+    session = _Session(page=[legs[0]], table_legs=list(legs))
+
+    out = await rail.repair(session, apply=True, limit=1)
+
+    assert out["counts"]["refused_group_incomplete"] == 2
+    assert session.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_zero_after_id_is_refused_and_never_reports_an_exhausted_scan(fast):
+    """#7701 rung 3a. `?after_id=0` is a cursor to the statement and an absent one
+    to Python: `CAST(:after_id AS bigint) IS NULL` is false for 0, so the page
+    took the cursor arm, `cursor_market` resolved to NULL and the page came back
+    empty — while every Python test was `if after_id`, which 0 is falsy for, so
+    the dangling probe was skipped and the empty page fell through to
+    `scan_exhausted`. A drain scripted from a cursor initialised to 0 meets this
+    on its FIRST call and is told the cohort is finished."""
+    session = _Session(page=[])
+
+    out = await rail.repair(session, after_id=0)
+
+    assert out["terminal"] == "refused"
+    assert out["refused_code"] == "CURSOR_DANGLING"
+    assert out["scan_exhausted"] is False, (
+        "a walk that examined nothing reported the cohort drained"
+    )
+    assert out["counts"]["legs_examined"] == 0
+    assert session.statements == [], (
+        "the refusal must land before the page select, not after reading"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_real_cursor_still_walks_so_the_zero_refusal_is_not_too_wide(
+    monkeypatch, fast
+):
+    """The control. `after_id` is refused for values below 1 and NOTHING else —
+    a refusal keyed on the wrong test would stop all 212 pages of the resume."""
+    markets = [_Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea"])]
+    _venue(monkeypatch, _FakeService(markets))
+    leg = _row(7, 10, "0xaa", "Manacor: A vs B")
+    session = _Session(page=[leg], table_legs=[leg])
+
+    out = await rail.repair(session, apply=True, after_id=1)
+
+    assert out["terminal"] != "refused"
+    assert out["counts"]["relabelled"] == 1
+
+
+@pytest.mark.asyncio
 async def test_a_row_the_poller_re_ingested_is_counted_raced_not_relabelled(
     monkeypatch, fast
 ):
@@ -879,10 +1062,15 @@ def test_the_census_and_the_pager_share_one_population_predicate():
         "side of the status test, so a second spelling there would compare two "
         "different populations and report the difference as a finding."
     )
-    assert src.count('{collapsed_leg_predicate("leg")}') == 1, (
+    assert src.count('{collapsed_leg_predicate("leg")}') == 3, (
         "the pager no longer renders the shared rule under its LATERAL alias. "
-        "Four statements must ask one question: three through the constant and "
-        "the page through the function that builds it."
+        "SIX statements must ask one question: three through the constant, and "
+        "three through the function that builds it — the page, #7701 rung 3a's "
+        "trailing-market top-up, and its per-market completeness count. The last "
+        "two are why the number moved from 1: both decide whether a market is "
+        "WHOLE, so a second spelling in either would count a different "
+        "population than the page walked and silently call a fragment complete "
+        "— which is the exact write this rung exists to refuse."
     )
     # The scope test is written once for the same reason, and the two halves
     # must be complements — if they ever overlap or leave a gap, the rail's
