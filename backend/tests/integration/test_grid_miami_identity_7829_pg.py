@@ -65,6 +65,13 @@ against a server.
   length — splitting the family took away the ``MIA`` anchor the pooled key had
   lent it. Plain ``Miami`` has no ticker and prefix-matches both schools, so it
   may land on neither.
+* **The plain spelling beside a LONE qualified sibling** (``lone_sibling``) —
+  production NCAAB exactly: the grid carries Kalshi ``Miami (FL)`` and
+  Polymarket plain ``Miami``, and no ``Miami (OH)`` leg at all (only last
+  season's resolved markets price one). Base pooled both spellings on one key
+  whose ``MIA`` suffix anchored them to the Hurricanes. Separated, the plain key
+  had no anchor and went to the longest candidate — the RedHawks. It must keep
+  base's answer.
 """
 
 import os
@@ -233,6 +240,14 @@ POLY_BARE_MIAMI = 0.62
 
 
 @pytest.fixture
+async def seeded_lone_sibling():
+    """Kalshi ``Miami (FL)`` + Polymarket plain ``Miami``; no ``Miami (OH)`` leg anywhere."""
+    engine = await _engine(permuted=False, oh_live=False, bare_sibling=True, lone_sibling=True)
+    yield Seeded(engine, "lone_sibling")
+    await _dispose(engine)
+
+
+@pytest.fixture
 async def seeded_anchorless():
     """The ``oh_live`` corpus, except every Miami (FL) leg has NO ticker suffix."""
     engine = await _engine(permuted=False, oh_live=True, anchorless=True)
@@ -257,7 +272,13 @@ async def _clear(conn) -> None:
 
 
 async def _seed(
-    conn, *, permuted: bool, oh_live: bool, anchorless: bool = False, bare_sibling: bool = False
+    conn,
+    *,
+    permuted: bool,
+    oh_live: bool,
+    anchorless: bool = False,
+    bare_sibling: bool = False,
+    lone_sibling: bool = False,
 ) -> None:
     """Insert the corpus.
 
@@ -346,6 +367,8 @@ async def _seed(
         return f"{market_ext}-{suffix}"
 
     playoff_legs = PLAYOFF_LEGS[:1] + ((OH_LIVE if oh_live else OH_GRADED),) + PLAYOFF_LEGS[1:]
+    if lone_sibling:
+        playoff_legs = PLAYOFF_LEGS
 
     for name, p in order(CHAMP_LEGS):
         await _leg(MARKET_CHAMP, name, name, p, p - 0.005, p + 0.005)
@@ -577,5 +600,29 @@ async def test_the_familys_plain_spelling_is_not_bound_by_length(seeded_bare_sib
         cell = (rows[name].get("cells") or {}).get("make_playoffs") or {}
         credited = sorted(str(s.get("source")) for s in cell.get("sources") or [])
         assert "polymarket" not in credited, (name, credited)
+    for name, expected in CONTROL_PLAYOFF.items():
+        assert playoff.get(name) == expected, (name, playoff)
+
+
+@needs_postgres
+async def test_the_plain_spelling_beside_a_lone_sibling_keeps_its_anchor(seeded_lone_sibling):
+    """Kalshi ``Miami (FL)`` 0.71 and Polymarket plain ``Miami`` 0.62 on the
+    make_playoffs markets; no ``Miami (OH)`` leg on any market.
+
+    Base pooled both spellings on ``miami`` and the ``MIA`` suffix bound them to
+    the Hurricanes. The plain key must still reach the Hurricanes — never the
+    RedHawks, the longest candidate, which is where it went once the qualified
+    spelling took the suffix away.
+    """
+    grid = await _grid(seeded_lone_sibling)
+    rows = _rows(grid)
+    oh_cell = (rows["Miami (OH) RedHawks"].get("cells") or {}).get("make_playoffs")
+    assert not oh_cell, f"Miami (OH) has no leg on this market and served {oh_cell!r}"
+    fl_cell = (rows["Miami Hurricanes"].get("cells") or {}).get("make_playoffs") or {}
+    credited = sorted(str(s.get("source")) for s in fl_cell.get("sources") or [])
+    assert credited == ["kalshi", "polymarket"], (
+        f"the Hurricanes' make_playoffs cell credits {credited}; both venues priced them"
+    )
+    playoff = _column(grid, "make_playoffs")
     for name, expected in CONTROL_PLAYOFF.items():
         assert playoff.get(name) == expected, (name, playoff)

@@ -6257,6 +6257,26 @@ async def get_playoff_grid(
     _contested_qualified |= {
         base for base, keys in _qualified_bases.items() if len(keys) > 1 and base in grid_raw
     }
+    # And when the family is NOT contested — one qualified spelling beside the
+    # plain one — the plain key keeps the anchor it had before the split. Base
+    # pooled `Miami (FL)` and `Miami` on one `miami` key, so the plain spelling
+    # resolved on the `MIA` suffix; separated, it would have none and fall to
+    # the longest candidate. Production NCAAB 2026-09-23 is exactly this: the
+    # grid carries no `Miami (OH)` leg (only last season's resolved markets do),
+    # and Polymarket's plain `Miami` went to the RedHawks. Lending the lone
+    # sibling's suffixes restores base's answer for this case.
+    _merge_suffixes: dict[str, set[str]] = ticker_suffixes
+    _lent = {
+        base: next(iter(keys))
+        for base, keys in _qualified_bases.items()
+        if len(keys) == 1 and base in grid_raw
+    }
+    if _lent:
+        _merge_suffixes = defaultdict(set, ticker_suffixes)
+        for base, sibling in _lent.items():
+            _merge_suffixes[base] = set(ticker_suffixes.get(base, ())) | set(
+                ticker_suffixes.get(sibling, ())
+            )
     _contested = {c for cs in merge_candidates.values() if len(cs) > 1 for c in cs}
     _contested |= {
         c for short, cs in merge_candidates.items() if short in _contested_qualified for c in cs
@@ -6277,7 +6297,7 @@ async def get_playoff_grid(
             continue
         merge_map[short_name] = (
             cands[0] if len(cands) == 1
-            else _resolve_ambiguous_merge(short_name, cands, ticker_suffixes, abbreviations)
+            else _resolve_ambiguous_merge(short_name, cands, _merge_suffixes, abbreviations)
         )
 
     # Apply merges
