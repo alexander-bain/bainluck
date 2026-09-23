@@ -6525,22 +6525,69 @@ def _drop_withheld_price_legs(market, outcomes: list, withheld_ids=None) -> list
     """
     if getattr(market, "status", None) != "open":
         return outcomes
-    # `__dict__.get`, never `getattr` — a rehydrated snapshot always carries this
-    # attribute (it is in `DERIVED_MARKET_COLUMNS`), and a carrier that does NOT
-    # must answer `None` rather than lazy-load or raise inside the per-item
-    # serializer (gotcha #42, and the module's rule one file over).
-    withheld = (
-        withheld_ids
-        if withheld_ids is not None
-        else getattr(market, "__dict__", _NO_MARKET_DICT).get(
-            "withheld_outcome_ids"
-        )
-    )
+    withheld = _resolve_withheld_ids(market, withheld_ids)
     if not withheld:
         return outcomes
     withheld_ids = set(withheld)
     survivors = [o for o in outcomes if o.id not in withheld_ids]
     return survivors or outcomes
+
+
+def _resolve_withheld_ids(market, withheld_ids=None):
+    """The detail page's withheld set for this carrier, whichever shape it arrives in.
+
+    Lifted out of `_drop_withheld_price_legs` by #8237 so the DROP and the
+    DIVISOR GATE cannot form two opinions about which legs the page refused —
+    the same one-rule discipline the drop's own docstring applies to membership.
+
+    `__dict__.get`, never `getattr` — a rehydrated snapshot always carries this
+    attribute (it is in `DERIVED_MARKET_COLUMNS`), and a carrier that does NOT
+    must answer `None` rather than lazy-load or raise inside the per-item
+    serializer (gotcha #42, and the module's rule one file over).
+
+    ⚠️ `None` IS NOT `[]`, and both callers depend on it: `None` means the arms
+    never ran for this carrier, so the drop drops nothing and the gate refuses
+    nothing (the pre-#7632 card, the fail-open direction).
+    """
+    return (
+        withheld_ids
+        if withheld_ids is not None
+        else getattr(market, "__dict__", _NO_MARKET_DICT).get("withheld_outcome_ids")
+    )
+
+
+def _field_has_withheld_legs(market, outcomes: list, withheld_ids=None) -> bool:
+    """Did the DETAIL PAGE refuse a price on any leg of THIS card's field (#8237)?
+
+    The answer `normalize_display_probs` gets as `field_complete=False`, asked on
+    the card's side of the same field, so the two surfaces stop dividing a
+    one-winner field by two different numbers.
+
+    🔴 CALLED ON THE PRE-DROP LIST, and that is the whole subtlety. #7632 DROPS
+    the refused legs from the card (the page nulls them in place), so by the time
+    the divisor is computed the card's field no longer contains the evidence that
+    it is incomplete — it looks like a healthy 125-leg field that happens to sum
+    to 1.291. Asked after the drop, this function would answer `False` on exactly
+    the boards it exists to catch.
+
+    🪤 AN INTERSECTION, NOT THE SET'S TRUTHINESS. `withheld_outcome_ids` is
+    computed over the WHOLE market, and the legs it names need not all appear in
+    the list this card is built from (dedup, the stale-observation drop and the
+    mixed-binary strip all run around here). `league_futures.py` makes the same
+    distinction in the same words — "counted while nulling, never re-derived from
+    `withheld_ids` ... what the gate has to describe is what THIS payload refused
+    to print" — and this is that sentence on the feed's side.
+
+    OPEN MARKETS ONLY, the drop's bound: a settled board keeps every leg, so
+    there is nothing for the gate to describe.
+    """
+    if getattr(market, "status", None) != "open":
+        return False
+    withheld = _resolve_withheld_ids(market, withheld_ids)
+    if not withheld:
+        return False
+    withheld_ids = set(withheld)
+    return any(getattr(o, "id", None) in withheld_ids for o in outcomes)
 
 
 #: Read-only stand-in for the instance dict of a carrier that has none, so the
@@ -6724,14 +6771,25 @@ def _outcomes_are_cumulative_ladder(
 def _market_exclusivity(market) -> bool | None:
     """``FuturesMarket.mutually_exclusive`` as #8224's overround ceiling reads it.
 
-    🔴 `getattr` WITH A DEFAULT, AND THE DEFAULT IS LOAD-BEARING. The cached path
-    rebuilds markets from `MARKET_ROW_COLUMNS` (`futures_market_snapshot.py`), and
-    the column only joined that list in #7808 (snapshot v7) — a v6 payload still in
-    Redis has no such attribute at all, so a bare `market.mutually_exclusive` would
-    raise inside the card builder and take the card out (gotcha #42). `None` is not
-    a guess either: it is read as "caller does not know" and keeps the historical
-    2.0 ceiling, so the degraded path is byte-identical to today rather than a
-    silently widened repair.
+    🪤 THE `getattr` DEFAULT IS HARMLESS BUT ITS ORIGINAL REASON WAS FALSE, and it
+    was written here as a load-bearing warning, so it was believed — it cost
+    discover/437 and int512 a pass each before anyone read the loader (#8237).
+    The retired claim: "a v6 payload still in Redis has no such attribute, so a
+    bare `market.mutually_exclusive` would raise inside the card builder". It
+    cannot. `SNAPSHOT_SCHEMA_VERSION` is **8**, `mutually_exclusive` has been in
+    `MARKET_COLUMNS` since #7808, and `futures_market_snapshot.py` REJECTS a
+    version-mismatched payload outright (`payload.get("v") != ...` -> `None`)
+    rather than reading it short. There is no degraded-read path to protect
+    against; a rehydrated carrier either carries the column or is not used.
+
+    The `getattr` stays, because a default that cannot fire costs nothing and the
+    ORM/snapshot pair is exactly where gotcha #42 applies — but it is ordinary
+    defensiveness, not the mitigation of a measured hazard. Do not reason from it.
+
+    `None` IS still load-bearing, for a different and real reason: it is read as
+    "caller does not know" and keeps BOTH per-class widenings off — #8224's 1.60
+    ceiling and #8237's withheld gate — so an unknown field is served exactly as
+    it was before either, never a silently widened repair.
     """
     return getattr(market, "mutually_exclusive", None)
 
@@ -6741,6 +6799,7 @@ def _feed_display_scale(
     question: str | None = None,
     *,
     mutually_exclusive: bool | None = None,
+    field_complete: bool = True,
 ) -> float:
     """The single display-probability divisor for one futures card (Queue 283,
     #1487).
@@ -6871,12 +6930,67 @@ def _feed_display_scale(
     is what makes the two surfaces agree rather than a second opinion about the
     field. The ladder gate below is untouched and still runs first.
 
-    ``None`` means "the caller does not know" and keeps the historical 2.0: a v6
-    snapshot payload predating #7808 carries no ``mutually_exclusive`` at all, and
-    the safe reading of an absent column is today's behaviour, never a silently
-    widened repair.
+    ``None`` means "the caller does not know" and keeps the historical 2.0, which
+    is the safe reading of an absent column: today's behaviour, never a silently
+    widened repair. (#8224 justified this by a v6 snapshot payload carrying no
+    ``mutually_exclusive`` — MEASURED FALSE and retired in #8237; see
+    ``_market_exclusivity``. The ``None`` arm is right on its own terms and the
+    reasoning above does not rest on the retired claim.)
+
+    ── #8237: AND THE OTHER CLAUSE OF THE PAGE'S RULE, WHICH #8224 LEFT BEHIND ──
+
+    #8224 read the page's ceiling and stopped there, but `normalize_display_probs`
+    refuses a one-winner field for TWO independent reasons, and the ceiling is the
+    second one. The first is #7103: ``field_complete=False`` — a field with
+    WITHHELD members is not a proved-complete distribution, so dividing by the
+    sum of the legs that survive is dividing by something that is not 1.
+
+    The card never had that clause, and #7632 is what hides the need for it: the
+    page NULLS a refused leg in place and counts it (`prices_withheld`), while the
+    card DROPS it. So the card arrives at this function holding a field whose
+    missing mass has already been deleted from the evidence, and divides by the
+    remainder. MEASURED on production 2026-09-23 14:20Z, v4970 (the release
+    carrying #8224), page read from `/api/futures/{id}`:
+
+      `52755536` Who will host the 2031 Pro Football Championship  `New Orleans`
+          26 legs, 7 withheld · priced sum 1.380 · page .13 -> card .0942
+      `2417016`  Pro Baseball Championship Series Matchup  `Tampa Bay vs LA`
+          225 legs, 100 withheld · priced sum 1.291 · page .1195 -> card .0926
+
+    🪤 AND THE CEILING CANNOT EXPLAIN EITHER OF THEM, which is why #8237's own
+    filed mechanism ("withheld legs pull the priced sum under the ceiling") is not
+    the one implemented here. Both priced sums are BELOW 1.60, so #8224's ceiling
+    is satisfied on both surfaces; a page obeying only the ceiling would have
+    squeezed `52755536` to .0942 and agreed with the card. It prints .13. The
+    withheld gate is the only clause that returns raw for these fields, so it is
+    the clause the card is missing — read off every clause's stored input rather
+    than the one the issue named.
+
+    🔴 AND THE DROP IS WHAT PUTS THE FIELD IN THE BAND, so do NOT "simplify" this
+    to summing the pre-drop list. `52755536` stores 26 legs summing **1.7900** —
+    above the ceiling, where #8224 already keeps both surfaces raw. #7632 removes
+    the 7 refused legs (0.41 of mass) and the 19 survivors sum to 1.3800, which is
+    INSIDE the band. Dividing by the pre-drop sum would agree on this specimen by
+    accident and still split on a field with few withheld legs and a low sum, and
+    it would reopen #7537 besides: the two surfaces owe each other one divisor
+    over one membership. The gate is the page's rule; the sum is not.
+
+    🔴 SCOPED TO THE EXCLUSIVE CLASS, exactly as #8224's ceiling is. On the page
+    the withheld gate sits BELOW the ``mutually_exclusive`` early return, so it
+    only ever describes a one-winner field; a non-ME field is kept raw there for
+    gotcha #58's different reason while this function divides it ON PURPOSE
+    (#4079's ``test_7``). Applying the gate to non-ME here would flip that
+    population for a reason the page never asserted about it.
+
+    ``field_complete`` defaults True, mirroring `normalize_display_probs`'s own
+    signature: every existing caller is preserved, and only a caller that KNOWS it
+    had legs withheld passes False.
     """
     if _outcomes_are_cumulative_ladder(all_sorted_outcomes, question):
+        return 1.0
+    # #8237: a one-winner field with withheld members is not a proved-complete
+    # distribution — the page's #7103 gate, on the card's side of the same field.
+    if mutually_exclusive and not field_complete:
         return 1.0
     displayed = [
         o for o in all_sorted_outcomes[:3] if getattr(o, "current_probability", None)
@@ -7043,6 +7157,7 @@ def _normalize_feed_probabilities(
     question: str | None = None,
     *,
     mutually_exclusive: bool | None = None,
+    field_complete: bool = True,
 ) -> list[dict]:
     """Normalize feed-card probabilities for independent binary markets.
 
@@ -7059,11 +7174,17 @@ def _normalize_feed_probabilities(
 
     Delegates the eligibility/divisor decision to ``_feed_display_scale`` so the
     mini-list shares one basis with the distribution + headline (Queue 283) —
-    including #8224's per-class overround ceiling, which is why
-    ``mutually_exclusive`` is threaded here rather than re-derived.
+    including #8224's per-class overround ceiling and #8237's withheld-member
+    gate, which is why ``mutually_exclusive`` and ``field_complete`` are threaded
+    here rather than re-derived. A mini-list that re-derived either one could
+    print a percent the distribution beside it does not, which is the single
+    failure this delegation exists to prevent.
     """
     scale = _feed_display_scale(
-        all_sorted_outcomes, question, mutually_exclusive=mutually_exclusive
+        all_sorted_outcomes,
+        question,
+        mutually_exclusive=mutually_exclusive,
+        field_complete=field_complete,
     )
     if scale == 1.0:
         return top_outcomes
@@ -10691,6 +10812,14 @@ async def _score_sports_mode_futures(
         # which the helper reads as "the arms never ran" and serves at its
         # pre-#7632 numbers — one bad board never empties a card, and never
         # wipes the pass (gotcha #42).
+        #
+        # #8237: asked BEFORE the drop, because the drop is what removes the
+        # evidence. The page nulls these legs and counts them; this card deletes
+        # them, so after this line the field looks complete and the divisor has
+        # no way to know it is dividing by a partial mass.
+        _field_incomplete = _field_has_withheld_legs(
+            market, sorted_outcomes, withheld_by_market.get(market.id)
+        )
         sorted_outcomes = _drop_withheld_price_legs(
             market, sorted_outcomes, withheld_by_market.get(market.id)
         )
@@ -10791,6 +10920,7 @@ async def _score_sports_mode_futures(
             card_outcomes,
             market.name,
             mutually_exclusive=_market_exclusivity(market),
+            field_complete=not _field_incomplete,
         )
         display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
@@ -11056,6 +11186,7 @@ async def _score_sports_mode_futures(
             card_outcomes,
             market.name,
             mutually_exclusive=_market_exclusivity(market),
+            field_complete=not _field_incomplete,
         )
         # #2088 criterion 3: the printed percents and the reason they may not total
         # 100. AFTER the scale, so the rule is applied to the displayed basis.
@@ -12333,6 +12464,11 @@ async def _score_futures(
             # it runs last because its gate is a fact about what the other four
             # already took away. A rule that reads the field as a whole cannot
             # be fed a field something else has already thinned.
+            #
+            # #8237: asked BEFORE the drop, for the reason its own docstring
+            # gives — the drop deletes the legs that prove the field is partial,
+            # so the divisor computed after it cannot see them.
+            _field_incomplete = _field_has_withheld_legs(market, sorted_outcomes)
             sorted_outcomes = _drop_withheld_price_legs(market, sorted_outcomes)
 
             # UX-P126/F5: and neither may an anonymized reserved slot ("Party C",
@@ -12446,6 +12582,7 @@ async def _score_futures(
                 card_outcomes,
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
+                field_complete=not _field_incomplete,
             )
             display_leader_prob = _scale_display_probability(leader_prob, _display_scale)
 
@@ -12624,6 +12761,7 @@ async def _score_futures(
                 card_outcomes,
                 market.name,
                 mutually_exclusive=_market_exclusivity(market),
+                field_complete=not _field_incomplete,
             )
             # #2088 criterion 3: the printed percents and the reason they may not
             # total 100. AFTER the scale, so the rule sees the displayed basis.
