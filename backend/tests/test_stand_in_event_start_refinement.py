@@ -696,3 +696,202 @@ def test_the_repair_runs_after_the_market_side_fixup_it_reads():
     assert src.index("_fix_tennis_commence_times()") < src.index(
         "_refine_stand_in_event_starts()"
     )
+
+
+# ---------------------------------------------------------------------------
+# CERT-3339: reachability. The revision arm is only worth its unit contracts
+# if the scheduled reads actually deliver a restatement to it. These drive the
+# REAL `_refresh_dated_fixture_starts` over a faked session and venue; the
+# same ground is covered against a real server in
+# `tests/integration/test_stand_in_event_starts_real_postgres.py`, but that
+# file cannot run in the sandbox, so these are the arms that fail locally.
+# ---------------------------------------------------------------------------
+
+async def _candidate_query_call():
+    """Call the REAL candidate query with a recording session.
+
+    Returns `(sql_text, bound_params)`. The query is the gate that decides
+    whether a repaired fixture is ever re-read at all.
+    """
+    from types import SimpleNamespace
+
+    import app.tasks.kalshi as kalshi_task
+
+    seen = {}
+
+    class _Session:
+        async def execute(self, sql, args=None):
+            seen["sql"] = str(sql)
+            seen["args"] = args
+            return SimpleNamespace(fetchall=lambda: [])
+
+    await kalshi_task._dated_fixture_refresh_candidates(_Session(), 25)
+    return seen["sql"], seen["args"]
+
+
+async def test_a_repaired_fixture_is_still_a_refresh_candidate():
+    """🔴 Half of why #3565 was inert in production.
+
+    Stamping `kalshi_occurrence` took the event out of
+    `DERIVED_COMMENCE_SOURCES` and therefore out of this query, so the venue
+    was never asked about that fixture again. A restatement nobody fetches is
+    a restatement nobody can adopt — the revision arm's unit contracts all
+    passed over rows the rail could never be handed.
+    """
+    import app.tasks.kalshi as kalshi_task
+
+    sql, args = await _candidate_query_call()
+
+    assert args["occurrence"] == kalshi_task.KALSHI_OCCURRENCE_COMMENCE_SOURCE
+    assert ":occurrence" in sql, (
+        "bound but unreferenced is not admitted — the predicate itself must "
+        "name the occurrence source"
+    )
+
+
+async def test_the_refresh_rotation_stays_bounded_while_it_looks_wider():
+    """Widening WHICH series rotate must not widen HOW MANY run per pass.
+
+    The cost control is the budget and the horizon, not the provenance filter,
+    so removing the latter may not quietly remove the former.
+    """
+    sql, args = await _candidate_query_call()
+
+    assert args["budget"] == 25
+    assert ":budget" in sql and ":floor" in sql and ":ceiling" in sql
+
+
+#: One Ligue 1 fixture, its ticker day, and the two hours the venue publishes.
+#: `_REV_RESTATED` is 2h45m EARLIER than `_REV_STORED` — an order-of-play
+#: reshuffle, which the revision arm accepts (measured against the ticker day,
+#: either direction) and the stand-in arm refuses (forward only). That is why
+#: the stand-in control below starts from midnight rather than from the stored
+#: hour: handed the same row, the two arms are answering different questions.
+_REV_SERIES = "KXLIGUE1GAME"
+_REV_DAY = datetime(2026, 9, 11, tzinfo=UTC)
+_REV_TICKER = f"{_REV_SERIES}-26SEP11RENOLM"
+_REV_STORED = _REV_DAY + timedelta(hours=21, minutes=45)
+_REV_RESTATED = _REV_DAY + timedelta(hours=19)
+
+
+async def _run_refresh(event_source, event_commence=_REV_STORED):
+    """Drive the REAL `_refresh_dated_fixture_starts` for one seeded fixture.
+
+    Returns `(stats, market_writes, event_writes, restated, selects)`. The
+    venue publishes `_REV_RESTATED`, a restatement inside the ticker day.
+    """
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import app.services.kalshi_api as kalshi_api
+    import app.tasks.kalshi as kalshi_task
+
+    series = _REV_SERIES
+    day = _REV_DAY
+    ticker = _REV_TICKER
+    stored = _REV_STORED
+    restated = _REV_RESTATED
+
+    market_writes, event_writes = [], []
+    selects = []
+
+    class _Session:
+        async def execute(self, sql, args=None):
+            body = str(sql)
+            if body.lstrip().startswith("SELECT"):
+                selects.append((body, args))
+                if "split_part" in body:          # the candidate query
+                    return SimpleNamespace(
+                        fetchall=lambda: [SimpleNamespace(series=series)]
+                    )
+                return SimpleNamespace(fetchall=lambda: [SimpleNamespace(
+                    market_id=7,
+                    external_id=ticker,
+                    market_commence=stored,
+                    event_id=1,
+                    event_commence=event_commence,
+                    event_source=event_source,
+                )])
+            (event_writes if "UPDATE events" in body else market_writes).append(args)
+            return SimpleNamespace(rowcount=1)
+
+        async def commit(self):
+            pass
+
+    @asynccontextmanager
+    async def _factory(**_):
+        yield _Session()
+
+    class _Venue:
+        async def get_markets(self, **_):
+            return [{}], None
+
+        def parse_markets(self, raw):
+            return [SimpleNamespace(
+                event_ticker=ticker,
+                occurrence_datetime=restated,
+                close_time=day + timedelta(days=3),
+            )]
+
+    with patch.object(kalshi_task, "get_task_session", _factory), \
+            patch.object(kalshi_api, "KalshiAPIService", lambda *a, **k: _Venue()):
+        stats = await kalshi_task._refresh_dated_fixture_starts()
+
+    return stats, market_writes, event_writes, restated, selects
+
+
+async def test_the_market_write_is_not_filtered_by_its_events_provenance():
+    """🔴 The other half, and the one this change itself introduced.
+
+    The first cut of #3565 added `e.commence_time_source = ANY(:derived)` to
+    the market SELECT, meaning to keep the EVENT half stand-in-only. It took
+    the MARKET half with it: once an event was repaired, its market stopped
+    receiving the venue's current hour, and the refine rail — which reads that
+    stored value and nothing else — had nothing to adopt forever after.
+    """
+    stats, market_writes, _, restated, selects = await _run_refresh(
+        "kalshi_occurrence"
+    )
+
+    assert stats["markets_moved"] == 1, (
+        "an occurrence-stamped event's market must still take the restatement"
+    )
+    assert [w["dt"] for w in market_writes] == [restated]
+
+    market_select = [a for body, a in selects if "split_part" not in body][0]
+    assert "derived" not in market_select, (
+        "the market SELECT must not filter on the event's provenance at all — "
+        "the two halves state their own eligibility"
+    )
+
+
+async def test_the_refresh_task_never_adopts_a_revision_itself():
+    """The disjoint half: widening everything is NOT the fix.
+
+    `_stand_in_refinement_decision` derives `revision` from the source it is
+    handed, so an occurrence-stamped row reaching the event half here would be
+    adopted — by a loop with no anti-flap control, which lives only in
+    `_refine_stand_in_event_starts`. Two writers of one revision, one of them
+    unguarded, is the flap that control exists to prevent.
+    """
+    stats, _, event_writes, _, _ = await _run_refresh("kalshi_occurrence")
+
+    assert stats["events_moved"] == 0
+    assert event_writes == []
+
+
+async def test_a_genuine_stand_in_is_still_repaired_here():
+    """The positive control: the guard above must not disable the task.
+
+    Without this, deleting the event half outright would pass every assertion
+    in the test above. Starts from the MIDNIGHT stand-in, because the forward
+    -only stand-in arm is a different question from the revision arm — see
+    `_REV_RESTATED`.
+    """
+    stats, _, event_writes, restated, _ = await _run_refresh(
+        "kalshi_ticker", event_commence=_REV_DAY
+    )
+
+    assert stats["events_moved"] == 1
+    assert [w["dt"] for w in event_writes] == [restated]

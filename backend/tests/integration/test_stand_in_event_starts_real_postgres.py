@@ -834,6 +834,23 @@ _REFRESH_VENUE_PAYLOAD = {
     }],
 }
 
+#: The SAME fixture, restated by the venue to 2h45m earlier — an order-of-play
+#: reshuffle, which is why the revision window is measured against the ticker
+#: DAY and counts both directions. Derived from the same offset-then-truncate
+#: anchor, so it carries no literal date (gotcha #44) and stays inside
+#: `[ticker midnight, +36h]`, under `close`, and well past the 30-minute
+#: minimum move.
+_REFRESH_RESTATED = _REFRESH_STAND_IN + timedelta(hours=19)
+_REFRESH_RESTATED_ISO = _REFRESH_RESTATED.strftime("%Y-%m-%dT%H:%M:%SZ")
+_REFRESH_RESTATED_PAYLOAD = {
+    "KXLIGUE1GAME": [{
+        "ticker": _REFRESH_TICKER + "-REN",
+        "event_ticker": _REFRESH_TICKER,
+        "occurrence_datetime": _REFRESH_RESTATED_ISO,
+        "close_time": _REFRESH_CLOSE_ISO,
+    }],
+}
+
 
 class _FakeVenue:
     """Kalshi's `/markets?series_ticker=...` payload, verbatim in shape.
@@ -1080,16 +1097,25 @@ async def test_a_rate_limited_series_is_skipped_not_recorded_as_no_occurrence(
 
 
 @needs_postgres
-async def test_the_refresh_converges_and_stops_selecting_what_it_fixed(
+async def test_the_refresh_converges_without_going_blind_to_the_fixture(
     pg_engine, monkeypatch
 ):
-    """It runs every two hours forever. A second pass must be a no-op.
+    """It runs every two hours forever. A second pass must not RE-WRITE.
 
-    The mechanism is not a flag: writing `kalshi_occurrence` takes the event
-    out of `DERIVED_COMMENCE_SOURCES`, so the candidate query cannot see it
-    again. Asserted by running twice and requiring the venue not to be asked
-    the second time — the cheap proof that the CANDIDATE set shrank, rather
-    than the write being re-applied to the same value.
+    🔴 THIS TEST REPLACES A CONTRACT THIS SHIP DELIBERATELY BREAKS (#3565).
+    It previously asserted `venue.asked == ["KXLIGUE1GAME"]` — that a repaired
+    fixture is never re-read, because stamping `kalshi_occurrence` took the
+    event out of `DERIVED_COMMENCE_SOURCES` and so out of the candidate query.
+    That is convergence by going blind, and it is precisely what made the
+    revision arm unreachable in production: `_refine_stand_in_event_starts`
+    decides off the STORED market hour, so a fixture nobody re-reads is a
+    fixture whose RESTATEMENT can never be observed, let alone adopted.
+
+    The invariant worth keeping is not "stop looking", it is "stop writing",
+    and that one is asserted here directly rather than inferred from the
+    candidate set shrinking: the event is not moved again, and the market is
+    not re-written while the venue keeps publishing the same hour. Idempotence
+    now rests on the values, which is where it belonged.
     """
     from app.tasks.kalshi import _refresh_dated_fixture_starts
 
@@ -1104,8 +1130,108 @@ async def test_the_refresh_converges_and_stops_selecting_what_it_fixed(
     second = await _refresh_dated_fixture_starts()
 
     assert first["events_moved"] == 1
-    assert second["events_moved"] == 0
-    assert venue.asked == ["KXLIGUE1GAME"], (
-        "the second run must not even ask the venue — if it does, the event is "
-        "still in the candidate set and this task rewrites the same row forever"
+    assert second["events_moved"] == 0, (
+        "a repaired event must never be re-written by this task — the event "
+        "half is stand-in-only and `kalshi_occurrence` is not a stand-in"
     )
+    assert second["markets_moved"] == 0, (
+        "and while the venue publishes the same hour the market write must be "
+        "a no-op too, so re-reading costs a fetch and not a row"
+    )
+    assert venue.asked == ["KXLIGUE1GAME", "KXLIGUE1GAME"], (
+        "the repaired fixture MUST stay in the rotation. If it is dropped, the "
+        "next restatement of this start is unobservable and #3565 is inert"
+    )
+
+
+@needs_postgres
+async def test_a_venue_restatement_reaches_the_event_through_both_rails(
+    pg_engine, monkeypatch
+):
+    """CERT-3339's required regression: the ship, end to end, on a real server.
+
+    #3565 promises that when the venue RESTATES a fixture's start, the event
+    page follows. Every unit contract for the revision arm passed while that
+    promise was false in production, because the arm was unreachable: the
+    refresh task had stopped re-reading repaired fixtures, and the first cut of
+    this change additionally filtered them out of its own market write. The
+    refine rail decides off the STORED market hour, so both gaps ended the same
+    way — a restatement nothing fetched, nothing stored, and nothing adopted.
+
+    A unit test cannot catch that. The defect is not in any predicate, it is in
+    which rows the scheduled reads SELECT, so the proof has to be two real
+    refresh passes against a real server with a venue that changes its mind
+    between them. Both halves are asserted separately, and the failure of
+    either is the whole ship:
+
+    * pass 2 must MOVE THE MARKET onto the restated hour — this is what fails
+      on the pre-repair code, at the candidate query and again at the SELECT;
+    * pass 2 must NOT move the EVENT — the refresh task stays stand-in-only, so
+      a blunt "widen every filter" fix, which would adopt the revision here and
+      bypass the anti-flap control that lives only in the refine rail's ordered
+      loop, fails this test too. The two assertions are deliberately disjoint:
+      a fix that satisfies one by deleting the other is not this fix.
+    """
+    from app.tasks.kalshi import (
+        _refine_stand_in_event_starts,
+        _refresh_dated_fixture_starts,
+    )
+
+    async with pg_engine.begin() as conn:
+        event_id = await _seed_already_ingested(conn)
+    ids = {"fixture": event_id}
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    # Pass 1 — the venue's first published hour. The ordinary repair.
+    _install_fake_venue(monkeypatch, _FakeVenue(_REFRESH_VENUE_PAYLOAD))
+    first = await _refresh_dated_fixture_starts()
+
+    assert first["events_moved"] == 1
+    assert (await _read_back(pg_engine, ids))["fixture"].commence_time == (
+        _REFRESH_OCCURRENCE
+    )
+    assert (await _read_markets(pg_engine, [_REFRESH_TICKER]))[
+        _REFRESH_TICKER
+    ] == _REFRESH_OCCURRENCE
+
+    # The venue changes its mind: same fixture, same ticker day, 2h45m earlier.
+    restating = _FakeVenue(_REFRESH_RESTATED_PAYLOAD)
+    _install_fake_venue(monkeypatch, restating)
+    second = await _refresh_dated_fixture_starts()
+
+    assert restating.asked == ["KXLIGUE1GAME"], (
+        "the repaired fixture must still be a candidate — if the venue is "
+        "never asked again, the restatement does not exist as far as we know"
+    )
+    assert second["markets_moved"] == 1, (
+        "the MARKET must take the restated hour even though its event is "
+        "already stamped `kalshi_occurrence`; this stored value is the only "
+        "thing the refine rail has to read"
+    )
+    assert (await _read_markets(pg_engine, [_REFRESH_TICKER]))[
+        _REFRESH_TICKER
+    ] == _REFRESH_RESTATED
+
+    after_second = (await _read_back(pg_engine, ids))["fixture"]
+    assert second["events_moved"] == 0, (
+        "the refresh task must NOT adopt a same-provider revision — that "
+        "belongs to the rail that carries the anti-flap control"
+    )
+    assert after_second.commence_time == _REFRESH_OCCURRENCE
+    assert after_second.commence_time_source == "kalshi_occurrence"
+
+    # The refine rail, which is where a revision is adopted, and the only
+    # place the anti-flap control applies.
+    moved = await _refine_stand_in_event_starts()
+
+    assert moved == 1
+    adopted = (await _read_back(pg_engine, ids))["fixture"]
+    assert adopted.commence_time == _REFRESH_RESTATED, (
+        "THE SHIP: the event page now advertises the hour the venue currently "
+        "publishes, not the one it withdrew"
+    )
+    assert adopted.commence_time_source == "kalshi_occurrence"
+
+    # And it settles: nothing further to adopt once the rails agree.
+    assert await _refine_stand_in_event_starts() == 0

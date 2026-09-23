@@ -4429,6 +4429,17 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
     call returns every open market of a series with its own `event_ticker` and
     `occurrence_datetime`, so a series is both the cheapest unit of work and the
     unit the venue is happy to serve (#3149).
+
+    #3565: an ALREADY-REPAIRED fixture stays in the rotation. Admitting only
+    `DERIVED_COMMENCE_SOURCES` made the task converge by going blind — the
+    moment an event was stamped `kalshi_occurrence` its series left the
+    candidate set, so the venue was never re-read for it and a later
+    RESTATEMENT of the same fixture's hour could not be observed at all. The
+    refine rail runs off STORED market values, so a restatement nothing fetches
+    is a restatement nothing can adopt: the whole revision arm was unreachable
+    in production behind this one predicate. Re-reading is bounded the same way
+    it always was — `LIMIT :budget`, most-stale-first, inside the horizon — so
+    this widens WHICH series rotate, never how many run per pass.
     """
     result = await session.execute(text("""
             SELECT split_part(fm.external_id, '-', 1) AS series,
@@ -4438,7 +4449,8 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
             WHERE fm.source = 'kalshi'
               AND fm.status = 'open'
               AND fm.commence_time IS NOT NULL
-              AND e.commence_time_source = ANY(:derived)
+              AND (e.commence_time_source = ANY(:derived)
+                   OR e.commence_time_source = :occurrence)
               AND e.commence_time >= :floor
               AND e.commence_time <= :ceiling
             GROUP BY 1
@@ -4446,6 +4458,7 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
             LIMIT :budget
         """), {
         "derived": sorted(DERIVED_COMMENCE_SOURCES),
+        "occurrence": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
         "floor": datetime.now(timezone.utc) - _DATED_FIXTURE_REFRESH_HORIZON,
         "ceiling": datetime.now(timezone.utc) + _DATED_FIXTURE_REFRESH_HORIZON,
         "budget": budget,
@@ -4488,9 +4501,15 @@ async def _refresh_dated_fixture_starts(
        `_stand_in_refinement_target`, gates and all — the same pure predicate,
        not a second opinion about when a fixture starts.
 
-    Convergent by construction: (2) rewrites `commence_time_source` to
-    `kalshi_occurrence`, which is not in `DERIVED_COMMENCE_SOURCES`, so the
-    event leaves this task's own candidate set the moment it is fixed.
+    Convergent, but NOT by going blind (#3565). (2) rewrites
+    `commence_time_source` to `kalshi_occurrence`, and the event half below
+    refuses any source outside `DERIVED_COMMENCE_SOURCES`, so a repaired event
+    is never re-written by this task. What it no longer does is drop the
+    fixture from the rotation: the series keeps being re-read and the MARKET
+    keeps taking the venue's current hour, because that stored value is the
+    only thing `_refine_stand_in_event_starts` has to read when the venue
+    RESTATES a start. Converging by ceasing to look made the restatement
+    unobservable, which left the revision arm dead in production.
 
     A 429 is a SKIP, never a verdict: the series keeps its stale stamp and is
     first in line next run. Recording "no occurrence" on a refused read is how
@@ -4544,14 +4563,25 @@ async def _refresh_dated_fixture_starts(
         return stats
 
     async with get_task_session() as session:
-        # #3565: the event half stays stand-in-only. The widened predicate
-        # below would otherwise adopt same-provider revisions here too — but
-        # this task's own candidate gate only re-reads series that still hold
-        # a derived event, so it cannot track restatements systematically;
-        # revisions belong to `_refine_stand_in_event_starts`, which runs off
-        # stored market values every poll cycle. (The market half above still
-        # refreshes every ticker the venue answered, repaired or not, which is
-        # what hands the refine rail a restated hour to adopt.)
+        # #3565: THE TWO HALVES HAVE DIFFERENT ELIGIBILITY, so the SELECT
+        # filters on neither and each half states its own.
+        #
+        # The MARKET half must reach every ticker the venue answered, repaired
+        # or not — the refine rail decides revisions off STORED market values,
+        # so a market this task stops refreshing is a fixture whose restatement
+        # nothing can ever adopt. Filtering the SELECT to derived-only sources
+        # (as the first cut of this change did) reads as a narrowing of the
+        # EVENT write, but it silently takes the market write with it and makes
+        # the revision arm unreachable in production.
+        #
+        # The EVENT half stays stand-in-only, guarded explicitly below. It must
+        # not adopt same-provider revisions HERE: `_stand_in_refinement_decision`
+        # derives `revision` from the source it is handed, so an occurrence-
+        # stamped row reaching it would take the revision arm — without the
+        # anti-flap control, which lives in `_refine_stand_in_event_starts`'s
+        # ordered loop and cannot be expressed in this one. Two writers of the
+        # same revision, one of them unguarded, is the flap that control exists
+        # to prevent.
         rows = (await session.execute(text("""
                 SELECT fm.id                   AS market_id,
                        fm.external_id          AS external_id,
@@ -4564,12 +4594,8 @@ async def _refresh_dated_fixture_starts(
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'open'
                   AND fm.external_id = ANY(:tickers)
-                  AND e.commence_time_source = ANY(:derived)
                 ORDER BY e.id, fm.external_id
-            """), {
-            "tickers": sorted(published),
-            "derived": sorted(DERIVED_COMMENCE_SOURCES),
-        })).fetchall()
+            """), {"tickers": sorted(published)})).fetchall()
 
         moved_events: set = set()
         for r in rows:
@@ -4594,6 +4620,17 @@ async def _refresh_dated_fixture_starts(
             # 2. the event, read against the value the market NOW holds — the
             #    composition #3532 was filed for, made explicit rather than
             #    left to statement order.
+            #
+            #    STAND-INS ONLY. This is the eligibility split described above:
+            #    the market write ran for this row regardless of provenance,
+            #    but a same-provider REVISION is adopted only by
+            #    `_refine_stand_in_event_starts`, which carries the anti-flap
+            #    control. Convergence is preserved here — a repaired event is
+            #    still never re-written by this task — but it is now a stated
+            #    guard rather than a side effect of the candidate query going
+            #    blind to the row.
+            if r.event_source not in DERIVED_COMMENCE_SOURCES:
+                continue
             if r.event_id in moved_events:
                 continue
             event_target = _stand_in_refinement_target(
