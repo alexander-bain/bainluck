@@ -4051,14 +4051,17 @@ jobs:
         # was made of — and the capped token top-up was spending 253 of its 299
         # slots on them while 42 markets on games in progress had no tokens.
         #
-        # Postgres answers this one or nobody does. A compiled-SQL assertion
-        # passes for a floor written inside the `scheduled` arm, which leaves the
-        # unbounded `live` arm to re-admit every stuck event — the single most
-        # likely way to get this wrong, and the case this file exists for.
+        # Postgres answers this one or nobody does, and the two ways of getting
+        # it wrong fail in OPPOSITE directions. Too loose and the stale bag
+        # stays subscribed. Too broad — the floor written ABOVE the `or_()`
+        # instead of inside the `scheduled` arm, which is how this was first
+        # drafted — and the clock tests reach live rows as well, so an event
+        # still called live goes dark after 24 h and one with no recorded start
+        # goes dark at once. Two live-preservation cases hold that end.
         #
-        # Skip detection plus a count: four of the six cases are controls that
-        # pass with OR without the fix, so a run that lost the two ship cases
-        # would still print green.
+        # Skip detection plus a count: six of the seven cases are controls that
+        # pass with OR without the fix, so a run that lost the ship case would
+        # still print green.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_slate_age_floor_pg_837.py \
@@ -4067,9 +4070,9 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
-          grep -qE "[^0-9]6 passed," /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all six cases"
+          # `[^0-9]` so a future `17 passed` cannot satisfy a gate asking for 7.
+          grep -qE "[^0-9]7 passed," /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all seven cases"
             exit 1
           }
 

@@ -100,11 +100,14 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
-#: How long after its scheduled start an event may still hold a place in the
-#: subscription. A start time is not a finish time (gotcha: "scheduled kickoff
-#: timestamps are not actual start/finish"), so this is deliberately far longer
-#: than any game: a rain-delayed baseball game, a five-set match and a full day
-#: of status-updater lag all stay subscribed.
+#: How long after its scheduled start an event that is STILL 'scheduled' may
+#: hold a place in the subscription. A start time is not a finish time (gotcha:
+#: "scheduled kickoff timestamps are not actual start/finish"), so this is
+#: deliberately far longer than any game: a rain-delayed baseball game, a
+#: five-set match and a full day of status-updater lag all stay subscribed.
+#:
+#: It bounds the `scheduled` arm ONLY. Nothing here is ever applied to a live
+#: event — see `_slate_event_window`.
 #:
 #: The exact value is not a judgement call, because the population it cuts is a
 #: CLIFF rather than a gradient. Measured on production 2026-09-23 02:5xZ, the
@@ -116,7 +119,8 @@ SLATE_MAX_AGE_HOURS = 24
 
 
 def _slate_event_window():
-    """The event window the socket subscribes to — bounded at BOTH ends.
+    """The event window the socket subscribes to — the scheduled arm bounded
+    at BOTH ends, the live arm at neither.
 
     The upper bound (start within 6 h) was always here. The floor was not, and
     without it ``status='scheduled'`` is not a statement about the future: it is
@@ -149,11 +153,46 @@ def _slate_event_window():
     tokens and therefore no price stream at all — eight MLB games among them,
     including the Dodgers/Padres game filed as #8156.
 
-    The floor is applied ONCE, above the ``or_()``, so it binds both arms. A
-    floor inside the ``scheduled`` arm alone would be re-admitted through the
-    wider ``live`` sibling the first time an event sticks at ``status='live'``
-    — that arm has no time bound of its own and is only clean today by luck
-    (measured: 60 live events, all started within 12 h, 0 stale).
+    THE FLOOR BINDS THE ``scheduled`` ARM ONLY, AND THE LIVE ARM STAYS
+    CLOCK-FREE. This is the whole of the fix's shape, so it is worth the
+    paragraph. A first draft applied the floor once, above the ``or_()``,
+    reasoning that a ``scheduled``-only floor is re-admitted through the wider
+    ``live`` sibling the first time an event sticks at ``status='live'``. That
+    hazard is real (see below) but the cure regressed the thing #837 exists to
+    protect: above the ``or_()`` the 24-hour bound applies to live rows too, so
+    an event the graph still calls live is unsubscribed after 24 hours — a
+    multi-day tournament, a suspended game, any delayed state advancement. That
+    is a hero stream going dark, decided by a clock we do not trust, which is
+    the premise of the constant above.
+
+    (The ``IS NOT NULL`` in that draft was inert rather than harmful:
+    ``events.commence_time`` is NOT NULL in the model and in production, so it
+    can never exclude a row. It is kept below inside the scheduled arm, where
+    the pre-#837 code had it, as belt-and-braces against the column being
+    loosened — not because it fires. The Postgres contract asserts the schema
+    that makes it inert, so that assumption fails loudly if it changes.)
+
+    The ship does not need the live floor. Measured on production 2026-09-23
+    03:4xZ over ALL events (a superset of the slate, so a zero here is a zero
+    there):
+
+        live ....... 58 rows,     0 older than 24 h
+        scheduled .. 3,284 rows, 850 older than 24 h
+
+    Every row the floor is for is a ``scheduled`` row, and the live arm's copy
+    of the floor cuts nothing at all today. It is pure downside on exactly the
+    row a reader is watching, so the live arm fails OPEN: no clock test, no
+    NULL test, subscribed.
+
+    The stuck-at-live hazard is therefore NOT fixed here, deliberately. An
+    event wedged at ``status='live'`` for weeks is a state-machine defect in
+    whatever should have advanced it, and it cannot be answered by dropping
+    live rows out of the price stream — that trades a rare stale subscription
+    for a routine dark hero. It needs a status-freshness signal (an advanced-at
+    stamp, or the venue's own resolution) rather than a clock this module is
+    already on record as not trusting. ``the_event_stuck_at_live`` stays in the
+    Postgres contract as a live-preservation control, asserting it KEEPS its
+    subscription, so nobody re-lands the above draft by accident.
     """
     # Imported in-function like every other SQLAlchemy use in this module: the
     # consumer is started by `run_kalshi_ws.py`, and module scope here stays
@@ -162,19 +201,20 @@ def _slate_event_window():
 
     from app.models.models import Event
 
-    return and_(
-        Event.commence_time.isnot(None),
-        # int() by construction: the interval literal can never carry anything
-        # but a number, whatever a future edit does to the constant.
-        Event.commence_time >= text(
-            f"NOW() - INTERVAL '{int(SLATE_MAX_AGE_HOURS)} hours'"
-        ),
-        or_(
-            Event.status == "live",
-            and_(
-                Event.status == "scheduled",
-                Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+    return or_(
+        # Clock-free and fail-open, on purpose. Unchanged from before the floor
+        # existed — the fix narrows the sibling arm and leaves this one alone.
+        Event.status == "live",
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time.isnot(None),
+            # int() by construction: the interval literal can never carry
+            # anything but a number, whatever a future edit does to the
+            # constant.
+            Event.commence_time >= text(
+                f"NOW() - INTERVAL '{int(SLATE_MAX_AGE_HOURS)} hours'"
             ),
+            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
         ),
     )
 

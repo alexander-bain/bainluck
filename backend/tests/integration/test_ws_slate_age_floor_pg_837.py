@@ -26,20 +26,26 @@ against 46 current**, so live games waited behind finished ones for a budget
 games *in progress* had no tokens and therefore no price stream at all — eight
 MLB games among them, including the Dodgers/Padres game filed as #8156.
 
-WHY THIS IS A POSTGRES TEST. The whole fix is one SQL predicate, and both ways
-of getting it wrong are invisible to anything that does not let Postgres answer.
-A unit test that asserts on the compiled string passes for a floor written
-*inside* the ``scheduled`` arm, which is the bug that matters — the ``live`` arm
-has no time bound of its own, so the first event that sticks at ``status='live'``
-walks straight back in. ``the_event_stuck_at_live`` is that case, and it is the
-reason the floor is applied once, above the ``or_()``.
+WHY THIS IS A POSTGRES TEST. The whole fix is one SQL predicate, and the two
+ways of getting it wrong fail in OPPOSITE directions, so neither is visible to a
+test that asserts on the compiled string. Too loose (no floor, or a floor that
+never fires) and the 1,248-market bag stays subscribed. Too broad — the floor
+written ABOVE the ``or_()`` rather than inside the ``scheduled`` arm, which is
+how this fix was first drafted and why it was sent back — and the clock tests
+reach live rows too: an event the graph still calls live is unsubscribed after
+24 hours, and one with no recorded start is unsubscribed at once. Only Postgres
+answering the real predicate tells those three apart.
 
 THE CASES, and which direction each fails in:
 
     the_finished_us_open_match .. THE SHIP. Scheduled, 20 days old — the
-                                  1,248-market bag, in miniature.
-    the_event_stuck_at_live ..... THE SHIP's other half. The or_() sibling arm.
-                                  Excluded only by a floor above the OR.
+                                  1,248-market bag, in miniature. Fails if the
+                                  floor is absent or inert.
+    the_event_stuck_at_live ..... LIVE-PRESERVATION CONTROL. Live, 30 days old.
+                                  Fails if the floor is lifted above the or_()
+                                  — the first draft dropped exactly this row.
+                                  This is the whole of why the live arm carries
+                                  no clock test.
     the_game_in_progress ........ KILL CONTROL. If the floor were too broad, or
                                   had disabled the slate, this would vanish.
     the_game_starting_soon ...... KILL CONTROL for the same.
@@ -49,8 +55,26 @@ THE CASES, and which direction each fails in:
     the_game_tomorrow ........... The upper bound still works. Proves the fix
                                   widened nothing while narrowing.
 
-Two of the six change with the fix and four are controls, so a run that lost the
-ship cases would still print a green summary — the CI step counts passes.
+    the_schema_is_why_there_is .. The seventh case is not an event at all. The
+      _no_null_clock_case         other live-preservation control — a live row
+                                  with no recorded start — CANNOT BE SEEDED,
+                                  because `events.commence_time` is NOT NULL.
+                                  Rather than omit it silently, the file asserts
+                                  the schema that makes it unwritable, so the
+                                  day someone loosens the column this fails and
+                                  the real case gets written.
+
+ONE case changes with the fix and six are controls, so a run that lost the ship
+case would still print a green summary — the CI step counts passes.
+
+A NOTE ON THE STUCK-AT-LIVE ROW, since the contract asserts it keeps a
+subscription it arguably should not have. An event wedged at ``status='live'``
+for a month is a real defect, but it belongs to whatever failed to advance the
+status; unsubscribing live rows on a clock trades a rare stale subscription for
+a routine dark hero, and this module is already on record that a start time is
+not a finish time. Production 2026-09-23 03:4xZ, all events (a superset of the
+slate): 58 live rows, 0 older than 24 h — against 850 ``scheduled`` rows older
+than 24 h. The ship is entirely in the scheduled arm.
 """
 
 import os
@@ -98,9 +122,15 @@ async def _seed(session):
         "the_finished_us_open_match": _event(
             "Finished", now - timedelta(days=20), "scheduled"
         ),
+        # ---- live-preservation controls -------------------------------
+        # Both of these are dropped by a floor written above the `or_()`,
+        # which is how this fix was first drafted.
         "the_event_stuck_at_live": _event(
             "StuckLive", now - timedelta(days=30), "live"
         ),
+        # The NULL-clock live row that would belong here cannot be seeded:
+        # `events.commence_time` is NOT NULL. `test_the_schema_is_why_there_is_
+        # no_null_clock_case` holds that end instead.
         # ---- controls -------------------------------------------------
         "the_game_in_progress": _event(
             "InProgress", now - timedelta(hours=1), "live"
@@ -141,21 +171,12 @@ async def _seed(session):
     return {case: event.id for case, event in events.items()}
 
 
-@pytest.fixture
-async def selected():
-    """Run the REAL slate predicate against Postgres; return the cases it keeps.
-
-    Function-scoped for the reason `test_search_recall_contract.py` gives:
-    `pytest.ini` leaves `asyncio_default_fixture_loop_scope` unset, so a
-    module-scoped async fixture outlives the loop that created its engine.
-    """
-    from sqlalchemy import select
+async def _engine_with_tables():
+    """A fresh engine over an empty copy of the six tables the slate joins."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     import app.models.models  # noqa: F401 — registers every table on Base
-    from app.models.models import Event, FuturesMarket, FuturesOutcome
     from app.services.database import Base
-    from app.tasks.polymarket_ws import _slate_event_window
 
     # Only this predicate's tables, plus the closure `events` needs for its FKs.
     # A whole-schema create_all needs Postgres 15 (`NULLS NOT DISTINCT`), and a
@@ -177,7 +198,23 @@ async def selected():
         await conn.run_sync(Base.metadata.drop_all, tables=wanted, checkfirst=True)
         await conn.run_sync(Base.metadata.create_all, tables=wanted)
 
-    maker = async_sessionmaker(engine, expire_on_commit=False)
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def selected():
+    """Run the REAL slate predicate against Postgres; return the cases it keeps.
+
+    Function-scoped for the reason `test_search_recall_contract.py` gives:
+    `pytest.ini` leaves `asyncio_default_fixture_loop_scope` unset, so a
+    module-scoped async fixture outlives the loop that created its engine.
+    """
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
+    from app.tasks.polymarket_ws import _slate_event_window
+
+    engine, maker = await _engine_with_tables()
     async with maker() as session:
         ids = await _seed(session)
 
@@ -204,18 +241,56 @@ async def selected():
 
 @needs_postgres
 class TestTheSlateIsBoundedAtBothEnds:
-    """Six events, one Polymarket market each, one real query."""
+    """Seven events, one Polymarket market each, one real query."""
 
     async def test_a_match_that_finished_twenty_days_ago_is_dropped(self, selected):
         # THE SHIP. 1,248 markets like this one were being subscribed; the
         # venue has no orderbook for 90% of their tokens.
         assert selected["the_finished_us_open_match"] is False
 
-    async def test_an_event_stuck_at_live_is_dropped_too(self, selected):
-        # The or_() sibling arm. A floor written inside the `scheduled` arm
-        # leaves this one subscribed forever, and compiles to SQL that looks
-        # right.
-        assert selected["the_event_stuck_at_live"] is False
+    async def test_an_event_still_called_live_keeps_its_stream_at_thirty_days(
+        self, selected
+    ):
+        # LIVE-PRESERVATION CONTROL. The live arm carries no clock test, so a
+        # multi-day tournament, a suspended game, or a status the updater never
+        # advanced keeps streaming. The first draft of this fix put the floor
+        # above the `or_()` and dropped this row; that is a dark hero decided
+        # by a timestamp this module does not trust.
+        assert selected["the_event_stuck_at_live"] is True
+
+    async def test_the_schema_is_why_there_is_no_null_clock_case(self):
+        # The other live-preservation case — a live event with no recorded
+        # start — CANNOT BE SEEDED, and that is worth an assertion rather than
+        # a silent omission. `events.commence_time` is NOT NULL (model:
+        # `Mapped[datetime]`, no Optional; production `information_schema`
+        # 2026-09-23 03:4xZ: is_nullable = NO), so Postgres refuses the row and
+        # `commence_time IS NOT NULL` can never exclude anything from the slate
+        # — in this predicate or in the draft that put it above the `or_()`.
+        #
+        # This assertion is the tripwire: loosen the column and it fails, which
+        # is the moment the live arm's fail-open behaviour needs a real case.
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models.models import Event
+
+        assert Event.__table__.c.commence_time.nullable is False
+
+        engine, maker = await _engine_with_tables()
+        try:
+            async with maker() as session:
+                session.add(
+                    Event(
+                        sport_id=None,
+                        home_team_name="NoClock Home",
+                        away_team_name="NoClock Away",
+                        commence_time=None,
+                        status="live",
+                    )
+                )
+                with pytest.raises(IntegrityError):
+                    await session.commit()
+        finally:
+            await engine.dispose()
 
     async def test_a_game_in_progress_still_streams(self, selected):
         # KILL CONTROL: the point of the fix is that THIS keeps its prices.
