@@ -1329,8 +1329,40 @@ async def update_event_fields_from_espn(
             stats.get("live_state_reversions_refused", 0) + 1
         )
 
+    # ── #8247: `allow_unstarted` GRANTS SETTLING, AND IT GRANTS NOTHING ELSE ──
+    #
+    # #5501 widened the deep-straggler arm to reach `scheduled` rows and passes
+    # `allow_unstarted=True` here so their status MAY be moved to a Final. The
+    # four live-state values below sat outside that permission and were written
+    # on their own terms, so a `scheduled` row whose board did NOT report
+    # `post`/`final` kept its status and still took ESPN's scoreboard. Measured
+    # on production within twelve minutes of the release: twelve rows at exactly
+    # `0-0`, and `/events/15290171` — White Sox at Blue Jays, played 2026-04-02 —
+    # printed a `0 — 0` hero and gained an "Actual Score Diff" point where it had
+    # printed nothing. That is strictly worse than the blank it replaced: a blank
+    # reads as "we do not know", a 0-0 reads as a fact, and it is false.
+    #
+    # These four columns describe a match IN PLAY. A row admitted to this door
+    # only by `allow_unstarted`, whose board does not report it finished, is by
+    # construction neither in play nor finished, so it receives none of them.
+    #
+    # The refusal is keyed on the FLAG, not on the status, and that is the whole
+    # confinement: every caller that does not pass `allow_unstarted` is
+    # bit-identical, including the liveness pass — which also sees `scheduled`
+    # rows and must go on writing a score onto one as its game starts.
+    _unstarted_and_unsettled = allow_unstarted and ee.status not in ("post", "final")
+    if _unstarted_and_unsettled:
+        stats["unstarted_live_writes_refused"] = (
+            stats.get("unstarted_live_writes_refused", 0) + 1
+        )
+
     # Update game clock
-    if ee.clock and event.game_clock != ee.clock and not _live_state_is_stale:
+    if (
+        ee.clock
+        and event.game_clock != ee.clock
+        and not _live_state_is_stale
+        and not _unstarted_and_unsettled
+    ):
         _live_values["game_clock"] = ee.clock
 
     # Update period.
@@ -1354,7 +1386,11 @@ async def update_event_fields_from_espn(
     # self-heals on the next sync and needs no migration.
     # `_new_period` is computed above, with the staleness check that reads it.
     if _new_period:
-        if event.period != _new_period and not _live_state_is_stale:
+        if (
+            event.period != _new_period
+            and not _live_state_is_stale
+            and not _unstarted_and_unsettled
+        ):
             _live_values["period"] = _new_period
     elif ee.status_detail and event.period is not None and _sanitize_period(event.period) is None:
         # Both sides are the same class of garbage — drop ours.
@@ -1375,6 +1411,7 @@ async def update_event_fields_from_espn(
         ee.home_score is not None
         and event.home_score != ee.home_score
         and not _live_state_is_stale
+        and not _unstarted_and_unsettled
     ):
         _live_values["home_score"] = ee.home_score
         score_changed = True
@@ -1382,6 +1419,7 @@ async def update_event_fields_from_espn(
         ee.away_score is not None
         and event.away_score != ee.away_score
         and not _live_state_is_stale
+        and not _unstarted_and_unsettled
     ):
         _live_values["away_score"] = ee.away_score
         score_changed = True
