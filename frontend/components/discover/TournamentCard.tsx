@@ -4,7 +4,7 @@ import Link from "next/link";
 import { buildDiscoverShareUrl, formatShareProbability } from "@/lib/share";
 import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
-import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { toAcronymSafeKeepingCase } from "@/lib/titleCase";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge, dismissCornerBadge } from "./shared";
 
@@ -26,7 +26,11 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
   // the #1620 shape on this lane. It repairs the CASE only — the lost apostrophe
   // and duplicated suffix in "Aig Women S Open Womens" are damage baked into the
   // key upstream, and guessing them back client-side is not a display fix.
-  const title = toTitleCaseAcronymSafe(data.name) || data.name;
+  // #8286: the name now arrives human-cased from the DataGolf schedule, and
+  // re-casing every word broke 31 of 97 served names ("Fedex Open De France",
+  // "Rbc Canadian Open"). The caser keeps every character it is given and
+  // only shouts a known acronym, so the UX-P050 "Pga" still reads "PGA".
+  const title = toAcronymSafeKeepingCase(data.name) || data.name;
   const leader = data.golfers?.[0];
   const leaderProbability = formatShareProbability(leader?.probability);
   // L2-159 / #235 Item 4: just-settled marquee tournament (T+36h WHAT-HIT window)

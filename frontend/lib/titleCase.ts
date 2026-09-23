@@ -86,3 +86,32 @@ export function toAcronymSafePreservingCase(input: string | null | undefined): s
     })
     .join(" ");
 }
+
+/**
+ * Acronym-safe casing that changes nothing a human chose (#8286).
+ *
+ * `toAcronymSafePreservingCase` still capitalises every word, which is right
+ * for a category label and wrong for a proper name: the DataGolf schedule
+ * serves "FedEx Open de France", "Sony Open in Hawaii", "Bank of Utah
+ * Championship", and a per-word capital reads "Open De France". Measured over
+ * the 97 names `/api/golf` served on 2026-09-23: `toTitleCaseAcronymSafe`
+ * changed 31, `toAcronymSafePreservingCase` 10, this one 1 (the leading "the"
+ * of "the Memorial Tournament").
+ *
+ * So it shouts a known acronym ("Pga" → "PGA", the UX-P050 case) and
+ * capitalises the first letter of the whole string. Every other character
+ * comes back exactly as given.
+ */
+export function toAcronymSafeKeepingCase(input: string | null | undefined): string {
+  if (!input) return "";
+  const cased = input
+    .replace(/_/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((raw) => {
+      const bare = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return bare && ACRONYMS.has(bare) ? raw.toUpperCase() : raw;
+    })
+    .join(" ");
+  return cased.charAt(0).toUpperCase() + cased.slice(1);
+}
