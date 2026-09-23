@@ -848,6 +848,199 @@ class TestTheCoverageNumberReachesAReader:
         )
 
 
+class TestThePerShardShapeReachesTheMinuteLine:
+    """#837 follow-up — the SHAPE at reader cadence, not only at the recycle.
+
+    `served_by_shard` and `subscribed_by_shard` have been in
+    `PolymarketWebSocket.stats` since the coverage emit, and reached a reader
+    only in the ten-minute recycle line. The once-a-minute line carried the
+    aggregate alone, which is the number this program has twice recorded as
+    "measured breadth, not a finding": 49% served reads identically whether the
+    venue is quiet everywhere or is truncating half the subscription.
+
+    live/521 measured the consequence on 2026-09-23 at 01:1xZ — eight live MLB
+    games written at 1 of ~79 outcomes in 150s while Phillies/Brewers sat at 50
+    of 79 in the same instant — and had to reconstruct the per-shard
+    denominators from a separate capture to see it. The pairs cost one field.
+    """
+
+    def _blend(self):
+        return {"stamped": 1, "no_reading": 2, "throttled": 3, "errors": 0}
+
+    def _task_stats(self):
+        return {
+            "price_updates": 10,
+            "trade_updates": 4,
+            "resolutions": 0,
+            "errors": 0,
+        }
+
+    #: The production read, verbatim: four shards starved, four streaming.
+    STARVED = {0: 14, 1: 26, 2: 36, 3: 39, 4: 492, 5: 500, 6: 500, 7: 230}
+    #: Same 1837 assets served, spread evenly — a quiet venue, nothing wrong.
+    UNIFORM = {0: 230, 1: 230, 2: 230, 3: 230, 4: 230, 5: 229, 6: 229, 7: 229}
+    SUBSCRIBED = {0: 500, 1: 500, 2: 500, 3: 500, 4: 500, 5: 500, 6: 500, 7: 293}
+
+    def _ws_stats(self, served):
+        return {
+            "messages": 99,
+            "shards": 8,
+            "shards_connected": 8,
+            "assets_subscribed": sum(self.SUBSCRIBED.values()),
+            "assets_served": sum(served.values()),
+            "served_by_shard": dict(served),
+            "subscribed_by_shard": dict(self.SUBSCRIBED),
+        }
+
+    def test_the_production_shape_reaches_the_minute_line(self, caplog):
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(
+                self._task_stats(), self._ws_stats(self.STARVED), self._blend()
+            )
+
+        assert "by_shard=0:14/500 1:26/500 2:36/500 3:39/500 " \
+               "4:492/500 5:500/500 6:500/500 7:230/293" in caplog.text
+
+    def test_one_aggregate_two_shapes_produce_two_different_lines(self, caplog):
+        """The whole reason the field exists, stated as a discriminator.
+
+        Both populations serve 1837 of 3793. If the emitted line cannot tell
+        them apart then the field is decoration: a reader seeing 49% still
+        cannot say whether to call the venue. Asserting only that some
+        `by_shard=` text appears would pass on a constant.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(
+                self._task_stats(), self._ws_stats(self.STARVED), self._blend()
+            )
+        starved_line = caplog.text
+        caplog.clear()
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(
+                self._task_stats(), self._ws_stats(self.UNIFORM), self._blend()
+            )
+        uniform_line = caplog.text
+
+        aggregate = "served=1837/3793"
+        assert aggregate in starved_line and aggregate in uniform_line, (
+            "the two populations must be indistinguishable in the aggregate, "
+            "or this test is not testing what it claims"
+        )
+        assert starved_line != uniform_line
+        assert "0:14/500" in starved_line and "0:14/500" not in uniform_line
+        assert "0:230/500" in uniform_line and "0:230/500" not in starved_line
+
+    def test_the_denominator_is_each_shards_own_subscription(self, caplog):
+        """Shard 7 is the remainder, 293 not 500.
+
+        A formatter that printed `MAX_ASSETS_PER_CONNECTION`, or the aggregate
+        divided by the shard count, would read 230/500 here and understate the
+        one shard whose share is hardest to judge.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(
+                self._task_stats(), self._ws_stats(self.STARVED), self._blend()
+            )
+
+        assert "7:230/293" in caplog.text
+        assert "7:230/500" not in caplog.text
+
+    def test_a_client_with_no_shards_prints_a_dash_rather_than_raising(
+        self, caplog
+    ):
+        """The shadow consumer subscribes without shards and shares this line.
+
+        An exception in the stats loop kills the socket's only heartbeat, and a
+        field that vanishes when empty is a field no grep can rely on.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), {}, self._blend())
+
+        assert "by_shard=-" in caplog.text
+        assert "served=0/0" in caplog.text
+
+    def test_shard_keys_are_ordered_numerically_not_as_text(self):
+        """Ten shards sort 2 before 10, including after a JSON round trip."""
+        from app.tasks.polymarket_ws import _format_by_shard
+
+        served = {i: i for i in range(11)}
+        subscribed = {i: 500 for i in range(11)}
+        as_ints = _format_by_shard(
+            {"served_by_shard": served, "subscribed_by_shard": subscribed}
+        )
+        as_text = _format_by_shard(
+            {
+                "served_by_shard": {str(k): v for k, v in served.items()},
+                "subscribed_by_shard": {str(k): v for k, v in subscribed.items()},
+            }
+        )
+
+        assert as_ints == as_text
+        assert as_ints.split()[2].startswith("2:")
+        assert as_ints.split()[-1].startswith("10:")
+
+    def test_a_shard_missing_from_one_half_still_prints_both(self):
+        """Never a KeyError, and never a pair that silently drops a shard."""
+        from app.tasks.polymarket_ws import _format_by_shard
+
+        line = _format_by_shard(
+            {"served_by_shard": {0: 5}, "subscribed_by_shard": {1: 500}}
+        )
+
+        assert line == "0:5/0 1:0/500"
+
+    @pytest.mark.asyncio
+    async def test_the_real_clients_per_shard_numbers_are_what_gets_logged(
+        self, monkeypatch, caplog
+    ):
+        """Ties the two halves: the client's OWN stats, not a hand-built dict.
+
+        A test that only feeds literal dicts to the formatter would pass even if
+        the client stopped exposing `subscribed_by_shard`, which is the half
+        that makes a served count readable as a share.
+        """
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        assets = _ids(1500)
+        served_frames = [
+            json.dumps({"event_type": "best_bid_ask", "asset_id": a})
+            for a in assets[:7]
+        ]
+
+        def connect(*args, **kwargs):
+            return _FakeSocket(served_frames, [])
+
+        monkeypatch.setattr("websockets.connect", connect, raising=False)
+
+        ws = PolymarketWebSocket()
+        task = asyncio.create_task(ws.run(asset_ids=assets))
+        await asyncio.sleep(0.3)
+        stats = ws.stats
+        task.cancel()
+        with pytest.raises((asyncio.CancelledError, Exception)):
+            await task
+
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(self._task_stats(), stats, self._blend())
+
+        assert stats["subscribed_by_shard"], (
+            "the client must expose per-shard denominators for the line to "
+            "have anything to print"
+        )
+        for shard, subscribed in stats["subscribed_by_shard"].items():
+            served = stats["served_by_shard"].get(shard, 0)
+            assert f"{shard}:{served}/{subscribed}" in caplog.text
+
+
 class TestTheUnservedIdsAreNamed:
     """#837 follow-up — WHICH ids the venue never sent, not just how many.
 
