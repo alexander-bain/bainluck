@@ -50,6 +50,7 @@ import OutcomeRow, {
 import RelatedByTag from "@/components/RelatedByTag";
 import GamesThisWeek from "@/components/futures/GamesThisWeek";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
+import { categoryKeyLabel } from "@/lib/sportCategories";
 import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 import {
   asOfLabel,
@@ -894,7 +895,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // prevalence claim.
         resolveDate={isResolved ? undefined : formatResolvesLabel(market.resolution_date) || undefined}
         categoryEmoji={getCategoryEmoji(market.llm_sport_category)}
-        categoryLabel={market.sport_name || market.llm_sport_category || undefined}
+        // #8290 — a null `sport_name` used to hand the raw key to the eyebrow,
+        // which printed `TABLE_TENNIS`. The key goes through the category map.
+        categoryLabel={market.sport_name || categoryKeyLabel(market.llm_sport_category)}
         isMultiOutcome={(market.outcome_count ?? 0) > 2}
         sparklinePoints={ambientPoints}
         resolved={isResolved}

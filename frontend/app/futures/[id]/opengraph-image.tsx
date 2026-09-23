@@ -3,6 +3,7 @@ import { ImageResponse } from "next/og";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { truncateShareText } from "@/lib/share";
+import { categoryKeyLabel } from "@/lib/sportCategories";
 import { futuresBoardPrice, futuresUnfurlCopy } from "@/lib/futuresDetailDisplay";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
@@ -194,7 +195,8 @@ export default async function Image({ params }: { params: { id: string } }) {
 
   const subtitleText = subtitle ? truncateShareText(subtitle, 130) : null;
 
-  const categoryLabel = market.sport_name || market.llm_sport_category || "Discover";
+  // #8290 — the key goes through the category map, never raw onto the card.
+  const categoryLabel = market.sport_name || categoryKeyLabel(market.llm_sport_category) || "Discover";
 
   return new ImageResponse(
     (

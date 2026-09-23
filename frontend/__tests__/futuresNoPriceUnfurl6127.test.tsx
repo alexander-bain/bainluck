@@ -408,7 +408,9 @@ describe("#6127 — an unpriced market's link preview draws no number, no leader
     // name, its category and the outcome count are facts and the reader wants
     // them. Falling through to `UnfurlCard`'s empty shape would throw them away.
     expect(text).toContain("2027 Men's College Basketball National Champion");
-    expect(text).toContain("basketball");
+    // #8290: the category arrives through `categoryKeyLabel`, so the key
+    // `basketball` is drawn as its name. Case-sensitive so a raw key cannot pass.
+    expect(text).toContain("Bain Luck Basketball");
     expect(joinedText(card)).toContain("2 outcomes tracked");
     expect(text).toContain("Bain Luck");
   });
