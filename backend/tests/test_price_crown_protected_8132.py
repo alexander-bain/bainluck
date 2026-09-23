@@ -47,7 +47,37 @@ inside THAT statement.
 
 The behavioural both-directions proof (a protected leg refused, an unprotected leg
 still written) needs a real planner and lives in
-`tests/integration/test_price_crown_protected_8132_pg.py`.
+`tests/integration/test_price_crown_leg_guard_8132_real_postgres.py`.
+
+## the +6h survival read, and why this file grew a second half
+
+The guard above shipped covering the three crowners the issue had traced, all of
+them PRICE-derived. Six hours after the 56-row repair applied, the watcher read
+the cohort back: the 46 legs stamped over a `clean_resolution` held, and all 10
+stamped over a prior `game_score` were back at `game_score / is_winner = true`.
+
+They were rewritten by a crowner nobody had guarded. `_resolve_kalshi_from_scores`
+and `_resolve_kalshi_spread_total_from_scores` derive a verdict from
+`events.home_score/away_score` rather than from a price — a different route into
+exactly the same hole. Their candidate scan is the same `HAVING SUM(CASE WHEN
+fo.is_winner AND ...)` that cannot see an `is_winner = false` retraction, and
+their UPDATEs asked the leg nothing either. `game_score` is tier 2 and
+`api_settlement` tier 3, so the write was the downgrade `is_downgrade` forbids.
+
+Measured on the repaired cohort: 43 of the 56 legs were structurally ineligible
+for a score crowner (no `event_id`, or an event carrying no scores) and 3 were
+spared by the grader's own question refusals. Of the 10 the guard was actually
+tested on, it protected 0.
+
+So the second half of this file pins the SCORE crowners the same way — and it
+cannot reuse the extractor above, for a reason worth stating: `_STATEMENT_END`
+looks for `\"\"\")`, and a statement assembled by CONCATENATION
+(`"UPDATE … NOT IN " + GUARD`) has no triple quote to find. The search then falls
+through to a 6,000-character window, which on this module spans several later
+statements — so an UNGUARDED concatenated statement would pass by borrowing the
+guard of a neighbour. `_text_call_containing` balances the `text(` parentheses
+instead, and `test_score_crowner_extractor_stops_at_its_own_call` is what proves
+it did not run away.
 """
 
 from __future__ import annotations
@@ -264,3 +294,241 @@ def test_guard_is_interpolated_not_quoted_as_a_literal():
                 "the protected list must be concatenated into the SQL, not "
                 "embedded as a literal token"
             )
+
+
+# ---------------------------------------------------------------------------
+# The SCORE-derived crowners carry it too (#8132's +6h survival read)
+# ---------------------------------------------------------------------------
+
+#: A `session.execute(...)` call is never this long in this module — measured
+#: 2026-09-23 over all 161 of them, the longest is 3,576 characters. If the
+#: balancer runs past this something is unbalanced and the window has started
+#: swallowing neighbouring statements, which is the exact vacuity the
+#: concatenated form invites; a hard stop, never a truncation. The tighter
+#: runaway check is `test_the_execute_extractor_is_alive`'s one-UPDATE-per-call
+#: assertion — this bound only stops a scan to end-of-file.
+_MAX_EXECUTE_CALL_CHARS = 6000
+
+
+def _balanced_call(open_at: int) -> str:
+    """The whole parenthesised call starting at `open_at`.
+
+    Parenthesis-balanced rather than delimiter-sniffed. These statements are
+    built three different ways — a single-line literal, a concatenation, and a
+    triple-quoted block — and no one closing token ends all three. The
+    concatenated form is the dangerous one: it has no `\"\"\")` for a
+    delimiter-based search to stop on, so a search that misses runs on into the
+    NEXT statement and reports an unguarded write as guarded.
+    """
+    i = _SOURCE.index("(", open_at)
+    depth = 0
+    while i < len(_SOURCE):
+        if _SOURCE[i] == "(":
+            depth += 1
+        elif _SOURCE[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return _SOURCE[open_at : i + 1]
+        i += 1
+        assert i - open_at < _MAX_EXECUTE_CALL_CHARS, (
+            f"call at {open_at} never closed within {_MAX_EXECUTE_CALL_CHARS} "
+            "chars — the balancer has run away and every assertion below would "
+            "be reading a neighbour's guard"
+        )
+    raise AssertionError("unterminated call")
+
+
+#: Every `session.execute(...)` in the module, whole, each carrying the text of
+#: its own line up to the call so the assignment target is visible. Anchoring on
+#: the EXECUTE rather than the inner `text()` is what lets a bound-parameter
+#: write be classified: `resolution_source = :src` says nothing on its own, and
+#: the literal that decides which crowner it is lives in the params dict beside
+#: it. The line prefix is needed for the rowcount assertion — `x = await
+#: session.execute(` puts the only evidence that a result was kept OUTSIDE the
+#: parentheses.
+_EXECUTE_CALLS = [
+    _SOURCE[_SOURCE.rfind("\n", 0, m.start()) + 1 : m.start()] + _balanced_call(m.start())
+    for m in re.finditer(r"session\.execute\(", _SOURCE)
+]
+
+#: The SET clause and nothing else. 🪤 A bare `"resolution_source = 'game_score'"
+#: substring test over the whole statement also matches the WHERE clause of the
+#: repair rails that EXIST to clear a bad `game_score` — two of them, and both
+#: read as unguarded crowners and demand a guard that would stop them repairing
+#: anything. A write is decided by the SET clause; a predicate is not a write.
+_SET_CLAUSE = re.compile(r"\bSET\b(.*?)(?:\bFROM\b|\bWHERE\b)", re.S)
+
+
+def _writes_source(call: str, source: str) -> bool:
+    """True if this UPDATE STAMPS `source` on `futures_outcomes`."""
+    if "UPDATE futures_outcomes" not in call:
+        return False
+    match = _SET_CLAUSE.search(call)
+    if not match:
+        return False
+    set_clause = match.group(1)
+    if f"resolution_source = '{source}'" in set_clause:
+        return True
+    return "resolution_source = :src" in set_clause and f'"src": "{source}"' in call
+
+
+_GAME_SCORE_WRITES = [c for c in _EXECUTE_CALLS if _writes_source(c, "game_score")]
+
+
+def test_the_execute_extractor_is_alive():
+    """If the balancer found nothing, every assertion below is vacuous."""
+    assert len(_EXECUTE_CALLS) > 100, (
+        f"only {len(_EXECUTE_CALLS)} session.execute calls found in a 10k-line "
+        "module — the extractor is broken, not the module"
+    )
+    for call in _EXECUTE_CALLS:
+        assert call.count("UPDATE futures_outcomes") <= 1, (
+            "an extracted call holds two UPDATEs — it has run past its own "
+            "statement and can borrow a neighbour's guard"
+        )
+
+
+def test_every_game_score_write_is_found():
+    """Eight writes. If this moves, the assertions below scan the wrong set.
+
+    One golf H2H, one BTTS (the only market-WIDE one in the module), one
+    moneyline — that one binds its source as `:src`, which is how it stayed out
+    of a grep for the literal — and five in the spread/total resolver
+    (team-total, spread, total, and the two name-token fallbacks).
+    """
+    assert len(_GAME_SCORE_WRITES) == 8, (
+        f"expected 8 game_score writes, found {len(_GAME_SCORE_WRITES)}. A new "
+        "score crowner has appeared — guard it rather than relaxing this count."
+    )
+
+
+def test_every_game_score_write_guards_the_leg_it_writes():
+    """The #8132 hole, closed on the route the survival read found it on."""
+    for call in _GAME_SCORE_WRITES:
+        assert "resolution_source, '') NOT IN" in call, (
+            "a score-derived verdict is written onto the leg with no authority "
+            "guard — this is what handed 10 fabricated wins back six hours "
+            f"after the #8132 repair:\n{call}"
+        )
+        assert "_GAME_SCORE_LEG_GUARD_SQL" in call, (
+            f"guards on some other list than the shared protected set:\n{call}"
+        )
+
+
+def test_the_guard_is_interpolated_not_a_literal_token():
+    """`NOT IN '_GAME_SCORE_LEG_GUARD_SQL'` is valid Python and dead SQL."""
+    for call in _GAME_SCORE_WRITES:
+        assert (
+            'NOT IN " + _GAME_SCORE_LEG_GUARD_SQL' in call
+            or 'NOT IN """ + _GAME_SCORE_LEG_GUARD_SQL' in call
+        ), f"the protected list must be concatenated into the SQL:\n{call}"
+
+
+def test_every_game_score_write_reads_its_own_rowcount():
+    """A refused write must not report a verdict it did not store.
+
+    The subtle version of this bug counts the refusal AND still claims the
+    grade, so `spread + total` keeps rising while nothing reaches the database.
+    """
+    for call in _GAME_SCORE_WRITES:
+        assert re.search(r"\b\w+ = await session\.execute\(", call), (
+            "the result of this game_score write is discarded, so a refusal is "
+            f"indistinguishable from a write:\n{call}"
+        )
+
+
+def test_the_score_guard_is_the_shared_protected_set():
+    """One definition, not a second list that can drift away from the first."""
+    module = importlib.import_module("app.tasks.backfill_winners")
+    assert module._GAME_SCORE_LEG_GUARD_SQL == price_crown_protected_sql("game_score")
+    rendered = {
+        s.strip().strip("'")
+        for s in module._GAME_SCORE_LEG_GUARD_SQL[1:-1].split(",")
+    }
+    assert rendered == PRICE_CROWN_PROTECTED_SOURCES
+
+
+def test_the_score_guard_protects_the_two_sources_the_repair_writes():
+    """#8132's repair stamps exactly these two; both must survive a 6h pass."""
+    frag = importlib.import_module(
+        "app.tasks.backfill_winners"
+    )._GAME_SCORE_LEG_GUARD_SQL
+    assert "'api_settlement'" in frag
+    assert "'ungradeable_result'" in frag
+
+
+def test_the_score_guard_does_not_freeze_the_pass_against_itself():
+    """`game_score` over `game_score` must stay writable.
+
+    Not a softening. A score correction re-grading its own prior row is a
+    same-source rewrite `is_downgrade` permits by name, and blocking it would
+    turn a guard into a capability regression nobody asked for. The clause must
+    also leave `clean_resolution` — the tier-1 price fallback these passes
+    legitimately supersede — writable, or the passes stop doing their job.
+    """
+    frag = importlib.import_module(
+        "app.tasks.backfill_winners"
+    )._GAME_SCORE_LEG_GUARD_SQL
+    assert "'game_score'" not in frag
+    assert "'clean_resolution'" not in frag
+
+
+#: The DERIVED writes in this module that are deliberately NOT guarded by this
+#: ship, pinned so the scope boundary is a test rather than a memory.
+#:
+#: Both are DataGolf passes and both are the same CLASS of hole — a derived
+#: verdict written onto a leg with no reference to what that leg already says.
+#: Neither is guarded here because neither is what the +6h survival read
+#: measured: this ship closes the route that handed #8132's rows back, and
+#: widening into golf settlement on the same commit would put an unmeasured
+#: population behind a change whose evidence is entirely about Kalshi spreads
+#: and totals.
+_KNOWN_UNGUARDED_DERIVED_SOURCES = ("leaderboard", "did_not_play")
+
+
+def test_the_unguarded_derived_writers_are_exactly_the_two_named():
+    """Fails in BOTH directions, which is the point.
+
+    A third unguarded derived writer appearing is a regression. These two
+    becoming guarded is progress — and should delete its own name from the list
+    rather than leave a stale exemption nobody re-reads.
+    """
+    unguarded = {
+        source
+        for source in _KNOWN_UNGUARDED_DERIVED_SOURCES
+        for call in _EXECUTE_CALLS
+        if _writes_source(call, source) and "NOT IN" not in call
+    }
+    assert unguarded == set(_KNOWN_UNGUARDED_DERIVED_SOURCES), (
+        "the deliberately-unguarded derived writers have changed: "
+        f"{unguarded} vs {set(_KNOWN_UNGUARDED_DERIVED_SOURCES)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "func",
+    [
+        "_resolve_kalshi_from_scores",
+        "_resolve_kalshi_spread_total_from_scores",
+        "_resolve_kalshi_golf_from_datagolf",
+    ],
+)
+def test_a_refused_write_is_counted_and_reaches_the_phase_summary(func):
+    """A refusal that is not counted is a refusal nobody finds.
+
+    Without this, a guard that came unwired and a guard with nothing to refuse
+    print the same phase summary — and the #8132 cohort is precisely a
+    population that stays refused for ever, because an `is_winner = false`
+    retraction never drops the board out of the candidate scan.
+    """
+    body = inspect.getsource(
+        getattr(importlib.import_module("app.tasks.backfill_winners"), func)
+    )
+    assert '"protected_legs_refused": 0' in body, f"{func}: counter not initialised"
+    assert 'stats["protected_legs_refused"] += 1' in body, (
+        f"{func}: nothing ever increments it"
+    )
+    assert 'stats["protected_legs_refused"],' in body, (
+        f"{func}: incremented but never reaches the phase summary — the number "
+        "exists and no operator can ever see it"
+    )

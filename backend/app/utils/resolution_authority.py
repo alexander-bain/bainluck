@@ -259,6 +259,30 @@ GUESS_FAMILY_SOURCES_SQL: str = _sql_in_list(GUESS_FAMILY_SOURCES)
 # box-score-derived grade is permitted by `is_downgrade` and nothing here has
 # measured a reason to forbid it. The guard removes writes that are wrong by the
 # ladder's own arithmetic, and no others.
+#
+# WIDENED FROM "PRICE" TO "DERIVED" (2026-09-23, #8132's +6h survival read). The
+# name stays `PRICE_CROWN_*` because it is what the guard was built for and the
+# rename buys a reader nothing; the SET is unchanged. What changed is who must
+# carry it. Six hours after the 56-row repair landed, the 46 legs it stamped
+# `api_settlement` / `ungradeable_result` over a `clean_resolution` held — and all
+# 10 it stamped over a prior `game_score` were back at `game_score /
+# is_winner = true`, rewritten whole-market by the SCORE crowners in
+# `_resolve_kalshi_spread_total_from_scores`, which this guard did not reach.
+#
+# The route differs; the hole is identical. A score crowner's candidate scan is
+# the same `HAVING SUM(CASE WHEN fo.is_winner AND fo.resolution_source NOT IN
+# (overwritable) ...) = 0`, blind to a retraction for the same reason, and its
+# UPDATE asks the leg nothing either. `game_score` is tier 2 and `api_settlement`
+# is tier 3, so the write is the downgrade `is_downgrade` forbids. Whether the
+# verdict came from a price or from our own `events.home_score` is not what makes
+# it wrong — being DERIVED, and landing on a leg the venue itself graded, is.
+#
+# So the rule this constant states is: a crowner that derives its verdict may not
+# write it onto a leg whose grade came from the venue, or onto a leg we have
+# declared unknowable. `backfill_winners` has five such crowners today (two
+# `clean_resolution`, one golf `settlement_sync`, and the two score-derived
+# passes) and `tests/test_price_crown_protected_8132.py` pins that every one of
+# them carries the clause in the statement it writes with.
 PRICE_CROWN_PROTECTED_SOURCES: frozenset[str] = AUTHORITATIVE_SOURCES | {
     "ungradeable_result"
 }

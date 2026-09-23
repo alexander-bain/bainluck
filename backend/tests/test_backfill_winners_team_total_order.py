@@ -183,8 +183,16 @@ class _Row:
 
 
 class _Result:
-    def __init__(self, rows):
+    #: #8132: the production code now reads `rowcount` to tell a write from a
+    #: leg the authority guard refused. This fake holds no rows and so cannot
+    #: evaluate that guard; a default of 1 says "the write landed", which is the
+    #: premise every assertion in this file already rests on. Whether the guard
+    #: actually refuses is a question only a server can answer, and
+    #: `tests/integration/test_price_crown_leg_guard_8132_real_postgres.py` is
+    #: where it is asked.
+    def __init__(self, rows, rowcount=1):
         self._rows = rows
+        self.rowcount = rowcount
 
     def all(self):
         return self._rows
