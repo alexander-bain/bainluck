@@ -316,8 +316,13 @@ _PLACEHOLDER_TEAM_RE = re.compile(
 # 38-item ladder to the 3 meaningful lines on event 14961907).
 _SPREAD_DEEP_OTM_FLOOR = 0.02
 from app.utils.event_twin_fold import fold_twin_events
-from app.utils.kalshi_expiration_start import recover_kalshi_expiration_starts
+from app.utils.kalshi_expiration_start import (
+    KALSHI_EXPIRATION_RECOVERY_STAMP,
+    recover_kalshi_expiration_starts,
+)
 from app.utils.kalshi_occurrence_start import (
+    KALSHI_OCCURRENCE_TIMED_SOURCES,
+    KALSHI_RECOVERY_STAMP,
     loaded_sport_key,
     recover_kalshi_occurrence_starts,
 )
@@ -22803,9 +22808,76 @@ def _point_is_at_or_after(point: dict, boundary: datetime) -> bool:
         return True
 
 
+def _commence_time_is_venue_expiration(event) -> bool:
+    """True when this row's ``commence_time`` is the END Kalshi expects, not a start.
+
+    #7878. Kalshi's ``occurrence_datetime`` is byte-identical to
+    ``expected_expiration_time`` — read at the venue 2026-09-13 (#5905) and again
+    2026-09-23 on ``KXATPMATCH``, where the market carries
+    ``early_close_condition: "This market will close and expire after a winner is
+    declared."`` It is when the contract is expected to RESOLVE. Kalshi publishes
+    no kick-off field at all, so a row clocked from it is holding the far end of
+    the contest.
+
+    ``_kalshi_commence_time`` prefers that instant for a dated fixture, which was
+    a large improvement over ``close_time`` (a +3d/+14d settlement backstop) and
+    is still the wrong end. For soccer the pad is an exact 180 minutes and
+    ``recover_kalshi_occurrence_starts`` puts the kick-off back; for a combat card
+    the DATE is recoverable from the ticker and
+    ``recover_kalshi_expiration_starts`` does that. Both run earlier in this
+    route, both stamp the row, and both are excluded below — this predicate is
+    about the rows NEITHER can reach, which is tennis and the rest.
+
+    🔴 **MEASURED, AND THE OTHER CLOCKS ARE THE CONTROL.** Production, events
+    commencing in the 48 h to 2026-09-23 10:3xZ, restricted to rows with >=50
+    win-prob points and a >0.30 probability swing (so a match that was never in
+    doubt cannot count), asking "was the contest already decided — last reading
+    between 0.15 and 0.85 — BEFORE its own stored start?":
+
+    ====================  ======  ===================  =====
+    commence_time_source  events  decided before start  pct
+    ====================  ======  ===================  =====
+    ``kalshi``               208                   139  66.8
+    ``polymarket_venue``     167                     2   1.2
+    ``odds_api``              33                     2   6.1
+    ``espn``                  42                     0   0.0
+    ====================  ======  ===================  =====
+
+    The three non-Kalshi arms are the noise floor of the question itself, and
+    Kalshi sits an order of magnitude above it. Over the same window the other
+    three clocks land a median 105-139 minutes BEFORE the last uncertain reading,
+    which is what a real kick-off looks like.
+
+    ⚠️ **THE ``external_id`` ARM IS VACUOUS ON TODAY'S POPULATION AND IS KEPT FOR
+    MECHANISM, NOT REACH.** All 208 rows above have ``external_id IS NULL``;
+    there is no specimen on the other side of it, so it narrows nothing that can
+    be measured now. It is here because a start a schedule provider reported is
+    not ours to distrust, which is the same gate
+    ``kalshi_occurrence_scheduled_start`` applies for the same reason.
+
+    Pure: reads only attributes already in memory, no DB and no clock.
+    """
+    if getattr(event, "commence_time_source", None) not in (
+        KALSHI_OCCURRENCE_TIMED_SOURCES
+    ):
+        return False
+    if getattr(event, "external_id", None) is not None:
+        return False
+    # Either recovery having run means the served hour is no longer the
+    # expiration — it is a kick-off (soccer) or the venue's own contest date
+    # (combat). Ask the stamps, not the source: both modules correct
+    # `commence_time` at serve time and neither rewrites `commence_time_source`.
+    if getattr(event, KALSHI_RECOVERY_STAMP, False):
+        return False
+    if getattr(event, KALSHI_EXPIRATION_RECOVERY_STAMP, False):
+        return False
+    return True
+
+
 def _omit_pre_kickoff_points(
     *,
     commence_time,
+    start_is_kickoff: bool = True,
     history: list,
     bookmaker_history: dict,
     win_prob_history: dict,
@@ -22883,11 +22955,39 @@ def _omit_pre_kickoff_points(
     specimens), so trimming them would be a no-op that still had to be reasoned
     about, and ``espn_history`` is read here to decide the fallback.
 
+    🔴 **IT TRIMS TO A KICK-OFF, SO IT DECLINES WHEN THE ROW HAS NONE (#7878).**
+    ``start_is_kickoff`` is False when ``commence_time`` is Kalshi's expected
+    EXPIRATION rather than a start — see
+    :func:`_commence_time_is_venue_expiration` for the venue read and the
+    measurement. Cutting at that instant does not remove the pre-match half, it
+    removes the MATCH: on ``/events/15317314`` (Basilashvili v Cina, ATP,
+    2026-09-23) the contest was played in the 07:00Z hour — 117 Kalshi and 126
+    Polymarket points carrying a real 0.39 -> 0.995 — against a stored start of
+    09:10Z, so ``range=since_start`` served **4 Kalshi points and 0 Polymarket**
+    out of 528, all of them after the winner was decided, and the page drew eight
+    flat minutes at 99%.
+
+    The existing fallback cannot catch that: ``has_post_start`` asks only whether
+    ANY point survives the cut, and four dead ones do. It is one arm — "the trim
+    would empty the chart" — and this population sits just past it.
+
+    Declining serves the whole journey and reports ``pre_window_omitted: False``,
+    which is the honest answer to "is what I am holding the whole journey?" and
+    is what spares the client the "All" re-fetch. It cannot hide a line: this
+    function only ever REMOVES points, so refusing to run it is strictly
+    fail-open. The #6925 byte win is untouched where it was measured — those
+    specimens are NFL and soccer rows clocked by ``odds_api``/``espn``, which
+    never reach this arm — and the cost where it does apply is 2.8 KB -> 93 KB on
+    the specimen above, against the 588 KB that ship's own KC-DEN case serves
+    post-trim.
+
     Returns True iff points were actually omitted. The route serves that as
     ``pre_window_omitted`` so a caller can tell "there is a second request that
     would tell you more" from "this is the whole journey".
     """
     if not commence_time:
+        return False
+    if not start_is_kickoff:
         return False
 
     # The client's `hasPostStartData`, computed over the same three series.
@@ -25080,6 +25180,11 @@ async def get_event_odds_history(
     if chart_range == EVENT_HISTORY_RANGE_SINCE_START:
         pre_window_omitted = _omit_pre_kickoff_points(
             commence_time=event.commence_time,
+            # #7878 — both Kalshi start recoveries have already run above, so a
+            # row still holding an expected-expiration instant is one neither
+            # could reach. Trimming to it would delete the contest, not the
+            # pre-match half.
+            start_is_kickoff=not _commence_time_is_venue_expiration(event),
             history=history,
             bookmaker_history=bookmaker_history,
             win_prob_history=win_prob_history,
@@ -25125,6 +25230,21 @@ async def get_event_odds_history(
         # a second request without it would tell this caller more. False on
         # every payload served today, including every `range=all` one.
         "pre_window_omitted": pre_window_omitted,
+        # #7878: false iff `commence_time` above is Kalshi's expected EXPIRATION
+        # rather than a start — the venue's `occurrence_datetime`, which is
+        # byte-identical to `expected_expiration_time` and is when the contract
+        # is expected to resolve. Kalshi publishes no kick-off field, and the two
+        # recoveries that can put one back (soccer's exact 180-minute pad, a
+        # combat card's ticker date) have already run above, so a row still
+        # answering false here is one neither could reach.
+        #
+        # THE CLIENT MUST NOT RE-DERIVE THIS, for the same reason as
+        # `pre_window_omitted`: it is a statement about PROVENANCE — which
+        # column the hour came from and whether a recovery has since moved it —
+        # and none of that is visible in the served points. A chart cutting its
+        # "Since Start" window at `commence_time` is asking exactly this
+        # question, and on a false it is cutting to after the contest finished.
+        "commence_time_is_kickoff": not _commence_time_is_venue_expiration(event),
         "pm_spread_data": pm_spread_data if pm_spread_data else None,
         "points": len(history),
         "bookmaker_count": len(bookmaker_history),
