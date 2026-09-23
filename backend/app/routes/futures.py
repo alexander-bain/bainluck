@@ -3723,14 +3723,14 @@ def _unsupported_price_candidates(market: FuturesMarket) -> list:
         for o in market.outcomes
         if needs_trade_evidence(
             market.source,
-            getattr(o, "resolution_source", None),
+            o.resolution_source,
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             in_exclusive_field=in_exclusive_field,
         )
         or needs_unbacked_ask_evidence(
             market.source,
-            getattr(o, "resolution_source", None),
+            o.resolution_source,
             _as_float(getattr(o, "current_probability", None)),
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
@@ -3810,7 +3810,7 @@ def _unsupported_price_verdicts(
         for o in candidates
         if price_is_unsupported(
             market.source,
-            getattr(o, "resolution_source", None),
+            o.resolution_source,
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             _as_float(latest_trade.get(o.id)),
@@ -3823,7 +3823,7 @@ def _unsupported_price_verdicts(
         # acquit what the other caught.
         or price_is_an_unbacked_ask(
             market.source,
-            getattr(o, "resolution_source", None),
+            o.resolution_source,
             _as_float(getattr(o, "current_probability", None)),
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
@@ -3902,8 +3902,8 @@ def _refuted_midpoint_candidates(market: FuturesMarket) -> list:
         for o in market.outcomes
         if needs_trade_disconfirmation(
             market.source,
-            getattr(o, "resolution_source", None),
-            _as_float(getattr(o, "current_probability", None)),
+            o.resolution_source,
+            _as_float(o.current_probability),
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
         )
@@ -3963,10 +3963,7 @@ def _closest_trade_by_outcome(candidates: list, rows: list) -> dict:
     per-market one — and on the per-market path every row is a candidate, so
     the filter is a no-op there rather than a behaviour change.
     """
-    served = {
-        o.id: _as_float(getattr(o, "current_probability", None))
-        for o in candidates
-    }
+    served = {o.id: _as_float(o.current_probability) for o in candidates}
     latest_trade: dict[int, float] = {}
     for outcome_id, last_price in rows:
         if outcome_id not in served:
@@ -3992,8 +3989,8 @@ def _refuted_midpoint_verdicts(
         for o in candidates
         if midpoint_refuted_by_last_trade(
             market.source,
-            getattr(o, "resolution_source", None),
-            _as_float(getattr(o, "current_probability", None)),
+            o.resolution_source,
+            _as_float(o.current_probability),
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
             latest_trade.get(o.id),
@@ -4022,9 +4019,9 @@ def _book_refuted_outcome_ids(market: FuturesMarket) -> set[int]:
         for o in market.outcomes
         if price_refuted_by_live_book(
             market.source,
-            getattr(o, "resolution_source", None),
-            getattr(o, "is_winner", None),
-            _as_float(getattr(o, "current_probability", None)),
+            o.resolution_source,
+            o.is_winner,
+            _as_float(o.current_probability),
             _as_float(getattr(o, "current_yes_bid", None)),
             _as_float(getattr(o, "current_yes_ask", None)),
         )
