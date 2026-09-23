@@ -4098,9 +4098,16 @@ jobs:
         # still called live goes dark after 24 h and one with no recorded start
         # goes dark at once. Two live-preservation cases hold that end.
         #
-        # Skip detection plus a count: six of the seven cases are controls that
-        # pass with OR without the fix, so a run that lost the ship case would
-        # still print green.
+        # Skip detection plus a count: most of these cases are controls that
+        # pass with OR without the fix, so a run that lost a ship case would
+        # still print green. Two ship cases now, one per class — the age floor
+        # and the settled-market drop — so the count is what holds them both.
+        #
+        # THE COUNT IS A PIN AND IT BINDS THE NEXT AUTHOR: adding a case to this
+        # file reddens this gate until the number below moves with it. That is
+        # the point (it is how a silently-dropped case gets caught), but it means
+        # the number is part of the test file's contract, not CI boilerplate.
+        # 12 = 7 age-floor cases + 4 settled-market cases + 1 consumer wiring case.
         run: |
           set -o pipefail
           python -m pytest tests/integration/test_ws_slate_age_floor_pg_837.py \
@@ -4109,9 +4116,12 @@ jobs:
             echo "::error::#837 slate contract SKIPPED — the gate did not run"
             exit 1
           fi
-          # `[^0-9]` so a future `17 passed` cannot satisfy a gate asking for 7.
-          grep -qE "[^0-9]7 passed," /tmp/slate837.txt || {
-            echo "::error::#837 slate contract did not run all seven cases"
+          # `[^0-9]` so a future `112 passed` cannot satisfy a gate asking for 12.
+          # `[,[:space:]]` because pytest drops the comma when a run emits no
+          # warnings (`12 passed in 3.4s`) — the old `passed,` form was green
+          # only by the accident of this file currently raising warnings.
+          grep -qE "[^0-9]12 passed[,[:space:]]" /tmp/slate837.txt || {
+            echo "::error::#837 slate contract did not run all twelve cases"
             exit 1
           }
 

@@ -309,3 +309,237 @@ class TestTheSlateIsBoundedAtBothEnds:
         # The upper bound survived: the fix narrowed one end without widening
         # the other.
         assert selected["the_game_tomorrow"] is False
+
+
+# ---------------------------------------------------------------------------
+# The market-level half of the slate: a market the venue has already SETTLED.
+#
+# The event window above is deliberately clock-free on the live arm, and its
+# docstring says the stuck-at-live hazard needs "the venue's own resolution"
+# rather than a clock. `futures_markets.status = 'resolved'` is that signal, and
+# it was not being read: measured on production 2026-09-23 05:2xZ, 54 markets /
+# 108 outcomes on 12 events inside the event window were already resolved in our
+# own database — 7.6% of a byte-capped subscription sitting at 40,594 of 40,960
+# bytes. A 120-second probe of the public CLOB socket returned NOTHING for four
+# such tokens (not even the opening `book` frame), while the same connection's
+# control arm got its books at once and 726 `price_change` frames.
+#
+# EVERY CASE BELOW SITS ON A `live` EVENT, so the event window keeps all of them
+# and only the market predicate can move one. Two of the four are on ONE event,
+# which is the whole point: the fix drops a settled MARKET, never an event.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_markets(session):
+    """One live event with a settled market and an open one, plus two controls."""
+    from sqlalchemy import text as sql_text
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    now = datetime.now(timezone.utc)
+
+    sport = Sport(key="tennis_atp", name="ATP")
+    session.add(sport)
+    await session.flush()
+
+    def _event(name):
+        return Event(
+            sport_id=sport.id,
+            home_team_name=f"{name} Home",
+            away_team_name=f"{name} Away",
+            commence_time=now - timedelta(hours=3),
+            status="live",
+        )
+
+    # THE MODEL IS STRICTER THAN THE DEPLOYED COLUMN, AND THE PREDICATE HAS TO
+    # SURVIVE THE DEPLOYED ONE. `FuturesMarket.status` is `Mapped[str]`, so
+    # `create_all` emits NOT NULL here — but production's column is
+    # `is_nullable = YES` with `DEFAULT 'open'` (read 2026-09-23 05:3xZ), so a
+    # raw-SQL writer that sets it to NULL is refused in this database and
+    # accepted in the one serving readers. Seeding the fail-open control
+    # against the model's schema is impossible; seeding it against production's
+    # is the whole point, so the column is relaxed to match what is deployed.
+    # If a migration ever adds the NOT NULL for real, this ALTER becomes a
+    # no-op and the control becomes belt-and-braces rather than live.
+    assert FuturesMarket.__table__.c.status.nullable is False, (
+        "model tightened; re-read production's information_schema before "
+        "deciding this control is dead"
+    )
+    await session.execute(
+        sql_text("ALTER TABLE futures_markets ALTER COLUMN status DROP NOT NULL")
+    )
+
+    # The M25 Yinchuan shape from the production read: one event whose
+    # moneyline the venue settled while a sibling market is still open.
+    yinchuan = _event("Yinchuan")
+    lone = _event("Lone")
+    session.add_all([yinchuan, lone])
+    await session.flush()
+
+    cases = {
+        # ---- the ship -------------------------------------------------
+        "the_market_the_venue_settled": (yinchuan.id, "resolved"),
+        # ---- kill control, on the SAME event --------------------------
+        "the_open_sibling_on_that_event": (yinchuan.id, "open"),
+        # ---- fail-open controls ---------------------------------------
+        "the_market_with_no_status": (lone.id, None),
+        "the_suspended_market": (lone.id, "suspended"),
+    }
+
+    null_status_ids = []
+    for case, (event_id, status) in cases.items():
+        market = FuturesMarket(
+            source="polymarket",
+            external_id=f"0x{case}",
+            name=f"{case} moneyline",
+            event_id=event_id,
+            # `status` is `default="open"`, so passing None here would be
+            # overwritten by the Python-side default at flush — the NULL has to
+            # be written afterwards in SQL, below, or the control is vacuous.
+            **({} if status is None else {"status": status}),
+        )
+        session.add(market)
+        await session.flush()
+        if status is None:
+            null_status_ids.append(market.id)
+        session.add(
+            FuturesOutcome(
+                market_id=market.id,
+                name=case,
+                external_id=f"0x{case}_yes",
+            )
+        )
+
+    if null_status_ids:
+        await session.execute(
+            sql_text(
+                "UPDATE futures_markets SET status = NULL WHERE id = ANY(:ids)"
+            ),
+            {"ids": null_status_ids},
+        )
+
+    await session.commit()
+
+    # The NULL control is only a control if the NULL actually landed. A column
+    # constraint or a writer default would make it read as 'open' and the arm
+    # would pass for the wrong reason.
+    stored = (
+        await session.execute(
+            sql_text(
+                "SELECT status FROM futures_markets WHERE id = ANY(:ids)"
+            ),
+            {"ids": null_status_ids},
+        )
+    ).scalars().all()
+    assert stored == [None], f"NULL-status control did not land: {stored!r}"
+
+    return {case: f"0x{case}" for case in cases}
+
+
+@pytest.fixture
+async def selected_markets():
+    """The same shipped query, read back per MARKET rather than per event."""
+    from sqlalchemy import select
+
+    from app.models.models import Event, FuturesMarket, FuturesOutcome
+    from app.tasks.polymarket_ws import _slate_event_window, _slate_market_filter
+
+    engine, maker = await _engine_with_tables()
+    async with maker() as session:
+        ids = await _seed_markets(session)
+
+    async with maker() as session:
+        result = await session.execute(
+            select(FuturesOutcome.id, FuturesMarket.external_id)
+            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+            .join(Event, FuturesMarket.event_id == Event.id)
+            .where(
+                FuturesMarket.source == "polymarket",
+                FuturesMarket.event_id.isnot(None),
+                _slate_event_window(),
+                _slate_market_filter(),
+            )
+        )
+        kept = {row.external_id for row in result.all()}
+
+    await engine.dispose()
+
+    yield {case: (ext_id in kept) for case, ext_id in ids.items()}
+
+
+@needs_postgres
+class TestASettledMarketLeavesTheSubscription:
+    """Four Polymarket markets on two live events, one real query."""
+
+    async def test_a_market_the_venue_has_settled_is_dropped(self, selected_markets):
+        # THE SHIP. 54 markets like this one were subscribed at the moment of
+        # the production read, and the venue answers their tokens with silence
+        # — no book, no price_change, nothing in 120 seconds.
+        assert selected_markets["the_market_the_venue_settled"] is False
+
+    async def test_its_open_sibling_on_the_same_event_still_streams(
+        self, selected_markets
+    ):
+        # KILL CONTROL, and the reason this predicate is market-level. The
+        # event stays live and every market on it that the venue has NOT
+        # settled keeps its stream; a reader watching that game loses nothing.
+        assert selected_markets["the_open_sibling_on_that_event"] is True
+
+    async def test_a_market_with_no_status_still_streams(self, selected_markets):
+        # FAIL-OPEN CONTROL, and the only arm that tells the shipped predicate
+        # apart from a plain `status != 'resolved'`: in SQL that comparison is
+        # NULL for a NULL status, so the plain form drops this row — a live
+        # market going dark because nobody wrote a status.
+        assert selected_markets["the_market_with_no_status"] is True
+
+    async def test_a_suspended_market_still_streams(self, selected_markets):
+        # Only `resolved` is terminal. A suspended market can reopen, and
+        # unsubscribing it would need a re-subscribe nobody schedules.
+        assert selected_markets["the_suspended_market"] is True
+
+
+def test_the_consumer_actually_applies_both_halves_of_the_slate():
+    """The predicates are WIRED into the query the socket runs.
+
+    Not Postgres-gated, and not decoration. Everything above stands the
+    predicate functions in for the where-clause, which reads the shipped
+    expression but not the shipped CALL SITE — so deleting
+    ``_slate_market_filter()`` from ``run_polymarket_ws``'s ``.where(...)``
+    leaves this file 11/11 green while the socket subscribes to every settled
+    market again. That mutation was run (2026-09-23, 8 arms, all passed) and is
+    the reason this test exists: a defined-but-uncalled filter is the exact
+    shape of an unwired fix.
+
+    AST rather than a substring, so a comment mentioning the name cannot
+    satisfy it and reformatting cannot break it: both filters must appear as
+    CALLS inside the argument list of one `.where(...)` call.
+    """
+    import ast
+    import inspect
+
+    from app.tasks import polymarket_ws
+
+    tree = ast.parse(inspect.getsource(polymarket_ws))
+
+    wired = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "where"):
+            continue
+        names = {
+            a.func.id
+            for a in node.args
+            if isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
+        }
+        if "_slate_event_window" in names:
+            wired |= names
+
+    assert "_slate_event_window" in wired, (
+        "no .where() applies the event window — the slate is unwired"
+    )
+    assert "_slate_market_filter" in wired, (
+        "_slate_market_filter() is not applied in the same .where() as the "
+        "event window: settled markets are back in the subscription"
+    )
