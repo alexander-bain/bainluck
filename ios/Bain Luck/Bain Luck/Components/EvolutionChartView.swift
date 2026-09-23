@@ -196,7 +196,8 @@ struct EvolutionChartView: View {
     @State private var topFilter: Int = 10
     @State private var selectedNames: Set<String> = []
     @State private var highlightedName: String?
-    @State private var showCombinedProbability = false
+    /// Off for every reader; the LOOK rig can ask for it (`-launch_chart_sum`).
+    @State private var showCombinedProbability = LaunchRig.startsChartSumOn()
     @State private var selectedRange: EvolutionTimeRange = .week
     @State private var crosshair: CrosshairData?
 
@@ -478,6 +479,19 @@ struct EvolutionChartView: View {
         EvolutionLeaderboardGeometry.renderedPercents(forServedField: data?.outcomes ?? [])
     }
 
+    /// Whether adding this market's outcomes up produces a probability — decided
+    /// ONCE over the whole served field, like `servedRenderedPercents` above and for
+    /// the same reason. See `EvolutionCombinedLinePolicy` for the measurement.
+    ///
+    /// Gates the `Sum` control AND the line independently. Two gates rather than one
+    /// because they can disagree: `showCombinedProbability` survives in `@State`
+    /// across a reload, and the rig can seed it true at launch, so hiding only the
+    /// checkbox would leave a market able to draw a line its reader can no longer
+    /// turn off.
+    private var fieldSupportsCombinedLine: Bool {
+        EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: displayedOutcomes)
+    }
+
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }
 
     private var effectiveSelected: Set<String> {
@@ -505,6 +519,9 @@ struct EvolutionChartView: View {
         guard let data else { return [] }
         let names = Set(displayedNames)
         let cutoff = timeCutoff
+        // Hoisted: a card-level fact, not a per-entry one, and the loop runs once
+        // per served instant (584 on 56775596).
+        let supportsCombined = fieldSupportsCombinedLine
         var points: [EvolutionPoint] = []
         // Track latest known probabilities for the combined line
         var latestProbs: [String: Double] = [:]
@@ -526,8 +543,12 @@ struct EvolutionChartView: View {
             }
 
             // Combined probability line
-            if showCombinedProbability, effectiveSelected.count > 1, !latestProbs.isEmpty {
-                let combined = min(100, latestProbs.values.reduce(0, +))
+            if let combined = EvolutionCombinedLinePolicy.combinedProbability(
+                showRequested: showCombinedProbability,
+                fieldIsOneQuestion: supportsCombined,
+                selectedCount: effectiveSelected.count,
+                latestProbs: latestProbs
+            ) {
                 points.append(EvolutionPoint(
                     date: date,
                     name: "_combined",
@@ -782,6 +803,7 @@ struct EvolutionChartView: View {
             availableRanges: availableRanges,
             selectedRange: $selectedRange,
             showCombinedProbability: $showCombinedProbability,
+            sumAvailable: fieldSupportsCombinedLine,
             topFilter: $topFilter,
             seasonWord: EvolutionRangeVocabulary.seasonWord(
                 sportCategory: data?.sportCategory,
@@ -1318,6 +1340,12 @@ struct EvolutionControlBar: View {
     let availableRanges: [EvolutionTimeRange]
     @Binding var selectedRange: EvolutionTimeRange
     @Binding var showCombinedProbability: Bool
+    /// Whether this market's outcomes can be added up at all
+    /// (`EvolutionCombinedLinePolicy`). Defaulted `true` so the bar still composes
+    /// on its own and so every existing caller — including the layout tests that
+    /// measure the widest vocabulary — keeps measuring the bar WITH the `Sum` chip,
+    /// which is the wide case and therefore the one worth pinning.
+    var sumAvailable: Bool = true
     @Binding var topFilter: Int
     /// What the widest chip is called for THIS market (#7077). Defaulted so the
     /// bar still composes on its own — every caller that shows a real market
@@ -1376,8 +1404,21 @@ struct EvolutionControlBar: View {
         )
     }
 
+    /// The `Sum` checkbox, drawn only where a sum is a probability.
+    ///
+    /// Absent rather than disabled, and with nothing put in its place. A greyed
+    /// checkbox invites the question "why can't I?", and answering it on the page
+    /// would be exactly the diagnostic prose notice 34 forbids — the reader gets the
+    /// controls that mean something, and no paragraph about the one that doesn't.
     @ViewBuilder
     func sumToggle(chipPadding: CGFloat) -> some View {
+        if sumAvailable {
+            sumToggleButton(chipPadding: chipPadding)
+        }
+    }
+
+    @ViewBuilder
+    private func sumToggleButton(chipPadding: CGFloat) -> some View {
         Button {
             showCombinedProbability.toggle()
         } label: {

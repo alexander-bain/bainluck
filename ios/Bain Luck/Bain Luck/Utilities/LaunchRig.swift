@@ -95,6 +95,29 @@ enum LaunchRig {
         defaults.bool(forKey: expandSectionsKey)
     }
 
+    // MARK: - Photographing a control the rig cannot tap
+
+    /// Launch-argument key that starts the Evolution chart's `Sum` line ON.
+    ///
+    /// `xcrun simctl launch <sim> <bundle> -launch_chart_sum YES`.
+    ///
+    /// Same hole as `-launch_expand_sections`, one control along: the rig cannot
+    /// tap, `Sum` is a `@State` checkbox that defaults off, and so the combined line
+    /// had never been photographed at all. That is how a flat dashed line pinned to
+    /// 100% across every point of a props market went unseen — not because it was
+    /// subtle, but because no camera could reach it. Off unless asked for, so the
+    /// checkbox a reader sees still starts clear.
+    static let chartSumKey = "launch_chart_sum"
+
+    /// Whether the chart's combined line should start drawn for the camera.
+    ///
+    /// Only ever ASKS for the line. Whether one is drawn is still
+    /// `EvolutionCombinedLinePolicy`'s call, so this flag cannot photograph a chart
+    /// no reader could get to — which is the property that makes it evidence.
+    static func startsChartSumOn(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: chartSumKey)
+    }
+
     // MARK: - Photographing what is BELOW the fold
 
     /// Launch-argument key carrying how far down the page to scroll, in POINTS,
