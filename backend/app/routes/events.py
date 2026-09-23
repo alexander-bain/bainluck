@@ -2142,6 +2142,51 @@ _SEARCH_EVENT_TEAM_WEIGHT = "A"
 #: exact match — which earns on both terms — always outranks a row that merely
 #: starts the same way. `yankees` must still answer with the Yankees.
 _SEARCH_TEAM_PREFIX_RANK_WEIGHT = 0.5
+#: #8155 — the floor a MULTI-TERM "did you mean" must clear, on
+#: ``word_similarity`` rather than ``similarity``.
+#:
+#: Two separate findings force both the operator and the number, and neither is
+#: a preference. Measured read-only on production 2026-09-23 against `teams`.
+#:
+#: **Why not plain ``similarity``.** The issue's prescribed fix — lift the
+#: single-term gate and let the existing predicate run — ships a WRONG answer for
+#: the exact query a TestFlight tester reported. `similarity` is computed over the
+#: whole string, so for `red socks` the argmax is **Red Star (0.357)**, not
+#: `Boston Red Sox` (0.316): the fallback takes `ORDER BY ... DESC LIMIT 1`, so the
+#: reader would be told a Serbian football club. `word_similarity` compares the
+#: query against the best-matching EXTENT of the name and ranks `Boston Red Sox`
+#: first (0.600), which is the whole reason the operator changes here.
+#:
+#: **Why 0.59.** On the real population — the 12 distinct `origin='user'`
+#: zero-result multi-term queries in `search_query_logs` — every correction worth
+#: making scores at or above 0.600 and every wrong one at or below 0.5833:
+#:
+#:     los angeles lakerz -> Los Angeles Lakers   0.8889   WANT
+#:     green bay packrs   -> Green Bay Packers    0.8235   WANT
+#:     boston red socks   -> Boston Red Sox       0.7647   WANT
+#:     red socks          -> Boston Red Sox       0.6000   WANT  (the report)
+#:     ---------------------------------------------------- 0.59 floor
+#:     france d'or        -> France               0.5833   no
+#:     queens club        -> Queens (NC)          0.5833   no
+#:     soccer d'or        -> Soccer Intellectuals 0.5833   no
+#:     as roma vs. fc barcelona -> FC Barcelona Bàsquet 0.5417 no
+#:     bitcoin price 2026 -> Niko Price           0.3158   no  (12x, most common)
+#:
+#: 0.59 rather than 0.60 for a reason: `red socks` scores EXACTLY 0.6, and
+#: `word_similarity` returns float4 while a literal is float8, so `>= 0.60` is a
+#: knife-edge on the one query this ship exists to fix. 0.59 clears it by 0.010
+#: and excludes the 0.5833 band by 0.0067.
+#:
+#: 🔴 The window is only 0.017 wide and rests on 12 real queries plus 5 synthetic
+#: ones. That is the weakest part of this change and is deliberately pinned in
+#: both directions by guard tests, so drifting it cannot be silent.
+#:
+#: The dominant multi-word zero-result queries are NOT misspelled team names at
+#: all — they are `X vs Y` fixtures, tournaments and market subjects — which is
+#: why this floor is set to rescue the misspelling class and leave the rest as the
+#: honest empty bucket they are today.
+_SEARCH_MULTI_TERM_CORRECTION_FLOOR = 0.59
+
 _SEARCH_FUTURES_MARKET_WEIGHT = "B"
 _SEARCH_FUTURES_OUTCOME_WEIGHT = "C"
 
@@ -6515,7 +6560,17 @@ async def search_events(
 
     # Fuzzy fallback: re-query with trigram similarity when ILIKE finds nothing
     fuzzy_corrected: str | None = None
-    if total_count == 0 and not degraded and len(terms) == 1 and not sport_alias_keys:
+    if total_count == 0 and not degraded and terms and not sport_alias_keys:
+        # #8155: this ran for SINGLE-TERM queries only, and the `else` below
+        # assigns `had_substring_match = False` — i.e. it fails OPEN for every
+        # multi-term query. That was safe only because the correction gate below
+        # was itself single-term, so the value was never read. Enabling multi-term
+        # corrections there turns this dead default into a live input, and a
+        # fail-open default is exactly what this guard exists to prevent: the
+        # `yank -> Petr Yan` substitution would come straight back in two-word
+        # form. So the guard is widened WITH the capability, in the same commit —
+        # the protection travels with the thing it protects.
+        #
         # LAT-P034: "did you mean" means YOUR QUERY MATCHED NOTHING. Since
         # `_event_name_match` added the word-boundary arm, a query can match rows
         # and still show zero — and firing a trigram correction there replaces one
@@ -6733,10 +6788,24 @@ async def search_events(
     # the table below). We know what `yank` names for the same reason we know what
     # `niners` names — the registry told us — so the correction is declined on the
     # same terms, with the same "the markets and team rails still answer" backstop.
+    # #8155 — a MISSPELLING THAT SPANS TWO WORDS gets the same rescue as a
+    # one-word one. `Yankes` returned 38 results while `Red socks` returned a
+    # blank page, both misspellings of a currently-playing MLB club; a TestFlight
+    # tester reported the second in an in-app shake ("Red socks is actually a
+    # legit team and it says no results"). `len(terms) == 1` was the only clause
+    # standing between them, and the route's own comment three lines down already
+    # warned that "this path is reached by the MISSPELLED queries, so a clause left
+    # behind here is missing from the searches a person actually types".
+    #
+    # Multi-term does NOT simply inherit the single-term predicate — see
+    # `_SEARCH_MULTI_TERM_CORRECTION_FLOOR`, where the measurement shows that
+    # doing so answers `red socks` with `Red Star`. The single-term path below is
+    # left byte-identical, so this change can only turn a blank page into an
+    # answer; it can never alter a correction the route already makes.
     if (
         total_count == 0
         and not degraded
-        and len(terms) == 1
+        and terms
         and not sport_alias_keys
         and not had_substring_match
         and not _event_nickname_arms
@@ -6762,17 +6831,41 @@ async def search_events(
             # pure noise in that distance — `similarity('Lazio', 'lazio today')`
             # is far below the same pair without it, so the fallback that exists
             # to rescue a near-miss was itself defeated by the reader's question.
-            best_team = await db.execute(
-                select(
-                    Team.name, func.similarity(Team.name, _q_identity).label("sim")
-                )
-                .where(
-                    Team.name.op("%")(_q_identity),
-                    func.similarity(Team.name, _q_identity) > 0.25,
-                )
-                .order_by(func.similarity(Team.name, _q_identity).desc())
-                .limit(1)
+            _best_team_q = select(
+                Team.name, func.similarity(Team.name, _q_identity).label("sim")
+            ).where(
+                Team.name.op("%")(_q_identity),
+                func.similarity(Team.name, _q_identity) > 0.25,
             )
+            if len(terms) > 1:
+                # #8155 — the multi-term arm. The `%` prefilter above is KEPT
+                # exactly as it is, deliberately: `word_similarity` is not
+                # servable by `ix_teams_name_trgm`, and ranking the survivors of
+                # the indexed predicate instead of replacing it is the difference
+                # between a Bitmap Index Scan and a Seq Scan on `teams` —
+                # measured on production, total cost 49.41 vs 1769.54. Candidate
+                # generation stays indexed; `word_similarity` only ranks and
+                # floors what the index already found.
+                #
+                # The floor is the correctness half (see the constant). The
+                # explicit tiebreak is the other half and is not cosmetic:
+                # `red sax` ties at 0.625 between `Red Star` and `Boston Red Sox`,
+                # and `LIMIT 1` over a tie is heap order — the same query would
+                # answer differently on two days. Ordering by `sim` then `name`
+                # makes the answer deterministic even where it is arguable.
+                _word_sim = func.word_similarity(_q_identity, Team.name)
+                _best_team_q = _best_team_q.where(
+                    _word_sim > _SEARCH_MULTI_TERM_CORRECTION_FLOOR
+                ).order_by(
+                    _word_sim.desc(),
+                    func.similarity(Team.name, _q_identity).desc(),
+                    Team.name.asc(),
+                )
+            else:
+                _best_team_q = _best_team_q.order_by(
+                    func.similarity(Team.name, _q_identity).desc()
+                )
+            best_team = await db.execute(_best_team_q.limit(1))
             best = best_team.first()
             if best:
                 fuzzy_corrected = best.name

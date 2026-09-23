@@ -1308,6 +1308,56 @@ async def test_a_genuinely_unmatched_query_still_gets_its_correction(search):
     )
 
 
+async def test_a_two_word_misspelling_gets_the_same_rescue_as_a_one_word_one(search):
+    """#8155 — `Red socks` returned a blank page while `Yankes` returned 38 results.
+
+    Both are misspellings of a currently-playing MLB club; the only difference was
+    `len(terms) == 1` on the correction gate. A TestFlight tester reported the
+    two-word one in an in-app shake: *"Red socks is actually a legit team and it
+    says no results"*.
+
+    Seeded analogue, so this runs on the contract fixture rather than production:
+    `boston celtcs` is the two-word shape of the `celtcs` case directly above.
+    Measured `word_similarity('boston celtcs', 'Boston Celtics')` = **0.786**,
+    against **0.500** for the nearest decoy `Boston Bruins` — so this asserts the
+    right club, not merely that something came back.
+    """
+    payload = await search("boston celtcs")
+    assert payload.get("did_you_mean") == "Boston Celtics", (
+        f"expected the two-word misspelling to be corrected to 'Boston Celtics', "
+        f"got {payload.get('did_you_mean')!r} — the multi-term arm of the "
+        "did-you-mean gate has regressed to single-term only (#8155)"
+    )
+
+
+async def test_the_multi_term_correction_refuses_a_near_miss_that_clears_the_prefilter(
+    search,
+):
+    """The floor is load-bearing, and this fails if it is removed.
+
+    NOT a vacuous negative. `celtics roster` **reaches** the correction: plain
+    `similarity('Boston Celtics', 'celtics roster')` = **0.429**, comfortably over
+    the 0.25 prefilter this path pins, so with the `word_similarity` floor deleted
+    it WOULD be answered "did you mean Boston Celtics". It is refused only because
+    `word_similarity` = **0.533** is below the 0.59 floor.
+
+    That is the distinction the floor exists to draw, measured on the real
+    population in #8155: a genuine misspelling of a club scores >= 0.600
+    (`red socks` -> Boston Red Sox), while a real club name plus an ordinary extra
+    word scores <= 0.583 (`france d'or` -> France, `queens club` -> Queens (NC)).
+    Correcting the second class asserts a wrong answer to the reader, which the
+    sibling `fed` guard above already rules is worse than an empty bucket.
+    """
+    payload = await search("celtics roster")
+    assert not payload.get("did_you_mean"), (
+        f"`celtics roster` drew the correction "
+        f"{payload.get('did_you_mean')!r}. It clears the 0.25 similarity "
+        "prefilter, so the only thing that may refuse it is the multi-term "
+        "word_similarity floor — this is what a deleted or lowered floor looks "
+        "like (#8155)."
+    )
+
+
 # --------------------------------------------------------------------------
 # LAT-P053 Item 5 — concept provenance, BEHAVIOURALLY (#1846, ruling 041)
 # --------------------------------------------------------------------------
