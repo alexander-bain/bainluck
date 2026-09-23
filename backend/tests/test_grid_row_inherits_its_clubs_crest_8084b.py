@@ -244,16 +244,35 @@ async def test_a_school_crest_crosses_sports_but_its_baseball_record_does_not():
     """BYU on `/playoffs/ncaa-football`: the NCAAF grid has no BYU football row
     at all, so every candidate is another sport. The crest is the university's
     and is right anywhere; `28-28` is a BASEBALL record and belongs nowhere near
-    a football grid. The honest outcome is a crested row with no record."""
+    a football grid. The honest outcome is a crested row with no record.
+
+    ARM B COULD NOT DELIVER THAT SENTENCE AND #8131 DOES. This test used to
+    assert `record == "22-10"` — the winning row's own women's-basketball
+    season — because arm B's reach was the INHERITANCE fill, which may only
+    write fields that were empty and so was never entitled to clear one. The
+    docstring above named the right answer anyway, and a reader duly found
+    `BYU Cougars 22-10` on the College Football Playoff grid. `_crosses_sport_
+    boundary` closes that gap, so the assertion now matches the paragraph it
+    always sat under.
+
+    Arm B's own claim — that the fill never DONATES a record across rows — is
+    untouched and is still pinned by
+    `test_the_english_record_does_not_follow_the_crest_onto_the_ucl_grid`,
+    where donor and winner are both soccer and the suppression cannot fire.
+    """
     meta = await _lookup(
         [_byu_baseball(), _byu_womens_hoops()], "ncaa-football", {"BYU Cougars"}
     )
     row = meta["byu cougars"]
 
-    assert row["logo_url"] == OTHER_CREST
-    assert row["record"] == "22-10", (
-        "the winning row's OWN record must survive untouched — the fill only "
-        "ever writes fields that were empty"
+    assert row["logo_url"] == OTHER_CREST, (
+        "the university's crest is right on any of its teams' grids and must "
+        "survive the season being dropped"
+    )
+    assert row["record"] is None, (
+        "22-10 is a women's basketball season (32 games) on a football grid; "
+        "28-28 is a baseball one. Neither belongs here and there is no BYU "
+        "football row to prefer instead (#8131)"
     )
 
 

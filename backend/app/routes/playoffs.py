@@ -1884,6 +1884,61 @@ def _alias_may_claim(
 # #6230 was opened for (a spring-training record served on an MLB grid).
 _VISUAL_IDENTITY_FIELDS = ("logo_url", "primary_color", "secondary_color")
 
+# The other half of that same sentence (#8131). `_VISUAL_IDENTITY_FIELDS` says
+# which fields may be INHERITED across rows; these are the fields that may not
+# cross a SPORT boundary even when they arrive on the winning row itself.
+_SEASON_FIELDS = ("record", "conference", "division", "seed")
+
+
+def _sport_family(sport_key: str | None) -> str:
+    """The sport itself — everything before the first underscore.
+
+    `basketball_ncaab` and `basketball_wncaab` are one family; `baseball_ncaa`
+    and `americanfootball_ncaaf` are two. Deliberately coarse: the claim being
+    made is only "a football grid may not print a baseball record", never
+    anything about which competition inside a sport is the right one.
+    """
+    return (sport_key or "").split("_")[0]
+
+
+def _crosses_sport_boundary(team, scope_keys: set[str]) -> bool:
+    """True when this row's SPORT is not the sport the grid is about.
+
+    A CLUB'S CREST CROSSES THIS BOUNDARY AND ITS RECORD DOES NOT (#8131). BYU's
+    crest is BYU's whichever team wears it, so `_with_inherited_identity` is
+    right to carry it; `22-10` is a women's basketball season and cannot also be
+    a football one. Measured on production 2026-09-23 over the 398 rows the 13
+    warm grids serve: exactly THREE rows cross a sport boundary, all three on
+    `/playoffs/ncaa-football`, and all three carry nothing but a wrong `record` —
+
+        BYU Cougars       <- 2408  basketball_wncaab  22-10  (32 games)
+        Arizona Wildcats  <- 14625 baseball_ncaa      19-32  (51 games)
+        Kentucky Wildcats <- 3615  baseball_ncaa      33-23  (56 games)
+
+    — none of which is a possible college-football record. There is no
+    `americanfootball_ncaaf` row for any of the three, so this is NOT the
+    "prefer the in-scope row" defect: the out-of-scope row wins because it is
+    the only claimant, and it brings its own season with it.
+
+    THE TEST IS THE SPORT, NOT THE SCOPE, AND THAT IS THE WHOLE SAFETY MARGIN.
+    Two of the served rows are out of scope WITHIN their sport — `Manchester
+    United` (11861, `soccer_uefa_champs_league_women`) and `Real Betis` (5670,
+    `soccer_uefa_europa_league`) on the Champions League grid — and a club's
+    domestic record is exactly what a reader expects on a European grid, so
+    suppressing on scope alone would trade three wrong records for a rule that
+    can blank correct ones the moment such a row carries one (today both carry
+    none). The coarse family test cannot reach them.
+
+    Fails closed twice: an empty scope (`league_slug=""`, no config) and a row
+    whose sport did not load both return False and change nothing.
+    """
+    if not scope_keys:
+        return False
+    sport_key = getattr(getattr(team, "sport", None), "key", None)
+    if not sport_key:
+        return False
+    return _sport_family(sport_key) not in {_sport_family(k) for k in scope_keys}
+
 
 def _with_inherited_identity(meta: dict, previous: dict | None) -> dict:
     """`meta`, with any empty visual-identity field filled from the key's last holder.
@@ -2195,6 +2250,17 @@ async def _get_team_metadata(
             meta["conference"] = _extract_standings_label(standings, conference_field)
             meta["division"] = _extract_standings_label(standings, "division")
             meta["seed"] = standings.get("position") or standings.get("seed")
+
+        # A SEASON FIELD MAY NOT CROSS A SPORT BOUNDARY (#8131). Everything
+        # above this line came off the winning ROW; everything below it is
+        # derived from the GRID (the static conference map and the NCAA bracket
+        # are keyed on `league_slug` and the name, not on `team`). So the
+        # suppression sits exactly between them: the row's own season is
+        # dropped, and the grid's own answer is then free to fill the hole it
+        # leaves rather than being blocked by a value from another sport.
+        if _crosses_sport_boundary(team, scope_keys):
+            for field in _SEASON_FIELDS:
+                meta[field] = None
 
         # Queue #242 Item 1c: MLB/NFL have NULL standings_data (StatPal only
         # populates NBA/NHL divisions), so the division race never rendered for

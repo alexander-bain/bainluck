@@ -660,6 +660,13 @@ class TestTeamStandingsMetadata:
         team = MagicMock()
         team.id = 7
         team.name = "Boston Celtics"
+        # A BARE MagicMock HAS NO SPORT, AND PRODUCTION ALWAYS DOES (#8131).
+        # `team.sport.key` auto-vivifies to a MagicMock, which is truthy and
+        # matches no sport key, so the fake read as a row from another SPORT on
+        # the NBA grid — and a season field may not cross that boundary, so the
+        # standings conference this test is about was suppressed. The fake was
+        # wrong, not the rule: pin the sport the row really has.
+        team.sport.key = "basketball_nba"
         team.abbreviation = "BOS"
         team.logo_url_small = None
         team.logo_url_large = None
@@ -691,6 +698,7 @@ class TestTeamStandingsMetadata:
         team = MagicMock()
         team.id = 8
         team.name = "Los Angeles Lakers"
+        team.sport.key = "basketball_nba"  # see the note above (#8131)
         team.abbreviation = "LAL"
         team.logo_url_small = None
         team.logo_url_large = None
