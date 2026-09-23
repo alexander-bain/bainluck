@@ -381,6 +381,13 @@ COVERED = (
     # specimen filtered for THAT reason makes the refusal assertion pass with the
     # fix reverted. That one is held by the gate's own anti-vacuity test.
     "test_grid_untaken_offer_8220_pg.py",
+    # #7829 part 1. The Miami identity gate on the same grid route. Seeds
+    # `sports`, `teams`, `futures_markets` and `futures_outcomes` by raw INSERT
+    # (the `teams.abbreviation` column is the anchor under test, so the seed
+    # must carry it) and reads the served NCAAF payload. Registered here so a
+    # NOT NULL column added to any of those four tables fails this parse rather
+    # than a red deploy.
+    "test_grid_miami_identity_7829_pg.py",
     # #6975: seeds `sports` with an explicit reserved id (the #6221 sibling's
     # reason — the shared CI database's sequence is behind its explicit-id
     # rows); every other row goes through the ORM so Python-side defaults

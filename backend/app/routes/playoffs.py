@@ -785,16 +785,123 @@ def _resolve_ambiguous_merge(
     above are untouched: a key with no alias entry behaves exactly as before, and
     an aliased key that still hits two candidates still falls back.
     """
+    hits = _ticker_anchor_hits(short_name, candidates, ticker_suffixes, abbreviations)
+    if len(hits) == 1:
+        return hits[0]
+    return candidates[0]
+
+
+def _ticker_anchor_hits(
+    short_name: str,
+    candidates: list[str],
+    ticker_suffixes: dict[str, set[str]],
+    abbreviations: dict[str, str],
+) -> list[str]:
+    """The candidates whose ``Team.abbreviation`` the venue's ticker suffix names.
+
+    Lifted verbatim out of :func:`_resolve_ambiguous_merge` (#7829 part 1) so the
+    qualified-key resolver below can ask the same question and get the same
+    answer — one predicate, two callers. The exactly-one-hit rule stays with the
+    callers; this only reports the hits.
+    """
     suffixes = {c for c in (_canon_ticker(s) for s in ticker_suffixes.get(short_name, ())) if c}
     suffixes |= {a for s in suffixes if (a := _TICKER_SUFFIX_ALIASES.get(s))}
-    if suffixes:
-        hits = [
-            c for c in candidates
-            if (ab := _canon_ticker(abbreviations.get(c))) and ab in suffixes
-        ]
-        if len(hits) == 1:
-            return hits[0]
-    return candidates[0]
+    if not suffixes:
+        return []
+    return [
+        c for c in candidates
+        if (ab := _canon_ticker(abbreviations.get(c))) and ab in suffixes
+    ]
+
+
+# #7829 part 1. Kalshi spells two different schools ``Miami (FL)`` and
+# ``Miami (OH)``. :func:`_normalize_team_name` strips a trailing parenthetical
+# (it exists to fold ``(W)`` / ``(Res)`` reserve markers), so both arrive at the
+# grid as the one key ``miami`` — and that key then collects BOTH ticker suffixes
+# (``MIA`` and ``MOH``), both candidates hit, and the #7821 anchor correctly
+# fails closed on two hits. Nothing downstream can repair a pool: the identity
+# was lost before any resolver ran.
+#
+# So the grid keeps the qualifier. A trailing two-letter US state code is the
+# one parenthetical that names a DIFFERENT institution rather than a reserve
+# side, and it is a closed, declared set — never a pattern over arbitrary
+# parentheticals, which would turn ``(W)`` back into an identity.
+_US_STATE_QUALIFIERS = frozenset({
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il",
+    "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms", "mo", "mt",
+    "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri",
+    "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv", "wi", "wy", "dc",
+})
+
+_TRAILING_STATE_QUALIFIER_RE = re.compile(r"\(([A-Za-z]{2})\)\s*$")
+_QUALIFIED_KEY_RE = re.compile(r"^(.+?) \(([a-z]{2})\)$")
+
+
+def _grid_identity_key(name: str) -> str:
+    """The grid's per-outcome key: :func:`_normalize_team_name`, except that a
+    trailing US-state qualifier survives.
+
+    ``Miami (FL)`` → ``miami (fl)``; ``Miami (OH)`` → ``miami (oh)``;
+    ``Miami (OH) RedHawks`` → ``miami (oh) redhawks`` (interior, untouched, as
+    before); ``Borussia Dortmund (Res)`` → ``borussia dortmund`` (not a state,
+    stripped exactly as before). Every name without a trailing state code keys
+    byte-for-byte as it always has, so no other key in any grid moves.
+    """
+    base = _normalize_team_name(name)
+    m = _TRAILING_STATE_QUALIFIER_RE.search(name or "")
+    if m and (q := m.group(1).lower()) in _US_STATE_QUALIFIERS and base:
+        return f"{base} ({q})"
+    return base
+
+
+def _qualified_key_base(key: str) -> str | None:
+    """``miami (fl)`` → ``miami``; anything else → None."""
+    m = _QUALIFIED_KEY_RE.match(key)
+    if m and m.group(2) in _US_STATE_QUALIFIERS:
+        return m.group(1)
+    return None
+
+
+def _resolve_qualified_merge(
+    short_name: str,
+    candidates: list[str],
+    ticker_suffixes: dict[str, set[str]],
+    abbreviations: dict[str, str],
+) -> str | None:
+    """Bind a state-qualified venue spelling to one of our teams, or to nothing.
+
+    Called ONLY when the family is contested — when this grid holds another key
+    with the same base and a different qualifier (``miami (fl)`` beside
+    ``miami (oh)``). The family's plain spelling (``miami``) comes here too: it
+    names one of the two schools and says nothing about which. That is the one situation the old ``miami`` key collapsed,
+    and it is the only situation this function changes; an uncontested qualified
+    key is handed to :func:`_resolve_ambiguous_merge` and behaves exactly as its
+    unqualified spelling always did.
+
+    Two anchors, both identities rather than guesses, in this order:
+
+    1. **Textual identity.** The qualified spelling is itself a prefix of exactly
+       one candidate: ``miami (oh)`` → ``miami (oh) redhawks``. This is the
+       ordinary prefix arm applied to the qualified key, and it needs no
+       abbreviation column.
+    2. **The venue's own ticker suffix**, matched against ``Team.abbreviation``
+       with the SAME exactly-one-hit predicate as #7821 — but over THIS key's
+       own suffix set (``miami (fl)`` carries only ``MIA``), which is what the
+       pooled key could never offer.
+
+    Neither anchor ⇒ ``None``: the leg stays on its own unmerged row and no
+    served team receives it. Length is deliberately NOT a fallback here. When
+    the venue has told us there are two schools and we cannot tell which one
+    this is, binding the longer name publishes Miami (OH)'s prices on Miami
+    (FL) — the #7821 defect re-created. A blank is the benign face.
+    """
+    direct = [c for c in candidates if _should_prefix_merge(short_name, c)]
+    if len(direct) == 1:
+        return direct[0]
+    hits = _ticker_anchor_hits(short_name, candidates, ticker_suffixes, abbreviations)
+    if len(hits) == 1:
+        return hits[0]
+    return None
 
 
 async def _team_abbreviations(session: AsyncSession, names: set[str]) -> dict[str, str]:
@@ -5943,7 +6050,10 @@ async def get_playoff_grid(
                 norm = entity_key
                 team_name = entity_name
             else:
-                norm = _normalize_team_name(team_name)
+                # #7829 part 1: `Miami (FL)` and `Miami (OH)` key separately.
+                # Identical to `_normalize_team_name` for every name without a
+                # trailing state qualifier.
+                norm = _grid_identity_key(team_name)
 
             graded = leg_is_graded(outcome.is_winner, outcome.resolution_source)
             # A terminal cell publishes no number, so a graded leg that reached
@@ -6063,7 +6173,24 @@ async def get_playoff_grid(
         return expanded
 
     def _merge_arm_matches(short_name: str, long_name: str) -> bool:
-        """Does any of the four name arms join these two keys?"""
+        """Does any of the four name arms join these two keys?
+
+        #7829 part 1: a state-qualified venue spelling (``miami (fl)``) is never
+        a merge TARGET — our team names do not take that form, and letting one
+        absorb ``miami`` or its sibling ``miami (oh)`` would rebuild the pool one
+        step later. As a SOURCE it matches whatever its base spelling matches
+        (``miami`` → both Miami schools) plus the qualified text itself
+        (``miami (oh)`` → ``miami (oh) redhawks``); which of those candidates it
+        binds to is decided in :func:`_resolve_qualified_merge`, never here.
+        """
+        if _qualified_key_base(long_name) is not None:
+            return False
+        base = _qualified_key_base(short_name)
+        if base is not None and base != short_name and _name_arms_match(base, long_name):
+            return True
+        return _name_arms_match(short_name, long_name)
+
+    def _name_arms_match(short_name: str, long_name: str) -> bool:
         # 1. Prefix merge (location-modifier safe)
         if _should_prefix_merge(short_name, long_name):
             return True
@@ -6102,13 +6229,75 @@ async def get_playoff_grid(
     # Abbreviations are fetched only for the handful of names in contested
     # families — never for the whole grid, and never as a lookup that could
     # answer "who is `florida`?" on its own.
+    #
+    # #7829 part 1. A state-qualified key is CONTESTED when this grid also holds
+    # a sibling key with the same base and a different qualifier — `miami (fl)`
+    # beside `miami (oh)`. That is precisely the population the old pooled key
+    # collapsed. Contested keys go to `_resolve_qualified_merge`, which needs the
+    # abbreviations of every candidate they have (even a single one, because a
+    # lone candidate may be the WRONG school when its sibling is absent from the
+    # other source). Every other key — unqualified, or qualified but alone — is
+    # handled exactly as before, so nothing else in any grid moves.
+    _qualified_bases: dict[str, set[str]] = defaultdict(set)
+    for key in grid_raw:
+        if (base := _qualified_key_base(key)) is not None:
+            _qualified_bases[base].add(key)
+    _contested_qualified = {
+        key for keys in _qualified_bases.values() if len(keys) > 1 for key in keys
+    }
+    # The BARE base key of a contested family is contested too. Once `miami (fl)`
+    # and `miami (oh)` take their own legs, a venue that spells the school plain
+    # `Miami` (Polymarket's 2027 NCAAB champion market, production 2026-09-23)
+    # is left alone on `miami` with no ticker suffix, and the old resolver's
+    # no-anchor fallback is `candidates[0]` — longest-first, i.e. `miami (oh)
+    # redhawks`. On base that key was anchored to the Hurricanes by the `MIA`
+    # suffix it pooled; splitting the family took the anchor away. The venue has
+    # told us there are two schools, so the plain spelling binds by identity or
+    # not at all, exactly like its qualified siblings.
+    _contested_qualified |= {
+        base for base, keys in _qualified_bases.items() if len(keys) > 1 and base in grid_raw
+    }
+    # And when the family is NOT contested — one qualified spelling beside the
+    # plain one — the plain key keeps the anchor it had before the split. Base
+    # pooled `Miami (FL)` and `Miami` on one `miami` key, so the plain spelling
+    # resolved on the `MIA` suffix; separated, it would have none and fall to
+    # the longest candidate. Production NCAAB 2026-09-23 is exactly this: the
+    # grid carries no `Miami (OH)` leg (only last season's resolved markets do),
+    # and Polymarket's plain `Miami` went to the RedHawks. Lending the lone
+    # sibling's suffixes restores base's answer for this case.
+    _merge_suffixes: dict[str, set[str]] = ticker_suffixes
+    _lent = {
+        base: next(iter(keys))
+        for base, keys in _qualified_bases.items()
+        if len(keys) == 1 and base in grid_raw
+    }
+    if _lent:
+        _merge_suffixes = defaultdict(set, ticker_suffixes)
+        for base, sibling in _lent.items():
+            _merge_suffixes[base] = set(ticker_suffixes.get(base, ())) | set(
+                ticker_suffixes.get(sibling, ())
+            )
     _contested = {c for cs in merge_candidates.values() if len(cs) > 1 for c in cs}
+    _contested |= {
+        c for short, cs in merge_candidates.items() if short in _contested_qualified for c in cs
+    }
     abbreviations = await _team_abbreviations(db, _contested) if _contested else {}
 
     for short_name, cands in merge_candidates.items():
+        if short_name in _contested_qualified:
+            target = _resolve_qualified_merge(short_name, cands, ticker_suffixes, abbreviations)
+            if target is None:
+                logger.info(
+                    "Grid %s: qualified key %r has %d candidate(s) but no identity anchor — "
+                    "left unbound rather than bound by length (#7829)",
+                    config.slug, short_name, len(cands),
+                )
+                continue
+            merge_map[short_name] = target
+            continue
         merge_map[short_name] = (
             cands[0] if len(cands) == 1
-            else _resolve_ambiguous_merge(short_name, cands, ticker_suffixes, abbreviations)
+            else _resolve_ambiguous_merge(short_name, cands, _merge_suffixes, abbreviations)
         )
 
     # Apply merges
