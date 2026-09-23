@@ -340,7 +340,7 @@ async def probe_kalshi(ticker: str, client: httpx.AsyncClient) -> ProbeOutcome:
     """
     market_status, market_body = await _get(client, f"{KALSHI_BASE}/markets/{ticker}")
     if market_status != 404:
-        return classify_kalshi(market_status, _clip(market_body))
+        return classify_kalshi(market_status, market_body, clip=_clip)
 
     # ASK FOR THE TICKER WE HOLD BEFORE ASKING FOR ITS PARENT.
     #
@@ -371,9 +371,13 @@ async def probe_kalshi(ticker: str, client: httpx.AsyncClient) -> ProbeOutcome:
         if parent != ticker:
             event_status, event_body = await _get(client, f"{KALSHI_BASE}/events/{parent}")
 
-    return classify_kalshi(
-        market_status, _clip(market_body), event_status, _clip(event_body)
-    )
+    # CLIP AT STORAGE, NOT BEFORE THE PARSE. ``_clip`` replaces a body over
+    # MAX_RAW_CHARS with a ``_head`` string that has no ``markets`` key, and a
+    # settled Kalshi board is two orders of magnitude over that ceiling
+    # (812,850 chars for a 400-leg ladder, measured 2026-09-22). Handing the
+    # clipped body to the classifier would blind the per-leg reader to exactly
+    # the boards it was written for; ``clip=`` keeps the stored payload bounded.
+    return classify_kalshi(market_status, market_body, event_status, event_body, clip=_clip)
 
 
 def _kalshi_event_ticker(market_ticker: str) -> str:

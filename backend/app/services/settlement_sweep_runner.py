@@ -95,7 +95,17 @@ logger = logging.getLogger(__name__)
 #: Version of the probe protocol that produced these dispositions. Bumped when the
 #: classifier's *rules* change, so old rows are never silently re-read under a new
 #: vocabulary — they answered a different question.
-PROBE_PROTOCOL_VERSION = 1
+#:
+#: **v2 (#2077, 2026-09-22)** — the classifier learned to read a multi-leg Kalshi
+#: board. Three rule changes, each of which re-labels rows v1 already wrote:
+#: an event-200 listing markets now grades per leg instead of answering
+#: ``ambiguous_empty``; ``finalized``/``scalar`` now answers
+#: ``settled_no_verdict`` instead of ``open_no_settlement`` (and, on the market
+#: path, instead of ``settled`` with the literal string ``"scalar"`` as the
+#: winner); and the parse now sees the unclipped body. A v1 ``ambiguous_empty``
+#: therefore means "not read yet", not "read and unreadable" — which is the whole
+#: reason this column exists.
+PROBE_PROTOCOL_VERSION = 2
 
 #: Rows in the terminal bucket at C-CLIFF-CENSUS-1 (2026-08-21). These are the ones
 #: that become permanently unrecoverable on 2026-08-28. Named so the budget below
@@ -261,6 +271,39 @@ def _capture_row(
 
     remaining = days_until_purge(candidate.resolution_date, now)
 
+    # PER-LEG VERDICTS ARE EVIDENCE, AND EVIDENCE MUST OUTLIVE THE PROBE.
+    #
+    # `winning_outcome` is one column and a settled board has up to 400 verdicts,
+    # so the legs cannot go there — and the table's CHECK constraint is right to
+    # keep it that way, since a board has no single winner to name.
+    #
+    # They cannot simply be dropped either. A `settled_per_leg` capture is
+    # TERMINAL, so the board is never probed again; storing the disposition
+    # without the verdicts would convert "we read 400 answers" into "we will never
+    # ask again and kept none of them", which is worse than not reading it at all.
+    # The follow-on grading write reads these rows rather than re-probing a
+    # population against a retention wall that is still moving.
+    #
+    # Stored under `_derived` and never merged into the channel keys beside it:
+    # everything else in `raw_response` is what the venue SAID, this is what we
+    # concluded, and constraint (a) is that a wrong parse stays recoverable from
+    # the former. Compact on purpose — ticker, verdict and the disposition that
+    # licenses it — because status and result are re-derivable from the
+    # disposition and the raw head, and 400 legs of full payload are not.
+    raw_response: dict[str, Any] = dict(outcome.raw or {})
+    if outcome.leg_claims:
+        raw_response["_derived"] = {
+            "protocol_version": PROBE_PROTOCOL_VERSION,
+            "legs": [
+                {
+                    "external_id": leg.external_id,
+                    "disposition": leg.disposition.value,
+                    "is_winner": leg.is_winner,
+                }
+                for leg in outcome.leg_claims
+            ],
+        }
+
     return {
         "market_id": candidate.market_id,
         "source": candidate.source,
@@ -275,7 +318,7 @@ def _capture_row(
         "channels": [
             {"channel": name, "status": status} for name, status in outcome.channels
         ],
-        "raw_response": outcome.raw or None,
+        "raw_response": raw_response or None,
         "reason": outcome.reason or None,
         "candidate_reason": candidate.candidate_reason,
         "days_remaining_at_capture": (

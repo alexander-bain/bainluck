@@ -766,3 +766,79 @@ async def test_the_drain_still_reaches_zero_when_the_work_is_actually_done():
     result = await verify_sweep(session, sweep_id="s", now=NOW)
     assert result["terminal_bucket_uncaptured"] == 0
     assert result["terminal_bucket_drained"] is True
+
+
+# ---------------------------------------------------------------------------
+# Per-leg verdicts survive the probe that read them (#2077)
+# ---------------------------------------------------------------------------
+
+
+def _per_leg_board():
+    """A settled two-leg board: one named winner, one `finalized`/`scalar`."""
+    from app.utils.settlement_truth import LegSettlement, ProbeOutcome
+
+    return ProbeOutcome(
+        Disposition.SETTLED_PER_LEG,
+        channels=(("kalshi_market", 404), ("kalshi_event", 200)),
+        reason="kalshi event settled every leg — 2 legs",
+        raw={"kalshi_event": {"_truncated": True, "_head": "{...}"}},
+        leg_claims=(
+            LegSettlement("KXA-1-T1", Disposition.SETTLED, is_winner=True),
+            LegSettlement("KXA-1-T2", Disposition.SETTLED_NO_VERDICT),
+        ),
+    )
+
+
+def test_a_per_leg_capture_persists_the_verdicts_it_read():
+    """Terminal WITHOUT evidence is data loss, not caution.
+
+    ``settled_per_leg`` is terminal, so this board is never probed again. A row
+    that recorded the disposition and dropped the legs would turn "we read every
+    answer" into "we will never ask again and kept none of them" — strictly worse
+    than never having read it, because the retention wall keeps moving.
+    """
+    candidate = Candidate(1, "kalshi", "KXA-1", _at_age(60), "missing_winner")
+    row = _capture_row(candidate, _per_leg_board(), sweep_id="s", now=NOW)
+
+    legs = row["raw_response"]["_derived"]["legs"]
+    assert [leg["external_id"] for leg in legs] == ["KXA-1-T1", "KXA-1-T2"]
+    assert legs[0]["is_winner"] is True
+    assert legs[1]["is_winner"] is None
+    assert legs[1]["disposition"] == "settled_no_verdict"
+
+
+def test_a_per_leg_capture_still_names_no_board_winner():
+    """The CHECK constraint ``(disposition='settled') = (winning_outcome IS NOT NULL)``
+    refuses the row otherwise — and a board has no single winner to name."""
+    candidate = Candidate(1, "kalshi", "KXA-1", _at_age(60), "missing_winner")
+    row = _capture_row(candidate, _per_leg_board(), sweep_id="s", now=NOW)
+    assert row["disposition"] == "settled_per_leg"
+    assert row["winning_outcome"] is None
+
+
+def test_the_derived_legs_never_overwrite_what_the_venue_said():
+    """Constraint (a): a wrong parse must stay recoverable from the raw body.
+
+    Merging the conclusions into the channel keys would lose that, so ``_derived``
+    is its own key and the venue's channels are untouched beside it.
+    """
+    candidate = Candidate(1, "kalshi", "KXA-1", _at_age(60), "missing_winner")
+    row = _capture_row(candidate, _per_leg_board(), sweep_id="s", now=NOW)
+    assert row["raw_response"]["kalshi_event"] == {"_truncated": True, "_head": "{...}"}
+
+
+def test_a_capture_with_no_legs_grows_no_derived_key():
+    """The control. Every non-board probe's row is unchanged by this ship."""
+    candidate = Candidate(1, "kalshi", "KXA-1", _at_age(60), "missing_winner")
+    row = _capture_row(candidate, _settled("no"), sweep_id="s", now=NOW)
+    assert "_derived" not in (row["raw_response"] or {})
+
+
+def test_the_protocol_version_moved_with_the_classifier_rules():
+    """The column exists so v1 rows are not re-read under v2 vocabulary.
+
+    A v1 ``ambiguous_empty`` on a board means "not read yet"; a v2 one means "read
+    and unreadable". Leaving the version at 1 fuses those two populations in every
+    burn-down that groups on disposition.
+    """
+    assert PROBE_PROTOCOL_VERSION >= 2
