@@ -68,8 +68,10 @@ MAX_ASSETS_PER_CONNECTION = 500
 # uptime 1560s, `shards=3/3`, two shards subscribed at the full 500 assets
 # (`0:448/500 1:482/500`) — the socket had received and json-parsed 186,472
 # messages and delivered 3,611 prices to `on_price` with 0 errors and no 1009.
-# `_shard_served` is written only after `json.loads` succeeds, so those served
-# counts are proof of RECEIPT. Whichever spares us (thin sports books landing
+# `_shard_wire` is written only after `json.loads` succeeds, so those counts are
+# proof of RECEIPT. They are WIRE counts and not the coverage figure `served=`
+# reports today: they were taken before the numerator was narrowed to the
+# subscription, so do not line them up against a current `served=` reading. Whichever spares us (thin sports books landing
 # the dump under 1 MiB, or the venue not answering this population with one
 # list), the close is not occurring, so do not read this constant as evidence
 # that it was. It buys insurance against a book that deepens, and the mode it
@@ -253,8 +255,19 @@ class PolymarketWebSocket:
         # books were quiet, and one structure rather than a list beside a
         # count is deliberate — a count that can drift from the list it
         # summarises is the coverage instrument lying about coverage.
+        # Two populations, deliberately not one. `_shard_wire` is everything the
+        # connection was sent, foreign ids included — the venue is free to push
+        # an id we never asked for, and it does: production read shard 2 at
+        # 394 on the wire against a 375-id subscription, an excess of 19. That
+        # raw set is what answers "did this socket receive anything at all",
+        # which is `_silent_shards`' question and not a coverage question.
+        # Coverage is `_served_by_shard()`, the intersection against
+        # `_shard_ids`, so that the numerator and the denominator of every
+        # served/subscribed ratio are drawn from the same population. Counting
+        # the wire against the subscription is what let a ratio print 105% and
+        # made every honest one — 98.3%, 97.8% — an over-read of the real figure.
         self._shard_ids: dict[int, list[str]] = {}
-        self._shard_served: dict[int, set[str]] = {}
+        self._shard_wire: dict[int, set[str]] = {}
         self._shards_connected: set[int] = set()
         self._shard_connected_at: dict[int, float] = {}
 
@@ -280,7 +293,7 @@ class PolymarketWebSocket:
             shards = [None]
 
         self._shard_ids = {i: list(s or []) for i, s in enumerate(shards)}
-        self._shard_served = {i: set() for i in range(len(shards))}
+        self._shard_wire = {i: set() for i in range(len(shards))}
         self._shards_connected = set()
         self._shard_connected_at = {}
 
@@ -334,11 +347,19 @@ class PolymarketWebSocket:
         shard with no live socket has no stamp at all — `_mark_shard_down` takes
         it with the connection — so it drops out here too, correctly: that is a
         disconnect, already logged loudly, not a starved subscription.
+
+        The RAW wire set is the right input here and the intersected coverage
+        set is not: this asks whether a connection received anything at all, so
+        a shard that was sent only ids outside its own subscription has plainly
+        not gone quiet — the socket is alive and the venue is answering it. That
+        is a different defect from a starved subscription and it would be a
+        false positive under this warning's own wording. It is visible instead
+        as `on_wire_by_shard` exceeding `served_by_shard` in `stats`.
         """
         return [
             i
-            for i, served in self._shard_served.items()
-            if not served
+            for i, wire in self._shard_wire.items()
+            if not wire
             and i in self._shard_connected_at
             and now - self._shard_connected_at[i] >= COVERAGE_GRACE_SECONDS
         ]
@@ -350,12 +371,24 @@ class PolymarketWebSocket:
         quiet for honest reasons, and absence on one leg proves nothing. The
         signal is comparative: same-sized shards, some serving and one serving
         nothing at all, is the shape the oversized subscribe produced.
+
+        The ratio printed beside it is the INTERSECTED count over the
+        subscription, so the two halves of `served/subscribed` count the same
+        population; the trip condition above it is still the raw wire, because
+        silence is about the socket and coverage is about the subscription.
         """
         while True:
             await asyncio.sleep(COVERAGE_GRACE_SECONDS)
-            served = {i: len(s) for i, s in self._shard_served.items()}
+            served = {i: len(s) for i, s in self._served_by_shard().items()}
             silent = self._silent_shards(asyncio.get_running_loop().time())
-            if silent and any(n > 0 for n in served.values()):
+            # The sibling test stays on the RAW wire for the same reason
+            # `_silent_shards` does: "is anyone else being answered at all" is
+            # the comparison that makes one shard's silence mean something, and
+            # scoring a sibling on the intersection would suppress this warning
+            # in exactly the case where the venue is answering the fleet with
+            # ids nobody asked for.
+            streaming = any(self._shard_wire.values())
+            if silent and streaming:
                 logger.warning(
                     "Polymarket WS coverage: shard(s) %s have served 0 distinct "
                     "assets while siblings are streaming — served/subscribed %s",
@@ -445,10 +478,19 @@ class PolymarketWebSocket:
                             # and reads zero for a shard the venue is in fact
                             # serving, which would make an unhandled shard
                             # indistinguishable from a starved one.
-                            served = _assets_in(data)
-                            if served:
-                                self._shard_served.setdefault(shard, set()).update(
-                                    served
+                            #
+                            # It is recorded RAW, and narrowed to the
+                            # subscription at the read (`_served_by_shard`),
+                            # not here: an id the venue sent us unasked is a
+                            # real thing this connection received, and dropping
+                            # it at the write would erase the only evidence that
+                            # it happened. Filtering here would also make the
+                            # counter silently depend on `_shard_ids` having
+                            # been populated first.
+                            on_wire = _assets_in(data)
+                            if on_wire:
+                                self._shard_wire.setdefault(shard, set()).update(
+                                    on_wire
                                 )
 
                             if isinstance(data, list):
@@ -538,6 +580,39 @@ class PolymarketWebSocket:
         """
         return bool(self._shards_connected)
 
+    def _served_by_shard(self) -> dict[int, set[str]]:
+        """Per shard, the SUBSCRIBED ids the venue has actually sent a frame for.
+
+        The intersection, and the reason coverage is read through this rather
+        than off `_shard_wire` directly. The venue sends ids we never asked for
+        — measured on production, shard 2 carried 19 of them across two reads,
+        `2:394/375` and `2:498/479` — so a numerator taken from the wire is
+        counted over a different population from the subscription denominator
+        beside it. That produced ratios above 100% where the excess was large
+        enough to notice and, far worse, quietly inflated every ratio where it
+        was not: the 98.3% and 97.8% coverage figures this instrument reported
+        are upper bounds, not readings.
+
+        AN INTERSECTION AND NOT A CAP, which codex's counterexample settles
+        (review 2026-09-23 06:38Z): one subscribed id never sent, one foreign id
+        received, and the old counter read `assets_served=1` of
+        `assets_subscribed=1` while `unserved_by_shard` said 1 in the same
+        breath. That shard never crossed its own denominator, so there was no
+        excess to subtract and a cap would have left `1/1` exactly as it was.
+        The over-count does not require an overfull shard.
+
+        Keyed on `_shard_ids` so the population is the subscription even for a
+        shard that has been sent nothing, and so this and `_unserved_by_shard`
+        below partition that subscription exactly — served + unserved is the
+        subscribed count for every shard, which is the invariant the old
+        counter could not satisfy.
+        """
+        out: dict[int, set[str]] = {}
+        for shard, ids in self._shard_ids.items():
+            wire = self._shard_wire.get(shard) or set()
+            out[shard] = {asset_id for asset_id in ids if asset_id in wire}
+        return out
+
     def _unserved_by_shard(self) -> dict[int, list[str]]:
         """Per shard, the subscribed ids the venue has never sent a frame for.
 
@@ -548,10 +623,11 @@ class PolymarketWebSocket:
         the sampler below reads position, and position is the confound it
         exists to spread across.
         """
+        served = self._served_by_shard()
         out: dict[int, list[str]] = {}
         for shard, ids in self._shard_ids.items():
-            served = self._shard_served.get(shard) or set()
-            out[shard] = [asset_id for asset_id in ids if asset_id not in served]
+            hit = served.get(shard) or set()
+            out[shard] = [asset_id for asset_id in ids if asset_id not in hit]
         return out
 
     def unserved_sample(
@@ -587,8 +663,9 @@ class PolymarketWebSocket:
 
     @property
     def stats(self) -> dict:
-        served = {i: len(s) for i, s in self._shard_served.items()}
+        served = {i: len(s) for i, s in self._served_by_shard().items()}
         subscribed = {i: len(ids) for i, ids in self._shard_ids.items()}
+        on_wire = {i: len(s) for i, s in self._shard_wire.items()}
         return {
             "connected": self.is_connected,
             "messages": self._message_count,
@@ -610,4 +687,18 @@ class PolymarketWebSocket:
             "unserved_by_shard": {
                 i: len(u) for i, u in self._unserved_by_shard().items()
             },
+            # The raw wire count, kept as its own field rather than folded into
+            # `served_by_shard`, because narrowing the numerator to the
+            # subscription would otherwise make the excess unreadable: served
+            # can no longer exceed its denominator — a consequence of the
+            # intersection, NOT a cap, which would leave the counterexample
+            # below untouched — so `2:375/375` reads the same whether the wire
+            # carried 375 ids or 394. Stated
+            # separately, `on_wire - served` is the count of ids the venue sent
+            # this shard unasked — the thing that was being scored AS coverage —
+            # and it is also the only served-ish number the shadow consumer has,
+            # since that one subscribes to everything and so has no subscription
+            # to intersect against.
+            "assets_on_wire": sum(on_wire.values()),
+            "on_wire_by_shard": on_wire,
         }

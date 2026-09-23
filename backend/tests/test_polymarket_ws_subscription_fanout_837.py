@@ -624,7 +624,7 @@ class TestCoverageIsCountedOnTheWire:
         # impatience.
         ws = PolymarketWebSocket()
         ws._shard_ids = {0: _ids(500), 1: _ids(500)}
-        ws._shard_served = {0: {"served"}, 1: set()}
+        ws._shard_wire = {0: {"served"}, 1: set()}
         ws._shards_connected = {0, 1}
         ws._shard_connected_at = {0: 0.0, 1: 1_000.0}
 
@@ -640,7 +640,7 @@ class TestCoverageIsCountedOnTheWire:
         # shard that simply is not connected.
         ws = PolymarketWebSocket()
         ws._shard_ids = {0: _ids(500), 1: _ids(500)}
-        ws._shard_served = {0: {"served"}, 1: set()}
+        ws._shard_wire = {0: {"served"}, 1: set()}
         ws._shards_connected = {0}
         ws._shard_connected_at = {0: 0.0}
 
@@ -1070,7 +1070,7 @@ class TestTheUnservedIdsAreNamed:
     def _client(self, shard_ids, served):
         ws = PolymarketWebSocket()
         ws._shard_ids = dict(shard_ids)
-        ws._shard_served = {i: set(s) for i, s in served.items()}
+        ws._shard_wire = {i: set(s) for i, s in served.items()}
         return ws
 
     def test_the_sample_names_ids_that_were_subscribed_and_never_served(self):
@@ -1203,7 +1203,7 @@ class TestTheUnservedIdsAreNamed:
         self, monkeypatch
     ):
         """Ties it to the wire rather than to seeded state: a hand-set
-        `_shard_served` would pass even if `run` stopped recording ids."""
+        `_shard_wire` would pass even if `run` stopped recording ids."""
         assets = _ids(1500)
         served_ids = assets[:7]
         frames = [
@@ -1226,15 +1226,235 @@ class TestTheUnservedIdsAreNamed:
             await task
 
         assert stats["assets_served"] > 0, "sanity: the fake socket served ids"
-        # Against the ids the socket was KNOWN to send, not against
-        # `assets_served`. Every shard here shares one fake socket, so all three
-        # connections receive frames for shard 0's seven ids and
-        # `assets_served` sums to 21 — a shard credited with a sibling's
-        # traffic. The unserved accounting must be immune to that, and 1493 is
-        # the number that proves it.
+        # THE OVER-COUNT, END TO END, through `run` rather than seeded state.
+        # Every shard here shares one fake socket, so all three connections
+        # receive frames for shard 0's seven ids: 21 id-arrivals on the wire for
+        # 7 subscribed ids actually served. `assets_served` summed those 21 —
+        # two shards credited with a sibling's traffic — while the denominator
+        # beside it counted only what each shard asked for. The wire total is
+        # still reported, under a name that says it is the wire.
+        assert stats["assets_served"] == len(served_ids), (
+            "a shard is credited only for ids IT subscribed to; 21 was the bug"
+        )
+        assert stats["assets_on_wire"] == len(served_ids) * stats["shards"], (
+            "the sibling arrivals are not lost, they are named as wire traffic"
+        )
         assert sum(stats["unserved_by_shard"].values()) == len(assets) - len(
             served_ids
         ), "subscribed minus served must account for every id, losing none"
         flat = [a for picks in sample.values() for a in picks]
         assert flat, "1500 ids and 7 served: there is plenty unserved to name"
         assert set(flat).isdisjoint(set(served_ids))
+
+
+class TestCoverageCountsOnePopulation:
+    """#837 — `served/subscribed` must not put the wire over the subscription.
+
+    THE DEFECT. `_shard_wire` is filled from the wire, above every filter, and
+    that is correct: it is receipt. But the coverage ratio read it as the
+    numerator against the SUBSCRIPTION as the denominator, and those are two
+    different populations — the venue sends ids nobody asked for. Measured on
+    production either side of the v4953 release, shard 2 served MORE than it
+    subscribed to, `2:394/375` and then `2:498/479`, an excess of exactly 19
+    both times.
+
+    WHY THAT MATTERS MORE THAN THE 105%. A ratio over 100% is absurd on its
+    face and gets noticed. The damage is the readings that stayed plausible:
+    98.3% and 97.8% coverage were reported as measurements when they were upper
+    bounds, because shards 0 and 1 may carry foreign ids too and theirs read as
+    coverage rather than as excess, having never crossed their own denominator.
+    An instrument built to answer "is the venue serving the whole subscription"
+    was answering it too generously, in the one direction that hides the defect
+    it exists to find.
+
+    So the property pinned here is that the numerator is drawn from the
+    denominator's own population, and its companion: nothing is thrown away to
+    achieve that. `_silent_shards` still asks the raw wire whether a socket
+    received anything at all, which is a question about the connection and not
+    about coverage, and the excess itself is reported rather than discarded.
+    """
+
+    #: The production read this class exists because of.
+    SUBSCRIBED = 375
+    FOREIGN = 19
+
+    def _client(self, subscribed, wire):
+        ws = PolymarketWebSocket()
+        ws._shard_ids = {i: list(ids) for i, ids in subscribed.items()}
+        ws._shard_wire = {i: set(s) for i, s in wire.items()}
+        return ws
+
+    def test_an_id_the_shard_never_subscribed_to_does_not_raise_its_served_count(
+        self,
+    ):
+        ids = _ids(10)
+        foreign = ["not-ours-1", "not-ours-2"]
+        ws = self._client({0: ids}, {0: set(ids[:3]) | set(foreign)})
+
+        assert ws.stats["served_by_shard"][0] == 3, (
+            "five ids arrived, three of them were ours; coverage counts ours"
+        )
+
+    def test_the_production_specimen_stops_reading_over_its_own_denominator(self):
+        # `2:394/375`, reproduced. The venue served the whole subscription AND
+        # 19 ids outside it, so the honest reading is 375/375 and not 394/375.
+        ids = _ids(self.SUBSCRIBED)
+        foreign = [f"foreign-{i}" for i in range(self.FOREIGN)]
+        ws = self._client({2: ids}, {2: set(ids) | set(foreign)})
+
+        stats = ws.stats
+        assert stats["served_by_shard"][2] == self.SUBSCRIBED
+        assert stats["served_by_shard"][2] <= stats["subscribed_by_shard"][2], (
+            "a shard cannot be served more of its subscription than it has"
+        )
+        assert stats["served_by_shard"][2] != self.SUBSCRIBED + self.FOREIGN, (
+            "394 was the number the old counter printed against a 375 denominator"
+        )
+
+    def test_codexs_counterexample_one_wanted_id_one_foreign_id(self):
+        # CODEX'S RECORDED COUNTEREXAMPLE, verbatim (review of 2026-09-23
+        # 06:38Z, artifacts/codex-837-coverage-review-20260923/). It is the
+        # minimal case and it is the one that settles the shape of the repair:
+        # ONE subscribed id never sent, ONE foreign id received. The old
+        # counter reported `assets_served=1` against `assets_subscribed=1` —
+        # apparently perfect coverage — while `unserved_by_shard` simultaneously
+        # said 1 of the 1 subscribed ids had never been served. Both numbers
+        # from the same object, in the same read, contradicting each other.
+        #
+        # This is also why the repair is an INTERSECTION and not a cap or a
+        # subtraction: this shard never crossed its own denominator, so there
+        # was no excess to subtract and capping would have left `1/1` exactly
+        # as it was. Codex's finding is precisely that capping yields upper
+        # bounds and is not a fix.
+        ws = self._client({0: ["wanted"]}, {0: {"foreign"}})
+
+        stats = ws.stats
+        assert stats["assets_served"] == 0, (
+            "the one id we asked for never arrived; 1/1 was the bug"
+        )
+        assert stats["unserved_by_shard"][0] == 1
+        assert stats["assets_on_wire"] == 1, "the foreign id is still counted"
+
+    def test_served_and_unserved_partition_the_subscription(self):
+        # The invariant the old counter could not satisfy, and the reason this
+        # is a partition rather than two independent counts: with a foreign id
+        # in the wire set the two halves summed to MORE than the denominator
+        # they were both reported beside, so a reader subtracting one from the
+        # other got a different answer than a reader adding them.
+        ids = _ids(40)
+        foreign = [f"foreign-{i}" for i in range(7)]
+        ws = self._client(
+            {0: ids[:25], 1: ids[25:]},
+            {0: set(ids[:10]) | set(foreign), 1: set(ids[25:30]) | set(foreign)},
+        )
+
+        stats = ws.stats
+        for shard in (0, 1):
+            assert (
+                stats["served_by_shard"][shard]
+                + stats["unserved_by_shard"][shard]
+                == stats["subscribed_by_shard"][shard]
+            ), f"shard {shard}: served + unserved must be the subscription"
+
+    def test_the_ids_the_venue_sent_unasked_are_reported_not_discarded(self):
+        # Narrowing the numerator at the READ and not at the write is what
+        # keeps this readable: with served capped at subscribed, `375/375` looks
+        # identical whether the wire carried 375 ids or 394, so the excess would
+        # become invisible at the exact moment it stopped being counted as
+        # coverage. That would trade one silent number for another.
+        ids = _ids(self.SUBSCRIBED)
+        foreign = [f"foreign-{i}" for i in range(self.FOREIGN)]
+        ws = self._client({2: ids}, {2: set(ids) | set(foreign)})
+
+        stats = ws.stats
+        assert stats["on_wire_by_shard"][2] == self.SUBSCRIBED + self.FOREIGN
+        assert (
+            stats["on_wire_by_shard"][2] - stats["served_by_shard"][2]
+            == self.FOREIGN
+        ), "the excess is still a number a reader can get to"
+
+    def test_a_shard_sent_only_ids_it_never_asked_for_is_not_called_silent(self):
+        # THE DISCRIMINATOR for the half that did NOT move. `_silent_shards`
+        # asks whether a connection received anything at all — a socket being
+        # answered, even with ids outside its subscription, has plainly not gone
+        # quiet, and reporting it as a starved subscription would be a false
+        # positive in the instrument this whole change is graded on. Scoring
+        # silence on the intersection would have introduced exactly that.
+        ws = self._client({0: _ids(500), 1: _ids(500)}, {0: {"not-ours"}, 1: set()})
+        ws._shards_connected = {0, 1}
+        ws._shard_connected_at = {0: 0.0, 1: 0.0}
+
+        settled = COVERAGE_GRACE_SECONDS + 1.0
+        assert ws._silent_shards(settled) == [1], (
+            "shard 0 received a frame; only shard 1 was told nothing at all"
+        )
+        assert ws.stats["served_by_shard"][0] == 0, (
+            "and it is still zero COVERAGE — the two questions differ, which is "
+            "the whole reason both sets are kept"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_excess_reaches_the_minute_line_and_not_only_the_stats_dict(
+        self, monkeypatch, caplog
+    ):
+        # THE OTHER HALF, and the one this file has already been burned by:
+        # `served_by_shard` sat in `stats` and in no log line for long enough
+        # that a silently-served fraction was unmeasurable from production. The
+        # same trap is open here. Narrowing `served` to the subscription means
+        # the ratio can no longer print 105%, so if the wire total were computed
+        # and never emitted, the excess would simply stop existing for every
+        # reader — a number fixed into invisibility is not a number fixed.
+        #
+        # Real client, not a hand-built dict, so this also fails if the client
+        # stops exposing the key. All three shards share one fake socket and are
+        # sent shard 0's seven ids, so the wire carries 21 arrivals for 7 served.
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        assets = _ids(1500)
+        served_ids = assets[:7]
+        frames = [
+            json.dumps({"event_type": "best_bid_ask", "asset_id": a})
+            for a in served_ids
+        ]
+
+        def connect(*args, **kwargs):
+            return _FakeSocket(frames, [])
+
+        monkeypatch.setattr("websockets.connect", connect, raising=False)
+
+        ws = PolymarketWebSocket()
+        task = asyncio.create_task(ws.run(asset_ids=assets))
+        await asyncio.sleep(0.3)
+        stats = ws.stats
+        task.cancel()
+        with pytest.raises((asyncio.CancelledError, Exception)):
+            await task
+
+        blend = {"stamped": 1, "no_reading": 2, "throttled": 3, "errors": 0}
+        task_stats = {
+            "price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 0,
+        }
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(task_stats, stats, blend)
+
+        assert f"served={len(served_ids)}/{len(assets)}" in caplog.text
+        assert f"wire={len(served_ids) * stats['shards']}" in caplog.text, (
+            "the ids the venue sent unasked must still be readable from a log"
+        )
+
+    def test_an_absent_wire_key_prints_a_zero_rather_than_killing_the_heartbeat(
+        self, caplog
+    ):
+        # The shadow consumer shares this line and subscribes without shards, so
+        # every coverage key can be missing. An exception in the stats loop takes
+        # the socket's only heartbeat with it.
+        from app.tasks.polymarket_ws import _log_stats_line
+
+        blend = {"stamped": 0, "no_reading": 0, "throttled": 0, "errors": 0}
+        task_stats = {
+            "price_updates": 0, "trade_updates": 0, "resolutions": 0, "errors": 0,
+        }
+        with caplog.at_level(logging.INFO):
+            _log_stats_line(task_stats, {}, blend)
+
+        assert "wire=0" in caplog.text

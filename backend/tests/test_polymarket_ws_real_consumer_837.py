@@ -97,7 +97,7 @@ async def test_real_consumer_dispatches_after_valid_large_book_list(monkeypatch)
         try:
             await asyncio.wait_for(delivered.wait(), 10)
             assert observed[0]["best_bid"] == "0.40"
-            assert token in consumer._shard_served[0]
+            assert token in consumer._shard_wire[0]
             assert consumer._message_count >= 2
             assert subscriptions[0]["assets_ids"] == [token]
         finally:
