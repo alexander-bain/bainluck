@@ -62,7 +62,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
-from app.utils.event_combat import bout_roster_key, bouts_are_one_fight
+# `event_combat` is imported INSIDE :func:`match_card_name`, not here. That
+# module reaches back for `load_card_names`, so a module-level import either way
+# makes a static cycle — CodeQL's `py/cyclic-import`, twice, on the first push
+# that had one. Both directions being lazy costs a `sys.modules` dict lookup and
+# leaves the two modules independently importable, which is the property
+# `sport_keys.py` is held to for the same reason (gotcha #3).
 
 #: Redis key for the venue's card listing. Versioned, because the stored shape
 #: is this module's own and a reader of an older shape must miss rather than
@@ -163,6 +168,8 @@ def match_card_name(
       tell which. Naming the card from either would be a coin flip, and this
       module's whole warrant is that a name it emits is the venue's.
     """
+    from app.utils.event_combat import bout_roster_key, bouts_are_one_fight
+
     mine = [k for k in (bout_roster_key(t) for t in bout_titles) if k]
     if not mine:
         return None
