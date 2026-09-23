@@ -241,13 +241,43 @@ struct GamePlayPoint {
             carried.append(d)
         }
         guard let oldest = carried.min() else { return nil }
-        return "as of \(Self.clockText(oldest))"
+        return "as of \(Self.asOfText(oldest, pointDate: timestamp.asDate))"
     }
 
     /// One clock format for both lines, so "7:44 PM" and "as of 7:41 PM" read as
     /// the same kind of time.
     static func clockText(_ date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// The `as of` time, carrying a day only when it needs one.
+    ///
+    /// A bare clock is right for the ordinary case — a state carried a few
+    /// minutes inside the point's own day — and wrong the moment the two fall
+    /// on different days, because `date: .omitted` renders 11:58 PM yesterday
+    /// and 11:58 PM today identically. A game still going after local midnight
+    /// then prints `as of 11:58 PM` directly beneath a `12:30 AM` point, and a
+    /// state THIRTY-TWO MINUTES old reads as twelve hours in the FUTURE: the
+    /// two lines sit one above the other in the badge, so the reader compares
+    /// them whether or not we meant them to be compared.
+    ///
+    /// Codex found this same defect in the web half on 2026-09-23 —
+    /// `carriedStateDisclosure` compared formatted `h:mm a` strings, so
+    /// yesterday-20:00 and today-20:00 disclosed nothing — and corrected it
+    /// there (CODEX-0007). This is the native counterpart; the native half
+    /// reached it by a different route (`date: .omitted`) and had no test
+    /// crossing a day boundary, because every `as of` expectation in the 925
+    /// suite was built by calling `clockText`, the code under test.
+    ///
+    /// The date style matches the chart's own multi-day axis label
+    /// (`OddsChartView.labelStyle` / `.calendarDay`), so a reader who scrubs
+    /// across midnight sees the same vocabulary on the axis and in the badge.
+    static func asOfText(_ observed: Date, pointDate: Date?,
+                         calendar: Calendar = .current) -> String {
+        guard let pointDate, !calendar.isDate(observed, inSameDayAs: pointDate) else {
+            return clockText(observed)
+        }
+        return observed.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 
     /// The badge above the score: the period, and the clock when the clock says

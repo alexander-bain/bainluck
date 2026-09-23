@@ -418,4 +418,79 @@ final class ScrubReadoutDatesCarriedState925Tests: XCTestCase {
         XCTAssertTrue(out[0].clockApprox)
         XCTAssertTrue(out[0].periodApprox)
     }
+
+    // MARK: - The day boundary (native counterpart of codex's web correction)
+
+    private var utc: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }
+
+    /// Codex found this on the WEB half on 2026-09-23: `carriedStateDisclosure`
+    /// compared formatted `h:mm a` strings, so an observation at 20:00
+    /// YESTERDAY and one at 20:00 TODAY were indistinguishable. The native half
+    /// reaches the same place by a different route — `clockText` is
+    /// `date: .omitted` — and nothing above caught it, because every `as of`
+    /// expectation in this file is built by the `asOf(_:)` helper, which calls
+    /// `GamePlayPoint.clockText`: an assertion computed by its own subject
+    /// cannot notice a missing date.
+    ///
+    /// Stated as a RELATIONSHIP rather than a literal so it holds in every
+    /// timezone. The two observations are exactly 24h apart and September
+    /// carries no DST boundary, so their clock components are identical
+    /// wherever this runs and only the DAY can tell them apart.
+    func testACarriedObservationFromAnEarlierDayIsNotShownAsTodaysClockTime() {
+        let carriedToday = point(
+            timestamp: "2026-09-23T21:00:00+00:00",
+            clockAt: "2026-09-23T20:00:00+00:00", clockApprox: true)
+        let carriedYesterday = point(
+            timestamp: "2026-09-23T21:00:00+00:00",
+            clockAt: "2026-09-22T20:00:00+00:00", clockApprox: true)
+
+        XCTAssertNotNil(carriedToday.stateAsOfDisplay)
+        XCTAssertNotNil(carriedYesterday.stateAsOfDisplay)
+        XCTAssertNotEqual(
+            carriedToday.stateAsOfDisplay, carriedYesterday.stateAsOfDisplay,
+            "a state carried from the previous day reads as one carried an hour ago")
+    }
+
+    /// The shape a reader actually meets: a game still going after local
+    /// midnight. `wallClockDisplay` ("12:30 AM") and the `as of` line sit one
+    /// above the other, so a 32-minute-old state must not print a bare
+    /// "11:58 PM" under it. Calendar injected, so the midnight being crossed is
+    /// the one the test means rather than the runner's.
+    func testAStateCarriedAcrossMidnightIsDated() {
+        let observed = date("2026-09-23T23:58:00+00:00")
+        let pointDate = date("2026-09-24T00:30:00+00:00")
+
+        let text = GamePlayPoint.asOfText(observed, pointDate: pointDate, calendar: utc)
+        XCTAssertNotEqual(text, GamePlayPoint.clockText(observed),
+                          "a bare clock cannot say the observation was yesterday")
+        XCTAssertTrue(text.contains("23") || text.contains("Sep"),
+                      "expected the carried day to be named, got \(text)")
+    }
+
+    /// The control that stops the repair becoming "always print the date": a
+    /// state carried inside the point's own day still reads as a bare clock.
+    /// Without this, `asOfText` could date every readout and the test above
+    /// would still pass.
+    func testASameDayCarriedObservationStillReadsAsABareClockTime() {
+        let observed = date("2026-09-23T20:00:00+00:00")
+        let pointDate = date("2026-09-23T21:00:00+00:00")
+
+        XCTAssertEqual(
+            GamePlayPoint.asOfText(observed, pointDate: pointDate, calendar: utc),
+            observed.formatted(date: .omitted, time: .shortened))
+    }
+
+    /// A point whose own timestamp will not parse has no day to compare
+    /// against, so the readout falls back to the bare clock rather than
+    /// inventing a date.
+    func testAnUndatablePointFallsBackToTheBareClock() {
+        let observed = date("2026-09-23T20:00:00+00:00")
+        XCTAssertEqual(
+            GamePlayPoint.asOfText(observed, pointDate: nil, calendar: utc),
+            GamePlayPoint.clockText(observed))
+    }
 }
