@@ -2711,7 +2711,16 @@ export default function RelatedFutures({
       const resolved = false;
       return {
         label: f.clean_label || f.market_name,
-        prob: f.probability || 0,
+        // #8203: the wire's `null` travels, it is not spent here. `|| 0` turned
+        // "nobody quoted this" into "quoted at nought", and on a *World Series
+        // Champion* rung that reads as "this club cannot win" — a claim no
+        // market made about the 2026 A's or Angels, both served `probability:
+        // null` with a stale `opening_probability: 0.005`. Note it was never the
+        // league-context path that could do this: `ctxToFutures` above already
+        // drops a cell that is null, so only the raw-futures fallback — the
+        // branch that takes rows exactly as the API sends them — carried it.
+        // `AdvancementPath` decides what an absent price looks like.
+        prob: f.probability ?? null,
         change: f.probability_change_24h ?? null,
         resolved,
         // #7206: WHAT this rung is, not what it is called. `AdvancementPath`
