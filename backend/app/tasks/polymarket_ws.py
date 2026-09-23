@@ -100,6 +100,125 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
+#: How long after its scheduled start an event that is STILL 'scheduled' may
+#: hold a place in the subscription. A start time is not a finish time (gotcha:
+#: "scheduled kickoff timestamps are not actual start/finish"), so this is
+#: deliberately far longer than any game: a rain-delayed baseball game, a
+#: five-set match and a full day of status-updater lag all stay subscribed.
+#:
+#: It bounds the `scheduled` arm ONLY. Nothing here is ever applied to a live
+#: event — see `_slate_event_window`.
+#:
+#: The exact value is not a judgement call, because the population it cuts is a
+#: CLIFF rather than a gradient. Measured on production 2026-09-23 02:5xZ, the
+#: slate held nothing at all between 6 h and 48 h old — a floor of 6, 12, 24 or
+#: 48 hours each kept the identical 594 markets — while the nearest stale event
+#: was 2 days old and the bulk (101 events, 1,175 markets) was the US Open,
+#: three weeks finished. 24 h is the widest margin that still costs nothing.
+SLATE_MAX_AGE_HOURS = 24
+
+
+def _slate_event_window():
+    """The event window the socket subscribes to — the scheduled arm bounded
+    at BOTH ends, the live arm at neither.
+
+    The upper bound (start within 6 h) was always here. The floor was not, and
+    without it ``status='scheduled'`` is not a statement about the future: it is
+    whatever the status updater last managed to write. Every event that never
+    left ``scheduled`` stayed in the subscription forever, so the slate silently
+    accumulated months of finished sport.
+
+    Measured on production 2026-09-23 02:5xZ, before this floor existed:
+
+        CURRENT (live, or starting within 6 h) ....  640 markets,  79 events
+        STALE   (started > 6 h ago, still
+                 'scheduled') ....................  1,248 markets, 107 events
+                 oldest commence_time 2026-06-01 — nearly four months
+
+    So **66 % of the subscription was finished sport**, and the venue confirms
+    those rows are not merely quiet but gone: of 30 randomly sampled stale
+    tokens, 27 answered ``/book`` with *"No orderbook exists for the requested
+    token id"*, against 30 of 30 alive for a same-size current control. That is
+    the whole of #837's unexplained ``served=1413/3367`` — four contiguous
+    shards reading 14/500, 26/500, 36/500, 39/500 while the two holding current
+    sport read 500/500 and 488/500. The subscription was not being truncated by
+    the venue; we were asking it for dead tokens.
+
+    What that cost a reader, which is why this is a fix and not hygiene: the
+    token top-up that gives a market its ``clob_token_ids`` is capped per
+    recycle, and its queue was **253 stale against 46 current**. It is ordered
+    by a rotating cursor, not by whether anyone is watching, so live games
+    waited behind finished ones for a budget 85 % of which could never pay.
+    At the moment of the measurement 42 markets on games *in progress* had no
+    tokens and therefore no price stream at all — eight MLB games among them,
+    including the Dodgers/Padres game filed as #8156.
+
+    THE FLOOR BINDS THE ``scheduled`` ARM ONLY, AND THE LIVE ARM STAYS
+    CLOCK-FREE. This is the whole of the fix's shape, so it is worth the
+    paragraph. A first draft applied the floor once, above the ``or_()``,
+    reasoning that a ``scheduled``-only floor is re-admitted through the wider
+    ``live`` sibling the first time an event sticks at ``status='live'``. That
+    hazard is real (see below) but the cure regressed the thing #837 exists to
+    protect: above the ``or_()`` the 24-hour bound applies to live rows too, so
+    an event the graph still calls live is unsubscribed after 24 hours — a
+    multi-day tournament, a suspended game, any delayed state advancement. That
+    is a hero stream going dark, decided by a clock we do not trust, which is
+    the premise of the constant above.
+
+    (The ``IS NOT NULL`` in that draft was inert rather than harmful:
+    ``events.commence_time`` is NOT NULL in the model and in production, so it
+    can never exclude a row. It is kept below inside the scheduled arm, where
+    the pre-#837 code had it, as belt-and-braces against the column being
+    loosened — not because it fires. The Postgres contract asserts the schema
+    that makes it inert, so that assumption fails loudly if it changes.)
+
+    The ship does not need the live floor. Measured on production 2026-09-23
+    03:4xZ over ALL events (a superset of the slate, so a zero here is a zero
+    there):
+
+        live ....... 58 rows,     0 older than 24 h
+        scheduled .. 3,284 rows, 850 older than 24 h
+
+    Every row the floor is for is a ``scheduled`` row, and the live arm's copy
+    of the floor cuts nothing at all today. It is pure downside on exactly the
+    row a reader is watching, so the live arm fails OPEN: no clock test, no
+    NULL test, subscribed.
+
+    The stuck-at-live hazard is therefore NOT fixed here, deliberately. An
+    event wedged at ``status='live'`` for weeks is a state-machine defect in
+    whatever should have advanced it, and it cannot be answered by dropping
+    live rows out of the price stream — that trades a rare stale subscription
+    for a routine dark hero. It needs a status-freshness signal (an advanced-at
+    stamp, or the venue's own resolution) rather than a clock this module is
+    already on record as not trusting. ``the_event_stuck_at_live`` stays in the
+    Postgres contract as a live-preservation control, asserting it KEEPS its
+    subscription, so nobody re-lands the above draft by accident.
+    """
+    # Imported in-function like every other SQLAlchemy use in this module: the
+    # consumer is started by `run_kalshi_ws.py`, and module scope here stays
+    # light on purpose.
+    from sqlalchemy import text, or_, and_
+
+    from app.models.models import Event
+
+    return or_(
+        # Clock-free and fail-open, on purpose. Unchanged from before the floor
+        # existed — the fix narrows the sibling arm and leaves this one alone.
+        Event.status == "live",
+        and_(
+            Event.status == "scheduled",
+            Event.commence_time.isnot(None),
+            # int() by construction: the interval literal can never carry
+            # anything but a number, whatever a future edit does to the
+            # constant.
+            Event.commence_time >= text(
+                f"NOW() - INTERVAL '{int(SLATE_MAX_AGE_HOURS)} hours'"
+            ),
+            Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
+        ),
+    )
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -215,7 +334,9 @@ def _log_unserved_sample(ws) -> None:
 
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
-    from sqlalchemy import select, update, text, or_, and_, func
+    # `text`/`or_`/`and_` left with `_slate_event_window`, which now owns the
+    # only expression in this consumer that needed them.
+    from sqlalchemy import select, update, func
 
     from app.models.models import (
         Event, FuturesMarket, FuturesOutcome,
@@ -254,14 +375,7 @@ async def _run_polymarket_ws_consumer():
             .where(
                 FuturesMarket.source == "polymarket",
                 FuturesMarket.event_id.isnot(None),
-                or_(
-                    Event.status == "live",
-                    and_(
-                        Event.status == "scheduled",
-                        Event.commence_time.isnot(None),
-                        Event.commence_time <= text("NOW() + INTERVAL '6 hours'"),
-                    ),
-                ),
+                _slate_event_window(),
             )
         )
         rows = result.all()
