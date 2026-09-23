@@ -54,6 +54,7 @@ from app.utils.kalshi_fabricated_loss import RETRACTION_SOURCE
 from app.utils.kalshi_resolution_window import (
     derive_resolution_window,
     derive_venue_settlement,
+    derive_venue_void,
 )
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
 
@@ -567,8 +568,18 @@ SELECT_SQL = """
 # are worth ranking, so the token list is at most `PAST_EVENT_BAND_DAYS` long.
 
 _BAND_MONTHS = (
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
 )
 
 
@@ -839,6 +850,40 @@ UPDATE_SQL = """
 """
 
 
+#: The void fact, #7035 — a SECOND statement rather than two more columns on the
+#: one above, and the separation is deliberate on three counts.
+#:
+#: 1. :data:`UPDATE_SQL` runs for EVERY row in the batch and must come out
+#:    byte-identical for the rows the venue still lists as open; its bind set is
+#:    pinned by ``tests/integration/test_kalshi_sweep_settlement_bind_pg.py``.
+#:    This one runs only for the rows that voided — 77 events in 14 days,
+#:    measured — so the hot path is untouched.
+#: 2. :data:`UPDATE_SQL` is deliberately SQLite-drivable, because the band
+#:    guards execute it against ``sqlite://``. ``jsonb`` is not, and forcing the
+#:    merge into that statement would either break those guards or push the
+#:    write into Python, where gotcha #4 (a JSONB ORM assignment that silently
+#:    does nothing) is waiting.
+#: 3. It writes ``market_metadata`` and nothing else — no status, no date, and
+#:    above all no grade. #1852's line holds: a void says the venue named NO
+#:    outcome, which is the opposite of a winner, and nothing here may be read
+#:    as one.
+#:
+#: MERGED, NOT ASSIGNED. ``COALESCE(...) || jsonb_build_object(...)`` so a row
+#: already carrying ``market_metadata["shape"]`` keeps it. A plain assignment
+#: would blank the side-kind metadata the serializers read in order to record a
+#: status fact, which is the same class of loss the COALESCEd dates above exist
+#: to avoid.
+VOID_UPDATE_SQL = """
+    UPDATE futures_markets
+    SET market_metadata = COALESCE(market_metadata, '{}'::jsonb)
+                          || jsonb_build_object(
+                                 'venue_voided', true,
+                                 'venue_voided_at', CAST(:updated_at AS text)
+                             )
+    WHERE id = :id
+"""
+
+
 async def run_backfill(
     *,
     session_maker: Callable,
@@ -943,8 +988,23 @@ async def run_backfill(
         "venue_settled": 0,
         "venue_partially_settled": 0,
         "settled_without_date": 0,
+        # #7035, the void half. A SUBSET of `venue_settled`, never a sibling of
+        # it: a void is a settlement the venue declined to grade, so every row
+        # counted here is already counted above. Reported apart because the two
+        # need opposite repairs downstream — a graded settlement wants its
+        # winner backfilled, a void wants the fixture to stop claiming a result
+        # nobody ever reported.
+        "venue_voided": 0,
+        # The refusals, so a run that voids nothing is legible. `void_refused`
+        # is dominated by `graded` on a healthy population; a run where it is
+        # dominated by `result_absent` is reading a payload shape that has
+        # moved, which is the failure this counter exists to make loud
+        # (gotcha #53 — "it returned" is not "it worked").
+        "void_refused_result_absent": 0,
     }
     samples: list[dict] = []
+    void_samples: list[dict] = []
+    void_ids: list[int] = []
 
     if not rows:
         # Not a success. Either the migration has not run, or the floor has
@@ -962,8 +1022,8 @@ async def run_backfill(
                 # denominator, so the population sentence would be four numbers
                 # of `-1` dressed up as a diagnosis. Say the one true thing.
                 "no rows supplied: the caller's selection matched nothing"
-                if supplied else
-                f"no candidates at offset {offset}: {eligible_total} rows still "
+                if supplied
+                else f"no candidates at offset {offset}: {eligible_total} rows still "
                 f"eligible ({never_swept} never swept, {provisional_recheck} holding "
                 f"a provisional date), {excluded_purged} of them past the purge "
                 "floor. If eligible_total is 0 the migration may not have run; if it "
@@ -971,6 +1031,10 @@ async def run_backfill(
             ),
             "stats": stats,
             "newly_past_samples": [],
+            # Same keys as the full report below. An empty batch and a batch
+            # that voided nothing must be the same SHAPE to a reader, or every
+            # consumer grows a `.get`.
+            "venue_voided_samples": [],
         }
 
     sem = asyncio.Semaphore(concurrency)
@@ -1002,6 +1066,37 @@ async def run_backfill(
             stats["venue_settled"] += 1
         elif settlement.reason == "partially_settled":
             stats["venue_partially_settled"] += 1
+
+        # #7035 — off the SAME payload, for no extra venue call, exactly as the
+        # settlement read above was added to the date read before it. `result`
+        # is the one field that separates "the venue decided this" from "the
+        # venue retired it at a fair price", and we were discarding it: a
+        # postponed fixture stored as `status='resolved'` with every leg
+        # ungraded, indistinguishable from a played game we had simply not
+        # graded yet, and so it sat under "No result reported" forever.
+        #
+        # `.get("result")` and not `["result"]`: a payload that omits the key
+        # reaches `derive_venue_void` as None and is REFUSED there, which is the
+        # answer we want. A leg we did not read is not a leg the venue declined
+        # to grade.
+        void = derive_venue_void(
+            [m.get("status") for m in markets],
+            [m.get("result") for m in markets],
+        )
+        if void.voided:
+            stats["venue_voided"] += 1
+            void_ids.append(market_id)
+            if len(void_samples) < 15:
+                void_samples.append(
+                    {
+                        "id": market_id,
+                        "ticker": ticker,
+                        "tier": tier,
+                        "legs": void.legs_total,
+                    }
+                )
+        elif void.reason == "result_absent":
+            stats["void_refused_result_absent"] += 1
 
         window = derive_resolution_window(
             [
@@ -1082,6 +1177,25 @@ async def run_backfill(
     else:
         stats["writes_applied"] = 0
 
+    # #7035. Its own pass, after the settlement writes have committed, so a
+    # failure here can never leave a row stamped "the venue voided this" that
+    # is not also stamped "the venue settled this" — the void is a refinement
+    # of the settlement and must not be able to outrun it. Chunked and
+    # committed on the same 500 boundary as the loop above, for the same
+    # reason (gotcha #13: long transactions on this table deadlock).
+    if apply and void_ids:
+        async with session_maker() as session:
+            for chunk_start in range(0, len(void_ids), 500):
+                for market_id in void_ids[chunk_start : chunk_start + 500]:
+                    await session.execute(
+                        text(VOID_UPDATE_SQL),
+                        {"id": market_id, "updated_at": now.isoformat()},
+                    )
+                await session.commit()
+        stats["void_writes_applied"] = len(void_ids)
+    else:
+        stats["void_writes_applied"] = 0
+
     report = {
         "mode": "APPLY" if apply else "DRY_RUN",
         "measured_at": now.isoformat(),
@@ -1090,6 +1204,11 @@ async def run_backfill(
         "zero_yield": len(writes) == 0,
         "stats": stats,
         "newly_past_samples": samples,
+        # #7035. Named tickers rather than a bare count, because the claim
+        # "the venue voided this" is checkable at the venue in one request
+        # (`/events/{ticker}?with_nested_markets=true`) and a report that only
+        # carries a number cannot be audited that way.
+        "venue_voided_samples": void_samples,
     }
     if stats["unresolvable_at_venue"] == len(rows) and not writes:
         # Every slot in the batch went to a row this script may not write. Those
@@ -1405,7 +1524,9 @@ async def run_sweep(
         )
     elif candidates and errors >= candidates:
         report["terminal"] = "failed"
-        report["terminal_reason"] = f"all {candidates} selected rows errored at the venue"
+        report["terminal_reason"] = (
+            f"all {candidates} selected rows errored at the venue"
+        )
     elif candidates and applied == 0:
         report["terminal"] = "partial"
         report["terminal_reason"] = (
