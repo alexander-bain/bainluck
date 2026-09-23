@@ -34,7 +34,10 @@ from app.models import (
 from app.services import get_db
 from app.utils.db_cancellation import is_query_canceled
 from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #6532
-from app.utils.futures_unsupported_price import needs_trade_evidence  # #8220
+from app.utils.futures_unsupported_price import (  # #8220, #8243
+    needs_trade_evidence,
+    price_is_unsupported,
+)
 from app.utils.futures_liveness import leg_is_graded  # #7387
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import canonical_conference as _canonical_conference
@@ -4689,12 +4692,13 @@ _SETTLED_COLUMNS = {"make_playoffs", "division"}
 # 20.88 / 13.21 / 7.21 / 5.35 / 4.58 against those seat counts — the two deepest
 # are incoherent, offering 5.35 probability for 4 places and 4.58 for 2.
 #
-# 🔴 DO NOT ADD THE OTHER FIXED-SIZE COLUMNS. THEY WERE MEASURED ON 2026-09-23
-# AND THE ANSWER WAS NO (#8243). This paragraph previously said their populations
-# were "unmeasured", which read as an invitation; they are measured now.
+# 🔴 DO NOT ADD A COLUMN HERE WITHOUT MEASURING IT. The five bracket columns
+# above were #8220's; `relegation` and `quarterfinal` were admitted by #8243 only
+# after the measurement below. The other fixed-size columns were measured on
+# 2026-09-23 AND THE ANSWER WAS NO — see the descope note at the end.
 #
 # `semifinal`, `quarterfinal`, `relegation`, `top_4`, `pennant` and `conference`
-# ARE the same frame — that half of the argument survives. What does not survive
+# ARE the same frame — that half of the argument survives. What did not survive
 # is the shortcut. `needs_trade_evidence` FAILS CLOSED: it withholds without
 # reading trades, because a per-outcome snapshot read in this loop is LAT-P132's
 # 24,465 ms. The cost of failing closed is the legs that HAVE traded and are
@@ -4714,10 +4718,38 @@ _SETTLED_COLUMNS = {"make_playoffs", "division"}
 # regression, not a repair. The 4.0% above is re-derived, not inherited, and
 # reproduces this ship's own figures including the Stanford leg named below.
 #
-# The real fix is a BATCHED trade read — one `DISTINCT ON (outcome_id)` over
-# `futures_odds_snapshots` for the whole grid, then `price_is_unsupported` with a
-# true `has_trade_evidence`. LAT-P132 forbids per-outcome, not per-grid. It also
-# lets THESE five columns stop over-withholding their own 15 legs. That is #8243.
+# #8243 BUILT THAT BATCHED TRADE READ, so the table above is now the argument
+# for the fix rather than against the columns. `_grid_untaken_offer_candidates`
+# screens on the outcome row (no query), then ONE `_newest_kalshi_trades` call
+# for the whole grid answers `has_trade_evidence` for every survivor.
+# LAT-P132 forbids per-OUTCOME, not per-GRID, and a grid with no candidate legs
+# still issues no query at all.
+#
+# WHAT THE TRADE READ BUYS, measured on production 2026-09-23 over the two
+# columns this ship admits. Withholding with the fail-closed rule against
+# withholding with the real one:
+#
+#   la-liga `relegation`          fail-closed 13 → 3 with the trade read
+#   champions-league `quarterfinal` fail-closed  3 → 2 with the trade read
+#
+# The 11 legs the difference spares all carry a real trade — Real Sociedad asks
+# 0.49 having LAST TRADED AT 0.99, Osasuna 0.53 against 0.54, Fenerbahce 0.59
+# against 0.59. Widening these columns WITHOUT the trade read would have deleted
+# those numbers: a regression wearing a repair's commit message.
+#
+# The five bracket columns keep their scope and gain the same correction: the 15
+# legs #8220 named as over-withheld are no longer refused. Thirteen of those 15
+# name teams with no row on the grid, so the reader-visible half of that is one
+# cell (Nebraska's Final Four, ask 0.22 having last traded 0.19) — counted here
+# as it was measured, not as the stored population suggested.
+#
+# 🔴 `semifinal` IS DESCOPED AND THE REASON IS AN INSTRUMENT ONE, NOT A VERDICT.
+# On `ncaa-football` its served cells cannot be reproduced from the stored
+# outcomes at all: Missouri renders 0.1275 against a stored 0.1800, Houston
+# 0.0825 against 0.2000, and the served values drift between rebuilds while the
+# stored rows sit still. The column is NOT renormalised (38 cells sum to 5.92
+# against 4 seats), so that is unexplained rather than benign. Nothing may be
+# withheld from a cell whose number we cannot yet account for — #8251.
 #
 # `championship` is excluded for two independent reasons. (1) BLENDING: all 68 of
 # its cells carry a non-Kalshi source, so withholding one contributor is a
@@ -4730,8 +4762,47 @@ _SETTLED_COLUMNS = {"make_playoffs", "division"}
 # champions-league but absent from the served payload, and golf's `top_N` columns
 # have no Kalshi contributor at all.
 _ADVANCEMENT_COLUMNS = frozenset(
-    {"round_of_32", "sweet_16", "elite_eight", "final_four", "title_game"}
+    {
+        "round_of_32", "sweet_16", "elite_eight", "final_four", "title_game",
+        # #8243. Admitted on the measurement above, one gate each: every cell the
+        # rule would withhold is backed by exactly ONE outcome (so it CLEARS
+        # rather than moving a mean, which would be the reviewed blending class),
+        # and no affected team loses its last populated cell to the grid's
+        # `if not cells: continue`.
+        "relegation", "quarterfinal",
+    }
 )
+
+
+def _grid_untaken_offer_candidates(
+    col_key: str,
+    source: str | None,
+    resolution_source: str | None,
+    yes_bid: float | None,
+    yes_ask: float | None,
+) -> bool:
+    """True when this cell is worth spending a trade read on (#8243).
+
+    THE SCREEN, SPLIT FROM THE VERDICT FOR THE REASON `futures.py`'s
+    :func:`_unsupported_price_candidates` gives: everything here is on the
+    outcome row the grid already loaded, so the handler can settle the
+    overwhelming majority of cells without touching the snapshot table, and a
+    grid holding no candidate issues NO query at all.
+
+    It is deliberately :func:`needs_trade_evidence` and not a re-statement of the
+    book shape. The screen and the verdict must name the same rows or the batched
+    read fetches trades for legs the verdict never asks about, and — far worse —
+    misses legs it does.
+    """
+    if col_key not in _ADVANCEMENT_COLUMNS:
+        return False
+    return needs_trade_evidence(
+        source,
+        resolution_source,
+        yes_bid,
+        yes_ask,
+        in_exclusive_field=True,
+    )
 
 
 def _grid_cell_quotes_an_untaken_offer(
@@ -4740,6 +4811,9 @@ def _grid_cell_quotes_an_untaken_offer(
     resolution_source: str | None,
     yes_bid: float | None,
     yes_ask: float | None,
+    last_price: float | None,
+    *,
+    has_trade_evidence: bool,
 ) -> bool:
     """True when this cell's number is an untaken offer inside a summed column.
 
@@ -4750,19 +4824,34 @@ def _grid_cell_quotes_an_untaken_offer(
     isolated by the row named for it — is to give it a name.
 
     The book judgement itself is NOT made here. It is delegated whole to
-    :func:`futures_unsupported_price.needs_trade_evidence`, which owns the venue
+    :func:`futures_unsupported_price.price_is_unsupported`, which owns the venue
     scope, the graded-row exemption (#7387/#6876) and the book shape. This
     function contributes exactly one thing the shared rule cannot know: whether
     the column this cell lands in is a fixed-size advancement partition, which is
     the frame that makes an upper bound false. See :data:`_ADVANCEMENT_COLUMNS`.
+
+    #8243 REPLACED `needs_trade_evidence` HERE AND THE SWAP IS MONOTONE.
+    `price_is_unsupported` is that same predicate AND the trade term, so it can
+    only withhold FEWER legs, never more: no cell served today can disappear
+    because of this line. The five bracket columns therefore stop over-withholding
+    the 15 legs #8220 measured and named.
+
+    ``has_trade_evidence`` is "did the batched read return a row for this
+    outcome", NOT "was the price non-zero" — gotcha #53, and
+    :func:`price_is_unsupported` documents why the two may not be collapsed. An
+    outcome the read never saw FAILS OPEN and keeps the number it serves today,
+    so a snapshot table that goes dark degrades to the pre-#8220 page rather than
+    blanking a column.
     """
     if col_key not in _ADVANCEMENT_COLUMNS:
         return False
-    return needs_trade_evidence(
+    return price_is_unsupported(
         source,
         resolution_source,
         yes_bid,
         yes_ask,
+        last_price,
+        has_trade_evidence=has_trade_evidence,
         in_exclusive_field=True,
     )
 
@@ -5522,6 +5611,42 @@ async def get_playoff_grid(
             league_slug, len(matched_markets), len(markets),
         )
 
+        # #8243 — ONE TRADE READ FOR THE WHOLE GRID, AND THAT IS THE ENTIRE
+        # DIFFERENCE BETWEEN THIS AND WHAT LAT-P132 FORBIDS. The screen below
+        # reads only columns already in memory, so it costs no query; the ids it
+        # survives are answered in a single batched statement BEFORE the cell
+        # loop opens. `_newest_kalshi_trades` returns `{}` for an empty id list
+        # without touching the database, so a grid with no candidate legs — every
+        # grid with no `_ADVANCEMENT_COLUMNS` column, and most of the rest — pays
+        # exactly nothing for this.
+        #
+        # Imported here rather than at module scope for the reason the
+        # `_serve_stale_and_refresh` import above is function-local: these two
+        # route modules already reference each other's helpers, and a
+        # module-level edge between them is how that becomes a cycle. It is the
+        # SHARED helper on purpose — `futures.py` calls it for the ladder and the
+        # feed's snapshot builder, and a third spelling of "newest Kalshi trade"
+        # is precisely what that function's own docstring refuses.
+        from app.routes.futures import _newest_kalshi_trades
+
+        _trade_candidate_ids = [
+            outcome.id
+            for market, col_key in matched_markets
+            for outcome in outcomes_by_market.get(market.id, ())
+            if _grid_untaken_offer_candidates(
+                col_key,
+                market.source,
+                outcome.resolution_source,
+                float(outcome.current_yes_bid)
+                if outcome.current_yes_bid is not None
+                else None,
+                float(outcome.current_yes_ask)
+                if outcome.current_yes_ask is not None
+                else None,
+            )
+        ]
+        _newest_trade = await _newest_kalshi_trades(db, _trade_candidate_ids)
+
         for market, col_key in matched_markets:
             cutoff = _settled_cutoff if col_key in _SETTLED_COLUMNS else _stale_cutoff
             for outcome in outcomes_by_market.get(market.id, ()):
@@ -5581,23 +5706,27 @@ async def get_playoff_grid(
                 # `is_lone_ask_in_exclusive_field`. `_ADVANCEMENT_COLUMNS` is the
                 # frame answer this route is entitled to give.
                 #
-                # WHY ITS "needs trade evidence" IS READ AS "withhold" HERE, which
-                # is the one place this route knowingly differs from the futures
-                # ladder. That predicate names rows a TRADE READ should decide,
-                # and this route has no trade to read: `futures_outcomes` stores
-                # no last price, and `volume` is NULL on all 560 of these rows
-                # (measured, not assumed). Reading snapshots per outcome would put
-                # a new query inside the grid loop, which LAT-P132 already
-                # measured at 24,465 ms on this route — the existing refusal above
-                # is row-local for the same reason. So this fails CLOSED, and the
-                # cost of that is bounded and named rather than waved through:
-                # against Kalshi's own books for all five rounds, 379 of 560 fresh
-                # legs are ask-only, 364 have never traded (last 0, volume 0, open
-                # interest 0) and 15 — 4.0% — carry trade evidence and are refused
-                # anyway. Several of those 15 overstate their own last trade
-                # regardless (Stanford asks 14c having last traded at 2c). The
-                # residual is #8210's subject, which owns the trade-evidence
-                # exemption; it is linked open and is not repaired here.
+                # #8243 — THIS ROUTE NOW HAS A TRADE TO READ, so the rule here is
+                # the same one the futures ladder applies and no longer a
+                # fail-closed approximation of it.
+                #
+                # What stood here until 2026-09-23 was true when it was written
+                # and is worth keeping as the reason the shortcut existed: the
+                # predicate names rows a TRADE READ should decide, and reading
+                # snapshots PER OUTCOME inside this loop is LAT-P132's 24,465 ms.
+                # `futures_outcomes` still stores no last price and `volume` is
+                # still NULL on all 560 of these rows. What changed is the fetch,
+                # not the rule — `_newest_kalshi_trades` answers the whole grid
+                # above this loop in one statement, which LAT-P132 never forbade.
+                #
+                # The cost the old shortcut carried is therefore paid off rather
+                # than re-stated: of 379 ask-only legs across the five bracket
+                # rounds, 364 had never traded and 15 carried trade evidence and
+                # were refused anyway. Those 15 are now served. #8210 owns the
+                # separate question of a trade that is real but STALE (Stanford
+                # asks 14c having last traded at 2c); it is linked open and this
+                # ship deliberately does not pre-empt it.
+                _last_trade = _newest_trade.get(outcome.id)
                 if _grid_cell_quotes_an_untaken_offer(
                     col_key,
                     market.source,
@@ -5608,6 +5737,14 @@ async def get_playoff_grid(
                     float(outcome.current_yes_ask)
                     if outcome.current_yes_ask is not None
                     else None,
+                    float(_last_trade) if _last_trade is not None else None,
+                    # MEMBERSHIP, not truthiness: `outcome.id in _newest_trade`
+                    # distinguishes "we looked and it never traded" (a row with
+                    # last_price 0.0) from "the read never saw this leg" (absent).
+                    # `bool(_last_trade)` would collapse the first into the second
+                    # and serve every never-traded leg — the exact fail-open the
+                    # gotcha #53 clause above exists to prevent.
+                    has_trade_evidence=outcome.id in _newest_trade,
                 ):
                     _ask_only_skipped += 1
                     continue
