@@ -116,6 +116,151 @@ final class PeriodMarkerProvenanceReachesThePhone3348Tests: XCTestCase {
         XCTAssertEqual(h.history.count, 1)
     }
 
+    /// CODEX 2026-09-23 (`CODEX-marker-decode.log`): the reviewed candidate
+    /// tolerated a mistyped FIELD but not a mistyped ELEMENT — a bare number or
+    /// a `null` in the array threw from `decoder.container(keyedBy:)` and took
+    /// the whole `EventHistoryResponse` down. RED on that candidate (the decode
+    /// throws `typeMismatch` / `valueNotFound` at `periodMarkers[0]`), GREEN
+    /// with the guarded container. Each bad element becomes an all-nil marker
+    /// that `servedPeriodMarkers` drops; the good marker and the history survive.
+    func testAScalarElementDoesNotTakeThePayloadDown() throws {
+        let bad = """
+        [12345, {"timestamp": "2026-08-13T00:45:00+00:00", "period": "2nd Quarter", "source": "win_prob"}]
+        """
+        let h = try decoder().decode(EventHistoryResponse.self, from: payload(periodMarkers: bad))
+        let m = try XCTUnwrap(h.periodMarkers)
+        XCTAssertEqual(m.count, 2)
+        XCTAssertNil(m[0].timestamp)
+        XCTAssertNil(m[0].period)
+        XCTAssertEqual(m[1].period, "2nd Quarter")
+        XCTAssertEqual(h.history.count, 1)
+        let served = OddsChartView.servedPeriodMarkers(from: m, sportKey: "americanfootball_nfl")
+        XCTAssertEqual(served.map(\.label), ["Q2"])
+    }
+
+    func testANullElementDoesNotTakeThePayloadDown() throws {
+        let bad = """
+        [null, {"timestamp": "2026-08-13T00:45:00+00:00", "period": "2nd Quarter", "source": "win_prob"}, null]
+        """
+        let h = try decoder().decode(EventHistoryResponse.self, from: payload(periodMarkers: bad))
+        let m = try XCTUnwrap(h.periodMarkers)
+        XCTAssertEqual(m.count, 3)
+        XCTAssertNil(m[0].timestamp)
+        XCTAssertNil(m[2].timestamp)
+        XCTAssertEqual(m[1].period, "2nd Quarter")
+        XCTAssertEqual(h.history.count, 1)
+        let served = OddsChartView.servedPeriodMarkers(from: m, sportKey: "americanfootball_nfl")
+        XCTAssertEqual(served.map(\.label), ["Q2"])
+    }
+
+    /// Control for the two above: an element that is a well-formed object
+    /// still decodes every field. Tolerance must not have turned into
+    /// swallowing.
+    func testAWellFormedElementStillDecodesEveryField() throws {
+        let h = try decoder().decode(EventHistoryResponse.self, from: payload(periodMarkers: transitionMarkers))
+        let m = try XCTUnwrap(h.periodMarkers)
+        XCTAssertEqual(m[0].timestamp, "2026-09-15T00:54:43+00:00")
+        XCTAssertEqual(m[0].period, "2nd Quarter")
+        XCTAssertEqual(m[0].source, "espn_state")
+        XCTAssertEqual(m[0].precision, "boundary_observed")
+        XCTAssertEqual(m[0].notBefore, "2026-09-15T00:53:43+00:00")
+    }
+
+    // MARK: - Missing source is unknown, not observed (codex 2026-09-23)
+
+    func testAMarkerWithNoSourceIsNeitherObservedNorEstimated() throws {
+        let noSource = """
+        [{"timestamp": "2026-08-13T00:45:00+00:00", "period": "2nd Quarter"},
+         {"timestamp": "2026-08-13T01:20:00+00:00", "period": "3rd Quarter", "source": ""},
+         {"timestamp": "2026-08-13T01:50:00+00:00", "period": "4th Quarter", "source": "espn_state"},
+         {"timestamp": "2026-08-13T02:20:00+00:00", "period": "Overtime", "source": "estimated"}]
+        """
+        let h = try decoder().decode(EventHistoryResponse.self, from: payload(periodMarkers: noSource))
+        let m = try XCTUnwrap(h.periodMarkers)
+        XCTAssertEqual(m.map(\.isObserved), [false, false, true, false])
+        XCTAssertEqual(m.map(\.isEstimated), [false, false, false, true])
+        let served = OddsChartView.servedPeriodMarkers(from: m, sportKey: "americanfootball_nfl")
+        XCTAssertEqual(served.map(\.label), ["Q2", "Q3", "Q4", "OT"])
+        XCTAssertEqual(served.map(\.isObserved), [false, false, true, false])
+        // Provenance is carried verbatim: a nil source stays nil, never invented.
+        XCTAssertNil(served[0].provenance.source)
+    }
+
+    /// An instrument name this client has never heard of is still an instrument.
+    func testAnUnknownInstrumentNameIsObserved() {
+        let m = PeriodMarkerPayload(timestamp: "2026-08-13T00:45:00+00:00", period: "2nd Quarter", source: "some_new_tier")
+        XCTAssertTrue(m.isObserved)
+        XCTAssertFalse(m.isEstimated)
+    }
+
+    // MARK: - One evidence tuple per chip (codex 2026-09-23)
+
+    private func prov(_ source: String?, _ precision: String?, _ notBefore: String?) -> PeriodProvenance {
+        PeriodProvenance(source: source, precision: precision, notBefore: notBefore?.asDate)
+    }
+
+    /// The reviewed candidate merged the server's `precision` / `not_before`
+    /// onto a chip the client had already placed at ITS OWN first-seen time —
+    /// certainty about the server's timestamp, transplanted onto a different
+    /// one. RED on that candidate (the chip's precision became
+    /// `boundary_observed`), GREEN now: the chip keeps its own tuple, whole.
+    func testAServedMarkerNeverRewritesAChipTheClientAlreadyPlaced() {
+        let clientSeen = "2026-09-15T00:56:00+00:00".asDate!
+        var firstSeen: [(label: String, date: Date)] = [("Q2", clientSeen)]
+        var seen: Set<String> = ["Q2"]
+        var provenance: [String: PeriodProvenance] = [
+            "Q2": prov(PeriodProvenance.clientSourceEspnHistory, PeriodProvenance.clientPrecisionFirstSeen, "2026-09-15T00:52:00+00:00"),
+        ]
+        let served = [ServedPeriodBoundary(
+            label: "Q2", date: "2026-09-15T00:54:43+00:00".asDate!, isEstimated: false, isObserved: true,
+            provenance: prov("espn_state", "boundary_observed", "2026-09-15T00:53:43+00:00"))]
+        OddsChartView.admitServedMarkers(served, firstSeen: &firstSeen, seenLabels: &seen, provenance: &provenance)
+        XCTAssertEqual(firstSeen.count, 1)
+        XCTAssertEqual(firstSeen[0].date, clientSeen, "the chip does not move")
+        XCTAssertEqual(provenance["Q2"]?.source, PeriodProvenance.clientSourceEspnHistory)
+        XCTAssertEqual(provenance["Q2"]?.precision, PeriodProvenance.clientPrecisionFirstSeen)
+        XCTAssertEqual(provenance["Q2"]?.notBefore, "2026-09-15T00:52:00+00:00".asDate)
+    }
+
+    /// Control: a label nothing drew IS admitted, at the server's time, with
+    /// the server's whole tuple.
+    func testAServedObservedMarkerForAnUndrawnLabelIsAdmittedWithItsOwnTuple() {
+        var firstSeen: [(label: String, date: Date)] = []
+        var seen: Set<String> = []
+        var provenance: [String: PeriodProvenance] = [:]
+        let served = [ServedPeriodBoundary(
+            label: "Q4", date: "2026-09-15T02:10:00+00:00".asDate!, isEstimated: false, isObserved: true,
+            provenance: prov("espn_state", "first_seen", "2026-09-15T01:58:00+00:00"))]
+        OddsChartView.admitServedMarkers(served, firstSeen: &firstSeen, seenLabels: &seen, provenance: &provenance)
+        XCTAssertEqual(firstSeen.map(\.label), ["Q4"])
+        XCTAssertEqual(firstSeen[0].date, "2026-09-15T02:10:00+00:00".asDate)
+        XCTAssertEqual(provenance["Q4"]?.source, "espn_state")
+        XCTAssertEqual(provenance["Q4"]?.precision, "first_seen")
+        XCTAssertEqual(provenance["Q4"]?.notBefore, "2026-09-15T01:58:00+00:00".asDate)
+    }
+
+    /// Estimated and unknown-source markers are never admitted: the phone draws
+    /// only what an instrument observed (#6718), and unknown is not observed.
+    /// RED on the candidate for the unknown-source arm (nil source passed
+    /// `!isEstimated`), GREEN now.
+    func testEstimatedAndUnknownSourceMarkersAreNotAdmitted() {
+        var firstSeen: [(label: String, date: Date)] = []
+        var seen: Set<String> = []
+        var provenance: [String: PeriodProvenance] = [:]
+        let served = [
+            ServedPeriodBoundary(label: "Q1", date: "2026-08-13T00:00:00+00:00".asDate!, isEstimated: true, isObserved: false,
+                                 provenance: prov("estimated", nil, nil)),
+            ServedPeriodBoundary(label: "Q2", date: "2026-08-13T00:45:00+00:00".asDate!, isEstimated: false, isObserved: false,
+                                 provenance: prov(nil, nil, nil)),
+            ServedPeriodBoundary(label: "Q3", date: "2026-08-13T01:20:00+00:00".asDate!, isEstimated: false, isObserved: true,
+                                 provenance: prov("win_prob", nil, nil)),
+        ]
+        OddsChartView.admitServedMarkers(served, firstSeen: &firstSeen, seenLabels: &seen, provenance: &provenance)
+        XCTAssertEqual(firstSeen.map(\.label), ["Q3"])
+        XCTAssertNil(provenance["Q1"])
+        XCTAssertNil(provenance["Q2"])
+    }
+
     // MARK: - servedPeriodMarkers (the pure read the chart consumes)
 
     func testServedMarkersAreNormalisedSortedAndFlagged() throws {

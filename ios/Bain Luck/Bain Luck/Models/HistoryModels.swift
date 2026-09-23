@@ -141,11 +141,17 @@ nonisolated struct PeriodMarkerPayload: Decodable, Sendable {
     /// The server's word for "placed by arithmetic, seen by nobody".
     static let estimatedSource = "estimated"
 
-    /// True when an instrument observed this boundary. A marker with NO source
-    /// is neither promoted to observed nor demoted to estimated: it is drawn
-    /// exactly as the pre-#3348 client would have drawn it, and only an
-    /// explicit `estimated` is held back.
+    /// True when the server says nobody observed this boundary.
     var isEstimated: Bool { source == Self.estimatedSource }
+
+    /// True when a NAMED instrument observed this boundary. A marker with no
+    /// `source` is UNKNOWN — neither observed nor estimated — and the phone,
+    /// which draws only what was observed (#6718), does not admit it. Missing
+    /// evidence is not evidence of observation (codex 2026-09-23 correction).
+    var isObserved: Bool {
+        guard let source, !source.isEmpty else { return false }
+        return source != Self.estimatedSource
+    }
 
     private enum CodingKeys: String, CodingKey {
         case timestamp, period, source, precision, notBefore
@@ -160,8 +166,24 @@ nonisolated struct PeriodMarkerPayload: Decodable, Sendable {
         self.notBefore = notBefore
     }
 
+    /// NEVER THROWS. `try?` on each field covers a mistyped field, but the
+    /// container itself is the other failure: a `null` or a bare scalar in the
+    /// array reaches this initialiser with no keyed container to open, and
+    /// `decoder.container(keyedBy:)` throws — which took the WHOLE
+    /// `EventHistoryResponse` down (codex 2026-09-23, `CODEX-marker-decode.log`:
+    /// scalar and null entries each failed the envelope while the reviewed
+    /// candidate claimed per-element tolerance). Such an entry decodes to an
+    /// all-nil marker, which `servedPeriodMarkers(from:)` drops for having no
+    /// timestamp. The element is still consumed, so the unkeyed cursor moves on.
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            timestamp = nil
+            period = nil
+            source = nil
+            precision = nil
+            notBefore = nil
+            return
+        }
         timestamp = try? c.decodeIfPresent(String.self, forKey: .timestamp)
         period = try? c.decodeIfPresent(String.self, forKey: .period)
         source = try? c.decodeIfPresent(String.self, forKey: .source)

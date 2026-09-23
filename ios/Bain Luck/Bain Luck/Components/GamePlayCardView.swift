@@ -177,13 +177,19 @@ struct GamePlayPoint {
     var period: String?
     var clock: String?
     var scoringPlay: ScoringPlay?
-    /// #925 — when the score/period/clock above were OBSERVED. On a point whose
-    /// state was carried forward from an older row this is that row's time;
-    /// `stateApprox` says the carry is a minute or more old. Both default so
-    /// every existing construction site (the resting "last point" in
-    /// `EventDetailView`) is an exact observation, which is what it is.
-    var stateObservedAt: Date? = nil
-    var stateApprox: Bool = false
+    /// #925 — when each of period / clock / score above was OBSERVED. On a
+    /// point whose field was carried forward from an older row this is that
+    /// row's time; the matching `*Approx` says the carry is a minute or more
+    /// old. One date per field, never one shared date: a clock-only row
+    /// refreshes the clock's age and nothing else (codex 2026-09-23). All
+    /// default so every existing construction site (the resting "last point"
+    /// in `EventDetailView`) is an exact observation, which is what it is.
+    var periodObservedAt: Date? = nil
+    var clockObservedAt: Date? = nil
+    var scoreObservedAt: Date? = nil
+    var periodApprox: Bool = false
+    var clockApprox: Bool = false
+    var scoreApprox: Bool = false
 
     var hasScore: Bool {
         homeScore != nil && awayScore != nil
@@ -197,15 +203,45 @@ struct GamePlayPoint {
         return Self.clockText(date)
     }
 
-    /// "as of 7:41 PM" — the observation the carried state came from, printed
-    /// only when it is older than the point (`stateApprox`), so an exact point
-    /// says nothing and a stale one says exactly how stale. Nil otherwise.
+    /// Which halves of the badge `liveStatusText` actually printed. Decided
+    /// over what is RENDERED, not what the point carries: when ESPN's period
+    /// detail already spells the clock the standalone clock is dropped, and a
+    /// clock the reader cannot see must not date, or mark, the badge.
+    private var renderedBadgeParts: (period: String, clock: String) {
+        let full = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+        let periodOnly = PeriodLabel.liveStatusText(period: period, gameClock: nil) ?? ""
+        let clockOnly = PeriodLabel.liveStatusText(period: nil, gameClock: clock) ?? ""
+        if !periodOnly.isEmpty, !clockOnly.isEmpty, full == "\(periodOnly) \(clockOnly)" {
+            return (periodOnly, clockOnly)
+        }
+        if !clockOnly.isEmpty, full == clockOnly { return ("", clockOnly) }
+        if !periodOnly.isEmpty, full == periodOnly { return (periodOnly, "") }
+        return (full, "")
+    }
+
+    private var periodIsCarried: Bool { periodApprox && !renderedBadgeParts.period.isEmpty }
+    private var clockIsCarried: Bool { clockApprox && !renderedBadgeParts.clock.isEmpty }
+
+    /// "as of 7:41 PM" — the OLDEST observation among the components actually
+    /// on screen that were carried here, printed only when at least one of
+    /// them is a minute or more older than the point. Oldest, not per-field:
+    /// it is the one choice that can never make a stale readout look fresher
+    /// than it is, and the `~` on the badge says which half is old. The score
+    /// joins the set only when the badge has nothing else — then the score IS
+    /// the readout being dated. Nil when everything shown is fresh, or when a
+    /// carried field has no date to name (the mark stays; no time is invented).
     ///
     /// Reader copy, not implementation: it names a time, not a mechanism.
     var stateAsOfDisplay: String? {
-        guard stateApprox, let observed = stateObservedAt,
-              hasScore || !timeDisplay.isEmpty else { return nil }
-        return "as of \(Self.clockText(observed))"
+        var carried: [Date] = []
+        if periodIsCarried, let d = periodObservedAt { carried.append(d) }
+        if clockIsCarried, let d = clockObservedAt { carried.append(d) }
+        let parts = renderedBadgeParts
+        if parts.period.isEmpty, parts.clock.isEmpty, hasScore, scoreApprox, let d = scoreObservedAt {
+            carried.append(d)
+        }
+        guard let oldest = carried.min() else { return nil }
+        return "as of \(Self.clockText(oldest))"
     }
 
     /// One clock format for both lines, so "7:44 PM" and "as of 7:41 PM" read as
@@ -240,11 +276,25 @@ struct GamePlayPoint {
     /// the hero capsule two hundred points up this same page already prints
     /// (`StatusBadge`, same helper): one vocabulary for the pair, not two.
     var timeDisplay: String {
-        let text = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
-        // #925 — a carried state wears the same `~` the web's badge does
-        // ("Q4 ~1:09", "~Top 8th"): one glyph, one meaning — "not observed at
-        // this instant". The exact time it WAS observed is `stateAsOfDisplay`.
-        guard stateApprox, !text.isEmpty else { return text }
-        return "~" + text
+        let parts = renderedBadgeParts
+        // #925 — a carried half wears the same `~` the web's badge does, and
+        // the `~` marks the ODD ONE OUT so the badge never carries two: the
+        // clock takes it when the clock is carried ("Q4 ~1:09"); the period
+        // takes it only when it is the stale half of a badge whose clock is
+        // fresh, or when it is alone ("~Top 8th", baseball). One glyph, one
+        // meaning — "not observed at this instant". The exact time it WAS
+        // observed is `stateAsOfDisplay`.
+        //
+        // The join itself stays `liveStatusText`'s (#4880 guard,
+        // `periodLabelSingleSource.test.ts`): the mark is placed INTO the
+        // string that rule printed, never by re-joining the pair here.
+        var text = PeriodLabel.liveStatusText(period: period, gameClock: clock) ?? ""
+        if clockIsCarried, let clockRange = text.range(of: parts.clock, options: .backwards) {
+            text.replaceSubrange(clockRange, with: "~" + parts.clock)
+        }
+        if periodIsCarried, !clockIsCarried, !text.isEmpty {
+            text = "~" + text
+        }
+        return text
     }
 }
