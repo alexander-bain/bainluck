@@ -198,7 +198,12 @@ export function pickLiveLeader<
  * — plus the runner-up).
  */
 export function pickChartSeedOutcomes<
-  T extends { id: number; is_winner?: boolean | null; probability?: number | null },
+  T extends {
+    id: number;
+    is_winner?: boolean | null;
+    probability?: number | null;
+    name?: string | null;
+  },
 >(
   outcomes: readonly T[],
   resolved: boolean,
@@ -212,7 +217,11 @@ export function pickChartSeedOutcomes<
   );
 
   if (resolved) {
-    const winner = outcomes.find((o) => o.is_winner === true) ?? byProb[0];
+    // #8301 — the row the HERO features, asked through the hero's own helper.
+    // This used to be the first graded row, which on a game board is a totals
+    // line: `/futures/114108` headlined "Kings WON" over an empty chart, because
+    // the seed was `O/U 5.5` and the history endpoint serves only Kings.
+    const winner = pickHeroOutcome(outcomes, byProb[0], true) ?? byProb[0];
     const runnerUp = byProb.find((o) => o.id !== winner.id);
     return runnerUp ? [winner, runnerUp] : [winner];
   }

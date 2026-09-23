@@ -9,6 +9,7 @@
 import {
   gradedWinner,
   isLineOrPropLeg,
+  pickChartSeedOutcomes,
   pickHeroOutcome,
 } from "@/lib/futuresDetailDisplay";
 
@@ -119,5 +120,26 @@ describe("#8280 isLineOrPropLeg over the shapes production serves", () => {
     "Tadej Pogacar",
   ])("%s names a side", (name) => {
     expect(isLineOrPropLeg(name)).toBe(false);
+  });
+});
+
+describe("#8301 the settled chart seeds the row the hero features", () => {
+  it("seeds Kings first on the specimen (the only outcome the history endpoint serves)", () => {
+    const seeds = pickChartSeedOutcomes(SPECIMEN_114108, true, false);
+    expect(seeds[0]?.id).toBe(1632399);
+    expect(seeds.map((o) => o.id)).toContain(1632399);
+  });
+
+  it("agrees with pickHeroOutcome on the specimen", () => {
+    const hero = pickHeroOutcome(SPECIMEN_114108, leaderOf(SPECIMEN_114108), true);
+    expect(pickChartSeedOutcomes(SPECIMEN_114108, true)[0]?.id).toBe(hero?.id);
+  });
+
+  it("a board with nothing graded still seeds the price leader", () => {
+    const rows: Row[] = [
+      { id: 1, name: "Kings", is_winner: false, probability: 0.2 },
+      { id: 2, name: "Blue Jackets", is_winner: false, probability: 0.7 },
+    ];
+    expect(pickChartSeedOutcomes(rows, true).map((o) => o.id)).toEqual([2, 1]);
   });
 });
