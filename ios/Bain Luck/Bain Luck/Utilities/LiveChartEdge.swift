@@ -39,13 +39,33 @@ import Foundation
 /// spent two seconds in a queue belongs where the data was true, not where the
 /// packet landed — otherwise the segment joining it to the backend points either
 /// side of it bends under network jitter.
+///
+/// `source`/`sourceProbability` are the OTHER number a frame carries — the venue
+/// reading behind the blend, the same value the backend persists into
+/// `win_prob_history[<source>][].home_probability`. They never reach the blend
+/// line. They exist for one place only: a single-source page, where the backend
+/// published no blend and that venue's own series is the line the reader reads
+/// (`OddsChartView.extendingServedSourceSeries`, #836/#837/#920). Held on the
+/// same validity bar as the blend — a named source and a finite probability —
+/// or not at all; a frame without one is still a perfectly good blend reading.
 nonisolated struct LiveBlendPoint: Sendable, Equatable {
     let date: Date
     let homeProbability: Double
+    let source: String?
+    let sourceProbability: Double?
 
-    init(date: Date, homeProbability: Double) {
+    init(date: Date, homeProbability: Double,
+         source: String? = nil, sourceProbability: Double? = nil) {
         self.date = date
         self.homeProbability = homeProbability
+        if let source, !source.isEmpty,
+           let value = sourceProbability, value.isFinite, (0...1).contains(value) {
+            self.source = source
+            self.sourceProbability = value
+        } else {
+            self.source = nil
+            self.sourceProbability = nil
+        }
     }
 }
 
