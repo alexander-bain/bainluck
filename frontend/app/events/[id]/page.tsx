@@ -2399,6 +2399,11 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeam={event.home_team}
               awayTeam={event.away_team}
               commenceTime={event.commence_time}
+              /* #8215 — served provenance, never re-derived: `false` means this hour is the
+                 venue's expected resolution time, not a kick-off, so it is not a "Since Start"
+                 cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
+                 directly. */
+              commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
               espnHistory={historyData?.espn_history}
@@ -3000,6 +3005,11 @@ export default function EventPage({ params }: EventPageProps) {
               homeTeam={event.home_team}
               awayTeam={event.away_team}
               commenceTime={event.commence_time}
+              /* #8215 — served provenance, never re-derived: `false` means this hour is the
+                 venue's expected resolution time, not a kick-off, so it is not a "Since Start"
+                 cut. The fullscreen chart below passes no `chartStartTime`, so it needs this
+                 directly. */
+              commenceTimeIsKickoff={historyData?.commence_time_is_kickoff}
               isLive={effectivelyLive}
               bookmakerHistory={historyData?.bookmaker_history}
               espnHistory={historyData?.espn_history}

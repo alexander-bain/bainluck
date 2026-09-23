@@ -282,6 +282,13 @@ interface OddsChartProps {
   homeTeam: string;
   awayTeam: string;
   commenceTime?: string;
+  /**
+   * #8215 — `EventHistoryResponse.commence_time_is_kickoff`, passed straight through. `false` means
+   * `commenceTime` is the venue's expected RESOLUTION hour, not a kick-off, so it may not be used
+   * as the "Since Start" cut. Undefined (older payload, or a caller that has none) keeps today's
+   * behaviour. Never re-derive it from the series — see the type's own note.
+   */
+  commenceTimeIsKickoff?: boolean;
   isLive?: boolean;
   bookmakerHistory?: Record<string, BookmakerHistoryPoint[]>;
   /** ESPN win probability history (legacy, used as fallback) */
@@ -525,6 +532,7 @@ export default function OddsChart({
   homeTeam,
   awayTeam,
   commenceTime,
+  commenceTimeIsKickoff,
   isLive = false,
   bookmakerHistory,
   espnHistory,
@@ -779,12 +787,22 @@ export default function OddsChart({
    */
   const rangeStartTime = useMemo(() => {
     const parentStart = chartStartTime ? parseISO(chartStartTime) : null;
+    // #8215 — the same rule `computeSharedChartDomain` applies to `liveStart`, applied where this
+    // chart cuts its own ink. This fallback is NOT dead code behind the parent's domain: the
+    // fullscreen chart (`app/events/[id]/page.tsx`) passes no `chartStartTime` at all, so on a
+    // Kalshi-clocked fixture it is this line, not the parent, that cut 525 points down to 4.
+    // A served `false` means `commenceTime` is the expected resolution hour, so there is no start
+    // to cut at — draw the whole extent rather than a window the match was not played in.
+    const commenceCut =
+      commenceTime && commenceTimeIsKickoff !== false ? parseISO(commenceTime) : null;
     const fallback =
       timeRange === "all"
         ? null
-        : commenceTime
-          ? parseISO(commenceTime)
-          : new Date();
+        : commenceCut
+          ? commenceCut
+          : commenceTimeIsKickoff === false
+            ? null
+            : new Date();
     const candidate = parentStart ?? fallback;
     if (!candidate || isNaN(candidate.getTime())) return null;
     const startMs = candidate.getTime();
@@ -804,6 +822,7 @@ export default function OddsChart({
     chartStartTime,
     timeRange,
     commenceTime,
+    commenceTimeIsKickoff,
     history,
     espnHistory,
     aggregateLine,

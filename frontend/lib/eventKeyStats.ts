@@ -1549,8 +1549,33 @@ export function computeSharedChartDomain(
 
   // "Since Start" mode: start from commenceTime
   const gameStart = commenceTime ? new Date(commenceTime) : null;
+
+  // #8215 — "SINCE START" MAY NOT CUT AT AN HOUR THAT IS NOT A START.
+  //
+  // For a Kalshi-clocked dated fixture we store the venue's `occurrence_datetime`, which is
+  // byte-identical to `expected_expiration_time`: when the CONTRACT is expected to resolve, about
+  // two hours after a tennis match is over. Kalshi publishes no kick-off field at all.
+  //
+  // Measured on /events/15317314 (Basilashvili v Cina, ATP, 2026-09-23): commence_time 09:10Z, and
+  // the 525 Kalshi+Polymarket points run 2026-09-22 17:45Z → 2026-09-23 09:19Z. Exactly 4 of those
+  // 525 fall at or after 09:10Z, so "Since Start" drew a nine-minute dead-flat tail at 99% and
+  // called it the match.
+  //
+  // 🔴 THE FLOOR BELOW CANNOT CATCH THIS, which is why the flag is needed at all. Every existing
+  // escape hatch here and in `OddsChart.rangeStartTime` is "nothing survives the cut" — and this
+  // population sits just PAST it, on a handful of post-settlement quotes. Four surviving points is
+  // not an empty window; it is a wrong one, and no test on the series can tell the two apart.
+  //
+  // ⚠️ Read the served flag; never re-derive it. It is a statement about which venue column the
+  // hour came from, not about the shape of the points (see `EventHistoryResponse`). `undefined` —
+  // an older payload — keeps today's behaviour; only an explicit `false` declines the cut, and
+  // then the honest full extent is the window, the same remedy as the floor and the inversion
+  // backstop below.
+  const commenceIsKickoff = historyData.commence_time_is_kickoff;
   const liveStart =
-    gameStart && !isNaN(gameStart.getTime()) ? gameStart : allStart;
+    gameStart && !isNaN(gameStart.getTime()) && commenceIsKickoff !== false
+      ? gameStart
+      : allStart;
 
   // "All" mode: cap the start to at most 2 hours before commenceTime once a game
   // is in-game (live) or finished. Prevents charts from showing many hours of
