@@ -21925,7 +21925,8 @@ async def _build_related_futures(
 
     team_index = None
     team_rows: list = []
-    label_identity = None
+    home_label_identity = None
+    away_label_identity = None
 
     async def _load_team_roster():
         """The sport's roster, read AT MOST ONCE and shared with the merge below.
@@ -21948,7 +21949,7 @@ async def _build_related_futures(
         Timberwolves) can never poison the #8052 ticker path. Only the new
         `label_identity` sees the whole family.
         """
-        nonlocal team_index, team_rows, label_identity
+        nonlocal team_index, team_rows, home_label_identity, away_label_identity
         if team_index is None and event.sport_id:
             family_rows = (
                 await db.execute(
@@ -21984,20 +21985,29 @@ async def _build_related_futures(
                     for t in team_rows
                 ]
             )
-            label_identity = build_label_identity(
-                [
-                    {
-                        "id": t.id,
-                        "sport_id": t.sport_id,
-                        "name": t.name,
-                        "abbreviation": t.abbreviation,
-                        "location": t.location,
-                        "alternate_names": t.alternate_names,
-                    }
-                    for t in family_rows
-                ],
-                own_team_ids=all_team_ids,
-                own_team_names=(event.home_team_name, event.away_team_name),
+            identity_rows = [
+                {
+                    "id": t.id,
+                    "sport_id": t.sport_id,
+                    "name": t.name,
+                    "abbreviation": t.abbreviation,
+                    "location": t.location,
+                    "alternate_names": t.alternate_names,
+                }
+                for t in family_rows
+            ]
+            # Identity is side-specific: when the Islanders play the Rangers,
+            # the Rangers' longer name is still foreign to the Islanders.
+            # Keep the shared league index above event-wide for #8052/merge.
+            home_label_identity = build_label_identity(
+                identity_rows,
+                own_team_ids=home_team_ids,
+                own_team_names=(event.home_team_name,),
+            )
+            away_label_identity = build_label_identity(
+                identity_rows,
+                own_team_ids=away_team_ids,
+                own_team_names=(event.away_team_name,),
             )
         return team_index
 
@@ -22120,20 +22130,20 @@ async def _build_related_futures(
         if not is_home and not is_away:
             # Fall back to name matching on outcome (team outcomes)
             is_home = _matches_any(outcome.name, home_patterns) and not label_names_another_club(
-                outcome.name, home_patterns, label_identity
+                outcome.name, home_patterns, home_label_identity
             )
             is_away = _matches_any(outcome.name, away_patterns) and not label_names_another_club(
-                outcome.name, away_patterns, label_identity
+                outcome.name, away_patterns, away_label_identity
             )
 
         if not is_home and not is_away:
             # Fall back to name matching on MARKET name (game props)
             # e.g., "Boston at Golden State: Rebounds" → market name matches
             is_home = _matches_any(market.name, home_team_patterns) and not label_names_another_club(
-                market.name, home_team_patterns, label_identity
+                market.name, home_team_patterns, home_label_identity
             )
             is_away = _matches_any(market.name, away_team_patterns) and not label_names_another_club(
-                market.name, away_team_patterns, label_identity
+                market.name, away_team_patterns, away_label_identity
             )
 
         if not is_home and not is_away:
