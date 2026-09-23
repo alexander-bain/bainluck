@@ -25,6 +25,12 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// because it is additive: an older cached payload has no key at all.
     let moments: [GameMomentPoint]?
     let aggregateLine: [AggregateLinePoint]?
+    /// #8215 — `false` means `commenceTime` is the venue's expected RESOLUTION
+    /// hour (Kalshi's `occurrence_datetime` on a tennis fixture), not a start,
+    /// so neither the page's chart domain nor "Since Start" may cut at it.
+    /// A statement about PROVENANCE the served points cannot show: read it,
+    /// never re-derive it. Absent (older payload) and `true` keep the cut.
+    let commenceTimeIsKickoff: Bool?
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?

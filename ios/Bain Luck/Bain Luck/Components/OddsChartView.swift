@@ -914,6 +914,19 @@ struct OddsChartView: View {
         return nil
     }
 
+    /// Where "Since Start" cuts, or nil for no cut (#8215, phone half).
+    ///
+    /// A served `commence_time_is_kickoff == false` means the stored hour is the
+    /// venue's expected RESOLUTION time, not a start — cutting there on a
+    /// Kalshi-clocked tennis match keeps the post-settlement minutes and hides
+    /// the match. The web declines the cut on the same flag
+    /// (`OddsChart.rangeStartTime`); so does this. Absent and `true` cut as
+    /// before. Read, never re-derived from the series.
+    static func sinceStartCut(commence: Date?, commenceTimeIsKickoff: Bool?) -> Date? {
+        guard commenceTimeIsKickoff != false else { return nil }
+        return commence
+    }
+
     private func filterPoints(_ points: [ChartDataPoint]) -> [ChartDataPoint] {
         var filtered = points
 
@@ -923,7 +936,8 @@ struct OddsChartView: View {
         }
 
         guard vm.selectedRange == .sinceStart,
-              let startDate = gameStartDate,
+              let startDate = Self.sinceStartCut(commence: gameStartDate,
+                                                 commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff),
               isGameStarted else {
             return filtered
         }

@@ -37,6 +37,42 @@ struct EventDetailView: View {
     @State private var sourceRowWidth: Double = 0
     @State private var refreshCountdown: Int = 0
     @State private var refreshCountdownTimer: Timer?
+    /// Where the page's shared chart domain opens (both inline charts get it).
+    ///
+    /// #1833: the actual start may be up to two hours BEFORE the schedule, from
+    /// the first period-bearing ESPN row — never more, because in-game rows from
+    /// the previous night's game once opened a 22-hour axis.
+    ///
+    /// #8215: when the payload says `commence_time_is_kickoff == false`, the
+    /// scheduled hour is the venue's expected RESOLUTION time (Kalshi's
+    /// `occurrence_datetime` on a tennis fixture), so it is no anchor at all:
+    /// the window is the full extent of what was captured, the web's remedy
+    /// (`computeSharedChartDomain`'s `liveStart`). Absent and `true` keep the
+    /// schedule. nil ⇒ no domain (the charts size themselves).
+    static func sharedDomainStart(scheduledStart: Date, history: EventHistoryResponse?) -> Date? {
+        if history?.commenceTimeIsKickoff == false {
+            return history.flatMap(earliestCapturedDate(in:))
+        }
+        let earliestPlausibleStart = scheduledStart.addingTimeInterval(-2 * 60 * 60)
+        if let espn = history?.espnHistory,
+           let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
+           let espnDate = firstEspn.timestamp.asDate {
+            let candidate = min(scheduledStart, espnDate.addingTimeInterval(-60))
+            return max(candidate, earliestPlausibleStart)
+        }
+        return scheduledStart
+    }
+
+    /// The earliest timestamp any chart series on this payload carries.
+    static func earliestCapturedDate(in history: EventHistoryResponse) -> Date? {
+        var stamps: [String] = history.history.map(\.timestamp)
+        stamps += (history.aggregateLine ?? []).map(\.timestamp)
+        stamps += (history.espnHistory ?? []).map(\.timestamp)
+        for series in (history.winProbHistory ?? [:]).values { stamps += series.map(\.timestamp) }
+        for series in (history.bookmakerHistory ?? [:]).values { stamps += series.map(\.timestamp) }
+        return stamps.compactMap(\.asDate).min()
+    }
+
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
               let commenceTime = event.commenceTime,
@@ -57,16 +93,8 @@ struct EventDetailView: View {
         // chart domain must not depend on upstream cleanliness to stay legible.
         // A real early start is minutes, not hours — so accept an earlier anchor
         // only within a warm-up margin and otherwise trust the schedule.
-        let earliestPlausibleStart = scheduledStart.addingTimeInterval(-2 * 60 * 60)
-        let actualStart: Date
-        if let espn = vm.history?.espnHistory,
-           let firstEspn = espn.first(where: { $0.period != nil && !($0.period?.isEmpty ?? true) }),
-           let espnDate = firstEspn.timestamp.asDate {
-            let candidate = min(scheduledStart, espnDate.addingTimeInterval(-60))
-            actualStart = max(candidate, earliestPlausibleStart)
-        } else {
-            actualStart = scheduledStart
-        }
+        guard let actualStart = Self.sharedDomainStart(scheduledStart: scheduledStart,
+                                                       history: vm.history) else { return nil }
 
         // Build a domain only when the upper bound is at/after the lower bound.
         // A market-less / aged-out closed game can have history whose only points
