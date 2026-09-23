@@ -1095,6 +1095,34 @@ jobs:
             exit 1
           fi
 
+      - name: "#7035 sweep void bind contract (real Postgres)"
+        # The same sweep's SECOND statement, and the same failure class one
+        # function over. `VOID_UPDATE_SQL` puts a bind inside
+        # `jsonb_build_object(...)`, which is `VARIADIC "any"` — Postgres can
+        # infer no type for an untyped parameter there, so it dies at PREPARE
+        # before a row is read. The statement carries an explicit
+        # `CAST(:updated_at AS text)` for exactly that reason, and removing it
+        # was measured to raise `IndeterminateDatatypeError`; the cast is the
+        # kind of thing a later tidy-up deletes.
+        #
+        # Real Postgres because nothing cheaper can reject it, and because the
+        # behavioural half needs a real `jsonb` column: the write MERGES
+        # (`COALESCE(...) || ...`) so a row already carrying
+        # `market_metadata["shape"]` keeps it, and a plain assignment — which
+        # sqlite would accept happily — would silently drop it.
+        #
+        # Same skip-detection as the gates around it: pytest exits 0 when every
+        # test skips, so a gate that silently did not run is indistinguishable
+        # from one that passed.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_kalshi_sweep_void_bind_pg.py \
+            -v -s -rs 2>&1 | tee /tmp/sweep_void_bind.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/sweep_void_bind.txt; then
+            echo "::error::#7035 sweep void bind contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4057 Kalshi settlement recency band (real Postgres)"
         # WHICH settled Kalshi markets a cycle asks the venue about is decided by
         # two WHERE clauses and nothing else. The old selection was an

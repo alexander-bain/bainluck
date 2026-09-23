@@ -99,6 +99,20 @@ COVERED = (
     "test_kalshi_fabricated_loss_bind_contract_pg.py",
     "test_kalshi_settlement_recency_band_pg.py",
     "test_kalshi_sweep_settlement_bind_pg.py",
+    # #7035. Seeds `futures_markets` by raw INSERT to prove the void write
+    # PREPARES — its bind sits inside `jsonb_build_object`, which is
+    # `VARIADIC "any"`, so an untyped parameter there cannot be inferred. Two
+    # seeding hazards the NOT-NULL arm cannot see, both about the one column
+    # the gate is actually about:
+    #
+    #   * `market_metadata` is bound through `CAST(:metadata AS jsonb)`. An
+    #     untyped NULL into a `jsonb` column is the SAME inference failure one
+    #     layer down, so a seed written the obvious way dies in the fixture and
+    #     reports the gate's own bug as a red deploy.
+    #   * the merge arm's whole subject is metadata the row ALREADY carries. A
+    #     seed that left it NULL would exercise only the empty case, and the
+    #     assignment-vs-merge bug it exists to catch would pass.
+    "test_kalshi_sweep_void_bind_pg.py",
     "test_link_tennis_already_linked_pg.py",
     "test_link_tennis_statpal_real_postgres.py",
     # #5024. Seeds `sports`, `events`, `futures_markets` and `futures_outcomes`
