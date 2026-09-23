@@ -968,6 +968,48 @@ export interface SportScoringVocab {
    */
   winnerMarketPricesADraw: boolean;
   /**
+   * Can a game in this sport END with the two sides level?
+   *
+   * #8156, on `/events/15316961` (Padres @ Dodgers, LIVE, score frozen at
+   * 0 – 0, Bottom 2nd), 390px, production 2026-09-23. Two frames four minutes
+   * apart, nothing happening in the game:
+   *
+   *     02:39Z   54% – 46% Dodgers      Projected final: 3 – 3
+   *     02:43Z   55% – 45% Dodgers      Projected final: 4 – 3
+   *
+   * and the 02:40Z payload (`2.5 / 3.5`) would have rendered `3 – 4`, the
+   * Padres. Three named outcomes in four minutes — and the middle one is not a
+   * poor estimate, it is an **impossible** one. **MLB has no ties.** The hero
+   * stated a final score the sport cannot produce, directly under its own
+   * "someone wins" probability.
+   *
+   * The mechanism is one line of arithmetic: `Math.round` is applied to each
+   * side of the pair independently, so ANY pair less than a run apart lands on
+   * one integer. `2.9 / 3.1` prints `3 – 3`. On this one event's own history
+   * that was 17 of 164 projection rows (10.4%) — the near-pick'em window, which
+   * is where a large share of live baseball sits.
+   *
+   * ⚠️ **THIS IS NOT `winnerMarketPricesADraw`, AND AMERICAN FOOTBALL IS THE
+   * PROOF.** That field asks whether the winner MARKET quotes a third outcome;
+   * this asks whether the SPORT can produce one. An NFL moneyline is two-sided
+   * and pushes on a tie — `winnerMarketPricesADraw: false` — yet an NFL
+   * regular-season game really can finish level, so `24 – 24` is a legal result
+   * and stays on the page. The two fields agree on five of six rows and
+   * disagree on the one that matters, which is exactly why binding them would
+   * be wrong.
+   *
+   * ⚠️ **THE DEFAULT IS `true`, with `scoreboardCountsTheUnit`'s and
+   * `gameHasAClock`'s polarity and not `hasDerivedSpread`'s.** This field
+   * DELETES a line the page would otherwise draw, so an undeclared sport must
+   * keep drawing it: rugby, cricket and chess all draw, and defaulting `false`
+   * would silently withhold a legal scoreline from every sport nobody has got
+   * round to declaring. Only a sport measured to be unable to tie says `false`.
+   *
+   * What it gates is a SUPPRESSION, never a narration — notice 34: if a number
+   * cannot be shown honestly the space is left empty, not explained.
+   */
+  canEndInATie: boolean;
+  /**
    * Is this sport's game governed by a running CLOCK at all?
    *
    * #6684. ESPN ships `period` and `game_clock` from one status payload for
@@ -1020,19 +1062,24 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     match: ["baseball", "mlb"],
     // THE ONE ROW THAT SAYS NO TO A CLOCK (#6684). An inning is not a timed
     // period; ESPN's `game_clock` for this sport is the constant `0:00`.
-    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: false },
+    // #8156's subject: extra innings run until somebody is ahead, so a level
+    // scoreline is not a rare result here, it is not a result at all.
+    vocab: { marginTitle: "Run margin map", totalTitle: "Runs map", unit: "runs", unitSingular: "run", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false },
   },
   {
     match: ["hockey", "nhl"],
     // A regular-season game level after overtime is decided by a shootout, so
-    // the winner market has two outcomes and the complement is honest.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
+    // the winner market has two outcomes and the complement is honest — and by
+    // the same fact (#8156) the final scoreboard is never level either.
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true },
   },
   {
     match: ["soccer", "mls", "epl", "uefa", "fifa"],
     // THE ONE ROW THAT SAYS YES (#6238, mirroring native's #5271). A league
     // draw prices around 20-30% pre-match and the site held no slot for it.
-    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, gameHasAClock: true },
+    // The same row says yes to #8156: a league draw is a result, so `1 – 1` is
+    // a projection this page may print.
+    vocab: { marginTitle: "Goal margin map", totalTitle: "Goals map", unit: "goals", unitSingular: "goal", marginRange: 5, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: true, canEndInATie: true, gameHasAClock: true },
   },
   {
     // #2441's subject. A tennis match is scored in games inside sets; the
@@ -1040,15 +1087,30 @@ const SPORT_SCORING: { match: string[]; vocab: SportScoringVocab }[] = [
     // `hasDerivedSpread: false` is what stops `BER +4.5` being drawn from a
     // points model over a sport with no points.
     match: ["tennis"],
-    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, gameHasAClock: false },
+    // `canEndInATie: false` is a true statement about the sport that #8156
+    // cannot reach: the projection this page prints is already withheld here by
+    // `hasDerivedSpread`, one gate earlier. Declared anyway so the row states a
+    // fact rather than an absence.
+    vocab: { marginTitle: "Game margin map", totalTitle: "Games map", unit: "games", unitSingular: "game", marginRange: 6, hasDerivedSpread: false, scoreboardCountsTheUnit: false, scoreboardUnit: "sets", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: false },
   },
   {
     match: ["basketball", "nba", "wnba", "ncaab"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
+    // Overtime repeats until one side is ahead (#8156), so a level final is not
+    // a basketball result at any level of the sport.
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: false, gameHasAClock: true },
   },
   {
     match: ["americanfootball", "nfl", "ncaaf"],
-    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, gameHasAClock: true },
+    // 🔴 THE ROW THAT SAYS `canEndInATie: true` WITH A TWO-SIDED WINNER MARKET,
+    // and the trap #8156 nearly walked into. An NFL regular-season game that is
+    // level after one overtime period IS recorded as a tie — rare, and real. So
+    // `24 – 24` here is a legal result and the page keeps printing it; the
+    // suppression is for impossible scorelines, not unlikely ones. NCAAF shares
+    // this row and cannot tie (its overtime runs until somebody wins), which is
+    // a reason to SPLIT the row on measured evidence, never a reason to flip it
+    // and delete a legal NFL scoreline. Same discipline as `gameHasAClock`'s
+    // football note: the rare thing is named by someone who measured it.
+    vocab: { marginTitle: "Margin map", totalTitle: "Points map", unit: "points", unitSingular: "point", marginRange: 18, hasDerivedSpread: true, scoreboardCountsTheUnit: true, scoreboardUnit: "", winnerMarketPricesADraw: false, canEndInATie: true, gameHasAClock: true },
   },
 ];
 
@@ -1076,6 +1138,14 @@ export const UNSCORED_IN_POINTS: SportScoringVocab = {
   // An undeclared sport keeps its two-sided reading. See the field's own note:
   // this default is what makes withholding the away number opt-in.
   winnerMarketPricesADraw: false,
+  // `true`, with `scoreboardCountsTheUnit`'s polarity and not
+  // `winnerMarketPricesADraw`'s, even though the two look like one question
+  // (they are not — see the field's own note, and the football row). This field
+  // DELETES a scoreline, and rugby, cricket and chess all draw, so an
+  // undeclared sport keeps printing a level projection until somebody measures
+  // it. In practice nothing undeclared reaches the gate anyway:
+  // `hasDerivedSpread: false` above withholds the projection one step earlier.
+  canEndInATie: true,
   // `true`, with `scoreboardCountsTheUnit`'s polarity and not
   // `winnerMarketPricesADraw`'s: this field DELETES a field the wire really
   // sent, so an undeclared sport keeps painting its clock. Defaulting false

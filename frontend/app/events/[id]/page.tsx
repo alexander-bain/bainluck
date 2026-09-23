@@ -981,6 +981,51 @@ export default function EventPage({ params }: EventPageProps) {
   // other.
   const projectionHasGameStateToFrame = !heroUnderway || heroScorePairPresent;
 
+  // ── #8156 — A PROJECTED FINAL IS A RESULT, SO IT HAS TO BE ONE THE SPORT CAN
+  //    PRODUCE ────────────────────────────────────────────────────────────────
+  //
+  // `/events/15316961`, Padres @ Dodgers, LIVE, score frozen at 0 – 0 through
+  // both frames, 390px, production 2026-09-23:
+  //
+  //     02:39Z   54% – 46% Dodgers      Projected final: 3 – 3
+  //     02:43Z   55% – 45% Dodgers      Projected final: 4 – 3
+  //
+  // and the payload between them (`2.5 / 3.5`) would have drawn `3 – 4`, the
+  // PADRES, under a hero naming the Dodgers. Three outcomes in four minutes
+  // with nothing happening in the game — but only one of them is this gate's
+  // business. **`3 – 3` is not a bad estimate. MLB has no ties.** The card
+  // stated a final score the sport cannot produce, immediately under its own
+  // "someone wins" number.
+  //
+  // 🔴 THE ARITHMETIC IS THE WHOLE CAUSE, AND IT IS HERE, NOT UPSTREAM. The
+  // pair is rounded per side, independently, so ANY pair under a run apart
+  // collapses onto one integer: `2.9 / 3.1` prints `3 – 3`. The served value is
+  // faithful to what the books quoted; the impossible claim is manufactured by
+  // the render. 17 of this event's own 164 projection rows (10.4%) round to a
+  // tie — the near-pick'em window, where a large share of live baseball sits.
+  //
+  // NOT THE JITTER. The underlying pair moves every minute because it is one
+  // minute's bookmaker sample (median 2 books; the favourite flips 13 times
+  // across this event's history) — that is #5455's single-row read, backend,
+  // and it is untouched here. This gate does not stabilise anything. It stops
+  // the page printing a scoreline that could never happen, which is the half
+  // that stands on its own.
+  //
+  // NOT A NARRATION. Notice 34: a number that cannot be shown honestly leaves
+  // the space empty. No "too close to call", no asterisk — the line is absent
+  // and the hero above it already says the game is near even.
+  //
+  // THE SPORT ANSWERS, NOT THIS FILE. `canEndInATie` is declared per sport in
+  // `marketMapUtils`; soccer and the NFL say `true` and keep their level
+  // projections, because the rule is about IMPOSSIBLE results and not unlikely
+  // ones. A sport nobody has declared keeps printing, by the field's default.
+  const projectedFinalPair = historyData?.pm_spread_data?.projected_final ?? null;
+  const projectedPairIsAPossibleResult =
+    projectedFinalPair == null ||
+    sportVocab(event?.sport || undefined).canEndInATie ||
+    Math.round(projectedFinalPair.home_score) !==
+      Math.round(projectedFinalPair.away_score);
+
   // #4571 — the age of the score PAIR the two lines above just resolved.
   //
   // `lastChartPoint` runs the same cascade internally and reports the clock of
@@ -2137,11 +2182,20 @@ export default function EventPage({ params }: EventPageProps) {
                   computed beside the scores it reads — a live game with no score
                   pair prints no projected final, a game that has not kicked off
                   still does. */}
+              {/* #8156: and gated on the pair being a result the sport can
+                  produce. The `Math.round` below is applied per side, so any
+                  pair under a run apart lands on one integer and a no-tie sport
+                  printed an impossible final (`3 – 3` on live MLB).
+                  `projectedPairIsAPossibleResult` is computed beside the other
+                  projection gates and rounds exactly the way this line does —
+                  the two must never drift, which is why the rounding is not
+                  written out twice in two different expressions. */}
               {sportVocab(event.sport || undefined).hasDerivedSpread &&
                 historyData?.pm_spread_data?.projected_final &&
                 event.status !== "completed" && event.status !== "closed" &&
                 !isSuspended &&
                 projectionHasGameStateToFrame &&
+                projectedPairIsAPossibleResult &&
                 historyData.pm_spread_data.projected_final.home_score > 0 &&
                 historyData.pm_spread_data.projected_final.away_score > 0 && (
                 <div className="mt-1.5">
