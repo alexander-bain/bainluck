@@ -34,6 +34,7 @@ from app.models import (
 from app.services import get_db
 from app.utils.db_cancellation import is_query_canceled
 from app.utils.futures_unsupported_price import price_refuted_by_live_book  # #6532
+from app.utils.futures_unsupported_price import needs_trade_evidence  # #8220
 from app.utils.futures_liveness import leg_is_graded  # #7387
 from app.utils.tournament_stages import classify_market_stage, get_stages_for_sport
 from app.utils.static_divisions import canonical_conference as _canonical_conference
@@ -4652,6 +4653,88 @@ _GRID_UNGENDERED_LEAGUES = ("golf",)
 # onto the grid at 0%/100%.
 _SETTLED_COLUMNS = {"make_playoffs", "division"}
 
+# #8220. THE GRID SUPPLIES THE FRAME THE VENUE'S METADATA CANNOT.
+#
+# A bracket-advancement column is a fixed-size exhaustive partition: N of the
+# teams shown advance, the cells are read against each other, and the column is
+# summed. That is exactly the frame
+# `kalshi_empty_book.is_lone_ask_in_exclusive_field` argues an ask-only book is
+# false inside — an untaken offer states an UPPER BOUND, and a column of upper
+# bounds does not overstate each leg a little, it inverts the ranking and
+# destroys the distribution.
+#
+# WHY THE FRAME IS DECLARED HERE AND NOT READ FROM THE MARKET. The canonical
+# frame test is `futures_unsupported_price.market_is_proved_exclusive_field`,
+# and it refuses every one of these markets — not because its winner-count term
+# says `== "1"` where a bracket has 2 or 4, but because the shape classifier
+# DECLINED them outright. Measured on production 2026-09-23, all five of
+# `KXMARMADROUND-27{R32,R16,R8,F4,T2}` store
+# `exhaustive: None / expected_winners: None / outcome_relation: 'unknown'` at
+# `confidence: 'low'`. So the frame fails on three clauses and there is no
+# winner count recorded at all; widening that term would change nothing. The
+# test is failing closed exactly as designed, and the proof it wants does not
+# exist upstream.
+#
+# It exists HERE. This module built the column — `_match_market_to_column`
+# resolved `-27T2` to `title_game` — so the grid knows structurally what the
+# classifier could not infer. `needs_trade_evidence` documents `in_exclusive_field`
+# as "the caller's answer to a question about the MARKET, not about this row";
+# this set is that answer, and keeping it a module-level constant is what makes
+# the answer assertable rather than a literal buried in a loop.
+#
+# ═══ SCOPED TO WHAT WAS MEASURED, WHICH IS NOT THE WHOLE CLASS ═══
+#
+# Seats per column: round_of_32 32, sweet_16 16, elite_eight 8, final_four 4,
+# title_game 2. On `/playoffs/ncaa-basketball` the served columns summed to
+# 20.88 / 13.21 / 7.21 / 5.35 / 4.58 against those seat counts — the two deepest
+# are incoherent, offering 5.35 probability for 4 places and 4.58 for 2.
+#
+# `semifinal`, `quarterfinal`, `final`, `top_4/5/10/20`, `relegation` and
+# `pennant` are the SAME frame and are deliberately NOT here: their populations
+# are unmeasured and they render on grids this ship has not walked, so admitting
+# them would be a second, unmeasured reader-visible change riding a measured one.
+# `championship` is excluded for a different and stronger reason — every one of
+# its 68 cells carries a non-Kalshi source, so it is a BLEND, and withholding one
+# contributor to a blended cell is a blending change (reviewed class under 49(d)),
+# not this ship. 17 of its 73 Kalshi legs are ask-only; that is recorded on #8220,
+# not repaired here.
+_ADVANCEMENT_COLUMNS = frozenset(
+    {"round_of_32", "sweet_16", "elite_eight", "final_four", "title_game"}
+)
+
+
+def _grid_cell_quotes_an_untaken_offer(
+    col_key: str,
+    source: str | None,
+    resolution_source: str | None,
+    yes_bid: float | None,
+    yes_ask: float | None,
+) -> bool:
+    """True when this cell's number is an untaken offer inside a summed column.
+
+    Extracted rather than left inline for the reason #7387 extracted
+    :func:`_grid_leg_is_terminal`: the decision lives in a 50-line loop inside a
+    1,000-line async handler that opens with a raw ``SET LOCAL``, so the only way
+    to assert it cheaply — and the only way a mutant that drops one clause gets
+    isolated by the row named for it — is to give it a name.
+
+    The book judgement itself is NOT made here. It is delegated whole to
+    :func:`futures_unsupported_price.needs_trade_evidence`, which owns the venue
+    scope, the graded-row exemption (#7387/#6876) and the book shape. This
+    function contributes exactly one thing the shared rule cannot know: whether
+    the column this cell lands in is a fixed-size advancement partition, which is
+    the frame that makes an upper bound false. See :data:`_ADVANCEMENT_COLUMNS`.
+    """
+    if col_key not in _ADVANCEMENT_COLUMNS:
+        return False
+    return needs_trade_evidence(
+        source,
+        resolution_source,
+        yes_bid,
+        yes_ask,
+        in_exclusive_field=True,
+    )
+
 
 def _build_league_name_conditions(config) -> list:
     """SQL prefilter for Path B.2 — league name patterns pushed down as ILIKE.
@@ -5387,6 +5470,10 @@ async def get_playoff_grid(
         # being refreshed — its book columns are current and its price is not —
         # so collapsing the two would report the loud case as the quiet one.
         _book_refuted_skipped = 0
+        # #8220. A THIRD counter, for the same reason #6532 wanted a second: this
+        # row is fresh AND its stored price is not refuted by its own book — it is
+        # refused because an untaken offer is not a price inside a summed column.
+        _ask_only_skipped = 0
 
         # Resolve every market to its column FIRST (market fields only), then load
         # outcomes for just the survivors — phase 2 of the #1484 bounded load.
@@ -5449,6 +5536,49 @@ async def get_playoff_grid(
                     else None,
                 ):
                     _book_refuted_skipped += 1
+                    continue
+                # #8220 — AN UNTAKEN OFFER IS NOT A PROBABILITY INSIDE A BRACKET
+                # COLUMN. South Dakota St read 13% to reach the Title Game and
+                # <0.1% to win it, a factor of 260 on one row, because the served
+                # number WAS the ask to the cent off a book with a zero bid and no
+                # trade in five months.
+                #
+                # Delegated, never restated: `needs_trade_evidence` already scopes
+                # to Kalshi, exempts a row carrying a verdict (#7387/#6876 — a
+                # graded leg's number is a settlement value and withholding it
+                # would delete a result), and hands the book shape to
+                # `is_lone_ask_in_exclusive_field`. `_ADVANCEMENT_COLUMNS` is the
+                # frame answer this route is entitled to give.
+                #
+                # WHY ITS "needs trade evidence" IS READ AS "withhold" HERE, which
+                # is the one place this route knowingly differs from the futures
+                # ladder. That predicate names rows a TRADE READ should decide,
+                # and this route has no trade to read: `futures_outcomes` stores
+                # no last price, and `volume` is NULL on all 560 of these rows
+                # (measured, not assumed). Reading snapshots per outcome would put
+                # a new query inside the grid loop, which LAT-P132 already
+                # measured at 24,465 ms on this route — the existing refusal above
+                # is row-local for the same reason. So this fails CLOSED, and the
+                # cost of that is bounded and named rather than waved through:
+                # against Kalshi's own books for all five rounds, 379 of 560 fresh
+                # legs are ask-only, 364 have never traded (last 0, volume 0, open
+                # interest 0) and 15 — 4.0% — carry trade evidence and are refused
+                # anyway. Several of those 15 overstate their own last trade
+                # regardless (Stanford asks 14c having last traded at 2c). The
+                # residual is #8210's subject, which owns the trade-evidence
+                # exemption; it is linked open and is not repaired here.
+                if _grid_cell_quotes_an_untaken_offer(
+                    col_key,
+                    market.source,
+                    outcome.resolution_source,
+                    float(outcome.current_yes_bid)
+                    if outcome.current_yes_bid is not None
+                    else None,
+                    float(outcome.current_yes_ask)
+                    if outcome.current_yes_ask is not None
+                    else None,
+                ):
+                    _ask_only_skipped += 1
                     continue
                 if outcome.current_probability is not None:
                     prob = float(outcome.current_probability)
@@ -5528,6 +5658,14 @@ async def get_playoff_grid(
                 "Playoff grid %s: skipped %d outcomes whose own book prices the "
                 "stored price out (#6532)",
                 config.slug, _book_refuted_skipped,
+            )
+        if _ask_only_skipped:
+            # `config.slug`, not `league_slug` — same `py/log-injection` reason
+            # the #6532 line above states.
+            logger.info(
+                "Playoff grid %s: withheld %d bracket cells quoting an untaken "
+                "offer with no bid (#8220)",
+                config.slug, _ask_only_skipped,
             )
 
         # Backfill empty columns from resolved markets (e.g., make_playoffs after

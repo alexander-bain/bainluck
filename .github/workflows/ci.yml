@@ -2870,6 +2870,43 @@ jobs:
             exit 1
           fi
 
+      - name: "#8220 an untaken offer is not a probability, at the GRID (real Postgres)"
+        # `/playoffs/ncaa-basketball` at 390px gave South Dakota St **13% to
+        # reach the Title Game and <0.1% to win it** — a factor of 260 on one
+        # row. The served number WAS the ask to the cent, off a book with a zero
+        # bid and no trade since 2026-04-28. The column offered 4.58 probability
+        # for 2 places; 26 of its 45 cells were this shape.
+        #
+        # 🔴 THE DEFECT WAS AN UNWIRED RULE, WHICH IS WHY THIS STEP EXISTS.
+        # `is_lone_ask_in_exclusive_field` was written for exactly this book in
+        # #6846 and returns True on the specimen. It reached no reader because
+        # `routes/playoffs.py` imported one member of `futures_unsupported_price`
+        # and not the other. The unit file `tests/test_grid_untaken_offer_8220.py`
+        # would have passed through the entire life of the defect, so this step
+        # reads the payload the page renders with the route running its own SQL.
+        #
+        # Measured non-vacuous, four mutants, each killed: unwiring the call site;
+        # dropping the `_ADVANCEMENT_COLUMNS` frame gate (caught by the
+        # championship control, which is deliberately outside it because that
+        # column is blended); forwarding `in_exclusive_field=False` (whose 0.50
+        # bound serves every one of these 11c-28c asks); and removing `title_game`
+        # from the frame set.
+        #
+        # The gate also carries its own anti-vacuity arm: step 4d filters this
+        # grid to `NCAA_2026_BRACKET`, so a refused specimen outside that list is
+        # absent for a reason unrelated to the rule and every assertion would
+        # pass with the fix reverted.
+        #
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_grid_untaken_offer_8220_pg.py \
+            -v -rs 2>&1 | tee /tmp/untakenoffer8220.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/untakenoffer8220.txt; then
+            echo "::error::#8220 untaken-offer grid gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Live blend concurrent stamp, two socket arms (real Postgres)
         # live/305's hero flicker, #836/#837/#5661. `worker-ws` runs the Kalshi
         # and Polymarket consumers under one `asyncio.gather`, each with its own

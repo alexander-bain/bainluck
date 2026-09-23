@@ -371,6 +371,16 @@ COVERED = (
     # loop drops anything older than seven days before the arm under test ever
     # sees it.
     "test_grid_book_refuted_price_6532_pg.py",
+    # #8220. The untaken-offer arm on the same grid loop as #6532 above, and it
+    # seeds two `futures_markets` plus their legs by raw INSERT. Two hazards this
+    # arm does see and one it does not, named so the next editor of that file
+    # does not rediscover them: `futures_markets.category` / `.mutually_exclusive`
+    # / `.status` and `sports.active` all carry CLIENT-SIDE ORM defaults a raw
+    # INSERT skips; and the one this gate is blind to — every seeded team must be
+    # in `NCAA_2026_BRACKET`, because step 4d drops the rest and a refused
+    # specimen filtered for THAT reason makes the refusal assertion pass with the
+    # fix reverted. That one is held by the gate's own anti-vacuity test.
+    "test_grid_untaken_offer_8220_pg.py",
     # #6975: seeds `sports` with an explicit reserved id (the #6221 sibling's
     # reason — the shared CI database's sequence is behind its explicit-id
     # rows); every other row goes through the ORM so Python-side defaults
