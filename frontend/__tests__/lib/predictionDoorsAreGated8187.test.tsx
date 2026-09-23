@@ -194,6 +194,23 @@ describe("#8187 — the door itself: Discover's header icon reads the flag", () 
   });
 });
 
+describe("#8187 — search stops promoting the route the header stopped promoting", () => {
+  it("asks not to be indexed, and still states its own identity", () => {
+    // Mirrors the `/daily` assertion in `challengeSurfacesHiddenForLaunch6445`.
+    // Closing the door in the app while leaving the page indexed only changes
+    // WHO opens it: the description sold "See how accurate my predictions are".
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { metadata } = require("@/app/discover/stats/layout") as {
+      metadata: Record<string, unknown>;
+    };
+
+    expect(metadata.robots).toEqual({ index: false, follow: false });
+    // #4193 again: without the canonical the route claims to be a duplicate of
+    // the home page, which is worse than the thing we are fixing.
+    expect(metadata.alternates).toEqual({ canonical: "/discover/stats" });
+  });
+});
+
 describe("#8187 — the destination stops claiming a measurement it never took", () => {
   // The flag ships `false`, so the default case needs no module surgery. It
   // deliberately does NOT run inside `jest.isolateModules`: a fresh registry
