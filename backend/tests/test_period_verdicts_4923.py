@@ -180,7 +180,16 @@ class _RecordingSession:
         sql = str(getattr(stmt, "text", stmt))
         self.statements.append((sql, params))
         out = self._responder(sql, params)
-        return out if out is not None else MagicMock(rowcount=0)
+        # #8132: a write this fake did not cannedly answer reports ONE row
+        # affected, not zero. The production code now reads `rowcount` to tell a
+        # write from a leg the authority guard refused, and a fake holding no
+        # rows cannot evaluate that guard — modelling it as a permanent refusal
+        # would make every verdict counter in these tests read 0 for a reason
+        # that has nothing to do with the parsing logic they grade. Whether the
+        # guard actually refuses is a question only a server can answer, and
+        # `tests/integration/test_price_crown_leg_guard_8132_real_postgres.py`
+        # is where it is asked.
+        return out if out is not None else MagicMock(rowcount=1)
 
     async def commit(self):
         return None

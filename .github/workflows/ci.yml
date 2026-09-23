@@ -3072,6 +3072,45 @@ jobs:
             exit 1
           fi
 
+      - name: "#8132 a venue-graded leg survives a score-crowner pass (real Postgres)"
+        # The +6h survival read of the same repair, made executable. Six hours
+        # after the 56-row apply, the 46 legs stamped over a `clean_resolution`
+        # held and all 10 stamped over a prior `game_score` were back at
+        # `game_score / is_winner = true` — rewritten whole-market by
+        # `_resolve_kalshi_spread_total_from_scores`, a SCORE-derived crowner the
+        # first pass of the leg guard never reached.
+        #
+        # The unit band asserts the clause is PRESENT in all eight statements
+        # that stamp `game_score`. Presence is not refusal: `NOT IN` against a
+        # NULL yields NULL rather than TRUE, which is why the shipped clause
+        # wraps the column in `COALESCE`, and no source-text assertion can tell
+        # you whether that `COALESCE` is there. Only a server reports which rows
+        # an UPDATE matched.
+        #
+        # The claim graded here is a NEGATIVE — "this row did not move" — and a
+        # skipped board, an unparsed leg or a market the candidate scan dropped
+        # all satisfy it by accident. So the corpus carries three legs on the
+        # SAME board that must still be graded (an ungraded one, a tier-1
+        # `clean_resolution` these passes exist to supersede, and a prior
+        # `game_score` the pass must stay able to rewrite) alongside the two it
+        # must refuse, plus a strawman running the pre-fix statement to prove the
+        # specimen can show the damage. Mutating the guard to an empty IN-list
+        # reds six of these arms.
+        #
+        # Runs the SHIPPED resolver with `get_task_session` pointed at this
+        # database, patched via `importlib.import_module` — `from app.tasks
+        # import backfill_winners` binds the Celery TASK, which shadows the
+        # module and has no such attribute. Same skip detection as every gate in
+        # this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_price_crown_leg_guard_8132_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/legguard8132.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/legguard8132.txt; then
+            echo "::error::#8132 leg-guard gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7354 the settled-orientation rail can open its own census (real Postgres)"
         # The rail merged with 54 green guards and could not execute. Its
         # `_SETTLED_PREDICATE` carried `(:sport_key IS NULL OR s.key = :sport_key)`,

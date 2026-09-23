@@ -54,6 +54,37 @@ from app.utils.winner_field_coherence import (
 
 logger = logging.getLogger(__name__)
 
+#: The per-leg authority guard for the crowners that stamp `game_score` (#8132's
+#: +6h survival read, 2026-09-23 10:06Z).
+#:
+#: #8132's first pass guarded the three PRICE-derived crowners and stopped there,
+#: because those were the three the issue had traced. Six hours after the 56-row
+#: repair applied, the 46 legs it stamped `clean_resolution`→`api_settlement` and
+#: `ungradeable_result` held — and the 10 it stamped over a prior `game_score`
+#: were all back at `game_score / is_winner = true`, rewritten by the 09:45Z pass
+#: at 09:45:47Z and 09:46:06Z. Every leg of both boards moved in one statement:
+#: the whole-market re-grade signature of `_resolve_kalshi_spread_total_from_scores`.
+#:
+#: The SCORE-derived crowners are the same shape of hole. Their candidate scan is
+#: `HAVING SUM(CASE WHEN fo.is_winner AND fo.resolution_source NOT IN (overwritable)
+#: ...) = 0`, and a retraction is `is_winner = false`, so it contributes 0 to the
+#: SUM and the board stays eligible; the UPDATE then writes the leg with no clause
+#: asking what that leg's grade already says. `api_settlement` is tier 3 and
+#: `game_score` is tier 2, so the write is a downgrade `is_downgrade` forbids,
+#: executed by SQL that never consults it — identical to the price-crowner defect,
+#: reached by a different route.
+#:
+#: Measured on the repaired cohort: of the 56 legs, 43 were structurally ineligible
+#: (no `event_id`, or an event with no scores) and 3 were saved by the grader's own
+#: question refusals (`_market_period`, `_score_gradeable_family`). Of the 10 the
+#: guard was actually tested on, it protected 0.
+#:
+#: `game_score` is not itself a member of the protected set, so the subtraction is
+#: a no-op here; the per-writer helper is used anyway so every crowner in this
+#: module reads the same way and a future move of `game_score` up the ladder
+#: cannot silently freeze this pass against its own rows.
+_GAME_SCORE_LEG_GUARD_SQL = price_crown_protected_sql("game_score")
+
 
 #: #4057: HOW MUCH OF THE KALSHI SETTLEMENT SWEEP IS RESERVED FOR WHAT JUST SETTLED.
 #:
@@ -2003,6 +2034,10 @@ async def _resolve_kalshi_golf_from_datagolf():
         "no_tournament_match": 0,
         "no_player_match": 0,
         "skipped_type": 0,
+        # #8132: a leg already graded by an authority this pass may not
+        # supersede. Counted so a pass that writes nothing is legible as a
+        # guard holding rather than as a leaderboard we failed to read.
+        "protected_legs_refused": 0,
         "errors": [],
     }
 
@@ -2105,13 +2140,16 @@ async def _resolve_kalshi_golf_from_datagolf():
                     if len(positions) == 2:
                         winner_id = min(positions, key=lambda x: x[1])[0]
                         for oid, _ in positions:
-                            await session.execute(
+                            h2h_result = await session.execute(
                                 text(
-                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                                 ),
                                 {"won": oid == winner_id, "oid": oid},
                             )
-                            stats["resolved_outcomes"] += 1
+                            if h2h_result.rowcount:
+                                stats["resolved_outcomes"] += 1
+                            else:
+                                stats["protected_legs_refused"] += 1
                     else:
                         stats["no_player_match"] += 2
                     continue
@@ -2147,12 +2185,14 @@ async def _resolve_kalshi_golf_from_datagolf():
 
     logger.info(
         "Golf cross-ref: %d tournaments matched, %d outcomes resolved, "
-        "%d no_tournament, %d no_player, %d skipped_type, %d errors",
+        "%d no_tournament, %d no_player, %d skipped_type, "
+        "%d protected_legs_refused, %d errors",
         stats["matched_tournaments"],
         stats["resolved_outcomes"],
         stats["no_tournament_match"],
         stats["no_player_match"],
         stats["skipped_type"],
+        stats["protected_legs_refused"],
         len(stats["errors"]),
     )
     return stats
@@ -2940,7 +2980,13 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     for re-running the HAVING clause after this function's commits.
     """
     stats = {"moneyline": 0, "btts": 0, "skipped": 0, "refused_period": 0,
-             "refused_family": 0, "errors": []}
+             "refused_family": 0,
+             # #8132: a leg this crowner declined to overwrite because a higher
+             # authority already graded it. A refusal that is not counted is a
+             # refusal nobody finds — and this one is the difference between
+             # "the guard held" and "nothing reached these rows".
+             "protected_legs_refused": 0,
+             "errors": []}
     # Markets this run has just given a non-overwritable winner. A market only
     # leaves the shared candidate set when SOME outcome ends up
     # `is_winner AND resolution_source NOT IN (overwritable)` — and every write
@@ -3044,13 +3090,25 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                 # BTTS: both teams to score
                 if "btts" in ticker_lower:
                     btts_yes = row.home_score > 0 and row.away_score > 0
-                    await session.execute(
+                    # The one market-WIDE game_score write in this module, so the
+                    # guard's granularity differs here and the counter says so:
+                    # a board whose every leg is protected writes 0 rows and is
+                    # counted as refused, while a partially-protected board
+                    # writes its unprotected legs and counts as graded. Legs
+                    # skipped inside a partial write are not individually
+                    # counted — the alternative is a second round trip per BTTS
+                    # market for a number nothing reads.
+                    btts_write = await session.execute(
                         text("""
                             UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW()
                             WHERE market_id = :mid
+                              AND COALESCE(resolution_source, '') NOT IN """ + _GAME_SCORE_LEG_GUARD_SQL + """
                         """),
                         {"won": btts_yes, "mid": row.market_id},
                     )
+                    if btts_write.rowcount == 0:
+                        stats["protected_legs_refused"] += 1
+                        continue
                     if btts_yes:
                         locked_market_ids.add(row.market_id)
                     stats["btts"] += 1
@@ -3150,12 +3208,19 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
                         else:
                             continue
 
-                    await session.execute(
+                    ml_write = await session.execute(
                         text(
-                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src, last_updated = NOW() WHERE id = :oid"
+                            "UPDATE futures_outcomes SET is_winner = :won, resolution_source = :src, last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                         ),
                         {"won": won, "oid": out.id, "src": "game_score"},
                     )
+                    if ml_write.rowcount == 0:
+                        # The leg already carries a grade this crowner may not
+                        # supersede. Counted, never silent — and NOT counted as a
+                        # moneyline resolution, which would report a verdict that
+                        # was refused.
+                        stats["protected_legs_refused"] += 1
+                        continue
                     resolved_any = True
                     if won:
                         locked_market_ids.add(row.market_id)
@@ -3177,11 +3242,12 @@ async def _resolve_kalshi_from_scores(scan_out: dict | None = None):
     total = stats["moneyline"] + stats["btts"]
     logger.info(
         "Kalshi score resolution: %d moneyline, %d btts, %d skipped, "
-        "%d refused_period, %d errors",
+        "%d refused_period, %d protected_legs_refused, %d errors",
         stats["moneyline"],
         stats["btts"],
         stats["skipped"],
         stats["refused_period"],
+        stats["protected_legs_refused"],
         len(stats["errors"]),
     )
     return stats
@@ -3956,6 +4022,12 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         # #2352: the same counter for the SPREAD grader, which gained the same
         # exclusivity rule and therefore the same ability to decline a leg.
         "spread_unresolved_team": 0,
+        # #8132: a leg whose existing grade this crowner may not supersede. The
+        # board stays in the candidate set (its HAVING cannot see an
+        # is_winner=false retraction), so this number is expected to be steady
+        # and non-zero rather than draining — it is the guard working, not a
+        # backlog. A drop to zero after a repair means the guard came unwired.
+        "protected_legs_refused": 0,
         "errors": [],
     }
 
@@ -4110,14 +4182,20 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                     stats["team_total_deferred_markets"] += 1
                     continue
                 if tt_writes:
+                    tt_written = 0
                     for _oid, _won in tt_writes:
-                        await session.execute(
+                        tt_result = await session.execute(
                             text(
-                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                             ),
                             {"won": _won, "oid": _oid},
                         )
-                    stats["total"] += 1
+                        if tt_result.rowcount:
+                            tt_written += 1
+                        else:
+                            stats["protected_legs_refused"] += 1
+                    if tt_written:
+                        stats["total"] += 1
                     continue
 
                 # For spread/total parsing, try each outcome until one matches
@@ -4174,13 +4252,21 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                             # SIBLING leg is graded this one is stranded for good.
                             stats["spread_unresolved_team"] += 1
                             continue
-                        await session.execute(
+                        sp_result = await session.execute(
                             text(
-                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                             ),
                             {"won": won, "oid": outcome.id},
                         )
-                        stats[f"{stat_prefix}spread"] += 1
+                        if sp_result.rowcount:
+                            stats[f"{stat_prefix}spread"] += 1
+                        else:
+                            # #8132: a higher authority already graded this leg.
+                            # `resolved_st` still goes True — the leg IS decided,
+                            # we merely declined to restate it — so the two
+                            # name-token fallbacks below stay out of a board they
+                            # have no business re-reading.
+                            stats["protected_legs_refused"] += 1
                         resolved_st = True
                         continue
 
@@ -4215,13 +4301,16 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                         won = _total_outcome_is_winner(name, h_for_total, a_for_total)
                         if won is None:
                             continue
-                        await session.execute(
+                        to_result = await session.execute(
                             text(
-                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                             ),
                             {"won": won, "oid": outcome.id},
                         )
-                        stats[f"{stat_prefix}total"] += 1
+                        if to_result.rowcount:
+                            stats[f"{stat_prefix}total"] += 1
+                        else:
+                            stats["protected_legs_refused"] += 1
                         resolved_st = True
                         continue
 
@@ -4297,12 +4386,14 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                                     won = not home_won
                                 else:
                                     continue
-                            await session.execute(
+                            tw_result = await session.execute(
                                 text(
-                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                                 ),
                                 {"won": won, "oid": oc.id},
                             )
+                            if not tw_result.rowcount:
+                                stats["protected_legs_refused"] += 1
                             resolved_st = True
                         if resolved_st:
                             stats["spread"] += 1
@@ -4334,12 +4425,14 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
                     )
                     if decision is not None:
                         for idx, oc in enumerate(outcomes_list):
-                            await session.execute(
+                            tt_result = await session.execute(
                                 text(
-                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid"
+                                    "UPDATE futures_outcomes SET is_winner = :won, resolution_source = 'game_score', last_updated = NOW() WHERE id = :oid AND COALESCE(resolution_source, '') NOT IN " + _GAME_SCORE_LEG_GUARD_SQL
                                 ),
                                 {"won": decision[idx], "oid": oc.id},
                             )
+                            if not tt_result.rowcount:
+                                stats["protected_legs_refused"] += 1
                         resolved_st = True
                         stats["spread"] += 1
 
@@ -4366,7 +4459,7 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
     logger.info(
         "Kalshi spread/total resolution: %d resolved (spread=%d, total=%d, "
         "h1_spread=%d, h1_total=%d, h2_spread=%d, h2_total=%d), %d no_plays, "
-        "%d refused_period, %d no_parse, %d errors",
+        "%d refused_period, %d protected_legs_refused, %d no_parse, %d errors",
         resolved,
         stats["spread"],
         stats["total"],
@@ -4376,6 +4469,7 @@ async def _resolve_kalshi_spread_total_from_scores(scan_in: dict | None = None):
         stats["h2_total"],
         stats["no_plays"],
         stats["refused_period"],
+        stats["protected_legs_refused"],
         stats["no_parse"],
         len(stats["errors"]),
     )
