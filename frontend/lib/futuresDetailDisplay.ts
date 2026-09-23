@@ -88,7 +88,7 @@ export interface MovementLeader {
  * between "unlikely" and "nothing here".
  */
 export function pickHeroOutcome<
-  T extends { is_winner?: boolean | null; probability?: number | null },
+  T extends { is_winner?: boolean | null; probability?: number | null; name?: string | null },
 >(
   outcomes: readonly T[],
   leader: T | null,
@@ -99,7 +99,57 @@ export function pickHeroOutcome<
     if (mutuallyExclusive !== false) return leader;
     return pickLiveLeader(outcomes) ?? leader;
   }
-  return outcomes.find((o) => o.is_winner === true) ?? leader;
+  const winners = outcomes.filter((o) => o.is_winner === true);
+  return winners.find((o) => !isLineOrPropLeg(o.name)) ?? winners[0] ?? leader;
+}
+
+/**
+ * #8280 — A GAME BOARD'S TOTALS AND SPREAD LEGS WIN TOO, AND NONE OF THEM IS
+ * THE WINNER.
+ *
+ * A Polymarket game market carries its moneyline, totals and spread legs as
+ * outcomes of one board, and each is graded on its own. Production,
+ * `/futures/114108` — *Kings vs. Blue Jackets*, served in this order:
+ *
+ *     O/U 5.5       won
+ *     O/U 6.5       won
+ *     Kings         won
+ *     Spread -1.5   lost
+ *
+ * The hero took the first graded row and read **"O/U 5.5 WON"**: a number, not
+ * a side, over a game the Kings won. Settled means settled — a hero shows the
+ * winner.
+ *
+ * So among the graded rows the hero prefers one that names a side. This only
+ * RE-ORDERS the graded rows; it never promotes an ungraded one and never
+ * withholds. When every graded row is a line or a prop (a soccer board whose
+ * moneyline leg is not in our copy), the first one is still featured, exactly
+ * as before. That residue is known and is not this rule's to decide.
+ *
+ * A board whose first graded row already names a side is unchanged, which is
+ * every single-winner board and every threshold ladder (`77° or above` matches
+ * nothing here, so #6032's loosest-rung behaviour stands).
+ *
+ * The shapes below were read off the multi-winner Polymarket game boards on
+ * production (2026-09-23): `O/U 5.5`, `X vs. Y: O/U 1.5`, `1H O/U 108.5`,
+ * `Luka Dončić: Points O/U 30.5`, `O/U 1.5 Rounds`, `Spread -1.5`,
+ * `Spread: Nashville SC (-2.5)`, `1H Spread: Lakers (-3.5)`,
+ * `Rayo Vallecano de Madrid (-1.5)`, `Both Teams to Score` (sometimes cut to
+ * `Both Teams to Sco`), questions ending `?` (`Fight won by KO/TKO?`), and the
+ * bare matchup `Green vs. Zellhuber`, which names both sides and so neither.
+ */
+export function isLineOrPropLeg(name: string | null | undefined): boolean {
+  const n = (name || "").trim();
+  if (!n) return false;
+  return (
+    /\bO\/U\b/i.test(n) ||
+    /^(1H |2H )?Spread\b/i.test(n) ||
+    /\([+-]\d+(\.\d+)?\)$/.test(n) ||
+    /^(over|under)\s+\d/i.test(n) ||
+    /both teams to sco/i.test(n) ||
+    /\?$/.test(n) ||
+    /\svs\.?\s/i.test(n)
+  );
 }
 
 /**
