@@ -947,7 +947,11 @@ _REPAIRS = {
     # Every leg reaches a NAMED verdict and each is counted (ruling 054):
     # relabelled / unchanged / not_at_venue / no_condition_id /
     # refused_collision (two legs of one market would take the same label) /
-    # raced. Nothing is written when the venue does not answer.
+    # refused_group_incomplete (#7701 rung 3: the market arrived PARTIAL, so
+    # distinctness could not be tested — a page cut, a venue pause mid-market or
+    # a cursor handed in mid-market all present as a group of one, which is
+    # trivially distinct and used to be written) / raced. Nothing is written when
+    # the venue does not answer.
     # Terminals mean PAUSED, not finished, and all of them hand back a cursor
     # that RETRIES rather than steps over: `paused_deadline`, `paused_venue`,
     # `paused_target_timeout`, `paused_pool_timeout`, `paused_write_timeout`.
@@ -958,8 +962,13 @@ _REPAIRS = {
     # 463K markets and needed 14s or a timeout on every page. The operator
     # contract did not change — still one `?after_id=` leg id — but an
     # `?after_id=` naming a leg that no longer exists now comes back
-    # `terminal: refused`, `code: CURSOR_DANGLING` instead of an empty page,
-    # because an empty page at the end of a 212-page drain reads as "done".
+    # `terminal: refused`, `refused_code: CURSOR_DANGLING` instead of an empty
+    # page, because an empty page at the end of a 212-page drain reads as "done".
+    # 🔴 #7701 rung 3 also refuses a NON-POSITIVE `?after_id=` under that same
+    # code: `0` is not NULL to the statement, so it selected nothing, but it IS
+    # falsy to Python, so it used to skip the dangling check and report the walk
+    # `scan_exhausted` having examined nothing. Scripting a drain from a cursor
+    # initialised to 0 is the ordinary way to meet that.
     # Capped at APPLY_LEG_CAP=120 legs per call, by module constant — the whole
     # 1,153-leg cohort is ten calls. Accepts ?limit=&sport=&after_id=
     # &status_scope=&band=.
