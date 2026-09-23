@@ -7,7 +7,7 @@
 # LaunchRigContractTests), hands it to the one router, and lands on the screen.
 #
 # Usage:
-#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N] [--expand]
+#   tools/native-shoot.sh <label> [route] [--counts] [--cooled] [--scroll N] [--expand] [--sum]
 #
 #   tools/native-shoot.sh discover
 #   tools/native-shoot.sh g1 '' --counts --cooled
@@ -22,6 +22,11 @@
 #   --scroll N photograph N POINTS down the page instead of the top viewport
 #   --expand   open the sections that start collapsed (the event page's Sources
 #              disclosure, and anything else reading LaunchRig)
+#   --sum      start the Evolution chart's `Sum` (combined probability) line ON.
+#              It is a @State checkbox defaulting off and the rig cannot tap, so
+#              without this the combined line is unphotographable — which is how
+#              a flat 100% line on a props market went unseen. The app still
+#              decides whether a sum is meaningful, so this asks, never forces.
 #   --dwell S[,S...]  extra frames from the SAME launch at cumulative seconds,
 #              for "does this advance while the reader sits on it" (#920). Every
 #              other mode relaunches, which re-fetches and so cannot see a
@@ -105,6 +110,7 @@ COUNTS=""
 COOLED=""
 SCROLL=""
 EXPAND=""
+SUM=""
 ALLOW_STALE=""
 RESOLVE_ONLY=""
 DWELL=""
@@ -113,6 +119,7 @@ while [ $# -gt 0 ]; do
     --counts) COUNTS=1 ;;
     --cooled) COOLED=1 ;;
     --expand) EXPAND=1 ;;
+    --sum) SUM=1 ;;
     --allow-stale) ALLOW_STALE=1 ;;
     --resolve-only) RESOLVE_ONLY=1 ;;
     --scroll)
@@ -227,6 +234,7 @@ ARGS=(-suppress_notification_prompt YES -bainluck_telemetry_consent none -discov
 [ -n "$COUNTS" ] && ARGS+=(-launch_debug_counts YES)
 [ -n "$SCROLL" ] && ARGS+=(-launch_scroll "$SCROLL")
 [ -n "$EXPAND" ] && ARGS+=(-launch_expand_sections YES)
+[ -n "$SUM" ] && ARGS+=(-launch_chart_sum YES)
 
 LAUNCH_OUT=$(xcrun simctl launch "$SIM" "$BUNDLE" "${ARGS[@]}" 2>/dev/null)
 # `simctl launch` prints "<bundle>: <pid>". The pid is the whole dwell control:
