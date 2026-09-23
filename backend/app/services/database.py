@@ -133,7 +133,11 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("DEBUG", "false").lower() == "true",
     pool_pre_ping=True,
-    pool_size=10,        # 1 web dyno × 20 max = 20 connections (within Heroku 120 limit)
+    # This engine is module-level, so each uvicorn worker builds its OWN pool:
+    # a web dyno holds WEB_CONCURRENCY × (pool_size + max_overflow) connections,
+    # = 2 × 20 = 40 today. Ceiling is the Postgres plan's cap (Standard-3: 500),
+    # shared with the worker dynos — read `heroku pg:info` before raising these.
+    pool_size=10,
     max_overflow=10,
     pool_recycle=1800,   # Recycle connections after 30 min (Heroku PG timeout)
     connect_args=connect_args,
