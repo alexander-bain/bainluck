@@ -207,19 +207,16 @@ export function carriedStateDisclosure(
   if (carried.length === 0) return null;
 
   let oldest: string;
-  let timeOfDay: string;
   try {
-    oldest = format(
-      parseISO(carried.map((c) => c.at).reduce((a, b) => (parseISO(a).getTime() <= parseISO(b).getTime() ? a : b))),
-      "h:mm a",
-    );
-    timeOfDay = format(parseISO(p.timestamp), "h:mm a");
+    const observation = parseISO(carried.map((c) => c.at).reduce((a, b) => (parseISO(a).getTime() <= parseISO(b).getTime() ? a : b)));
+    const point = parseISO(p.timestamp);
+    // Compare actual minute buckets: the same clock time on another day is old.
+    if (Math.floor(observation.getTime() / 60000) === Math.floor(point.getTime() / 60000)) return null;
+    const sameDay = format(observation, "yyyy-MM-dd") === format(point, "yyyy-MM-dd");
+    oldest = format(observation, sameDay ? "h:mm a" : "MMM d, h:mm a");
   } catch {
     return null;
   }
-  // Minute-keyed rows: when the two read the same minute the line would only
-  // repeat the time already on the card.
-  if (oldest === timeOfDay) return null;
 
   const which =
     carried.length === 2
