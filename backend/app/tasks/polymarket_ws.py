@@ -100,6 +100,47 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
+def _format_by_shard(ws_stats: dict) -> str:
+    """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
+
+    The aggregate cannot carry this. `served=1837/3793` is the same 49% whether
+    every shard is half-served (a quiet venue, nothing wrong) or four shards sit
+    at 3% while four stream in full (a truncated subscription), and only the
+    second is a defect. The first production read WAS the second shape, and the
+    reader had to reconstruct the denominators from a separate capture to see
+    it: the pairs were in `PolymarketWebSocket.stats` the whole time and reached
+    no line until the ten-minute recycle, so a minute-resolution reader saw one
+    number that could not be acted on.
+
+    BOTH halves per shard, never a bare served count. Shard subscriptions are
+    not all the same size — the last shard is a remainder, and the byte bound
+    makes shards of different lengths at different id lengths — so `0:14` cannot
+    be read as a share by anyone, including the next person to grep this line.
+
+    Degrades to `-` rather than vanishing or raising. The shadow consumer shares
+    this client and subscribes without shards, and an exception in the stats loop
+    kills the socket's only heartbeat; a field that disappears when empty is also
+    a field no grep can rely on.
+    """
+    served = ws_stats.get("served_by_shard") or {}
+    subscribed = ws_stats.get("subscribed_by_shard") or {}
+    if not served and not subscribed:
+        return "-"
+
+    def _order(key):
+        # Shard keys are ints in-process but arrive as strings through any JSON
+        # round-trip, and "10" sorts before "2" as text.
+        try:
+            return (0, int(key), "")
+        except (TypeError, ValueError):
+            return (1, 0, str(key))
+
+    return " ".join(
+        f"{key}:{served.get(key, 0)}/{subscribed.get(key, 0)}"
+        for key in sorted(set(served) | set(subscribed), key=_order)
+    )
+
+
 def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     """The once-a-minute socket line, including #837's coverage ratio.
 
@@ -118,7 +159,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     """
     logger.info(
         "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
-        "%d msgs | coverage shards=%d/%d served=%d/%d "
+        "%d msgs | coverage shards=%d/%d served=%d/%d by_shard=%s "
         "| blend stamped=%d no_reading=%d throttled=%d errors=%d",
         stats["price_updates"], stats["trade_updates"],
         stats["resolutions"], stats["errors"],
@@ -126,6 +167,7 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
         ws_stats.get("shards_connected", 0), ws_stats.get("shards", 0),
         ws_stats.get("assets_served", 0),
         ws_stats.get("assets_subscribed", 0),
+        _format_by_shard(ws_stats),
         blend["stamped"], blend["no_reading"],
         blend["throttled"], blend["errors"],
     )
