@@ -105,6 +105,13 @@ BACKSTOP = datetime(2026, 9, 21, 6, 5, tzinfo=UTC)
 LIGUE1_PUBLISHED = datetime(2026, 9, 20, 21, 45, tzinfo=UTC)
 NFL_PUBLISHED = datetime(2026, 9, 15, 3, 15, tzinfo=UTC)
 
+#: #3565. A stored hour two days past its own ticker day — the shape a market
+#: carries when the venue has not re-timed it. Refused by the window on both
+#: arms, which is what makes it an INELIGIBLE sibling rather than an agreeing
+#: one. (42h from the Sep 7 stand-in, so the stand-in arm's 36h bound refuses
+#: it too: the row is inert on run 1 and on every run after.)
+OUT_OF_TICKER_DAY = datetime(2026, 9, 9, 18, 0, tzinfo=UTC)
+
 
 # (key, event_source, event_commence,
 #  [(external_id, source, status, market_commence, llm_sport_category), ...])
@@ -143,6 +150,18 @@ _EVENTS = [
         ("KXNFLRACE-26SEP14DENKC-35", "kalshi", "open", NFL_PUBLISHED,
          "football"),
     ]),
+    # ---- #3565 -----------------------------------------------------------
+    # An event whose FIRST market by `external_id` is not an eligible speaker:
+    # its ticker names Sep 7 but its stored hour is Sep 9, so it falls outside
+    # its own ticker day and the window refuses it on both arms. The SECOND
+    # market is the real fixture. The pair exists so that "the first market
+    # decides" can never be implemented as "the first ROW decides" — see
+    # `test_an_ineligible_first_sibling_does_not_freeze_a_restatement`.
+    ("ineligible_first", "kalshi_ticker", STAND_IN_SEP07, [
+        ("KXATPMATCH-26SEP07AAAOUT", "kalshi", "open", OUT_OF_TICKER_DAY,
+         "tennis"),
+        ("KXATPMATCH-26SEP07BBBVAL", "kalshi", "open", PUBLISHED, "tennis"),
+    ]),
 ]
 
 #: Events whose commence_time the repair must leave exactly where it found it.
@@ -161,6 +180,9 @@ _MUST_MOVE = {
     "itf_next_day": ITF_PUBLISHED,
     "soccer_fixture": LIGUE1_PUBLISHED,
     "nfl_prop": NFL_PUBLISHED,
+    # #3565: BBBVAL is reached only because AAAOUT is skipped rather than
+    # treated as having spoken for the event.
+    "ineligible_first": PUBLISHED,
 }
 
 
@@ -346,10 +368,11 @@ async def test_the_repair_never_writes_status(pg_engine, monkeypatch):
 
 @needs_postgres
 async def test_a_second_run_is_a_no_op(pg_engine, monkeypatch):
-    """The poll runs this every cycle. Once an event carries
-    `kalshi_occurrence` it is no longer in `DERIVED_COMMENCE_SOURCES`, so the
-    SQL cannot select it again — the repair converges instead of rewriting the
-    same rows forever (which is the #2020 shape from the other end)."""
+    """The poll runs this every cycle. #3565 re-scoped this from "never selects
+    again" to "no-op when nothing changed": the second run now RE-selects the
+    `kalshi_occurrence` rows and refuses each one (the venue restated nothing,
+    so the min-move gate says no write) instead of rewriting the same rows
+    forever (which is the #2020 shape from the other end)."""
     from app.tasks.kalshi import _refine_stand_in_event_starts
 
     async with pg_engine.begin() as conn:
@@ -429,6 +452,188 @@ async def test_the_unscoped_query_redates_events_for_matches_already_over(
         "the closed market must be swept up by the unpredicated query, or the "
         "status clause has nothing to be load-bearing about"
     )
+
+
+# ---------------------------------------------------------------------------
+# #3565 — the venue restates its own hour, and the write is compare-and-set
+# ---------------------------------------------------------------------------
+
+#: A restated order of play: same ticker day as PUBLISHED, a later hour.
+RESTATED = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+
+
+@needs_postgres
+async def test_a_restated_venue_hour_is_adopted_on_the_next_run(
+    pg_engine, monkeypatch
+):
+    """Arm 1. The first published hour is not frozen forever: when Kalshi
+    restates `occurrence_datetime` on the same ticker day, the event follows.
+    On the pre-#3565 code the second run moves 0 and the page keeps advertising
+    a time the venue itself has withdrawn."""
+    from app.tasks.kalshi import _refine_stand_in_event_starts
+    from app.utils.event_completion import KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+    assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
+
+    # The venue moves the match 18:00Z -> 20:30Z, same ticker day.
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET commence_time = :ct "
+                 "WHERE external_id = :ext"),
+            {"ct": RESTATED, "ext": "KXATPMATCH-26SEP07ZVEDAR"},
+        )
+
+    moved = await _refine_stand_in_event_starts()
+    assert moved == 1, moved
+
+    after = await _read_back(pg_engine, ids)
+    assert after["refines"].commence_time == RESTATED
+    assert after["refines"].commence_time_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    # ...and a third run is quiet again: the adopted hour is a fixed point,
+    # not the first half of a flap between disagreeing sibling markets
+    # (`two_markets` holds 18:00Z against 20:30Z and must not move on any run
+    # after the first).
+    assert await _refine_stand_in_event_starts() == 0
+    settled = await _read_back(pg_engine, ids)
+    assert settled["refines"].commence_time == RESTATED
+    assert settled["two_markets"].commence_time == PUBLISHED
+
+
+@needs_postgres
+async def test_an_ineligible_first_sibling_does_not_freeze_a_restatement(
+    pg_engine, monkeypatch
+):
+    """Arm 1b. The anti-flap control ends an event's turn when the first market
+    has SPOKEN. A market that is not an eligible speaker has not spoken, and
+    must not end it on behalf of a later sibling that is.
+
+    `ineligible_first` holds two open markets. `AAAOUT` sorts first and its
+    stored hour is outside its own ticker day, so the window refuses it;
+    `BBBVAL` is the real fixture. Reading AAAOUT's refusal as "the stored hour
+    is confirmed" freezes the event permanently — the join is ordered by
+    `external_id`, so AAAOUT sorts first on every run forever, and the venue's
+    restatement is never adopted. That is the shape this test pins:
+
+    * on the pre-correction loop the second run below returns **0** and the
+      event keeps advertising 18:00Z after the venue moved it to 20:30Z;
+    * deleting the anti-flap control entirely would pass this test and fail
+      `test_a_restated_venue_hour_is_adopted_on_the_next_run`'s third run,
+      where `two_markets` must stay put. Both are required, which is what
+      makes "distinguish ineligible from agreeing" the only passing shape.
+    """
+    from app.tasks.kalshi import _refine_stand_in_event_starts
+    from app.utils.event_completion import KALSHI_OCCURRENCE_COMMENCE_SOURCE
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    # Run 1: the stand-in arm already skips AAAOUT (42h > the 36h bound), so
+    # the event lands on BBBVAL's hour and its provenance becomes a revision.
+    assert await _refine_stand_in_event_starts() == len(_MUST_MOVE)
+    first = await _read_back(pg_engine, ids)
+    assert first["ineligible_first"].commence_time == PUBLISHED
+    assert (
+        first["ineligible_first"].commence_time_source
+        == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+    )
+
+    # The venue restates the fixture, same ticker day. AAAOUT is untouched and
+    # still sorts first.
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET commence_time = :ct "
+                 "WHERE external_id = :ext"),
+            {"ct": RESTATED, "ext": "KXATPMATCH-26SEP07BBBVAL"},
+        )
+
+    # Run 2: the revision arm must reach BBBVAL past AAAOUT.
+    moved = await _refine_stand_in_event_starts()
+    assert moved == 1, moved
+
+    after = await _read_back(pg_engine, ids)
+    assert after["ineligible_first"].commence_time == RESTATED
+
+    # The ineligible sibling is inert in both directions: it never ends a turn,
+    # and it is never adopted either.
+    assert after["ineligible_first"].commence_time != OUT_OF_TICKER_DAY
+
+    # Run 3 is quiet: BBBVAL now agrees, and an agreeing eligible market DOES
+    # end the turn. Without that half this rail would rewrite forever.
+    assert await _refine_stand_in_event_starts() == 0
+    settled = await _read_back(pg_engine, ids)
+    assert settled["ineligible_first"].commence_time == RESTATED
+
+
+@needs_postgres
+async def test_a_concurrent_stronger_write_is_skipped_not_clobbered(
+    pg_engine, monkeypatch
+):
+    """Arm 2. The UPDATE is compare-and-set on the values the decision was read
+    against. An ESPN sync landing between this rail's SELECT and UPDATE must
+    survive: the row is skipped, and the count does not include it.
+
+    The race is injected honestly: the ONLY seam is the session's `execute`,
+    wrapped so the first `UPDATE events` is preceded — on a SECOND connection,
+    committed — by the stronger write. The production UPDATE text and its
+    rowcount gating do the rest. On the pre-#3565 code the ESPN row is
+    overwritten with the stale venue hour and the run reports it moved.
+    """
+    from app.tasks.kalshi import _refine_stand_in_event_starts
+
+    async with pg_engine.begin() as conn:
+        ids = await _seed(conn)
+
+    _install_real_session(monkeypatch, pg_engine)
+
+    import app.tasks.kalshi as kalshi_task
+
+    real_session_factory = kalshi_task.get_task_session
+    fired: list = []
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _racing_session(**budget):
+        async with real_session_factory(**budget) as session:
+            orig_execute = session.execute
+
+            async def _execute(stmt, params=None):
+                if "UPDATE events" in str(stmt) and not fired:
+                    fired.append(True)
+                    # ESPN lands a stronger provenance between SELECT and UPDATE.
+                    async with pg_engine.begin() as conn:
+                        await conn.execute(
+                            text("UPDATE events SET commence_time = :ct, "
+                                 "commence_time_source = 'espn' WHERE id = :id"),
+                            {"ct": PUBLISHED, "id": ids["refines"]},
+                        )
+                return await orig_execute(stmt, params)
+
+            session.execute = _execute
+            yield session
+
+    monkeypatch.setattr(kalshi_task, "get_task_session", _racing_session)
+
+    moved = await _refine_stand_in_event_starts()
+
+    assert fired, "the race must actually fire or this test proves nothing"
+    # Every other stand-in moves; the raced row is skipped, not counted.
+    assert moved == len(_MUST_MOVE) - 1, moved
+
+    after = await _read_back(pg_engine, ids)
+    assert after["refines"].commence_time == PUBLISHED
+    assert after["refines"].commence_time_source == "espn"
+    for key, expected in _MUST_MOVE.items():
+        if key == "refines":
+            continue
+        assert after[key].commence_time == expected, key
 
 
 # ---------------------------------------------------------------------------

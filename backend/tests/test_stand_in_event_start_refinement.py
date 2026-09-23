@@ -58,8 +58,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.tasks.kalshi import (
+    _REFINE_ADOPT,
+    _REFINE_AGREES,
+    _REFINE_INELIGIBLE,
     _STAND_IN_REFINEMENT_MAX,
     _STAND_IN_REFINEMENT_MIN_MOVE,
+    _stand_in_refinement_decision,
     _stand_in_refinement_target,
 )
 from app.utils.event_completion import (
@@ -125,7 +129,7 @@ def test_the_asian_itf_draw_moves_even_though_it_lands_the_next_utc_day():
 @pytest.mark.parametrize(
     "source",
     ["espn", "odds_api", "statpal", "mlb_schedule_repair", "kalshi", "polymarket",
-     KALSHI_OCCURRENCE_COMMENCE_SOURCE, None, "", "something_new"],
+     None, "", "something_new"],
 )
 def test_only_a_named_derived_stand_in_is_ever_rewritten(source):
     """Every non-derived provenance is untouchable, including None.
@@ -134,8 +138,13 @@ def test_only_a_named_derived_stand_in_is_ever_rewritten(source):
     written as "not a reported start" or "not one of these good sources" would
     admit it. This is an allowlist of one named set, so a new provenance is
     excluded until somebody adds it deliberately.
+
+    `kalshi_occurrence` is deliberately NOT in this list: #3565 gives it its
+    own revision rule (below), because the venue restating its own hour is one
+    provider's row at two points in time, not two authorities disagreeing.
     """
     assert source not in DERIVED_COMMENCE_SOURCES
+    assert source != KALSHI_OCCURRENCE_COMMENCE_SOURCE
     assert _target(event_commence_source=source) is None
 
 
@@ -274,6 +283,124 @@ def test_the_window_cannot_manufacture_a_link_the_2020_guard_would_refuse():
 
 
 # ---------------------------------------------------------------------------
+# gate 1b — the same-provider revision (#3565)
+# ---------------------------------------------------------------------------
+
+#: The specimen after the first repair: the page renders the venue's hour.
+REVISED_FROM = datetime(2026, 9, 7, 18, 0, tzinfo=UTC)
+
+
+def _revision(**kw):
+    args = {
+        "external_id": TICKER,
+        "event_commence": REVISED_FROM,
+        "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+    }
+    args.update(kw)
+    return _stand_in_refinement_target(**args)
+
+
+def test_a_restated_hour_on_the_same_ticker_day_is_adopted():
+    """The defect arm 1 names: Kalshi moves the order of play (rain, a long
+    preceding match, a night-session reshuffle) and the event follows instead
+    of advertising a time the venue itself has withdrawn."""
+    later = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+    assert _revision(market_commence=later) == later
+
+
+def test_a_revision_may_move_a_match_earlier():
+    """A reshuffle moves matches earlier too. The stand-in path's never-earlier
+    rule exists because a stand-in IS the fixture day's midnight; a revision
+    starts from a published hour, so an earlier published hour is still a
+    forward position on the ticker day."""
+    earlier = datetime(2026, 9, 7, 16, 0, tzinfo=UTC)
+    assert _revision(market_commence=earlier) == earlier
+
+
+def test_a_revision_below_the_ticker_day_is_refused():
+    """Before the ticker's own midnight is a different fixture (or a poisoned
+    market), not a restatement."""
+    assert _revision(market_commence=STAND_IN - timedelta(hours=1)) is None
+
+
+def test_a_revision_is_measured_against_the_ticker_day_not_the_last_write():
+    """The anti-walk bound: repeated restatements cannot ratchet a row forward
+    one window at a time. The market sits 6h past the previously written
+    18:00Z — inside a 36h window measured from the last write — but past
+    ticker-midnight + 36h, so it is refused."""
+    past_ticker_window = STAND_IN + _STAND_IN_REFINEMENT_MAX + timedelta(seconds=1)
+    assert past_ticker_window - REVISED_FROM < _STAND_IN_REFINEMENT_MAX
+    assert _revision(market_commence=past_ticker_window) is None
+    # ...while the ticker-day edge itself is inclusive.
+    edge = STAND_IN + _STAND_IN_REFINEMENT_MAX
+    assert _revision(market_commence=edge) == edge
+
+
+def test_a_settlement_backstop_is_still_refused_on_a_revised_row():
+    """Gate 3 keeps working after the first write: a market that falls back to
+    the +14d close must not drag a correctly-timed event a fortnight out."""
+    assert BACKSTOP - REVISED_FROM > _STAND_IN_REFINEMENT_MAX
+    assert _revision(market_commence=BACKSTOP) is None
+
+
+def test_repeating_the_same_hour_is_a_no_op():
+    """Convergence. The rail runs every cycle and now re-selects occurrence
+    rows; a venue that restates nothing must not produce a write (which is
+    also what keeps `test_a_second_run_is_a_no_op` green)."""
+    assert _revision(market_commence=REVISED_FROM) is None
+    small = REVISED_FROM + _STAND_IN_REFINEMENT_MIN_MOVE - timedelta(seconds=1)
+    assert _revision(market_commence=small) is None
+    big = REVISED_FROM + _STAND_IN_REFINEMENT_MIN_MOVE
+    assert _revision(market_commence=big) == big
+
+
+def test_a_revision_still_requires_a_dated_fixture_ticker():
+    """Gate 2 is not relaxed by the revision: an outright's +14d close is not
+    a restated hour."""
+    assert _revision(external_id="KXWTA-26USO", market_commence=BACKSTOP) is None
+    assert _revision(external_id="KXWTA-26USO") is None
+
+
+def test_a_revision_cannot_manufacture_a_link_the_2020_guard_would_refuse():
+    """The revision band's half of `test_the_window_cannot_manufacture_a_link...
+    Every value the revision arm can write must still be accepted by the #2020
+    linkage guard — swept across the whole ticker-day window rather than
+    restated as a number."""
+    from app.tasks.prediction_market_matching import (
+        _kalshi_prefix,
+        _ticker_date_conflicts_with_event,
+    )
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    ticker_date = extract_game_date_from_ticker(TICKER)
+    prefix = _kalshi_prefix(TICKER)
+
+    step = timedelta(minutes=30)
+    offset = timedelta(0)
+    checked = 0
+    while offset <= _STAND_IN_REFINEMENT_MAX:
+        candidate = STAND_IN + offset
+        if _revision(market_commence=candidate) is not None:
+            assert not _ticker_date_conflicts_with_event(
+                ticker_date, candidate, prefix
+            ), f"+{offset} would be refused by the #2020 linkage guard"
+            checked += 1
+        offset += step
+    assert checked > 60, f"the sweep must actually exercise the window ({checked})"
+
+
+def test_a_revision_with_an_unparseable_ticker_day_fails_closed(monkeypatch):
+    """The ticker-day floor needs a parsed day. If the parse ever fails on a
+    ticker the dated-fixture gate admitted, the revision is refused rather
+    than measured against nothing."""
+    import app.utils.prediction_market_matching as pmm
+
+    monkeypatch.setattr(pmm, "extract_game_date_from_ticker", lambda _t: None)
+    assert _revision() is None
+
+
+# ---------------------------------------------------------------------------
 # what the repair writes, and what it deliberately does not
 # ---------------------------------------------------------------------------
 
@@ -321,6 +448,213 @@ def test_a_missing_time_is_no_signal(missing):
 # ---------------------------------------------------------------------------
 # wiring — every assertion above is about a function nobody has to call
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# #3565 — the two Nones. `target is None` is not one answer.
+# ---------------------------------------------------------------------------
+
+def _reason(**kw):
+    """The revision specimen's REASON, defaulting to a restatement."""
+    args = {
+        "external_id": TICKER,
+        "event_commence": REVISED_FROM,
+        "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+    }
+    args.update(kw)
+    return _stand_in_refinement_decision(**args)[1]
+
+
+def test_an_adopted_restatement_reports_adopt():
+    assert _reason() == _REFINE_ADOPT
+
+
+def test_an_eligible_market_holding_the_stored_hour_reports_agrees():
+    """The anti-flap case, and the ONLY None allowed to end an event's turn."""
+    assert _reason(market_commence=REVISED_FROM) == _REFINE_AGREES
+
+
+def test_an_hour_outside_its_own_ticker_day_reports_ineligible_not_agrees():
+    """🔴 The #3565 defect, at the source.
+
+    Both of these return `None`, and a rail that reads only the value cannot
+    tell them apart. Conflated, the market below speaks for an event it is not
+    entitled to speak for: sorted first by `external_id`, it freezes every
+    later sibling — including the venue's actual restatement — forever.
+    """
+    assert _reason(
+        market_commence=datetime(2026, 9, 9, 18, 0, tzinfo=UTC)
+    ) == _REFINE_INELIGIBLE
+
+
+def test_an_undated_ticker_reports_ineligible():
+    assert _reason(external_id="KXWTA-26USO") == _REFINE_INELIGIBLE
+
+
+def test_a_protected_provenance_reports_ineligible():
+    """An ESPN start is not an agreeing speaker; it is not a speaker."""
+    assert _reason(event_commence_source="espn") == _REFINE_INELIGIBLE
+
+
+@pytest.mark.parametrize("missing", ["event_commence", "market_commence"])
+def test_a_missing_time_reports_ineligible(missing):
+    assert _reason(**{missing: None}) == _REFINE_INELIGIBLE
+
+
+def test_the_stand_in_arm_reports_the_same_vocabulary():
+    """The reasons are not revision-only: the stand-in arm distinguishes a
+    market that agrees from one the window refused, so the loop can never grow
+    a second, divergent notion of "nothing to say"."""
+    assert _stand_in_refinement_decision(
+        TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, PUBLISHED,
+    ) == (PUBLISHED, _REFINE_ADOPT)
+    assert _stand_in_refinement_decision(
+        TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, STAND_IN,
+    )[1] == _REFINE_AGREES
+    assert _stand_in_refinement_decision(
+        TICKER, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE, BACKSTOP,
+    )[1] == _REFINE_INELIGIBLE
+
+
+def test_the_value_half_still_answers_exactly_what_it_used_to():
+    """`_stand_in_refinement_target` is now a wrapper. Its contract is that
+    every caller and every test above it cannot tell — the tuple's first
+    element IS the old return value, for all four outcomes."""
+    for kw in (
+        {},
+        {"market_commence": REVISED_FROM},
+        {"external_id": "KXWTA-26USO"},
+        {"event_commence_source": "espn"},
+    ):
+        args = {
+            "external_id": TICKER,
+            "event_commence": REVISED_FROM,
+            "event_commence_source": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+            "market_commence": datetime(2026, 9, 7, 20, 30, tzinfo=UTC),
+        }
+        args.update(kw)
+        assert (
+            _stand_in_refinement_target(**args)
+            == _stand_in_refinement_decision(**args)[0]
+        )
+
+
+async def _run_loop(rows):
+    """Drive the REAL loop over `rows`, returning `(moved, [written values])`.
+
+    The only seam is the session, so the ordering, the dedupe, the anti-flap
+    control and the compare-and-set gating are all production code. The DB
+    contract itself is not in scope here and is proved against a real server
+    in `tests/integration/test_stand_in_event_starts_real_postgres.py`.
+    """
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    import app.tasks.kalshi as kalshi_task
+
+    class _Session:
+        def __init__(self):
+            self.writes = []
+
+        async def execute(self, sql, args=None):
+            if str(sql).lstrip().startswith("SELECT"):
+                return SimpleNamespace(fetchall=lambda: rows)
+            self.writes.append(args)
+            return SimpleNamespace(rowcount=1)
+
+        async def commit(self):
+            pass
+
+    session = _Session()
+
+    @asynccontextmanager
+    async def _factory(**_budget):
+        yield session
+
+    with patch.object(kalshi_task, "get_task_session", _factory):
+        moved = await kalshi_task._refine_stand_in_event_starts()
+    return moved, [w["dt"] for w in session.writes]
+
+
+def _row(external_id, market_commence, event_commence, source):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        event_id=1,
+        event_commence=event_commence,
+        event_source=source,
+        external_id=external_id,
+        market_commence=market_commence,
+    )
+
+
+AAA = "KXATPMATCH-26SEP07AAAZZZ"
+BBB = "KXATPMATCH-26SEP07BBBZZZ"
+RESTATED_HOUR = datetime(2026, 9, 7, 20, 30, tzinfo=UTC)
+OFF_TICKER_DAY = datetime(2026, 9, 9, 18, 0, tzinfo=UTC)
+
+
+async def test_an_ineligible_first_market_does_not_end_the_events_turn():
+    """🔴 The #3565 defect in the rail, not the predicate.
+
+    `AAA` sorts first and its hour is outside its own ticker day, so it is not
+    an eligible speaker. `BBB` is the venue's restatement. Treating AAA's
+    `None` as agreement returns `(0, [])` and the event is frozen forever —
+    the sort is stable, so AAA sorts first on every future run too.
+    """
+    moved, written = await _run_loop([
+        _row(AAA, OFF_TICKER_DAY, REVISED_FROM, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+        _row(BBB, RESTATED_HOUR, REVISED_FROM, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+    ])
+    assert (moved, written) == (1, [RESTATED_HOUR])
+
+
+async def test_an_eligible_first_market_that_agrees_still_ends_the_turn():
+    """The anti-flap control, which the fix above must not cost us.
+
+    Both markets are eligible and they disagree. The event already holds AAA's
+    hour, so AAA agrees — and BBB must NOT be consulted. Consulting it adopts
+    22:00; the run after that, AAA differs and is adopted again; the event
+    flaps between two hours forever.
+    """
+    moved, written = await _run_loop([
+        _row(AAA, REVISED_FROM, REVISED_FROM, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+        _row(BBB, datetime(2026, 9, 7, 22, 0, tzinfo=UTC), REVISED_FROM,
+             KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+    ])
+    assert (moved, written) == (0, [])
+
+
+async def test_two_disagreeing_markets_reach_a_fixed_point_not_a_flap():
+    """The two tests above, composed over successive runs — which is the only
+    place a flap can be observed at all."""
+    first_moved, first_written = await _run_loop([
+        _row(AAA, REVISED_FROM, STAND_IN, TICKER_DERIVED_COMMENCE_SOURCE),
+        _row(BBB, datetime(2026, 9, 7, 22, 0, tzinfo=UTC), STAND_IN,
+             TICKER_DERIVED_COMMENCE_SOURCE),
+    ])
+    assert (first_moved, first_written) == (1, [REVISED_FROM])
+
+    adopted = first_written[0]
+    second_moved, second_written = await _run_loop([
+        _row(AAA, REVISED_FROM, adopted, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+        _row(BBB, datetime(2026, 9, 7, 22, 0, tzinfo=UTC), adopted,
+             KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+    ])
+    assert (second_moved, second_written) == (0, [])
+
+
+async def test_an_all_ineligible_event_writes_nothing():
+    """Silence adopts nothing either — the fix widens what is REACHED, never
+    what is written."""
+    moved, written = await _run_loop([
+        _row(AAA, OFF_TICKER_DAY, REVISED_FROM, KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+        _row(BBB, datetime(2026, 9, 11, 18, 0, tzinfo=UTC), REVISED_FROM,
+             KALSHI_OCCURRENCE_COMMENCE_SOURCE),
+    ])
+    assert (moved, written) == (0, [])
+
 
 def test_the_poll_actually_calls_the_repair():
     """Delete the call site and every other test in this file still passes.
