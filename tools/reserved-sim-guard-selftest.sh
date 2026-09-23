@@ -45,7 +45,7 @@ fail() { echo "  FAIL — $1" >&2; FAILED=$((FAILED+1)); }
 # a tool means adding it here; that instruction had already been missed twice
 # when it was written. A list that must be remembered is the same shape of
 # defect as the convention this whole file replaced, so 11 derives the list.
-ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh tools/native-gates.sh tools/native-firstcard.sh"
+ENTRYPOINTS="tools/native-shoot.sh tools/native_live_shoot.sh tools/native-g1-shoot.sh tools/native-uitest.sh tools/native-walk.sh tools/native-gates.sh tools/native-firstcard.sh tools/native-925-scrub-shoot.sh tools/native-257-freeze-shoot.sh"
 
 echo "1. the guard refuses the reserved device with exit 7"
 ( . tools/reserved-sim-guard.sh; bl_refuse_reserved_sim "$RESERVED" selftest ) >/dev/null 2>&1
