@@ -1014,3 +1014,137 @@ async def test_a_genuine_stand_in_is_still_repaired_here():
 
     assert stats["events_moved"] == 1
     assert [w["dt"] for w in event_writes] == [restated]
+
+
+# ── CERT-3344: one fixture, several Kalshi series, one kick-off ──────────────
+#
+# #6715 measured a normal soccer event carrying GAME at 22:30Z and
+# BTTS/SPREAD/TOTAL at 23:30Z — 117/117 derivative pairs at GAME+60m. The
+# candidate join is `ORDER BY fm.external_id`, so `KXLIGUE1BTTS` sorts ahead of
+# `KXLIGUE1GAME` and the first-eligible anti-flap rail reached the DERIVATIVE
+# first. Its hour is the venue's truth for its own series and a lie about the
+# fixture: carried onto the event it survives the 180-minute pad and serves
+# 20:30Z for a match that kicks off at 19:30Z.
+
+_MS_DAY = datetime(2026, 9, 20, 0, 0, tzinfo=timezone.utc)
+_MS_GAME_HOUR = datetime(2026, 9, 20, 22, 30, tzinfo=timezone.utc)
+_MS_DERIVATIVE_HOUR = datetime(2026, 9, 20, 23, 30, tzinfo=timezone.utc)
+_MS_SOCCER = "soccer_france_ligue_one"
+
+#: In `ORDER BY fm.external_id` order. BTTS genuinely sorts first — that is the
+#: whole defect, so the tuple is written in the order the rail sees, not the
+#: order that makes the point comfortably.
+_MS_SIBLINGS = (
+    ("KXLIGUE1BTTS-26SEP20OLMPSG", _MS_DERIVATIVE_HOUR),
+    ("KXLIGUE1GAME-26SEP20OLMPSG", _MS_GAME_HOUR),
+    ("KXLIGUE1SPREAD-26SEP20OLMPSG", _MS_DERIVATIVE_HOUR),
+    ("KXLIGUE1TOTAL-26SEP20OLMPSG", _MS_DERIVATIVE_HOUR),
+)
+
+
+def test_the_siblings_really_do_sort_derivative_first():
+    """Anti-vacuity for every test below: if GAME sorted first, the defect
+    could not arise and the guards would pass on the unrepaired code."""
+    first = sorted(t for t, _ in _MS_SIBLINGS)[0]
+    assert first == "KXLIGUE1BTTS-26SEP20OLMPSG", first
+    assert first != "KXLIGUE1GAME-26SEP20OLMPSG"
+
+
+@pytest.mark.parametrize("ticker, hour", _MS_SIBLINGS, ids=[t for t, _ in _MS_SIBLINGS])
+def test_every_sibling_series_mints_the_same_kickoff(ticker, hour):
+    """🔴 CERT-3344. Whichever series the rail happens to reach first, the event
+    is minted on the GAME clock — so the outcome no longer depends on
+    `external_id` ordering, and `20:30Z` is unreachable."""
+    target, reason = _stand_in_refinement_decision(
+        ticker, _MS_DAY, "kalshi_ticker", hour, sport_key=_MS_SOCCER,
+    )
+    assert (target, reason) == (_MS_GAME_HOUR, "adopt"), (
+        f"{ticker} minted {target}, not the GAME hour {_MS_GAME_HOUR} — a page "
+        f"an hour late once the 180-minute pad comes off"
+    )
+
+
+@pytest.mark.parametrize("ticker, hour", _MS_SIBLINGS, ids=[t for t, _ in _MS_SIBLINGS])
+def test_no_sibling_moves_an_event_already_on_the_game_hour(ticker, hour):
+    """The no-change half, and the fixed point. An event already on the GAME
+    hour must be left alone by EVERY sibling — including the derivatives, whose
+    unnormalised hour differs from it by exactly the 60 minutes of excess.
+
+    `agrees` rather than `ineligible` is the load-bearing part: only `agrees`
+    may end the event's turn, so a derivative that answered `ineligible` here
+    would leave the turn open and re-raise the ordering question it just settled.
+    """
+    target, reason = _stand_in_refinement_decision(
+        ticker, _MS_GAME_HOUR, "kalshi_occurrence", hour, sport_key=_MS_SOCCER,
+    )
+    assert (target, reason) == (None, "agrees"), (
+        f"{ticker} answered {reason!r} against an event already on the GAME "
+        f"hour; a second pass would move a correct page"
+    )
+
+
+def test_a_restatement_of_the_whole_fixture_is_followed_on_the_game_clock():
+    """The restatement half. The venue moves the fixture an hour later and every
+    series moves with it; the event must follow ONCE, onto the new GAME hour —
+    not onto the derivative's, and not by two different amounts depending on
+    which sibling spoke."""
+    moved_game = _MS_GAME_HOUR + timedelta(hours=1)
+    moved_derivative = _MS_DERIVATIVE_HOUR + timedelta(hours=1)
+    adopted = {
+        ticker: _stand_in_refinement_decision(
+            ticker,
+            _MS_GAME_HOUR,
+            "kalshi_occurrence",
+            moved_game if "GAME" in ticker else moved_derivative,
+            sport_key=_MS_SOCCER,
+        )
+        for ticker, _ in _MS_SIBLINGS
+    }
+    assert {v for v in adopted.values()} == {(moved_game, "adopt")}, adopted
+
+
+def test_a_derivative_in_an_unmeasured_league_is_left_exactly_where_it_is():
+    """Fails SAFE: the correction is only ever applied where it was MEASURED.
+
+    `KXBUNDESLIGABTTS` is a real BTTS derivative and a dated fixture ticker, so
+    unlike `KXEPLTOTALCORNERS` below it genuinely reaches this arm — but
+    Bundesliga is not one of the six leagues the 60-minute excess was measured
+    on. Subtracting 60 minutes from it would invent a kick-off out of a
+    measurement nobody took, so its hour is adopted unchanged.
+
+    🔵 STATED LIMIT, NOT A CLAIM OF CORRECTNESS: this row may well also sit 60
+    minutes late, and if it does the event is minted 60 minutes late. That is
+    master's behaviour and it is unchanged here; closing it needs the same
+    league-by-league measurement `KALSHI_MEASURED_SOCCER_LEAGUE_PREFIXES`
+    records, which is a census and not an edit (see the module header).
+    """
+    target, reason = _stand_in_refinement_decision(
+        "KXBUNDESLIGABTTS-26SEP20BAYDOR", _MS_DAY, "kalshi_ticker",
+        _MS_DERIVATIVE_HOUR, sport_key="soccer_germany_bundesliga",
+    )
+    assert (target, reason) == (_MS_DERIVATIVE_HOUR, "adopt"), (
+        "an unmeasured league must be adopted unchanged, never shifted by a "
+        "measurement that was not taken on it"
+    )
+
+
+def test_series_membership_is_equality_and_not_a_prefix():
+    """The primitive, asked directly, because the arm cannot reach this ticker.
+
+    `KXEPLTOTALCORNERS` opens with the measured `KXEPLTOTAL`, so a `startswith`
+    test would shift it by 60 minutes. It is a different market with no measured
+    pad — and `_is_dated_fixture_ticker` rejects it outright, which is why this
+    is asked of `kalshi_derivative_series_excess` rather than of the decision:
+    a guard routed through the arm would pass on the prefix bug too, for the
+    unrelated reason that the ticker never arrives.
+    """
+    from app.tasks.kalshi import _is_dated_fixture_ticker
+    from app.utils.kalshi_occurrence_start import kalshi_derivative_series_excess
+
+    assert kalshi_derivative_series_excess("KXEPLTOTALCORNERS-26SEP20ARSCHE") == (
+        timedelta(0)
+    )
+    assert kalshi_derivative_series_excess("KXEPLTOTAL-26SEP20ARSCHE") == (
+        timedelta(hours=1)
+    )
+    assert not _is_dated_fixture_ticker("KXEPLTOTALCORNERS-26SEP20ARSCHE")

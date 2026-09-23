@@ -195,6 +195,16 @@ cert-scratch-*/
 # the repo is public and every push burns a Vercel build. An evidence dir must
 # not be able to redden the tree it is written into.
 /artifacts-native-*/
+# Same accident, third time, now for the numbered build lanes (#3565). The two rules
+# above are anchored at the repo ROOT, so a LOOK or capture written from inside
+# `backend/` slips past both: this branch committed 165,648 bytes of
+# `backend/artifacts-lane1-486/futures-25923847-390.png` — yesterday's screenshot from a
+# different ship, referenced by nothing — into a TRUTH fix through a broad `git add`,
+# and it would have been the FIRST tracked `artifacts-lane*` path on master. This rule is
+# deliberately UNANCHORED so it holds wherever the CWD happened to be. Measured before
+# adding: 295 such directories untracked in this one worktree, exactly one tracked — the
+# accident. Deliberate evidence still goes in with `git add -f`.
+artifacts-lane*/
 .env*
 
 # CAL-P992: a LIVE append-only cursor, not a bankable artifact — a watcher is still

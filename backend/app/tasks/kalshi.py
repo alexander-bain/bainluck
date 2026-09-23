@@ -44,7 +44,8 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     DERIVED_COMMENCE_SOURCES,
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
-from app.utils.kalshi_occurrence_start import (  # noqa: E402  # CERT-3342 #3565
+from app.utils.kalshi_occurrence_start import (  # noqa: E402  # CERT-3342/3344 #3565
+    kalshi_derivative_series_excess,
     kalshi_occurrence_hour_is_recoverable,
 )
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
@@ -3578,7 +3579,36 @@ def _stand_in_refinement_decision(
         return None, _REFINE_INELIGIBLE
 
     ec = _as_utc(event_commence)
-    mc = _as_utc(market_commence)
+    # 🔴 EVERY CANDIDATE IS PUT ON THE GAME SERIES' CLOCK BEFORE IT IS COMPARED
+    # OR WRITTEN (CERT-3344). One soccer fixture carries several Kalshi series,
+    # and they do not share an occurrence: #6715 measured GAME at 22:30Z against
+    # BTTS/SPREAD/TOTAL at 23:30Z on the same event, 117/117 derivative pairs at
+    # GAME+60m. The candidate join is `ORDER BY fm.external_id`, so `KXLIGUE1BTTS`
+    # sorts ahead of `KXLIGUE1GAME`, and the first-eligible anti-flap rail would
+    # end the event's turn on the DERIVATIVE's hour. Its 60 minutes of venue
+    # excess then survive the 180-minute pad and the page serves 20:30Z for a
+    # fixture that kicks off at 19:30Z — a correct page moved an hour late, which
+    # is the ship inverted.
+    #
+    # `kalshi_derivative_series_excess` is the existing measurement and the only
+    # thing consulted: a zero timedelta for every non-derivative ticker, so a
+    # GAME row, a tennis row and an unmeasured series each cost one subtraction
+    # of nothing. Series membership is tested by EQUALITY, so `KXEPLTOTALCORNERS`
+    # is a miss and is left alone.
+    #
+    # NORMALISING THE VALUE, NOT THE POPULATION: the same rows are still
+    # considered, and the market keeps its own honest occurrence — a derivative's
+    # `commence_time` is the venue's truth for that series and other readers are
+    # entitled to it (`kalshi_game_scale_commence`'s docstring is the authority).
+    # What may never become the fixture's kick-off is that series' clock.
+    #
+    # Applied to BOTH arms on purpose. Leaving the stand-in arm unnormalised
+    # would mint the event an hour late on run 1 and let the revision arm "fix"
+    # it on run 2 — a write the venue never asked for, and precisely the flap the
+    # anti-flap control exists to prevent. Normalised, the siblings AGREE: the
+    # first market to speak still ends the turn, but every sibling now speaks the
+    # same hour, so the outcome no longer depends on `external_id` ordering.
+    mc = _as_utc(market_commence) - kalshi_derivative_series_excess(external_id)
     if not revision:
         delta = mc - ec
         if delta < timedelta(0) or delta > _STAND_IN_REFINEMENT_MAX:

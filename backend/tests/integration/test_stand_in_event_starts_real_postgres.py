@@ -520,6 +520,114 @@ _RESTATEMENTS = (
 )
 
 
+#: Constants by the ticker day they belong to. The corpus spans three days and
+#: two sports, and a constant from the wrong one is the defect below.
+_DAY_CONSTANTS = {
+    "SEP20": {"LIGUE1_PUBLISHED", "RESTATED_SEP20", "STAND_IN_SEP20",
+              "OUT_OF_TICKER_DAY_SEP20"},
+    "SEP07": {"PUBLISHED", "PUBLISHED_LATER", "RESTATED", "STAND_IN_SEP07"},
+    "SEP06": {"ITF_PUBLISHED", "STAND_IN_SEP06"},
+}
+
+
+def test_no_assertion_pairs_a_ticker_with_another_days_constant():
+    """🔴 NO POSTGRES ON PURPOSE. The second guard for the second way this file
+    lied, and the reason it is static rather than behavioural.
+
+    CERT-3342 moved two specimens from the Sep 7 TENNIS day to the Sep 20 SOCCER
+    day. Most references moved with them; one did not, and
+    `test_an_ineligible_first_sibling_does_not_freeze_a_restatement` ended with
+    `== RESTATED` — the Sep 7 hour — under a Sep 20 ticker.
+
+    It cost a second CI cycle for a reason worth writing down: **that assertion
+    sits downstream of one that was already failing**, so the run which reddened
+    never executed it and CI quoted only the first failure. Fixing the first
+    defect is what revealed the second. A guard that needs the suite to get that
+    far cannot catch this; a static one reads every line whether or not the line
+    above it passed, and it reads them where no server is required.
+
+    Keyed on the EVENT, not on the line's own text. The line that actually broke
+    carries no ticker at all —
+
+        assert settled["ineligible_first"].commence_time == RESTATED
+
+    — so a scan for "a ticker beside a foreign constant" reads it as clean. That
+    version of this guard was written first and **passed on the reintroduced
+    defect**, which is the only reason this one is keyed the way it is. What ties
+    the line to a day is the event key, and `_EVENTS` already knows every key's
+    ticker, so the mapping is derived from the fixture rather than restated here
+    where the two could drift apart.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    day_of_event = {}
+    for key, _source, _commence, markets, _sport in _EVENTS:
+        days = {
+            m.group(1)
+            for ticker, *_ in markets
+            if (m := re.search(r"-26(SEP\d\d)", ticker))
+        }
+        if len(days) == 1:
+            day_of_event[key] = days.pop()
+
+    assert "ineligible_first" in day_of_event, (
+        "the guard lost sight of its own specimen — _EVENTS changed shape"
+    )
+
+    # Docstrings are skipped, and this guard's own is why: it quotes the broken
+    # assertion verbatim, so a plain line scan convicts the guard of the defect
+    # it documents. Prose is excluded by PARSING rather than by rewriting the
+    # example into something the regex cannot see — the example is the clearest
+    # part of this test and weakening it to satisfy the scanner would be the
+    # scanner writing the evidence.
+    # DOCSTRINGS ONLY — the first statement of a module, class or function.
+    # Skipping every string constant instead was tried and is catastrophic here:
+    # the key in `settled["ineligible_first"]` is itself a string constant, so
+    # the broad version erased exactly the lines this guard exists to read and
+    # went green on the defect. Both versions pass the clean tree; only this one
+    # fails the dirty one.
+    text_source = Path(__file__).read_text()
+    prose = set()
+    tree = ast.parse(text_source)
+    for node in [tree] + [
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]:
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        head = body[0]
+        if isinstance(head, ast.Expr) and isinstance(head.value, ast.Constant) \
+                and isinstance(head.value.value, str):
+            prose.update(
+                range(head.lineno, (head.end_lineno or head.lineno) + 1)
+            )
+
+    offenders = []
+    for number, line in enumerate(text_source.split("\n"), 1):
+        if line.lstrip().startswith("#") or number in prose:
+            continue
+        for key in re.findall(r"""\[["'](\w+)["']\]""", line):
+            day = day_of_event.get(key)
+            if day is None:
+                continue
+            wrong = set(re.findall(r"\b[A-Z][A-Z0-9_]{3,}\b", line)) & set().union(
+                *(v for k, v in _DAY_CONSTANTS.items() if k != day)
+            )
+            if wrong:
+                offenders.append(
+                    f"  L{number}: {key!r} is a {day} fixture, asserted "
+                    f"against {sorted(wrong)}"
+                )
+
+    assert not offenders, (
+        "an assertion names one event and a constant from another event's "
+        "ticker day:\n" + "\n".join(offenders)
+    )
+
+
 @pytest.mark.parametrize(
     "label, ticker, sport, stored, restated",
     _RESTATEMENTS,
@@ -735,7 +843,12 @@ async def test_an_ineligible_first_sibling_does_not_freeze_a_restatement(
     # end the turn. Without that half this rail would rewrite forever.
     assert await _refine_stand_in_event_starts() == 0
     settled = await _read_back(pg_engine, ids)
-    assert settled["ineligible_first"].commence_time == RESTATED
+    # `RESTATED_SEP20`, not `RESTATED`: this specimen moved to the Sep 20 SOCCER
+    # ticker day under CERT-3342 and `RESTATED` is still the Sep 7 TENNIS hour.
+    # The mismatch survived because the `moved == 1` above failed first, so this
+    # line was never reached — an assertion downstream of a failing one is not
+    # covered by the run that reddened, and CI quoted only the first.
+    assert settled["ineligible_first"].commence_time == RESTATED_SEP20
 
 
 @needs_postgres

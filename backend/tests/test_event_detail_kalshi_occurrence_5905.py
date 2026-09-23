@@ -322,3 +322,136 @@ async def test_the_stored_column_is_not_quietly_rewritten():
     await _serve(row)
     assert row.commence_time == KICKOFF, "the served row carries the corrected hour"
     assert KICKOFF == EXPECTED_EXPIRATION - timedelta(hours=3)
+
+
+# ── CERT-3344: the fixture the rail reached through its DERIVATIVE ──────────
+#
+# The end-to-end the block required. Every test above starts from an hour
+# already stored on the event; these start one step earlier, at the rail that
+# decides WHICH sibling's hour gets stored, because that is where the defect
+# lived. #6715: one soccer event carries GAME at 22:30Z and BTTS/SPREAD/TOTAL
+# at 23:30Z, and `ORDER BY fm.external_id` reaches BTTS first.
+#
+# The number these exist to keep off the page is 20:30Z — a fixture that kicks
+# off at 19:30Z, advertised an hour late, on a page that was correct before.
+
+_MS_DAY = datetime(2026, 9, 13, 0, 0, tzinfo=timezone.utc)
+_MS_BTTS = "KXLIGUE1BTTS-26SEP13OLMPSG"
+_MS_GAME = "KXLIGUE1GAME-26SEP13OLMPSG"
+_MS_SPORT = "soccer_france_ligue_one"
+#: GAME says 22:30Z (`EXPECTED_EXPIRATION`); its derivatives say 23:30Z.
+_MS_DERIVATIVE_EXPIRATION = EXPECTED_EXPIRATION + timedelta(hours=1)
+#: What the page WOULD have served off the unnormalised derivative hour.
+_MS_WRONG_SERVED = _MS_DERIVATIVE_EXPIRATION - KALSHI_EXPECTED_EXPIRATION_PAD
+
+
+def _rail_writes(ticker, market_hour, *, stored, source):
+    """What `_refine_stand_in_event_starts` would put in `events.commence_time`."""
+    from app.tasks.kalshi import _stand_in_refinement_decision
+
+    return _stand_in_refinement_decision(
+        ticker, stored, source, market_hour, sport_key=_MS_SPORT,
+    )
+
+
+def test_the_wrong_hour_is_a_real_hour_this_route_would_have_served():
+    """Anti-vacuity. If 20:30Z were unreachable the guards below prove nothing,
+    so the strawman is pinned: one pad off the derivative's own hour IS 20:30Z,
+    and it is exactly one hour past the kick-off."""
+    assert _MS_WRONG_SERVED == datetime(2026, 9, 13, 20, 30, tzinfo=timezone.utc)
+    assert _MS_WRONG_SERVED - KICKOFF == timedelta(hours=1)
+
+
+async def test_a_fixture_reached_through_its_derivative_still_serves_the_kickoff():
+    """🔴 CERT-3344, end to end: rail → stored hour → served page.
+
+    BTTS speaks first and its hour is 23:30Z. The reader must still be told
+    19:30Z.
+    """
+    written, reason = _rail_writes(
+        _MS_BTTS, _MS_DERIVATIVE_EXPIRATION,
+        stored=_MS_DAY, source="kalshi_ticker",
+    )
+    assert reason == "adopt", reason
+
+    served = _served_commence(
+        await _serve(_kalshi_minted_row(9905040, sport_key=_MS_SPORT,
+                                        commence_time=written))
+    )
+    assert served == KICKOFF, (
+        f"the page served {served:%H:%M}Z for a fixture that kicks off at "
+        f"{KICKOFF:%H:%M}Z — the derivative series' clock reached the reader"
+    )
+    assert served != _MS_WRONG_SERVED
+
+
+async def test_the_game_sibling_serves_the_same_hour_as_the_derivative_one():
+    """Order independence, read at the surface rather than at the predicate.
+
+    The rail's outcome depends on which sibling `external_id` ordering happens
+    to reach first. After the repair that is no longer a question the READER can
+    tell has been asked, which is the only place it matters.
+    """
+    pages = set()
+    for ticker, hour in (
+        (_MS_BTTS, _MS_DERIVATIVE_EXPIRATION),
+        (_MS_GAME, EXPECTED_EXPIRATION),
+    ):
+        written, reason = _rail_writes(
+            ticker, hour, stored=_MS_DAY, source="kalshi_ticker",
+        )
+        assert reason == "adopt", (ticker, reason)
+        pages.add(
+            _served_commence(
+                await _serve(_kalshi_minted_row(9905041, sport_key=_MS_SPORT,
+                                                commence_time=written))
+            )
+        )
+    assert pages == {KICKOFF}, pages
+
+
+async def test_a_second_pass_over_the_corrected_event_serves_the_same_hour():
+    """The no-change / fixed-point half.
+
+    Once the event holds the GAME hour, every sibling — derivatives included —
+    must answer `agrees`, nothing is written, and a re-read serves the same
+    minute. A rail that answered `adopt` here would move a correct page on every
+    beat, which is the flap the anti-flap control exists to prevent.
+    """
+    for ticker, hour in (
+        (_MS_BTTS, _MS_DERIVATIVE_EXPIRATION),
+        (_MS_GAME, EXPECTED_EXPIRATION),
+    ):
+        target, reason = _rail_writes(
+            ticker, hour, stored=EXPECTED_EXPIRATION, source="kalshi_occurrence",
+        )
+        assert (target, reason) == (None, "agrees"), (ticker, target, reason)
+
+    served = _served_commence(
+        await _serve(_kalshi_minted_row(9905042, sport_key=_MS_SPORT,
+                                        commence_time=EXPECTED_EXPIRATION))
+    )
+    assert served == KICKOFF
+
+
+async def test_a_restated_fixture_follows_the_venue_on_the_game_clock():
+    """The restatement half. The venue moves the whole fixture an hour later —
+    GAME 22:30→23:30, derivatives 23:30→00:30 — and the page must follow to
+    20:30Z exactly once, off the GAME clock. Note this is the same wall-clock
+    number the unrepaired code served for the UNMOVED fixture: the repair is
+    what makes 20:30Z mean "the venue moved it" instead of "we read the wrong
+    sibling".
+    """
+    moved_game = EXPECTED_EXPIRATION + timedelta(hours=1)
+    moved_derivative = _MS_DERIVATIVE_EXPIRATION + timedelta(hours=1)
+
+    for ticker, hour in ((_MS_BTTS, moved_derivative), (_MS_GAME, moved_game)):
+        written, reason = _rail_writes(
+            ticker, hour, stored=EXPECTED_EXPIRATION, source="kalshi_occurrence",
+        )
+        assert (written, reason) == (moved_game, "adopt"), (ticker, written)
+        served = _served_commence(
+            await _serve(_kalshi_minted_row(9905043, sport_key=_MS_SPORT,
+                                            commence_time=written))
+        )
+        assert served == KICKOFF + timedelta(hours=1), (ticker, served)
