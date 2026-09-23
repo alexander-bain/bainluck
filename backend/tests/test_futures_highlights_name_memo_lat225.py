@@ -56,6 +56,7 @@ NAMES = [
     "Who will win the Super Bowl",
     "Stanley Cup winner",
     "Will the Lakers advance to the NBA Finals",
+    "Will Dallas Stars advance to the Second Round of the 2027 Stanley Cup Playoffs?",
     "Taylor Swift wedding",
     "NBA Championship",
     "NFL MVP",
@@ -72,6 +73,7 @@ FIELD_PATTERNS = [
     ("cultural_gravity_t1", "_CULTURAL_GRAVITY_T1"),
     ("cultural_gravity_t2", "_CULTURAL_GRAVITY_T2"),
     ("sports_postseason_story", "_SPORTS_POSTSEASON_STORY_RE"),
+    ("postseason_early_round", "_POSTSEASON_EARLY_ROUND_RE"),
     ("minor_league", "_MINOR_LEAGUE_PATTERNS"),
     ("top_tier_soccer", "_TOP_TIER_SOCCER_RE"),
 ]
