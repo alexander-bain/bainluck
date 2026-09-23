@@ -772,10 +772,20 @@ class TestBudgetCannotStarveAHealthyStage:
         outcome_at = src.find("candidates_in([outcome_arm])")
         assert outcome_at > 0, "outcome-arm query not found — update this guard"
 
-        rearm = src[:outcome_at].rfind("_apply_search_statement_timeout(db, deadline)")
+        rearm = src[:outcome_at].rfind("_apply_search_statement_timeout(db, deadline")
         assert rearm > 0, (
             "the outcome-arm query does not re-arm the statement timeout — it is "
             "running on whatever the tier<=1 query left behind"
+        )
+
+        # LAT-P271/#1619 STRENGTHENS THIS, it does not relax it. The anchor above
+        # lost its closing paren because the call gained an argument, and that
+        # argument is the point: re-arming with the DEADLINE RESIDUAL satisfied
+        # the sentence this guard was written to enforce while still handing the
+        # expensive arm ~19 s of a 20 s request. The bound must be the arm's own.
+        assert "bound_ms=bound_ms" in src[rearm:outcome_at], (
+            "the outcome arm re-arms with the deadline residual rather than its "
+            "own budget — the bound is a leftover, not a limit"
         )
 
 
