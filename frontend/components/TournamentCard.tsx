@@ -5,6 +5,7 @@ import { tournamentEventKey, eventPath } from "@/lib/eventKey";
 import { formatProbability } from "@/lib/api";
 import { formatMovementPoints, isRenderedMove } from "@/lib/probabilityDisplay";
 import { isTournamentLive } from "@/lib/tournamentLive";
+import { resolveCupSideColors } from "@/lib/cupTeamSides";
 import type { GolfTournament, GolfLeaderboardPlayer } from "@/lib/types";
 
 // L2-78 Item 2 — golf-default flip. FLIPPED TRUE in Queue #213: Alex ruled the
@@ -225,18 +226,13 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
   const probA = teamA.probability * 100;
   const probB = teamB.probability * 100;
 
-  // Color mapping for known cup teams
-  const teamColors: Record<string, { bg: string; text: string; bar: string }> = {
-    "usa": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
-    "united states": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
-    "u.s.": { bg: "bg-blue-50", text: "text-blue-800", bar: "bg-blue-500" },
-    "europe": { bg: "bg-amber-50", text: "text-amber-800", bar: "bg-amber-500" },
-    "international": { bg: "bg-emerald-50", text: "text-emerald-800", bar: "bg-emerald-500" },
-    "great britain & ireland": { bg: "bg-red-50", text: "text-red-800", bar: "bg-red-500" },
-  };
-  const defaultColor = { bg: "bg-surface-secondary", text: "text-text-primary", bar: "bg-text-secondary" };
-  const colorA = teamColors[teamA.name.toLowerCase()] || defaultColor;
-  const colorB = teamColors[teamB.name.toLowerCase()] || defaultColor;
+  // #8028 — the two sides' colours, resolved TOGETHER so the bar's two segments
+  // can never paint the same value. The map used to be keyed on the raw
+  // lowercased name, which no served side ever matches ("Team USA", "Team
+  // World", "Team Europe" all carry the prefix), so every cup card on
+  // production drew one grey block. Vocabulary and folding are shared with
+  // `backend/app/utils/golf_event_format.py`; see `lib/cupTeamSides.ts`.
+  const [colorA, colorB] = resolveCupSideColors(teamA.name, teamB.name);
 
   return (
     <Link href={href} className="block">
@@ -286,10 +282,11 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
             </div>
           </div>
 
-          {/* Probability bar */}
+          {/* Probability bar. Widths are the printed figures to one decimal, not
+              the raw product: `0.145 * 100` emits `14.499999999999998%`. */}
           <div className="flex h-2 rounded-full overflow-hidden">
-            <div className={`${colorA.bar} transition-all`} style={{ width: `${probA}%` }} />
-            <div className={`${colorB.bar} transition-all`} style={{ width: `${probB}%` }} />
+            <div className={`${colorA.bar} transition-all`} style={{ width: `${probA.toFixed(1)}%` }} />
+            <div className={`${colorB.bar} transition-all`} style={{ width: `${probB.toFixed(1)}%` }} />
           </div>
 
           {/* Prop markets below */}

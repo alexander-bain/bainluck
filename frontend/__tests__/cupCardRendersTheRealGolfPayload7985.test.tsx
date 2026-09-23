@@ -167,10 +167,13 @@ describe("#7985 — the mounted card leads with the two teams", () => {
   });
 
   test("an unknown team name renders rather than throwing on the colour map", () => {
-    // `teamColors` is keyed on a lowercased name and falls back; "Team World" is
-    // NOT one of its keys (it maps usa/europe/international/GB&I), so the
-    // production pair already exercises the fallback. Stated as its own case so
-    // a future key change cannot make this incidental.
+    // The colour lookup falls back rather than throwing. Names invented on
+    // purpose: as of #8028 the production pair ("Team USA" / "Team World") is
+    // RECOGNISED — that filing was precisely that it was not — so this case
+    // needs sides no vocabulary holds to still exercise the fallback.
+    // What the fallback PAINTS is #8028's subject, guarded in
+    // `cupBarDifferentiatesItsTwoSides8028.test.tsx`; here it is only that an
+    // unknown side renders its name and number at all.
     const pairs = renderedPairs(
       render(presidentsCup([
         teamEntry("Team Atlantis", 0.5, 1),
