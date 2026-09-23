@@ -109,7 +109,9 @@ describe("DETECTORS — the ladder reaches the rendered hero", () => {
     // today. `sizes` is not decoration here; it IS the desktop saving.
     const tag = heroTag(render(HERO_URL));
     expect(tag).toContain('sizes="');
-    expect(tag).toContain("(min-width: 1280px) 300px");
+    // REVISED 2026-09-23 (#8254 residue): the four-column slot moved with the
+    // feed's width — 368px flat from 1600px, fluid below. Was "(min-width: 1280px) 300px".
+    expect(tag).toContain("(min-width: 1600px) 368px");
   });
 
   it("the ladder's widest rung is the very url in `src`", () => {
