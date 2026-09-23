@@ -8,6 +8,7 @@ import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
 import { priceCadenceNote } from "@/lib/priceCadenceCopy";
 import { seriesFreshness } from "@/lib/seriesFreshness";
 import { chartSeriesPath } from "@/lib/chartSeriesPath";
+import { combinedLinePoints } from "@/lib/combinedLinePolicy";
 import {
   visibleChartOutcomes,
   withoutBoardNamePrefix,
@@ -91,7 +92,14 @@ interface FuturesChartProps {
   onHoverOutcome?: (outcomeId: number | null) => void;
   /** L2-149: draw the summed probability of the displayed outcomes as a single
    *  dashed line (the "Combined" toggle migrated from EvolutionChart). Only shown
-   *  when more than one outcome is displayed. */
+   *  when more than one outcome is displayed.
+   *
+   *  #8158 — ⚠️ THE CALLER OWNS THE DECISION. Adding a board's outcomes up only
+   *  produces a probability when they are alternatives to one question (gotcha #23),
+   *  and this component cannot tell: its `historyData` may be one market's field or
+   *  a cross-source union that double-counts contenders. Before passing `true`, a
+   *  caller on the single-market path must check `fieldIsOneQuestion`
+   *  (`lib/combinedLinePolicy.ts`) and hide its own control when that is false. */
   showCombinedProbability?: boolean;
   /** L2-164: opt-in tap-to-zoom chip for long-horizon low-probability series
    *  (season journeys). The fixed 0–100% axis stays the DEFAULT so movement is
@@ -324,47 +332,27 @@ export function FuturesChart({
   const yTicks = chartYTicks(maxProb);
 
   // L2-149: combined probability line — the forward-filled sum of the displayed
-  // outcomes across the union of their timestamps, capped at 100%. Only meaningful
-  // for more than one outcome. Migrated from EvolutionChart's "Combined" toggle.
-  // NOTE: a plain computation (not a hook) — it lives below the early returns, so
-  // a useMemo here would break the rules of hooks. The loop is O(points) and cheap.
-  const combinedPoints: { t: number; sum: number }[] | null = (() => {
-    if (!showCombinedProbability || displayedOutcomes.length < 2) return null;
-    const stamps = new Set<number>();
-    for (const o of displayedOutcomes) {
-      for (const p of o.history) {
-        if (p.probability !== null) stamps.add(new Date(p.timestamp).getTime());
-      }
-    }
-    const sortedStamps = Array.from(stamps).sort((a, b) => a - b);
-    if (sortedStamps.length < 2) return null;
-    // Pre-sort each outcome's real points once for a linear forward-fill walk.
-    const series = displayedOutcomes.map((o) =>
-      o.history
-        .filter((p) => p.probability !== null)
-        .map((p) => ({ t: new Date(p.timestamp).getTime(), v: p.probability as number }))
-        .sort((a, b) => a.t - b.t)
-    );
-    const cursors = series.map(() => 0);
-    const last = series.map(() => null as number | null);
-    const pts: { t: number; sum: number }[] = [];
-    for (const t of sortedStamps) {
-      let sum = 0;
-      let anyKnown = false;
-      series.forEach((pointsList, i) => {
-        while (cursors[i] < pointsList.length && pointsList[cursors[i]].t <= t) {
-          last[i] = pointsList[cursors[i]].v;
-          cursors[i] += 1;
-        }
-        if (last[i] !== null) {
-          sum += last[i] as number;
-          anyKnown = true;
-        }
-      });
-      if (anyKnown) pts.push({ t, sum: Math.min(1, sum) });
-    }
-    return pts.length >= 2 ? pts : null;
-  })();
+  // outcomes across the union of their timestamps. Only meaningful for more than
+  // one outcome. Migrated from EvolutionChart's "Combined" toggle.
+  //
+  // #8158 — the arithmetic moved to `lib/combinedLinePolicy.ts`, and the clamp with
+  // it: `Math.min(1, sum)` on a field of independent props (ten Kalshi Las Vegas
+  // team-specials totalling 3.72) pinned every point to a flat, confident 100%.
+  //
+  // ⚠️ THIS COMPONENT DOES NOT DECIDE WHETHER THE LINE MAY BE DRAWN, and the
+  // temptation to add a floor here was measured and rejected. The test is whether
+  // the SERVED FIELD is alternatives to one question, and `historyData` is not
+  // reliably that: on the multi-market path it is a cross-source union in which the
+  // same contender appears once per source ("Buffalo Bills" 0.118 AND "Buffalo"
+  // 0.115), so a floor here would strip the line off every league championship
+  // chart for a duplication defect that is not this line's. The caller knows how
+  // many markets it merged; this component cannot. See `fieldIsOneQuestion`.
+  //
+  // NOTE: a plain call (not a hook) — it lives below the early returns, so a
+  // useMemo here would break the rules of hooks. The walk is O(points) and cheap.
+  const combinedPoints = showCombinedProbability
+    ? combinedLinePoints(displayedOutcomes)
+    : null;
 
   // Hover handler for interactive tooltip
   function handleChartHover(e: React.MouseEvent<SVGSVGElement>) {

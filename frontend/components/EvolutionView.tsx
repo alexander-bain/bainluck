@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { FuturesChart } from "@/components/FuturesChart";
 import { EvolutionLeaderboard } from "@/components/EvolutionLeaderboard";
 import { fetchFuturesHistory, fetchMultiMarketHistory } from "@/lib/api";
+import { fieldIsOneQuestion } from "@/lib/combinedLinePolicy";
 import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
   SERIES_COLORS,
@@ -271,6 +272,39 @@ export function EvolutionView({
     return m;
   }, [data, effectiveSelectedIds]);
 
+  // #8158: whether "Combined" is offered at all. Adding a board's outcomes up only
+  // produces a probability when they are alternatives to ONE question; on a props
+  // board of independent binaries it does not, and the chart's clamp turned that
+  // meaningless total into a dead-flat, confident 100% line. Measured on production
+  // 2026-09-22, `/sport/golf/pga` → "Golfers to compete in the Presidents Cup this
+  // year": 20 near-certain independent binaries, served field 12.05, default five
+  // rows summing 4.975, drawn as a flat 100%. The line is refused there, so the
+  // control that asks for it is too — a checkbox that visibly does nothing is its
+  // own defect.
+  //
+  // TWO CONDITIONS, AND THE FIRST IS THE ONE THAT IS EASY TO MISS.
+  //
+  // (1) SINGLE-MARKET PATH ONLY. `fieldIsOneQuestion` assumes its rows are one
+  //     market's field. On the multi-market path `data.outcomes` is
+  //     `/multi-history`'s cross-source UNION, where the same contender appears once
+  //     per source — the NFL Stage default serves 44 rows for 32 teams ("Buffalo
+  //     Bills" 0.118 AND "Buffalo" 0.115) and totals 1.502 on a question that is
+  //     plainly exclusive. Judging there would strip the control off the NFL, NBA,
+  //     MLB, NHL, NCAAF and MLS championship charts for a duplication defect that
+  //     belongs to the payload, not to this line. The union keeps today's behaviour
+  //     until `/multi-history` says which market a row came from.
+  //
+  // (2) Judged on `data.outcomes` — the SERVED field, before the time-range window
+  //     and before the reader's selection. A card-level truth must not move because
+  //     a reader narrowed the table, which is exactly what the old line did by
+  //     summing whatever was on screen.
+  // Read as: judge ONLY on the single-market path; on a union, decline to judge and
+  // leave the control as it is today.
+  const combinedLineOffered = useMemo(
+    () => activeMarketIds.length > 1 || fieldIsOneQuestion(data?.outcomes ?? []),
+    [activeMarketIds, data?.outcomes],
+  );
+
   // L2-149: apply the range cutoff client-side (the old EvolutionChart did this
   // inside buildChartData). FuturesChart then plots the raw windowed points.
   const windowedOutcomes = useMemo(
@@ -360,7 +394,7 @@ export function EvolutionView({
           highlightedOutcomeId={highlightedOutcomeId}
           onHoverOutcome={setHighlightedOutcomeId}
           timeMarkers={timeMarkers}
-          showCombinedProbability={showCombinedProbability}
+          showCombinedProbability={showCombinedProbability && combinedLineOffered}
           fieldCeiling
           showAxes
           showLegend={false}
@@ -469,15 +503,21 @@ export function EvolutionView({
               </>
             )}
 
-            <label className="flex h-7 items-center gap-1.5 rounded-md border border-surface-border px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary">
-              <input
-                type="checkbox"
-                checked={showCombinedProbability}
-                onChange={(e) => setShowCombinedProbability(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-surface-border accent-text-primary"
-              />
-              <span className="whitespace-nowrap">Combined</span>
-            </label>
+            {/* #8158: absent on a field that is not one question's alternatives.
+                Nothing takes its place — D102/notice 34: the reader gets the
+                numbers, not a paragraph explaining why a control they never saw
+                is missing. */}
+            {combinedLineOffered && (
+              <label className="flex h-7 items-center gap-1.5 rounded-md border border-surface-border px-2 text-[11.5px] font-medium text-text-secondary hover:bg-surface-secondary">
+                <input
+                  type="checkbox"
+                  checked={showCombinedProbability}
+                  onChange={(e) => setShowCombinedProbability(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-surface-border accent-text-primary"
+                />
+                <span className="whitespace-nowrap">Combined</span>
+              </label>
+            )}
           </div>
 
           {/* Expand/collapse button */}
