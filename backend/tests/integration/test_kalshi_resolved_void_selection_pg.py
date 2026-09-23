@@ -100,7 +100,33 @@ async def pg_session():
     await engine.dispose()
 
 
-async def _event(session, *, status, commence=RECENT, sport_id="soccer_spain_la_liga"):
+async def _sport(session):
+    """🔴 `events.sport_id` is an INTEGER FK to `sports.id`, NOT a sport key.
+
+    The first cut of this file passed `'soccer_spain_la_liga'` — the string the
+    rest of the codebase calls a sport_id everywhere else — and every one of the
+    14 arms died in CI with `TypeError: 'str' object cannot be interpreted as an
+    integer`, raised from asyncpg's `int4_encode` four frames below anything
+    under test. Neither local instrument could see it: the PG gate skips on a
+    PG14 server, and the reduced-table proof beside it has no `sports` table to
+    join, so it never carried the column at all.
+
+    `active` is named explicitly for the reason this file's enrolment in
+    `test_pg_gate_seed_completeness.py` exists: it is NOT NULL with a
+    PYTHON-side default, which a raw INSERT bypasses. The completeness check
+    reads `server_default`, so a column defaulted in the ORM alone does not
+    appear in its required list — it is a hazard that survives the guard.
+    """
+    return (await session.execute(text("""
+                INSERT INTO sports (key, name, active)
+                VALUES ('soccer_spain_la_liga', 'La Liga', TRUE)
+                ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name
+                RETURNING id
+                """))).scalar()
+
+
+async def _event(session, *, status, commence=RECENT):
+    sport_id = await _sport(session)
     return (
         await session.execute(
             text("""
