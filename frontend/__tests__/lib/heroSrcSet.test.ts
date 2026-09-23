@@ -258,15 +258,37 @@ describe("HERO_IMAGE_SIZES tracks the Discover masonry", () => {
   // one it replaced. Breakpoints here are Tailwind's sm/lg/xl, and the
   // subtractions are `px-4` page padding plus `gap-4` gutters.
   it("names the four column counts the grid actually renders", () => {
-    expect(HERO_IMAGE_SIZES).toContain("(min-width: 1280px) 300px");
+    // REVISED 2026-09-23 (#8254 residue): the feed now sits on the shell's
+    // 1600px, so the four-column slot is 368px flat from 1600px and fluid
+    // between 1280 and 1600. It used to read "(min-width: 1280px) 300px".
+    expect(HERO_IMAGE_SIZES).toContain("(min-width: 1600px) 368px");
+    expect(HERO_IMAGE_SIZES).toContain("(min-width: 1280px) calc((100vw - 128px) / 4)");
     expect(HERO_IMAGE_SIZES).toContain("(min-width: 1024px) calc((100vw - 64px) / 3)");
     expect(HERO_IMAGE_SIZES).toContain("(min-width: 640px) calc((100vw - 48px) / 2)");
     expect(HERO_IMAGE_SIZES.endsWith("calc(100vw - 32px)")).toBe(true);
   });
 
-  it("the four-column slot is 300 CSS px — the number the desktop saving rests on", () => {
-    // max-w-7xl (1280) - px-4 both sides (32) - 3 gutters of 16 = 1200 / 4.
-    expect((1280 - 32 - 3 * 16) / 4).toBe(300);
+  it("the four-column slot is 368 CSS px at full width, and the fluid clause meets it", () => {
+    // REVISED 2026-09-23 (#8254 residue) from "300 CSS px": shell max-w-content
+    // (1600) - px-6 both sides (48) - page px-4 both sides (32) - 3 gutters of
+    // 16 = 1472 / 4. The fluid clause at exactly 1600px must give the same
+    // number, or the image jumps a rung at the seam.
+    expect((1600 - 48 - 32 - 3 * 16) / 4).toBe(368);
+    expect((1600 - 128) / 4).toBe(368);
+  });
+
+  it("the grid and the shell still carry the widths this derivation reads", () => {
+    // The arithmetic above is only true while these tokens are. Pin them so a
+    // layout change reddens HERE instead of silently mis-sizing every hero.
+    const fs = require("fs");
+    const path = require("path");
+    const page = fs.readFileSync(path.join(process.cwd(), "app/discover/page.tsx"), "utf8");
+    const layout = fs.readFileSync(path.join(process.cwd(), "app/layout.tsx"), "utf8");
+    expect(page).toMatch(/<main className="max-w-content mx-auto px-4 /);
+    expect(page).toContain("columns-1 sm:columns-2 lg:columns-3 xl:columns-4");
+    expect(layout).toContain('className="max-w-content mx-auto px-3 md:px-6 py-4"');
+    const tw = fs.readFileSync(path.join(process.cwd(), "tailwind.config.ts"), "utf8");
+    expect(tw).toMatch(/content:\s*'1600px'/);
   });
 });
 

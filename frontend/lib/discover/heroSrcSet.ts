@@ -81,26 +81,34 @@
 
 /**
  * The Discover masonry is `columns-1 sm:columns-2 lg:columns-3 xl:columns-4
- * gap-4` inside `max-w-7xl mx-auto px-4` (`app/discover/page.tsx`). Slot width
+ * gap-4` inside `max-w-content mx-auto px-4` (`app/discover/page.tsx`), which
+ * sits in the site shell's `max-w-content px-6` (`app/layout.tsx`). Slot width
  * per breakpoint, gutters and page padding subtracted:
  *
- *   >= 1280px  container caps at 1280 - 32 padding = 1248; 4 cols, 3x16 gap  -> 300px flat
+ *   >= 1600px  shell caps at 1600 - 48 = 1552, page padding -> 1520; 4 cols, 3x16 gap -> 368px flat
+ *   >= 1280px  4 cols           -> (100vw - 48 shell - 32 page - 48 gaps) / 4
  *   >= 1024px  3 cols, 2x16 gap   -> (100vw - 32 - 32) / 3
  *   >=  640px  2 cols, 1x16 gap   -> (100vw - 32 - 16) / 2
  *   <   640px  1 col              ->  100vw - 32
  *
  * Keep this in step with that grid — a `sizes` that overstates the slot is how
- * a responsive image quietly gets heavier than the fixed one it replaced.
+ * a responsive image quietly gets heavier than the fixed one it replaced, and
+ * one that UNDERSTATES it is how it goes soft. #8254 widened the feed from
+ * `max-w-7xl` to the shell's 1600px; the old flat "300px" then told a 1920px
+ * DPR-1 monitor to pick the 300w rung for a 368px slot (a 23% upscale). The
+ * lower three clauses still ignore the shell's own padding, so they overstate
+ * by at most 16px a column — the heavy-but-sharp direction, left as it was.
  */
 export const HERO_IMAGE_SIZES =
-  "(min-width: 1280px) 300px, " +
+  "(min-width: 1600px) 368px, " +
+  "(min-width: 1280px) calc((100vw - 128px) / 4), " +
   "(min-width: 1024px) calc((100vw - 64px) / 3), " +
   "(min-width: 640px) calc((100vw - 48px) / 2), " +
   "calc(100vw - 32px)";
 
 /**
  * Candidate widths, in device pixels. Chosen against the slot widths the grid
- * above actually produces (300 / 405 / 487 / 607 CSS px) at DPR 1 and 2, then
+ * above actually produces (300 / 405 / 487 / 607 CSS px; 368 since #8254) at DPR 1 and 2, then
  * kept to five rungs so 40 cards of `srcset` stay small in the document.
  * Rungs at or above a url's own raster are dropped, so this is a ceiling list,
  * never a floor.

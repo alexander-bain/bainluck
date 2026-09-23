@@ -112,3 +112,51 @@ describe("#8254 — the Discover heading and its feed are one container, not two
     expect(SOURCE).not.toMatch(/columns-5/);
   });
 });
+
+/**
+ * ═══ THE RESIDUE — two boxes the first fix could not see (ux/1465, 2026-09-23) ═══
+ *
+ * The deployed LOOK at 1920px paid arms 1–2: band and feed now share 1600px and line up. It also
+ * showed the first-run line "Probability, not betting…" starting at x≈336 while the "Discover"
+ * title and the cards start at x≈200 — 136px of indent, exactly (1600 − 1280) / 2 − 24. The line
+ * lives in `FirstRunOrientation.tsx` with its own `max-w-7xl`, and `app/discover/loading.tsx`
+ * (the skeleton, "mirrors app/discover/page.tsx") kept `max-w-7xl` on both boxes, so a wide
+ * window drew the skeleton 1280px wide and then jumped to 1600px when the feed arrived.
+ *
+ * The arms above read ONE file and name two boxes, which is why neither was caught. This arm pins
+ * the SET: every page-width box on the Discover route — page, skeleton, and the strip between
+ * header and feed — declares the feed's width token.
+ */
+describe("#8254 residue — every page-width Discover box shares the feed's width", () => {
+  const feedWidth = widthClasses(SOURCE.match(FEED_BOX)![1]);
+  const read = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), "utf8");
+
+  const BOXES: Array<[string, RegExp]> = [
+    ["loading.tsx header box", HEADING_BOX],
+    ["loading.tsx feed box", FEED_BOX],
+  ];
+
+  it.each(BOXES)("app/discover/loading.tsx — %s", (_label, box) => {
+    const m = read("app/discover/loading.tsx").match(box);
+    expect(m).not.toBeNull();
+    expect(widthClasses(m![1])).toEqual(feedWidth);
+  });
+
+  it("the first-run orientation line sits on the same width as the heading above it", () => {
+    const m = read("components/discover/FirstRunOrientation.tsx").match(
+      /<div className="([^"]*)" data-testid="discover-orientation"/,
+    );
+    expect(m).not.toBeNull();
+    expect(widthClasses(m![1])).toEqual(feedWidth);
+  });
+
+  it("no Discover page-width box is left on the old 1280px cap", () => {
+    for (const rel of [
+      "app/discover/page.tsx",
+      "app/discover/loading.tsx",
+      "components/discover/FirstRunOrientation.tsx",
+    ]) {
+      expect(read(rel)).not.toMatch(/className="[^"]*\bmax-w-7xl\b/);
+    }
+  });
+});

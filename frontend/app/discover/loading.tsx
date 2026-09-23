@@ -19,7 +19,7 @@ export default function DiscoverLoading() {
     <div className="min-h-screen bg-surface-deep">
       {/* Header — mirrors app/discover/page.tsx */}
       <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+        <div className="max-w-content mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
             <span
@@ -30,7 +30,7 @@ export default function DiscoverLoading() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-4">
+      <main className="max-w-content mx-auto px-4 py-4">
         <DiscoverSkeletonGrid />
       </main>
     </div>

@@ -12,7 +12,7 @@ import { BRAND_TAGLINE } from "@/lib/brandCopy";
 export default function FirstRunOrientation({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <div className="max-w-7xl mx-auto px-4 pt-3" data-testid="discover-orientation">
+    <div className="max-w-content mx-auto px-4 pt-3" data-testid="discover-orientation">
       <p className="text-[12px] leading-relaxed text-text-muted">{BRAND_TAGLINE}</p>
     </div>
   );
