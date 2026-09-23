@@ -47,6 +47,46 @@ WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 MAX_SUBSCRIBE_BYTES = 40 * 1024
 MAX_ASSETS_PER_CONNECTION = 500
 
+# #837 — AN EXPLICIT RECEIVE CEILING, BECAUSE THE DEFAULT ONE IS 1 MiB AND A
+# SUBSCRIBE CAN BE ANSWERED WITH ONE MESSAGE HOLDING EVERY BOOK WE ASKED FOR.
+# `websockets.connect` defaults `max_size` to 2**20 = 1,048,576 bytes and closes
+# the connection with 1009 "message too big" the moment a larger message
+# arrives — before the consumer sees a byte of it, and before any price_change
+# can follow. The shard would then reconnect, resubscribe, be sent the same
+# dump, and be closed again, counting as connected the whole time while
+# `stats()` said nothing about why it never served. Book depth is the venue's
+# to choose and nothing on our side bounds it, so the ceiling is stated rather
+# than inherited.
+#
+# ⚠️ THIS IS HARDENING AGAINST A LATENT MODE, NOT THE REPAIR OF A LIVE OUTAGE,
+# and the distinction is written down because the measurement that motivated it
+# reads like an outage report and is not one. The 1,286,965 – 1,372,376 byte
+# figure (artifacts/other-model-837-final-coverage/, 2026-09-23, a single `list`
+# of 460–496 book snapshots) was taken over WHOLE-VENUE live books, not over the
+# sports subscription this client actually sends. Measured on production the
+# same night at the shard shape that figure calls fatal — worker-ws v4950,
+# uptime 1560s, `shards=3/3`, two shards subscribed at the full 500 assets
+# (`0:448/500 1:482/500`) — the socket had received and json-parsed 186,472
+# messages and delivered 3,611 prices to `on_price` with 0 errors and no 1009.
+# `_shard_served` is written only after `json.loads` succeeds, so those served
+# counts are proof of RECEIPT. Whichever spares us (thin sports books landing
+# the dump under 1 MiB, or the venue not answering this population with one
+# list), the close is not occurring, so do not read this constant as evidence
+# that it was. It buys insurance against a book that deepens, and the mode it
+# insures against is silent and total, which is why it is worth its cost.
+#
+# ⚠️ THE CEILING IS A MEMORY COMMITMENT, NOT JUST A RECEIVE BOUND, and it is
+# written that way because the obvious reading is wrong: "the dump is parsed
+# and dropped" says nothing about the cost of HOLDING it. `websockets` buffers
+# the whole message before it hands the consumer a single frame, so the peak is
+# paid per connected shard whatever we do with the bytes afterwards — and this
+# client runs 7–8 shards concurrently. 8 MiB is therefore the per-shard worst
+# case, ~64 MiB across the fleet, chosen as ~6x the largest dump ever measured
+# so a deeper book does not reach the ceiling, and kept FINITE so a malformed or
+# hostile message cannot grow the process without bound. Raise it only with the
+# fleet-wide multiple in hand, never to clear a single observation.
+MAX_MESSAGE_BYTES = 8 * 1024 * 1024
+
 # How long a shard must have been connected before a silent one is worth
 # mentioning. Long enough that an ordinary quiet stretch is not the reason.
 COVERAGE_GRACE_SECONDS = 120
@@ -350,11 +390,12 @@ class PolymarketWebSocket:
                     WS_URL,
                     ping_interval=None,
                     close_timeout=5,
+                    # The initial dump for a full shard is one message over the
+                    # library's 1 MiB default; see MAX_MESSAGE_BYTES.
+                    max_size=MAX_MESSAGE_BYTES,
                 ) as ws:
                     self._shards_connected.add(shard)
-                    self._shard_connected_at[shard] = (
-                        asyncio.get_running_loop().time()
-                    )
+                    self._shard_connected_at[shard] = asyncio.get_running_loop().time()
                     if self._reconnect_count > 0:
                         logger.info(
                             "Polymarket WS shard %d reconnected (attempt %d)",
@@ -438,7 +479,9 @@ class PolymarketWebSocket:
                                     if asyncio.iscoroutine(result):
                                         await result
                                 except Exception:
-                                    logger.exception("Polymarket resolution handler error")
+                                    logger.exception(
+                                        "Polymarket resolution handler error"
+                                    )
 
                             elif event_type == "new_market" and self.on_new_market:
                                 try:
@@ -446,7 +489,9 @@ class PolymarketWebSocket:
                                     if asyncio.iscoroutine(result):
                                         await result
                                 except Exception:
-                                    logger.exception("Polymarket new_market handler error")
+                                    logger.exception(
+                                        "Polymarket new_market handler error"
+                                    )
 
                     finally:
                         hb.cancel()
