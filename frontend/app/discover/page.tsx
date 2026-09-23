@@ -1427,7 +1427,19 @@ export default function DiscoverPage() {
       <FeedBootScript />
       {/* Header */}
       <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+        {/* #8254 — ONE WIDTH TOKEN, THE SAME ONE THE SITE SHELL USES.
+            This inner box and the feed's `<main>` below MUST carry identical width classes: the
+            header's painted background spans the shell (`max-w-content`, 1600px, in
+            `app/layout.tsx`) while this box decided where the word "Discover" sat, so the two
+            widths were free to disagree — and did. Measured on production 2026-09-23 in Chromium:
+            at a 1920px window the slab's background was 1552px and the feed 1248px, so the white
+            band overhung the cards by 152px on EACH side. Alex photographed exactly that on an
+            iPad in Safari on an external monitor.
+            `max-w-7xl` (1280px) also capped the feed 320px below the shell it lives in, so a wide
+            window bought nothing: the feed used 65% of a 1920px window and 49% of a 2560px one.
+            Sharing the shell's token fixes both with one number — and it binds only above ~1328px,
+            so 390px and iPad-portrait geometry are byte-identical to before (measured). */}
+        <div className="max-w-content mx-auto px-4 py-3">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-lg font-black tracking-tight">Discover</h1>
             <div className="flex items-center gap-3">
@@ -1483,8 +1495,13 @@ export default function DiscoverPage() {
         />
       )}
 
-      {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop */}
-      <main className="max-w-7xl mx-auto px-4 py-4">
+      {/* Feed — responsive: 1 col mobile, 2 col tablet, 3 col desktop.
+          #8254: width classes here are the HEADER's, character for character (see the note on it).
+          The extra width becomes WIDER cards, not more of them — four columns in 1520px are ~368px
+          each against ~300px before, which is the "comfortably readable" half of the ask. A fifth
+          column at this width would take them back down to ~291px, narrower than the defect, so
+          the column ladder is deliberately untouched. */}
+      <main className="max-w-content mx-auto px-4 py-4">
         {isLoading && <DiscoverSkeletonGrid />}
 
         {/* UX-P087 (#1909): the same component the typed-UNAVAILABLE case uses,
