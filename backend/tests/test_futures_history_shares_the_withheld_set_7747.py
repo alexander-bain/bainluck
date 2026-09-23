@@ -32,22 +32,12 @@ import pytest
 from app.models.models import FuturesMarket, FuturesOddsSnapshot
 from app.routes import futures as futures_route
 
-T0 = datetime(2026, 9, 22, 3, 50, 54, 864277, tzinfo=timezone.utc)
-
-MENSIK, SINNER, ALCARAZ, RUUD = 230781795, 230781778, 230781780, 230781797
-
-_FIELD = {
-    MENSIK: 0.740, SINNER: 0.315, ALCARAZ: 0.270, RUUD: 0.030,
-    230781779: 0.010, 230781785: 0.010, 230781796: 0.010, 230781798: 0.010,
-    230781802: 0.010, 230781782: 0.010, 230781783: 0.010, 230781784: 0.010,
-    230781786: 0.010, 230781787: 0.010, 230781788: 0.010, 230781789: 0.010,
-    230781790: 0.010, 230781791: 0.010, 230781792: 0.010, 230781793: 0.010,
-    230781799: 0.010, 230781801: 0.010, 230781781: 0.010, 230781794: 0.010,
-}
-
-#: What the page prints for the priced legs once Mensik is withheld (raw: the
-#: survivors sum to 0.815, under the squeeze's own floor).
-_HERO = {SINNER: 0.315, ALCARAZ: 0.270, RUUD: 0.030}
+#: The 2027 US Open board (`/futures/61308736`) that named #7747 is NOT the
+#: specimen below, and its field is deliberately not transcribed here. That
+#: board is withheld through the Kalshi trade screen — arm ONE, the only arm
+#: the chart already consulted — so it cannot separate base from candidate.
+#: The specimen this file needs is a board withheld through one of the OTHER
+#: four arms; see the Polymarket board built further down.
 
 
 class _Result:
