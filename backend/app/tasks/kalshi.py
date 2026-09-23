@@ -44,6 +44,10 @@ from app.utils.event_completion import (  # noqa: E402  # #3544
     DERIVED_COMMENCE_SOURCES,
     KALSHI_OCCURRENCE_COMMENCE_SOURCE,
 )
+from app.utils.kalshi_occurrence_start import (  # noqa: E402  # CERT-3342/3344 #3565
+    kalshi_derivative_series_excess,
+    kalshi_occurrence_hour_is_recoverable,
+)
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.futures_rank import rerank_market_field_stmt  # #6598
 from app.utils.settled_price import (  # noqa: E402  # #5246
@@ -3446,13 +3450,32 @@ _STAND_IN_REFINEMENT_MAX = timedelta(hours=36)
 _STAND_IN_REFINEMENT_MIN_MOVE = timedelta(minutes=30)
 
 
+#: Why a market had nothing to write. `ADOPT` carries a target; the other two
+#: are both "target is None" and the rail MUST NOT conflate them (#3565):
+#:
+#: * `AGREES` — every gate passed. This market is an authoritative speaker for
+#:   the event and it is saying the hour already stored is right. It ends the
+#:   event's turn: that is the anti-flap control.
+#: * `INELIGIBLE` — a gate refused (wrong provenance, not a dated ticker, hour
+#:   outside the ticker day). This market is not a speaker at all, so it must
+#:   NOT end the event's turn — silence is not agreement.
+_REFINE_ADOPT = "adopt"
+_REFINE_AGREES = "agrees"
+_REFINE_INELIGIBLE = "ineligible"
+
+
 def _stand_in_refinement_target(
     external_id: Optional[str],
     event_commence: datetime | None,
     event_commence_source: Optional[str],
     market_commence: datetime | None,
+    *,
+    sport_key: Optional[str],
 ):
     """The published start to write onto a linked Event, or None to leave it.
+
+    The value half of `_stand_in_refinement_decision`; see that function for
+    why the None half is not one answer but two.
 
     #3544, and the second half of #3488. Pure: no DB, no clock.
 
@@ -3471,13 +3494,24 @@ def _stand_in_refinement_target(
       writes itself under two names. Only `odds_api`/`espn` outrank, and tennis
       has no ESPN anchor. So the stand-in is permanent by construction.
 
-    THE THREE GATES, all three required:
+    THE GATES, all required:
 
-    1. **The event's start must be a derived stand-in.** This is the
-       non-overwrite control and it fails CLOSED: only the named
-       `DERIVED_COMMENCE_SOURCES` provenance qualifies. An `espn`, `odds_api`,
-       `statpal`, `mlb_schedule_repair` or unknown/None start is never touched
-       — including None, which is most of the table.
+    0. **A same-provider REVISION additionally needs the hour to be
+       RECOVERABLE as a start** (`kalshi_occurrence_hour_is_recoverable`,
+       CERT-3342). Kalshi's occurrence IS its expected expiration, so it is a
+       kick-off nowhere and a recoverable instant only where the pad has been
+       measured exact — soccer. Tennis has no measurement, so a restated tennis
+       occurrence is refused rather than persisted as a start. The stand-in arm
+       below is NOT gated on this: that is master's behaviour since #3544 and
+       changing it is its own ship. Fails closed on an unknown sport.
+    1. **The event's start must be a derived stand-in — or the venue's own
+       earlier hour.** This is the non-overwrite control and it fails CLOSED:
+       only the named `DERIVED_COMMENCE_SOURCES` provenance qualifies, plus
+       `kalshi_occurrence` as a SAME-PROVIDER REVISION (#3565, the q066b
+       vocabulary: a provider restating its own record is not two authorities
+       disagreeing). An `espn`, `odds_api`, `statpal`, `mlb_schedule_repair`
+       or unknown/None start is never touched — including None, which is most
+       of the table.
     2. **The ticker must be a dated fixture ticker** (`_is_dated_fixture_ticker`
        — the same pinned predicate that armed the market-side write). This is
        what keeps gotcha #14 out: for any OTHER Kalshi ticker the market's
@@ -3488,25 +3522,144 @@ def _stand_in_refinement_target(
        repaired by exactly the rail below, unchanged.
     3. **The move must be FORWARD and within `_STAND_IN_REFINEMENT_MAX`.** See
        that constant: it is what proves this write cannot re-open #2020.
+       For a same-provider revision the window is measured against the TICKER
+       DAY, not against the previously written value — so repeated restatements
+       cannot walk a row forward one window at a time — and either direction
+       counts, because an order-of-play reshuffle moves matches earlier too.
 
-    Returns the market's own published start. It never invents a value and
-    never moves a start earlier.
+    Returns the market's own published start. It never invents a value. A
+    stand-in is never moved earlier (a real start on the fixture's day cannot
+    precede its own midnight); a revision may move either way inside the
+    ticker-day window.
     """
-    if event_commence_source not in DERIVED_COMMENCE_SOURCES:
-        return None
+    return _stand_in_refinement_decision(
+        external_id, event_commence, event_commence_source, market_commence,
+        sport_key=sport_key,
+    )[0]
+
+
+def _stand_in_refinement_decision(
+    external_id: Optional[str],
+    event_commence: datetime | None,
+    event_commence_source: Optional[str],
+    market_commence: datetime | None,
+    *,
+    sport_key: Optional[str],
+):
+    """`(target, reason)` — the gates above, plus WHY a None is a None.
+
+    #3565. `_stand_in_refinement_target` answers "what should I write", which
+    is the only question the stand-in arm ever had: there, a market with
+    nothing to say is just skipped and the next one is asked.
+
+    The revision arm needs a second question, because it carries an ANTI-FLAP
+    control: once an event holds `kalshi_occurrence`, two eligible markets that
+    disagree would hand it back and forth forever (adopt AAA's hour; next run
+    AAA agrees and BBB is the first to differ; adopt BBB's; repeat). The
+    control that stops it is "the first market to speak ends the event's turn".
+
+    The trap this function exists to close: **silence is not agreement.** A
+    market whose hour falls outside its own ticker day, or whose ticker is not
+    dated at all, is not an authoritative speaker — it is not entitled to end
+    the turn on behalf of a later sibling that IS. Reading its None as "the
+    stored hour is confirmed" freezes exactly the restatement this rail was
+    built to adopt: with the join ordered by `fm.external_id`, one ineligible
+    market sorting first is enough to make the event permanently unreachable.
+
+    So the two Nones are separated at the source rather than re-derived by the
+    caller: `AGREES` is returned only after every gate has passed, and it is
+    the only None that may end an event's turn.
+    """
+    revision = event_commence_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+    if event_commence_source not in DERIVED_COMMENCE_SOURCES and not revision:
+        return None, _REFINE_INELIGIBLE
     if not _is_dated_fixture_ticker(external_id):
-        return None
+        return None, _REFINE_INELIGIBLE
     if event_commence is None or market_commence is None:
-        return None
+        return None, _REFINE_INELIGIBLE
 
     ec = _as_utc(event_commence)
-    mc = _as_utc(market_commence)
-    delta = mc - ec
-    if delta < timedelta(0) or delta > _STAND_IN_REFINEMENT_MAX:
-        return None
-    if delta < _STAND_IN_REFINEMENT_MIN_MOVE:
-        return None
-    return mc
+    # 🔴 EVERY CANDIDATE IS PUT ON THE GAME SERIES' CLOCK BEFORE IT IS COMPARED
+    # OR WRITTEN (CERT-3344). One soccer fixture carries several Kalshi series,
+    # and they do not share an occurrence: #6715 measured GAME at 22:30Z against
+    # BTTS/SPREAD/TOTAL at 23:30Z on the same event, 117/117 derivative pairs at
+    # GAME+60m. The candidate join is `ORDER BY fm.external_id`, so `KXLIGUE1BTTS`
+    # sorts ahead of `KXLIGUE1GAME`, and the first-eligible anti-flap rail would
+    # end the event's turn on the DERIVATIVE's hour. Its 60 minutes of venue
+    # excess then survive the 180-minute pad and the page serves 20:30Z for a
+    # fixture that kicks off at 19:30Z — a correct page moved an hour late, which
+    # is the ship inverted.
+    #
+    # `kalshi_derivative_series_excess` is the existing measurement and the only
+    # thing consulted: a zero timedelta for every non-derivative ticker, so a
+    # GAME row, a tennis row and an unmeasured series each cost one subtraction
+    # of nothing. Series membership is tested by EQUALITY, so `KXEPLTOTALCORNERS`
+    # is a miss and is left alone.
+    #
+    # NORMALISING THE VALUE, NOT THE POPULATION: the same rows are still
+    # considered, and the market keeps its own honest occurrence — a derivative's
+    # `commence_time` is the venue's truth for that series and other readers are
+    # entitled to it (`kalshi_game_scale_commence`'s docstring is the authority).
+    # What may never become the fixture's kick-off is that series' clock.
+    #
+    # Applied to BOTH arms on purpose. Leaving the stand-in arm unnormalised
+    # would mint the event an hour late on run 1 and let the revision arm "fix"
+    # it on run 2 — a write the venue never asked for, and precisely the flap the
+    # anti-flap control exists to prevent. Normalised, the siblings AGREE: the
+    # first market to speak still ends the turn, but every sibling now speaks the
+    # same hour, so the outcome no longer depends on `external_id` ordering.
+    mc = _as_utc(market_commence) - kalshi_derivative_series_excess(external_id)
+    if not revision:
+        delta = mc - ec
+        if delta < timedelta(0) or delta > _STAND_IN_REFINEMENT_MAX:
+            return None, _REFINE_INELIGIBLE
+        if delta < _STAND_IN_REFINEMENT_MIN_MOVE:
+            return None, _REFINE_AGREES
+        return mc, _REFINE_ADOPT
+
+    # #3565, the revision arm. Same provider, same row, later reading — the
+    # q066b `same_record_revision` shape, which the string-equality clause in
+    # `commence_time_write_authorized` cannot express because Kalshi writes
+    # itself under two names (`kalshi_ticker` -> `kalshi_occurrence`).
+    #
+    # 🔴 GATE 0, AND IT COMES FIRST: THE HOUR MUST BE RECOVERABLE AS A START.
+    # CERT-3342. Kalshi's `occurrence_datetime` is byte-identical to
+    # `expected_expiration_time` (venue-read, #5905) — it is never a kick-off,
+    # only sometimes convertible into one. Soccer has an exact measured pad
+    # (180 min, 11/11 anchored); tennis has NO measurement, and the specimen
+    # 15317314 stored 09:10Z for play in the 07:00Z hour. Adopting a restated
+    # occurrence for such a sport would persist a SECOND expiration and stamp
+    # it `kalshi_occurrence`, i.e. assert the venue published it as the start.
+    #
+    # Gated HERE, on the revision arm only, and deliberately not on the SELECT:
+    # narrowing the query would strand this refusal with nothing to refuse and
+    # make its control vacuous. The stand-in arm above is untouched — that is
+    # master's behaviour since #3544 and widening this repair into it would
+    # re-date the 104 non-tennis stand-ins #3562 reaches, which is a different
+    # ship (see the issue). What this SHA adds, this SHA gates.
+    #
+    # Fails CLOSED: an unknown or unloaded `sport_key` is not recoverable, so a
+    # caller that cannot say what sport it holds gets a refusal, never a write.
+    # `_REFINE_INELIGIBLE` (not `_REFINE_AGREES`) is the right None: this market
+    # has not spoken, so it must not end the event's turn on a later sibling's
+    # behalf — though in practice every market on an event shares its sport, so
+    # the whole event is refused either way.
+    if not kalshi_occurrence_hour_is_recoverable(sport_key):
+        return None, _REFINE_INELIGIBLE
+
+    from app.utils.prediction_market_matching import extract_game_date_from_ticker
+
+    ticker_day = extract_game_date_from_ticker(external_id)
+    if ticker_day is None:
+        return None, _REFINE_INELIGIBLE
+    floor = _as_utc(ticker_day).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    if mc < floor or mc > floor + _STAND_IN_REFINEMENT_MAX:
+        return None, _REFINE_INELIGIBLE
+    if abs(mc - ec) < _STAND_IN_REFINEMENT_MIN_MOVE:
+        return None, _REFINE_AGREES
+    return mc, _REFINE_ADOPT
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -3536,22 +3689,35 @@ async def _refine_stand_in_event_starts() -> int:
     make the surviving value depend on the order the server happened to return
     — so the join is ordered and the first market to yield a target wins, once.
     The count returned is therefore events moved, not rows examined.
+
+    #3565: the SELECT admits `kalshi_occurrence` rows as same-provider
+    revisions (the venue restating its own hour), and the UPDATE is
+    compare-and-set on the values the decision was read against — a row that
+    moved under us (ESPN sync, the odds poller, a repair rail landing a
+    stronger provenance between the SELECT and the UPDATE) is skipped rather
+    than clobbered, and not counted.
     """
     async with get_task_session() as session:
         result = await session.execute(text("""
                 SELECT e.id            AS event_id,
                        e.commence_time AS event_commence,
                        e.commence_time_source AS event_source,
+                       s.key           AS sport_key,
                        fm.external_id,
                        fm.commence_time AS market_commence
                 FROM events e
                 JOIN futures_markets fm ON fm.event_id = e.id
-                WHERE e.commence_time_source = ANY(:derived)
+                LEFT JOIN sports s ON s.id = e.sport_id
+                WHERE (e.commence_time_source = ANY(:derived)
+                       OR e.commence_time_source = :occurrence)
                   AND fm.source = 'kalshi'
                   AND fm.status = 'open'
                   AND fm.commence_time IS NOT NULL
                 ORDER BY e.id, fm.external_id
-            """), {"derived": sorted(DERIVED_COMMENCE_SOURCES)})
+            """), {
+            "derived": sorted(DERIVED_COMMENCE_SOURCES),
+            "occurrence": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
+        })
         rows = result.fetchall()
 
         moved = 0
@@ -3559,26 +3725,54 @@ async def _refine_stand_in_event_starts() -> int:
         for r in rows:
             if r.event_id in seen:
                 continue
-            target = _stand_in_refinement_target(
+            target, reason = _stand_in_refinement_decision(
                 r.external_id, r.event_commence, r.event_source, r.market_commence,
+                sport_key=r.sport_key,
             )
             if target is None:
+                if (
+                    r.event_source == KALSHI_OCCURRENCE_COMMENCE_SOURCE
+                    and reason == _REFINE_AGREES
+                ):
+                    # #3565, the anti-flap control: a revision is decided by
+                    # the first ELIGIBLE market and no other. Consulting the
+                    # rest would hand the event back and forth between two
+                    # disagreeing hours forever — after adopting AAA's, AAA
+                    # agrees and BBB becomes the first to differ, so the next
+                    # run adopts BBB's. An eligible market that agrees has
+                    # spoken, and ends the event's turn.
+                    #
+                    # `_REFINE_INELIGIBLE` deliberately does NOT end it. That
+                    # market is not a speaker (undated ticker, or an hour
+                    # outside its own ticker day), and the join is ordered by
+                    # `external_id`, so letting its silence stand for the
+                    # event would freeze every later sibling out permanently —
+                    # including the valid restatement this rail exists to
+                    # adopt. Skipping it does not weaken the control: the
+                    # order is stable, so "the first eligible market wins,
+                    # once" picks the same market on every run.
+                    seen.add(r.event_id)
                 continue
             seen.add(r.event_id)
-            await session.execute(
+            written = await session.execute(
                 text("""
                     UPDATE events
                     SET commence_time = :dt,
                         commence_time_source = :src
                     WHERE id = :id
+                      AND commence_time = :read_commence
+                      AND commence_time_source IS NOT DISTINCT FROM :read_source
                 """),
                 {
                     "dt": target,
                     "src": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
                     "id": r.event_id,
+                    "read_commence": r.event_commence,
+                    "read_source": r.event_source,
                 },
             )
-            moved += 1
+            if written.rowcount:
+                moved += 1
 
         if moved:
             await session.commit()
@@ -4310,6 +4504,17 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
     call returns every open market of a series with its own `event_ticker` and
     `occurrence_datetime`, so a series is both the cheapest unit of work and the
     unit the venue is happy to serve (#3149).
+
+    #3565: an ALREADY-REPAIRED fixture stays in the rotation. Admitting only
+    `DERIVED_COMMENCE_SOURCES` made the task converge by going blind — the
+    moment an event was stamped `kalshi_occurrence` its series left the
+    candidate set, so the venue was never re-read for it and a later
+    RESTATEMENT of the same fixture's hour could not be observed at all. The
+    refine rail runs off STORED market values, so a restatement nothing fetches
+    is a restatement nothing can adopt: the whole revision arm was unreachable
+    in production behind this one predicate. Re-reading is bounded the same way
+    it always was — `LIMIT :budget`, most-stale-first, inside the horizon — so
+    this widens WHICH series rotate, never how many run per pass.
     """
     result = await session.execute(text("""
             SELECT split_part(fm.external_id, '-', 1) AS series,
@@ -4319,7 +4524,8 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
             WHERE fm.source = 'kalshi'
               AND fm.status = 'open'
               AND fm.commence_time IS NOT NULL
-              AND e.commence_time_source = ANY(:derived)
+              AND (e.commence_time_source = ANY(:derived)
+                   OR e.commence_time_source = :occurrence)
               AND e.commence_time >= :floor
               AND e.commence_time <= :ceiling
             GROUP BY 1
@@ -4327,6 +4533,7 @@ async def _dated_fixture_refresh_candidates(session, budget: int) -> list[str]:
             LIMIT :budget
         """), {
         "derived": sorted(DERIVED_COMMENCE_SOURCES),
+        "occurrence": KALSHI_OCCURRENCE_COMMENCE_SOURCE,
         "floor": datetime.now(timezone.utc) - _DATED_FIXTURE_REFRESH_HORIZON,
         "ceiling": datetime.now(timezone.utc) + _DATED_FIXTURE_REFRESH_HORIZON,
         "budget": budget,
@@ -4369,9 +4576,15 @@ async def _refresh_dated_fixture_starts(
        `_stand_in_refinement_target`, gates and all — the same pure predicate,
        not a second opinion about when a fixture starts.
 
-    Convergent by construction: (2) rewrites `commence_time_source` to
-    `kalshi_occurrence`, which is not in `DERIVED_COMMENCE_SOURCES`, so the
-    event leaves this task's own candidate set the moment it is fixed.
+    Convergent, but NOT by going blind (#3565). (2) rewrites
+    `commence_time_source` to `kalshi_occurrence`, and the event half below
+    refuses any source outside `DERIVED_COMMENCE_SOURCES`, so a repaired event
+    is never re-written by this task. What it no longer does is drop the
+    fixture from the rotation: the series keeps being re-read and the MARKET
+    keeps taking the venue's current hour, because that stored value is the
+    only thing `_refine_stand_in_event_starts` has to read when the venue
+    RESTATES a start. Converging by ceasing to look made the restatement
+    unobservable, which left the revision arm dead in production.
 
     A 429 is a SKIP, never a verdict: the series keeps its stale stamp and is
     first in line next run. Recording "no occurrence" on a refused read is how
@@ -4425,15 +4638,36 @@ async def _refresh_dated_fixture_starts(
         return stats
 
     async with get_task_session() as session:
+        # #3565: THE TWO HALVES HAVE DIFFERENT ELIGIBILITY, so the SELECT
+        # filters on neither and each half states its own.
+        #
+        # The MARKET half must reach every ticker the venue answered, repaired
+        # or not — the refine rail decides revisions off STORED market values,
+        # so a market this task stops refreshing is a fixture whose restatement
+        # nothing can ever adopt. Filtering the SELECT to derived-only sources
+        # (as the first cut of this change did) reads as a narrowing of the
+        # EVENT write, but it silently takes the market write with it and makes
+        # the revision arm unreachable in production.
+        #
+        # The EVENT half stays stand-in-only, guarded explicitly below. It must
+        # not adopt same-provider revisions HERE: `_stand_in_refinement_decision`
+        # derives `revision` from the source it is handed, so an occurrence-
+        # stamped row reaching it would take the revision arm — without the
+        # anti-flap control, which lives in `_refine_stand_in_event_starts`'s
+        # ordered loop and cannot be expressed in this one. Two writers of the
+        # same revision, one of them unguarded, is the flap that control exists
+        # to prevent.
         rows = (await session.execute(text("""
                 SELECT fm.id                   AS market_id,
                        fm.external_id          AS external_id,
                        fm.commence_time        AS market_commence,
                        e.id                    AS event_id,
                        e.commence_time         AS event_commence,
-                       e.commence_time_source  AS event_source
+                       e.commence_time_source  AS event_source,
+                       s.key                   AS sport_key
                 FROM futures_markets fm
                 JOIN events e ON e.id = fm.event_id
+                LEFT JOIN sports s ON s.id = e.sport_id
                 WHERE fm.source = 'kalshi'
                   AND fm.status = 'open'
                   AND fm.external_id = ANY(:tickers)
@@ -4463,10 +4697,22 @@ async def _refresh_dated_fixture_starts(
             # 2. the event, read against the value the market NOW holds — the
             #    composition #3532 was filed for, made explicit rather than
             #    left to statement order.
+            #
+            #    STAND-INS ONLY. This is the eligibility split described above:
+            #    the market write ran for this row regardless of provenance,
+            #    but a same-provider REVISION is adopted only by
+            #    `_refine_stand_in_event_starts`, which carries the anti-flap
+            #    control. Convergence is preserved here — a repaired event is
+            #    still never re-written by this task — but it is now a stated
+            #    guard rather than a side effect of the candidate query going
+            #    blind to the row.
+            if r.event_source not in DERIVED_COMMENCE_SOURCES:
+                continue
             if r.event_id in moved_events:
                 continue
             event_target = _stand_in_refinement_target(
                 r.external_id, r.event_commence, r.event_source, target,
+                sport_key=r.sport_key,
             )
             if event_target is None:
                 continue

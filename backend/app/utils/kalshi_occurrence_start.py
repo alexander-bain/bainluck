@@ -105,6 +105,7 @@ __all__ = [
     "KALSHI_SOCCER_DERIVATIVE_KINDS",
     "kalshi_derivative_series_excess",
     "kalshi_game_scale_commence",
+    "kalshi_occurrence_hour_is_recoverable",
     "kalshi_occurrence_scheduled_start",
     "loaded_sport_key",
     "recover_kalshi_occurrence_starts",
@@ -306,6 +307,41 @@ def _soccer(sport_key: Optional[str]) -> bool:
     a competition is added.
     """
     return bool(sport_key) and sport_key.startswith("soccer")
+
+
+def kalshi_occurrence_hour_is_recoverable(sport_key: Optional[str]) -> bool:
+    """Is a Kalshi occurrence hour convertible to a real start for this sport?
+
+    The same question :func:`kalshi_occurrence_scheduled_start` answers about a
+    ROW, asked about a SPORT alone — for callers that must decide before they
+    have a row, or that want to refuse rather than read. Pure: no DB, no clock,
+    no I/O. Fails CLOSED: ``None``, an empty key and every unmeasured sport are
+    ``False``.
+
+    🔴 **THIS IS A WRITE GATE, NOT A DISPLAY ONE (#3565, CERT-3342).** Everything
+    above this line is serve-time: it corrects a hydrated row on its way to a
+    reader, writes nothing, and a wrong answer lasts one request. A task that
+    copies an occurrence hour into ``events.commence_time`` is different in kind
+    — it persists the value, the source stamp then says the venue published it
+    as a start, and no later reader can tell the difference. So a writer asks
+    this FIRST and declines when it is ``False``.
+
+    The distinction that makes the refusal necessary: ``occurrence_datetime`` is
+    byte-identical to ``expected_expiration_time`` (the venue read at the top of
+    this module), so it is never a kick-off anywhere — it is only *recoverable*
+    where the pad from the real start has been measured and found exact.
+    :data:`KALSHI_EXPECTED_EXPIRATION_PAD` is that measurement and it is soccer's
+    alone: 180 minutes on 11 of 11 anchored rows, against 255/265/275/285/295/345
+    for MMA and ~14 days for boxing. **Tennis has no measurement at all** —
+    CERT-3342's specimen 15317314 stored 09:10Z for play in the 07:00Z hour — so
+    a tennis occurrence written as a start is an expiration wearing a kick-off's
+    label, which is the exact defect #5905 was filed for.
+
+    Widening this is a census, never an edit. Adding a sport means measuring its
+    ghost/real delta the way the module header does and finding a SINGLE value;
+    a spread means there is no pad to recover and the answer stays ``False``.
+    """
+    return _soccer(sport_key)
 
 
 def kalshi_occurrence_scheduled_start(
