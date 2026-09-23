@@ -960,7 +960,12 @@ async def _restore(session, apply: bool, undo_identity: str) -> dict[str, Any]:
             server_budget_s=COMMIT_BUDGET_SECONDS,
             sql="SELECT 1",
             commit=True,
-        )
+        )  # the restore's one commit — see COMMIT_BUDGET_SECONDS
+        # 🔴 THE TRAILING COMMENT ABOVE IS LOAD-BEARING (same collision as
+        # repair_polymarket_single_leg_label.py): `scan_mutation_residue` Pass B
+        # reads a bare `        )` directly above this `except` line as
+        # `typeahead_outcome_arm_mutations:M2-NO-LIMIT`'s replacement literal and
+        # reds CI as residue. Deleting the comment restores the collision.
     except Exception as exc:  # noqa: BLE001 — a lock on these very rows
         await _safe_rollback(session)
         out["refused"] = f"RESTORE_WRITE_FAILED: {type(exc).__name__}: {exc}"[:300]
