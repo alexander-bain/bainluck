@@ -489,7 +489,7 @@ struct EvolutionChartView: View {
     /// checkbox would leave a market able to draw a line its reader can no longer
     /// turn off.
     private var fieldSupportsCombinedLine: Bool {
-        EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: displayedOutcomes)
+        EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: data?.outcomes ?? [])
     }
 
     private var displayedNames: [String] { displayedOutcomes.map(\.name) }

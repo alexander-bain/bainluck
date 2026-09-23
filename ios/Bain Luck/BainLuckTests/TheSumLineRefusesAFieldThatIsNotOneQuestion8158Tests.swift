@@ -309,6 +309,56 @@ final class TheSumLineRefusesAFieldThatIsNotOneQuestion8158Tests: XCTestCase {
             intrinsicSize(of: explicit.row(chipPadding: 8)).width, accuracy: 0.5)
     }
 
+    // MARK: - The call site is the whole decision
+
+    /// 🪤 **`displayedOutcomes` IS NOT THE SERVED FIELD, AND SUBSTITUTING IT IS
+    /// INVISIBLE TO EVERY TEST ABOVE.** `displayedRows` drops the `Field` row and
+    /// then truncates to the reader's `Top N` chip. Both edits remove probability
+    /// mass, so the sum falls, so a board that cannot be summed starts answering
+    /// that it can — and the answer moves when the reader flips Top 5 / 10 / 20,
+    /// which is precisely the instability the policy exists to prevent.
+    ///
+    /// Constructed to make the two disagree: 20 independent props at 10 each total
+    /// 2.0 and are refused; the first ten of them total exactly 1.0 and are not.
+    /// Every other test in this file calls the policy directly and so cannot tell
+    /// which list the view hands it. This one states that the distinction is
+    /// load-bearing, and `testTheChartAsksAboutTheServedFieldNotTheVisibleRows`
+    /// below pins which list is actually passed.
+    func testTruncatingToTheVisibleRowsWouldFlipTheAnswer() {
+        let twentyProps = (0..<20).map { outcome("Prop \($0)", 0.10) }
+
+        XCTAssertEqual(twentyProps.compactMap(\.currentProbability).reduce(0, +), 2.0, accuracy: 0.001)
+        XCTAssertFalse(
+            Policy.fieldIsOneQuestion(servedOutcomes: twentyProps),
+            "the served field totals 200% — not one question")
+        XCTAssertTrue(
+            Policy.fieldIsOneQuestion(servedOutcomes: Array(twentyProps.prefix(10))),
+            "…but the Top 10 the reader can see totals exactly 100%, and would pass")
+    }
+
+    /// Pins the wiring the test above proves is load-bearing. A `@State`-driven
+    /// argument name is invisible to value-level tests — the same hole that let a
+    /// route render with its slug discarded in #1471 — so this one reads the source.
+    func testTheChartAsksAboutTheServedFieldNotTheVisibleRows() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()      // BainLuckTests
+            .deletingLastPathComponent()      // Bain Luck (project dir)
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift"),
+            encoding: .utf8)
+        let body = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        XCTAssertTrue(
+            body.contains("EvolutionCombinedLinePolicy.fieldIsOneQuestion(servedOutcomes: data?.outcomes ?? [])"),
+            "the card-level decision must be taken over the served field")
+        XCTAssertFalse(
+            body.contains("fieldIsOneQuestion(servedOutcomes: displayedOutcomes)"),
+            "displayedOutcomes drops Field and truncates to Top N — it is not the served field")
+    }
+
     private func intrinsicSize<V: View>(of view: V) -> CGSize {
         let host = UIHostingController(rootView: AnyView(view))
         host.view.frame = CGRect(x: 0, y: 0, width: 1200, height: 2000)
