@@ -1632,9 +1632,12 @@ struct OddsChartView: View {
 
         var extended = points
         for frame in liveFrames {
-            guard let source = frame.source, let value = frame.sourceProbability,
-                  let edge = edges[source], frame.date > edge else { continue }
-            extended.append(ChartDataPoint(date: frame.date, probability: value, source: source))
+            // `venue`, not `source`: a `let source = x.source` binding makes every
+            // `source.capitalized` in this file read as a re-cased source key to
+            // appNamesEverySourceItPrints' alias scan (file-scoped by design).
+            guard let venue = frame.source, let value = frame.sourceProbability,
+                  let edge = edges[venue], frame.date > edge else { continue }
+            extended.append(ChartDataPoint(date: frame.date, probability: value, source: venue))
         }
         return extended
     }
