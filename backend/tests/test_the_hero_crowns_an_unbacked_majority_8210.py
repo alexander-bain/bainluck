@@ -62,6 +62,7 @@ production.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -255,6 +256,90 @@ class TestTheControlsOnHerOwnBoard:
         assert _shipped_arms_withhold("Amanda Anisimova") is True
 
 
+class TestTheZeroBidIsLoadBearing:
+    """🪤 NO LEG OF THE SPECIMEN'S BOARD CAN TEST THIS, WHICH IS WHY THE CONTROL
+    IS IMPORTED FROM ANOTHER ONE.
+
+    Every two-sided leg of market 61003887 is priced below the half, so the
+    ceiling term rejects all of them before the bid is ever read — delete the
+    zero-bid term entirely and the board's own controls still pass. A mutation
+    sweep caught that: the guard was vacuous on the term the arm's whole scope
+    rests on.
+
+    Jakub Mensik is the fix. He is a REAL production row of market 61308736
+    (#7747's specimen, 2026-09-21) and the only shape that discriminates: a
+    price above the half on a book that IS two-sided.
+    """
+
+    #: (probability, yes_bid, yes_ask, last_price) — production, market 61308736.
+    MENSIK = (0.74, 0.0400, 0.7400, 0.7400)
+
+    def test_a_four_cent_bid_above_the_half_is_the_siblings_and_not_this_arms(self):
+        """The scope boundary this arm's docstring declares, asserted.
+
+        A bid of four cents is a real book that locates a floor. Mensik belongs
+        to `price_is_an_unbacked_ask`, which withholds him on his own terms —
+        so this arm declining him costs the reader nothing, and an arm that
+        claimed him would be silently widening past its measured population.
+        """
+        probability, yes_bid, yes_ask, last_price = self.MENSIK
+        assert (
+            price_is_an_unbacked_majority(
+                "kalshi",
+                None,
+                probability,
+                yes_bid,
+                yes_ask,
+                last_price,
+                has_trade_evidence=True,
+                in_exclusive_field=True,
+                volume_24h=UNTRADED[0],
+                volume_24h_at=UNTRADED[1],
+                last_seen_at=UNTRADED[2],
+            )
+            is False
+        )
+
+    def test_and_the_sibling_arm_still_catches_him(self):
+        """So the boundary above is a handoff, not a hole."""
+        probability, yes_bid, yes_ask, last_price = self.MENSIK
+        assert (
+            price_is_an_unbacked_ask(
+                "kalshi",
+                None,
+                probability,
+                yes_bid,
+                yes_ask,
+                last_price,
+                has_trade_evidence=True,
+                in_exclusive_field=True,
+                volume_24h=UNTRADED[0],
+                volume_24h_at=UNTRADED[1],
+                last_seen_at=UNTRADED[2],
+            )
+            is True
+        )
+
+    def test_an_ask_of_zero_is_no_offer_at_all(self):
+        """`_is_ask_only_book`'s last term, kept in step: a book with neither a
+        bid nor an ask states nothing, and this arm must not read a price into
+        it."""
+        assert (
+            needs_unbacked_majority_evidence(
+                "kalshi",
+                None,
+                0.58,
+                0.0000,
+                0.0000,
+                in_exclusive_field=True,
+                volume_24h=UNTRADED[0],
+                volume_24h_at=UNTRADED[1],
+                last_seen_at=UNTRADED[2],
+            )
+            is False
+        )
+
+
 class TestTheBoardAsAWhole:
     def test_the_shipped_arms_reproduce_production(self):
         """`prices_withheld: 3`, served 2026-09-23. The fixture is a replay."""
@@ -383,6 +468,137 @@ class TestTheGates:
             )
             is False
         )
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeSession:
+    """The newest-Kalshi-trade read, answered for EVERY leg of the board.
+
+    🪤 It deliberately does not filter to the candidate list. A fake that
+    answered only for the legs the shipped screen selects would make the
+    widening untestable: Muchova would come back with no trade row, fail open
+    on `has_trade_evidence`, and the test would pass against the defect.
+    """
+
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _FakeResult(self.rows)
+
+
+def _outcome(oid, name, prob, bid, ask, *, volume=UNTRADED, resolution_source=None):
+    volume_24h, volume_24h_at, last_updated = volume
+    return SimpleNamespace(
+        id=oid,
+        name=name,
+        external_id=f"KXWTA-27AO-{oid}",
+        current_probability=prob,
+        current_yes_bid=bid,
+        current_yes_ask=ask,
+        current_american_odds=None,
+        opening_probability=None,
+        opening_american_odds=None,
+        probability_change_24h=None,
+        rank=None,
+        rank_change_24h=None,
+        is_winner=None,
+        volume=None,
+        team_id=None,
+        team=None,
+        resolution_source=resolution_source,
+        price_changed_at=None,
+        volume_24h=volume_24h,
+        volume_24h_at=volume_24h_at,
+        last_updated=last_updated,
+    )
+
+
+def _market(rows=AO_2027_WOMENS, *, metadata=AO_METADATA, market_type="field"):
+    return SimpleNamespace(
+        id=61003887,
+        name="Australian Open Women's Singles Winner",
+        source="kalshi",
+        status="open",
+        market_type=market_type,
+        market_metadata=metadata,
+        outcomes=[
+            _outcome(1000 + i, n, p, b, a)
+            for i, (n, p, b, a, _lp) in enumerate(rows)
+        ],
+    )
+
+
+async def _withheld_names(rows=AO_2027_WOMENS, **kw):
+    """The ids the ROUTE refuses, resolved back to names.
+
+    Names rather than ids so a fixture edit cannot quietly move the assertion
+    onto a different player.
+    """
+    from app.routes.futures import _unsupported_price_outcome_ids
+
+    market = _market(rows, **kw)
+    by_name = {o.name: o.id for o in market.outcomes}
+    trades = [(by_name[n], lp) for n, _p, _b, _a, lp in rows if lp is not None]
+    db = _FakeSession(trades)
+    ids = await _unsupported_price_outcome_ids(db, market)
+    return {o.name for o in market.outcomes if o.id in ids}
+
+
+@pytest.mark.asyncio
+class TestTheRouteActuallyCallsTheArm:
+    """🪤 EVERY TEST ABOVE PASSES IF THE ARM IS NEVER WIRED INTO THE ROUTE.
+
+    The unit classes prove the predicate answers correctly; they cannot see an
+    `or` that was never added to `_unsupported_price_outcome_ids`. This class is
+    the only thing standing between a correct predicate and an inert ship.
+    """
+
+    async def test_the_route_withholds_her(self):
+        assert NEWLY_WITHHELD in await _withheld_names()
+
+    async def test_the_board_stops_naming_her_its_leader(self):
+        names = await _withheld_names()
+        survivors = [
+            (p, n) for n, p, _b, _a, _lp in AO_2027_WOMENS if n not in names
+        ]
+        assert max(survivors)[1] == "Elena Rybakina", (
+            "with the unbacked majority withheld the hero is the best leg "
+            "somebody will actually pay for"
+        )
+
+    async def test_she_is_the_only_leg_this_arm_adds(self):
+        """Asserting the UNION rather than the delta is how a widening hides."""
+        names = await _withheld_names()
+        assert names == ALREADY_WITHHELD_BY_SHIPPED_RULES | {NEWLY_WITHHELD}
+        assert len(names) == 4, "production served 3; the ship makes it 4"
+
+    async def test_the_shipped_three_are_reproduced_exactly(self):
+        """If this fails the fixture has drifted and every delta above is void."""
+        assert await _withheld_names() - {NEWLY_WITHHELD} == (
+            ALREADY_WITHHELD_BY_SHIPPED_RULES
+        )
+
+    async def test_the_leg_is_withheld_not_dropped(self):
+        """Withholding keeps the row; the reader still sees the player."""
+        names = await _withheld_names()
+        market = _market()
+        assert names, "if nothing is withheld this asserts nothing at all"
+        assert names <= {o.name for o in market.outcomes}
+        assert len(market.outcomes) == 9
+
+    async def test_an_unproved_partition_is_left_alone(self):
+        names = await _withheld_names(metadata={"shape": {"exhaustive": False}})
+        assert NEWLY_WITHHELD not in names
 
 
 class TestTheCeiling:
