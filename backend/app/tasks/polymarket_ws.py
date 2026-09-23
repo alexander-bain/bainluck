@@ -219,6 +219,64 @@ def _slate_event_window():
     )
 
 
+def _slate_market_filter():
+    """A market our own rows already record the venue as having SETTLED is not
+    subscribed — the market-level half of the slate, and the signal the event
+    window says it needs.
+
+    ``_slate_event_window`` deliberately leaves the live arm clock-free, and
+    says in as many words that the stuck-at-live hazard "needs a
+    status-freshness signal (an advanced-at stamp, or the venue's own
+    resolution) rather than a clock this module is already on record as not
+    trusting". ``futures_markets.status = 'resolved'`` IS the venue's own
+    resolution: it is written by this module's ``handle_resolved`` off a
+    ``market_resolved`` push, and by ``sync_polymarket_resolved_status`` off the
+    venue's closed/terminal read. Nothing here infers a finish from a clock.
+
+    WHAT IT COSTS TO LEAVE THEM IN, measured on production 2026-09-23 05:2xZ.
+    Of the 709 Polymarket markets the event window then selected, **54 markets /
+    108 outcomes on 12 events were already ``status='resolved'`` in our own
+    database** — 7.6% of a subscription whose per-shard budget is BYTE-capped
+    and was sitting at 40,594 of 40,960 bytes, i.e. effectively full. Those
+    tokens cannot pay: a 120-second probe of the public CLOB socket (8 assets,
+    one connection, ``initial_dump``) returned **nothing whatsoever** for the
+    four tokens of two such markets — not even the opening ``book`` frame every
+    open market answers with — while the same connection's control arm got its
+    books at once and 726 ``price_change`` frames on one of them. Two matches in
+    the same M25 Yinchuan tournament, one resolved and one open, split exactly
+    that way, so this is not a tier or a thin-book story.
+
+    WHAT A READER SAW. Those 12 events were still ``status='live'`` on the site
+    with no score and no ``completed_at``, showing a Polymarket price last
+    written when the venue settled the market — four of them frozen over an
+    hour, one at 733 minutes. Dropping the settled MARKET does not touch the
+    event or its open siblings, so this returns the budget without taking a
+    single price off a game still being played.
+
+    FAIL OPEN, WHICH IS WHY THE NULL ARM IS HERE AND NOT A PLAIN ``!=``. In SQL
+    ``status != 'resolved'`` is NULL — not true — for a NULL status, so the
+    plain form silently DROPS a market whose status was never written. That is
+    the dark-hero direction this module refuses everywhere else, and the case is
+    reachable on the schema that actually serves readers: the model's
+    ``Mapped[str]`` reads as NOT NULL, but **production's column is
+    ``is_nullable = YES`` with ``DEFAULT 'open'``** (``information_schema``,
+    2026-09-23 05:3xZ), so a raw-SQL writer can leave it NULL there while a
+    ``create_all`` test database refuses the same row. The contract test relaxes
+    its column to match production rather than let the stricter schema retire
+    the control. Values in production today: ``open`` (29,039) and ``resolved``
+    (784,156). ``suspended`` — the third the model's own comment names — is
+    KEPT: a suspended market can reopen, and only ``resolved`` is terminal.
+    """
+    from sqlalchemy import or_
+
+    from app.models.models import FuturesMarket
+
+    return or_(
+        FuturesMarket.status.is_(None),
+        FuturesMarket.status != "resolved",
+    )
+
+
 def _format_by_shard(ws_stats: dict) -> str:
     """`0:14/500 1:26/500 …` — the per-shard shape behind the coverage ratio.
 
@@ -376,6 +434,7 @@ async def _run_polymarket_ws_consumer():
                 FuturesMarket.source == "polymarket",
                 FuturesMarket.event_id.isnot(None),
                 _slate_event_window(),
+                _slate_market_filter(),
             )
         )
         rows = result.all()
