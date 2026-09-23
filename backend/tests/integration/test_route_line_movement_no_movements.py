@@ -293,13 +293,13 @@ def test_blocking_llm_call_scan_catches_a_planted_call():
 # historical — nothing is on this list because it is inconvenient to fix.
 _NON_BLOCKING_LLM_HELPERS = frozenset({"is_available"})
 
-# Operator-triggered batch enrichment, whose whole purpose is to run the LLM over
-# rows — a different shape of caller from a page request, and a different fix
-# (#4068). They are exempt BY NAME so that a sync LLM call appearing in any other
-# route module still fails today, and the exemption is self-retiring: the control
-# below requires each of these to still contain a hit, so whoever fixes #4068 is
-# made to delete the entry rather than leave a permanent hole behind.
-_BATCH_ENRICHMENT_MODULES = frozenset({"admin_providers.py", "admin_taxonomy.py"})
+# Operator-triggered batch enrichment (`admin_providers.py`, `admin_taxonomy.py`)
+# was exempt BY NAME here while #4068 was open: those sweeps call sync LLM helpers
+# in loops over rows, a different shape of caller from a page request. #4068
+# routed every one of them through `app/utils/async_llm.run_llm_off_loop`, so the
+# exemption is deleted and the guard below covers those two modules like every
+# other route module. The self-retiring control that forced this deletion goes
+# with it. There is no second exemption list; do not add one — fix the call site.
 
 
 def _sync_llm_entry_points() -> frozenset[str]:
@@ -363,8 +363,6 @@ def test_no_route_module_calls_a_sync_llm_helper_from_an_async_handler():
 
     offenders: dict[str, list[tuple[str, str]]] = {}
     for path in sorted(routes_dir.glob("*.py")):
-        if path.name in _BATCH_ENRICHMENT_MODULES:
-            continue
         hits = _sync_llm_calls_in_async_bodies(path.read_text(), names)
         if hits:
             offenders[path.name] = sorted(set(hits))
@@ -377,31 +375,6 @@ def test_no_route_module_calls_a_sync_llm_helper_from_an_async_handler():
         )
         + " — move generation to a task and read its result (#3322, CERT-868)"
     )
-
-
-def test_the_batch_enrichment_exemption_retires_itself():
-    """Every exempt module must STILL have a hit, or the exemption must go.
-
-    A denylist of known-unknowns hands the claim to the first new state: left
-    alone, this one would keep excusing `admin_taxonomy.py` long after #4068 is
-    fixed, and would silently cover a *new* blocking call added to it. So the
-    exemption is only valid while it is load-bearing — fix #4068 and this test
-    goes red until the module's name is deleted from `_BATCH_ENRICHMENT_MODULES`.
-    """
-    routes_dir = Path(inspect.getsourcefile(app_routes)).parent
-    names = _sync_llm_entry_points()
-
-    for module in sorted(_BATCH_ENRICHMENT_MODULES):
-        path = routes_dir / module
-        assert path.exists(), (
-            f"{module} is exempted but no longer exists — drop it from "
-            "_BATCH_ENRICHMENT_MODULES"
-        )
-        assert _sync_llm_calls_in_async_bodies(path.read_text(), names), (
-            f"{module} no longer calls a sync LLM helper from an async handler — "
-            "#4068 is fixed, so remove it from _BATCH_ENRICHMENT_MODULES and let "
-            "the guard cover it"
-        )
 
 
 def test_the_widened_scan_is_not_vacuous():

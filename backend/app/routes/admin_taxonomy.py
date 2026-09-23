@@ -16,6 +16,8 @@ from app.models import Event, FuturesMarket
 
 from app.services import get_db, get_db_rw
 
+from app.utils.async_llm import run_llm_off_loop
+
 from app.routes.admin_utils import _check_admin_secret
 
 
@@ -340,15 +342,19 @@ async def enrich_events_metadata(
             text = f"{event.away_team_name} at {event.home_team_name}"
 
             metadata = {
-                "gender": llm.classify_gender_cached(text, sport_key),
-                "level": llm.classify_level_cached(text, sport_key),
-                "league": llm.classify_league_cached(text, sport_key),
-                "importance": llm.classify_importance_cached(text, sport_key),
+                "gender": await run_llm_off_loop(llm.classify_gender_cached, text, sport_key),
+                "level": await run_llm_off_loop(llm.classify_level_cached, text, sport_key),
+                "league": await run_llm_off_loop(llm.classify_league_cached, text, sport_key),
+                "importance": await run_llm_off_loop(llm.classify_importance_cached, text, sport_key),
             }
 
             # Normalize team names for better matching
-            home_norm, home_vars = llm.normalize_team_name_cached(event.home_team_name, sport_key)
-            away_norm, away_vars = llm.normalize_team_name_cached(event.away_team_name, sport_key)
+            home_norm, home_vars = await run_llm_off_loop(
+                llm.normalize_team_name_cached, event.home_team_name, sport_key
+            )
+            away_norm, away_vars = await run_llm_off_loop(
+                llm.normalize_team_name_cached, event.away_team_name, sport_key
+            )
 
             enriched.append({
                 "id": event.id,
@@ -486,7 +492,7 @@ async def enrich_futures_metadata(
 
     for market in markets:
         try:
-            metadata = llm.enrich_market_metadata(market.name)
+            metadata = await run_llm_off_loop(llm.enrich_market_metadata, market.name)
 
             enriched.append({
                 "id": market.id,
