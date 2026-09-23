@@ -1005,26 +1005,26 @@ struct EvolutionChartView: View {
 
     private func updateCrosshair(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
         guard let date: Date = proxy.value(atX: location.x) else { return }
-        let entries = chartEntries.filter { !$0.isCombined }
-        // Find closest timestamp
-        guard let closest = entries.min(by: {
-            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-        }) else { return }
 
-        let matchDate = closest.date
-        let matchEntries = entries
-            .filter { $0.date == matchDate && effectiveSelected.contains($0.name) }
-            .sorted { $0.probability > $1.probability }
+        // ONE population for both the snap and the readout (#7547). Choosing the
+        // instant over every displayed line and then reporting only the selected
+        // ones left the crosshair with nothing to say at 47.8% of the instants a
+        // reader could reach on production 56775596's `24h` — and its response to
+        // nothing-to-say was to stop following the finger. See
+        // `ChartCrosshairPolicy` for the measurement.
+        let candidates = chartEntries
+            .filter { !$0.isCombined && effectiveSelected.contains($0.name) }
+            .map { ScrubCandidate(date: $0.date, name: $0.name, probability: $0.probability) }
 
-        let coloredEntries: [(name: String, probability: Double, color: Color)] = matchEntries.map { point in
+        guard let resolved = ChartCrosshairPolicy.resolve(at: date, among: candidates) else { return }
+
+        let coloredEntries: [(name: String, probability: Double, color: Color)] = resolved.entries.map { point in
             let idx = displayedNames.firstIndex(of: point.name) ?? 0
             let color = colorForOutcome(name: point.name, index: idx)
             return (name: point.name, probability: point.probability, color: color)
         }
 
-        if !coloredEntries.isEmpty {
-            crosshair = CrosshairData(date: matchDate, entries: coloredEntries)
-        }
+        crosshair = CrosshairData(date: resolved.date, entries: coloredEntries)
     }
 
     // MARK: - Crosshair Tooltip
