@@ -6,6 +6,7 @@ import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import { buildScorecardShareSentence } from "@/lib/share";
 import LoadingState from "@/components/LoadingState";
+import { CHALLENGE_SURFACES_ENABLED } from "@/lib/launchSurfaces";
 
 interface DetailedStats {
   total: number;
@@ -38,7 +39,9 @@ export default function PredictionStatsPage() {
   useEngagementTime({ pageType: "prediction_stats" });
 
   const [stats, setStats] = useState<DetailedStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  // #8187 — nothing is loading when the surface is held back, so the reader
+  // never meets "Loading stats..." on the way to a page that will not load any.
+  const [loading, setLoading] = useState(CHALLENGE_SURFACES_ENABLED);
   const [shareState, setShareState] = useState<"idle" | "copied" | "shared">("idle");
 
   const handleShare = useCallback(async () => {
@@ -102,6 +105,12 @@ export default function PredictionStatsPage() {
   }, [stats]);
 
   useEffect(() => {
+    // #8187 — don't ask for data this page will not show. `/api/predictions/*`
+    // is deliberately dark (#6445), so this fetch was a guaranteed 404 whose
+    // failure branch rendered the same empty state as a genuine "you have none".
+    // Skipping it is the same grammar the resolved-banner already uses on
+    // Discover (`CHALLENGE_SURFACES_ENABLED ? "discover-resolutions" : null`).
+    if (!CHALLENGE_SURFACES_ENABLED) return;
     async function load() {
       try {
         const res = await fetch("/api/predictions/detailed-stats", {
@@ -113,6 +122,31 @@ export default function PredictionStatsPage() {
     }
     load();
   }, []);
+
+  // #8187 — HELD BACK, NOT EMPTY, AND THE DIFFERENCE IS THE WHOLE POINT.
+  // The `stats.total === 0` branch below says "No predictions yet", which is a
+  // claim about the READER's history. With the endpoint dark, `stats` is null
+  // for everyone, so every reader — including one with a long saved history —
+  // was told they had made none. That is a measurement the page never took, and
+  // it read identically to one it had. This says what is actually true instead,
+  // and says nothing about how many predictions the reader has.
+  if (!CHALLENGE_SURFACES_ENABLED) {
+    return (
+      <div className="min-h-screen bg-surface-deep" data-testid="prediction-stats-held-back">
+        <header className="sticky top-0 z-20 bg-surface-card/80 backdrop-blur-lg border-b border-surface-border">
+          <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+            <Link href="/discover" className="text-text-muted hover:text-text-primary">←</Link>
+            <h1 className="text-lg font-black tracking-tight">Your Stats</h1>
+          </div>
+        </header>
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center text-text-muted">
+          <p className="text-lg font-medium text-text-primary">Prediction stats are paused</p>
+          <p className="text-sm mt-2">We&apos;re making this part better. Anything you saved is still here.</p>
+          <Link href="/discover" className="inline-block mt-6 text-sm font-semibold text-accent-brand hover:underline">Back to Discover</Link>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

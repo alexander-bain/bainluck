@@ -25,5 +25,26 @@
 // off one constant, and `areGamesUnlocked` reads this before it reads anything
 // about the reader.
 //
-// Restoring: flip this to `true`. Nothing else is needed.
+// ── A FOURTH SITE, AND WHY THE SENTENCE BELOW CHANGED (#8187) ───────────────
+//
+// 🔴 THIS COMMENT USED TO END "Restoring: flip this to `true`. Nothing else is
+// needed." That was FALSE WHEN IT WAS WRITTEN, in the direction that matters:
+// a fourth entry point never read the constant at all, so switching the feature
+// OFF did not close it. The Discover header carried an unlabelled 18px icon to
+// `/discover/stats` — the most reachable door of the four, on the default
+// landing page — and it survived two sweeps (#6501, #6646) that were looking
+// for exactly this. The shopper lane found it on the first pass that opened it.
+//
+// The same sentence was false on the phone for the same reason, twice (the iOS
+// `ReleaseSurfaces` docstring records sites 4–5 and then 6–7). The pattern is
+// worth naming: a docstring asserting that one flag covers a class is a CENSUS
+// QUESTION about that class, not an answer to it, and the call sites it has not
+// counted are precisely the bug it claims cannot exist.
+//
+// So the claim is no longer load-bearing on its own. It is true because
+// `predictionDoorsAreGated8187.test.ts` SCANS `app/` and `components/` for any
+// navigation into the predictions route family and fails on one that does not
+// read this constant. A fifth door fails that scan; it cannot fail this comment.
+//
+// Restoring: flip this to `true`. The scan above is what makes that enough.
 export const CHALLENGE_SURFACES_ENABLED = false;
