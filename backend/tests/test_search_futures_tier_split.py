@@ -117,7 +117,9 @@ def _no_statement_timeout(monkeypatch):
     """`_fetch_futures_window` re-arms the bound; the fake DB has no SQL."""
     calls = []
 
-    async def _fake(db, deadline=None):
+    async def _fake(db, deadline=None, bound_ms=None):
+        # `bound_ms` is LAT-P271/#1619's per-arm budget; this suite is about the
+        # tier split, so it records the call and asserts nothing about the bound.
         calls.append(deadline)
 
     monkeypatch.setattr("app.routes.events._apply_search_statement_timeout", _fake)
@@ -127,7 +129,12 @@ def _no_statement_timeout(monkeypatch):
 async def _run(corpus, *, outcome_arm=OUTCOME_ARM):
     db = FakeDB(corpus)
     rows, state = await _fetch_futures_window(
-        db, _window_query, _candidates_in, list(TIER1_ARMS), outcome_arm, 0.0
+        # `None`, not the old `0.0`. This suite is about the tier split and wants
+        # the deadline out of the way, but `0.0` is not "no deadline" — it is a
+        # deadline that expired in 1970, and since LAT-P271/#1619 the outcome arm
+        # reads an expired deadline the only honest way, by shedding without
+        # touching the database. `None` is the documented no-deadline case.
+        db, _window_query, _candidates_in, list(TIER1_ARMS), outcome_arm, None
     )
     return db, rows, state
 

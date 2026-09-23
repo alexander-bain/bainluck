@@ -555,25 +555,75 @@ def test_a_harness_that_counts_in_one_function_is_graded_in_that_function():
     `inspect.getsource(_fetch_futures_window)`. The scan counted them across all
     of `app/routes/events.py`, found `M6-no-rearm` twice, and recorded it as a
     mutant that could never run. It runs, and it is KILLED (8/8) — the second
-    match is in a function this harness never touches.
+    match was in a function this harness never touches.
 
-    The two counts are asserted separately BECAUSE they differ. If the whole-file
-    count ever drops to 1 this guard has gone vacuous and should be re-pointed at
-    another needle rather than quietly kept.
+    🔴 THE DISCRIMINATOR IS CONSTRUCTED, NOT BORROWED FROM THE TREE (LAT-P271).
+    This guard used to assert `scope.count == 1 < whole.count` on M6's live
+    anchor, which only discriminates while some OTHER function happens to hold a
+    copy of that line. #1619 gave the re-arm its own `bound_ms=` argument, the
+    duplicate stopped being a duplicate, and the guard went red — correctly, by
+    its own docstring: `if the whole-file count ever drops to 1 this guard has
+    gone vacuous`. No needle in the harness discriminates any more (all 8 are
+    1-in-scope and 1-in-file), so there is nothing to re-point it AT.
+
+    So the two counts are now made to differ on purpose. The real scanner grades
+    one synthetic pair twice, the arms differing ONLY in whether a scope is
+    published; if `main()` ever goes back to counting in the file, the first arm
+    turns red. A source edit cannot silently disarm that the way it just did.
     """
     harness = _load_eval_module("search_tier_split_mutations")
     scope = harness.anchor_scope_text()
     whole = (EVALS.parents[1] / "app" / "routes" / "events.py").read_text()
-    needle = next(m["needle"] for m in harness.MUTANTS if m["id"] == "M6-no-rearm")
 
-    assert scope.count(needle) == 1, (
-        "the anchor is not unique inside the function the harness mutates — "
-        "this mutant really would score HARNESS-FAIL"
+    # The live half: the harness still publishes a scope, it is genuinely
+    # narrower than the file it targets, and every anchor is unique inside it.
+    # A needle that is not would score HARNESS-FAIL in the battery.
+    assert scope and scope in whole and len(scope) < len(whole), (
+        "search_tier_split_mutations no longer publishes a narrower counting "
+        "scope than its target file, so the scan has nothing to read"
     )
-    assert whole.count(needle) > 1, (
-        "the whole-file count no longer differs from the function count, so this "
-        "guard can no longer tell a right denominator from a wrong one"
+    for mutant in harness.MUTANTS:
+        assert scope.count(mutant["needle"]) == 1, (
+            f"{mutant['id']}'s anchor is not unique inside the function the "
+            "harness mutates — this mutant really would score HARNESS-FAIL"
+        )
+
+    # The constructed half. `harvest()` is replaced so the scanner's REAL Pass A
+    # and its REAL exit code run over one pair whose needle is unique in the
+    # published scope and repeated in the target file — the case the live
+    # anchors no longer supply.
+    probe = textwrap.dedent(
+        f"""
+        import sys, pathlib
+        sys.path.insert(0, {str(EVALS)!r})
+        import scan_mutation_residue as s
+        target = pathlib.Path({str(EVALS / "scan_mutation_residue.py")!r})
+        pair = s.Pair("synthetic_probe_mutations", "M-SCOPE", "import ",
+                      "ZZZ-NOT-PRESENT-ANYWHERE-ZZZ", target, scope=__ARM__)
+        s.harvest = lambda: ([pair], [])
+        sys.argv = ["scan"]
+        sys.exit(s.main())
+        """
     )
+    for label, scope_arg, expect_code in (
+        # Published scope holds the needle exactly once ⇒ aimed ⇒ clean.
+        ("published scope", '"a import b"', 0),
+        # Same needle, same target, no scope ⇒ counted in the file ⇒ ambiguous.
+        ("no scope", "None", 1),
+    ):
+        result = subprocess.run(
+            [sys.executable, "-c", probe.replace("__ARM__", scope_arg)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=str(EVALS.parents[1]),
+        )
+        assert result.returncode == expect_code, (
+            f"with {label} the scan exited {result.returncode}, expected "
+            f"{expect_code} — Pass A is not counting in the scope the owning "
+            f"harness publishes.\n{result.stdout}\n{result.stderr}"
+        )
+    assert "not unique" in result.stdout, result.stdout
 
 
 def test_a_declared_repeatable_target_is_not_graded_as_ambiguous():

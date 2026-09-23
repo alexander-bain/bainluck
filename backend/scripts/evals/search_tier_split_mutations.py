@@ -89,10 +89,12 @@ MUTANTS: list[dict[str, str]] = [
     },
     {
         "id": "M6-no-rearm",
-        "needle": "    await _apply_search_statement_timeout(db, deadline)",
+        "needle": "    await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)",
         "replacement": "    pass",
         "why": "the EXPENSIVE half of the stage inherits a bound sized for the "
-        "cheap half — the exact defect LAT-P005's re-arm was added for.",
+        "cheap half — the exact defect LAT-P005's re-arm was added for. "
+        "Since LAT-P271/#1619 the same line also CARRIES the arm's own "
+        "budget, so deleting it restores the residual bound as well.",
     },
     {
         "id": "M7-absent-reported-as-skipped",
@@ -116,13 +118,19 @@ def anchor_scope_text() -> str:
 
     #2391. `scan_mutation_residue.py` graded these needles against the whole of
     `app/routes/events.py` and reported `M6-no-rearm` as matching twice, i.e. as
-    a mutant that could never run. It runs and it is KILLED: the second match is
+    a mutant that could never run. It ran and it was KILLED: the second match was
     in a different function, and this harness never looks there. The scan was
     right about the substring and wrong about the DENOMINATOR.
 
     So the scope is published rather than described. The scan calls this and
     `_mutate` uses it, which makes the two counts the same expression — they
     cannot drift into disagreeing again the way a written-down claim can.
+
+    That second match is GONE as of #1619, which gave the re-arm a `bound_ms=`
+    argument of its own: every needle here now matches once in the file too. The
+    narrowing is still the contract — it is what stops the NEXT duplicated line
+    from being read as ambiguity — but it is no longer observable from the tree,
+    so `tests/test_mutation_guard.py` proves it on a constructed pair instead.
     """
     import app.routes.events as E
 
