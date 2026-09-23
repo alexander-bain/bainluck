@@ -156,6 +156,13 @@ function markup(Component: unknown, t: GolfTournament): string {
 // byte-identical, movement span asserted positively on both sides. It is a
 // partition, not a normaliser — the legacy side is required to still carry the
 // old `%`, so a fix that silently stopped applying fails here instead of passing.
+// #8123 — the eyebrow date span, and the one windowless row whose eyebrow date
+// this fix legitimately removes. Named explicitly rather than recomputed from
+// the fix's own predicate: a control that re-derives membership the way the
+// component does would pass whatever shipped.
+const STALE_CAPTURE_ROW = "golfers_to_win_a_pga_tour_major_before_2030";
+const EYEBROW_DATE_SPAN = /<span class="text-text-tertiary">[^<]*<\/span>/g;
+
 const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
 const withoutMovement = (m: string) => m.replace(MOVEMENT_SPAN, "");
 const movementSpans = (m: string) => m.match(MOVEMENT_SPAN) ?? [];
@@ -342,19 +349,57 @@ describe("UX-P180 · the windowless population is untouched", () => {
     expect(WINDOWLESS).toHaveLength(4);
   });
 
-  it.each(WINDOWLESS.map((t) => [t.key, t] as const))(
-    "%s renders byte-identically before and after the fix",
-    (_key, t) => {
-      // A veto keyed on `start_date && end_date` must be invisible to rows that
-      // have neither. These are long-horizon futures and the two mis-filed
-      // non-golf markets; they are still decided by the price signal alone.
-      const now = "2026-08-29T20:39:00Z";
-      assertOnlyTheMovementUnitMoved(
-        at(now, () => markup(TournamentCard, t)),
-        at(now, () => markup(TournamentCardLegacy, t)),
-      );
-    },
-  );
+  it.each(
+    WINDOWLESS.filter((t) => t.key !== STALE_CAPTURE_ROW).map(
+      (t) => [t.key, t] as const,
+    ),
+  )("%s renders byte-identically before and after the fix", (_key, t) => {
+    // A veto keyed on `start_date && end_date` must be invisible to rows that
+    // have neither. These are long-horizon futures and the two mis-filed
+    // non-golf markets; they are still decided by the price signal alone.
+    const now = "2026-08-29T20:39:00Z";
+    assertOnlyTheMovementUnitMoved(
+      at(now, () => markup(TournamentCard, t)),
+      at(now, () => markup(TournamentCardLegacy, t)),
+    );
+  });
+
+  it(`${STALE_CAPTURE_ROW} keeps every byte except the stale capture date`, () => {
+    // #8123. This row is the fourth windowless one, and it was carrying a
+    // SECOND defect all along — visible in this very payload, read from
+    // production on 2026-08-29: no `start_date`, a `commence_time` of
+    // 2026-07-19T18:17:17 (when we first captured the market) and a
+    // `resolution_date` of 2030-07-07. The pre-#8123 card ran the two fields
+    // together through one `||` and printed "Jul 19" — a date seven weeks in
+    // the PAST on a future that does not resolve until 2030. #8123 prints
+    // nothing there instead of something false.
+    //
+    // 🔴 NOT a re-snapshot and NOT a normaliser (notice 50, ux/1217). The
+    // control is SPLIT exactly the way #5623's movement caption was: the
+    // remainder must still be byte-identical, and BOTH sides are asserted
+    // POSITIVELY — the legacy side is REQUIRED to still carry the stale
+    // "Jul 19", so a #8123 that silently stopped applying fails here rather
+    // than passing quietly. The three rows above keep the untouched
+    // full-byte-identity assertion, because this fix must be invisible to them:
+    // two have no `resolution_date` to contradict their `commence_time`, and
+    // the third's `commence_time` is in the future, so none is provably wrong.
+    const now = "2026-08-29T20:39:00Z";
+    const t = tournament(STALE_CAPTURE_ROW);
+    const fixed = at(now, () => markup(TournamentCard, t));
+    const legacy = at(now, () => markup(TournamentCardLegacy, t));
+
+    // Remainder — every byte outside the eyebrow date is unchanged, and the
+    // movement partition still applies on top of it.
+    assertOnlyTheMovementUnitMoved(
+      fixed.replace(EYEBROW_DATE_SPAN, ""),
+      legacy.replace(EYEBROW_DATE_SPAN, ""),
+    );
+
+    // The changed span, asserted positively on both sides.
+    expect(legacy).toContain('<span class="text-text-tertiary">Jul 19</span>');
+    expect(legacy.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
+    expect(fixed.match(EYEBROW_DATE_SPAN)).toBeNull();
+  });
 
   it.each([
     ["a start with no end", { start_date: "2026-08-27T00:00:00+00:00", end_date: null }],

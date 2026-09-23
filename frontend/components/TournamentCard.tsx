@@ -67,6 +67,7 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
   // residual 24h movement lingers) — it leads with the champion, not a pulse.
   const isLive = !whatHit && _isLive(tournament);
   const tourLabel = tournament.tour_label || tournament.tour?.toUpperCase() || "Golf";
+  const eyebrowDate = _eyebrowDate(tournament);
 
   // Build leader + chasers from leaderboard (preferred) or golfers (fallback)
   const leader = _buildLeader(tournament, leaderboard);
@@ -95,9 +96,9 @@ export default function TournamentCard({ tournament, leaderboard, href: hrefOver
                       : "LIVE"}
                   </span>
                 )}
-                {!isLive && !whatHit && (tournament.start_date || tournament.commence_time) && (
+                {!isLive && !whatHit && eyebrowDate && (
                   <span className="text-text-tertiary">
-                    {_formatTournamentDate(tournament.start_date || (tournament.commence_time ?? null), tournament.end_date ?? null)}
+                    {eyebrowDate}
                   </span>
                 )}
               </div>
@@ -233,6 +234,7 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
   // production drew one grey block. Vocabulary and folding are shared with
   // `backend/app/utils/golf_event_format.py`; see `lib/cupTeamSides.ts`.
   const [colorA, colorB] = resolveCupSideColors(teamA.name, teamB.name);
+  const eyebrowDate = _eyebrowDate(tournament);
 
   return (
     <Link href={href} className="block">
@@ -248,9 +250,9 @@ function CupCard({ tournament, href }: { tournament: GolfTournament; href: strin
                   LIVE
                 </span>
               )}
-              {!isLive && (tournament.start_date || tournament.commence_time) && (
+              {!isLive && eyebrowDate && (
                 <span className="text-text-tertiary">
-                  {_formatTournamentDate(tournament.start_date || (tournament.commence_time ?? null), tournament.end_date ?? null)}
+                  {eyebrowDate}
                 </span>
               )}
             </div>
@@ -438,6 +440,48 @@ function _cleanPropLabel(marketName: string, tournamentName: string): string {
     label = label.replace(/^\s*·\s*/, "").replace(/\s*·\s*$/, "").trim();
   }
   return label || marketName;
+}
+
+/**
+ * #8123 — the eyebrow date, or "" when no date can be stated honestly.
+ *
+ * `start_date` is a date of play; `commence_time` is not. For a cup or a
+ * long-horizon future carrying no schedule, `commence_time` is the moment the
+ * market was first captured — the Ryder Cup was served
+ * `2026-08-28T20:16:51+00:00` for an event whose own prop markets say 2027, and
+ * a Ryder Cup session does not start at 20:16:51. The old `||` treated the two
+ * fields as interchangeable, which is what turned a backend gap into a false
+ * statement on the card: a date almost a month in the PAST on an upcoming event.
+ *
+ * So the fallback is refused in exactly the case where it is provably not a date
+ * of play — no `start_date`, a `commence_time` already gone, and a
+ * `resolution_date` still ahead. An event that has not resolved yet cannot have
+ * been played on a date that has already passed. There print nothing, rather
+ * than explain the emptiness (notice 34).
+ *
+ * Deliberately narrow; every other shape renders exactly as before. A real
+ * `start_date` still wins, a FUTURE `commence_time` still shows, and a row with
+ * no `resolution_date` is not second-guessed — we cannot prove those wrong, so
+ * we do not suppress them. Deriving the missing year from `resolution_date` is a
+ * product call and a backend one (`routes/golf.py` serves the nulls); this half
+ * only stops the page asserting something false.
+ */
+function _eyebrowDate(tournament: GolfTournament): string {
+  const { start_date, commence_time, resolution_date, end_date } = tournament;
+  if (!start_date && commence_time && resolution_date) {
+    const now = Date.now();
+    const captured = new Date(commence_time).getTime();
+    const resolves = new Date(resolution_date).getTime();
+    if (
+      !Number.isNaN(captured) &&
+      !Number.isNaN(resolves) &&
+      captured < now &&
+      resolves > now
+    ) {
+      return "";
+    }
+  }
+  return _formatTournamentDate(start_date || (commence_time ?? null), end_date ?? null);
 }
 
 function _formatTournamentDate(start: string | null, end: string | null): string {
