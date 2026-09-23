@@ -484,18 +484,63 @@ function _eyebrowDate(tournament: GolfTournament): string {
   return _formatTournamentDate(start_date || (commence_time ?? null), end_date ?? null);
 }
 
+/**
+ * #8139 — a date outside the season on screen is printed WITH its year.
+ *
+ * A bare `Sep 17–19` is only unambiguous while every other row in the list is
+ * this season. It is not: the archived 2026-08-29 payload served
+ * `golfers_to_win_a_pga_tour_major_in_2027` with a `commence_time` of
+ * 2028-01-14 and this function printed `Jan 14` — a date sixteen months away,
+ * rendered as if it were next week, between two tournaments that started that
+ * Thursday.
+ *
+ * It is also the precondition for #8139's producer half. `/api/golf` serves the
+ * Ryder Cup with `start_date: null` today, so #8123 suppresses the row's date
+ * rather than print a capture stamp (`_eyebrowDate` above). When that route
+ * starts serving the calendar's real `2027-09-17`, the date lands on this
+ * function with no further deploy — and a yearless `Sep 17–19` in a list of
+ * 2026 tournaments is a worse answer than today's honest blank, not a better
+ * one. The year has to be renderable BEFORE the payload can change.
+ *
+ * "Outside the season" is the CALENDAR YEAR, compared in UTC like every other
+ * field here: golf's tours run to the calendar, the served dates are
+ * midnight-UTC stamps, and a rule a reader can restate ("it says the year when
+ * it isn't this year") beats one tuned to a tour's own season boundaries.
+ * In-season rows — every row `/api/golf` serves today — render exactly the
+ * bytes they rendered before.
+ */
 function _formatTournamentDate(start: string | null, end: string | null): string {
   if (!start) return "";
   try {
-    const s = new Date(start);
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const s = new Date(start);
+    // An unparseable stamp used to reach the formatting and print the literal
+    // "undefined NaN" on the card; with a year appended it would have become
+    // "undefined NaN, NaN". A date we cannot read is a date we do not state
+    // (notice 34: leave the space empty, never explain the emptiness).
+    if (Number.isNaN(s.getTime())) return "";
+    const eRaw = end ? new Date(end) : null;
+    const e = eRaw && !Number.isNaN(eRaw.getTime()) ? eRaw : null;
+
+    const thisYear = new Date().getUTCFullYear();
+    const sYear = s.getUTCFullYear();
+    const eYear = e ? e.getUTCFullYear() : sYear;
+    const inSeason = sYear === thisYear && eYear === thisYear;
+
     const sStr = `${months[s.getUTCMonth()]} ${s.getUTCDate()}`;
-    if (!end) return sStr;
-    const e = new Date(end);
-    if (s.getUTCMonth() === e.getUTCMonth()) {
-      return `${sStr}–${e.getUTCDate()}`;
-    }
-    return `${sStr}–${months[e.getUTCMonth()]} ${e.getUTCDate()}`;
+    if (!e) return inSeason ? sStr : `${sStr}, ${sYear}`;
+
+    // The end collapses to a bare day ONLY inside one month of one year —
+    // without the year test a Sep 2026 → Sep 2027 window would read "Sep 17–19"
+    // and hide the twelve months between its two halves.
+    const eStr =
+      s.getUTCMonth() === e.getUTCMonth() && sYear === eYear
+        ? String(e.getUTCDate())
+        : `${months[e.getUTCMonth()]} ${e.getUTCDate()}`;
+    if (inSeason) return `${sStr}–${eStr}`;
+    if (sYear === eYear) return `${sStr}–${eStr}, ${sYear}`;
+    // A window that crosses New Year's needs both years or one of them is a lie.
+    return `${sStr}, ${sYear}–${eStr}, ${eYear}`;
   } catch {
     return "";
   }

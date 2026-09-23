@@ -183,10 +183,21 @@ describe("UX-P180 artifact", () => {
       midWindow,
       at(MID_WINDOW, () => card(TournamentCardLegacy, TOUR_CHAMPIONSHIP)),
     );
+    // #8139 — this panel's row is the one whose eyebrow date legitimately
+    // moves: no `start_date`, a `commence_time` of 2028-01-14, read here on a
+    // 2026 clock, so the frozen card's yearless "Jan 14" becomes "Jan 14, 2028".
+    // Split exactly like #5623's movement caption and #8123's suppressed date
+    // (notice 50): remainder byte-identical, the changed span asserted
+    // POSITIVELY on both sides. Not a normaliser — the legacy side is required
+    // to still carry the bare "Jan 14".
+    const windowlessLegacy = at(MID_WINDOW, () => card(TournamentCardLegacy, WINDOWLESS));
+    const EYEBROW_DATE = /<span class="text-text-tertiary">[^<]*<\/span>/g;
     assertOnlyTheMovementUnitMoved(
-      windowless,
-      at(MID_WINDOW, () => card(TournamentCardLegacy, WINDOWLESS)),
+      windowless.replace(EYEBROW_DATE, ""),
+      windowlessLegacy.replace(EYEBROW_DATE, ""),
     );
+    expect(windowlessLegacy).toContain('<span class="text-text-tertiary">Jan 14</span>');
+    expect(windowless).toContain('<span class="text-text-tertiary">Jan 14, 2028</span>');
 
     // ── the defect is zone-independent: assert it rather than gate on a zone ──
     // Both symptoms are `now` compared against a midnight-UTC stamp, so the
@@ -254,7 +265,7 @@ ${panel(
 )}
 ${panel(
   "CONTROL — the windowless population, which this fix must not touch",
-  'Four of the seven served tournaments carry no <code>start_date</code>/<code>end_date</code> at all — long-horizon futures, plus two mis-filed non-golf markets. The veto is keyed on having a window, so these are still decided by the price signal alone. Also asserted byte-identical against the legacy card.',
+  'Four of the seven served tournaments carry no <code>start_date</code>/<code>end_date</code> at all — long-horizon futures, plus two mis-filed non-golf markets. The veto is keyed on having a window, so these are still decided by the price signal alone. Asserted byte-identical against the legacy card everywhere except the eyebrow date, which #8139 changed on this row alone: its stamp is 2028-01-14, and the legacy card printed a yearless <b>Jan 14</b> for it.',
   windowless,
 )}
 </body></html>`;
