@@ -133,6 +133,47 @@ enum FuturesHero {
     }
 }
 
+// MARK: - Event Hero
+
+/// The Discover GAME card's hero — the third instance of #7074's shape, found
+/// by #2095's card-type acceptance pass.
+///
+/// 🔴 #7074 FIXED TWO HEROES AND THERE WERE THREE. `NativeEventDiscoverCard`
+/// wrapped its gradient and its overlay in a `ZStack { … }.frame(height: 160)`
+/// — the same defect wearing different clothes. Because the height is on the
+/// ZStack rather than on the backdrop alone, the overflow is not spilled onto
+/// the card's white body (the futures card's symptom) but CLIPPED by the
+/// `clipShape` that follows it, which is worse: the content does not look
+/// misplaced, it looks absent.
+///
+/// MEASURED on master `5e9cc2d5f`, iPhone 17 Pro, anonymous feed, the live card
+/// "Miami Marlins @ Chicago Cubs":
+///
+/// | Dynamic Type | hero BEFORE | AFTER | chip's gap below the hero's top edge |
+/// |---|---|---|---|
+/// | `large` (default) | 160.0pt | 164.0pt | 12.0pt → **14.0pt** |
+/// | `extra-extra-extra-large` | 160.0pt | 185.7pt | 1.3pt → **14.0pt** |
+/// | `accessibility-extra-extra-extra-large` | 160.0pt | ≥308.7pt | **chip absent** → **14.0pt** |
+///
+/// The hero measured 160.0pt at EVERY size, which is the finding: it could not
+/// grow, so at the largest accessibility size the `MLB` chip and the `• LIVE`
+/// badge were clipped away entirely and the two scores lost their bottoms.
+/// Note the default row — the card was already 4pt over its own pin at the
+/// DEFAULT text size, so the chip was 2pt short of its padding on every phone.
+/// Artifacts: `artifacts/native-301/BEFORE-*` and their `AFTER-*` twins.
+///
+/// Its sibling card kinds were photographed in the same pass and are well:
+/// the futures card (#2095's own `GEOPOLITICS` specimen) and the tournament
+/// card both draw their chips whole at the largest size, because #7074 gave
+/// one a floor and the other never had a fixed height.
+enum EventHero {
+
+    /// The shortest the Discover game card's hero may be drawn — a FLOOR, not a
+    /// height. 160 is the value it was pinned at, so a card whose content fits
+    /// draws exactly the hero it has always drawn.
+    static let discoverCardMinimumHeight: CGFloat = 160
+}
+
 /// The one futures hero backdrop, shared by the Discover card and the detail page.
 ///
 /// Layering follows the web (`FuturesCard.tsx`): the gradient is the base layer
