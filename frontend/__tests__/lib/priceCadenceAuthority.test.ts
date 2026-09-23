@@ -111,8 +111,12 @@ describe("priceCadenceNote", () => {
   });
 
   it("uses ONE dash spelling across both lengths (the drift that was there)", () => {
-    const dashes = [priceCadenceNote(false), priceCadenceNote(false, { long: true })]
-      .map((s) => s.match(/1(.)2/)?.[1]);
+    // #8135 widened the return type to `string | null` ("say nothing" on a
+    // dormant board). Neither of these is dormant — asserted, so the dash check
+    // below cannot go green on a pair of nulls that match no dash at all.
+    const notes = [priceCadenceNote(false), priceCadenceNote(false, { long: true })];
+    expect(notes.every((s) => typeof s === "string")).toBe(true);
+    const dashes = notes.map((s) => (s as string).match(/1(.)2/)?.[1]);
     expect(new Set(dashes).size).toBe(1);
     expect(dashes[0]).toBe("–");
   });
@@ -140,5 +144,20 @@ describe("the callers that know they are settled, pass it", () => {
 
   it("FuturesChart defaults to NOT settled, so every other caller is unaffected", () => {
     expect(read("components/FuturesChart.tsx")).toContain("settled = false,");
+  });
+
+  it("#8135 — and the one caller that can know the board is DORMANT, passes that too", () => {
+    // The trend caption is the only site with a history payload in hand, so it is
+    // the only one that can answer "is anything still being priced here". The
+    // other two fire on an ERROR or an EMPTY chart, where there is nothing to
+    // date — `isCadenceDormant(null)` is false and they are right to stay silent
+    // about it. Pinned as an expression rather than a bare mention of the name:
+    // `dormant: false` would satisfy a `toContain("dormant")`.
+    const src = read("app/futures/[id]/page.tsx");
+    expect(src).toContain("dormant: isCadenceDormant(boardLastObservationMs)");
+    // ...and that value is read off the board's own history, not off the row's
+    // `updated_at` — the #6018 mistake, one table up from where prices live.
+    expect(src).toMatch(/boardLastObservationMs\s*=\s*useMemo\(/);
+    expect(src).toMatch(/newestInstant\(\s*historyOutcomes\.flatMap/);
   });
 });

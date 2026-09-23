@@ -150,6 +150,28 @@ function asInstant(value: unknown): number | null {
   return null;
 }
 
+/**
+ * The newest datable instant in a payload array, or `null` when none is.
+ *
+ * #8135. Split out rather than reached for through `seriesFreshness` because it
+ * answers a different question — *when did this board last print a number?* —
+ * for a caller that must not inherit the cadence state machine's opinion along
+ * with the number (`priceCadenceCopy` explains why the two rules are not
+ * interchangeable). It shares `asInstant`, so what counts as a date cannot drift
+ * between them, and it does not sort: a maximum is O(n) and these arrays run to
+ * tens of thousands of points on a big field.
+ */
+export function newestInstant(
+  timestamps: readonly unknown[] | null | undefined,
+): number | null {
+  let newest: number | null = null;
+  for (const raw of timestamps ?? []) {
+    const t = asInstant(raw);
+    if (t !== null && (newest === null || t > newest)) newest = t;
+  }
+  return newest;
+}
+
 /** Median of a non-empty list. Even lengths average the middle pair. */
 function median(sorted: number[]): number {
   const mid = sorted.length >> 1;

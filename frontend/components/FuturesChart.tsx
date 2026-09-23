@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FuturesOutcomeHistory } from "@/lib/types";
+import { axisTimeFormat, formatAxisTime } from "@/lib/chartAxisTimeLabel";
 import { chartYTicks } from "@/lib/chartCeiling";
 import { canZoomSeries, computeZoomBound, resolveYAxisMax } from "@/lib/chartZoom";
 import { anchorScrollLeft, edgeOverflowFor } from "@/lib/chartScroll";
@@ -503,29 +504,16 @@ export function FuturesChart({
                   ticks.push(minTime + (timeRange * i) / tickCount);
                 }
 
-                const formatTime = (ts: number) => {
-                  const d = new Date(ts);
-                  if (timeRange < 24 * 60 * 60 * 1000) {
-                    return d.toLocaleTimeString("en-US", {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    });
-                  } else if (timeRange < 7 * 24 * 60 * 60 * 1000) {
-                    return (
-                      d.toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      }) +
-                      " " +
-                      d.toLocaleTimeString("en-US", { hour: "numeric" })
-                    );
-                  } else {
-                    return d.toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                    });
-                  }
-                };
+                /* #8135: the label shape comes from the domain's AGE as well as
+                   its span. The branch that lived here picked clock-only labels
+                   off `timeRange` alone, so a board whose only six readings were
+                   one afternoon four weeks ago drew `1:48 PM · 4:03 PM · 6:19 PM`
+                   over a caption reading "Last number 29 days ago". The rule and
+                   its reasoning are in `lib/chartAxisTimeLabel.ts`; the two dated
+                   branches are unchanged. No zone is passed — the reader gets
+                   their own, as this axis always has. */
+                const axisFormat = axisTimeFormat(minTime, maxTime);
+                const formatTime = (ts: number) => formatAxisTime(ts, axisFormat);
 
                 /* #4262: THE END LABELS ANCHOR TO THE PLOT EDGE, NOT TO THEIR
                    TICK. A centred label needs half its width of room on each

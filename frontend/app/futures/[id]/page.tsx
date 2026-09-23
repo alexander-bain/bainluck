@@ -23,7 +23,8 @@ import {
   categoryPagePath,
   sportPagePath,
 } from "@/lib/eventKey";
-import { priceCadenceNote } from "@/lib/priceCadenceCopy";
+import { isCadenceDormant, priceCadenceNote } from "@/lib/priceCadenceCopy";
+import { newestInstant } from "@/lib/seriesFreshness";
 import FuturesTrendRangeControls from "@/components/futures/FuturesTrendRangeControls";
 import FuturesTrendEmptyState from "@/components/futures/FuturesTrendEmptyState";
 import {
@@ -484,6 +485,28 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const movementExplanation = useMemo(
     () => movementExplanationHelper(captionSubject, market?.name),
     [captionSubject, market?.name]
+  );
+
+  // #8135 — when did this BOARD last print a number? The cadence promise below
+  // is a claim about the market, not about whichever lines the reader has left
+  // selected, so it reads every outcome the page holds. That is also the
+  // conservative side: the more outcomes counted, the newer this instant, and a
+  // promise is only withdrawn once nothing on the board has moved.
+  //
+  // The chart computes its own freshness over the DRAWN outcomes (#2961) and the
+  // two are meant to differ: a board can still be printing numbers while the one
+  // line on screen is behind. Same filter on both, so neither counts a priceless
+  // row as an observation.
+  const boardLastObservationMs = useMemo(
+    () =>
+      newestInstant(
+        historyOutcomes.flatMap((o) =>
+          o.history
+            .filter((p) => p.probability !== null)
+            .map((p) => p.timestamp),
+        ),
+      ),
+    [historyOutcomes]
   );
 
   // D102 / #4568 — the rows that print a number, and the numberless ones folded
@@ -1010,7 +1033,17 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                 onSelect={selectRange}
                 requestedHours={historyHours}
                 actualHours={historyData.actual_hours}
-                cadenceNote={historyData.sparse ? priceCadenceNote(isResolved) : null}
+                /* #8135: `sparse` asks how MUCH history there is; `dormant` asks
+                   whether any of it is recent. The specimen was sparse, open and
+                   four weeks cold, so the old gate returned the live promise over
+                   a chart captioned "Last number 29 days ago". */
+                cadenceNote={
+                  historyData.sparse
+                    ? priceCadenceNote(isResolved, {
+                        dormant: isCadenceDormant(boardLastObservationMs),
+                      })
+                    : null
+                }
               />
             </div>
             {/* Tab toggle: Over Time / By Stage */}
