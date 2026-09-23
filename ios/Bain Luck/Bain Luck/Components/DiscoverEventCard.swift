@@ -33,6 +33,12 @@ struct NativeEventDiscoverCard: View {
     /// why this is a simultaneous gesture and not a button action. #5525.
     var onShare: (() -> Void)? = nil
 
+    /// #8144 — the status column between the crests is sized against the strings
+    /// THIS card draws at THIS text size, so both of these are inputs to a layout
+    /// decision rather than decoration. See `GameCardStatusColumn`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var heroContentWidth: Double = 0
+
     /// This card's slate/blue defaults are where `ProbabilityBarPalette`'s came
     /// from — it was the one card that already used a *pair* rather than one
     /// colour twice, so the palette adopts its values and Discover looks
@@ -133,9 +139,16 @@ struct NativeEventDiscoverCard: View {
             }
             return "Final"
         }
-        // live/048 — the crest strip is 50pt wide and sized for "Q3", so it
-        // gets the short word and the full shared summary goes in the badge
-        // below the matchup, where the reader already looks for the outcome.
+        // live/048 — the crest strip gets the SHORT word and the full shared
+        // summary goes in the badge below the matchup, where the reader already
+        // looks for the outcome.
+        //
+        // #8144 — the reason live/048 gave for that split was "the strip is 50pt
+        // wide and sized for Q3". That is no longer true of the strip: it is
+        // sized to the ink of whatever string this returns (`GameCardStatusColumn`).
+        // The split survives its own stated reason anyway — "Paused" belongs
+        // between the crests and a sentence belongs in the badge, at any width —
+        // which is exactly the case for restating it rather than deleting it.
         if isSuspended { return "Paused" }
         return "vs"
     }
@@ -531,32 +544,82 @@ struct NativeEventDiscoverCard: View {
 
             Spacer(minLength: 10)
 
-            // Matchup row
-            HStack(alignment: .center, spacing: 0) {
-                heroTeam(
-                    label: cardSides.away, badge: cardBadges.away,
-                    slot: avatarSlot(home: false),
-                    color: awayColor,
-                    score: event.awayScore,
-                    alignment: .leading
-                )
+            // Matchup row. #8144 — the status between the crests used to be
+            // `.frame(width: 50)`, "sized for Q3", which `Bottom 6th` overran at
+            // the DEFAULT text size and shredded to one letter per line at the
+            // largest. It is now sized to its own ink, and it sits between the
+            // crests only while it fits there on one line — past that the row
+            // reflows and it takes its own line underneath. `GameCardStatusColumn`
+            // takes that decision from the strings this card is about to draw.
+            VStack(spacing: GameCardStatusColumn.stackedLineSpacing) {
+                HStack(alignment: .center, spacing: 0) {
+                    heroTeam(
+                        label: cardSides.away, badge: cardBadges.away,
+                        slot: avatarSlot(home: false),
+                        color: awayColor,
+                        score: event.awayScore,
+                        alignment: .leading
+                    )
 
-                VStack(spacing: 2) {
-                    Text(statusText)
-                        .font((isLive ? Font.caption2 : Font.footnote).weight(.heavy).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
+                    if case let .inline(statusWidth) = statusLayout {
+                        statusLabel(maximumLines: GameCardStatusColumn.maximumInlineStatusLines)
+                            .frame(width: statusWidth)
+                    }
+
+                    heroTeam(
+                        label: cardSides.home, badge: cardBadges.home,
+                        slot: avatarSlot(home: true),
+                        color: homeColor,
+                        score: event.homeScore,
+                        alignment: .trailing
+                    )
                 }
-                .frame(width: 50)
 
-                heroTeam(
-                    label: cardSides.home, badge: cardBadges.home,
-                    slot: avatarSlot(home: true),
-                    color: homeColor,
-                    score: event.homeScore,
-                    alignment: .trailing
-                )
+                if statusLayout == .stacked {
+                    statusLabel(maximumLines: GameCardStatusColumn.maximumStackedStatusLines)
+                        .frame(maxWidth: .infinity)
+                }
             }
         }
+        // #8144 — the hero's own content width, measured rather than derived from
+        // the screen: a card's width is a layout outcome (the feed's padding, an
+        // iPad column, Stage Manager) and recomputing it from a screen size would
+        // assert a layout instead of reading one. `.padding(14)` is applied
+        // OUTSIDE this view, so this geometry is already the content box.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: HeroContentWidthKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(HeroContentWidthKey.self) { width in
+            heroContentWidth = width
+        }
+    }
+
+    /// #8144 — ONE status label, in one face, wherever the row decides to put it.
+    /// Two copies would become two faces the first time either was edited, and
+    /// `GameCardStatusColumn.statusFont` measures exactly this one — a model
+    /// sizing a column against a font the view does not draw is the #4107 trap.
+    private func statusLabel(maximumLines: Int) -> some View {
+        Text(statusText)
+            .font((isLive ? Font.caption2 : Font.footnote).weight(.heavy).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.7))
+            .multilineTextAlignment(.center)
+            .lineLimit(maximumLines)
+            // #3966 — `lineLimit` alone still truncates when a parent proposes
+            // one line's height. The pair is load-bearing together.
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var statusLayout: GameCardStatusColumn.Layout {
+        GameCardStatusColumn.layout(
+            statusText: statusText,
+            isLive: isLive,
+            scores: [event.awayScore, event.homeScore].compactMap { $0 }.map(String.init),
+            availableWidth: heroContentWidth,
+            typeSize: dynamicTypeSize
+        )
     }
 
     private func heroTeam(
@@ -679,5 +742,15 @@ struct NativeEventDiscoverCard: View {
             ShareCardRenderer.saveImageToPhotos(image)
         }
         #endif
+    }
+}
+
+/// #8144 — the hero's measured content width, published up from a
+/// `GeometryReader` so `GameCardStatusColumn` can size the status against the
+/// room that actually exists rather than a screen width it assumed.
+struct HeroContentWidthKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) {
+        value = max(value, nextValue())
     }
 }
