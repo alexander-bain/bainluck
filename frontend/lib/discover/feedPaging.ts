@@ -176,6 +176,74 @@ export function shouldLoadNextPage(state: {
 export const PAGINATION_LOOKAHEAD = 5;
 
 /**
+ * Whether the reveal window should advance by one page.
+ *
+ * #8176 — THE WINDOW ADVANCE IS A LEVEL, NOT AN EDGE. This existed inline in
+ * `page.tsx` as an `IntersectionObserver` callback that incremented on the
+ * transition into intersecting. An observer only fires when intersection
+ * CHANGES, and the reveal window is the only thing that makes the document
+ * taller (rendering is `processedItems.slice(0, visibleCount)`). So once the
+ * window stopped advancing, the document stopped growing, the sentinel stayed
+ * inside the 400px `rootMargin` band, and no further transition was ever
+ * produced: the window was frozen by the fact that it was frozen.
+ *
+ * Measured on production at 390px signed out: the feed stopped at
+ * `visibleCount = 40` against `renderedCount = 48` with `has_more = true` and
+ * 67 more cards on the server, showing a spinner that could never resolve —
+ * `visibleCount < renderedCount` keeps the spinner branch true, and
+ * `EndOfFeedCard` needs `visibleCount >= renderedCount`, so the reader gets an
+ * indefinite loader and can never reach the honest end state. Scrolling up 200px
+ * (inside the band) produced 0 requests across 71s; scrolling up 1600px (out of
+ * the band) resumed paging immediately and ran the feed to completion.
+ *
+ * Asking the question as a level — "is the sentinel in view and is the window
+ * still behind the content" — cannot deadlock, because it is re-asked on every
+ * commit rather than only on a transition the frozen document cannot produce.
+ *
+ * 🔴 THE `+ PAGE_SIZE` BOUND IS WHAT KEEPS THIS FROM BECOMING A FETCH STORM, AND
+ * IT IS ALSO WHY THE COLD PATH STILL WORKS. Both halves matter:
+ *
+ *  - Without a bound, a sentinel parked in view advances the window on every
+ *    commit while a page is in flight. Nothing new can render, so the document
+ *    never grows, so the sentinel never leaves the band — `visibleCount` inflates
+ *    without limit and `shouldLoadNextPage` walks the feed to exhaustion while
+ *    the reader sits still. That is the uninvited-fetch defect LAT-P172 and
+ *    #7417 were both about, re-entering through a new door.
+ *  - Bounding at `renderedCount` alone (rather than one page past it) would kill
+ *    pagination outright on the cold path: page one lands filtered to fewer rows
+ *    than the seed window, so `visibleCount` already equals or exceeds
+ *    `renderedCount`, the window could never advance past
+ *    `initialVisibleCount`, and `shouldLoadNextPage`'s LAT-P172 gate would read
+ *    that as "the reader has not scrolled" forever.
+ *
+ * One page past the content is exactly the room needed to signal "the reader
+ * wants more" to the pager, and no more. The natural terminator is unchanged:
+ * revealing cards makes the document taller, which pushes the sentinel out of
+ * the band, which sets `sentinelVisible` false.
+ */
+export function shouldAdvanceWindow(state: {
+  /** The sentinel is inside the observer's band RIGHT NOW — a level, not an edge. */
+  sentinelVisible: boolean;
+  /** Cards the reader can currently see. */
+  visibleCount: number;
+  /** Cards available to show: `processedItems.length`, independent of `visibleCount`. */
+  renderedCount: number;
+  /**
+   * A scroll restore is still landing. #7417: the reader is clamped at the
+   * bottom of a growing document for reasons that have nothing to do with them
+   * running out of cards, and the restore is about to move them away.
+   */
+  restorePending: boolean;
+  /** The page size the window advances by. */
+  pageSize: number;
+}): boolean {
+  const { sentinelVisible, visibleCount, renderedCount, restorePending, pageSize } = state;
+  if (!sentinelVisible) return false;
+  if (restorePending) return false;
+  return visibleCount < renderedCount + pageSize;
+}
+
+/**
  * Fold a fresh page-one payload into the one the reader is already looking at.
  *
  * #4430 — Alex, reading Discover on the web the morning of 2026-09-09: "cards
