@@ -100,6 +100,37 @@ async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
     return written
 
 
+def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
+    """The once-a-minute socket line, including #837's coverage ratio.
+
+    Module-level rather than inline in the consumer's `stats_loop` for one
+    reason: the defect this exists to prevent is a number that is COMPUTED and
+    never EMITTED, and a closure three `await`s deep inside a consumer that
+    needs a database, a slate and a live socket cannot be asserted on. Lifted
+    here, the emitted line is checkable directly, so "the coverage fields
+    silently stopped being logged" is a red test rather than something a person
+    has to notice in a log tail months later.
+
+    Every field is read with `.get(..., 0)` because the shadow consumer shares
+    this client and subscribes without shards: absent coverage keys must print
+    a zero, never raise inside a stats loop whose exception would kill the
+    socket's only heartbeat.
+    """
+    logger.info(
+        "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
+        "%d msgs | coverage shards=%d/%d served=%d/%d "
+        "| blend stamped=%d no_reading=%d throttled=%d errors=%d",
+        stats["price_updates"], stats["trade_updates"],
+        stats["resolutions"], stats["errors"],
+        ws_stats.get("messages", 0),
+        ws_stats.get("shards_connected", 0), ws_stats.get("shards", 0),
+        ws_stats.get("assets_served", 0),
+        ws_stats.get("assets_subscribed", 0),
+        blend["stamped"], blend["no_reading"],
+        blend["throttled"], blend["errors"],
+    )
+
+
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
     from sqlalchemy import select, update, text, or_, and_, func
@@ -654,20 +685,23 @@ async def _run_polymarket_ws_consumer():
             await asyncio.sleep(60)
             # Q504-b: blend counters ride along, same reasoning as the Kalshi arm.
             blend = blend_refresher.stats
-            logger.info(
-                "Polymarket WS: %d prices, %d trades, %d resolutions, %d errors, "
-                "%d msgs | blend stamped=%d no_reading=%d throttled=%d errors=%d",
-                stats["price_updates"], stats["trade_updates"],
-                stats["resolutions"], stats["errors"],
-                ws.stats.get("messages", 0),
-                blend["stamped"], blend["no_reading"],
-                blend["throttled"], blend["errors"],
-            )
+            # #837: the fan-out already counts, on the wire, how many distinct
+            # assets each shard was actually served — but nothing read it, so
+            # the one number that answers "is the venue serving the whole
+            # subscription or a fraction of it" existed only in process memory
+            # and no after-check could ever be paid from production. The
+            # coverage WARNING beside it fires only when a shard serves
+            # literally zero while a sibling streams; a shard served 3 of 500
+            # is the same silent-fraction defect and is invisible to it. So the
+            # ratio is stated every minute, whether or not anything is wrong.
+            ws_stats = ws.stats
+            _log_stats_line(stats, ws_stats, blend)
             _report_liveness(
                 "polymarket",
                 "streaming" if getattr(ws, "is_connected", False) else "disconnected",
                 legs=len(asset_ids),
-                msgs=ws.stats.get("messages", 0),
+                msgs=ws_stats.get("messages", 0),
+                served=ws_stats.get("assets_served", 0),
                 stamped=blend["stamped"],
                 no_reading=blend["no_reading"],
             )
@@ -698,6 +732,14 @@ async def _run_polymarket_ws_consumer():
         # must RETRY rather than requeue into a buffer nobody will read again.
         await drain_prices()
 
+    # #837: the per-shard breakdown, once per recycle rather than once a minute
+    # — this is the shape that tells a starved subscription from a quiet one.
+    # `run()`'s teardown clears the CONNECTED sets but deliberately not the
+    # served ones, so the cycle's coverage is still readable here; `shards_
+    # connected` is not, and is left out rather than logged as a misleading 0.
+    exit_stats = ws.stats
+    stats["assets_served"] = exit_stats.get("assets_served", 0)
+    stats["served_by_shard"] = exit_stats.get("served_by_shard", {})
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
 
