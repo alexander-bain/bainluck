@@ -161,6 +161,11 @@ function markup(Component: unknown, t: GolfTournament): string {
 // the fix's own predicate: a control that re-derives membership the way the
 // component does would pass whatever shipped.
 const STALE_CAPTURE_ROW = "golfers_to_win_a_pga_tour_major_before_2030";
+// #8139 — the other windowless row whose eyebrow date legitimately moves: its
+// `commence_time` is 2028-01-14, read here on a 2026 clock, so the yearless
+// "Jan 14" the frozen card prints becomes "Jan 14, 2028". Named explicitly for
+// the same reason as the row above.
+const OUT_OF_SEASON_ROW = "golfers_to_win_a_pga_tour_major_in_2027";
 const EYEBROW_DATE_SPAN = /<span class="text-text-tertiary">[^<]*<\/span>/g;
 
 const MOVEMENT_SPAN = /<span class=" text-(?:green|red)-600 font-semibold">[^<]*<\/span>/g;
@@ -350,9 +355,9 @@ describe("UX-P180 · the windowless population is untouched", () => {
   });
 
   it.each(
-    WINDOWLESS.filter((t) => t.key !== STALE_CAPTURE_ROW).map(
-      (t) => [t.key, t] as const,
-    ),
+    WINDOWLESS.filter(
+      (t) => t.key !== STALE_CAPTURE_ROW && t.key !== OUT_OF_SEASON_ROW,
+    ).map((t) => [t.key, t] as const),
   )("%s renders byte-identically before and after the fix", (_key, t) => {
     // A veto keyed on `start_date && end_date` must be invisible to rows that
     // have neither. These are long-horizon futures and the two mis-filed
@@ -399,6 +404,41 @@ describe("UX-P180 · the windowless population is untouched", () => {
     expect(legacy).toContain('<span class="text-text-tertiary">Jul 19</span>');
     expect(legacy.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
     expect(fixed.match(EYEBROW_DATE_SPAN)).toBeNull();
+  });
+
+  it(`${OUT_OF_SEASON_ROW} keeps every byte except the year on its date`, () => {
+    // #8139, and the same split as the row above (notice 50): remainder
+    // byte-identical, the changed span asserted POSITIVELY on BOTH sides.
+    //
+    // This row is why the year rule is not merely preparation for #8139's
+    // producer half. Read from production on 2026-08-29, it carries no
+    // `start_date` and a `commence_time` of 2028-01-14 — and the frozen card
+    // printed "Jan 14" for it, between two tournaments that had started that
+    // Thursday, on a card titled "…Major In 2027". A reader had nothing on the
+    // card to tell them the date was sixteen months away.
+    //
+    // The legacy side is REQUIRED to still print the bare "Jan 14": if the
+    // yearless render ever comes back, this fails loudly instead of the pair
+    // agreeing quietly.
+    const now = "2026-08-29T20:39:00Z";
+    const t = tournament(OUT_OF_SEASON_ROW);
+    // The archived body omits the key outright on this row rather than serving
+    // an explicit null, so read it as "no window", not `=== null`.
+    expect(t.start_date ?? null).toBeNull();
+    expect(t.end_date ?? null).toBeNull();
+    expect(t.commence_time).toBe("2028-01-14T15:00:00+00:00");
+
+    const fixed = at(now, () => markup(TournamentCard, t));
+    const legacy = at(now, () => markup(TournamentCardLegacy, t));
+
+    assertOnlyTheMovementUnitMoved(
+      fixed.replace(EYEBROW_DATE_SPAN, ""),
+      legacy.replace(EYEBROW_DATE_SPAN, ""),
+    );
+
+    expect(legacy).toContain('<span class="text-text-tertiary">Jan 14</span>');
+    expect(fixed).toContain('<span class="text-text-tertiary">Jan 14, 2028</span>');
+    expect(fixed.match(EYEBROW_DATE_SPAN)).toHaveLength(1);
   });
 
   it.each([

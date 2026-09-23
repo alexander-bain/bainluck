@@ -176,12 +176,17 @@ describe("#8123 · the population the fix must NOT touch", () => {
   it("a real start_date wins even when the capture stamp looks suspect", () => {
     // start_date present, commence_time past, resolution_date future — the
     // suppression triggers on the ABSENCE of start_date, never on its presence.
+    //
+    // The year on the end of this string is #8139, not a weakening of #8123:
+    // both these fixtures are 2027 dates read on a 2026 clock, so the rule that
+    // says the year when it is not this year applies to them. What #8123 owns
+    // here is that the date is SHOWN at all, and that claim is unchanged.
     const scheduled = {
       ...RYDER_CUP,
       start_date: "2027-09-28T00:00:00+00:00",
       end_date: "2027-09-30T00:00:00+00:00",
     } as GolfTournament;
-    expect(eyebrowDate(markup(scheduled))).toBe("Sep 28–30");
+    expect(eyebrowDate(markup(scheduled))).toBe("Sep 28–30, 2027");
   });
 
   it("a FUTURE commence_time still shows — it is not provably wrong", () => {
@@ -189,7 +194,7 @@ describe("#8123 · the population the fix must NOT touch", () => {
       ...RYDER_CUP,
       commence_time: "2027-09-28T00:00:00+00:00",
     } as GolfTournament;
-    expect(eyebrowDate(markup(upcoming))).toBe("Sep 28");
+    expect(eyebrowDate(markup(upcoming))).toBe("Sep 28, 2027");
   });
 
   it("a row with no resolution_date is not second-guessed", () => {
