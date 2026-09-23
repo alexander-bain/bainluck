@@ -182,9 +182,23 @@ export function RelatedEventRow({ event }: { event: RelatedEvent }) {
  *
  * The caption is here rather than on each row because it is one claim about
  * every number in the section: they are this market's odds, not the game's.
+ *
+ * #8282 — A SETTLED MARKET HAS NO "THIS WEEK". Every per-team number on a
+ * resolved board is a verdict (0% or >99%), not a chance, and printed beside a
+ * game that has not been played it reads as that team's odds tomorrow.
+ * Production, `/futures/114108` — *Kings vs. Blue Jackets*, a single game that
+ * settled in March — listed "Tomorrow · Pittsburgh Penguins at Columbus Blue
+ * Jackets · Columbus Blue Jackets >99%". So on a resolved market the section
+ * is withheld, silently (notice 34): no heading, no explanation, no hole.
  */
-export default function GamesThisWeek({ events }: { events: RelatedEvent[] }) {
-  if (events.length === 0) return null;
+export default function GamesThisWeek({
+  events,
+  marketResolved = false,
+}: {
+  events: RelatedEvent[];
+  marketResolved?: boolean;
+}) {
+  if (marketResolved || events.length === 0) return null;
 
   return (
     <div className="bg-surface-card rounded-card shadow-card p-6">

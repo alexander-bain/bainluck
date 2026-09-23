@@ -1251,8 +1251,8 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </div>
       )}
 
-      {/* Games This Week */}
-      <GamesThisWeek events={relatedEvents} />
+      {/* Games This Week — withheld on a settled market (#8282) */}
+      <GamesThisWeek events={relatedEvents} marketResolved={isResolved} />
 
       {/* More from this category */}
       {market?.llm_sport_category && (
