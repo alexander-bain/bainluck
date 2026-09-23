@@ -131,7 +131,9 @@ def test_futures_reason_uses_market_context_for_weak_outcome_labels():
         now=NOW,
     )
 
-    assert reason == "How many Fed rate cuts in 2026? has shifted since Mar 4"
+    # #2096: the title loses its trailing `?` in SUBJECT position. This test's
+    # subject is the weak-label fall-through, not the punctuation.
+    assert reason == "How many Fed rate cuts in 2026 has shifted since Mar 4"
 
 
 def test_futures_reason_falls_through_an_undated_opening_to_the_market_name():
@@ -209,8 +211,10 @@ def test_futures_reason_names_leader_for_monthly_resolution():
         leader_probability=0.64,
     )
 
+    # #2096: trailing `?` dropped in SUBJECT position; the leader clause, which
+    # is what this test is about, is unchanged.
     assert reason == (
-        "Fed Decision in June? resolves within a month, No change leads at 64%"
+        "Fed Decision in June resolves within a month, No change leads at 64%"
     )
 
 
@@ -222,8 +226,14 @@ def test_futures_reason_avoids_date_leader_for_monthly_resolution():
         leader_probability=0.46,
     )
 
+    # #2096: trailing `?` dropped in SUBJECT position. The elision mark stays —
+    # it is part of the title, and this RAW `by...?` spelling is a unit-level
+    # input in any case: the serve path hands this generator the CLEANED display
+    # name (`Russia x Ukraine ceasefire agreement?`), as the 2026-09-22 payload
+    # census confirms. The refusal to name `December 31` is the subject here and
+    # is unchanged.
     assert reason == (
-        "Russia x Ukraine ceasefire agreement by...? resolves within a month"
+        "Russia x Ukraine ceasefire agreement by... resolves within a month"
     )
 
 

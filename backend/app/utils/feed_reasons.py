@@ -448,6 +448,44 @@ _TRAILING_NOISE_RE = re.compile(
 # Remove trailing question mark
 _TRAILING_QM_RE = re.compile(r"\s*\?\s*$")
 
+
+def _market_name_as_subject(market_name: str | None) -> str:
+    """The market title with its trailing `?` removed, for SUBJECT position.
+
+    #2096/#8151's residual. `generate_futures_reason` splices the title into two
+    grammatical positions, and only one of them can carry the question mark the
+    title ends with. In OBJECT position ("Big odds movement in {name}") the mark
+    sits where the title's own punctuation belongs. In SUBJECT position it lands
+    mid-sentence:
+
+        "Saudi Arabia military action against Yemen? resolves within a month"
+
+    …which is ungrammatical on its own, and which the CARD then makes worse. The
+    web and iOS caption chains both subtract a leading restatement of the card's
+    own heading (`stripCardTitleHead`, #6903) before printing, and the heading is
+    the same title WITHOUT its mark — so the cut lands one character early and
+    the orphan is what survives, capitalised into the first character of the
+    sentence the reader reads:
+
+        ? resolves within a month
+
+    Photographed at 390px on production `/categories/geopolitics` 2026-09-22
+    (`artifacts-discover/d428/geo-3200.png`, the Saudi Arabia and Houthi cards).
+    MEASURED the same hour over 536 served futures cards across six surfaces:
+    23 reason strings splice the mark in subject position and 6 of them reach a
+    reader as a caption opening with `?` (the rest are outranked today by an
+    earlier rung of the chain, which is a scheduling accident, not a guard).
+
+    DELIBERATELY NOT :func:`_short_market_name`, which is the headline's helper
+    and strips the same mark. That one also TRUNCATES at 58 characters, and the
+    reason field has no hero to wrap past — adopting it here would rewrite the
+    copy on every long-titled card to fix the punctuation on a few. This removes
+    one character the reader has already read one line above and nothing else
+    (ruling 003: a deletion, never a rewrite).
+    """
+    return _TRAILING_QM_RE.sub("", (market_name or "").strip())
+
+
 # The widest label a feed card can show without wrapping past its hero. A
 # manufactured label that needs more room than this is refused outright (#3491),
 # never cut down to fit — see `humanize_binary_outcome_name` Strategy 2.
@@ -2249,6 +2287,12 @@ def generate_futures_reason(
     _verb = leader_agreement_verb(leader_name, leader_is_team, leader_team_name)
     # #4640: likewise resolved once — see `_leader_is_unnameable`.
     _no_leader_subject = _leader_is_unnameable(leader_name, leader_is_ladder_rung)
+    # …and the title in SUBJECT position, resolved once for the same reason the
+    # others are: eleven templates below open with it, and eleven chances to
+    # remember the question mark is eleven chances to reintroduce "? resolves
+    # within a month". The OBJECT-position templates ("Big odds movement in
+    # {market_name}") keep the title verbatim — see `_market_name_as_subject`.
+    _subject_name = _market_name_as_subject(market_name)
     # #6470: resolved once beside the refusal it answers, so a template can
     # never print the level clause without having consulted that refusal.
     _deadline = _deadline_fallback(
@@ -2363,43 +2407,43 @@ def generate_futures_reason(
     if "resolving_soon_1d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
-                return f"{market_name} resolving within a day"
+                return f"{_subject_name} resolving within a day"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             clause = leader_standing_clause(
                 leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
             )
-            return f"{market_name} resolving within a day, {clause}"
-        return f"{market_name} resolving within a day"
+            return f"{_subject_name} resolving within a day, {clause}"
+        return f"{_subject_name} resolving within a day"
     if "resolving_soon_2d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
-                return f"{market_name} resolving within two days"
+                return f"{_subject_name} resolving within two days"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             clause = leader_standing_clause(
                 leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
             )
-            return f"{market_name} resolving within two days, {clause}"
-        return f"{market_name} resolving within two days"
+            return f"{_subject_name} resolving within two days, {clause}"
+        return f"{_subject_name} resolving within two days"
     if "resolving_soon_7d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
-                return f"{market_name} resolving within a week"
+                return f"{_subject_name} resolving within a week"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             clause = leader_standing_clause(
                 leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
             )
-            return f"{market_name} resolving soon, {clause}"
-        return f"{market_name} resolving within a week"
+            return f"{_subject_name} resolving soon, {clause}"
+        return f"{_subject_name} resolving within a week"
     if "resolving_soon_30d" in reasons:
         if leader_name and leader_probability is not None:
             if _no_leader_subject:
-                return f"{market_name} resolves within a month"
+                return f"{_subject_name} resolves within a month"
             pct = _display_pct(leader_probability, rendered_leader_percent)
             clause = leader_standing_clause(
                 leader_name, pct, verb=_verb, lead_is_visible=_lead_visible
             )
-            return f"{market_name} resolves within a month, {clause}"
-        return f"{market_name} resolving within a month"
+            return f"{_subject_name} resolves within a month, {clause}"
+        return f"{_subject_name} resolving within a month"
 
     # Lifetime move, DATED and DEMOTED (D1 clause a, #4066).
     #
@@ -2434,7 +2478,7 @@ def generate_futures_reason(
                 f"{_side_label(top_surprise_name)} is {direction} {pts} "
                 f"since {since_opening} in {market_name}"
             )
-        return f"{market_name} has shifted since {since_opening}"
+        return f"{_subject_name} has shifted since {since_opening}"
 
     # (No `multi_source` branch. How many rows we hold for a question is a count
     # of our inventory, and which venues carry it is attribution — D91 puts that
