@@ -144,24 +144,93 @@ def test_the_frame_set_is_exactly_the_five_measured_bracket_columns():
     """Both directions, because each one catches a different mistake.
 
     A missing member serves fabricated cells in that column. An EXTRA member
-    blanks cells on a grid nobody walked — `semifinal`, `quarterfinal`, `final`,
-    `top_4/5/10/20`, `relegation` and `pennant` are the same frame and are
-    excluded on purpose: their populations are unmeasured. Widening this set is
-    a deliberate act that owes its own census, so it must redden a test.
+    withholds cells on a grid whose population does not support the shortcut —
+    see `_MEASURED_EXCLUSIONS` below, which now carries the measurement this
+    docstring used to say was missing.
     """
     assert _ADVANCEMENT_COLUMNS == frozenset(
         {"round_of_32", "sweet_16", "elite_eight", "final_four", "title_game"}
     )
 
 
+#: Every fixed-size column that shares this frame and is still excluded, with the
+#: production measurement (2026-09-23, #8243) that excludes it: how many served
+#: cells the widening would withhold, and how many of those legs HAVE traded in
+#: their latest `futures_odds_snapshots` row. The shipped five read 15/379 = 4.0%.
+_MEASURED_EXCLUSIONS = (
+    ("conference", 23, 23, "nba/nfl/nhl/mls — every withheld leg has traded"),
+    ("pennant", 4, 4, "mlb"),
+    ("relegation", 13, 7, "epl 4/4 + la-liga 9/6"),
+    ("top_4", 4, 4, "epl 2/2 + la-liga 2/2"),
+    ("semifinal", 17, 11, "ncaa-football CFP — Michigan bid 0.00/ask 0.15, last traded 0.19"),
+    ("quarterfinal", 2, 1, "champions-league"),
+)
+
+
+@pytest.mark.parametrize(
+    "col,withheld,traded,note",
+    _MEASURED_EXCLUSIONS,
+    ids=[c[0] for c in _MEASURED_EXCLUSIONS],
+)
+def test_a_same_frame_column_whose_population_trades_stays_out(
+    col, withheld, traded, note
+):
+    """The exclusions that a reader of the frame argument would expect to be IN.
+
+    These columns really are the same frame — fixed-size, summed, and an ask-only
+    book really does state an upper bound inside them. They are out because of
+    the SHORTCUT, not the frame: `needs_trade_evidence` fails closed and withholds
+    without reading trades, so its cost is the legs that have traded and are
+    refused anyway. That cost is a property of the population. It is 4.0% on the
+    five shipped columns and 83% across these six.
+
+    Asserted through the FUNCTION, not just the constant, so a mutant that adds a
+    key to `_ADVANCEMENT_COLUMNS` is killed by the behaviour and reads the reason
+    in the failure message rather than a bare set mismatch.
+    """
+    assert col not in _ADVANCEMENT_COLUMNS, (
+        f"`{col}` was added to the frame, but on 2026-09-23 {traded} of its "
+        f"{withheld} withheld cells had TRADED ({100.0 * traded / withheld:.0f}%, "
+        f"against 4.0% for the shipped five) — {note}. Withholding a traded "
+        f"number is a regression. #8243 is the batched trade read that makes "
+        f"this column admissible; widen only after it lands."
+    )
+    # the specimen book from the men's bracket, asked in this column's frame
+    assert (
+        _grid_cell_quotes_an_untaken_offer(col, "kalshi", None, 0.0, 0.15) is False
+    ), col
+
+
+def test_the_measured_exclusions_are_a_strict_superset_of_nothing_shipped():
+    """Control for the table above: it must not quietly name a SHIPPED column.
+
+    Without this, a careless edit could list `title_game` as excluded-and-traded
+    and the parametrized test would fail for the right-looking wrong reason —
+    or, worse, someone could satisfy it by narrowing the shipped set.
+    """
+    named = {c[0] for c in _MEASURED_EXCLUSIONS}
+    assert named.isdisjoint(_ADVANCEMENT_COLUMNS)
+    assert len(named) == len(_MEASURED_EXCLUSIONS), "duplicate column in the table"
+
+
 def test_championship_is_not_in_the_frame_even_though_it_is_single_winner():
     """The one exclusion a reader of the rule would most expect to be included.
 
     `championship` IS a single-winner field — the frame argument plainly applies
-    — and it is still out, because its cells are blended: 38 of 68 carry Kalshi
-    beside odds_api and none is Kalshi-only. 17 of its 73 Kalshi legs are
-    ask-only, so this is a real contamination that is deliberately NOT repaired
-    here. Recorded so a later widening is a decision and not a tidy-up.
+    — and it is still out for two independent reasons.
+
+    BLENDING: all 68 of its cells carry a non-Kalshi source and none is
+    Kalshi-only, so withholding one contributor is a blending change (reviewed
+    class under 49(d)), not this ship.
+
+    AND IT NEEDS NOTHING ANYWAY, which corrects what this docstring used to
+    claim. "17 of its 73 Kalshi legs are ask-only" is true and was read as a
+    contamination waiting to be repaired. It is not: re-measured 2026-09-23
+    (#8243), all 17 name teams with NO row on the grid — the grid renders last
+    March's 68-team field — and every one of them asks 0.001, the venue floor.
+    Zero reach a reader; the served column sums to 0.8175 for its one seat. The
+    17 was a count of the STORED population, which is a property of the filter
+    that counted it, not of what anyone sees.
     """
     assert "championship" not in _ADVANCEMENT_COLUMNS
     assert (

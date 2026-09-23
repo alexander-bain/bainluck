@@ -4689,15 +4689,46 @@ _SETTLED_COLUMNS = {"make_playoffs", "division"}
 # 20.88 / 13.21 / 7.21 / 5.35 / 4.58 against those seat counts — the two deepest
 # are incoherent, offering 5.35 probability for 4 places and 4.58 for 2.
 #
-# `semifinal`, `quarterfinal`, `final`, `top_4/5/10/20`, `relegation` and
-# `pennant` are the SAME frame and are deliberately NOT here: their populations
-# are unmeasured and they render on grids this ship has not walked, so admitting
-# them would be a second, unmeasured reader-visible change riding a measured one.
-# `championship` is excluded for a different and stronger reason — every one of
-# its 68 cells carries a non-Kalshi source, so it is a BLEND, and withholding one
-# contributor to a blended cell is a blending change (reviewed class under 49(d)),
-# not this ship. 17 of its 73 Kalshi legs are ask-only; that is recorded on #8220,
-# not repaired here.
+# 🔴 DO NOT ADD THE OTHER FIXED-SIZE COLUMNS. THEY WERE MEASURED ON 2026-09-23
+# AND THE ANSWER WAS NO (#8243). This paragraph previously said their populations
+# were "unmeasured", which read as an invitation; they are measured now.
+#
+# `semifinal`, `quarterfinal`, `relegation`, `top_4`, `pennant` and `conference`
+# ARE the same frame — that half of the argument survives. What does not survive
+# is the shortcut. `needs_trade_evidence` FAILS CLOSED: it withholds without
+# reading trades, because a per-outcome snapshot read in this loop is LAT-P132's
+# 24,465 ms. The cost of failing closed is the legs that HAVE traded and are
+# refused anyway, and that cost is a property of the POPULATION, not of the rule:
+#
+#   ncaa-basketball × these 5 columns   379 ask-only,  15 traded —   4.0%  ← ours
+#   nba/nfl/nhl/mls `conference`         23 ask-only,  23 traded — 100.0%
+#   mlb `pennant`, epl `relegation`,
+#     epl/la-liga `top_4`                 8 ask-only,   8 traded — 100.0%
+#   la-liga `relegation`                  9 ask-only,   6 traded —  66.7%
+#   ncaa-football `semifinal`            17 ask-only,  11 traded —  64.7%
+#   champions-league `quarterfinal`       2 ask-only,   1 traded —  50.0%
+#
+# Specimen: CFP `semifinal` shows Michigan at `bid 0.00 / ask 0.15` having LAST
+# TRADED AT 0.19 — no resting bid at capture, but a live transacting market.
+# Withholding those 52 of 63 cells would delete numbers markets traded on: a
+# regression, not a repair. The 4.0% above is re-derived, not inherited, and
+# reproduces this ship's own figures including the Stanford leg named below.
+#
+# The real fix is a BATCHED trade read — one `DISTINCT ON (outcome_id)` over
+# `futures_odds_snapshots` for the whole grid, then `price_is_unsupported` with a
+# true `has_trade_evidence`. LAT-P132 forbids per-outcome, not per-grid. It also
+# lets THESE five columns stop over-withholding their own 15 legs. That is #8243.
+#
+# `championship` is excluded for two independent reasons. (1) BLENDING: all 68 of
+# its cells carry a non-Kalshi source, so withholding one contributor is a
+# blending change (reviewed class under 49(d)), not this ship. (2) It needs
+# nothing anyway — its 17 ask-only Kalshi legs all name teams with NO grid row
+# and every one asks 0.001. The "17 of 73" recorded on #8220 was a count of the
+# STORED population; zero of them reach a reader.
+#
+# `final` and `top_5/10/20` stay out as genuinely inert: `final` is configured on
+# champions-league but absent from the served payload, and golf's `top_N` columns
+# have no Kalshi contributor at all.
 _ADVANCEMENT_COLUMNS = frozenset(
     {"round_of_32", "sweet_16", "elite_eight", "final_four", "title_game"}
 )
