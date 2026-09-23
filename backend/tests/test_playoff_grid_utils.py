@@ -334,6 +334,67 @@ class TestSortTeamsByChampionship:
         result = sort_teams_by_championship(teams, "championship", max_teams=30)
         assert [t["name"] for t in result] == ["A", "B"]
 
+    # ---- #8209: rows tied on every other term get ONE fixed order ----------
+    #
+    # Production 2026-09-23: `ncaa-basketball` serves 23 of 68 rows at an
+    # identical championship of 0.0005 and the cap is 68, so the cap cuts
+    # through the tie. The assertions below are on ORDER and on CAP MEMBERSHIP
+    # under a PERMUTED input — an assertion that merely sorts one fixture
+    # passes just as happily with no tiebreak at all, because `list.sort` is
+    # stable and a single fixture has only one arrival order.
+
+    def test_a_tie_on_every_other_term_is_ordered_the_same_whatever_order_it_arrives_in(self):
+        names = [f"Longshot {i:02d}" for i in range(12)]
+        forward = sort_teams_by_championship(
+            [_make_team(n, 0.0005) for n in names], "championship", max_teams=50
+        )
+        reversed_arrival = sort_teams_by_championship(
+            [_make_team(n, 0.0005) for n in reversed(names)], "championship", max_teams=50
+        )
+
+        assert [t["name"] for t in forward] == [t["name"] for t in reversed_arrival]
+
+    def test_the_cap_keeps_the_same_teams_when_the_same_tie_arrives_in_a_different_order(self):
+        # The reader-visible half, and the one the issue is named for: three
+        # schools left /playoffs/ncaa-basketball and three joined it with every
+        # displayed percentage unchanged. Membership, not just order.
+        names = [f"Longshot {i:02d}" for i in range(23)]
+        forward = sort_teams_by_championship(
+            [_make_team(n, 0.0005) for n in names], "championship", max_teams=20
+        )
+        reversed_arrival = sort_teams_by_championship(
+            [_make_team(n, 0.0005) for n in reversed(names)], "championship", max_teams=20
+        )
+
+        assert len(forward) == len(reversed_arrival) == 20
+        assert {t["name"] for t in forward} == {t["name"] for t in reversed_arrival}
+
+    def test_the_name_tiebreak_never_outranks_a_real_price(self):
+        # CONTROL, opposite branch of term 1: if name leaked ahead of the
+        # probability the whole grid would go alphabetical. "Akron" is named to
+        # sort first and priced to sort last.
+        akron = _make_team("Akron Zips", 0.01)
+        zags = _make_team("Zzz Bulldogs", 0.90)
+
+        result = sort_teams_by_championship([akron, zags], "championship", max_teams=10)
+
+        assert [t["name"] for t in result] == ["Zzz Bulldogs", "Akron Zips"]
+
+    def test_the_name_tiebreak_never_outranks_the_identified_club_rule(self):
+        # CONTROL, opposite branch of term 2: #7754's tie-break must still win
+        # over the new term. Both rows are eliminated so term 1 ties, and the
+        # UNIDENTIFIED row is named to sort first alphabetically — so if name
+        # were checked before `team_id is None`, the phantom would take the
+        # seat and #7754 would be silently reopened.
+        unidentified = _make_eliminated_team("Aaa Athletics", team_id=None)
+        reds = _make_eliminated_team("Cincinnati Reds", team_id=10713)
+
+        result = sort_teams_by_championship(
+            [unidentified, reds], "championship", max_teams=1
+        )
+
+        assert [t["name"] for t in result] == ["Cincinnati Reds"]
+
 
 class TestIsValidGridOutcome:
 
