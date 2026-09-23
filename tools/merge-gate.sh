@@ -1162,6 +1162,17 @@ if [ "$SHA_IN" = "--selftest" ]; then
   # and only the selftest's own mentions remained. Vacuous guards are the thing.
   check "check-runs are reduced to the newest run per check, not read flat" \
     "/usr/bin/grep -q '^CR_LATEST=' '$self' && [ \$(/usr/bin/grep -c '[\$]CR_LATEST' '$self') -eq 2 ]"
+  # notice 48. The row must exist, and — the fail-open direction — an empty
+  # answer must PRINT rather than vanish, because a missing row reads as "no
+  # heavy involvement". Deleting the `else` branch is the regression.
+  # Both patterns break their own literal with a character class, exactly as
+  # `release-required BASI[S]` above does: without it the check's own command
+  # text is a match, the count reads 4 instead of 2, and the guard fails on a
+  # correct file. Self-reference is the trap in every source-text test here.
+  check "the notice-48 heavy-reach row is computed from the diff" \
+    "/usr/bin/grep -q '\-\-\-\-  heavy-reac[h]' '$self'"
+  check "an unreadable heavy-reach answer is printed, not dropped (fail-open guard)" \
+    "[ \$(/usr/bin/grep -c '\-\-\-\-  heavy-reac[h]' '$self') -eq 2 ] && /usr/bin/grep -q 'do NOT read this silenc[e]' '$self'"
   # The fail-open hazard, pinned by name: CodeQL and Vercel open their own check
   # suites and can appear ONLY in the earliest batch, so grouping on the SUITE
   # (or taking max suite id) drops the one verdict notice 32 exists to catch.
@@ -3018,6 +3029,38 @@ if [ -x "$rr_script" ] || [ -r "$rr_script" ]; then
   # at its files.
   if [ -z "$base" ]; then
     echo "  ----  release-required BASIS     NO MERGE BASE in this clone (the same empty base #5456's composition scan reports as inconclusive) — the script fails toward releasing, so '$rr' is its SAFE DEFAULT, not a reading of this diff. Deepen the clone or read it from CI before batching on it."
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Notice 48, computed from the diff — a routing fact, like release-required, and
+# for the same reason: every lane states this answer in its merge offer from
+# memory, at the end of a session.
+#
+# IT IS STATED PER CHANGED TASK AND THE HAZARD IS PER CHANGED FILE. On
+# 2026-09-23 an offer read "no heavy line owed — `backfill_winners` is not in
+# `HEAVY_TASKS`". True of the task NAME. The FILE it changed,
+# `app/tasks/backfill_winners.py`, hosts `_compute_calibration_prices`, which
+# the heavy `compute_calibration_prices` imports in its own body — so the file
+# runs on worker-heavy. Nothing shipped wrong (the diff landed on resolvers that
+# entry point never calls), but the offer was right by luck, and notice 48
+# exists because "merged" gets read as "live" when heavy is behind.
+#
+# WHY IT IS THREE WORDS AND NOT A BOOLEAN: measured over 587 app modules, the
+# closure is ~79-88% if you follow lazy imports and 17% if you do not. A boolean
+# is therefore either non-discriminating or fail-open — the module-level-only
+# reading clears `app.utils.aggregation`, the exact module int492's control
+# proved must convict. `heavy-reach.py --help` carries the full reasoning.
+# ─────────────────────────────────────────────────────────────────────────────
+hr_script="$REPO_PATH/tools/heavy-reach.py"
+if [ -r "$hr_script" ]; then
+  hv="$(cd "$REPO_PATH" && python3 "$hr_script" --head "$SHA" --quiet 2>/dev/null | tail -1)"
+  if [ -n "$hv" ]; then
+    echo "  ----  heavy-reach (notice 48)    $hv"
+  else
+    # An unreadable answer is said out loud rather than dropped: a missing row
+    # here reads as "no heavy involvement", which is the fail-open direction.
+    echo "  ----  heavy-reach (notice 48)    UNREADABLE — the script produced no verdict (python3 missing, or run outside a clone with backend/app). Answer notice 48 by hand; do NOT read this silence as 'not heavy'."
   fi
 fi
 
