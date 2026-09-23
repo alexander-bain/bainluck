@@ -77,10 +77,24 @@ class _Session:
     """
 
     def __init__(
-        self, page=(), remaining=0, landed=None, census_rows=(), out_of_scope=(0, 0)
+        self,
+        page=(),
+        remaining=0,
+        landed=None,
+        census_rows=(),
+        out_of_scope=(0, 0),
+        cursor_resolves=True,
     ):
         self.page = list(page)
         self.remaining = remaining
+        #: Whether the #7701 rung 2 dangling-cursor probe finds its row.
+        #: DEFAULTS TO TRUE so that every guard written before rung 2 keeps
+        #: measuring what it was written to measure: those tests hand in an
+        #: `after_id` with an empty page to exercise exhaustion and resumption,
+        #: and a fake that answered "no such row" would divert all of them into
+        #: the new refusal and quietly stop testing their own subject. The
+        #: False arm is a deliberate fixture, used by the dangling-cursor test.
+        self.cursor_resolves = cursor_resolves
         #: ``(legs, markets)`` the complement-of-scope count answers, or ``None``
         #: to make that count RAISE — the arm that proves the rail reports
         #: "unmeasured" instead of a reassuring zero.
@@ -197,6 +211,13 @@ class _Session:
             return _Result(one=tuple(self.out_of_scope))
         if "LIMIT CAST(:cap AS int)" in sql:
             return _Result(rows=self._selected(sql, dict(params or {})))
+        # #7701 rung 2's dangling-cursor probe. Routed EXPLICITLY rather than
+        # left to the fallthrough, because the fallthrough answers with no rows
+        # — which this rail reads as "the cursor names nothing" — so an unrouted
+        # probe would turn every empty-page-with-a-cursor guard in this file
+        # into a test of the refusal instead of a test of its own subject.
+        if "SELECT 1 FROM futures_outcomes" in sql:
+            return _Result(rows=[(1,)] if self.cursor_resolves else [])
         if upper.startswith("SELECT COUNT("):
             return _Result(scalar=self.remaining)
         return _Result()
@@ -732,9 +753,40 @@ async def test_the_cursor_is_exclusive_and_the_next_call_asks_past_it(monkeypatc
     await rail.repair(second, apply=True, after_id=out["next_cursor"]["after_id"])
 
     assert second.page_params["after_id"] == 9
-    assert "fo.id > CAST(:after_id AS bigint)" in second.page_sql, (
+    # #7701 rung 2 moved the keyset from `fo.id` alone to the composite
+    # `(fm.id, fo.id)`, because the page is now driven from the market side.
+    # The CONTRACT is unchanged — one `?after_id=` on `futures_outcomes.id`,
+    # and the market half is derived from it inside the statement — but the
+    # exclusivity now lives in the row-wise comparison, so that is what this
+    # guard reads.
+    assert "(fm.id, fo.id) > (" in second.page_sql, (
         "the cursor is not exclusive, so the last leg of every page is examined "
         "twice"
+    )
+    # 🔴 THE TWO COMPARISONS BESIDE EACH OTHER HAVE DIFFERENT STRICTNESS AND
+    # BOTH ARE DELIBERATE. The row-wise one must be STRICT or the boundary leg
+    # is re-examined; the `fm.id >=` bound must be NON-STRICT or the rest of a
+    # split market's legs are stepped over — and because they sit two lines
+    # apart, making them agree is the natural-looking edit that breaks one of
+    # them. Neither mistake changes a row count in any other test here: a
+    # re-examined leg is merely counted `unchanged`, and a stepped-over leg is
+    # simply never drained.
+    assert "(fm.id, fo.id) >= (" not in second.page_sql, (
+        "the row-wise keyset went non-strict: the last leg of every page is "
+        "now examined twice"
+    )
+    assert "fm.id >= (SELECT" in second.page_sql, (
+        "the indexable range start is gone. Without it a resume is applied as "
+        "a FILTER and re-walks the whole market keyspace: measured on "
+        "production 2026-09-23, 302,453 markets and 5.1s at a mid-cohort "
+        "cursor, against 11,652 and 738ms with it."
+    )
+    assert "OFFSET 0" in second.page_sql, (
+        "the LATERAL's optimization fence is gone. Postgres pulls a simple "
+        "LATERAL subquery up and re-derives the hash join this change exists "
+        "to avoid — measured cost 603,538, every page 14s or a timeout. It "
+        "reads like a no-op, it changes no row, and no result-checking test "
+        "can see it go."
     )
 
 
@@ -806,17 +858,31 @@ def test_the_census_and_the_pager_share_one_population_predicate():
     """Two spellings of "collapsed leg" is how a drain comes to report progress
     against a population it is not actually walking."""
     src = inspect.getsource(rail)
-    assert src.count("fo.name IS NOT DISTINCT FROM fm.name") == 1, (
+    # 🔴 THE RULE IS COUNTED WITHOUT ITS ALIAS, WHICH IS STRICTLY STRONGER THAN
+    # COUNTING `fo.name IS NOT DISTINCT FROM fm.name` WAS. Since #7701 rung 2
+    # the pager names the outcome table inside a LATERAL and needs the same
+    # sentence under the alias `leg`, so the rule is rendered by
+    # `collapsed_leg_predicate()` and the old full-literal count would read 0.
+    # Matching on the alias-free tail means a hand-written second copy under
+    # ANY alias — `leg.name IS NOT DISTINCT FROM fm.name` pasted into the
+    # lateral, which is exactly the shortcut this change invites — fails here.
+    # The old assertion could not have seen that.
+    assert src.count(".name IS NOT DISTINCT FROM fm.name") == 1, (
         "the collapse predicate is written more than once; the census and the "
         "pager can now disagree about their own population"
     )
-    assert src.count("{COLLAPSED_LEG_PREDICATE}") == 4, (
-        "the shared predicate is no longer interpolated into all four "
-        "statements (page, census, remaining count, out-of-scope count). The "
-        "out-of-scope count is the one that MOST needs it: its whole job is to "
-        "be the same cohort on the other side of the status test, so a second "
-        "spelling there would compare two different populations and report the "
-        "difference as a finding."
+    assert src.count("{COLLAPSED_LEG_PREDICATE}") == 3, (
+        "the shared predicate is no longer interpolated into all three "
+        "statements that take it under the default alias (census, remaining "
+        "count, out-of-scope count). The out-of-scope count is the one that "
+        "MOST needs it: its whole job is to be the same cohort on the other "
+        "side of the status test, so a second spelling there would compare two "
+        "different populations and report the difference as a finding."
+    )
+    assert src.count('{collapsed_leg_predicate("leg")}') == 1, (
+        "the pager no longer renders the shared rule under its LATERAL alias. "
+        "Four statements must ask one question: three through the constant and "
+        "the page through the function that builds it."
     )
     # The scope test is written once for the same reason, and the two halves
     # must be complements — if they ever overlap or leave a gap, the rail's
@@ -1672,3 +1738,163 @@ async def test_only_examined_rows_are_folded_into_the_retention_reading(
         "reading would show a retention cliff that is really a rate limit"
     )
     assert out["terminal"] == "paused_venue"
+
+
+# ---------------------------------------------------------------------------
+# #7701 rung 2 — the selector that made the widened scope servable at all.
+#
+# Rung 1 left rung 2 owing "an index (or a selector that is not a double seq
+# scan)". This is the second branch: the join is DRIVEN from the market side.
+# Measured on production 2026-09-23, widened scope, 120-leg page —
+#
+#     driven by            head page   deep resume   terminal page
+#     planner (was)        14.0s / timeout on every page, cost 603,538
+#     futures_outcomes     626ms       —             20.5s  (cannot say "done")
+#     futures_markets      102ms       738ms         2.57s
+#
+# Every guard below pins a token whose removal is invisible to a result-checking
+# test: the plan changes, the answer does not. That is the whole hazard class.
+# ---------------------------------------------------------------------------
+
+
+def test_the_page_is_driven_from_the_market_side():
+    """🔴 THE JOIN ORDER IS THE FIX, AND IT READS LIKE A REFACTOR.
+
+    The predicate, the scope test, the band and the columns are all unchanged;
+    the only thing rung 2 altered is which table the walk is driven from. A
+    later edit that "simplifies" the LATERAL back into a plain JOIN returns the
+    identical rows and restores the 603,538 hash join, so nothing that checks an
+    answer can catch it.
+    """
+    src = inspect.getsource(rail)
+    page = src.split("page_sql = f")[1]
+
+    assert "JOIN LATERAL" in page, (
+        "the page is no longer driven from the market side. A plain JOIN lets "
+        "the planner hash 4.34M outcomes against 463K markets: measured cost "
+        "603,538, every page 14s or a timeout."
+    )
+    assert "FROM futures_markets fm" in page and page.index(
+        "FROM futures_markets fm"
+    ) < page.index("futures_outcomes"), (
+        "futures_markets is no longer the driving relation — the outcome table "
+        "is named first, which is the 4.34M-row side"
+    )
+    assert "ORDER BY fm.id, fo.id" in page, (
+        "the page no longer orders by the composite key, so a market whose "
+        "legs straddle a page boundary cannot be resumed inside itself"
+    )
+
+
+def test_the_offset_0_fence_is_load_bearing():
+    """🔴 THE ONE TOKEN IN THIS RAIL THAT LOOKS LIKE A TYPO AND IS NOT.
+
+    `OFFSET 0` blocks Postgres from pulling the LATERAL subquery up into the
+    outer join. Measured: without it the planner re-derives a plan
+    byte-identical to the pre-rung-2 hash join. It changes no row, returns no
+    different answer, and has no effect any other test in this file can
+    observe — so it gets a test of its own, or the next reader deletes it as
+    dead syntax.
+    """
+    src = inspect.getsource(rail)
+    page = src.split("page_sql = f")[1].split('"""')[1]
+    assert "OFFSET 0" in page, (
+        "the LATERAL's optimization fence is gone; the pull-up restores the "
+        "603,538 hash join and the widened drain stops working"
+    )
+    # Inside the subquery, not trailing the outer statement — an `OFFSET 0` on
+    # the outer SELECT is a genuine no-op and would satisfy a bare substring
+    # check while fencing nothing.
+    assert page.index("OFFSET 0") < page.index(") fo ON TRUE"), (
+        "OFFSET 0 has moved outside the LATERAL subquery, where it fences "
+        "nothing at all"
+    )
+
+
+def test_the_resume_keeps_both_of_its_comparisons_and_their_strictness():
+    """🔴 TWO COMPARISONS, TWO LINES APART, DELIBERATELY DIFFERENT.
+
+    `fm.id >=` is the indexable range start and MUST be non-strict, or the rest
+    of a split market's legs are stepped over. `(fm.id, fo.id) >` is the
+    exclusivity and MUST be strict, or the boundary leg is examined twice.
+    Making them agree is the natural-looking edit, and neither mistake shows up
+    as a failure anywhere else: a re-examined leg is counted `unchanged`, and a
+    stepped-over leg is simply never drained.
+    """
+    src = inspect.getsource(rail)
+    page = src.split("page_sql = f")[1].split('"""')[1]
+    assert "fm.id >= {cursor_market}" in page
+    assert "(fm.id, fo.id) > ({cursor_market}," in page
+    assert "(fm.id, fo.id) >= (" not in page
+
+
+@pytest.mark.asyncio
+async def test_a_dangling_cursor_is_refused_not_reported_as_exhausted(
+    monkeypatch, fast
+):
+    """🔴 THE FAILURE THIS RAIL CAN AFFORD LEAST: A FALSE "DONE".
+
+    Rung 2 derives the market half of the keyset from `?after_id=` inside the
+    statement. If that leg row has gone the scalar subquery is NULL, every
+    comparison against it is NULL, and the page is empty — indistinguishable
+    from a drained cohort. At the end of a 212-page walk that empty page is the
+    answer everybody is waiting for, so it must be refused BY NAME.
+    """
+    _venue(monkeypatch, _FakeService([]))
+    session = _Session(page=[], out_of_scope=(1, 1), cursor_resolves=False)
+
+    out = await rail.repair(session, apply=False, after_id=999)
+
+    assert out["terminal"] == "refused"
+    assert out["refused_code"] == "CURSOR_DANGLING"
+    assert out["scan_exhausted"] is False, (
+        "a dangling cursor was reported as an exhausted scan — the drain would "
+        "bank a finish it never earned"
+    )
+    assert out["next_cursor"] == {"after_id": 999}, (
+        "the operator's cursor must come back untouched so a retry repeats the "
+        "page rather than stepping over it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_empty_page_on_a_cursor_that_RESOLVES_is_still_exhaustion(
+    monkeypatch, fast
+):
+    """The control for the test above, and the reason it is not vacuous.
+
+    Without this arm the refusal could be firing on every empty page with a
+    cursor — which would take the rail's ONLY way of saying "finished" away
+    while the dangling test still passed.
+    """
+    _venue(monkeypatch, _FakeService([]))
+    session = _Session(page=[], out_of_scope=(1, 1), cursor_resolves=True)
+
+    out = await rail.repair(session, apply=False, after_id=999)
+
+    assert out["terminal"] == "ok"
+    assert out.get("refused_code") is None
+    assert out["scan_exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_dangling_probe_does_not_run_on_a_page_that_found_rows(
+    monkeypatch, fast
+):
+    """The probe is bounded by WHEN it runs, not only by its own timeout.
+
+    It is a primary-key lookup, but it is inside the same budget the venue
+    round-trips come out of. Running it on every page would put one extra
+    statement on all 212 of them to answer a question only the last page asks.
+    """
+    market = _Market("0xaa", "Manacor: A vs B", ["Anna Player", "Bea"])
+    _venue(monkeypatch, _FakeService([market]))
+    session = _Session(page=[_row(9, 10, "0xaa", "Manacor: A vs B")])
+
+    await rail.repair(session, apply=False, after_id=3)
+
+    probes = [s for s, _ in session.statements if "SELECT 1 FROM futures_outcomes" in s]
+    assert probes == [], (
+        "the dangling-cursor probe ran on a page that returned rows; it is only "
+        "ever needed to disambiguate an EMPTY page"
+    )
