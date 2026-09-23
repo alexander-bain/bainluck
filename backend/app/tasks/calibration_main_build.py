@@ -1924,6 +1924,7 @@ async def load_staged_cursor(
         REASON_READ_FAILED,
         STAGED_FUTURES_SCHEMA,
         decode_staged_cursor_detailed,
+        describe_malformed_cursor_field,
         new_staged_cursor,
     )
 
@@ -1978,7 +1979,7 @@ async def load_staged_cursor(
             return blank, REFUSE, f"envelope_{read.status}"
         return blank, INVALIDATE, f"envelope_{read.status}"
 
-    return decode_staged_cursor_detailed(
+    cursor, action, reason = decode_staged_cursor_detailed(
         read.envelope.payload,
         expected_population_version=population_version,
         expected_input_fingerprint=input_fingerprint,
@@ -1992,6 +1993,27 @@ async def load_staged_cursor(
         # the next save. ``None`` restores the pre-layer-1 behaviour exactly.
         legacy_input_fingerprint=legacy_input_fingerprint,
     )
+    # CAL-P1339 (#8050). THE ONLY PLACE THE REJECTED VALUE STILL EXISTS. The
+    # decode is pure and returns a bounded token; the payload that earned it is
+    # in scope here and nowhere after, and the cursor row it came from is
+    # overwritten by this same beat. So a malformed field that is not read out
+    # here is gone — which is exactly how the 12:36:50Z wipe of 2026-09-22 cost
+    # 109 banked units and ~75 refinement children with no way to say what had
+    # been written.
+    #
+    # Logged rather than gauged: the token block in ``calibration_staged_futures``
+    # fixes cursor-reason cardinality at six so the sampler can bank them by
+    # name, and an observed value in a gauge name would mint one per occurrence.
+    malformed = describe_malformed_cursor_field(read.envelope.payload, reason)
+    if malformed:
+        logger.warning(
+            "calibration staged cursor invalidated on %s — the rejected value "
+            "was %s (this discards the bank; the cursor row is overwritten this "
+            "beat, so this line is the only record of it)",
+            reason,
+            malformed,
+        )
+    return cursor, action, reason
 
 
 async def save_staged_cursor(cursor, *, terminal: str, banks_a_unit: bool = True) -> bool:
