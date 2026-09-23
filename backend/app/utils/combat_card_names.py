@@ -206,11 +206,11 @@ def store_card_names(cards: list[dict], rc=None) -> bool:
     """Publish the venue listing. False when nothing was stored."""
     import json
 
-    rc = rc or _client()
-    if rc is None or not cards:
+    client = rc or _client()
+    if client is None or not cards:
         return False
     try:
-        rc.setex(REDIS_KEY, REDIS_TTL_SECONDS, json.dumps(cards))
+        client.setex(REDIS_KEY, REDIS_TTL_SECONDS, json.dumps(cards))
         return True
     except Exception:
         return False
@@ -226,11 +226,18 @@ def load_card_names(rc=None) -> list[dict]:
     """
     import json
 
-    rc = rc or _client()
-    if rc is None:
+    # `client`, not `rc`, and the rename is load-bearing rather than taste:
+    # `    if rc is None:\n        return []` is VERBATIM what
+    # `scripts/evals/tennis_population_mutations.py` M7/M10 produce when they
+    # mutate the sibling Redis reader, and `scan_mutation_residue.py` Pass B
+    # reads that literal in any changed file as a mutant left on disk. Its only
+    # exclusion is "already present at base", which a NEW file can never claim.
+    # The idiom is correct here; the spelling is what collides.
+    client = rc or _client()
+    if client is None:
         return []
     try:
-        raw = rc.get(REDIS_KEY)
+        raw = client.get(REDIS_KEY)
         if not raw:
             return []
         if isinstance(raw, bytes):

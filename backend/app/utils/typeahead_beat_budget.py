@@ -1921,7 +1921,32 @@ def free_background_slots(
 #: background beat writes the identical `BACKGROUND_BEAT_COUNT = 127` against a
 #: base of 126 while this branch writes 127, and the composed tree is 128 with no
 #: textual conflict. Re-run the census AFTER the rebase, not before it.
-BACKGROUND_BEAT_COUNT = 127
+#:
+#: 🔴 RE-DERIVED at discover/430 (2026-09-23, #4485): 127 → **128**, explicit
+#: 84 → **85**, fall-through UNMOVED at **43**. `refresh-espn-combat-cards`
+#: (`crontab(minute=5, hour="*/6")`) names `background` explicitly, which is the
+#: benign direction this guard reserves. RE-DERIVED by RUNNING the census over
+#: the assembled `beat_schedule`, which printed `explicit 85 implicit 43 total
+#: 128`, never by adding one to 127 (#1910).
+#:
+#: Cost shape, declared because this file is where `background` gets argued
+#: about. FOUR FIRES A DAY, and each one is a single ~26 KB HTTP GET of ESPN's
+#: MMA board plus a parse of at most a few dozen cards and one Redis `SETEX` —
+#: no database read, no write, no row scan. Measured end-to-end against the live
+#: venue at 14 cards: well under a second. It is the cheapest beat on this queue
+#: by some distance, and the 120 s soft limit exists only so a dark venue comes
+#: back as this task's own "published nothing" verdict rather than as a kill.
+#:
+#: WHY THE CADENCE IS SLOW ON PURPOSE. The consumer is a NAME, not a price. A
+#: card is announced once and keeps its name, and the stored listing lives 7
+#: days — an order of magnitude longer than the period — so what this must
+#: survive is a run of missed deliveries, not a stale value. Polling faster
+#: would buy nothing a reader could see.
+#:
+#: WHY `background` AND NOT `heavy`: nothing here is heavy, and the serve path
+#: that reads the published listing is the main app's. Routing it to heavy would
+#: put a deployment lag (notice 48) in front of a beat that costs one HTTP GET.
+BACKGROUND_BEAT_COUNT = 128
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT
