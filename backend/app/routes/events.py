@@ -101,7 +101,11 @@ from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import venue_settlement_is_askable
 from app.utils.venue_settlement_reader import attach_venue_settlement
-from app.utils.standings_shape import public_standings, record_text
+from app.utils.standings_shape import (
+    public_standings,
+    reconciled_record_and_standings,
+    record_text,
+)
 from app.utils import (
     moneyline_to_probability,
     project_scores,
@@ -26520,7 +26524,27 @@ def _format_team_data(team) -> dict:
     if getattr(team, "standings_data", None):
         # Write-dead keys are stripped before the blob leaves the server
         # (#4811) — see `app/utils/standings_shape`.
-        data["standings"] = public_standings(deepcopy(team.standings_data))
+        standings = public_standings(deepcopy(team.standings_data))
+        # ONE RECORD PER PAYLOAD (#8070). `record` and the W-L a client
+        # composes out of `standings` are two rails on the same team, and they
+        # disagreed for 2 of the 8 MLB teams on the feed the morning this was
+        # filed — the two sides of one completed game, `record` a game ahead of
+        # the board. The reconciliation is `record_text`'s, already ruled under
+        # #5520 and already serving this very page's hero through
+        # `_compute_standings_context`; applying it here is what stops the hero
+        # and the team card one scroll below it printing different seasons.
+        #
+        # The fallback keeps today's answer on a row the rule cannot read: an
+        # unparseable `current_record` with no snapshot behind it yields None,
+        # and a row nobody can measure should not lose a record it was already
+        # serving. Such a row carries no composable W-L either, so it cannot be
+        # the contradiction this exists to remove.
+        record, standings = reconciled_record_and_standings(
+            team.current_record, standings
+        )
+        if record is not None:
+            data["record"] = record
+        data["standings"] = standings
     # Include season stats if available
     if getattr(team, "season_stats", None):
         data["season_stats"] = deepcopy(team.season_stats)
