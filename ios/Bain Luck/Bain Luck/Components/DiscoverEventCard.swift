@@ -184,100 +184,38 @@ struct NativeEventDiscoverCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Hero section with gradient background
-            ZStack {
-                LinearGradient(
-                    colors: [gradient.0, gradient.1],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .overlay(
-                    // Decorative watermark at 0.08 opacity — never read, so it
-                    // is deliberately NOT ramped (#1772). Scaling it would move
-                    // a background glyph behind live text for no legibility
-                    // gain. The census guard exempts exactly this line.
-                    Text(sportEmoji(for: event.sport))
-                        .font(.system(size: 96))
-                        .opacity(0.08)
-                )
-
-                VStack(spacing: 0) {
-                    // Top row: sport label + live badge
-                    HStack {
-                        Text(sportLabel)
-                            .font(.caption2.weight(.heavy))
-                            .tracking(0.8)
-                            .foregroundStyle(.white.opacity(0.78))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.24), in: Capsule())
-
-                        Spacer()
-
-                        if isLive {
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(.white)
-                                    .frame(width: 5, height: 5)
-                                Text("LIVE")
-                                    .font(.caption2.weight(.heavy))
-                            }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.red.opacity(0.85), in: Capsule())
-                        } else if isDone {
-                            Text("FINAL")
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.white.opacity(0.78))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(.black.opacity(0.24), in: Capsule())
-                        } else if isSuspended {
-                            // The corner that says FINAL or LIVE has to say
-                            // something here too — leaving it empty is how the
-                            // state stayed invisible (live/048).
-                            Text("PAUSED")
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.white.opacity(0.78))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(.black.opacity(0.24), in: Capsule())
-                        }
-                    }
-
-                    Spacer(minLength: 10)
-
-                    // Matchup row
-                    HStack(alignment: .center, spacing: 0) {
-                        heroTeam(
-                            label: cardSides.away, badge: cardBadges.away,
-                            slot: avatarSlot(home: false),
-                            color: awayColor,
-                            score: event.awayScore,
-                            alignment: .leading
-                        )
-
-                        VStack(spacing: 2) {
-                            Text(statusText)
-                                .font((isLive ? Font.caption2 : Font.footnote).weight(.heavy).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                        .frame(width: 50)
-
-                        heroTeam(
-                            label: cardSides.home, badge: cardBadges.home,
-                            slot: avatarSlot(home: true),
-                            color: homeColor,
-                            score: event.homeScore,
-                            alignment: .trailing
-                        )
-                    }
-                }
+            // Hero section with gradient background.
+            //
+            // #2095 / #7074, third instance. This was
+            // `ZStack { backdrop; content }.frame(height: 160)`, and 160 is not
+            // enough room for this content at large text sizes: the sport chip,
+            // the LIVE/FINAL badge, two crests, two team names and two scores
+            // all ramp. Because the fixed height sat on the ZStack and the
+            // `clipShape` below clips to it, the surplus was not merely drawn in
+            // the wrong place — it was CUT OFF. At the largest accessibility
+            // size the whole top row (`MLB`, `• LIVE`) and the bottom of both
+            // scores were simply not on screen, and the card looked like one
+            // that had never had a chip rather than one that had lost it.
+            //
+            // Same repair as the other two heroes: the backdrop becomes the
+            // content's BACKGROUND, so the hero has ONE height instead of two,
+            // and 160 becomes a FLOOR.
+            //
+            // ⚠️ THE DEFAULT-TYPE CARD MOVES, by 4pt, and that is the finding
+            // rather than a cost: measured AFTER, this content wants 164pt at
+            // `large`, so the 160 it was pinned at had ALREADY been eating 2pt
+            // of the chip's 14pt padding on every phone at the default text
+            // size. A floor of 160 is kept anyway — it is the number the card
+            // has always been written against, and a card with less content
+            // than this one still draws the hero it always drew.
+            heroContent
                 .padding(14)
-            }
-            .frame(height: 160)
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: EventHero.discoverCardMinimumHeight
+                )
+                .background { heroBackground }
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
 
             // Bottom section
             VStack(alignment: .leading, spacing: 12) {
@@ -516,6 +454,109 @@ struct NativeEventDiscoverCard: View {
                     .font(.caption.weight(.heavy))
                     .foregroundStyle(.white)
             )
+    }
+
+    // MARK: - The hero (#2095 / #7074, third instance)
+
+    /// What the hero draws BEHIND its content, as a background rather than a
+    /// sibling with a height of its own. See `EventHero` for the measurement
+    /// that made this a floor.
+    private var heroBackground: some View {
+        LinearGradient(
+            colors: [gradient.0, gradient.1],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(
+            // Decorative watermark at 0.08 opacity — never read, so it is
+            // deliberately NOT ramped (#1772). Scaling it would move a
+            // background glyph behind live text for no legibility gain. The
+            // census guard exempts exactly this line.
+            Text(sportEmoji(for: event.sport))
+                .font(.system(size: 96))
+                .opacity(0.08)
+        )
+    }
+
+    /// The hero's own content: the chip row that #2095 is about, and the
+    /// matchup beneath it. `Spacer(minLength: 10)` is what spends the floor —
+    /// at default type it pushes the matchup to the bottom of the 160pt the
+    /// card has always drawn; when the content needs more than 160 it collapses
+    /// to its minimum and the hero grows instead of cutting the chip off.
+    private var heroContent: some View {
+        VStack(spacing: 0) {
+            // Top row: sport label + live badge
+            HStack {
+                Text(sportLabel)
+                    .font(.caption2.weight(.heavy))
+                    .tracking(0.8)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.24), in: Capsule())
+
+                Spacer()
+
+                if isLive {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 5, height: 5)
+                        Text("LIVE")
+                            .font(.caption2.weight(.heavy))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.85), in: Capsule())
+                } else if isDone {
+                    Text("FINAL")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
+                } else if isSuspended {
+                    // The corner that says FINAL or LIVE has to say something
+                    // here too — leaving it empty is how the state stayed
+                    // invisible (live/048).
+                    Text("PAUSED")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.24), in: Capsule())
+                }
+            }
+
+            Spacer(minLength: 10)
+
+            // Matchup row
+            HStack(alignment: .center, spacing: 0) {
+                heroTeam(
+                    label: cardSides.away, badge: cardBadges.away,
+                    slot: avatarSlot(home: false),
+                    color: awayColor,
+                    score: event.awayScore,
+                    alignment: .leading
+                )
+
+                VStack(spacing: 2) {
+                    Text(statusText)
+                        .font((isLive ? Font.caption2 : Font.footnote).weight(.heavy).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .frame(width: 50)
+
+                heroTeam(
+                    label: cardSides.home, badge: cardBadges.home,
+                    slot: avatarSlot(home: true),
+                    color: homeColor,
+                    score: event.homeScore,
+                    alignment: .trailing
+                )
+            }
+        }
     }
 
     private func heroTeam(

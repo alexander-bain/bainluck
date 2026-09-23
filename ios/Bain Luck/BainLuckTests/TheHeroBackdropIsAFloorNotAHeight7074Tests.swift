@@ -140,6 +140,120 @@ final class TheHeroBackdropIsAFloorNotAHeight7074Tests: XCTestCase {
         )
     }
 
+    // MARK: - The THIRD hero (#2095): the Discover GAME card
+    //
+    // #7074 fixed two heroes and there were three. #2095's acceptance asks for
+    // the chip to be checked on every card kind that carries one, and the kind
+    // nobody had photographed was the game card:
+    //
+    //     ZStack { gradient; VStack { chip row; Spacer; matchup } .padding(14) }
+    //         .frame(height: 160)
+    //         .clipShape(…)
+    //
+    // Same two-heights shape, different symptom. Here the fixed height is on
+    // the ZStack and a `clipShape` follows it, so the surplus is not spilled
+    // onto the card's white body — it is CUT OFF. MEASURED on master
+    // `5e9cc2d5f`, iPhone 17 Pro, the live "Miami Marlins @ Chicago Cubs" card:
+    // the hero drew 160.0pt at `large`, at `extra-extra-extra-large` AND at
+    // `accessibility-extra-extra-extra-large`, and at that last size the `MLB`
+    // chip and the `• LIVE` badge were not on screen at all. Frames:
+    // `artifacts/native-301/`.
+
+    private func eventCard() throws -> String {
+        try source("Components", "DiscoverEventCard.swift")
+    }
+
+    /// Anti-vacuity: without this, every assertion below passes on "".
+    func testTheScanReadsTheEventCard2095() throws {
+        XCTAssertTrue(
+            try eventCard().contains("structNativeEventDiscoverCard:View"),
+            "the scan is not reading DiscoverEventCard.swift"
+        )
+    }
+
+    /// The floor is the height the game card always drew.
+    func testTheEventHeroFloorIsUnchangedAtTheHeightItAlwaysDrew2095() {
+        XCTAssertEqual(EventHero.discoverCardMinimumHeight, 160)
+    }
+
+    /// Three heroes, one rule.
+    func testTheEventHeroIsAFloorToo2095() throws {
+        let code = try eventCard()
+        XCTAssertTrue(
+            code.contains("minHeight:EventHero.discoverCardMinimumHeight"),
+            "the game card's hero does not read the floor as a minimum"
+        )
+        XCTAssertTrue(
+            code.contains(".background{heroBackground}"),
+            "the game card's backdrop is not drawn as its content's background"
+        )
+        XCTAssertFalse(
+            code.contains(".frame(height:160)"),
+            """
+            the game card's hero is a fixed height again — the #7074 shape with \
+            a clip in front of it, which does not misplace the category chip, \
+            it deletes it (#2095).
+            """
+        )
+    }
+
+    /// The chip row and the matchup are still separated by the spacer that
+    /// SPENDS the floor. Without it the floor would pad the bottom instead of
+    /// holding the matchup down, and every game card would change shape at the
+    /// default text size — a different defect wearing this fix's name.
+    func testTheEventHeroStillSpendsItsFloorOnTheMatchup2095() throws {
+        XCTAssertTrue(
+            try eventCard().contains("Spacer(minLength:10)"),
+            "the game hero's spacer is gone, so the floor no longer positions the matchup"
+        )
+    }
+
+    /// The needles must be able to say NO. The pre-fix text contains the
+    /// forbidden shape and none of the three required ones.
+    func testTheEventScanWouldCatchTheOriginalShape2095() {
+        let original = PredictionsExperienceIsGatedEverywhere6501Tests.stripped("""
+        ZStack {
+            LinearGradient(colors: [gradient.0, gradient.1],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            VStack(spacing: 0) { Text(sportLabel); Spacer(minLength: 10) }
+                .padding(14)
+        }
+        .frame(height: 160)
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18))
+        """)
+        XCTAssertTrue(
+            original.contains(".frame(height:160)"),
+            "the needle does not match the code it is meant to forbid"
+        )
+        XCTAssertFalse(
+            original.contains("minHeight:EventHero.discoverCardMinimumHeight"),
+            "the floor needle matches the pre-fix shape, so its presence proves nothing"
+        )
+        XCTAssertFalse(
+            original.contains(".background{heroBackground}"),
+            "the background needle matches the pre-fix shape, so its presence proves nothing"
+        )
+    }
+
+    /// 🪤 #8097's trap, checked rather than assumed (n300): a `contains` needle
+    /// that occurs TWICE stays green on a half-revert. Each needle this file
+    /// asserts PRESENT must occur exactly once in the file it scans, or
+    /// reverting one of the two sites leaves the scan satisfied by the other.
+    func testEachEventNeedleOccursExactlyOnce2095() throws {
+        let code = try eventCard()
+        for needle in [
+            "minHeight:EventHero.discoverCardMinimumHeight",
+            ".background{heroBackground}",
+            "Spacer(minLength:10)",
+        ] {
+            XCTAssertEqual(
+                code.components(separatedBy: needle).count - 1, 1,
+                "`\(needle)` does not occur exactly once — a count of 2 means a "
+                + "revert of one site leaves this scan green on the defect"
+            )
+        }
+    }
+
     /// The scan must be able to say NO, or "does not contain" is worthless.
     func testTheScanWouldCatchTheOriginalShape() {
         let original = PredictionsExperienceIsGatedEverywhere6501Tests.stripped("""
