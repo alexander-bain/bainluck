@@ -877,15 +877,47 @@ export function daysUntil(startISO: string | null | undefined, now: Date): numbe
  *
  * Honest-empty (ruling 027): no own window and no declared edition ⇒ null, and
  * the header renders no date rather than a hedge about why (notice 34).
+ *
+ * WHY THE OWN WINDOW ALSO NEEDS THE YEAR (#8197). `formatEditionWindow` above
+ * documents this trap and routes the *edition* window around it, on the
+ * reasoning that "an edition window is by construction not the current
+ * season's". The event's OWN window was assumed to be the current season's —
+ * true for a game, false for a standing concept. #8139's producer half then
+ * filled this very page's `start_date`/`end_date` with `2027-09-17 →
+ * 2027-09-19`, so it stopped taking the fallback and started taking the
+ * short-circuit — and `eventDateRange` prints no year. Production served
+ * `Sep 17 – Sep 19 · 3 markets tracked` beside a `STARTS IN 359 DAYS` badge:
+ * the page contradicted itself, and the date is the more specific-looking of
+ * the two, so it is the one a reader believes. The gate was on the right
+ * hazard and the wrong field.
+ *
+ * So the year is a property of the WINDOW, not of which field carried it: an
+ * out-of-year window prints through the year-bearing grammar whichever branch
+ * produced it. No new date grammar — both already exist, this only picks.
+ * In-season headers are byte-identical (the settled `/event/golf/the-masters`
+ * control stays `Apr 9 – Apr 12`), so only a header that is currently lying
+ * moves.
  */
 export function conceptHeaderDate(
   status: string,
   start: string | null | undefined,
   end: string | null | undefined,
   nextEdition: { start?: string | null; end?: string | null } | null | undefined,
+  now: Date = new Date(),
 ): string | null {
   const own = eventDateRange(start, end);
-  if (own) return own;
+  if (own) {
+    // EVERY defined endpoint must sit in the current year to stay compact — a
+    // window straddling New Year (Dec 30 → Jan 2) needs the year precisely
+    // because its two halves disagree about which one they are in.
+    const years = [parseISODate(start), parseISODate(end)]
+      .filter((d): d is Date => d !== null)
+      .map((d) => d.getUTCFullYear());
+    const outOfYear = years.some((y) => y !== now.getUTCFullYear());
+    // `?? own` is load-bearing for the end-only window: `eventDateRange` can
+    // say "Ends Sep 19", `formatEditionWindow` needs a start and returns null.
+    return outOfYear ? (formatEditionWindow(start, end) ?? own) : own;
+  }
   if (status === "live" || status === "settled") return null;
   return formatEditionWindow(nextEdition?.start, nextEdition?.end);
 }
