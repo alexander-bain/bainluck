@@ -90,6 +90,56 @@ class TestEnvelopeInvariant:
         findings, _ = gs.check_envelope_invariant(grid, "nba")
         assert len(findings) == 1
 
+    # #8251: a capped cell keeps its market's quote and names its bound. The
+    # Missouri CFP semifinal on 9/23: stored 0.18, make-playoffs 0.13, served 0.13.
+    @staticmethod
+    def _capped(merged, src_prob, bound_prob, capped_by="make_playoffs"):
+        semi = _cell(merged, [_src("kalshi", src_prob)])
+        if capped_by is not None:
+            semi["capped_by"] = capped_by
+        return _grid([{"name": "Missouri", "cells": {
+            "make_playoffs": _cell(bound_prob, [_src("kalshi", bound_prob)]),
+            "semifinal": semi,
+        }}], ["make_playoffs", "semifinal"])
+
+    def test_a_capped_cell_below_its_quote_is_not_corruption(self):
+        findings, _ = gs.check_envelope_invariant(self._capped(0.13, 0.18, 0.13), "ncaaf")
+        assert findings == []
+
+    def test_the_same_shape_without_the_marker_still_flags(self):
+        """Control — the capped exemption is keyed on the marker, never on shape."""
+        findings, _ = gs.check_envelope_invariant(
+            self._capped(0.13, 0.18, 0.13, capped_by=None), "ncaaf")
+        assert [f["check"] for f in findings] == ["grid_envelope_violation"]
+
+    def test_a_marked_cell_above_its_bound_still_flags(self):
+        """A marker cannot excuse a number the cap could never have produced."""
+        findings, _ = gs.check_envelope_invariant(self._capped(0.16, 0.18, 0.13), "ncaaf")
+        assert [f["check"] for f in findings] == ["grid_envelope_violation"]
+
+    def test_a_marked_cell_above_its_highest_source_still_flags(self):
+        grid = self._capped(0.30, 0.18, 0.40)
+        findings, _ = gs.check_envelope_invariant(grid, "ncaaf")
+        assert [f["check"] for f in findings] == ["grid_envelope_violation"]
+
+    def test_a_marker_naming_a_missing_bound_still_flags(self):
+        findings, _ = gs.check_envelope_invariant(
+            self._capped(0.13, 0.18, 0.13, capped_by="division"), "ncaaf")
+        assert [f["check"] for f in findings] == ["grid_envelope_violation"]
+
+    def test_the_real_cap_output_passes_the_sentinel(self):
+        """End to end: what `enforce_monotonicity` now emits is what this
+        invariant accepts — the producer and the watchdog agree on the contract."""
+        from app.config.league_configs import NCAA_FOOTBALL_CONFIG
+        from app.utils.playoff_grid import enforce_monotonicity
+
+        grid = self._capped(0.18, 0.18, 0.13, capped_by=None)  # pre-cap cell
+        enforce_monotonicity(grid["teams"], NCAA_FOOTBALL_CONFIG.columns)
+        semi = grid["teams"][0]["cells"]["semifinal"]
+        assert (semi["merged_probability"], semi["sources"][0]["probability"]) == (0.13, 0.18)
+        findings, _ = gs.check_envelope_invariant(grid, "ncaaf")
+        assert findings == []
+
 
 # ---------------------------------------------------------------------------
 # Structural checks
