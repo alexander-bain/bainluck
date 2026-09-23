@@ -360,6 +360,10 @@ async def anchor_is_current(
     A missing event row is ``False``. The FK is `ON DELETE CASCADE` so it should
     be unreachable, but "the row I was going to corroborate against is gone" is
     not evidence that the anchor is current.
+
+    One corroborated exception (#8278): a provider that mints several ids for one
+    game may disagree with its own column without being disproven. See
+    :data:`MULTI_ID_SCALAR_SOURCES`.
     """
     column = SCALAR_DERIVED_ID_COLUMNS.get(key.source)
     if column is None:
@@ -400,11 +404,83 @@ async def anchor_is_current(
         sport_key=statpal_sport_from_source_id(key.source_id),
         warn_unqualified=False,
     )
-    return (
+    if (
         current_key is not None
         and current_key.source_id == key.source_id
         and current_key.id_kind == key.id_kind
+    ):
+        return True
+    return await _is_a_second_id_of_the_row_that_owns_the_first(
+        session, key, current_key, event_id
     )
+
+
+#: Providers that hand out MORE THAN ONE true id for one game, whose single
+#: `events` column can therefore hold only one of them (#8278).
+#:
+#: The Odds API re-mints an event id when a game is rescheduled, and the registry
+#: has long logged that shape as "same game, different API ID"
+#: (`event_registry._attach_claim`). The duplicate drain makes it permanent: it
+#: repoints every child row of the orphan onto the keeper, anchors included, but
+#: `external_id` holds one value and the keeper keeps its own. So after a merge
+#: the orphan's Odds id lives only in `event_provider_anchors`, pointing at the
+#: keeper, disagreeing with the keeper's column.
+#:
+#: Read with CERT-410's rule alone, that anchor is stale, and the next poll of
+#: the orphan's id creates the twin again. Specimen: Blue Jays @ Orioles, the
+#: 2026-09-23 rainout makeup. `odds_api:cc3886…` was anchored to 15316846,
+#: whose column holds Tuesday's `7fafa79a…`. At 20:01Z the claim was refused as
+#: stale and 15317985 was created. It took ESPN's makeup id, so game 1's own
+#: card froze at 0–0 while the game went 4–2.
+#:
+#: ESPN and StatPal are NOT here. Their columns ARE re-keyed and cleared
+#: (`repair_event_espn_id`, the source-intelligence collision sweep). Those are
+#: CERT-410's specimens, and for them a disagreeing anchor is a disproof. Nothing
+#: re-keys `external_id`: its two writers outside the registry
+#: (`snapshot_sparsity`, `admin_backfill_linkage`) fill only a NULL column.
+MULTI_ID_SCALAR_SOURCES = frozenset({"odds_api"})
+
+
+async def _is_a_second_id_of_the_row_that_owns_the_first(
+    session: AsyncSession,
+    key: AnchorKey,
+    current_key: Optional[AnchorKey],
+    event_id: int,
+) -> bool:
+    """Is ``key`` one more true id for a row whose column holds another? (#8278)
+
+    Only for :data:`MULTI_ID_SCALAR_SOURCES`, and only with corroboration. The
+    column's own id must ALSO be anchored to this same row. Then the row owns two
+    ids of one provider, both established the way every anchor is (at create,
+    at first attach, or carried over by an authorized merge), and neither
+    disproves the other.
+
+    Every other shape keeps CERT-410's refusal:
+
+    * an EMPTY column (``current_key is None``). A cleared id is a disproof,
+      not a second id.
+    * a column id that is anchored to a DIFFERENT row, or not anchored at all.
+      Then nothing shows that this row owns both ids.
+    """
+    if key.source not in MULTI_ID_SCALAR_SOURCES or current_key is None:
+        return False
+    if current_key.id_kind != key.id_kind:
+        return False
+    owner = (
+        await session.execute(
+            text(
+                "SELECT event_id FROM event_provider_anchors "
+                "WHERE source = :source AND source_id = :source_id "
+                "AND id_kind = :id_kind LIMIT 1"
+            ),
+            {
+                "source": current_key.source,
+                "source_id": current_key.source_id,
+                "id_kind": current_key.id_kind,
+            },
+        )
+    ).first()
+    return owner is not None and owner[0] == event_id
 
 
 async def invalidate_scalar_anchor(
