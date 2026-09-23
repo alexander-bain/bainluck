@@ -3847,7 +3847,13 @@ jobs:
           # outside densely captured cells), P4a/P4b/P4c (dense cells, capture
           # precedence, no empty hour marks), P5 x3 (bounded by the bank at
           # 24h / 168h / 4320h).
-          EXPECTED = 10
+          # 12 with the coverage fence: P6 (an hour our polls touched twice —
+          # 20:20 and 20:48 — serves its seventeen venue minutes and both
+          # captures at their instants) and P4d (the in-play clamp, split out
+          # of P4a when P4a moved onto the receipt's real live-polled hours).
+          # 13: P4e (the hour a reader stands in is judged up to `now`, not to
+          # its end — the one route mutant the unit guards could not see).
+          EXPECTED = 13
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/phone7547-junit.xml").getroot()

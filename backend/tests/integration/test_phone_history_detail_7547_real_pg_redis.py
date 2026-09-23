@@ -359,6 +359,53 @@ def test_P2_a_capture_hour_serves_the_venue_turns_and_the_capture_at_its_own_ins
     ), f"\n got  {served}\n want {sorted(expected_venue + [(capture_at, capture_value)])}"
 
 
+# ═══ P6 — two captures in an hour do not make it densely captured ════════════
+
+
+#: Codex's named hour (FABLE-REVIEW.md, 2026-09-23T18:54Z): the same outcome as
+#: P2, the hour BEFORE it.
+SPREAD_TWO_CAPTURE_HOUR = datetime(2026, 9, 18, 20, 0, 0, tzinfo=timezone.utc)
+
+
+def test_P6_an_hour_our_polls_touched_twice_serves_the_venue_turns_and_both_captures(
+    venue, broker
+):
+    """61097129 / 229589757, 2026-09-18T20Z, read on the Monday before kickoff.
+
+    Captures at 20:20:00 and 20:48:52 and seventeen venue minutes 20:07–20:55,
+    with a .425 trough and a .435 peak. RED on the base: the cell held two
+    capture instants, so the phone served ONE row — the .43 median at 20:00 —
+    and refused every venue minute; the web served nineteen.
+
+    Two captures twenty-nine minutes apart, twenty minutes after the hour
+    started and eleven before it ended, are not a live poll. The cell is not
+    covered, so the venue's minutes are admitted, and BOTH captures are served
+    at the instants they were taken, each with its own reading — not folded to
+    one median at a bucket start nobody observed.
+    """
+    fx = _stage(SPREAD_ID, now=SPREAD_NOW)
+    name = _name(fx, SPREAD_OUTCOME)
+    hour = SPREAD_TWO_CAPTURE_HOUR
+    expected_venue = _receipt_hour(fx, SPREAD_OUTCOME, hour, "venue")
+    captures = _receipt_hour(fx, SPREAD_OUTCOME, hour, "captures")
+    assert len(expected_venue) == 17 and len(captures) == 2, (expected_venue, captures)
+    assert min(v for _t, v in expected_venue) == 0.425
+    assert max(v for _t, v in expected_venue) == 0.435
+
+    body = _phone(SPREAD_ID)
+    assert body["bucket_seconds"] == 3600, "pre-kickoff: hourly buckets"
+    served = _in_hour(_phone_series(body, name), hour)
+
+    want = sorted(expected_venue + captures)
+    assert len(want) == 19
+    assert served == want, f"\n got  {served}\n want {want}"
+    # The fold is gone: nothing at the hour mark, which no capture was taken at.
+    assert all(ts != hour for ts, _v in served), served
+    # And the web reader agrees on every venue minute in the hour.
+    web_hour = _in_hour(sorted(_web_venue_points(_web(SPREAD_ID), SPREAD_OUTCOME)), hour)
+    assert set(web_hour) <= set(served), sorted(set(web_hour) - set(served))
+
+
 # ═══ P3 — the two readers agree, except where our own polls are already fine ═
 
 
@@ -374,6 +421,33 @@ def _capture_instants_per_cell(
     return cells
 
 
+#: A stretch this long with no capture is a hole — ten minutes, ten times the
+#: venue's one-minute fine tier. Written out here rather than imported so the
+#: acceptance does not borrow the definition it is checking.
+_HOLE_S = 600
+
+
+def _covered_cells(
+    fx: dict, *, now: datetime, bucket_s: int, since: datetime
+) -> set[tuple[int, int]]:
+    """The cells our own captures fill end to end — the only cells that keep
+    their median and admit no venue row. Two or more instants, and no stretch of
+    the visible cell (clamped to `[since, now]`), head and tail included,
+    `_HOLE_S` long without one."""
+    out = set()
+    for (oid, bucket), instants in _capture_instants_per_cell(
+        fx, now=now, bucket_s=bucket_s, since=since
+    ).items():
+        if len(instants) < 2:
+            continue
+        start = max(datetime.fromtimestamp(bucket, tz=timezone.utc), since)
+        end = min(datetime.fromtimestamp(bucket + bucket_s, tz=timezone.utc), now)
+        edges = [start, *sorted(instants), end]
+        if all((b - a).total_seconds() < _HOLE_S for a, b in zip(edges, edges[1:])):
+            out.add((oid, bucket))
+    return out
+
+
 @pytest.mark.parametrize(
     "market_id,now,built_at",
     [
@@ -386,23 +460,23 @@ def test_P3_the_phone_serves_every_venue_row_the_web_serves_outside_densely_capt
 ):
     """Parity with the paid web slice, stated with its one deliberate exception.
 
-    A cell our own polls fill with TWO OR MORE readings keeps its shape — one
-    median at the bucket start, no venue rows — exactly as `test_C9` requires
-    of a finely captured market. Everywhere else the phone serves the same
-    venue instants and values `/history` serves.
+    A cell our own polls COVER — two or more readings and no ten-minute stretch
+    without one — keeps its shape: one median at the bucket start, no venue
+    rows, exactly as `test_C9` requires of a finely captured market. Everywhere
+    else the phone serves the same venue instants and values `/history` serves.
+
+    #7547 — the exception used to be "two or more readings", which fenced every
+    pre-kickoff hour our polls happened to touch twice (`test_P6`).
     """
     fx = _stage(market_id, now=now, built_at=built_at)
     phone, web = _phone(market_id), _web(market_id)
     assert phone["venue_history"]["state"] == "warm" and web["venue_history"]["state"] == "warm"
     assert "refusals" not in phone["venue_history"], phone["venue_history"]
     assert phone["venue_history"]["unsupported_points_withheld"] == 0
-    dense = {
-        cell
-        for cell, instants in _capture_instants_per_cell(
-            fx, now=now, bucket_s=phone["bucket_seconds"]
-        ).items()
-        if len(instants) >= 2
-    }
+    assert phone["actual_hours"] == 168, "the window was not extended, so it starts 168h back"
+    dense = _covered_cells(
+        fx, now=now, bucket_s=phone["bucket_seconds"], since=now - timedelta(hours=168)
+    )
 
     total_web = total_phone = 0
     for o in fx["outcomes"]:
@@ -438,49 +512,100 @@ def test_P3_the_phone_serves_every_venue_row_the_web_serves_outside_densely_capt
 # ═══ P4 — controls: what did not move ════════════════════════════════════════
 
 
-def test_P4a_a_densely_captured_cell_keeps_its_median_at_the_bucket_start(venue, broker):
-    """The settled game, read at the receipt's own clock: in play, 15-minute
-    buckets, our own poll every two to four minutes. Every venue row in the game
-    lands in a cell with several captures, so the phone draws exactly what it
-    drew before this change — one median per cell, at the cell's start — and
-    the bank contributes nothing there.
+#: The receipt's real two-minute live poll: 2026-09-22 00:01:49 → 03:11:49, the
+#: three hours before kickoff (03:13:23). It STOPS at kickoff — the next capture
+#: is 06:49:31 — so a reader clocked inside the game sees no live-polled cell at
+#: all. This clock is the last pre-kickoff minute, where the run is in the window.
+LIVE_POLL_NOW = datetime(2026, 9, 22, 3, 12, 0, tzinfo=timezone.utc)
+LIVE_POLL_HOURS = [datetime(2026, 9, 22, h, 0, 0, tzinfo=timezone.utc) for h in (0, 1, 2)]
+
+
+def test_P4a_a_cell_our_live_poll_covers_keeps_its_median_at_the_bucket_start(venue, broker):
+    """The fence's reason to exist, on the receipt's own live-polled hours.
+
+    00:00, 01:00 and 02:00 on 2026-09-22 each hold 20-30 captures of every leg,
+    two to six minutes apart, AND hundreds of venue minutes the web serves. Our
+    poll already draws those hours, so the phone draws exactly what it drew
+    before #7547 — one median per cell, at the cell's start — and the bank
+    contributes nothing there.
+
+    ⚠️ THIS CONTROL MOVED, AND WHY IS RECORDED. It used to read the receipt at
+    18:26 in play and call every cell with two capture instants dense. The only
+    such cells in that window were a pair ONE SECOND apart at 14:47:30/31 — a
+    restated poll, not a live one — so the control was guarding a duplicate
+    and the live-polled run it described sat outside the clamp. The in-play
+    clamp it also checked is `test_P4d`.
     """
+    fx = _stage(SPREAD_ID, now=LIVE_POLL_NOW)
+    body = _phone(SPREAD_ID)
+    web = _web(SPREAD_ID)
+    assert body["bucket_seconds"] == 3600, "one minute before kickoff: not in play, hourly"
+    assert body["actual_hours"] == 168
+    covered = _covered_cells(
+        fx, now=LIVE_POLL_NOW, bucket_s=3600, since=LIVE_POLL_NOW - timedelta(hours=168)
+    )
+    fenced_web_rows = 0
+    for o in fx["outcomes"]:
+        oid, name = o["outcome_id"], o["name"]
+        served = _phone_series(body, name)
+        web_points = _web_venue_points(web, oid)
+        for hour in LIVE_POLL_HOURS:
+            bucket = int(hour.timestamp())
+            assert (oid, bucket) in covered, f"{name} {hour}: the live poll does not cover it"
+            readings = [
+                p for ts, p in o["captures"] if hour <= _ts(ts) < hour + timedelta(hours=1)
+            ]
+            assert len(readings) >= 20, (name, hour, len(readings))
+            points = _in_hour(served, hour)
+            assert points == [(hour, pytest.approx(round(median(readings), 6)))], (
+                f"{name}: a live-polled cell no longer serves one median at its start: {points}"
+            )
+            fenced_web_rows += len(_in_hour(sorted(web_points), hour))
+    # Not vacuous: the web serves venue minutes in these very cells, and the
+    # phone refused every one of them.
+    assert fenced_web_rows >= 500, fenced_web_rows
+
+
+def test_P4d_the_in_play_clamp_to_the_event_start_holds(venue, broker):
+    """#1138, unchanged: read in play, the phone's window starts at the event
+    start's hour and buckets by fifteen minutes."""
     now = _ts("2026-09-22T18:26:00+00:00")
     fx = _stage(SPREAD_ID, now=now, built_at="2026-09-22T16:02:31.156467+00:00")
     body = _phone(SPREAD_ID)
     assert body["bucket_seconds"] == 900
     clamp = _ts(fx["commence_time"])
-    # Only captures INSIDE the served window count — the clamp cuts the query at
-    # the event start, so a capture before it is not a reading in any cell.
-    dense_cells = {
-        cell
-        for cell, instants in _capture_instants_per_cell(
-            fx, now=now, bucket_s=900, since=clamp
-        ).items()
-        if len(instants) >= 2
-    }
-    assert dense_cells, "the receipt's in-play captures are two to four minutes apart"
-    checked = 0
+    served_any = False
     for o in fx["outcomes"]:
-        oid, name = o["outcome_id"], o["name"]
-        served = _phone_series(body, name)
+        served = _phone_series(body, o["name"])
+        served_any = served_any or bool(served)
         assert all(
             ts >= clamp.replace(minute=0, second=0, microsecond=0) for ts, _v in served
         ), "the in-play clamp to the event start (#1138) moved"
-        venue_rows = {(_ts(ts), p) for ts, p in o["venue"]}
-        per_cell: dict[int, list] = defaultdict(list)
-        for ts, v in served:
-            per_cell[int(ts.timestamp()) // 900 * 900].append((ts, v))
-        for bucket, points in per_cell.items():
-            if (oid, bucket) in dense_cells:
-                checked += 1
-                assert points == [
-                    (datetime.fromtimestamp(bucket, tz=timezone.utc), points[0][1])
-                ], f"{name}: a densely captured cell no longer serves one median at its start: {points}"
-                assert not (
-                    set(points) & venue_rows
-                ), f"{name}: a densely captured cell admitted a venue row"
-    assert checked > 0
+    assert served_any
+
+
+def test_P4e_the_current_hour_is_judged_up_to_now_not_to_its_end(venue, broker):
+    """The hour a reader is standing in has not finished. Read at 01:30 inside
+    the live-polled run, with a bank built a minute earlier: 01:00–01:30 holds
+    captures every two to four minutes and venue minutes the web serves. Judged
+    to 02:00 it would read a thirty-minute "hole" nobody could have polled yet,
+    and admit those minutes; judged to `now` it is covered and keeps its median.
+    """
+    now = datetime(2026, 9, 22, 1, 30, 0, tzinfo=timezone.utc)
+    hour = datetime(2026, 9, 22, 1, 0, 0, tzinfo=timezone.utc)
+    fx = _stage(SPREAD_ID, now=now, built_at=(now - timedelta(minutes=1)).isoformat())
+    body, web = _phone(SPREAD_ID), _web(SPREAD_ID)
+    assert body["bucket_seconds"] == 3600
+    fenced = 0
+    for o in fx["outcomes"]:
+        readings = [p for ts, p in o["captures"] if hour <= _ts(ts) <= now]
+        assert len(readings) >= 5, (o["name"], len(readings))
+        points = _in_hour(_phone_series(body, o["name"]), hour)
+        assert points == [(hour, pytest.approx(round(median(readings), 6)))], (
+            f"{o['name']}: the current hour was judged past `now`: {points}"
+        )
+        fenced += len(_in_hour(sorted(_web_venue_points(web, o["outcome_id"])), hour))
+    assert fenced >= 50, fenced
 
 
 def test_P4b_a_venue_minute_that_restates_a_capture_is_still_refused_on_the_phone(venue, broker):

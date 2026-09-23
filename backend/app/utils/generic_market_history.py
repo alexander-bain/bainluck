@@ -763,6 +763,59 @@ def captures_are_coarse(
     return densest >= coarse_at
 
 
+def captures_cover_cell(
+    instants: Iterable[datetime],
+    *,
+    cell_start: datetime,
+    cell_end: datetime,
+) -> bool:
+    """Do our own captures already draw this chart cell, end to end?
+
+    `/probability-timeline` keeps one median per (outcome, bucket) and refuses
+    the venue's minutes in a cell our polls already fill. It used to call a cell
+    filled when it held TWO capture instants — a proxy for "the two-minute live
+    poll reached it". #7547 measured the proxy failing on the ordinary
+    pre-kickoff cadence: 61097129 *over 9.5*, 2026-09-18T20Z, captures at 20:20
+    and 20:48 and seventeen venue minutes between 20:07 and 20:55 — the web drew
+    the .425 trough and the .435 peak, the phone drew one .43. Two readings do
+    not fill an hour.
+
+    So the question is COVERAGE, not count: is there any stretch of the cell —
+    the head before the first capture and the tail after the last included — at
+    least `COARSE_CAPTURE_MULTIPLE` × the fine interval long with no capture in
+    it? That is the same line `captures_are_coarse` draws between a live-polled
+    line (two minutes, firmly covered) and an hourly one (firmly not), so the
+    route has one definition of "our captures are fine", not two.
+
+    🪤 A SPACING STATISTIC IS NOT COVERAGE. The median gap between captures —
+    the first rule proposed for this — reads 20:00 and 20:02 as two-minute data
+    and fences the fifty-eight minutes after them. Only the widest uncovered
+    stretch answers "is any of this cell unobserved".
+
+    NEVER LOOSER THAN THE COUNT IT REPLACES. A cell with fewer than two instants
+    is never covered here, whatever its width: one capture in the middle of a
+    fifteen-minute in-play cell would otherwise newly FENCE venue minutes the
+    route admits today. This predicate only ever releases cells the old count
+    fenced; it never fences a cell the old count released.
+
+    `cell_start`/`cell_end` are the part of the bucket the reader's window can
+    see — clamp the bucket to the window's start and to `now` before calling, or
+    a cell straddling the edge reads a stretch nobody could have captured as a
+    hole.
+    """
+    from app.utils.futures_chart_series import KALSHI_FINE_INTERVAL
+
+    stamps = sorted({ts for ts in instants if ts is not None})
+    if len(stamps) < 2:
+        return False
+    hole_at = KALSHI_FINE_INTERVAL * 60 * COARSE_CAPTURE_MULTIPLE
+    edges = [cell_start, *stamps, cell_end]
+    widest = max(
+        (edges[i + 1] - edges[i]).total_seconds() for i in range(len(edges) - 1)
+    )
+    return widest < hole_at
+
+
 def as_snapshot_rows(
     outcome_id: int, bookmaker: str, points: Iterable[VenuePoint]
 ) -> list[VenueSnapshotRow]:
