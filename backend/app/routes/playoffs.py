@@ -872,7 +872,8 @@ def _resolve_qualified_merge(
 
     Called ONLY when the family is contested — when this grid holds another key
     with the same base and a different qualifier (``miami (fl)`` beside
-    ``miami (oh)``). That is the one situation the old ``miami`` key collapsed,
+    ``miami (oh)``). The family's plain spelling (``miami``) comes here too: it
+    names one of the two schools and says nothing about which. That is the one situation the old ``miami`` key collapsed,
     and it is the only situation this function changes; an uncontested qualified
     key is handed to :func:`_resolve_ambiguous_merge` and behaves exactly as its
     unqualified spelling always did.
@@ -6243,6 +6244,18 @@ async def get_playoff_grid(
             _qualified_bases[base].add(key)
     _contested_qualified = {
         key for keys in _qualified_bases.values() if len(keys) > 1 for key in keys
+    }
+    # The BARE base key of a contested family is contested too. Once `miami (fl)`
+    # and `miami (oh)` take their own legs, a venue that spells the school plain
+    # `Miami` (Polymarket's 2027 NCAAB champion market, production 2026-09-23)
+    # is left alone on `miami` with no ticker suffix, and the old resolver's
+    # no-anchor fallback is `candidates[0]` — longest-first, i.e. `miami (oh)
+    # redhawks`. On base that key was anchored to the Hurricanes by the `MIA`
+    # suffix it pooled; splitting the family took the anchor away. The venue has
+    # told us there are two schools, so the plain spelling binds by identity or
+    # not at all, exactly like its qualified siblings.
+    _contested_qualified |= {
+        base for base, keys in _qualified_bases.items() if len(keys) > 1 and base in grid_raw
     }
     _contested = {c for cs in merge_candidates.values() if len(cs) > 1 for c in cs}
     _contested |= {

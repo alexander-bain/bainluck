@@ -57,6 +57,14 @@ against a server.
   the key has no suffix at all. With nothing to anchor on, the legs may NOT be
   bound to Miami (OH) by string length; they stay unbound (a blank, the benign
   face). Red on base, where the lone ``MOH`` hit binds the pool to Miami (OH).
+* **The family's PLAIN spelling** (the ``bare_sibling`` seed, recomposition
+  2026-09-23) — a Polymarket make-playoffs market spells the school ``Miami``,
+  beside Kalshi's contested ``Miami (FL)`` / ``Miami (OH)``. Production's shape:
+  Polymarket's 2027 NCAAB champion market lists plain ``Miami``, and the full
+  saved-input replay showed the first candidate binding it to the RedHawks by
+  length — splitting the family took away the ``MIA`` anchor the pooled key had
+  lent it. Plain ``Miami`` has no ticker and prefix-matches both schools, so it
+  may land on neither.
 """
 
 import os
@@ -83,7 +91,8 @@ SPORT_ID = 978291
 MARKET_CHAMP = 978291001     # odds_api, championship column
 MARKET_PLAYOFF = 978291002   # kalshi, make_playoffs column
 MARKET_SEMI = 978291003      # kalshi, semifinal column
-_MARKETS = (MARKET_CHAMP, MARKET_PLAYOFF, MARKET_SEMI)
+MARKET_POLY_PLAYOFF = 978291004  # polymarket, make_playoffs column (bare_sibling only)
+_MARKETS = (MARKET_CHAMP, MARKET_PLAYOFF, MARKET_SEMI, MARKET_POLY_PLAYOFF)
 _TEAM_ID_BASE = 978291100
 
 #: ``teams`` rows: (name, abbreviation). Abbreviations are the REAL production
@@ -211,6 +220,19 @@ async def seeded(request):
 
 
 @pytest.fixture
+async def seeded_bare_sibling():
+    """The ``oh_live`` corpus plus Polymarket pricing plain ``Miami`` to make the playoff."""
+    engine = await _engine(permuted=False, oh_live=True, bare_sibling=True)
+    yield Seeded(engine, "bare_sibling")
+    await _dispose(engine)
+
+
+#: Polymarket's plain-``Miami`` make_playoffs price. Distinct from every other
+#: leg in the corpus so any row that absorbs it moves off its own number.
+POLY_BARE_MIAMI = 0.62
+
+
+@pytest.fixture
 async def seeded_anchorless():
     """The ``oh_live`` corpus, except every Miami (FL) leg has NO ticker suffix."""
     engine = await _engine(permuted=False, oh_live=True, anchorless=True)
@@ -234,7 +256,9 @@ async def _clear(conn) -> None:
     await conn.execute(text("DELETE FROM sports WHERE id = :id"), {"id": SPORT_ID})
 
 
-async def _seed(conn, *, permuted: bool, oh_live: bool, anchorless: bool = False) -> None:
+async def _seed(
+    conn, *, permuted: bool, oh_live: bool, anchorless: bool = False, bare_sibling: bool = False
+) -> None:
     """Insert the corpus.
 
     🔴 EVERY NOT NULL COLUMN IS SPELLED OUT, INCLUDING THE ONES THAT LOOK
@@ -281,6 +305,11 @@ async def _seed(conn, *, permuted: bool, oh_live: bool, anchorless: bool = False
         (semi_id, "kalshi", "KXCFPSEMI-T7829",
          "College Football Playoff Semifinal Qualifiers"),
     ]
+    if bare_sibling:
+        markets.append(
+            (MARKET_POLY_PLAYOFF, "polymarket", "t7829-poly-make-cfp",
+             "Which teams will Make the College Football Playoff")
+        )
     if permuted:
         markets.reverse()
     for market_id, source, external_id, name in markets:
@@ -324,6 +353,10 @@ async def _seed(conn, *, permuted: bool, oh_live: bool, anchorless: bool = False
         await _leg(playoff_id, _ext("KXCFPMAKE-T7829", name, suffix), name, p, bid, ask, rs)
     for name, suffix, p, bid, ask in order(SEMI_LEGS):
         await _leg(semi_id, _ext("KXCFPSEMI-T7829", name, suffix), name, p, bid, ask)
+    if bare_sibling:
+        # A condition id, not a ticker: `_ticker_suffix` yields nothing for it.
+        await _leg(MARKET_POLY_PLAYOFF, "0xt7829bare", "Miami", POLY_BARE_MIAMI,
+                   POLY_BARE_MIAMI - 0.01, POLY_BARE_MIAMI + 0.01)
 
 
 async def _grid(seeded: Seeded) -> dict:
@@ -517,5 +550,32 @@ async def test_a_qualified_name_with_no_ticker_is_not_bound_by_length(seeded_anc
     assert "Miami (OH) RedHawks" not in semi
     assert "Miami Hurricanes" not in playoff and "Miami Hurricanes" not in semi
     # The controls do not move with the anchor: they never depended on it.
+    for name, expected in CONTROL_PLAYOFF.items():
+        assert playoff.get(name) == expected, (name, playoff)
+
+
+@needs_postgres
+async def test_the_familys_plain_spelling_is_not_bound_by_length(seeded_bare_sibling):
+    """Polymarket spells the school plain ``Miami`` (0.62) beside Kalshi's
+    ``Miami (FL)`` 0.71 and ``Miami (OH)`` 0.79.
+
+    Plain ``Miami`` prefix-matches both schools and carries no ticker. The old
+    resolver's no-anchor fallback is the longest candidate — the RedHawks — so
+    before the recomposition fix Polymarket's number was blended into Miami (OH)'s
+    cell. Neither school may absorb it: each serves exactly its own Kalshi leg,
+    and no Miami cell credits Polymarket.
+    """
+    grid = await _grid(seeded_bare_sibling)
+    playoff = _column(grid, "make_playoffs")
+    assert playoff.get("Miami (OH) RedHawks") == 0.79, (
+        f"Miami (OH) make_playoffs = {playoff.get('Miami (OH) RedHawks')!r}, not its own "
+        f"0.79 — plain 'Miami' was bound to it. Column: {playoff}"
+    )
+    assert playoff.get("Miami Hurricanes") == 0.71, playoff
+    rows = _rows(grid)
+    for name in ("Miami Hurricanes", "Miami (OH) RedHawks"):
+        cell = (rows[name].get("cells") or {}).get("make_playoffs") or {}
+        credited = sorted(str(s.get("source")) for s in cell.get("sources") or [])
+        assert "polymarket" not in credited, (name, credited)
     for name, expected in CONTROL_PLAYOFF.items():
         assert playoff.get(name) == expected, (name, playoff)
