@@ -239,7 +239,43 @@ from app.tasks.calibration_main_build import UNIT_PLAN_CACHE_MODE
 #: The version is NOT bumped, and this one is easy: the change moves a
 #: TRANSPARENCY COUNT, not a row. q271 names precisely the rows it named
 #: yesterday; what changes is whether the page describes one of them twice.
-LIVE_INPUT_FINGERPRINT = "d4000da8ca17d64dfeef47a8974d7c6f"
+#:
+#: RE-ANCHORED for #6868 (CAL-P1340, the estimate-collapse repair):
+#: ``d4000da8…`` -> ``8bb78952…``. The moved root is
+#: ``_calibration_population_ctes`` and the edit is ONE clause — the
+#: ``datagolf_recovery_unverified`` withholding the #6211 anchor above
+#: introduced, respelled from ``md->'k' IS NULL`` to ``md IS NULL OR NOT
+#: (md ? 'k')``. IDENTICAL ROWS: ``md->'k' IS NULL`` is true when ``md`` is SQL
+#: NULL or the key is absent, a JSON ``null`` VALUE is ``'null'::jsonb`` and
+#: never SQL NULL, so the two forms cannot disagree on any row — and today
+#: neither withholds anything at all, because 0 of 1,120,621 resolved markets
+#: carry the key (2026-09-23 03:54Z). What moves is the PLAN. PostgreSQL has no
+#: statistics for a jsonb subscript, so an ``IS NULL`` on one is charged
+#: ``DEFAULT_UNK_SEL`` = 0.005: read off the production planner at a
+#: 1,500-market roster (``EXPLAIN``, plan only, 2026-09-23 03:5xZ), the shipped
+#: spelling estimated ``market_info`` at 4 rows against 725 for the same
+#: statement without the clause, and ``virtual_market`` at 30 against a true
+#: 1,500. The repaired spelling plans node-for-node identically to the
+#: pre-#6211 tree (135 nodes, 725 rows, root cost 448,472). That 181x
+#: under-estimate is #6868: the per-unit mean stepped 145,478 ms -> ~660,000 ms
+#: between two consecutive beats on 2026-09-16 and /api/calibration has served
+#: a 2026-09-15 snapshot ever since.
+#:
+#: WHAT THIS RE-KEY COSTS, asked the way the notes above insist. MEASURED,
+#: NOTHING, and this time there is no argument to make: the live
+#: ``calibration:main:staged_futures`` cursor (read 2026-09-23 03:58Z, written
+#: 03:37:56Z) carries ``planned_units: 132``, ``committed_units: 0``,
+#: ``served_units: 0``, ``terminal: partial``. There is no bank to discard. The
+#: ring says the same from the other side: 15 beats from 2026-09-22 12:36Z to
+#: 2026-09-23 02:37Z banked 0.00 units/beat, and the run before it closed +0.27
+#: net per beat against 94 units outstanding — ~14.5 days, against wipes every
+#: 1-5 days. Re-keying a bank that cannot publish is the entire point of the
+#: change.
+#:
+#: The version is NOT bumped, and the reason is the strongest of any anchor
+#: here: the rows are provably the same rows. A reader is told nothing because
+#: nothing about the population changed — only how long it takes to compute.
+LIVE_INPUT_FINGERPRINT = "8bb7895222dddc7749b5052a43fcdb5e"
 
 
 class _Db:

@@ -3785,7 +3785,49 @@ def _calibration_population_ctes(
                   AND NOT COALESCE(
                       (fm.market_metadata->>'datagolf_recovery_residual')::boolean,
                       false)
-                  AND fm.market_metadata->'datagolf_recovery_unverified' IS NULL
+                  -- 🔴 #6868 / CAL-P1340 — THIS LINE IS WRITTEN AS `IS NULL ON A
+                  -- COLUMN OR NOT AT ALL`, AND THE SPELLING IS THE WHOLE POINT.
+                  -- `2caad4905` shipped it as
+                  --
+                  --     AND fm.market_metadata->'datagolf_recovery_unverified' IS NULL
+                  --
+                  -- which is the SAME rows and a different plan. PostgreSQL has
+                  -- no statistics for a jsonb subscript, so `nulltestsel` falls
+                  -- through to DEFAULT_UNK_SEL = 0.005 for an `IS NULL` whose
+                  -- argument is not a plain column. Read off the production
+                  -- planner at a 1,500-market roster (`EXPLAIN`, plan only,
+                  -- 2026-09-23 03:5xZ), that one clause took the estimate for
+                  -- `market_info` from 725 rows to 4 -- 181x -- and `virtual_market`
+                  -- from the true 1,500 to 30. Believing the unit holds four
+                  -- markets, the planner rebuilt the whole chain as per-row
+                  -- nested loops with index lookups, and eleven plan nodes
+                  -- disappeared. The per-unit mean went 145,478 ms to ~660,000 ms
+                  -- between two consecutive beats on 2026-09-16 and the accuracy
+                  -- page stopped publishing.
+                  --
+                  -- The estimate is not merely pessimistic, it is backwards: the
+                  -- clause excludes NOTHING. 0 of 1,120,621 resolved markets
+                  -- carry the key (measured 2026-09-23 03:54Z). True selectivity
+                  -- 1.000, assumed 0.005.
+                  --
+                  -- `IS NULL` on the real COLUMN keeps its statistics, and
+                  -- `NOT (md ? 'k')` is estimated by `contsel` rather than by the
+                  -- null-test default, so the pair below plans as the clause it
+                  -- actually is. It is exactly equivalent: `md->'k' IS NULL` is
+                  -- true when `md` is SQL NULL or the key is absent, and a JSON
+                  -- `null` VALUE is `'null'::jsonb`, never SQL NULL, so `?`
+                  -- agrees with the subscript on every row. No test of the ROWS
+                  -- can hold this -- the two spellings select the same rows, and
+                  -- `test_calibration_datagolf_symmetric_exclusion_pg.py` stayed
+                  -- green through the whole week -- so the guard is a scan for
+                  -- the SPELLING (`tests/test_calibration_population_jsonb_
+                  -- nulltest_6868.py`, the class and not this clause) and the
+                  -- plan read is a committed script
+                  -- (`scripts/probe_staged_unit_plan_shape.py`). An estimate is a
+                  -- property of STATISTICS, and CI's empty container has none,
+                  -- so a CI gate on this ratio could only measure itself.
+                  AND (fm.market_metadata IS NULL
+                       OR NOT (fm.market_metadata ? 'datagolf_recovery_unverified'))
             ),
             -- #6275 / #1902, queue 363 item 4 (ALEX RULING): the identity
             -- quarantine. A market whose own ticker names a different game date
