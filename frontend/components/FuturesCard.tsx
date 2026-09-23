@@ -26,6 +26,7 @@ import { renderedPricesAsOf } from "@/lib/futuresCardPriceAge";
 // instead of growing a private second copy of the rule.
 import { outcomeRowVerdict } from "@/components/futures/OutcomeRow";
 import { PinIcon } from "@/components/PinButton";
+import { categoryKeyLabel } from "@/lib/sportCategories";
 
 interface FuturesCardProps {
   market: FuturesMarket;
@@ -172,7 +173,8 @@ export default function FuturesCard({
             <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
               {showSport && (
                 <span className="text-micro-xs text-text-muted uppercase tracking-widest truncate">
-                  {market.llm_sport_category || formatSportName(market.sport, market.sport_name)}
+                  {/* #8290 — the key goes through the category map, never raw. */}
+                  {categoryKeyLabel(market.llm_sport_category) || formatSportName(market.sport, market.sport_name)}
                 </span>
               )}
               {/* UX-P276 (#2710): the chip says "Game Props", never `game_prop`.

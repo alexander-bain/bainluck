@@ -1085,6 +1085,22 @@ export function getNameForCategory(categoryKey: string): string {
 }
 
 /**
+ * #8290 — the reader-facing name for an `llm_sport_category` key, or
+ * `undefined` when there is none.
+ *
+ * The futures hero, its share card and `FuturesCard` printed the key raw
+ * whenever the served `sport_name` was null. Production `/futures/59939103`
+ * read `TABLE_TENNIS` — underscore included, upper-cased by CSS.
+ * `getNameForCategory` already owns the answer (the map's name, else
+ * acronym-safe title case), so this only adds the null handling the three call
+ * sites need to keep their `||` fallbacks.
+ */
+export function categoryKeyLabel(key: string | null | undefined): string | undefined {
+  if (typeof key !== "string" || !key.trim()) return undefined;
+  return getNameForCategory(key.trim()) || undefined;
+}
+
+/**
  * Group an array of league keys by their category.
  * Returns a map of categoryKey -> leagueKeys[]
  */
