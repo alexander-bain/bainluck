@@ -4,6 +4,7 @@ Covers: Kalshi, Polymarket, Odds API futures, ESPN, StatPal, DataGolf, MLB,
 rosters, and quota monitoring.
 """
 
+import functools
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, get_db_rw
 from app.utils import probability_to_american
+from app.utils.async_llm import run_llm_off_loop
 from app.utils.futures_rank import rerank_market_fields_stmt
 from app.utils.espn_candidate_selection import select_authorized_espn_candidate
 from app.routes.admin_utils import _check_admin_destructive, _check_admin_secret
@@ -839,7 +841,9 @@ async def sync_espn_teams(
         if not espn_team and llm.is_available():
             best_score = 0
             for et in espn_teams:
-                score = llm.match_team_names_cached(team.name, et.display_name or et.name, sport_key)
+                score = await run_llm_off_loop(
+                    llm.match_team_names_cached, team.name, et.display_name or et.name, sport_key
+                )
                 if score > best_score and score >= 0.8:
                     best_score = score
                     espn_team = et
@@ -942,6 +946,24 @@ async def espn_teams_status(
         "with_alt_names": row.with_alt_names,
         "enrichment_pct": round(row.with_espn_id / row.total * 100, 1) if row.total > 0 else 0,
     }
+
+
+def _llm_espn_event_match(ee, *, home_name, away_name, sport_key) -> bool:
+    """Sync LLM name predicate for ESPN event candidates (#4068).
+
+    Lives at module level rather than as a closure in the handler for two
+    reasons: CERT-868's widened guard walks nested `def`s inside async bodies
+    too — wrapping a blocking call in a closure does not unpark the loop — and
+    a module-level function is picklable enough to reason about. It only ever
+    runs inside `run_llm_off_loop`, never on the loop.
+    """
+    from app.services import llm
+
+    espn_home = ee.home_team.display_name or ee.home_team.name or ""
+    espn_away = ee.away_team.display_name or ee.away_team.name or ""
+    home_conf = llm.match_team_names_cached(home_name, espn_home, sport_key)
+    away_conf = llm.match_team_names_cached(away_name, espn_away, sport_key)
+    return home_conf >= 0.8 and away_conf >= 0.8
 
 
 @router.post("/espn/sync-live-events")
@@ -1069,15 +1091,21 @@ async def sync_espn_live_events(
 
         # LLM fallback for unmatched events (skip if skip_llm=true to avoid timeout)
         if not espn_event and not skip_llm and llm.is_available():
-            def _llm_match(ee) -> bool:
-                espn_home = ee.home_team.display_name or ee.home_team.name or ""
-                espn_away = ee.away_team.display_name or ee.away_team.name or ""
-                home_conf = llm.match_team_names_cached(event.home_team_name, espn_home, sport_key)
-                away_conf = llm.match_team_names_cached(event.away_team_name, espn_away, sport_key)
-                return home_conf >= 0.8 and away_conf >= 0.8
-
-            espn_event, _llm_reason = select_authorized_espn_candidate(
-                espn_events, event.commence_time, is_name_match=_llm_match,
+            # The whole selection goes off-loop, not each call inside it: the
+            # predicate is handed to `select_authorized_espn_candidate` as a
+            # SYNC callback, so there is no await point to put in it. Every
+            # argument is a scalar read here, on the loop — `espn_events` comes
+            # from the ESPN scoreboard service, not the ORM, so nothing lazy
+            # crosses into the thread.
+            espn_event, _llm_reason = await run_llm_off_loop(
+                select_authorized_espn_candidate,
+                espn_events, event.commence_time,
+                is_name_match=functools.partial(
+                    _llm_espn_event_match,
+                    home_name=event.home_team_name,
+                    away_name=event.away_team_name,
+                    sport_key=sport_key,
+                ),
                 anchor_espn_id=getattr(event, "espn_id", None),
             )
             if espn_event is not None:
@@ -1087,11 +1115,13 @@ async def sync_espn_live_events(
                 llm_matched.append({
                     "our_event": f"{event.away_team_name} @ {event.home_team_name}",
                     "espn_event": f"{_espn_away} @ {_espn_home}",
-                    "home_confidence": llm.match_team_names_cached(
-                        event.home_team_name, _espn_home, sport_key
+                    "home_confidence": await run_llm_off_loop(
+                        llm.match_team_names_cached,
+                        event.home_team_name, _espn_home, sport_key,
                     ),
-                    "away_confidence": llm.match_team_names_cached(
-                        event.away_team_name, _espn_away, sport_key
+                    "away_confidence": await run_llm_off_loop(
+                        llm.match_team_names_cached,
+                        event.away_team_name, _espn_away, sport_key,
                     ),
                 })
             elif _llm_reason != "no-name-match":
@@ -1378,7 +1408,9 @@ async def match_espn_teams(
     results = []
     for et in espn_teams:
         espn_name = et.display_name or et.name
-        score = llm.match_team_names_cached(our_team_name, espn_name, sport_key) if llm.is_available() else 0.0
+        score = await run_llm_off_loop(
+            llm.match_team_names_cached, our_team_name, espn_name, sport_key
+        ) if llm.is_available() else 0.0
 
         if score >= 0.5:  # Only show likely matches
             results.append({
