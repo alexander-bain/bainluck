@@ -373,6 +373,206 @@ def test_population_sql_is_sliced_seven_ways_and_covers_every_capture():
 
 
 # ---------------------------------------------------------------------------
+# reconcile_pinned — the idempotent re-run, and the zero it must not be
+#
+# The derivation cannot speak about a leg this script has repaired: its
+# population predicate is `fo.is_winner IS TRUE` and the repair's whole effect is
+# to set that column false. So `ALREADY_REPAIRED` was unreachable through
+# `derive`, and a second run reported the healthy state as
+# `MISSING from derivation: 56` — the same line a Kalshi retention purge prints.
+# These arms are about telling those two apart.
+# ---------------------------------------------------------------------------
+
+
+class _CurrentRowsSession:
+    """Answers the reconciliation's direct read of `futures_outcomes`.
+
+    Serves ONLY the ids it was actually asked for, so an arm cannot pass on a
+    row the code under test never requested, and `asked` is recorded so the
+    "already derived legs are not re-read" arm has something to assert on.
+    """
+
+    def __init__(self, current: dict[int, tuple[bool, str]]):
+        self._current = current
+        self.asked: list[int] = []
+
+    async def execute(self, _stmt, params=None):
+        self.asked = list(params["ids"])
+        return _FakeResult(
+            [(oid, *self._current[oid]) for oid in self.asked if oid in self._current]
+        )
+
+
+def _pinned(index: int = 0):
+    """A pinned leg and the stamp it earns, straight from the shipped table."""
+    oid, market, ticker, venue_result, prior = repair.EXPECTED[index]
+    return oid, market, ticker, venue_result, prior, repair.RETRACTION_FOR[venue_result]
+
+
+@pytest.mark.asyncio
+async def test_a_repaired_leg_is_reconciled_as_already_repaired():
+    """The healthy idempotent state, which `derive` structurally cannot report."""
+    oid, _m, _t, _v, _p, target = _pinned()
+    session = _CurrentRowsSession({oid: (False, target)})
+
+    got = {r["outcome_id"]: r for r in await repair.reconcile_pinned(session, [])}
+
+    assert got[oid]["verdict"] == repair.ALREADY_REPAIRED
+    assert got[oid]["target_source"] == target
+
+
+@pytest.mark.asyncio
+async def test_a_leg_whose_evidence_vanished_is_never_reported_as_repaired():
+    """⭐ The arm this whole function exists for.
+
+    Kalshi MARKET data purges at >=74/<86 days (gotcha #35, measured) and these
+    are July tickers. When the capture goes, the leg drops out of the derivation
+    while still being `is_winner = TRUE` — i.e. NOT repaired, and no longer
+    provable from our own tables. Before the reconciliation that produced the
+    identical `MISSING` line as a successful repair, so the run that should have
+    raised an alarm read as the run that should reassure.
+    """
+    oid, _m, _t, _v, prior, _target = _pinned()
+    session = _CurrentRowsSession({oid: (True, prior)})
+
+    got = {r["outcome_id"]: r for r in await repair.reconcile_pinned(session, [])}
+
+    assert got[oid]["verdict"] == repair.EVIDENCE_GONE
+    assert got[oid]["verdict"] != repair.ALREADY_REPAIRED
+    assert "NOT repaired" in got[oid]["why"]
+
+
+@pytest.mark.asyncio
+async def test_a_leg_another_grader_stamped_is_moved_not_repaired():
+    """False, but not by this repair — so not this repair's row to claim."""
+    oid, _m, _t, _v, _p, target = _pinned()
+    session = _CurrentRowsSession({oid: (False, "espn_scoreboard")})
+
+    got = {r["outcome_id"]: r for r in await repair.reconcile_pinned(session, [])}
+
+    assert got[oid]["verdict"] == repair.MOVED
+    assert "espn_scoreboard" in got[oid]["why"] and target in got[oid]["why"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_outcome_row_is_gone_and_is_not_guessed_at():
+    oid, _m, _t, _v, _p, _target = _pinned()
+    session = _CurrentRowsSession({})  # the row is not there at all
+
+    got = {r["outcome_id"]: r for r in await repair.reconcile_pinned(session, [])}
+
+    assert got[oid]["verdict"] == repair.GONE
+    assert got[oid]["is_winner"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_leg_the_derivation_returned_is_not_reconciled_on_top_of_it():
+    """Otherwise every pinned leg would be counted twice in the summary."""
+    oid, _m, _t, _v, _p, target = _pinned()
+    session = _CurrentRowsSession({oid: (False, target)})
+
+    got = await repair.reconcile_pinned(session, [{"outcome_id": oid}])
+
+    assert oid not in {r["outcome_id"] for r in got}
+    assert oid not in session.asked, "it must not even be asked about"
+
+
+@pytest.mark.asyncio
+async def test_every_pinned_leg_is_accounted_for_exactly_once():
+    """The invariant the report's ⛔ UNACCOUNTED line guards."""
+    session = _CurrentRowsSession({})
+    got = await repair.reconcile_pinned(session, [])
+
+    ids = [r["outcome_id"] for r in got]
+    assert sorted(ids) == sorted(repair.EXPECTED_BY_ID)
+    assert len(ids) == len(set(ids)) == len(repair.EXPECTED)
+
+
+def test_the_derivation_structurally_cannot_produce_already_repaired():
+    """Pin the mechanism, so deleting the reconciliation reds an arm that says why.
+
+    `derive`'s ALREADY_REPAIRED branch tests `row["is_winner"] is False` against
+    rows returned by a query that requires `fo.is_winner IS TRUE`. Both halves
+    are asserted here: if the filter is ever dropped the branch becomes reachable
+    and this arm should be revisited rather than silently outlived.
+    """
+    for slice_mod in range(7):
+        assert "fo.is_winner IS TRUE" in repair._population_sql(slice_mod)
+
+    source = (_SCRIPTS / "repair_8132_fabricated_win.py").read_text()
+    assert 'row["is_winner"] is False and row["prior_source"] == stamp' in source
+
+
+def test_every_verdict_the_code_defines_is_printed_by_the_report():
+    """A verdict missing from `VERDICTS` is a row the operator never sees."""
+    defined = {
+        getattr(repair, name)
+        for name in dir(repair)
+        if name.isupper() and isinstance(getattr(repair, name), str)
+        and getattr(repair, name) == name
+    }
+    assert defined == set(repair.VERDICTS)
+
+
+# ---------------------------------------------------------------------------
+# state_sentence — which zero is this zero
+# ---------------------------------------------------------------------------
+
+
+def _verdicts(**counts) -> list[dict]:
+    plan = []
+    for verdict, n in counts.items():
+        plan += [{"verdict": getattr(repair, verdict), "outcome_id": None}] * n
+    return plan
+
+
+def test_the_holding_state_says_so_in_words():
+    plan = _verdicts(ALREADY_REPAIRED=len(repair.EXPECTED))
+    got = repair.state_sentence(plan, writable=[], include_new=False)
+    assert "HOLDING" in got and str(len(repair.EXPECTED)) in got
+
+
+def test_the_alarming_zero_and_the_healthy_zero_are_not_the_same_sentence():
+    """The entire defect in one assertion: both used to print
+    `nothing writable — no rows touched.`"""
+    healthy = repair.state_sentence(
+        _verdicts(ALREADY_REPAIRED=len(repair.EXPECTED)), [], include_new=False
+    )
+    alarming = repair.state_sentence(
+        _verdicts(EVIDENCE_GONE=len(repair.EXPECTED)), [], include_new=False
+    )
+    assert healthy != alarming
+    assert "HOLDING" not in alarming
+    assert "EVIDENCE_GONE" in alarming
+
+
+def test_a_partially_repaired_cohort_reports_both_halves():
+    plan = _verdicts(ALREADY_REPAIRED=50, EVIDENCE_GONE=4, MOVED=2)
+    got = repair.state_sentence(plan, writable=[], include_new=False)
+    assert "50 of 56" in got
+    assert "4 EVIDENCE_GONE" in got and "2 MOVED" in got
+    assert "HOLDING" not in got, "a cohort with holes is not holding"
+
+
+def test_held_back_new_legs_name_the_flag_that_would_write_them():
+    plan = _verdicts(ALREADY_REPAIRED=len(repair.EXPECTED), NEW=3)
+    assert "--include-new" in repair.state_sentence(plan, [], include_new=False)
+    assert "--include-new" not in repair.state_sentence(plan, [], include_new=True)
+
+
+def test_work_to_do_is_counted_rather_than_explained():
+    got = repair.state_sentence(_verdicts(REPAIR=7), [{"x": 1}] * 7, include_new=False)
+    assert "7 row(s) to write" in got
+
+
+def test_an_empty_plan_refuses_to_reassure():
+    """Nothing derived AND nothing reconciled is not evidence of anything."""
+    got = repair.state_sentence([], writable=[], include_new=False)
+    assert "HOLDING" not in got
+    assert "check the capture table" in got
+
+
+# ---------------------------------------------------------------------------
 # The undo
 # ---------------------------------------------------------------------------
 
