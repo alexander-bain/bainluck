@@ -51,6 +51,13 @@ MAX_ASSETS_PER_CONNECTION = 500
 # mentioning. Long enough that an ordinary quiet stretch is not the reason.
 COVERAGE_GRACE_SECONDS = 120
 
+# How many unserved ids each shard names at the recycle. Bounded because the
+# point is a sample somebody can carry to the venue and ask about, not a dump:
+# a starved cycle has thousands of unserved ids and a log line is not the place
+# for them. Five per shard is enough to ask the question and small enough that
+# eight shards cost one line.
+UNSERVED_SAMPLE_PER_SHARD = 5
+
 
 def _assets_in(message: Any) -> set[str]:
     """Every asset id this frame carries, whatever shape the venue used.
@@ -77,6 +84,24 @@ def _assets_in(message: Any) -> set[str]:
                 if isinstance(change, dict) and change.get("asset_id"):
                     found.add(change["asset_id"])
     return found
+
+
+def _evenly_spaced(items: list[str], limit: int) -> list[str]:
+    """At most `limit` items, spread from the first to the last.
+
+    Position-preserving on purpose: the caller samples a list whose ORDER is
+    the thing it must not select on, so the picks are spaced across the whole
+    range instead of taken off one end. Shorter than `limit` means take it all
+    — there is nothing to spread.
+    """
+    if limit <= 0 or not items:
+        return []
+    if len(items) <= limit:
+        return list(items)
+    if limit == 1:
+        return [items[len(items) // 2]]
+    step = (len(items) - 1) / (limit - 1)
+    return [items[round(k * step)] for k in range(limit)]
 
 
 def _subscribe_frame(asset_ids: Optional[list[str]]) -> str:
@@ -179,7 +204,16 @@ class PolymarketWebSocket:
         # #837 coverage: what we asked the venue for, against what it has
         # actually sent us. Per shard, because the silent-fraction signature is
         # one connection going quiet while its same-sized siblings do not.
-        self._shard_subscribed: dict[int, int] = {}
+        #
+        # The ASKED half holds the ids themselves rather than a count, so the
+        # difference between the two is nameable. A count could only ever say
+        # "1832 of 3738", which is breadth and not a finding: an untraded book
+        # and a truncated subscription produce the same ratio. Naming the ids
+        # is what lets the next reader ask the venue whether those particular
+        # books were quiet, and one structure rather than a list beside a
+        # count is deliberate — a count that can drift from the list it
+        # summarises is the coverage instrument lying about coverage.
+        self._shard_ids: dict[int, list[str]] = {}
         self._shard_served: dict[int, set[str]] = {}
         self._shards_connected: set[int] = set()
         self._shard_connected_at: dict[int, float] = {}
@@ -205,7 +239,7 @@ class PolymarketWebSocket:
             # with nothing to fan. The shadow resolution-only consumer uses it.
             shards = [None]
 
-        self._shard_subscribed = {i: len(s or []) for i, s in enumerate(shards)}
+        self._shard_ids = {i: list(s or []) for i, s in enumerate(shards)}
         self._shard_served = {i: set() for i in range(len(shards))}
         self._shards_connected = set()
         self._shard_connected_at = {}
@@ -286,7 +320,10 @@ class PolymarketWebSocket:
                     "Polymarket WS coverage: shard(s) %s have served 0 distinct "
                     "assets while siblings are streaming — served/subscribed %s",
                     silent,
-                    {i: f"{served[i]}/{self._shard_subscribed.get(i, 0)}" for i in served},
+                    {
+                        i: f"{served[i]}/{len(self._shard_ids.get(i) or [])}"
+                        for i in served
+                    },
                 )
 
     def _mark_shard_down(self, shard: int) -> None:
@@ -456,9 +493,57 @@ class PolymarketWebSocket:
         """
         return bool(self._shards_connected)
 
+    def _unserved_by_shard(self) -> dict[int, list[str]]:
+        """Per shard, the subscribed ids the venue has never sent a frame for.
+
+        Set difference against the SUBSCRIPTION, not against everything seen:
+        the venue is free to send an id we did not ask for, and counting that
+        against a shard's coverage would credit one shard for another's
+        traffic. The order of the shard's own subscribe is preserved because
+        the sampler below reads position, and position is the confound it
+        exists to spread across.
+        """
+        out: dict[int, list[str]] = {}
+        for shard, ids in self._shard_ids.items():
+            served = self._shard_served.get(shard) or set()
+            out[shard] = [asset_id for asset_id in ids if asset_id not in served]
+        return out
+
+    def unserved_sample(
+        self, limit: int = UNSERVED_SAMPLE_PER_SHARD
+    ) -> dict[int, list[str]]:
+        """Up to `limit` unserved ids per shard, spread across each shard.
+
+        This is the whole point of keeping the ids. `assets_served` counts
+        assets that sent at least one message, so an untraded book and a
+        truncated subscription read identically in the ratio — 49% served is
+        measured breadth, not a finding. Naming ids converts it: ask the venue
+        whether these particular books were quiet, and the answer separates
+        "nobody traded them" from "we were never served them".
+
+        SPREAD, not the first `limit`. `_shard_asset_ids` slices the caller's
+        list contiguously, and that list comes from a query with no `ORDER BY`
+        — heap order, which tracks insertion order, which tracks market age. So
+        the head of a shard is its oldest slice, and taking the first few ids
+        would select the sample by the very variable under test. Evenly spaced
+        indices touch head, middle and tail, so a sample that comes back
+        uniformly quiet says something about the shard rather than about its
+        oldest corner.
+
+        Shards with nothing unserved are omitted rather than reported empty:
+        an empty list is the healthy case and does not need a line.
+        """
+        sample: dict[int, list[str]] = {}
+        for shard, unserved in self._unserved_by_shard().items():
+            if not unserved:
+                continue
+            sample[shard] = _evenly_spaced(unserved, limit)
+        return sample
+
     @property
     def stats(self) -> dict:
         served = {i: len(s) for i, s in self._shard_served.items()}
+        subscribed = {i: len(ids) for i, ids in self._shard_ids.items()}
         return {
             "connected": self.is_connected,
             "messages": self._message_count,
@@ -466,9 +551,18 @@ class PolymarketWebSocket:
             # #837: what we asked for against what the venue actually sent, so
             # a silently-served fraction is a number somebody can read rather
             # than something inferred from a missing chart.
-            "shards": len(self._shard_subscribed),
+            "shards": len(self._shard_ids),
             "shards_connected": len(self._shards_connected),
-            "assets_subscribed": sum(self._shard_subscribed.values()),
+            "assets_subscribed": sum(subscribed.values()),
             "assets_served": sum(served.values()),
             "served_by_shard": served,
+            # Both halves per shard, so the unserved COUNT is read rather than
+            # subtracted by hand. The first production read of this ratio came
+            # back bimodal (four shards under 40, four near 500) and the reader
+            # had to reconstruct the denominators from a separate capture to
+            # see it.
+            "subscribed_by_shard": subscribed,
+            "unserved_by_shard": {
+                i: len(u) for i, u in self._unserved_by_shard().items()
+            },
         }

@@ -131,6 +131,46 @@ def _log_stats_line(stats: dict, ws_stats: dict, blend: dict) -> None:
     )
 
 
+def _log_unserved_sample(ws) -> None:
+    """Name a few of the ids the venue never sent, once per recycle.
+
+    #837's ratio said 49% served and could not say why: `assets_served` counts
+    assets that sent at least one message, so a book nobody traded and a
+    subscription the venue truncated are the same number. The ids the
+    difference is made of already exist in process memory at this point and
+    were being discarded. Named, they are answerable — the books can be put to
+    Polymarket directly, and the reply turns "49% served" into a share that is
+    actually truncated.
+
+    Module-level for the same reason `_log_stats_line` is: the failure this
+    guards against is a line that quietly stops being emitted, and a closure
+    inside a consumer that needs a database, a slate and a live socket cannot
+    be asserted on.
+
+    Defensive around the client because this runs in the recycle path, after
+    the `finally` that drained prices: a consumer that raised here would turn
+    a planned resubscribe into a crash, trading a diagnostic for the socket.
+    """
+    # Imported here, not at module scope, for the same reason the client is:
+    # nothing on this module's import path should pull the websocket service.
+    from app.services.polymarket_ws import UNSERVED_SAMPLE_PER_SHARD
+
+    try:
+        sample = ws.unserved_sample()
+    except Exception:
+        logger.exception("Polymarket WS unserved sample failed (#837)")
+        return
+    if not sample:
+        return
+    logger.info(
+        "Polymarket WS unserved sample (#837): %d shard(s) with unserved ids, "
+        "up to %d spread per shard — %s",
+        len(sample),
+        UNSERVED_SAMPLE_PER_SHARD,
+        sample,
+    )
+
+
 async def _run_polymarket_ws_consumer():
     """Main Polymarket WebSocket consumer loop."""
     from sqlalchemy import select, update, text, or_, and_, func
@@ -740,6 +780,9 @@ async def _run_polymarket_ws_consumer():
     exit_stats = ws.stats
     stats["assets_served"] = exit_stats.get("assets_served", 0)
     stats["served_by_shard"] = exit_stats.get("served_by_shard", {})
+    stats["subscribed_by_shard"] = exit_stats.get("subscribed_by_shard", {})
+    stats["unserved_by_shard"] = exit_stats.get("unserved_by_shard", {})
+    _log_unserved_sample(ws)
     logger.info("Polymarket WS consumer exiting: %s", stats)
     return stats
 
