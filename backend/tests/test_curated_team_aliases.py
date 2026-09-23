@@ -32,9 +32,44 @@ def test_curated_map_is_franchise_scoped_and_wellformed():
 
 
 def test_no_alias_collides_across_franchises():
-    # An alias mapping to two different franchises would make search worse.
-    seen: dict[str, tuple] = {}
-    for key, aliases in CURATED_TEAM_ALIASES.items():
+    """An alias may name ONE club in several sports; never two different clubs.
+
+    #8084 sharpened this from "no alias appears twice". `north carolina state` is
+    the same school's own formal name on three rows — `basketball_wncaab`,
+    `americanfootball_ncaaf`, `basketball_ncaab` — all spelled `NC State Wolfpack`
+    and all anchored to espn 152, so it is one club with three sport rows rather
+    than the cross-franchise fan-out this guard exists to stop. The protection that
+    matters is unchanged and still asserted below: two DIFFERENT team names sharing
+    an alias remains a failure, which is the case that would make search worse
+    (the file's own "multiple Patriots" example).
+    """
+    seen: dict[str, str] = {}
+    for (sport_key, name), aliases in CURATED_TEAM_ALIASES.items():
         for a in aliases:
-            assert a not in seen, f"alias {a!r} maps to {seen[a]} and {key}"
-            seen[a] = key
+            if a in seen:
+                assert seen[a] == name, (
+                    f"alias {a!r} maps to two different clubs: "
+                    f"{seen[a]!r} and {name!r}"
+                )
+            seen[a] = name
+
+
+def test_an_alias_claimed_by_two_clubs_still_fails_the_guard():
+    """The guard above must still catch the case it was written for.
+
+    Asserted on a constructed map rather than by trusting the real one to stay
+    clean: a guard whose failing branch is never exercised is a guard that passes
+    because the population is currently innocent, not because it works.
+    """
+    fake = {
+        ("americanfootball_nfl", "New England Patriots"): ["pats"],
+        ("basketball_ncaab", "George Mason Patriots"): ["pats"],
+    }
+    seen: dict[str, str] = {}
+    collided = False
+    for (_sport_key, name), aliases in fake.items():
+        for a in aliases:
+            if a in seen and seen[a] != name:
+                collided = True
+            seen[a] = name
+    assert collided, "two different clubs sharing an alias must be a failure"

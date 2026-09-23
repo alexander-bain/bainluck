@@ -23,7 +23,57 @@ CURATED_TEAM_ALIASES: dict[tuple[str, str], list[str]] = {
     ("americanfootball_nfl", "San Francisco 49ers"): ["niners", "9ers"],
     ("americanfootball_nfl", "Tampa Bay Buccaneers"): ["bucs"],
     ("basketball_nba", "Philadelphia 76ers"): ["sixers"],
+    # #8084 — NOT a colloquial nickname: the school's own formal name. Our row is
+    # spelled `NC State Wolfpack`, the college feeds spell it `North Carolina St.`,
+    # and nothing anywhere holds the form in between. Measured on production
+    # 2026-09-22 across the 398 rows the 13 warm grids serve: `North Carolina St.`
+    # is one of 11 rows resolving to NO metadata, on TWO grids —
+    # /playoffs/ncaa-women-basketball and /playoffs/ncaa-football — where it renders
+    # as bare text beside 68 crested rows. `normalize_team_name_for_matching`
+    # already expands it to `north carolina state` (arm C), so the read side is
+    # waiting on a key no row holds; this is the alias that mints it.
+    #
+    # THREE ROWS, ONE CLUB, VERIFIED BY ANCHOR AND NOT BY NAME. `teams` holds four
+    # rows named `NC State Wolfpack`: 4 (ncaaf), 232 (ncaab), 735 (wncaab) all carry
+    # espn_id 152 and NC State's crest, colours and record. Row 3211
+    # (`baseball_ncaa`) carries espn_id **95** and a different primary colour, and is
+    # deliberately EXCLUDED — that sport's rows are where #7727's specimen lives
+    # (14627 is named `Ohio State` while holding Penn State's espn 414), so its
+    # anchor is not one this issue verified. A name is not an id.
+    ("basketball_wncaab", "NC State Wolfpack"): ["north carolina state"],
+    ("americanfootball_ncaaf", "NC State Wolfpack"): ["north carolina state"],
+    ("basketball_ncaab", "NC State Wolfpack"): ["north carolina state"],
 }
+
+
+def _alias_claim_counts() -> dict[str, int]:
+    """`alias -> how many (sport_key, team_name) entries claim it`.
+
+    THE MAP'S KEY CAN EXPRESS A MULTI-SPORT ALIAS AND ITS TWO DERIVED MAPS CANNOT
+    (#8084). Both expansion functions below build `expansions[alias] = (...)`, so
+    an alias claimed by several entries does not collide loudly — the last one
+    written silently wins, and which one that is depends on nothing but insertion
+    order. While every alias belonged to exactly one franchise that was invisible;
+    `north carolina state` is the first alias to belong to one SCHOOL in three
+    sports, which is the same shape as belonging to two different franchises as far
+    as a dict keyed on the alias alone can tell.
+
+    So the ambiguity is refused rather than resolved, which is this file's existing
+    rule ("an alias that matches two franchises makes search worse, not better")
+    applied to its own derived output. A contested alias yields NO search or
+    game-card expansion: those rails then behave exactly as they do today, while the
+    TEAMS rail — `alternate_names`, which is keyed per row and has no such
+    collision — still resolves the alias for all three rows. That is the rail #8084
+    needs, so the refusal costs the issue nothing.
+
+    Fail-closed, not last-wins: guessing a scope here re-creates the cross-league
+    fan-out the `(sport_key, name)` key was chosen to prevent.
+    """
+    counts: dict[str, int] = {}
+    for aliases in CURATED_TEAM_ALIASES.values():
+        for alias in aliases:
+            counts[alias.lower()] = counts.get(alias.lower(), 0) + 1
+    return counts
 
 
 # #4728 — the SECOND consumer of the map above, and the reason it is keyed by sport.
@@ -94,6 +144,7 @@ def team_nickname_search_expansions() -> dict[str, tuple[str, str]]:
 
     from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 
+    contested = _alias_claim_counts()
     expansions: dict[str, tuple[str, str]] = {}
     for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
         category = SPORT_PREFIX_TO_LLM_CATEGORY.get(sport_key.split("_")[0])
@@ -107,6 +158,8 @@ def team_nickname_search_expansions() -> dict[str, tuple[str, str]]:
             alias = alias.lower()
             if alias in token.lower():
                 continue
+            if contested.get(alias, 0) > 1:
+                continue  # see `_alias_claim_counts` — refused, not guessed
             expansions[alias] = (token, category)
     return expansions
 
@@ -179,9 +232,12 @@ def team_nickname_event_expansions() -> dict[str, tuple[str, str]]:
     leaves the sibling's optimisation intact where it is still true.
     """
 
+    contested = _alias_claim_counts()
     expansions: dict[str, tuple[str, str]] = {}
     for (sport_key, team_name), aliases in CURATED_TEAM_ALIASES.items():
         token = _canonical_market_token(team_name)
         for alias in aliases:
+            if contested.get(alias.lower(), 0) > 1:
+                continue  # see `_alias_claim_counts` — refused, not guessed
             expansions[alias.lower()] = (token, sport_key)
     return expansions
