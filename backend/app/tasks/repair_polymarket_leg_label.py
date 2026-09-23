@@ -274,6 +274,16 @@ CENSUS_STATEMENT_TIMEOUT_SECONDS = 12
 #: never reports zero.
 REMAINING_COUNT_MIN_BUDGET_SECONDS = 0.5
 
+#: Least wall-time #7701 rung 3a's per-market completeness count will start on.
+#: It shares the terminal count's floor but NOT its temperament: that count is
+#: degradable and may report itself unmeasured, while this one gates a WRITE, so
+#: running out of budget refuses the groups rather than guessing them. Its bound
+#: is derived from the wall at call time (see `repair()`), never from
+#: ``TARGET_SELECT_BUDGET_SECONDS`` — CERT-3341: a fixed bound on a statement
+#: that runs AFTER the venue loop is additive to the wall and silently reverses
+#: ``budget_headroom_seconds()`` into an H12 with no body and no cursor.
+COMPLETENESS_MIN_BUDGET_SECONDS = 0.5
+
 #: Bound on the #7701 rung 2 dangling-cursor probe. A single primary-key lookup
 #: on ``futures_outcomes``, run ONLY when a page came back empty under an
 #: ``?after_id=`` — so at most once per drain, with the venue budget untouched.
@@ -1345,12 +1355,41 @@ async def repair(
 
     collapsed_by_market: dict[int, int] = {}
     count_failed: Optional[str] = None
-    if by_market:
+    # 🔴 CERT-3341: THIS QUERY RUNS AFTER THE VENUE LOOP, SO ITS COST IS ADDITIVE
+    # TO THE WALL AND A FIXED BUDGET REVERSES `budget_headroom_seconds()`. At
+    # `TARGET_SELECT_BUDGET_SECONDS` the declared worst case was 10.0 deadline +
+    # 6.0 final batch pair + 0.35 pause + 8.0 here + 0.5 pool slack + 8.0
+    # post-loop reserve = 32.85s against a 30s router wall: an H12 with no body
+    # and no cursor, which is the exact silent failure this rail promises not to
+    # be. The top-up above is NOT in that sum and does not need to be — it runs
+    # BEFORE the loop, so the deadline check at the top of each batch absorbs it
+    # by starting fewer batches.
+    #
+    # Derived from the wall the same way the terminal count below is, and for the
+    # same reason: subtracting `client_db_budget_seconds(0)` is what stops the
+    # bound from overshooting by exactly the pool slack the helper adds. Unlike
+    # that count this one is NOT degradable — it decides whether a write is safe
+    # — so when the budget is gone the groups are refused rather than guessed.
+    spent_before_completeness = time.monotonic() - started
+    completeness_budget = (
+        ROUTER_WALL_SECONDS
+        - spent_before_completeness
+        - POST_LOOP_RESERVE_SECONDS
+        - client_db_budget_seconds(0.0)
+    )
+    if by_market and completeness_budget < COMPLETENESS_MIN_BUDGET_SECONDS:
+        count_failed = (
+            f"only {completeness_budget:.2f}s of the {ROUTER_WALL_SECONDS}s wall "
+            f"remained after {spent_before_completeness:.2f}s spent, which is "
+            f"under the {COMPLETENESS_MIN_BUDGET_SECONDS}s this check needs; the "
+            "page is returned with its cursor instead of a write nothing proved"
+        )
+    elif by_market:
         try:
             counted = await _bounded_statement(
                 session,
-                timeout_literal=f"'{TARGET_SELECT_BUDGET_SECONDS}s'",
-                server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
+                timeout_literal=f"'{completeness_budget:.3f}s'",
+                server_budget_s=completeness_budget,
                 sql=f"""
                     SELECT leg.market_id, COUNT(*)
                       FROM futures_markets fm

@@ -1126,6 +1126,51 @@ def test_the_worst_case_still_fits_under_the_router_wall():
     )
 
 
+def test_the_completeness_count_is_bounded_by_the_wall_not_by_a_constant():
+    """CERT-3341, and the regression guard it required.
+
+    #7701 rung 3a's per-market completeness count runs AFTER the venue loop, so
+    unlike the page select its cost is ADDITIVE to the wall — `started` is
+    already spent by the time it begins. Bounded at
+    `TARGET_SELECT_BUDGET_SECONDS` the declared worst case was 10.0 deadline +
+    6.0 final batch pair + 0.35 pause + 8.0 count + 0.5 pool slack + 8.0
+    post-loop reserve = 32.85s against a 30s wall: `budget_headroom_seconds()`
+    silently reversed, and an H12 with no body and no cursor — the one failure
+    this rail is built not to have.
+
+    Two things are asserted, because either alone is weak. The STRUCTURAL half
+    says the bound is still derived; the ARITHMETIC half says the derivation
+    still leaves the count enough room to start, which is what breaks if anyone
+    raises the deadline, the batch pair or the post-loop reserve.
+    """
+    src = inspect.getsource(rail)
+    assert "server_budget_s=completeness_budget" in src, (
+        "the completeness count no longer takes a wall-derived bound"
+    )
+    assert src.count("server_budget_s=TARGET_SELECT_BUDGET_SECONDS") == 2, (
+        "a statement other than the page select and its trailing-market top-up "
+        "took the fixed select budget. Both of those run BEFORE the loop, where "
+        "the deadline check absorbs them by starting fewer batches; anything "
+        "after the loop that takes a constant is additive to the wall."
+    )
+
+    worst_spent = (
+        rail.DEADLINE_SECONDS + rail.BATCH_PAIR_BUDGET_SECONDS + rail.VENUE_PAUSE
+    )
+    derived = (
+        rail.ROUTER_WALL_SECONDS
+        - worst_spent
+        - rail.POST_LOOP_RESERVE_SECONDS
+        - rail.client_db_budget_seconds(0.0)
+    )
+    assert derived >= rail.COMPLETENESS_MIN_BUDGET_SECONDS, (
+        f"in the worst case the completeness count is left {derived:.2f}s, under "
+        f"the {rail.COMPLETENESS_MIN_BUDGET_SECONDS}s it needs to start — so every "
+        "such call refuses every group and the drain writes nothing, which is "
+        "safe but is not a drain"
+    )
+
+
 def test_the_page_select_bound_cannot_exceed_the_loop_deadline():
     """`started` is captured BEFORE the page SELECT, so a slow SELECT does not
     add to the total — it just leaves the loop less room. That argument holds
