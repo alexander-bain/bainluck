@@ -964,6 +964,12 @@ export interface ConceptHeadlineBout {
 export function conceptHeadlineBout(
   data: FeedConceptData,
   locale?: string,
+  // #8223 — threaded rather than left to `boutDateLabel`'s own default so the
+  // wrapper is pinnable in a test. A defaulted `now` here cannot re-acquire the
+  // defect the way a defaulted `startDate` could in `formatDeclaredStartLabel`:
+  // the reader's clock is the only correct value in production, so the default
+  // IS the production behaviour, not a silent opt-out of it.
+  now: Date = new Date(),
 ): ConceptHeadlineBout | null {
   // Settled means settled: a card in its WHAT-HIT window leads with the result,
   // never with a price that is now history.
@@ -996,21 +1002,61 @@ export function conceptHeadlineBout(
     dateLabel: boutDateLabel(
       data.headline_bout?.commence_time ?? data.start_date,
       locale,
+      now,
     ),
   };
 }
 
-/** "Fri, Sep 19", or null when there is no parseable start. */
+/**
+ * "Fri, Sep 19" for a bout in the reader's current year, "Thu, Jul 1, 2027" when
+ * it is not, or null when there is no parseable start.
+ *
+ * WHY THE YEAR (#8223). This label was weekday/month/day in every branch. On the
+ * default landing page on 2026-09-23 that put three 2027 UFC cards on screen
+ * reading `Wed, Jun 30`, `Thu, Jul 1` and `Sat, Jul 10` — dates a reader in
+ * September 2026 places three months in the PAST, on cards advertising fights
+ * nine months in the future. Same-page 2026 cards (`Sat, Oct 3`, `Sat, Dec 26`)
+ * were already right and stay byte-identical: only a card that is currently
+ * lying moves.
+ *
+ * ⚠️ THE YEAR IS ASKED OF THE SAME FORMATTER THAT PRINTS THE DAY, and that is
+ * the whole design of this branch rather than a flourish. The obvious spelling
+ * is `d.getFullYear() !== now.getFullYear()`, and the obvious "tidy-up" a later
+ * reader makes is swapping it to `getUTCFullYear` — because `conceptHeaderDate`
+ * twenty lines above legitimately does exactly that. It is right there and wrong
+ * here: that function picks between formatters that pin `timeZone: "UTC"`, so
+ * UTC IS its render clock, whereas this label passes no `timeZone` and renders
+ * in the reader's own zone. A UTC comparison here misjudges every bout within a
+ * few hours of New Year — `2026-01-01T02:00:00Z` renders `Wed, Dec 31` for every
+ * reader in the Americas, which is December 2025, and a UTC year of 2026 matches
+ * the reader's and suppresses the year, dating a year-old fight as last week.
+ *
+ * Comparing two renders from the same formatter cannot make that mistake: there
+ * is no second clock to be inconsistent with. It also removes the failure from
+ * the guard's reach and puts it out of the next reader's reach, which matters
+ * because the frontend jest gate runs `TZ=UTC` — a gate in which the local and
+ * UTC spellings are indistinguishable and NO test can tell them apart. The
+ * ambiguity is removed by construction precisely because it cannot be caught.
+ *
+ * `now` is injected rather than read from `Date.now()` inside the branch because
+ * this is the class of #1093 and #3458 — combat card-concept tests that pinned
+ * the real calendar and took CI red near UTC midnight on every branch at once.
+ */
 export function boutDateLabel(
   when?: string | null,
   locale?: string,
+  now: Date = new Date(),
 ): string | null {
   if (!when) return null;
   const d = new Date(when);
   if (Number.isNaN(d.getTime())) return null;
+  // The year AS THIS LABEL WOULD PRINT IT — same locale, same (unpinned, so
+  // reader-local) zone as the weekday/month/day below. See the ⚠️ above.
+  const renderedYear = (x: Date) => x.toLocaleDateString(locale, { year: "numeric" });
   return d.toLocaleDateString(locale, {
     weekday: "short",
     month: "short",
     day: "numeric",
+    ...(renderedYear(d) !== renderedYear(now) ? { year: "numeric" as const } : {}),
   });
 }
