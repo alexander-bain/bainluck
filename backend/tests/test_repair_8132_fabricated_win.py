@@ -8,13 +8,24 @@ cover, together with the refusals that make the script safe to hand to an
 operator: the wrong app, a moved row, a downgrade, a leg the pinned table has
 never seen.
 
-What they do NOT cover is the SQL. A fake session answers whatever the test author
-decided it answers, so it can prove the verdict logic and nothing about whether
+WHAT THEY DO NOT COVER IS THE SQL, and that is stated here rather than left to be
+discovered. A fake session answers whatever the test author decided it answers, so
+these can prove the verdict logic and nothing about whether
 `jsonb_array_elements(raw_response -> 'kalshi_event' -> 'markets')` selects the
-rows the docstring claims. That claim was established by measurement on production
-(seven `mod(id,7)` slices, 2026-09-23 00:50-01:05Z) and is pinned here as
-:data:`EXPECTED`; the producer-guard half has a real-Postgres companion in
-`tests/integration/test_price_crown_protected_8132_pg.py`.
+rows the docstring claims. That claim rests on measurement instead: seven
+`mod(id,7)` slices driven against production 2026-09-23 00:50-01:05Z, pinned here
+as :data:`EXPECTED` and re-derived by the script on every run before it writes.
+
+The producer guard has no real-Postgres gate either. Its predicate was validated
+against production's own parser (`COALESCE(resolution_source,'') NOT IN <set>`
+returns the three specimen rows as UNPROTECTED today, which is correct — they
+still carry `clean_resolution`/`game_score`), and its structural half is
+`tests/test_price_crown_protected_8132.py`. A `*_pg.py` gate needs enrolment in
+`test_pg_gate_seed_completeness.COVERED` AND a hand-written step in CI's
+`search-recall` job, and `ci.yml` is already being edited by this lane's open
+PR #8037 — so it is a named follow-up on #8132, not a silent omission. The guard's
+real proof is the post-apply survival check: repaired rows still carrying their
+stamp after a full `backfill_winners` cycle, on production.
 
 ## the vocabulary, and why `yes` must be refused rather than handled
 
@@ -30,7 +41,6 @@ not recognise would pass a test suite built only from the two arms it repairs.
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 

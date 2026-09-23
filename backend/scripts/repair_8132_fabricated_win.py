@@ -192,7 +192,6 @@ from sqlalchemy import text  # noqa: E402
 
 from app.tasks.base import get_task_session  # noqa: E402
 from app.utils.resolution_authority import (  # noqa: E402
-    PRICE_CROWN_PROTECTED_SOURCES,
     authority_tier,
     is_downgrade,
 )
@@ -598,9 +597,7 @@ async def run(apply: bool, include_new: bool) -> int:
         print(f"\n  pre-image banked in : {BACKUP_TABLE}")
         print(f"  rows written        : {stats['written']}")
         print(f"  concurrent_drift    : {stats['concurrent_drift']}")
-        print(
-            f"\nundo: python3 scripts/restore_8132_fabricated_win.py --apply"
-        )
+        print("\nundo: python3 scripts/restore_8132_fabricated_win.py --apply")
         return 0 if stats["concurrent_drift"] == 0 else 1
 
 
