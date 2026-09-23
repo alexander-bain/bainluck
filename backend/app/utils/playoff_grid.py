@@ -469,12 +469,32 @@ def sort_teams_by_championship(
     same defect pointed the other way, so a row that outranks on a real price
     keeps its seat whether or not we could name it.
 
+    Rows that tie on BOTH of those terms break on name, so the order is one
+    fixed sequence rather than whatever order the rows happened to arrive in
+    (#8209). This is not cosmetic: measured on production 2026-09-23,
+    ``ncaa-basketball`` serves 23 of its 68 rows at an identical
+    ``championship`` of 0.0005, and ``max_teams`` is 68 — so the cap cuts
+    THROUGH the tie. With no third term, 75 of the 78 order inversions seen
+    across a 2.5 h gap were between rows whose prices were byte-identical and
+    equal to each other, and three schools silently left the grid while three
+    others joined it, every displayed percentage unchanged. Three consecutive
+    rebuilds seconds apart agreed exactly, so this was never per-request
+    randomness: it is a comparator with no tiebreak over an input order that
+    is not pinned.
+
+    Name is the third term rather than ``team_id`` because it is total — a row
+    that reached the grid always has one, while ``team_id`` is null on real
+    schools our name matching missed (see above). It makes the cut at the cap
+    DETERMINISTIC, not fair: which of 23 equally-priced longshots hold the last
+    seats is still arbitrary, and that is the separate product question.
+
     The cap is the last thing that can silently lose a club, so it says so.
     """
     teams.sort(
         key=lambda t: (
             -_championship_sort_value(t, championship_col),
             t.get("team_id") is None,
+            t.get("name") or "",
         )
     )
     if len(teams) <= max_teams:
