@@ -1153,6 +1153,13 @@ def test_the_completeness_count_is_bounded_by_the_wall_not_by_a_constant():
         "the deadline check absorbs them by starting fewer batches; anything "
         "after the loop that takes a constant is additive to the wall."
     )
+    assert "timeout_literal=f\"'{int(completeness_budget * 1000)}ms'\"" in src, (
+        "the completeness count's server timeout is no longer rendered as "
+        "integer milliseconds. Every DERIVED budget in this module renders that "
+        "way — only the two constants can afford whole seconds — and a "
+        "fractional literal such as '5.150s' is a GUC format PostgreSQL only "
+        "learned to round in 12, on the one statement that gates a write."
+    )
 
     worst_spent = (
         rail.DEADLINE_SECONDS + rail.BATCH_PAIR_BUDGET_SECONDS + rail.VENUE_PAUSE

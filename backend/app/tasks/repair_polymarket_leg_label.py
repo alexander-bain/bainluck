@@ -1388,7 +1388,15 @@ async def repair(
         try:
             counted = await _bounded_statement(
                 session,
-                timeout_literal=f"'{completeness_budget:.3f}s'",
+                # Integer milliseconds, like every other DERIVED budget here
+                # (the terminal count at the bottom, the write, the commit) and
+                # unlike the two constants, which can afford whole seconds.
+                # `'5.150s'` would have been the only fractional GUC literal in
+                # the file, and PostgreSQL only learned to round those in 12 —
+                # an unproven format on the one statement that gates a write.
+                # Truncation is the safe direction: the server gives up a
+                # fraction of a millisecond BEFORE the client bound below.
+                timeout_literal=f"'{int(completeness_budget * 1000)}ms'",
                 server_budget_s=completeness_budget,
                 sql=f"""
                     SELECT leg.market_id, COUNT(*)
