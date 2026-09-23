@@ -3427,6 +3427,20 @@ jobs:
             exit 1
           fi
 
+      - name: "#7021 Cardinals fold — apply, re-run and undo against real Postgres"
+        # The fold repoints every FK onto teams.id and then DELETEs the duplicate,
+        # whose own FK actions (CASCADE / SET NULL) would silently destroy or
+        # orphan any reference the repoint missed. Only a real server runs those.
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_7021_fold_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold7021.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold7021.txt; then
+            echo "::error::#7021 fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4079 numeric movement acceptance — provision the disposable database"
         # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
         # to touch any database that does not carry a sentinel row holding a nonce
