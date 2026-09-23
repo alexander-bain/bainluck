@@ -285,15 +285,26 @@ def test_a_scheduled_preseason_pair_folds_too():
 
 
 def test_two_rows_sharing_a_sport_key_are_still_refused():
-    """The SYMMETRIC case, which this module has always refused and still does.
+    """The SYMMETRIC case for THIS pass's licence: no LEAGUE asymmetry to read.
 
-    Two `icehockey_nhl` rows eight minutes apart offer no asymmetry to read: no
-    dominance test can pick a survivor and none should try. If this ever folds,
-    the new pass has stopped being about season variants.
+    Two `icehockey_nhl` rows eight minutes apart wear the same key, so this pass
+    has nothing to say about them. If this ever folds, the season-variant pass
+    has stopped being about season variants.
+
+    🔴 THE ANCHOR IS EQUALISED ON PURPOSE, and it is not scaffolding — it is what
+    keeps this arm about its own subject. `_flames_pair` gives the parent an
+    `espn_id` and the variant none, which since #8100 is a licence in its own
+    right (`_merge_anchored_claim_kickoffs`: one id-less CLAIM beside the
+    anchored row it names, inside twelve minutes, folds). Leaving that
+    difference in place would make this arm pass or fail on the NEW pass's rule
+    while claiming to test this one. The shape it used to assert is now folded
+    deliberately and on a measurement — see
+    `test_one_nbl_game_stops_drawing_two_cards_8100.py`, which owns it.
     """
     parent, variant = _flames_pair()
     variant.sport = _Sport(parent.sport_id, NHL)
     variant.sport_id = parent.sport_id
+    variant.external_id = "odds-api-8815"
 
     result = fold_twin_events([parent, variant])
 
@@ -301,10 +312,14 @@ def test_two_rows_sharing_a_sport_key_are_still_refused():
 
 
 def test_two_variant_rows_are_refused_in_the_same_way():
-    """The other half of the asymmetry. Two `_preseason` rows are symmetric."""
+    """The other half of the asymmetry. Two `_preseason` rows are symmetric.
+
+    The anchor is equalised for the reason the arm above records.
+    """
     parent, variant = _flames_pair()
     parent.sport = _Sport(variant.sport_id, NHL_PRE)
     parent.sport_id = variant.sport_id
+    variant.external_id = "odds-api-8815"
 
     result = fold_twin_events([parent, variant])
 
@@ -368,8 +383,18 @@ def test_a_chain_of_three_is_discarded_whole():
     the outer two are 24 minutes apart, so this must collapse to nothing rather
     than pick which link to break."""
     a = _Row(1, sport_key=NHL, commence_time=PUCK_DROP, espn_id="x")
-    b = _Row(2, sport_key=NHL_PRE, commence_time=PUCK_DROP + timedelta(minutes=12))
-    c = _Row(3, sport_key=NHL, commence_time=PUCK_DROP + timedelta(minutes=24))
+    b = _Row(
+        2,
+        sport_key=NHL_PRE,
+        commence_time=PUCK_DROP + timedelta(minutes=12),
+        external_id="y",
+    )
+    c = _Row(
+        3,
+        sport_key=NHL,
+        commence_time=PUCK_DROP + timedelta(minutes=24),
+        external_id="z",
+    )
 
     result = fold_twin_events([a, b, c])
 
@@ -442,11 +467,22 @@ def test_a_group_that_already_holds_both_sides_is_left_alone():
     skips it and the third row stays a second card. That is conservative rather
     than obviously right — no production fixture has this shape today — and it
     is pinned so that folding it later is a measured decision, not a drift.
+
+    #8100 TOOK THAT DECISION FOR ONE SHAPE OF THIRD ROW, AND NOT THIS ONE. When
+    the late row is an id-less CLAIM it now folds onto the anchored group, on the
+    measurement `_merge_anchored_claim_kickoffs` carries;
+    `test_the_third_row_folds_when_it_is_an_id_less_claim` in the #8100 file owns
+    that case. THIS arm keeps the shape where the third row is itself anchored —
+    two anchored sides, which is still nobody's licence — so it goes on testing
+    this pass's own skip rather than silently becoming a test of the new one.
     """
     same_minute_parent = _Row(20, sport_key=NHL, commence_time=PUCK_DROP, espn_id="a")
     same_minute_variant = _Row(21, sport_key=NHL_PRE, commence_time=PUCK_DROP)
     late_variant = _Row(
-        22, sport_key=NHL_PRE, commence_time=PUCK_DROP + timedelta(minutes=8)
+        22,
+        sport_key=NHL_PRE,
+        commence_time=PUCK_DROP + timedelta(minutes=8),
+        external_id="b",
     )
 
     result = fold_twin_events(

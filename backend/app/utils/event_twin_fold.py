@@ -657,6 +657,18 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             "twin fold: season-variant merge failed; serving strict groups"
         )
 
+    # #8100 — same shape of step again, and after the season-variant pass rather
+    # than before it: that pass can only make a group MORE anchored, which is the
+    # input this one reads. Its licence is a PROVENANCE asymmetry (one id-less
+    # claim, one anchored row) and not a league or a sport, so it is the only
+    # thing here that can reach two `basketball_nbl` rows six minutes apart.
+    try:
+        groups = _merge_anchored_claim_kickoffs(groups)
+    except Exception:  # noqa: BLE001 — gotcha #42; the groups above are today's
+        logger.exception(
+            "twin fold: anchored-claim merge failed; serving strict groups"
+        )
+
     # #5918 — the strict key has now grouped every pair that SPELLS its clubs the
     # same way. The soccer pass below is the only thing that can reach a pair
     # that NAMES them differently, and it runs on the groups rather than on the
@@ -1033,6 +1045,231 @@ def _season_variant_clusters(
     for index, left in enumerate(ordered):
         for right in ordered[index + 1 :]:
             if right[3] - left[3] > SEASON_VARIANT_KICKOFF_DRIFT:
+                break
+            if same_fixture(left, right):
+                parent[find(right)] = find(left)
+
+    clusters: dict[tuple, list] = {}
+    for key in ordered:
+        clusters.setdefault(find(key), []).append(key)
+
+    out: list[list] = []
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Clique or nothing — a merely connected chain is discarded whole.
+        if all(
+            same_fixture(left, right)
+            for i, left in enumerate(members)
+            for right in members[i + 1 :]
+        ):
+            out.append(members)
+    return out
+
+
+ANCHORED_CLAIM_KICKOFF_DRIFT = timedelta(minutes=12)
+"""How far apart an id-less CLAIM and the anchored row it names may sit. #8100.
+
+Sized the way :data:`SOCCER_KICKOFF_DRIFT` and
+:data:`SEASON_VARIANT_KICKOFF_DRIFT` are sized — from the measured band, placed
+in the empty space below the nearest population — and it is NOT 15 minutes,
+which is what the issue proposed before the reading was taken.
+
+MEASURED ON PRODUCTION 2026-09-22 23:4xZ over the WHOLE `events` table (241,300
+rows, `2001-01-02` → `2028-07-30`), by a window pass rather than a self-join:
+partition by `sport_id` and both squashed club names, order by `commence_time`,
+and take every adjacent pair more than 0 and at most 15 minutes apart. Then
+split that population by whether the two sides agree about carrying a provider
+id (:func:`_group_is_id_anchored`'s pair of columns):
+
+    both id-less        954 pairs   5 sports   0 two-espn_id   0 two-scoreline
+    both anchored        16 pairs   5 sports   0 two-espn_id   5 two-scoreline
+    ASYMMETRIC           15 pairs   3 sports   0 two-espn_id   1 two-scoreline
+
+Only the third row is this pass's population, and the first two are why the
+asymmetry is the licence rather than the clock: 954 of the 985 pairs are the
+`esports` / `esports_other` bulk the issue could not bound, and the asymmetry
+refuses every one of them without naming a sport. The `both anchored` row is the
+same refusal earning its keep from the other side — five of those sixteen hold
+two DIFFERENT scorelines, which is two real games, and two anchored rows are the
+symmetric case this module has always refused to guess between.
+
+THE BOUND ITSELF, from the asymmetric pairs' gap distribution out to four hours:
+
+    0.4 – 9.7 min    14 pairs   basketball_nbl · baseball_mlb · mma
+    15.0, 19.8 min    2 pairs
+    24.9 … 55 min     6 pairs
+    180.0 min         5 pairs   (the Kalshi expected-expiration class, #5905)
+
+So the observed class ends at 9.7 minutes and the nearest neighbour above it is
+at 15.0. Twelve sits in that empty band: clear above the population it is for,
+clear below the first pair it is not. Fifteen — the number #8100 proposed — would
+sit exactly ON a pair rather than clear of it, which is the "fitted to its own
+maximum" mistake :data:`SEASON_VARIANT_KICKOFF_DRIFT` records avoiding.
+
+The reader-reachable defect that named this ship sits at 6.0 minutes:
+`/search?q=Perth+Wildcats` served `15314490` (Polymarket-born, no provider id,
+holding the only price — `{"polymarket": 0.41}`) at 11:30Z above `15316489`
+(Odds-API-born, `external_id` set, no sources, no odds, nothing at all) at
+11:36Z, as `NBL Sep 24 4:30 AM Perth 41%` above `NBL Sep 24 4:36 AM Perth
+(No price yet)`.
+
+Chaining is not a way around it, and here the clock is not even what refuses the
+chain — see :func:`_anchored_claim_clusters`.
+"""
+
+
+def _merge_anchored_claim_kickoffs(groups: dict[tuple, list]) -> dict[tuple, list]:
+    """Merge an id-less claim group onto the anchored group it names, minutes off.
+
+    #8100 — THE GAP BETWEEN EVERY EXISTING PASS, AND WHY NONE OF THEM REACHES IT.
+    The strict key is exact-minute, so a pair that disagrees by six minutes is two
+    groups. :func:`_merge_soccer_name_variants` is the only pass that widens the
+    clock for two rows sharing a sport key, and it is soccer-gated on purpose.
+    :func:`_merge_season_variant_kickoffs` widens the clock without a name rule,
+    but its licence is a LEAGUE asymmetry — one row on a `*_preseason` key, one on
+    its parent's — which two `basketball_nbl` rows cannot satisfy. So an NBL game
+    whose two providers disagree by six minutes falls between all three and
+    `/search?q=Perth+Wildcats` served it twice, once with the price and once with
+    "No price yet".
+
+    THE LICENCE IS A PROVENANCE ASYMMETRY, AND IT IS RULING 048 READ FORWARD.
+    A row carrying neither `espn_id` nor `external_id` is an id-less CLAIM: gotcha
+    #32 says such a row could only ever have CREATED, never absorbed, which is
+    exactly why both rows exist and why `event_provider_anchors` has nothing to
+    drain here. It is not independent evidence of a second game. A row carrying a
+    provider's id was reported by somebody who knows the fixture BY id. So one of
+    each, on the same clubs, minutes apart, is one game recorded twice — while two
+    ANCHORED rows are two games (five of the sixteen measured pairs prove it with
+    two scorelines) and two ID-LESS rows are a question nobody here can answer.
+    :func:`_star_on_one_anchor` reached the same conclusion for a soccer cluster
+    from the other direction; this is that reasoning as a pass's whole admission
+    test rather than as a rescue for one cluster shape.
+
+    NOTHING HERE ASKS FOR AN ABSORPTION, A REGISTRY OR A MATCHER CHANGE. Both rows
+    stay in the table and stay correct. This is the serve-time fold, the only
+    repair #8100 asks for, and loosening absorption was put to Alex on 2026-08-20
+    and REJECTED.
+
+    WHY THIS IS NOT A WIDER `SOCCER_KICKOFF_DRIFT` AND NOT A WIDER SEASON-VARIANT
+    PASS. The soccer bound carries a token-subset name rule — the one that cannot
+    tell `Miami` from `Miami (OH)` — and widening it would apply that rule to
+    leagues it was never measured on, and would reach the 30-minute re-mints #5918
+    refuses. The season-variant pass cannot be widened here at all: its asymmetry
+    is a property of the SPORT KEY, and relaxing it to "any two groups" is the
+    symmetric case, which is the 954 id-less esports pairs. This pass keeps the
+    strict key's EXACT squashed names — equality, never a subset — and adds one
+    clause neither sibling has.
+
+    It runs AFTER :func:`_merge_season_variant_kickoffs` and on the same dict for
+    the same reason that pass runs on one: it is the same SHAPE of step. The two
+    cannot fight over a group, because a season-variant merge only ever makes a
+    group MORE anchored, and this pass reads that merged group's anchoring as it
+    finds it. It runs BEFORE the soccer pass so that pass still receives a dict
+    keyed the way it expects. A merged group is filed under the key of its
+    EARLIEST kick-off, and the early return below hands back the same object
+    rather than a copy, so a caller with nothing to merge gets byte-identical
+    behaviour to before #8100.
+    """
+    buckets: dict[tuple, list[tuple]] = {}
+    for key in groups:
+        buckets.setdefault(_soccer_bucket_key(key), []).append(key)
+
+    merged_into: dict[tuple, tuple] = {}
+    for bucket_keys in buckets.values():
+        if len(bucket_keys) < 2:
+            continue
+        for cluster in _anchored_claim_clusters(bucket_keys, groups):
+            target = cluster[0]
+            for other in cluster[1:]:
+                merged_into[other] = target
+
+    if not merged_into:
+        return groups
+
+    out: dict[tuple, list] = {}
+    for key, members in groups.items():
+        target = merged_into.get(key, key)
+        if target in out:
+            out[target].extend(members)
+            continue
+        out[target] = list(members)
+    return out
+
+
+def _anchored_claim_clusters(
+    bucket_keys: list[tuple], groups: dict[tuple, list]
+) -> list[list]:
+    """Cliques of keys inside one bucket that are one fixture under this licence.
+
+    WHAT REFUSES A CHAIN HERE IS THE ASYMMETRY, NOT THE CLOCK — the same thing
+    :func:`_season_variant_clusters` records, and it holds for the same reason.
+    Anchored and id-less are the only two sides there are, so any cluster of three
+    or more holds two groups on the SAME side, `same_fixture` refuses that pair,
+    and the clique test below discards the whole cluster. A cluster that survives
+    is therefore always exactly two groups, and the sliding window has already
+    proved those two are inside the bound. That is why the drift is expressed
+    once, in the window, and is not restated in the predicate: a second copy would
+    be unreachable, and an unreachable copy of a rule is what
+    :func:`_season_variant_clusters` deleted rather than kept as a decoration.
+
+    Three refusals, and each leaves both rows standing — two cards, today's
+    behaviour — rather than risking one card holding two games:
+
+    * :func:`_variant_group_is_collapsible` — a LIVE row is not folded. Measured
+      inert on this pass's population today (all 15 asymmetric pairs are
+      `scheduled`, `completed` or `closed`), and kept because the reason the
+      sibling pass gives is about this pass's own hazard: while a game is live the
+      asymmetry this can read is outranked by one it cannot, which row's score is
+      current, and electing the stale copy shows a wrong score as the only score.
+    * the asymmetry itself, which is the licence.
+    * :func:`_objectively_different_games` — and this one is ARMED rather than
+      decorative, which is the control #8100 said it could not find. One of the 15
+      asymmetric pairs holds two different scorelines and is refused by it. Its
+      `espn_id` arm is a different matter and is not sold as a guard: an id-less
+      group has no `espn_id` by construction, so that arm can only ever fire on a
+      group that already holds two of them, which the strict key would have had to
+      build. It is called for the scoreline half and inherited whole rather than
+      reimplemented.
+    """
+    collapsible = {}
+    anchored = {}
+    for key in bucket_keys:
+        members = groups[key]
+        collapsible[key] = _variant_group_is_collapsible(members)
+        anchored[key] = _group_is_id_anchored(members)
+
+    eligible = [key for key in bucket_keys if collapsible[key]]
+    if len(eligible) < 2:
+        return []
+
+    def same_fixture(left: tuple, right: tuple) -> bool:
+        """The asymmetry, the names and the evidence. THE CLOCK IS NOT HERE."""
+        # The asymmetry first: it is a dict lookup, it is the clause that makes
+        # this pass legal at all, and it refuses 970 of the 985 measured pairs.
+        if anchored[left] == anchored[right]:
+            return False
+        # Elements 1 and 2 are the squashed away/home names the strict key
+        # already built, orientation kept. Equality, not a subset rule.
+        if left[1] != right[1] or left[2] != right[2]:
+            return False
+        return not _objectively_different_games(groups[left], groups[right])
+
+    ordered = sorted(eligible, key=lambda k: k[3])
+    parent = {key: key for key in ordered}
+
+    def find(key: tuple) -> tuple:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    # THE CLOCK RULE, EXPRESSED ONCE. `ordered` is ascending, so this break IS the
+    # drift bound for this pass rather than an optimisation over pairs already
+    # refused.
+    for index, left in enumerate(ordered):
+        for right in ordered[index + 1 :]:
+            if right[3] - left[3] > ANCHORED_CLAIM_KICKOFF_DRIFT:
                 break
             if same_fixture(left, right):
                 parent[find(right)] = find(left)
