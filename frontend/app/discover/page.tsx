@@ -1433,16 +1433,24 @@ export default function DiscoverPage() {
             <div className="flex items-center gap-3">
               {/* L2-119: killed the "{N} markets" count — on an infinite feed it
                   was the loaded-so-far tally, which reads as a (wrong) total and
-                  ticks up as you scroll. The stats link stays. */}
-              <Link
-                href="/discover/stats"
-                aria-label="Prediction stats"
-                className="text-text-muted hover:text-text-primary transition-colors"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 20V10" /><path d="M18 20V4" /><path d="M6 20v-4" />
-                </svg>
-              </Link>
+                  ticks up as you scroll.
+                  #8187 — and the stats link no longer "stays". It was the FOURTH
+                  render site of the surface the three below already gate, and the
+                  only one on the first screen: an 18px unlabelled icon opening
+                  `/discover/stats`, which told the reader to go and play cards
+                  that #6445 had switched off everywhere. Same flag as the other
+                  three, so the door and the rooms behind it move together. */}
+              {CHALLENGE_SURFACES_ENABLED && (
+                <Link
+                  href="/discover/stats"
+                  aria-label="Prediction stats"
+                  className="text-text-muted hover:text-text-primary transition-colors"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20V10" /><path d="M18 20V4" /><path d="M6 20v-4" />
+                  </svg>
+                </Link>
+              )}
             </div>
           </div>
         </div>
