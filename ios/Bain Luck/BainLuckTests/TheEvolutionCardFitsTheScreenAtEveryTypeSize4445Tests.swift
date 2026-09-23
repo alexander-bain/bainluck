@@ -182,10 +182,11 @@ final class TheEvolutionCardFitsTheScreenAtEveryTypeSize4445Tests: XCTestCase {
     func testTheLeaderboardRowAndHeaderAlreadyFitAndMustKeepFitting() {
         for size in everyTypeSize {
             let columns = EvolutionLeaderboardGeometry.columns(
-                for: photographedBoard(), at: size)
+                for: photographedBoard(), at: size, renderedPercents: [])
             let row = EvolutionLeaderboardRow(
                 position: 1, outcome: photographedBoard()[1], color: .blue,
-                isSelected: true, isHighlighted: true, columns: columns)
+                isSelected: true, isHighlighted: true, columns: columns,
+                renderedPercent: nil)
             XCTAssertLessThanOrEqual(
                 demandedWidth(of: row, offered: narrowPhone, at: size),
                 narrowPhone + 0.5, "row at \(size)")

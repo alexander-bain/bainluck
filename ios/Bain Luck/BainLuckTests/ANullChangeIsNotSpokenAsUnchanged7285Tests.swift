@@ -130,7 +130,7 @@ final class ANullChangeIsNotSpokenAsUnchanged7285Tests: XCTestCase {
     /// assertion that says it did.
     func testTheColumnIsMeasuredOnTheStringTheRowNowDraws() throws {
         let rows = danubeShapedOutcomes()
-        let columns = EvolutionLeaderboardGeometry.columns(for: rows, at: .large)
+        let columns = EvolutionLeaderboardGeometry.columns(for: rows, at: .large, renderedPercents: [])
 
         // What `EvolutionLeaderboardRow` will actually put on screen, built the way
         // the row builds it.
@@ -173,7 +173,7 @@ final class ANullChangeIsNotSpokenAsUnchanged7285Tests: XCTestCase {
     /// its own column — the case `untradedOutcomes` was written for.
     func testAnAllNullBoardStillClearsItsHeadings() throws {
         let allNull = (1...3).map { outcome(name: "Row \($0)", prob: nil, change: nil) }
-        let columns = EvolutionLeaderboardGeometry.columns(for: allNull, at: .large)
+        let columns = EvolutionLeaderboardGeometry.columns(for: allNull, at: .large, renderedPercents: [])
 
         XCTAssertGreaterThanOrEqual(
             columns.prob,
@@ -232,8 +232,16 @@ final class ANullChangeIsNotSpokenAsUnchanged7285Tests: XCTestCase {
                       "the row stopped carrying the change as an optional (#7285)")
         XCTAssertTrue(source.contains("private var probPct: Double?"),
                       "the row stopped carrying the price as an optional (#7285)")
-        XCTAssertTrue(source.contains("EvolutionLeaderboardGeometry.spokenProb(probPct)"),
-                      "the spoken price stopped going through the optional-aware call (#7285)")
+        // #8109 widened this call: the spoken row now also carries the card-level
+        // decision, so a VoiceOver reader cannot hear a different number than the
+        // screen draws. Re-aimed at the WHOLE call rather than loosened to a
+        // prefix — this scan's job is to notice the row's arguments changing, and
+        // `spokenProb(probPct` would stop noticing exactly that.
+        XCTAssertTrue(
+            source.contains(
+                "EvolutionLeaderboardGeometry.spokenProb(probPct, renderedPercent: renderedPercent)"),
+            "the spoken price stopped going through the optional-aware call (#7285) "
+            + "or stopped carrying the card-level decision (#8109)")
 
         XCTAssertFalse(source.contains("(outcome.probabilityChange24h ?? 0)"),
                        "the 24h coalesce is back (#7285)")
