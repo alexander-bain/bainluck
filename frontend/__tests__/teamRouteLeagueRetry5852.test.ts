@@ -116,16 +116,18 @@ describe("#5852 link half — the league-qualified retry", () => {
   });
 
   /**
-   * ⚠️ THIS ASSERTION WAS REVISED 2026-09-20, AND THE PROTECTION IT CARRIES WAS
-   * NOT DROPPED. It used to read `expect(asked).toEqual(["jannik-sinner"])` —
-   * "the tennis case never reaches the retry at all" — because the trigger was
-   * the SPORT family and a cross-tournament row is same-family. The competition
-   * half of #5852 widened the trigger, so the retry is now offered a tennis
-   * route too. What that test was defending is that a reader is never moved off
-   * the right PERSON, and that is asserted here directly (and again below, on
-   * the row that does exist). The cost it implied — no wasted request — is
-   * asserted too: the league-segment candidate `jannik-sinner-atp_us_open`
-   * carries an underscore `slugify` cannot emit, so it is never asked for.
+   * ⚠️ THIS ASSERTION WAS REVISED 2026-09-20, AND REVISED AGAIN 2026-09-23
+   * (#7651), AND THE PROTECTION IT CARRIES WAS NOT DROPPED EITHER TIME. It
+   * used to read `expect(asked).toEqual(["jannik-sinner"])` — "the tennis case
+   * never reaches the retry at all" — because the trigger was the SPORT family
+   * and a cross-tournament row is same-family. The competition half of #5852
+   * widened the trigger, so the retry is now offered a tennis route too. What
+   * that test was defending is that a reader is never moved off the right
+   * PERSON, and that is asserted here directly (and again below, on the row
+   * that does exist). The second revision drops the "never asked for" pin on
+   * `jannik-sinner-atp_us_open`: its rationale — an underscore `slugify`
+   * cannot emit — went stale when #7501 settled new rows on exactly that
+   * shape, so the segment shape is now tried first and 404s here.
    */
   it("leaves a tennis player on the tournament row they already have when there is no better one", async () => {
     const { fetchTeam, asked } = fetcherOver({
@@ -136,8 +138,7 @@ describe("#5852 link half — the league-qualified retry", () => {
 
     expect(out.slug).toBe("jannik-sinner");
     expect(out.data.team.name).toBe("Jannik Sinner");
-    expect(asked).toEqual(["jannik-sinner", "jannik-sinner-open"]);
-    expect(asked).not.toContain("jannik-sinner-atp_us_open");
+    expect(asked).toEqual(["jannik-sinner", "jannik-sinner-atp_us_open", "jannik-sinner-open"]);
   });
 
   it("gives a tennis player the tournament row the URL asked for when it exists", async () => {

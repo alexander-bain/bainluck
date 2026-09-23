@@ -57,33 +57,39 @@ export function sportKeyQualifiedSlug(
 
 /**
  * The candidate slugs for a route. Exported so a guard can assert the COUNT —
- * the cost of this repair is exactly the length of this list, and it is one.
+ * the cost of this repair is exactly the length of this list, and it is at
+ * most two. #7651
  *
- * WHY ONLY THE KEY-DERIVED SHAPE, WHEN TWO WERE BUILT. The URL-segment form
- * (`leagueQualifiedSlug`, the one that shipped) reaches nothing this one does
- * not: measured over all 5,748 duplicate-name rows, 1,418 vs 759 with an empty
- * difference. Where the two disagree it is because the segment is an ALIAS, and
- * the table holds **zero** rows ending in `-ucl`, `-laliga`, `-ufc` or `-arts`
- * against 19 ending `-league` and 3 ending `-liga`. Keeping it as a second try
- * would buy a guaranteed-404 round trip on exactly the alias routes, to reach a
- * population that does not exist — a branch no data can enter. NCAAF, EPL and
- * every other single-token league are unaffected either way: the two forms are
- * the same string there, which is why the shipped Clemson repair is untouched.
+ * WHY BOTH SHAPES, AND WHY THIS ORDER. #5852 shipped only the key-derived
+ * shape, on a measurement taken when 40% of `teams` had NO slug at all: 1,418
+ * vs 759 with an empty difference, and zero rows ending in `-ucl` or `-arts`.
+ * #7501 then backfilled 4,031 of those rows, and the shape it settled on is
+ * the URL-segment form (`new-jersey-devils-nhl_preseason`,
+ * `benfica-uefa_champs_league_women`, `-ucl` for the aliased keys) — 2,482 of
+ * the 4,031 carry a multi-token suffix the key-derived shape never composes.
+ * The old measurement's "branch no data can enter" is now the growing half of
+ * the table, and the filler that mints it is the column's single owner, so the
+ * segment shape is tried FIRST and the frozen legacy shape (`real-madrid-
+ * league`, the `-open` tennis rows, never re-slugged) SECOND. NCAAF, EPL and
+ * every other single-token league are unaffected: the two forms are the same
+ * string there and dedupe to one candidate, which is why the shipped Clemson
+ * repair is untouched.
  *
- * It also needs no "is this slug shaped like a slug" filter, for the same
- * reason and measured the same way: the suffix is one token of a sport key, so
- * it can never carry the underscore a multi-token segment would have, and all
- * 5,748 slugs plus all 74 legacy slugs match `^[a-z0-9-]+$`. A slug that does
- * not is one the FIRST fetch already 404s on, and a thrown first fetch never
- * reaches here.
+ * WHY AN UNDERSCORE IS ASKABLE NOW. The old "always slug-shaped" rule rested
+ * on all 5,748 slugs matching `^[a-z0-9-]+$` — true before the backfill, false
+ * after it by design: the settled rung-2 shape carries the segment's
+ * underscores and the API serves those rows. Candidates mirror the column, not
+ * `slugify`.
  */
 export function teamRouteCandidates(
   teamSlug: string,
   sport: string,
   league: string,
 ): string[] {
-  const candidate = sportKeyQualifiedSlug(teamSlug, sport, league);
-  return candidate === null ? [] : [candidate];
+  const segment = leagueQualifiedSlug(teamSlug, league);
+  const keyed = sportKeyQualifiedSlug(teamSlug, sport, league);
+  const candidates = [segment, keyed].filter((c): c is string => c !== null);
+  return [...new Set(candidates)];
 }
 
 /** The fields that make a team page look like that team rather than a stub. */
@@ -167,7 +173,8 @@ function isNotPoorer(candidate: TeamIdentity, current: TeamIdentity): boolean {
  * only REPLACES that answer when the second is measurably on-route by sport AND
  * competition and is not a poorer page (`isNotPoorer` — the Galatasaray and
  * Newcastle cases, where the right competition's row has no crest or no
- * record). Every other path — an on-route first answer, no qualified row, a
+ * record; it applies only when the first answer is on-sport, because an
+ * off-sport one renders the refusal, not a page — #7651). Every other path — an on-route first answer, no qualified row, a
  * second answer that is also off-route, a second answer that would empty the
  * page — returns the first answer unchanged. The tennis population the family
  * test protects can now only move BETWEEN THE SAME PERSON'S TOURNAMENT ROWS,
@@ -197,6 +204,16 @@ export async function resolveTeamForRoute<
     return { slug: teamSlug, data: first };
   }
 
+  // The richness test compares two PAGES, so it binds only when the first
+  // answer is one. An off-SPORT first answer is never rendered — the page
+  // prints "We don't have a … page" instead — so the reader's alternative to
+  // the candidate is that refusal, and any on-route row beats it. #7651:
+  // `new-jersey-devils-nhl_preseason` has no crest, colour or record on
+  // production (2026-09-23) while the NHL row it would be compared against has
+  // crest and colour; without this the segment candidate was fetched, judged
+  // "poorer" than a row the page refuses to draw, and the refusal stood.
+  const firstIsAPage = !verdict.offRoute;
+
   for (const candidate of teamRouteCandidates(teamSlug, sport, league)) {
     try {
       const second = await fetchTeam(candidate);
@@ -204,7 +221,7 @@ export async function resolveTeamForRoute<
       if (
         !onRoute.offRoute &&
         !onRoute.offLeague &&
-        isNotPoorer(second.team, first.team)
+        (!firstIsAPage || isNotPoorer(second.team, first.team))
       ) {
         return { slug: candidate, data: second };
       }
