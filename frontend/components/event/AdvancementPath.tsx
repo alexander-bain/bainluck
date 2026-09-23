@@ -40,6 +40,23 @@
  * `make_playoffs` at 0.9972 in the same list as rungs at 0.001. It now prints
  * through `formatProbabilityPercent`, so a rung that is merely close to an
  * absolute says `>99%` or `<1%` and only a genuine 0 or 1 prints as one.
+ *
+ * ═══ AND WHAT A RUNG NOBODY PRICED PRINTS (#8203) ═══
+ *
+ * That last clause — *only a genuine 0 prints as one* — was true of every value
+ * this component was HANDED and false of the page, because the caller
+ * manufactured the zero before the formatter could refuse it. `RelatedFutures`
+ * coerced the wire with `f.probability || 0`, so a withheld price arrived
+ * indistinguishable from a quote of zero, and `World Series Champion 0%` was
+ * printed over two clubs nobody had quoted (`/events/15316874`, measured
+ * 2026-09-23: `probability: null`, `opening_probability: 0.005`, both sides).
+ *
+ * So `prob` is nullable and the refusal lives HERE, for the same reason the
+ * heading rule does two blocks below: a caller-side fix would have left "this
+ * number may not be invented" in the distance between two files, and this is the
+ * THIRD surface in the family — #6138 and #8067 both repaired the same coercion
+ * in `SpecialEventMarkets` and neither sweep could see this block. The component
+ * can no longer be handed a false zero that it is willing to draw.
  */
 
 import { motion } from "@/components/motion";
@@ -51,8 +68,16 @@ import { ADVERSE_COLUMN_KEYS, risingIsGood } from "@/lib/gridColumnPolarity";
 export interface AdvancementStage {
   /** The destination, in words — "Quarter-finals", "Win division". */
   label: string;
-  /** 0–1. */
-  prob: number;
+  /**
+   * 0–1, or `null` when nobody has quoted this rung (#8203).
+   *
+   * NULLABLE IS THE POINT, not a convenience. While this was `number` the only
+   * way a caller could satisfy the type with a withheld wire price was to invent
+   * a value for it, and `|| 0` is the cheapest invention available — so the type
+   * itself was steering callers into the defect. A rung with no price is a state
+   * this block has to be able to represent before it can refuse to draw it.
+   */
+  prob: number | null;
   /** Move over the last 24h, 0–1, or `null` when nothing was measured twice. */
   change: number | null;
   /**
@@ -170,7 +195,46 @@ export default function AdvancementPath({
         {effectiveHeading}
       </div>
       <div className="space-y-0.5 mb-5" data-testid={testId}>
-        {stages.map((p) => (
+        {stages.map((p) => {
+          /* #8203 — A RUNG NOBODY PRICED KEEPS ITS NAME AND SHOWS NOTHING.
+             The treatment is #8067's, verbatim, because this is that defect on a
+             third surface: not a dash, not "no price", not a parenthetical —
+             notice 34's remedy for a number we cannot show honestly is to leave
+             the space empty rather than explain the emptiness. And no bar: the
+             bar is a picture of a quantity, so a zero-width one is the same
+             false zero drawn instead of written.
+
+             The 24h move goes with it. A delta is a statement about the very
+             level we are declining to state, so printing `↓ 2.1%` beside a blank
+             would assert a price exists and then decline to name it.
+
+             BELOW `resolved`, exactly as #8067 sits below its verdict: a
+             settlement is the better answer wherever there is one, and `✓
+             clinched` needs no price to be true. Both callers pass a constant
+             `false` today (#7687), so this ordering is a rule for the payload
+             that eventually reports one, not a live branch.
+
+             The label keeps `w-36 shrink-0` rather than #8067's `flex-1`. That
+             rail has no fixed columns; this one does, and a ladder can hold
+             priced and unpriced rungs at once (`/events/15317392` serves two
+             unpriced beside none, `15313464` three) — a label that widened on
+             the unpriced rows would ripple the whole list out of alignment. */
+          const withheld = p.prob == null && !p.resolved;
+          if (withheld) {
+            return (
+              <div
+                key={p.label}
+                className="flex items-center gap-3 py-1.5"
+                data-testid="advancement-stage"
+                data-stage={p.label}
+                data-no-price="true"
+              >
+                <div className="text-sm w-36 shrink-0 text-text-secondary">{p.label}</div>
+                <div className="flex-1" />
+              </div>
+            );
+          }
+          return (
           <div
             key={p.label}
             className="flex items-center gap-3 py-1.5"
@@ -184,7 +248,24 @@ export default function AdvancementPath({
                 className={`h-full rounded-full transition-all duration-500 ${
                   p.resolved ? "bg-accent-live" : "bg-violet-400"
                 }`}
-                style={{ width: `${p.resolved ? 100 : p.prob * 100}%` }}
+                /* A `null` reaching here is a RESOLVED rung — the withheld
+                   branch above returned for every other one — and a clinch is
+                   drawn full whatever it was last priced at. Spelled as a
+                   null-check rather than `(p.prob ?? 0) * 100` so that the
+                   coercion this fix deletes cannot grow back in the one place
+                   that still has to cope with an absent number.
+
+                   EQUIVALENT TO `(p.prob ?? 0) * 100` TODAY, and the mutation
+                   sweep says so: swapping them kills nothing, because the early
+                   return leaves only two ways to reach this line and both give
+                   100 either way (`prob != null`, or `resolved` with the first
+                   arm taken). It is not guarded and cannot be — the two forms
+                   differ only on input this branch never sees. Kept for the
+                   edit that DOES let a null through here, where one of them
+                   paints a full bar and the other paints the false zero. */
+                style={{
+                  width: `${p.resolved || p.prob == null ? 100 : p.prob * 100}%`,
+                }}
               />
             </div>
             <div className="w-28 text-right flex items-center justify-end gap-2">
@@ -208,11 +289,16 @@ export default function AdvancementPath({
                   p.resolved ? "text-accent-live" : ""
                 }`}
               >
-                {p.resolved ? "✓ clinched" : formatProbabilityPercent(p.prob)}
+                {p.resolved
+                  ? "✓ clinched"
+                  : p.prob == null
+                    ? null
+                    : formatProbabilityPercent(p.prob)}
               </span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );
