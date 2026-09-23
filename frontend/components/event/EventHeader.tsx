@@ -6,7 +6,7 @@
 // no source names.
 
 import { useEffect, useState } from "react";
-import { statusLabel, eventDateRange, countdownLabel } from "@/lib/eventConceptDisplay";
+import { statusLabel, conceptHeaderDate, countdownLabel } from "@/lib/eventConceptDisplay";
 import { conceptDomainLabel } from "@/components/discover/utils";
 import type { EventConceptResponse } from "@/lib/types";
 
@@ -21,6 +21,13 @@ interface EventHeaderProps {
   /** Section anchors present on the page (built by the page from what rendered). */
   nav: SectionNavItem[];
   fallbackName: string;
+  /**
+   * #8139: the competition's declared next edition, used as the date line ONLY
+   * when the event carries no window of its own — see `conceptHeaderDate`. A
+   * standing concept (the Ryder Cup) has null start/end dates, so without this
+   * the page states no date at all.
+   */
+  nextEdition?: { start?: string | null; end?: string | null } | null;
 }
 
 export default function EventHeader({
@@ -28,8 +35,14 @@ export default function EventHeader({
   marketsTracked,
   nav,
   fallbackName,
+  nextEdition,
 }: EventHeaderProps) {
-  const dateRange = eventDateRange(event.start_date, event.end_date);
+  const dateRange = conceptHeaderDate(
+    event.status,
+    event.start_date,
+    event.end_date,
+    nextEdition,
+  );
   const meta = [dateRange, event.venue, event.location].filter(Boolean).join(" · ");
   // #3673: null = the payload makes no phase claim, and neither does the chip.
   // See `statusLabel` — a `default:` arm that answered "Upcoming" is how an

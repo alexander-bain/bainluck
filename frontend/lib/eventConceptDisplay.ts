@@ -785,6 +785,112 @@ export function eventDateRange(
 }
 
 // ---------------------------------------------------------------------------
+// #8139 concept-page half (ux/1455) — a standing competition states WHEN it is.
+//
+// `formatEditionWindow`/`daysUntil`/`parseISODate` moved here verbatim from
+// `components/event/NextEditionStrip`, which re-exports them so its own tests
+// and imports are unchanged. They are pure date display, this file is where the
+// header's other date helpers live, and `conceptHeaderDate` below needs the
+// window formatter — a lib importing a `"use client"` component to get it would
+// be the wrong direction.
+// ---------------------------------------------------------------------------
+
+function parseISODate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const ms = Date.parse(`${value.slice(0, 10)}T00:00:00Z`);
+  return Number.isNaN(ms) ? null : new Date(ms);
+}
+
+/**
+ * "April 8–11, 2027" · "April 8, 2027" · "December 30, 2026 – January 2, 2027".
+ *
+ * ⚠️ THE YEAR IS ALWAYS PRINTED, and that is exactly why a declared edition
+ * window goes through this and never through `eventDateRange`. An edition window
+ * is by construction not the current season's, and `eventDateRange` prints no
+ * year — so it would render the Ryder Cup's `2027-09-17 → 2027-09-19` as
+ * "Sep 17 – Sep 19", which a reader in September 2026 reads as *this week*.
+ * live/523 refused to ship #8139's backend half alone for that exact reason, and
+ * live/524 flagged the same trap when it handed this surface over.
+ */
+export function formatEditionWindow(
+  startISO: string | null | undefined,
+  endISO: string | null | undefined,
+): string | null {
+  const start = parseISODate(startISO);
+  if (!start) return null;
+  const end = parseISODate(endISO) ?? start;
+  const month = (d: Date) => d.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  const day = (d: Date) => d.getUTCDate();
+  if (start.getTime() === end.getTime()) {
+    return `${month(start)} ${day(start)}, ${start.getUTCFullYear()}`;
+  }
+  if (start.getUTCFullYear() !== end.getUTCFullYear()) {
+    return `${month(start)} ${day(start)}, ${start.getUTCFullYear()} – ${month(end)} ${day(
+      end,
+    )}, ${end.getUTCFullYear()}`;
+  }
+  if (start.getUTCMonth() !== end.getUTCMonth()) {
+    return `${month(start)} ${day(start)} – ${month(end)} ${day(end)}, ${end.getUTCFullYear()}`;
+  }
+  return `${month(start)} ${day(start)}–${day(end)}, ${end.getUTCFullYear()}`;
+}
+
+/**
+ * Whole days from `now` until the edition starts, or null when that is not a
+ * forward-looking number. The countdown is computed in the CLIENT and never read
+ * off the payload: the envelope is mirrored for up to 24h and served stale on a
+ * miss, so a server-stamped "240 days" would be wrong for most of the life of the
+ * response it rode in on (the gotcha #118 shape — a number with no window is not
+ * a measurement).
+ */
+export function daysUntil(startISO: string | null | undefined, now: Date): number | null {
+  const start = parseISODate(startISO);
+  if (!start) return null;
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days = Math.round((start.getTime() - today) / 86_400_000);
+  return days > 0 ? days : null;
+}
+
+/**
+ * The date line for a concept header: the event's own window when it has one,
+ * otherwise the competition's declared next edition.
+ *
+ * WHY THE FALLBACK EXISTS. A standing-competition concept can carry no dates of
+ * its own. `GET /api/event/event:golf:ryder-cup` served `start_date: null`,
+ * `end_date: null`, `status: "upcoming"` on production `83a20bc7` — so the header
+ * printed no date and the page read "Ryder Cup · UPCOMING" with nothing anywhere
+ * saying it is two years out. The date was in the payload the whole time, one
+ * field over, as `competition.next_edition` (2027-09-17 → 2027-09-19); it was
+ * only ever on screen via the NEXT EDITION strip, which is a concluded-event
+ * affordance, so #8141 correctly flipping the badge settled→upcoming retired the
+ * strip and took the page's only date with it (live/524).
+ *
+ * WHY IT IS GATED ON live/settled. The next edition is only the page's own date
+ * when the page has no edition of its own in play:
+ *  - `live` — the reader is watching it; a future edition's date is not this
+ *    page's date and would contradict the LIVE chip beside it.
+ *  - `settled` — `NextEditionStrip` already prints this window as a sentence
+ *    ("The Masters returns April 8–11, 2027"). Putting it in the header too
+ *    would state one fact twice, in two grammars, on one screen.
+ * So the fallback lands only where the defect is: a competition that has not
+ * begun and cannot say when it does.
+ *
+ * Honest-empty (ruling 027): no own window and no declared edition ⇒ null, and
+ * the header renders no date rather than a hedge about why (notice 34).
+ */
+export function conceptHeaderDate(
+  status: string,
+  start: string | null | undefined,
+  end: string | null | undefined,
+  nextEdition: { start?: string | null; end?: string | null } | null | undefined,
+): string | null {
+  const own = eventDateRange(start, end);
+  if (own) return own;
+  if (status === "live" || status === "settled") return null;
+  return formatEditionWindow(nextEdition?.start, nextEdition?.end);
+}
+
+// ---------------------------------------------------------------------------
 // ux/1070 item 2 — a fight card's MAIN EVENT, as a bout.
 // ---------------------------------------------------------------------------
 
