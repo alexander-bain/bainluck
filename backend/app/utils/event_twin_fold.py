@@ -1353,7 +1353,16 @@ def _one_club_named_twice(left: Optional[str], right: Optional[str]) -> bool:
     right_tokens = _name_tokens(right)
     if not left_tokens or not right_tokens:
         return False
-    return left_tokens <= right_tokens or right_tokens <= left_tokens
+    # `issubset`, not `<=`, and the spelling is load-bearing. CodeQL raised
+    # `py/redundant-comparison` on `a <= b or b <= a` because for a TOTAL order
+    # that disjunction is a tautology — which is exactly how a human skims it
+    # too, and the "simplification" it invites is `return True`. Sets are a
+    # PARTIAL order, so the disjunction is the whole rule: `{hiroshima, carp}`
+    # and `{yokohama, baystars}` satisfy neither side. The mutation sweep kills
+    # both the one-directional and the equality narrowings, so the two arms are
+    # each doing work; this spells that out where the reader is, rather than
+    # leaving a static analyser's "redundant" label sitting on the licence.
+    return left_tokens.issubset(right_tokens) or right_tokens.issubset(left_tokens)
 
 
 def _merge_anchored_claim_name_variants(groups: dict[tuple, list]) -> dict[tuple, list]:
