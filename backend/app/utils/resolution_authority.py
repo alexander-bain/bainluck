@@ -223,6 +223,73 @@ OVERWRITABLE_WINNER_SOURCES_SQL: str = _sql_in_list(OVERWRITABLE_WINNER_SOURCES)
 # non-guess resolution, including deterministic/soft ones).
 GUESS_FAMILY_SOURCES_SQL: str = _sql_in_list(GUESS_FAMILY_SOURCES)
 
+# ---------------------------------------------------------------------------
+# What a PRICE-DERIVED crowner may not overwrite (#8132).
+#
+# The sets above answer "may this market be re-resolved?" — a question about the
+# MARKET, asked in a HAVING clause. This one answers "may this LEG be written?",
+# and it exists because the three price-derived crowners in `backfill_winners`
+# (`clean_resolution` x2, golf `settlement_sync`) guard the former and not the
+# latter: their CTE decides the market is eligible, then the UPDATE rewrites
+# every leg of it with no reference to what that leg's grade already says. A
+# tier-1 price fallback stamping over a tier-3 venue settlement is a downgrade
+# `is_downgrade` forbids, executed by SQL that never consults it.
+#
+# TWO MEMBERS, AND THE SECOND IS THE ONE WITH A HOLE ALREADY IN IT.
+#
+# `AUTHORITATIVE_SOURCES` — the venue's own declared result. A price fallback
+# superseding it is the fabrication class by definition: #8132's 46
+# `clean_resolution` rows are that exact write, made after Kalshi PURGED the
+# per-leg results (`GET /events/{ticker}` answers 200 with an empty `markets`
+# array at ~75 days, gotcha #35), leaving `is_winner = current_probability >=
+# 0.95` as the only thing left saying anything. A leg that closed at 0.99 and
+# lost then reads "Won" for ever.
+#
+# `ungradeable_result` — the #1852 retraction, and TERMINAL_SOURCES already
+# states the intent in prose: "It is NOT in OVERWRITABLE_WINNER_SOURCES: the
+# re-resolution HAVING guards ask 'may a price-derived crowner supersede this?',
+# and the answer for a row we have just declared unknowable is no." That
+# protection does not hold. The HAVING guards count only rows where
+# `fo.is_winner` is TRUE, and a retraction is `is_winner = false` — it
+# contributes 0 to the SUM and is invisible to the very guard named as its
+# defence. This constant is where that sentence becomes true.
+#
+# Deliberately NOT included: `DETERMINISTIC_SOURCES` (tier 2). Blocking those
+# would tighten beyond the ladder — a same-or-higher-tier rewrite of a
+# box-score-derived grade is permitted by `is_downgrade` and nothing here has
+# measured a reason to forbid it. The guard removes writes that are wrong by the
+# ladder's own arithmetic, and no others.
+PRICE_CROWN_PROTECTED_SOURCES: frozenset[str] = AUTHORITATIVE_SOURCES | {
+    "ungradeable_result"
+}
+
+# SQL fragment for the price-crowner leg guard. Used as
+# `AND COALESCE(fo.resolution_source, '') NOT IN ` + this.
+PRICE_CROWN_PROTECTED_SOURCES_SQL: str = _sql_in_list(PRICE_CROWN_PROTECTED_SOURCES)
+
+
+def price_crown_protected_sql(writer: str) -> str:
+    """The protected-source IN-list for a crowner that stamps ``writer``.
+
+    A source may always rewrite its OWN prior write: that is a same-tier rewrite,
+    which :func:`is_downgrade` permits by name, and it is what keeps a sync pass
+    idempotent. The golf pass stamps ``settlement_sync``, which is itself a
+    member of :data:`AUTHORITATIVE_SOURCES` — so protecting the set wholesale
+    would freeze that pass against its own rows and strand exactly the
+    corrections it exists to make. Subtracting the writer is therefore not a
+    softening of the guard; it is the difference between guarding a leg and
+    disabling a pass.
+
+    Raises on a writer the ladder does not know, so a typo'd source name can
+    never silently widen the set it was meant to narrow.
+    """
+    if writer not in KNOWN_SOURCES:
+        raise ValueError(
+            f"unknown resolution_source {writer!r}: classify it in "
+            "resolution_authority before using it as a crowner"
+        )
+    return _sql_in_list(PRICE_CROWN_PROTECTED_SOURCES - {writer})
+
 
 # ---------------------------------------------------------------------------
 # Calibration-truth eligibility (Queue #261) — ORTHOGONAL to overwrite authority.

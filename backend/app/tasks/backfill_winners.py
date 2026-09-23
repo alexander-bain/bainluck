@@ -34,6 +34,8 @@ from app.utils.resolution_authority import (
     AUTHORITATIVE_SOURCES_SQL,
     GUESS_FAMILY_SOURCES_SQL,
     OVERWRITABLE_WINNER_SOURCES_SQL,
+    PRICE_CROWN_PROTECTED_SOURCES_SQL,
+    price_crown_protected_sql,
     SINGLE_WINNER_GUESS_SOURCES_SQL,
 )
 from app.utils.price_change_stamp import price_changed_at_value
@@ -1343,6 +1345,14 @@ async def _backfill_kalshi_winners(
                                 FROM market_check mc
                                 WHERE fo.market_id = mc.market_id
                                   AND fo.current_probability IS NOT NULL
+                                  -- #8132: this branch fires precisely BECAUSE
+                                  -- the venue answered with no markets, i.e.
+                                  -- after the purge — so it is the least
+                                  -- informed writer in the file and must not
+                                  -- stamp over a leg the venue itself graded,
+                                  -- nor over a retraction. The CTE above vets
+                                  -- the MARKET; only this vets the LEG.
+                                  AND COALESCE(fo.resolution_source, '') NOT IN """ + PRICE_CROWN_PROTECTED_SOURCES_SQL + """
                                 RETURNING fo.is_winner
                             """),
                             {"event_ticker": event_ticker},
@@ -7365,6 +7375,12 @@ async def _backfill_from_current_probability():
                       -- needed: excluding it from the CTE only stops it
                       -- justifying the grade, not being crowned by it.
                       AND """ + DUPLICATE_CONDITION_LEG_SQL + """
+                      -- #8132: the same shape of hole, one tier up. A
+                      -- near-certain CLOSING PRICE is not a settlement, so it
+                      -- may not overwrite the venue's own result or the #1852
+                      -- retraction. This pass runs over ALL sources, so it is
+                      -- the widest reach of the three crowners.
+                      AND COALESCE(fo.resolution_source, '') NOT IN """ + PRICE_CROWN_PROTECTED_SOURCES_SQL + """
                     RETURNING fo.is_winner
                 """))
             rows = result.all()
@@ -10605,6 +10621,18 @@ async def _backfill_all_winners(dry_run: bool = False, limit: int = 5000):
                                      'datagolf_matchup', 'game_score')
                           )
                       )
+                      -- #8132: #938's guard above asks whether SOME SIBLING leg
+                      -- holds an authoritative winner; it never asks what THIS
+                      -- leg's own grade says. So a board the venue graded and
+                      -- then purged — every leg a loser, no sibling winner to
+                      -- find — passes it, and a leg frozen at 0.99 is re-crowned
+                      -- as `settlement_sync`. That is tier 3, so nothing may
+                      -- overwrite it afterwards: the one crowner whose mistakes
+                      -- are permanent. Price is not a settlement; the venue's
+                      -- own answer and the #1852 retraction both outrank it.
+                      -- Its OWN source is subtracted so the pass stays
+                      -- idempotent over rows it wrote itself.
+                      AND COALESCE(fo.resolution_source, '') NOT IN """ + price_crown_protected_sql("settlement_sync") + """
                 """))
             golf_sync_stats["synced"] = r.rowcount
 
