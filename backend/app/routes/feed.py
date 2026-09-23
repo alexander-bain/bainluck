@@ -6771,14 +6771,25 @@ def _outcomes_are_cumulative_ladder(
 def _market_exclusivity(market) -> bool | None:
     """``FuturesMarket.mutually_exclusive`` as #8224's overround ceiling reads it.
 
-    🔴 `getattr` WITH A DEFAULT, AND THE DEFAULT IS LOAD-BEARING. The cached path
-    rebuilds markets from `MARKET_ROW_COLUMNS` (`futures_market_snapshot.py`), and
-    the column only joined that list in #7808 (snapshot v7) — a v6 payload still in
-    Redis has no such attribute at all, so a bare `market.mutually_exclusive` would
-    raise inside the card builder and take the card out (gotcha #42). `None` is not
-    a guess either: it is read as "caller does not know" and keeps the historical
-    2.0 ceiling, so the degraded path is byte-identical to today rather than a
-    silently widened repair.
+    🪤 THE `getattr` DEFAULT IS HARMLESS BUT ITS ORIGINAL REASON WAS FALSE, and it
+    was written here as a load-bearing warning, so it was believed — it cost
+    discover/437 and int512 a pass each before anyone read the loader (#8237).
+    The retired claim: "a v6 payload still in Redis has no such attribute, so a
+    bare `market.mutually_exclusive` would raise inside the card builder". It
+    cannot. `SNAPSHOT_SCHEMA_VERSION` is **8**, `mutually_exclusive` has been in
+    `MARKET_COLUMNS` since #7808, and `futures_market_snapshot.py` REJECTS a
+    version-mismatched payload outright (`payload.get("v") != ...` -> `None`)
+    rather than reading it short. There is no degraded-read path to protect
+    against; a rehydrated carrier either carries the column or is not used.
+
+    The `getattr` stays, because a default that cannot fire costs nothing and the
+    ORM/snapshot pair is exactly where gotcha #42 applies — but it is ordinary
+    defensiveness, not the mitigation of a measured hazard. Do not reason from it.
+
+    `None` IS still load-bearing, for a different and real reason: it is read as
+    "caller does not know" and keeps BOTH per-class widenings off — #8224's 1.60
+    ceiling and #8237's withheld gate — so an unknown field is served exactly as
+    it was before either, never a silently widened repair.
     """
     return getattr(market, "mutually_exclusive", None)
 
@@ -6919,10 +6930,12 @@ def _feed_display_scale(
     is what makes the two surfaces agree rather than a second opinion about the
     field. The ladder gate below is untouched and still runs first.
 
-    ``None`` means "the caller does not know" and keeps the historical 2.0: a v6
-    snapshot payload predating #7808 carries no ``mutually_exclusive`` at all, and
-    the safe reading of an absent column is today's behaviour, never a silently
-    widened repair.
+    ``None`` means "the caller does not know" and keeps the historical 2.0, which
+    is the safe reading of an absent column: today's behaviour, never a silently
+    widened repair. (#8224 justified this by a v6 snapshot payload carrying no
+    ``mutually_exclusive`` — MEASURED FALSE and retired in #8237; see
+    ``_market_exclusivity``. The ``None`` arm is right on its own terms and the
+    reasoning above does not rest on the retired claim.)
 
     ── #8237: AND THE OTHER CLAUSE OF THE PAGE'S RULE, WHICH #8224 LEFT BEHIND ──
 
