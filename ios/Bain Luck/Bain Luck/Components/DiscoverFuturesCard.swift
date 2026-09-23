@@ -71,6 +71,15 @@ nonisolated func discoverFuturesShareRows(
 
 // MARK: - Futures Card
 
+/// #8213 — carries the outcome rows' measured width up to the card, so the
+/// percent column can be sized from the room the row actually has.
+private struct FuturesOutcomeRowWidthKey: PreferenceKey {
+    static let defaultValue: Double = 0
+    static func reduce(value: inout Double, nextValue: () -> Double) {
+        value = max(value, nextValue())
+    }
+}
+
 struct NativeFuturesDiscoverCard: View {
     let data: FeedFuturesData
     let feedContext: String?
@@ -98,6 +107,18 @@ struct NativeFuturesDiscoverCard: View {
     /// mark because the caption is drawn under the whole footer, where it cannot
     /// cover the number the reader just asked about.
     @State private var revealedPriceAge: String?
+
+    /// #8213 — the width the outcome rows were actually given, published by a
+    /// `GeometryReader` behind them. Not derived from the screen: a card's width
+    /// is a layout outcome (padding, iPad columns, Stage Manager), and deriving
+    /// it would assert a layout instead of measuring one.
+    @State private var outcomeRowWidth: Double = 0
+
+    /// #8213 — the view's OWN text size, which is what the column model measures
+    /// against. `UIFont.preferredFont` with no traits resolves the PROCESS
+    /// setting instead, and measuring one while drawing the other is how a
+    /// column ends up narrower than the string inside it.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var categoryLabel: String {
         sportCategoryDisplayName(data.sportName ?? data.llmSportCategory).uppercased()
@@ -285,15 +306,38 @@ struct NativeFuturesDiscoverCard: View {
 
                 if let outcomes = data.topOutcomes, outcomes.count > 1 {
                     let percents = renderedPercents
+                    let shown = Array(outcomes.prefix(3).enumerated())
+                    // #8213 — the column widths are measured from the strings
+                    // these rows will actually print, at this view's text size,
+                    // in the width this card was actually given. The percent
+                    // column is computed ONCE here rather than inside the row
+                    // so all three rows share a right edge, which is the one
+                    // thing the 34pt literal was getting right.
+                    let columns = FuturesOutcomeRowColumns.layout(
+                        percentLabels: shown.map {
+                            discoverFuturesCardPercentLabel(
+                                percents.indices.contains($0.offset) ? percents[$0.offset] : nil)
+                        },
+                        availableWidth: outcomeRowWidth,
+                        typeSize: dynamicTypeSize
+                    )
                     VStack(spacing: 7) {
-                        ForEach(Array(outcomes.prefix(3).enumerated()), id: \.element.id) { idx, outcome in
+                        ForEach(shown, id: \.element.id) { idx, outcome in
                             outcomeRow(
                                 outcome,
                                 isLeader: idx == 0,
-                                percent: percents.indices.contains(idx) ? percents[idx] : nil
+                                percent: percents.indices.contains(idx) ? percents[idx] : nil,
+                                columns: columns
                             )
                         }
                     }
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: FuturesOutcomeRowWidthKey.self, value: geo.size.width)
+                        }
+                    )
+                    .onPreferenceChange(FuturesOutcomeRowWidthKey.self) { outcomeRowWidth = $0 }
                 }
 
                 // #2088 — the sentence a card carries when its numbers do not add
@@ -406,14 +450,20 @@ struct NativeFuturesDiscoverCard: View {
     private func outcomeRow(
         _ outcome: FeedFuturesOutcome,
         isLeader: Bool,
-        percent: Int?
+        percent: Int?,
+        columns: FuturesOutcomeRowColumns.Layout
     ) -> some View {
-        HStack(spacing: 8) {
+        // #8213 — the spacing the model subtracts is the spacing the row is
+        // built with. Two literals that must agree are two numbers that drift.
+        HStack(spacing: FuturesOutcomeRowColumns.interColumnSpacing) {
             Text(outcome.name)
                 .font(.caption.weight(isLeader ? .semibold : .regular))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(minWidth: 60, maxWidth: 140, alignment: .leading)
+                .frame(
+                    minWidth: FuturesOutcomeRowColumns.nameMinimum,
+                    maxWidth: columns.nameMaximum,
+                    alignment: .leading)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -428,7 +478,8 @@ struct NativeFuturesDiscoverCard: View {
 
             Text(discoverFuturesCardPercentLabel(percent))
                 .font(.caption.weight(.bold).monospacedDigit())
-                .frame(width: 34, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: columns.percentWidth, alignment: .trailing)
         }
     }
 
