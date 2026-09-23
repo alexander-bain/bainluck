@@ -594,6 +594,22 @@ export interface EventHistoryResponse {
    * whether the chart's "All" range still owes a re-fetch.
    */
   pre_window_omitted?: boolean;
+  /**
+   * #7878 / #8215: true iff `commence_time` is an actual kick-off. `false` means the hour came out
+   * of a venue column that is the match's expected END — Kalshi's `occurrence_datetime`, which is
+   * byte-identical to `expected_expiration_time` and sits ~2h after a tennis match finishes.
+   * Optional because a client may be reading an older payload.
+   *
+   * A statement about PROVENANCE, and the client must not re-derive it from the points: which venue
+   * column the hour came from, and whether one of the serve-time recoveries (#5905 soccer pad,
+   * #6568 combat-card ticker date) has since moved it, is invisible in the series. Same reason
+   * `pre_window_omitted` is served rather than inferred. Measured on production over the 48h to
+   * 2026-09-23: 139 of 208 `kalshi`-clocked events (66.8%) were already decided before their own
+   * stored start, against 0.0% for `espn`.
+   *
+   * The charts read it to decide whether `commence_time` may be used as the "Since Start" cut.
+   */
+  commence_time_is_kickoff?: boolean;
   points: number;
   espn_snapshot_count?: number;
   pm_spread_data?: {
