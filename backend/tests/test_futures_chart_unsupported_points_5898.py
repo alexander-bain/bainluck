@@ -39,6 +39,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models.models import FuturesMarket, FuturesOddsSnapshot
 from app.routes import futures as futures_route
 from app.utils.futures_unsupported_price import snapshot_price_is_unsupported
 
@@ -149,6 +150,18 @@ class _Session:
         self.calls = 0
 
     async def execute(self, statement):
+        # #7747 (chart shares the page's whole withheld set): the handler now
+        # asks `_withheld_price_outcome_ids`, whose Polymarket arm (#5876)
+        # takes ONE trade read on this board's empty-book leg before the
+        # snapshot query — the same read the page makes. A column select is
+        # that read; it is answered empty (no trade rows, which fails OPEN, so
+        # nothing in this file is withheld that was not withheld before) and
+        # does not consume the scripted queue, which is keyed to the snapshot
+        # reads alone.
+        if statement.column_descriptions[0]["expr"] is not FuturesMarket and (
+            statement.column_descriptions[0]["expr"] is not FuturesOddsSnapshot
+        ):
+            return _Result(rows=[])
         self.calls += 1
         idx = min(self.calls - 1, len(self._results) - 1)
         return self._results[idx]

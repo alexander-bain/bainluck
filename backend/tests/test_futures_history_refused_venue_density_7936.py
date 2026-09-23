@@ -74,9 +74,14 @@ def _outcome(oid, prob):
         team_id=None,
         probability_change_24h=None,
         current_probability=prob,
-        # A real two-sided book, so #5898 admits every capture below.
-        current_yes_bid=0.0200,
-        current_yes_ask=0.1800,
+        # A real two-sided book AROUND THE PRICE, so #5898 admits every capture
+        # below and the page's book-refuted arm (#6532) does not withhold the
+        # leg: a 0.50 printed over a 0.02/0.18 book is a price its own book
+        # prices out, and since #7747 the chart is gated on the same withheld
+        # set the page uses — a refused leg would flip `field_complete` and
+        # with it the venue verdict these twins exist to tell apart.
+        current_yes_bid=round(prob - 0.01, 4),
+        current_yes_ask=round(prob + 0.01, 4),
         resolution_source=None,
         is_winner=None,
         external_id=f"KXPAIR-26SEP-{oid}",

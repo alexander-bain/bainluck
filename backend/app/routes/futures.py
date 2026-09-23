@@ -6764,7 +6764,20 @@ async def get_futures_history(
     # interleaved with the auto-extend tiers that re-ask for a wider window.
     # Most boards never reach it: the predicate screens on the outcome rows
     # already in memory and only survivors cost a trade read.
-    _withheld_ids = await _unsupported_price_outcome_ids(db, market)
+    #
+    # 🔴 THE SAME SET, WHICH MEANS THE SAME HELPER — `_withheld_price_outcome_ids`,
+    # the one #6993 lifted so that "adding an arm here reaches every caller".
+    # The first cut of this gate called `_unsupported_price_outcome_ids`
+    # directly, i.e. ONE of the five arms the detail page unions (#5611's
+    # Kalshi trade screen), and none of the other four: the Polymarket
+    # refuted-midpoint arm (#5876), the book-refuted arm (#6532), the
+    # empty-book arm (#6757, source-agnostic) and the unlocated-in-broken-field
+    # arm (#7059). On any board one of those four withholds, the detail prints
+    # RAW (`field_complete=False`) while this route still squeezed — the exact
+    # two-scale defect above, re-entering through four doors the comment above
+    # said were closed. The union is composed in one place so this route cannot
+    # disagree with the page about which rows are refused.
+    _withheld_ids = await _withheld_price_outcome_ids(db, market)
     if getattr(market, "status", None) == "open":
         from app.utils.market_staleness import stale_observation_keys
 
