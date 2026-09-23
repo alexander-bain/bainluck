@@ -155,8 +155,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-NOCLEANUPRESERVE",
         RAIL,
         "stop charging the cleanup to the reserve — the failure path goes unpaid",
-        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 6.5""",
-        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 3.5""",
+        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 8.5""",
+        """POST_LOOP_NON_COUNT_RESERVE_SECONDS = 5.5""",
     ),
     (
         "M-EXHAUSTED",
