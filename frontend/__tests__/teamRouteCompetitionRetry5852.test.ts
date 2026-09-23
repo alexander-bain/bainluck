@@ -117,6 +117,11 @@ describe("#5852 competition half — which row a route resolves to", () => {
   it("reaches a row whose suffix is the sport key's last token, not the URL segment", async () => {
     // `/sport/soccer/ucl/…` is an ALIAS: the row is `real-madrid-league`,
     // minted from `soccer_uefa_champs_league`. `real-madrid-ucl` does not exist.
+    //
+    // ⚠️ REVISED 2026-09-23 (#7651): the segment shape is now tried FIRST —
+    // #7501 settled new rows on it, so `-ucl` is askable — and the legacy
+    // `-league` row is reached SECOND. What this test defends (the legacy row
+    // is still reached) is unchanged; only the cost moved, by one 404.
     const { fetchTeam, asked } = fetcherOver({
       "real-madrid": full("Real Madrid", "soccer_spain_la_liga", "5-0-2"),
       "real-madrid-league": full("Real Madrid", "soccer_uefa_champs_league", "0-0-1"),
@@ -125,7 +130,7 @@ describe("#5852 competition half — which row a route resolves to", () => {
     const out = await resolveTeamForRoute("real-madrid", "soccer", "ucl", fetchTeam);
 
     expect(out.slug).toBe("real-madrid-league");
-    expect(asked).not.toContain("real-madrid-ucl");
+    expect(asked).toEqual(["real-madrid", "real-madrid-ucl", "real-madrid-league"]);
   });
 
   it("refuses a right-competition row that would cost the reader the crest and the record", async () => {
@@ -255,31 +260,43 @@ describe("#5852 competition half — which row a route resolves to", () => {
     expect(asked).toEqual(["arsenal-epl"]);
   });
 
-  it("buys exactly one extra request, whatever shape the route segment is", () => {
-    // The segment IS the key's last token.
+  it("buys at most two extra requests, one per slug shape in the table", () => {
+    // ⚠️ REVISED 2026-09-23 (#7651): #7501 backfilled 4,031 rows in the
+    // URL-segment shape, so the repair now tries it FIRST and the frozen
+    // legacy last-token shape SECOND. Single-token routes still cost one: the
+    // two shapes are the same string there and dedupe.
+    // The segment IS the key's last token: one candidate.
     expect(teamRouteCandidates("arsenal", "soccer", "epl")).toEqual(["arsenal-epl"]);
-    // Multi-token: `-cup` from the key; `-fa_cup` is unaskable and not tried.
-    expect(teamRouteCandidates("arsenal", "soccer", "fa_cup")).toEqual(["arsenal-cup"]);
-    // An ALIAS: the row is `-league`, and the table holds no `-ucl` row to try.
-    expect(teamRouteCandidates("arsenal", "soccer", "ucl")).toEqual(["arsenal-league"]);
+    // Multi-token: the settled `-fa_cup` first, the legacy `-cup` second.
+    expect(teamRouteCandidates("arsenal", "soccer", "fa_cup")).toEqual([
+      "arsenal-fa_cup",
+      "arsenal-cup",
+    ]);
+    // An ALIAS: the settled `-ucl` first, the legacy `-league` second.
+    expect(teamRouteCandidates("arsenal", "soccer", "ucl")).toEqual([
+      "arsenal-ucl",
+      "arsenal-league",
+    ]);
   });
 
-  it("suffixes with ONE token of the sport key, so a candidate is always slug-shaped", () => {
-    // All 5,748 team slugs and all 74 legacy slugs match ^[a-z0-9-]+$, and the
-    // suffix is a single key token — never the multi-token URL segment, which
-    // would put an underscore in a slug no row can have.
-    for (const [slug, sport, league] of [
-      ["jannik-sinner", "tennis", "atp_us_open"],
-      ["lazio", "soccer", "italy_serie_a"],
-      ["stade-de-reims", "soccer", "france_ligue_two"],
-    ] as const) {
-      const [candidate] = teamRouteCandidates(slug, sport, league);
-      expect(candidate).toMatch(/^[a-z0-9-]+$/);
-    }
+  it("mirrors the column's two shapes, in settled-first order", () => {
+    // ⚠️ REVISED 2026-09-23 (#7651): this used to pin "ONE token … always
+    // slug-shaped" (`^[a-z0-9-]+$`), measured when no row held an underscore.
+    // #7501 settled rung 2 on the URL segment WITH its underscores, and the API
+    // serves those rows — so a candidate that refuses underscores now refuses
+    // the growing half of the table. Candidates mirror the column, not slugify.
     expect(teamRouteCandidates("jannik-sinner", "tennis", "atp_us_open")).toEqual([
+      "jannik-sinner-atp_us_open",
       "jannik-sinner-open",
     ]);
-    expect(teamRouteCandidates("lazio", "soccer", "italy_serie_a")).toEqual(["lazio-a"]);
+    expect(teamRouteCandidates("lazio", "soccer", "italy_serie_a")).toEqual([
+      "lazio-italy_serie_a",
+      "lazio-a",
+    ]);
+    expect(teamRouteCandidates("stade-de-reims", "soccer", "france_ligue_two")).toEqual([
+      "stade-de-reims-france_ligue_two",
+      "stade-de-reims-two",
+    ]);
   });
 
   it("refuses a row that loses ONLY the colour", async () => {
