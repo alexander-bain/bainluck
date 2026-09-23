@@ -1600,7 +1600,10 @@ struct OddsChartView: View {
     ///    thing `chartPoints`' first guarantee refuses, and worse than it looks:
     ///    `defaultVisibleSources` returns `["aggregate"]` the moment one such
     ///    point exists, so a single minted point would hide the consensus line
-    ///    the reader was actually reading and draw nothing in its place.
+    ///    the reader was actually reading and draw nothing in its place. What
+    ///    DOES advance there is the venue's own served series, from the venue
+    ///    reading each frame carries (`extendingServedSourceSeries`) — a later
+    ///    reading of a line already on the plot, not a new one.
     /// 2. **Settled means settled.** A finished payload is never extended. The
     ///    match is over, the backend's history is the complete journey, and a
     ///    late frame must not add a twitch past the end of the game.
@@ -1621,13 +1624,61 @@ struct OddsChartView: View {
             .filter { $0.source == "aggregate" }
             .map(\.date)
             .max()
-        guard let publishedEdge else { return points }
+        guard let publishedEdge else {
+            return extendingServedSourceSeries(
+                points, with: liveFrames,
+                servedSources: Set((history.winProbHistory ?? [:]).keys))
+        }
 
         var extended = points
         for frame in liveFrames where frame.date > publishedEdge {
             extended.append(
                 ChartDataPoint(date: frame.date, probability: frame.homeProbability, source: "aggregate")
             )
+        }
+        return extended
+    }
+
+    /// Where the backend blended NOTHING, carry each served venue series forward
+    /// to that venue's own pushed readings (#836/#837/#920).
+    ///
+    /// `aggregate_line` exists only where two or more sources were blended, so on
+    /// a Kalshi-only or Polymarket-only live game the line the reader reads the
+    /// match off is the venue's series — and refusal 1 above left it waiting for
+    /// the 120 s poll while the hero moved on the push. Web's twin is
+    /// `extendServedSourceSeries` (`frontend/lib/liveChartHistory.ts`); the rules
+    /// are the same:
+    ///
+    /// 1. **Never mint a series.** Only a source in `win_prob_history` with points
+    ///    already drawn is extended. Two pushed frames of an unserved source would
+    ///    be a line with no history, no legend entry and no colour.
+    /// 2. **Strictly newer than THAT series' own edge.** Ties go to the served
+    ///    point; each series has its own edge, not the page's.
+    /// 3. **The venue's value at the stamped time** — `sourceProbability`, never
+    ///    the blend `homeProbability` standing in for it.
+    ///
+    /// Refusal 2 (settled means settled) has already run by the time this is
+    /// reached, so a finished payload never gets here.
+    static func extendingServedSourceSeries(
+        _ points: [ChartDataPoint],
+        with liveFrames: [LiveBlendPoint],
+        servedSources: Set<String>
+    ) -> [ChartDataPoint] {
+        var edges: [String: Date] = [:]
+        for point in points where servedSources.contains(point.source) {
+            if let edge = edges[point.source], edge >= point.date { continue }
+            edges[point.source] = point.date
+        }
+        guard !edges.isEmpty else { return points }
+
+        var extended = points
+        for frame in liveFrames {
+            // `venue`, not `source`: a `let source = x.source` binding makes every
+            // `source.capitalized` in this file read as a re-cased source key to
+            // appNamesEverySourceItPrints' alias scan (file-scoped by design).
+            guard let venue = frame.source, let value = frame.sourceProbability,
+                  let edge = edges[venue], frame.date > edge else { continue }
+            extended.append(ChartDataPoint(date: frame.date, probability: value, source: venue))
         }
         return extended
     }

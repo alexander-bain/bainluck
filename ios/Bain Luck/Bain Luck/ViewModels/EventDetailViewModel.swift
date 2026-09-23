@@ -327,9 +327,14 @@ final class EventDetailViewModel: ObservableObject {
         // cannot parse — still moves the hero, which needs no x-coordinate, but
         // it gets no point: placing it at "now" would draw an invented time next
         // to backend points that all carry real ones.
+        //
+        // The venue reading rides along (#836/#837/#920): on a single-source page
+        // the backend blends nothing, and that venue's own line is the one the
+        // chart draws — so it is the one that has to keep up with the hero.
         if let p = frame.p, let stamped = frame.updatedAt?.asDate {
             liveBlend = LiveBlendBuffer.appending(
-                LiveBlendPoint(date: stamped, homeProbability: p),
+                LiveBlendPoint(date: stamped, homeProbability: p,
+                               source: frame.source, sourceProbability: frame.sourceValue),
                 to: liveBlend
             )
         }
