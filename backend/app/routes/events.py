@@ -2206,7 +2206,11 @@ async def _fetch_futures_window(
     Returns ``(rows, arm_state)``; ``arm_state`` is reported under
     ``?debug_timing=1`` so "did it skip" is answerable from outside without
     reading a log — a zero-cost stage and a stage that did not run are otherwise
-    the same observation (gotcha #53).
+    the same observation (gotcha #53). The states are ``absent`` (nothing to
+    split), ``skipped`` (the tier order proves the arm cannot matter), ``shed``
+    (LAT-P271: no time left to start it), ``budget_exceeded`` (LAT-P271: it
+    started and blew its own bound, so the page is the name matches alone) and
+    ``merged``.
     """
     if tier1_arms:
         tier1_rows = list(
@@ -2224,13 +2228,49 @@ async def _fetch_futures_window(
     if len(tier1_rows) >= _SEARCH_FUTURES_WINDOW:
         return tier1_rows, "skipped"
 
-    await _apply_search_statement_timeout(db, deadline)
-    outcome_rows = (
-        (await db.execute(window_query(candidates_in([outcome_arm]))))
-        .scalars()
-        .unique()
-        .all()
-    )
+    # LAT-P271/#1619: the arm runs inside its OWN budget, not the deadline residual.
+    # Measurement, the number, and what a shed costs the reader are all at
+    # :data:`_SEARCH_OUTCOME_ARM_TIMEOUT_MS`.
+    bound_ms = _search_outcome_arm_bound_ms(deadline)
+    if bound_ms is None:
+        # Nothing left worth starting — an honest "we ran out of time" rather than
+        # a statement issued in order to be cancelled. A distinct state from
+        # `budget_exceeded`: this arm never touched the database (gotcha #53).
+        return tier1_rows, "shed"
+    await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+    try:
+        outcome_rows = (
+            (await db.execute(window_query(candidates_in([outcome_arm]))))
+            .scalars()
+            .unique()
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001 — re-raised below unless it is the bound
+        if not _is_query_timeout(exc):
+            raise
+        # The arm blew its own budget. Before this existed the cancellation
+        # propagated to the caller, which empties the WHOLE futures bucket and
+        # logs a recall failure — so the expensive arm's failure cost the reader
+        # the cheap arm's answer too. The tier<=1 rows are already in hand and
+        # every one of them outranks every row this arm could have returned.
+        logger.warning(
+            "search futures outcome arm exceeded its %d ms budget — keeping the "
+            "%d name matches", bound_ms, len(tier1_rows),
+        )
+        await _recover_search_session(db, deadline)
+        # 🔴 gotcha #6: that rollback EXPIRED every ORM row we are holding, so
+        # `tier1_rows` cannot be returned — serialising it would lazy-load on a
+        # rolled-back session. Re-read the cheap arm (the one measured at 114-204
+        # ms) rather than hand the caller rows that raise when they are rendered.
+        if not tier1_arms:  # pragma: no cover - the name arm is always built
+            return [], "budget_exceeded"
+        refetched = list(
+            (await db.execute(window_query(candidates_in(tier1_arms))))
+            .scalars()
+            .unique()
+            .all()
+        )
+        return refetched, "budget_exceeded"
     merged = list(tier1_rows)
     seen = {m.id for m in merged}
     for m in outcome_rows:
@@ -4477,6 +4517,71 @@ _SEARCH_MIN_STAGE_TIMEOUT_MS = int(os.getenv("SEARCH_MIN_STAGE_TIMEOUT_MS", "200
 # original comment wanted and could not get.
 _SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "0")) or None
 
+# LAT-P271/#1619: the futures OUTCOME arm's own budget, which it did not have.
+#
+# Every other bound on this route is derived from the 20 s request deadline, so the
+# arm's bound was whatever was LEFT of 20 s — a residual, not a limit. The reader
+# pays that residual in full.
+#
+# MEASURED on production 2026-09-23 08:1x-08:2xZ, `?debug_timing=1`, `stanley cup`
+# interleaved as the control, futures-stage ms with the arm actually merged:
+#
+#     healthy        us recession 2026  114 | super bowl winner 139 | world cup
+#                    winner 173 | tour de france 176 | masters winner 204
+#     pathological   f1 winner 2,490 and 4,309 | f1 champion 3,170
+#
+# The distribution is bimodal with an order of magnitude of clear air between the
+# modes, so a bound in that gap can only fire on the sick query. 1,000 ms is ~5x
+# the worst healthy STAGE (which includes the tier<=1 arm, so >5x the outcome arm
+# alone) — the same "as loose as it can be while still protective" rule
+# :data:`_TYPEAHEAD_OUTCOME_ARM_TIMEOUT_MS` was set by, and the rule LAT-P002 was
+# reverted for breaking in the other direction.
+#
+# WHAT THE READER LOSES WHEN IT FIRES, measured rather than asserted, because a
+# latency change that quietly narrows recall is this file's recurring failure.
+# The arm's OUTCOME-ONLY contribution for the two specimens, in production SQL:
+#
+#     f1 winner   0 rows in 1,318 ms   — the whole cost buys nothing at all
+#     us winner  25 rows in 1,089 ms   — every one a `%us%` substring collision
+#                                        ("Bear Bryant Coach of the Year Winner",
+#                                        "Which Millennium Prize Problem...")
+#
+# and those rows are tier 2, so they only ever reach the page when the name arms
+# underfill it. Nothing is deleted: the arm still runs, and still merges whenever
+# it can finish inside a bound a person would wait for.
+_SEARCH_OUTCOME_ARM_TIMEOUT_MS = int(
+    os.getenv("SEARCH_OUTCOME_ARM_TIMEOUT_MS", "1000")
+)
+
+
+def _search_outcome_arm_bound_ms(deadline: float | None) -> int | None:
+    """The outcome arm's bound in ms, or ``None`` when there is no time to start.
+
+    🔴 :data:`_SEARCH_MIN_STAGE_TIMEOUT_MS` (2,000 ms) IS DELIBERATELY NOT APPLIED
+    HERE. It is the floor for a stage bounded by the deadline residual — "do not
+    start a query you intend to cancel" — and this arm's budget is smaller than
+    that floor BY DESIGN. Feeding this bound through the floor would raise every
+    arm back to 2,000 ms, or, read the other way (``bound < floor`` ⇒ shed), would
+    shed the arm on every single request. Both are silent: the states this returns
+    are reported, but a bound quietly widened back to the residual looks exactly
+    like a working fix. `test_search_outcome_arm_budget_1619.py` pins both.
+
+    The bound is the SMALLER of the arm's budget and whatever is left of the
+    request deadline — a bound that could outlive the deadline is no bound — and
+    the ``SEARCH_STATEMENT_TIMEOUT_MS`` escape hatch still wins when it is set, so
+    one config var keeps pinning every stage the way its own comment promises.
+    """
+    remaining_ms = (
+        _SEARCH_DEADLINE_MS
+        if deadline is None
+        else int((deadline - time.monotonic()) * 1000)
+    )
+    budget_ms = _SEARCH_OUTCOME_ARM_TIMEOUT_MS
+    if _SEARCH_STATEMENT_TIMEOUT_MS:
+        budget_ms = min(budget_ms, _SEARCH_STATEMENT_TIMEOUT_MS)
+    bound_ms = min(budget_ms, remaining_ms)
+    return None if bound_ms <= 0 else bound_ms
+
 
 def _headline_arm_bound_ms(deadline: float | None, budget_ms: int) -> int | None:
     """A bonus lane's own statement bound, or ``None`` to shed it untouched.
@@ -5045,7 +5150,7 @@ def _stage_timeout_ms(deadline: float | None) -> int:
 
 
 async def _apply_search_statement_timeout(
-    db: AsyncSession, deadline: float | None = None
+    db: AsyncSession, deadline: float | None = None, bound_ms: int | None = None
 ) -> None:
     """Bound the next statement(s) in this request's transaction.
 
@@ -5053,11 +5158,18 @@ async def _apply_search_statement_timeout(
     to the next borrower of the pooled connection. Re-applied before each bounded
     stage: a later `SET LOCAL` overrides the earlier one, so every stage is bounded by
     the time actually left rather than by a constant chosen for a different stage.
+
+    ``bound_ms`` is an arm's OWN budget (LAT-P271/#1619) and is used verbatim when
+    given: it is already the min of that budget and the deadline residual, and it is
+    deliberately allowed below :data:`_SEARCH_MIN_STAGE_TIMEOUT_MS`, which is the
+    floor for a residual-derived bound and not for a budget chosen against a measured
+    distribution. See :func:`_search_outcome_arm_bound_ms`.
     """
     try:
-        await db.execute(
-            text(f"SET LOCAL statement_timeout = {int(_stage_timeout_ms(deadline))}")
+        applied_ms = (
+            int(bound_ms) if bound_ms is not None else int(_stage_timeout_ms(deadline))
         )
+        await db.execute(text(f"SET LOCAL statement_timeout = {applied_ms}"))
     except Exception as exc:  # noqa: BLE001 — never fail the search on the guard itself
         logger.warning("search statement_timeout not applied: %s", exc)
 
