@@ -2932,6 +2932,45 @@ jobs:
             exit 1
           fi
 
+      - name: "#8132 the D51(b) undo for the fabricated-win repair (real Postgres)"
+        # The forward half of this pair is ALREADY APPLIED to 56 production
+        # rows. D51(b) permitted that unattended because the repair "writes a
+        # backup first and ships a one-command restore" — so the grant rests on
+        # `restore_8132_fabricated_win.py` working, and before this gate nothing
+        # executed it. Its unit band asserts against the file read as a STRING
+        # (`restore_src`), which proves the text contains a compare-and-set and
+        # never that one runs. An undo that has never been run is a claim.
+        #
+        # Four things in it are the server's and a mock decides every one:
+        # `to_regclass` as the whole of "no backup, no write"; `rowcount == 1`
+        # as the CAS verdict and the exit code derived from it; the `LEFT JOIN`
+        # that reports a banked leg whose outcome row is gone instead of
+        # inventing one; and the three-way comparison that separates
+        # ALREADY_BACK from RESTORE from DIVERGED over a nullable boolean and a
+        # nullable text.
+        #
+        # The arm the file exists for is the clause D51(b) itself turns on: a
+        # repaired leg is precisely a leg some grader may since have settled
+        # properly, so the undo must SPARE it rather than put the fabricated win
+        # back over a real decision. Two shapes of that are graded — a regrade
+        # at plan time and a row that moves between the plan and the write, which
+        # are different code paths — plus the strawman that an id-keyed undo
+        # stomps both. Proved non-vacuous by mutation before wiring: nine
+        # mutations of the shipped script, nine red, each naming the arm it kills.
+        #
+        # Runs the SHIPPED undo with `get_task_session` pointed at this database
+        # (patched on the restore module, not on `app.tasks.base` — it binds the
+        # name at import). Nothing is faked: there is no venue in this pair.
+        # Same skip detection as every gate in this job, for the same reason.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_restore_8132_undo_real_postgres.py \
+            -v -rs 2>&1 | tee /tmp/restore8132.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/restore8132.txt; then
+            echo "::error::#8132 undo gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7354 the settled-orientation rail can open its own census (real Postgres)"
         # The rail merged with 54 green guards and could not execute. Its
         # `_SETTLED_PREDICATE` carried `(:sport_key IS NULL OR s.key = :sport_key)`,
