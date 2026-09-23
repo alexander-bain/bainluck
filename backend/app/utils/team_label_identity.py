@@ -251,4 +251,3 @@ def label_names_another_club(
         covered_spans.append((start, end))
 
     return bool(covered_spans)
-

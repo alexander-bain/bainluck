@@ -21946,8 +21946,8 @@ async def _build_related_futures(
         `team_index` for the ticker/alias veto and the merge, `team_rows` for
         the logos — keeps receiving EXACTLY the event's own league rows, so a
         cross-league abbreviation collision (`MIN` is the Lynx and the
-        Timberwolves) can never poison the #8052 ticker path. Only the new
-        `label_identity` sees the whole family.
+        Timberwolves) can never poison the #8052 ticker path. Only the
+        two new per-side label identities see the whole family.
         """
         nonlocal team_index, team_rows, home_label_identity, away_label_identity
         if team_index is None and event.sport_id:

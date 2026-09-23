@@ -426,6 +426,11 @@ COVERED = (
     # (the #6221/#7147 hazard above) because this gate's fixture drops and
     # recreates the whole schema first, which resets the sequence with it.
     "test_team_slug_fill_7501_pg.py",
+    # #7867. Seeds `sports`, `teams`, `events`, `futures_markets` and
+    # `futures_outcomes` by raw INSERT to put the sport FAMILY's roster behind
+    # the real `/related-futures` handler — the one thing its mocked sibling
+    # cannot see. Its fixture drops and recreates the schema, as #7501's does.
+    "test_route_related_futures_team_paths_7867_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

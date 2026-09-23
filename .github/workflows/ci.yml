@@ -4302,6 +4302,37 @@ jobs:
             exit 1
           }
 
+      - name: "#7867 a team's Championship Path reads the sport family's roster (real Postgres)"
+        # #7867. `_build_related_futures` now refuses a name-matched row when
+        # every occurrence of this team's token sits inside a longer name of
+        # ANOTHER known club (`Miami` inside `Miami (OH)`, `Giants` inside
+        # `Yomiuri Giants`). The candidate pool is family-wide, so the roster
+        # that establishes those identities must be read at the family width
+        # too — one JOIN on `sports`, still one read — while `team_index` and
+        # the logos keep only the event's own league.
+        #
+        # THE ARM THAT NEEDS A REAL SERVER is that width. The mocked suite
+        # answers the roster query by statement text, so a mutant that narrows
+        # it back to the league passes every mocked test by construction;
+        # measured on this branch it fails 2 of these 3. The third arm asserts
+        # the request still makes exactly one roster read.
+        #
+        # Same skip detection as every gate in this job, and a count so a
+        # dropped case cannot print green: 3 = family roster (MLB/NPB/KBO) +
+        # NHL/WNBA/NCAAF pages + the one-roster-read arm.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_route_related_futures_team_paths_7867_pg.py \
+            -v -rs -s 2>&1 | tee /tmp/teampaths7867.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/teampaths7867.txt; then
+            echo "::error::#7867 team-paths gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]3 passed[,[:space:]]" /tmp/teampaths7867.txt || {
+            echo "::error::#7867 team-paths gate did not run all three cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
