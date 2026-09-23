@@ -28,6 +28,8 @@ from app.utils.golf_evolution_market import (
     select_by_settled_resolution,
     select_by_snapshot_richness,
 )
+from app.utils.competition_identity import next_edition, resolve_competition  # #8139
+from app.utils.majors_calendar import _as_utc_date  # one parser for the calendar's dates
 from app.utils.odds_math import probability_to_american
 from app.utils.golf_event_format import (  # #7985
     is_team_match_play_key,
@@ -2419,6 +2421,81 @@ def _enrich_with_schedule(
                 t["resolution_date"] = sched["end_date"]
 
 
+# #8139 — the standing competition a golf tournament key belongs to. ASSIGNED.
+#
+# Never derived from the key's text. `ryder_cup` -> `ryder-cup` reads as a pure
+# format translation right up until you run it on `us_open`: golf has one and
+# tennis has one, and `majors_calendar.yaml` deliberately refuses the `us-open`
+# alias for that exact reason ("an ambiguous alias that silently picks a winner
+# is the inference this register exists to refuse"). Same doctrine as
+# `competition_identity.py`, which asserts its own absence of inference in a
+# test: a wrong assignment is one wrong line, visible in a diff, fixable by
+# anyone; a wrong rule is subtly wrong everywhere at once and belongs to nobody.
+_TOURN_TO_COMPETITION_SLUG = {
+    "ryder_cup": "ryder-cup",
+    "masters": "the-masters",
+    "the_open": "the-open-championship",
+}
+
+
+def _fill_dates_from_calendar(tournaments: list[dict], now: datetime) -> None:
+    """Give a dateless tournament the horizon calendar's next edition. #8139.
+
+    DataGolf's schedule is the current season, so a tournament whose next
+    edition is in a LATER season has no row there and `_enrich_with_schedule`
+    leaves it with `start_date: null`. The Ryder Cup is the standing case: it is
+    biennial and lands in odd years, so it is off the DataGolf schedule for ~51
+    weeks out of every 104, and the card could say nothing at all about when it
+    is. `majors_calendar.yaml` already carries the answer (2027-09-17 ->
+    2027-09-19, ASSIGNED, with a venue note) and is already the horizon
+    sentinel's source of truth for exactly this question.
+
+    Three properties, each of which is the reason for one line below:
+
+    1. **It fills, it never overrules.** A row that already has either date
+       keeps both. DataGolf is the live schedule and outranks a roadmap file.
+    2. **It cannot revive anything.** This runs AFTER `_filter_stale_tournaments`,
+       so a row the row's own signals call finished is already gone and can
+       never be stamped back to life by a future calendar date. `next_edition`
+       is independently incapable of returning a finished edition, so the
+       ordering and the source agree rather than one covering for the other.
+    3. **It cannot cross a sport.** The register row's `domain` must read
+       `golf`. Without it the map is the only thing standing between a golf card
+       and a tennis competition that shares a name — the precise collision the
+       register's own comment refuses to encode as an alias.
+
+    `resolution_date` and `commence_time` are left exactly as they were: the
+    first is the market's real resolution and the second is a capture stamp, and
+    neither becomes truer for the calendar knowing a date of play (#1077's
+    normalization is the DataGolf path's, where a live schedule earns it).
+
+    `date_confidence` travels WITH the dates. Most far-future rows in the
+    calendar are `approximate` — "the sport's conventional window, refine when
+    set" — and a producer that drops that attestation on the floor has laundered
+    a roadmap estimate into a fact nobody downstream can question. No renderer
+    reads it today; it is served so that one can.
+    """
+    for t in tournaments:
+        if t.get("start_date") or t.get("end_date"):
+            continue
+        slug = _TOURN_TO_COMPETITION_SLUG.get(t.get("key") or "")
+        if not slug:
+            continue
+        row = resolve_competition(slug)
+        if not row or str(row.get("domain") or "").strip().lower() != "golf":
+            continue
+        entry = next_edition(slug, now)
+        if not entry:
+            continue
+        start = _as_utc_date(entry.get("start"))
+        if not start:
+            continue
+        end = _as_utc_date(entry.get("end")) or start
+        t["start_date"] = f"{start.isoformat()}T00:00:00+00:00"
+        t["end_date"] = f"{end.isoformat()}T00:00:00+00:00"
+        t["date_confidence"] = entry.get("date_confidence")
+
+
 def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[dict]:
     """Remove completed or stale tournaments based on schedule/date signals."""
     now_date = now.date()
@@ -2847,6 +2924,10 @@ async def get_golf(
     # Enrich + filter
     _enrich_with_schedule(tournaments, schedule_by_key)
     tournaments = _filter_stale_tournaments(tournaments, now)
+    # #8139 — AFTER the filter, never before: see property 2 in the docstring.
+    # A calendar date is allowed to tell a surviving row when it is, and is not
+    # allowed to be the reason a finished row survives.
+    _fill_dates_from_calendar(tournaments, now)
 
     # Biggest movers
     all_movers = []
