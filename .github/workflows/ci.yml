@@ -3598,6 +3598,61 @@ jobs:
           print("#8000 display-selection acceptance GREEN on all", t, "tests")
           PY
 
+      - name: "#7547 the phone's selected range keeps the venue's genuine turns"
+        # PILLAR: TRUTH / FORMATTING. SHIP: the phone's selected history range
+        # preserves genuine price reversals already available from the venue,
+        # rather than reducing a busy hour to one point.
+        #
+        # Runs on the SAME disposable Postgres + Redis the #7351 step provisioned
+        # (`GENERIC_HISTORY_*` are still in $GITHUB_ENV) and imports that file's
+        # rig: the suite drops and recreates the schema and flushes db 15 per
+        # test exactly as #7351 does, so nothing here needs a service of its own.
+        # The two named specimens are saved production `/history` receipts
+        # replayed as the bank through the real `/probability-timeline` route;
+        # no venue is called. Same three refusals (skip / zero / short count),
+        # and pytest's exit code is read for its VALUE (gotcha #54).
+        env:
+          REDIS_URL: redis://localhost:56379/15
+          KALSHI_API_KEY: ""
+        run: |
+          set +e
+          python -m pytest \
+            tests/integration/test_phone_history_detail_7547_real_pg_redis.py \
+            -p no:cacheprovider -rA --tb=short \
+            --junitxml=/tmp/phone7547-junit.xml 2>&1 | tee /tmp/phone7547.txt
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "PYTEST EXIT CODE: $RC"
+          python - "$RC" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          # P1 (busy hour, no capture: both turns), P2 (capture hour: turns +
+          # the capture at its instant), P3 x2 (parity with the paid web slice
+          # outside densely captured cells), P4a/P4b/P4c (dense cells, capture
+          # precedence, no empty hour marks), P5 x3 (bounded by the bank at
+          # 24h / 168h / 4320h).
+          EXPECTED = 10
+          rc = int(sys.argv[1])
+          try:
+              root = ET.parse("/tmp/phone7547-junit.xml").getroot()
+          except Exception as exc:
+              sys.exit(f"::error::#7547 phone acceptance produced no junit report ({exc}) — NOT a pass")
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          t, f, e, k = (int(s.get(a, 0)) for a in ("tests", "failures", "errors", "skipped"))
+          print(f"tests={t} passed={t - f - e - k} failed={f} errors={e} skipped={k}")
+          if t == 0:
+              sys.exit("::error::#7547 phone acceptance collected ZERO tests — NOT a pass")
+          if k:
+              sys.exit(f"::error::#7547 phone acceptance SKIPPED {k} test(s) — a skip is never green evidence")
+          if t != EXPECTED:
+              sys.exit(f"::error::#7547 phone acceptance ran {t} tests, expected {EXPECTED} — tests were deselected or removed")
+          if rc not in (0, 1):
+              sys.exit(f"::error::pytest exit {rc} is a harness story, not a result")
+          if f or e or rc:
+              sys.exit(f"::error::#7547 phone acceptance RED: {f} failed, {e} errors")
+          print("#7547 phone history-detail acceptance GREEN on all", t, "tests")
+          PY
+
       - name: "#7548 trade-print refusal — provision the disposable Postgres + Redis"
         # Same bargain as the #7351 step above: the suite DROPS AND RECREATES THE
         # WHOLE SCHEMA and FLUSHES ITS REDIS DB, so it gets a database of its own

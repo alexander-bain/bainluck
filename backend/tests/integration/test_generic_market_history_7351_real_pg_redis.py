@@ -683,24 +683,26 @@ def _assert_named_contract(timeline: dict, history: dict):
     for ts, reason in REJECTED_IN_WEEK.items():
         assert ts not in {t for t, _ in served_h}, f"{ts} must be rejected ({reason})"
 
-    # The phone's reader buckets to the hour to DEDUPLICATE — one venue point per
-    # (outcome, hour), the LAST one in the hour (a real quote, never a median),
-    # and an hour our capture reached keeps the capture.
+    # The phone's reader serves EVERY admitted venue observation, at the instant
+    # the venue recorded it (#7547). It used to keep one per (outcome, hour) —
+    # the last — and none in an hour our capture reached, which on this specimen
+    # dropped the 09:00 hourly candle behind the 09:41 minute one; on the
+    # hourly-captured population it dropped everything. The bank is already
+    # compacted per range band, so serving it whole is bounded by the bank.
     #
-    # 🔴 BUT IT SERVES THAT OBSERVATION AT THE INSTANT THE VENUE RECORDED IT. The
-    # bucket decides WHICH observation is served, never WHEN it happened. Two of
-    # the specimen's own candles close off the hour — 08:01 and 09:41 — and the
-    # first presentation published them as 08:00 and 09:00: times nobody observed,
-    # on the one series whose whole claim is that these are real observations at
-    # real instants. `/history` served the true minute all along, so the two
-    # readers disagreed about when the same Kalshi candle closed.
-    last_in_hour: dict[str, tuple[str, float]] = {}
-    for ts, value in ADMITTED_IN_WEEK:
-        last_in_hour[_hour_bucket(ts)] = (ts, value)
-    # An hour our own capture reached is the capture's, and a capture is still
-    # served at its bucket start — nothing about our own rows moved.
-    last_in_hour.pop(_hour_bucket(CAPTURE_IN_WEEK[0]), None)
-    cells = dict(last_in_hour.values())
+    # 🔴 AND IT SERVES EACH OBSERVATION AT THE INSTANT THE VENUE RECORDED IT. Two
+    # of the specimen's own candles close off the hour — 08:01 and 09:41 — and
+    # the first presentation published them as 08:00 and 09:00: times nobody
+    # observed, on the one series whose whole claim is that these are real
+    # observations at real instants. `/history` served the true minute all
+    # along, so the two readers disagreed about when the same Kalshi candle
+    # closed.
+    cells = dict(ADMITTED_IN_WEEK)
+    # An hour our own capture reached that gains no venue row still serves the
+    # capture at its bucket start — nothing about our own rows moved. (The 10:00
+    # hourly candle in that hour is claimed by the finer 09:41 tier, so the
+    # capture's hour gains nothing here.)
+    assert _hour_bucket(CAPTURE_IN_WEEK[0]) not in {_hour_bucket(ts) for ts, _ in ADMITTED_IN_WEEK}
     cells[_hour_bucket(CAPTURE_IN_WEEK[0])] = CAPTURE_IN_WEEK[1]
     served_t = _in_week(_timeline_points(timeline))
     missing_t = [b for b in cells if b not in {t for t, _ in served_t}]

@@ -5474,12 +5474,13 @@ def _venue_rows_served(venue_cells: dict) -> list:
     """The venue observations a served timeline entry actually carries.
 
     Since the reader serves each of these at its OWN recorded instant, the cells
-    ARE the served rows — one per (outcome, bucket) the captures left empty, the
-    last observation in each. The `observed_from` / `observed_through` stamps
-    `describe` builds from them are therefore real venue instants, and can be
-    compared directly with the timestamps in the timeline.
+    ARE the served rows — every admitted observation in every (outcome, bucket)
+    our own polls do not already fill densely (#7547; one row per cell before
+    it). The `observed_from` / `observed_through` stamps `describe` builds from
+    them are therefore real venue instants, and can be compared directly with
+    the timestamps in the timeline.
     """
-    return [row for cells in venue_cells.values() for row in cells.values()]
+    return [row for cells in venue_cells.values() for rows in cells.values() for row in rows]
 
 
 def _request_path_redis():
@@ -5965,6 +5966,13 @@ async def get_probability_timeline(
         lambda: defaultdict(list)
     )
 
+    # #7547 — the cell's capture INSTANTS travel with its readings. How many
+    # distinct instants a cell holds is what decides, below, whether the venue's
+    # minutes may be admitted around them.
+    capture_instants: dict[int, dict[int, set[datetime]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+
     for snap in snapshots:
         if snap.probability is not None:
             ts = int(snap.captured_at.timestamp())
@@ -5972,49 +5980,79 @@ async def get_probability_timeline(
             outcome_buckets[snap.outcome_id][bucket_key].append(
                 float(snap.probability)
             )
+            capture_instants[snap.outcome_id][bucket_key].add(snap.captured_at)
 
     # Collect all bucket keys across all outcomes
     all_bucket_keys = set()
     for buckets in outcome_buckets.values():
         all_bucket_keys.update(buckets.keys())
 
-    # #7351 — venue observations fill ONLY the (outcome, bucket) cells no capture
-    # reached. A cell a capture already fills is served byte-for-byte as before;
-    # that is the whole compatibility argument for dense markets.
+    # #7351 — the venue's observations at the instants no capture claims; #7547 —
+    # ALL of them, not one per hour.
     #
-    # THE VALUE IS THE LAST OBSERVATION IN THE BUCKET, NOT A MEDIAN. The median
-    # above is a consensus ACROSS BOOKS at one reading. Two venue observations in
-    # one hour are one book at two instants, and their median is a price nobody
-    # quoted; the last one is the price the bucket closed on.
+    # 🔴 #7547 — THIS READER THREW THE FILL AWAY ONE LAYER AFTER ADMITTING IT.
+    # `in_window` had already applied the one layering rule (`unclaimed_instants`:
+    # a capture claims the venue instants that restate it, ±30 s against a
+    # minute tier) and handed back every venue observation our polls missed.
+    # This loop then kept ONE per (outcome, bucket) — the last — and kept NONE in
+    # a bucket any capture had reached. On the hourly-captured population #7547
+    # is about, every hour holds a capture, so the phone served `points_served`
+    # rows in its receipt and drew none of them; and in an hour with no capture,
+    # a busy hour of minute candles became the price it closed on. Replayed from
+    # the saved production receipts (tests/fixtures/phone_history_detail_7547):
+    # 61097129 *over 9.5*, 2026-09-18T21Z, twelve venue minutes and one capture
+    # → the capture alone; 56775596 *Mendoza 300+*, 2026-09-16T23Z, nine venue
+    # minutes and no capture → 23:56 alone, the 23:12 trough and 23:27 peak gone.
+    # `/history` served all of them all along; the two readers disagreed about
+    # what the venue said.
     #
-    # 🔴 AND IT IS SERVED AT THE INSTANT IT WAS OBSERVED, NOT AT THE BUCKET START.
-    # The bucket is how this route DEDUPLICATES against our own captures — one
-    # venue point per (outcome, hour) that our polls missed — and that is all it
-    # is. Writing the observation into the bucket's own entry would publish
-    # 05:00 for a price the venue timestamped 05:41: a time nobody observed, on
-    # the one series whose entire claim is that these are real observations at
-    # real instants. `/history` has always served the raw instant; the phone read
-    # the rounded one, so the two readers disagreed about when the same
-    # observation happened.
+    # NO ROUTE-LEVEL THINNING. The bank these rows come from is already
+    # compacted per range band at fill time (`compact_by_band`: 150 / 90 / 80 /
+    # 80 points per outcome, keeping every move and thinning by SMALLEST move),
+    # so the rows in hand are the range-aware selection, and serving them whole
+    # is bounded by the bank — ≤400 per outcome, ≤12 outcomes — exactly as the
+    # web reader is. A second pass here that kept "first, biggest, last" of an
+    # hour was tried and rejected: it dropped its own specimen's 0.38 trough.
     #
-    # Capture buckets are untouched and still emit at the bucket start, so a
-    # market with no venue history is byte-for-byte what it was. A venue
-    # observation gets its own entry keyed by its own timestamp, which is also
-    # why two outcomes observed at different instants inside one hour can no
-    # longer be collapsed onto one shared reading.
+    # THE BUCKET STILL DECIDES ONE THING: whether our own polls already fill the
+    # cell. A cell holding TWO OR MORE capture instants is a cell our live poll
+    # draws (two-minute cadence, fifteen-minute buckets in play): it keeps its
+    # median at the bucket start and admits no venue row, byte-for-byte as
+    # before — `test_C9`'s fence, and the reason a finely captured market
+    # cannot change shape under this. A cell holding ONE capture instant, or
+    # none, admits the venue's minutes at their own recorded instants.
+    #
+    # 🔴 AND THE ONE CAPTURE IN SUCH A CELL IS SERVED AT ITS OWN INSTANT TOO.
+    # This route stamps a capture at its bucket start; alone in its hour that
+    # is a rounding nobody can see. Put real 21:2x minutes beside a capture
+    # stamped 21:00 that was taken at 21:5x and the line draws a move nobody
+    # observed at an instant nobody observed it — the same fabrication #7351
+    # refused to commit on venue rows, now on our own. The value is unchanged
+    # (the median of one reading is that reading); `/history` has always served
+    # this capture at this instant. A cell that gains no venue row is not
+    # touched, so a market with no venue history is byte-for-byte what it was.
     #
     # ONLY THE CHARTED TOP-N. A venue point never feeds "Field": the fill fetches
     # a bounded top-N, so a Field summed from venue points would be a partial sum
     # presented as the rest of the market.
-    venue_cells: dict[int, dict[int, object]] = defaultdict(dict)
+    venue_cells: dict[int, dict[int, list]] = defaultdict(lambda: defaultdict(list))
     for row in sorted(venue_rows, key=lambda r: r.captured_at):
         if row.outcome_id not in top_outcome_ids or row.probability is None:
             continue
         bucket_key = (int(row.captured_at.timestamp()) // bucket_seconds) * bucket_seconds
-        if bucket_key in (outcome_buckets.get(row.outcome_id) or {}):
+        if len(capture_instants[row.outcome_id].get(bucket_key, ())) >= 2:
             continue
-        # Last observation in the cell wins — the rows are in ascending order.
-        venue_cells[row.outcome_id][bucket_key] = row
+        venue_cells[row.outcome_id][bucket_key].append(row)
+
+    # The captures that leave the bucket start for their own instant: one per
+    # (outcome, cell) whose single capture shares the cell with admitted venue
+    # rows. Read once here so the loop below and the Field sum agree on them.
+    relocated: dict[tuple[int, int], datetime] = {}
+    for oid, cells in venue_cells.items():
+        for bucket_key in cells:
+            instants = capture_instants[oid].get(bucket_key)
+            if instants and len(instants) == 1:
+                relocated[(oid, bucket_key)] = next(iter(instants))
 
     # Build timeline: for each time bucket, compute median probability per outcome
     entries_by_instant: dict[datetime, dict] = {}
@@ -6033,7 +6071,14 @@ async def get_probability_timeline(
             med_prob = median(probs)
 
             if oid in top_outcome_ids:
-                entry["outcomes"][outcome_names[oid]] = round(med_prob, 6)
+                served_at = relocated.get((oid, bucket_key))
+                if served_at is not None and served_at != bucket_at:
+                    own = entries_by_instant.setdefault(
+                        served_at, {"timestamp": served_at.isoformat(), "outcomes": {}}
+                    )
+                    own["outcomes"][outcome_names[oid]] = round(med_prob, 6)
+                else:
+                    entry["outcomes"][outcome_names[oid]] = round(med_prob, 6)
             else:
                 field_prob += med_prob
 
@@ -6048,21 +6093,31 @@ async def get_probability_timeline(
         if len(charted_outcomes) > top:
             entry["outcomes"]["Field"] = round(min(field_prob, 1.0), 6)
 
-        entries_by_instant[bucket_at] = entry
+        # #7547: an hour mark whose only charted reading moved to its own
+        # instant is not an observation and is not published (C5's rule).
+        if entry["outcomes"]:
+            existing = entries_by_instant.get(bucket_at)
+            if existing is None:
+                entries_by_instant[bucket_at] = entry
+            else:
+                for name, value in entry["outcomes"].items():
+                    existing["outcomes"].setdefault(name, value)
 
     # #7351: the venue's observations, each at the instant the venue recorded.
-    # An instant that coincides exactly with a bucket start joins that entry
-    # rather than shadowing it; the outcome cannot already be present there,
-    # because a cell a capture reached was skipped above.
+    # An instant that coincides exactly with a bucket start, or with a
+    # relocated capture, joins that entry rather than shadowing it: `setdefault`
+    # is what keeps a capture never displaced, whatever the venue said at the
+    # same second.
     for oid, cells in venue_cells.items():
-        for row in cells.values():
-            entry = entries_by_instant.get(row.captured_at)
-            if entry is None:
-                entry = {"timestamp": row.captured_at.isoformat(), "outcomes": {}}
-                entries_by_instant[row.captured_at] = entry
-            entry["outcomes"].setdefault(
-                outcome_names[oid], round(float(row.probability), 6)
-            )
+        for rows in cells.values():
+            for row in rows:
+                entry = entries_by_instant.get(row.captured_at)
+                if entry is None:
+                    entry = {"timestamp": row.captured_at.isoformat(), "outcomes": {}}
+                    entries_by_instant[row.captured_at] = entry
+                entry["outcomes"].setdefault(
+                    outcome_names[oid], round(float(row.probability), 6)
+                )
 
     timeline = [entries_by_instant[at] for at in sorted(entries_by_instant)]
 
