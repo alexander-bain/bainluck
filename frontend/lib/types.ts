@@ -409,6 +409,13 @@ export interface LeagueContextData {
 export interface EventDetailResponse extends Event {
   current_odds?: CurrentOdds;
   /**
+   * #8315 — the pre-game reading the game's CARD prints (Kalshi → Polymarket →
+   * sportsbooks, resolved server-side by the same call `/api/feed` uses). Served
+   * on settled events only; absent on a cached pre-#8315 payload, where
+   * `lib/settledPregameMark.ts` falls back to `opening_odds`.
+   */
+  prematch_odds?: FeedEventData["prematch_odds"];
+  /**
    * "blend" when the aggregate exists, "opening" when only the opening line does,
    * "settled" when the game is over and the hero is the RESULT (Q441/#1495).
    *

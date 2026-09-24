@@ -296,10 +296,11 @@ export default async function Image({ params }: { params: { id: string } }) {
     typeof event.away_score === "number";
 
   // The number a settled card IS allowed to print, from the module that owns
-  // which number that is for the other three surfaces. The detail payload
-  // carries no `prematch_odds` key at all, so this always lands on the
-  // documented `opening_odds` fallback — which is exactly the case that helper
-  // exists for, and it labels the reading as the sportsbook median it is.
+  // which number that is for the other three surfaces. Since #8315 the detail
+  // payload serves `prematch_odds` on a settled event, so a share image of a
+  // finished game states the card's rung; every other status (and a cached
+  // pre-#8315 payload) lands on the documented `opening_odds` fallback, which
+  // that helper labels as the sportsbook median it is.
   //
   // `null` is a real answer here and licenses the empty space: a finished card
   // with no pre-match reading prints nothing rather than a number about a
@@ -313,7 +314,12 @@ export default async function Image({ params }: { params: { id: string } }) {
   // number at all is its own defect. 685 of the 2,739 suspended rows hold an
   // opening line; the rest get `null` here and say so by saying nothing.
   const prematch = forecastWithheld
-    ? prematchReading({ opening_odds: event.opening_odds })
+    ? prematchReading({
+        // #8315 — served on a settled event since the page's hero needed it;
+        // absent on every other status, which keeps the fallback below.
+        prematch_odds: event.prematch_odds,
+        opening_odds: event.opening_odds,
+      })
     : null;
 
   // THE BIG SLOT. On a live or scheduled game it is the probability, unchanged.
