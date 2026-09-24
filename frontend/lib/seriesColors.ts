@@ -77,3 +77,50 @@ export const ELIMINATED_SERIES_COLOR = "#b5b9c3";
 /** Combined-probability line color — the summed line reads as a dark neutral so
  *  it never masquerades as one of the contenders (L2-149). */
 export const COMBINED_SERIES_COLOR = "#111827";
+
+/**
+ * #8095 — a series whose label is a US party name carries a colour meaning of its
+ * own, and the index palette can contradict it: "Which party will win the U.S.
+ * House?" sorted Republican first, so Republicans drew blue and Democrats red, and
+ * a red line pinned at 91% read as the opposite result. A glanceable chart that
+ * needs its legend to avoid inverting the answer is not glanceable.
+ *
+ * The match is on the WHOLE label, deliberately. "Democrats, 5+ pts" is a margin
+ * rung, not the party, and "Liberal Democratic Party" / "Social Democratic Party"
+ * are other countries' parties with their own colours — none of them match. No new
+ * hexes: the two are the palette's own blue and red.
+ */
+const PARTY_SERIES_COLORS: ReadonlyArray<[RegExp, string]> = [
+  [/^(?:the\s+)?(?:democrats?|democratic(?:\s+party)?)$/i, SERIES_COLORS[0]],
+  [/^(?:the\s+)?(?:republicans?|republican\s+party|gop)$/i, SERIES_COLORS[1]],
+];
+
+/** The conventional colour for a series label, or null when it has none. */
+export function conventionalSeriesColor(name: string): string | null {
+  const label = name.trim();
+  for (const [pattern, color] of PARTY_SERIES_COLORS) {
+    if (pattern.test(label)) return color;
+  }
+  return null;
+}
+
+/**
+ * Colour each series in order. With no conventional label present this is exactly
+ * `palette[i % palette.length]`, so every chart without a party line is unchanged.
+ * With one present, the party lines take their colour and the rest walk the
+ * palette skipping the hues already taken, so no two lines share a colour.
+ */
+export function assignSeriesColors(
+  names: readonly string[],
+  palette: readonly string[],
+): string[] {
+  const conventional = names.map(conventionalSeriesColor);
+  if (conventional.every((c) => c === null)) {
+    return names.map((_, i) => palette[i % palette.length]);
+  }
+  const taken = new Set(conventional.filter((c): c is string => c !== null));
+  const free = palette.filter((c) => !taken.has(c));
+  const pool = free.length > 0 ? free : palette;
+  let next = 0;
+  return conventional.map((c) => c ?? pool[next++ % pool.length]);
+}

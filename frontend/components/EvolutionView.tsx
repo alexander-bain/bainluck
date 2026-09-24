@@ -10,6 +10,7 @@ import type { FuturesOutcomeHistory } from "@/lib/types";
 import {
   SERIES_COLORS,
   ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
+  assignSeriesColors,
 } from "@/lib/seriesColors";
 
 type TimeRange = "full" | "tournament" | "7d" | "24h" | "today";
@@ -266,8 +267,10 @@ export function EvolutionView({
     const sorted = data.outcomes
       .filter((o) => effectiveSelectedIds.has(o.outcome_id))
       .sort((a, b) => lastProbOf(b) - lastProbOf(a));
+    // #8095: a party line takes its party's colour, not its rank's.
+    const colors = assignSeriesColors(sorted.map((o) => o.name), EVOLUTION_COLORS);
     sorted.forEach((o, i) => {
-      m.set(o.outcome_id, o.eliminated ? ELIMINATED_COLOR : EVOLUTION_COLORS[i % EVOLUTION_COLORS.length]);
+      m.set(o.outcome_id, o.eliminated ? ELIMINATED_COLOR : colors[i]);
     });
     return m;
   }, [data, effectiveSelectedIds]);
