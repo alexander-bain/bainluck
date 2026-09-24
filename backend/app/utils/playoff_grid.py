@@ -76,12 +76,22 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
 
     if not pairs:
         return 0
+    bound_of = {curr: prev for prev, curr in pairs}
 
     violations_fixed = 0
     for team in teams:
         cells = team.get("cells", {})
         for prev_key, curr_key in pairs:
-            prev_cell = cells.get(prev_key)
+            # #8241: an ABSENT bound is walked past to the one that bounds it —
+            # P(title game) <= P(final four) <= P(elite eight) holds whether or
+            # not the middle cell is shown. Withholding an untaken offer (#8220)
+            # removes cells, so the adjacent-only reading let BYU's 19% title
+            # game stand over its 11% elite eight with the final four blank.
+            # A cell that is PRESENT without a number stops the walk below: it is
+            # a settled state, and a settled stage is not bounded by a price.
+            while prev_key is not None and prev_key not in cells:
+                prev_key = bound_of.get(prev_key)
+            prev_cell = cells.get(prev_key) if prev_key is not None else None
             curr_cell = cells.get(curr_key)
             if prev_cell and curr_cell:
                 prev_p = prev_cell.get("merged_probability")
@@ -100,6 +110,13 @@ def enforce_monotonicity(teams: list[dict], columns: list) -> int:
                     # credited "CFP Semifinals Qualifiers" with 0.1275 while the
                     # market quoted 0.1800 — on 15 of 38 semifinal cells.
                     curr_cell["capped_by"] = prev_key
+                    # #8241: `trend_24h` was measured on the uncapped quote, so
+                    # it reported a move the served cell never made (BYU "11%
+                    # ▲10"). The cell now prints its bound's number, so it prints
+                    # its bound's arrow — or none, if the bound has none. NOT
+                    # "own trend minus what the cap took": a cell capped
+                    # yesterday too would get a ▼ for a number that never moved.
+                    curr_cell["trend_24h"] = prev_cell.get("trend_24h")
                     violations_fixed += 1
                     logger.debug(
                         "Monotonicity fix: %s %s %.4f > %s %.4f -> capped to %.4f",
