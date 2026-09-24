@@ -166,11 +166,12 @@ class TestExtractLeague:
     def test_nba(self):
         assert _extract_league("basketball_nba", None) == "nba"
 
-    def test_llm_league_preferred(self):
-        assert _extract_league("basketball_nba", "EPL") == "epl"
+    def test_sport_key_league_beats_llm_league(self):
+        # #8418: the sport key names its competition; the LLM label cannot move it.
+        assert _extract_league("basketball_nba", "EPL") == "nba"
 
     def test_llm_league_with_spaces(self):
-        assert _extract_league("unknown_key", "Champions League") == "champions_league"
+        assert _extract_league("soccer_other", "Champions League") == "champions_league"
 
     def test_fallback_to_sport_key(self):
         assert _extract_league("soccer_efl_champ", None) == "efl_champ"
@@ -283,14 +284,23 @@ class TestComputeEventTags:
         )
         assert "level:college" in tags
 
-    def test_llm_league_override(self, weekday_afternoon):
+    def test_llm_league_fills_a_generic_sport_key(self, weekday_afternoon):
+        tags = compute_event_tags(
+            sport_key="soccer_other",
+            status="live",
+            commence_time=weekday_afternoon,
+            llm_league="Champions League",
+        )
+        assert "league:champions_league" in tags
+
+    def test_llm_league_cannot_override_the_sport_key(self, weekday_afternoon):
         tags = compute_event_tags(
             sport_key="basketball_nba",
             status="live",
             commence_time=weekday_afternoon,
             llm_league="Champions League",
         )
-        assert "league:champions_league" in tags
+        assert [t for t in tags if t.startswith("league:")] == ["league:nba"]
 
     def test_tags_sorted(self, weekday_afternoon):
         tags = compute_event_tags(
