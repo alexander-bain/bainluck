@@ -317,12 +317,16 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
         let chart = try code(
             at: root.appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift"))
 
+        // #4445 moved the planning into `axisLayout` (the drawn size picks the
+        // stride, or the window's endpoints) — still fed the DRAWN points, and both
+        // arms still print the plan's own format.
         XCTAssertTrue(
-            chart.contains("let plan = Self.axisPlan(for: entries.map(\\.date)"),
+            chart.contains("let axis = Self.axisLayout(\n                for: entries.map(\\.date)"),
             "the axis must be planned from the points it DRAWS")
-        XCTAssertTrue(
-            chart.contains("AxisValueLabel(\n                    format: plan.format,"),
-            "…and must print the plan's own format")
+        XCTAssertEqual(
+            chart.components(separatedBy: "AxisValueLabel(\n                        format: plan.format,").count - 1,
+            2,
+            "…and both axis arms must print the plan's own format")
         XCTAssertFalse(
             chart.contains(".automatic(desiredCount: 5)"),
             "the pre-fix tick rule: six labels across a 20-hour chart")
