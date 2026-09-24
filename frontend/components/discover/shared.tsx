@@ -15,7 +15,7 @@ import {
   normalizeTier,
   type ConfidenceTier,
 } from "@/lib/confidence";
-import { movementPoints } from "@/lib/probabilityDisplay";
+import { formatMovementPointsLikeSentence, movementPoints } from "@/lib/probabilityDisplay";
 import { animatedProbabilityReading } from "@/lib/animatedProbabilityReading";
 
 // ── Animated Counter ──
@@ -94,10 +94,17 @@ export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?
   // leader rendered "10%", which reads as a tenth more than he had rather than
   // the ten points he actually gained (#4066 / D1 clause (a)). The label was the
   // spec sitting next to the bug the whole time.
-  const pts = Math.abs(Math.round(points));
+  //
+  // #8339 — and the magnitude is printed the way the SENTENCE on the same row
+  // prints it. This used to round to a whole point, so a bundle row read "Down
+  // 28.5 points today — now 37% chance   ▼ 29 pts": one move, two numbers, a
+  // few millimetres apart. The backend's house formatter keeps one decimal and
+  // drops a trailing ".0", so a whole-point move still reads "7 pts" and keeps
+  // the width #6579 below was fought over; only a half-point move grows.
+  const pts = formatMovementPointsLikeSentence(m) as string;
   // L2-156 Item 3 — the arrow is a 24h PROBABILITY move, not a rank change. Casual
   // fans can't tell without a label, so spell it out on hover / for screen readers.
-  const label = `${up ? "Up" : "Down"} ${pts} point${pts === 1 ? "" : "s"} in the last 24h`;
+  const label = `${up ? "Up" : "Down"} ${pts} point${pts === "1" ? "" : "s"} in the last 24h`;
   // #6579 — `shrink-0 whitespace-nowrap`, because this badge is the SHORT,
   // FIXED-length item in its row and the thing beside it is the variable one.
   // `TrendBadge` below carries the `shrink-0` half for the same reason; the

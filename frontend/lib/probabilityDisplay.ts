@@ -200,6 +200,20 @@ export function formatMovementPoints(
 }
 
 /**
+ * #8339 — the magnitude in the SAME form the backend's movement sentences print
+ * it: one decimal, trailing ".0" dropped (`feed_reasons._points`: "28.5 points",
+ * "7 points"). For a chip that sits on the same row as one of those sentences,
+ * so "Down 28.5 points today" and the chip beside it cannot print one move two
+ * ways. `null` exactly where `formatMovementPoints` is.
+ */
+export function formatMovementPointsLikeSentence(
+  movement: number | null | undefined,
+): string | null {
+  const printed = formatMovementPoints(movement, 1);
+  return printed === null ? null : printed.replace(/\.0$/, "");
+}
+
+/**
  * UX-P275 — does this movement PRINT as a move at `decimals`?
  *
  * THE DEFECT this exists to make unrepresentable. Seven renderers decided

@@ -1,0 +1,605 @@
+{
+ "captured_at": "2026-09-24T04:11Z",
+ "source": "GET /api/feed?limit=100 items[27]",
+ "bundle": {
+  "type": "bundle",
+  "score": 94.0,
+  "reason": "How does the war in Ukraine end?",
+  "headline": "Russia\u2013Ukraine",
+  "data": {
+   "id": "theme:story:russia_ukraine:20569379-20565978-112896-61664813",
+   "title": "Russia\u2013Ukraine",
+   "kind": "theme",
+   "story_key": "story:russia_ukraine",
+   "shared_question": "How does the war in Ukraine end?",
+   "item_count": 4,
+   "member_ids": [
+    20569379,
+    20565978,
+    112896,
+    61664813
+   ],
+   "items": [
+    {
+     "type": "futures",
+     "score": 94,
+     "reason": "",
+     "headline": null,
+     "context_summary": "",
+     "data": {
+      "id": 20569379,
+      "name": "Russia x Ukraine ceasefire agreement?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "politics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-24T03:50:18+00:00",
+      "top_outcomes": [
+       {
+        "id": 230902795,
+        "name": "December 31, 2027",
+        "probability": 0.725,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 73
+       },
+       {
+        "id": 230902796,
+        "name": "November 30, 2027",
+        "probability": 0.7,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 70
+       },
+       {
+        "id": 230902797,
+        "name": "October 31, 2027",
+        "probability": 0.645,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 65
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 19,
+      "canonical_market_key": null,
+      "group_id": "polymarket:478472",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "October 31",
+         "value": 20261031,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.08,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "November 30",
+         "value": 20261130,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.14,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "December 31",
+         "value": 20261231,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.23,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "January 31, 2027",
+         "value": 20270131,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.29,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "February 28, 2027",
+         "value": 20270228,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.315,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "March 31, 2027",
+         "value": 20270331,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.375,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "April 30, 2027",
+         "value": 20270430,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.435,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "May 31, 2027",
+         "value": 20270531,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.505,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "June 30, 2027",
+         "value": 20270630,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.525,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "July 31, 2027",
+         "value": 20270731,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.575,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "August 31, 2027",
+         "value": 20270831,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.605,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "September 30, 2027",
+         "value": 20270930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.64,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": false,
+       "distribution_outcomes": [
+        {
+         "label": "December 31, 2027",
+         "probability": 0.725,
+         "movement": null
+        },
+        {
+         "label": "November 30, 2027",
+         "probability": 0.7,
+         "movement": null
+        },
+        {
+         "label": "October 31, 2027",
+         "probability": 0.645,
+         "movement": null
+        },
+        {
+         "label": "September 30, 2027",
+         "probability": 0.64,
+         "movement": null
+        },
+        {
+         "label": "August 31, 2027",
+         "probability": 0.605,
+         "movement": null
+        },
+        {
+         "label": "July 31, 2027",
+         "probability": 0.575,
+         "movement": null
+        },
+        {
+         "label": "June 30, 2027",
+         "probability": 0.525,
+         "movement": null
+        },
+        {
+         "label": "May 31, 2027",
+         "probability": 0.505,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 7,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/11460279/pexels-photo-11460279.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 525,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "geopolitics",
+       "subtopic": "ceasefire",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "sport:politics",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 86,
+     "reason": "Will Russia enter Sloviansk by December 31, 2026: 15% chance, down 10.5 points since May 14",
+     "headline": "Down 10.5 points since May 14",
+     "context_summary": "15% chance, down 10.5 points since May 14",
+     "data": {
+      "id": 20565978,
+      "name": "Will Russia enter Sloviansk by December 31, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "container_member",
+      "status": "open",
+      "resolution_date": "2026-12-31T00:00:00+00:00",
+      "price_observed_at": "2026-09-24T03:50:18+00:00",
+      "top_outcomes": [
+       {
+        "id": 109183466,
+        "name": "No",
+        "probability": 0.85,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 85
+       },
+       {
+        "id": 109183465,
+        "name": "Yes",
+        "probability": 0.15,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 15
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 2,
+      "canonical_market_key": null,
+      "group_id": "polymarket:474389",
+      "group_type": "polymarket_sub_market",
+      "discover_card": {
+       "suggested_format": "binary_probability",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "No",
+         "probability": 0.85,
+         "movement": null
+        },
+        {
+         "label": "Yes",
+         "probability": 0.15,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": []
+      },
+      "image_url": "https://images.pexels.com/photos/11570485/pexels-photo-11570485.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 627,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "discover_llm": {
+       "topic": "geopolitics",
+       "subtopic": "russia-ukraine",
+       "archetype": "other",
+       "audience_scope": "mainstream",
+       "salience_score": 4,
+       "junk_flags": [],
+       "comparison_axes": []
+      },
+      "market_tags": [
+       "category:game_prop",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 84,
+     "reason": "",
+     "headline": null,
+     "context_summary": "",
+     "data": {
+      "id": 112896,
+      "name": "Putin out as President of Russia?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "field",
+      "status": "open",
+      "resolution_date": "2027-07-01T03:59:00+00:00",
+      "price_observed_at": "2026-09-24T03:50:15+00:00",
+      "top_outcomes": [
+       {
+        "id": 196069643,
+        "name": "June 30, 2027",
+        "probability": 0.115,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 12
+       },
+       {
+        "id": 1625919,
+        "name": "December 31, 2026",
+        "probability": 0.0405,
+        "rank": 2,
+        "movement": null,
+        "rendered_percent": 4
+       },
+       {
+        "id": 196069645,
+        "name": "September 30, 2026",
+        "probability": 0.0015,
+        "rank": 3,
+        "movement": null,
+        "rendered_percent": 0
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 7,
+      "canonical_market_key": "geopolitics:US:championship:2027",
+      "group_id": "polymarket:31195",
+      "group_type": "polymarket_event",
+      "discover_card": {
+       "suggested_format": "threshold_heatmap",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [
+        {
+         "source": "date_bucket",
+         "label": "September 30, 2026",
+         "value": 20260930,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.0015,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "December 31, 2026",
+         "value": 20261231,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.0405,
+         "movement": null
+        },
+        {
+         "source": "date_bucket",
+         "label": "June 30, 2027",
+         "value": 20270630,
+         "unit": "date",
+         "direction": "before",
+         "probability": 0.115,
+         "movement": null
+        }
+       ],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "June 30, 2027",
+         "probability": 0.115,
+         "movement": null
+        },
+        {
+         "label": "December 31, 2026",
+         "probability": 0.0405,
+         "movement": null
+        },
+        {
+         "label": "September 30, 2026",
+         "probability": 0.0015,
+         "movement": null
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "threshold_values"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/12321867/pexels-photo-12321867.jpeg?auto=compress&cs=tinysrgb&h=350",
+      "image_width": 522,
+      "image_height": 350,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "low",
+      "confidence_score": 0.3529,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:conference",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    },
+    {
+     "type": "futures",
+     "score": 81,
+     "reason": "Will Russia enter Mykolaivka by October 31, 2026: Down 28.5 points today \u2014 now 37% chance",
+     "headline": "Down 28.5 points today",
+     "context_summary": "Down 28.5 points today \u2014 now 37% chance",
+     "data": {
+      "id": 61664813,
+      "name": "Will Russia enter Mykolaivka by October 31, 2026?",
+      "sport": null,
+      "sport_name": null,
+      "llm_sport_category": "geopolitics",
+      "source": "polymarket",
+      "source_count": 1,
+      "sources": [
+       "polymarket"
+      ],
+      "market_tier": 2,
+      "market_type": "container_member",
+      "status": "open",
+      "resolution_date": "2027-01-01T04:59:00+00:00",
+      "price_observed_at": "2026-09-24T03:50:21+00:00",
+      "top_outcomes": [
+       {
+        "id": 232374957,
+        "name": "No",
+        "probability": 0.625,
+        "rank": 1,
+        "movement": null,
+        "rendered_percent": 63
+       },
+       {
+        "id": 232374956,
+        "name": "Yes",
+        "probability": 0.375,
+        "rank": 2,
+        "movement": -0.28500000000000003,
+        "rendered_percent": 37
+       }
+      ],
+      "card_sum_reason": null,
+      "outcome_count": 2,
+      "canonical_market_key": null,
+      "group_id": "polymarket:803776",
+      "group_type": "polymarket_sub_market",
+      "discover_card": {
+       "suggested_format": "probability_timeline",
+       "bundle_candidate": false,
+       "comparison_theme": null,
+       "threshold_points": [],
+       "ladder_treatment_refused": false,
+       "field_is_a_race": true,
+       "distribution_outcomes": [
+        {
+         "label": "No",
+         "probability": 0.625,
+         "movement": null
+        },
+        {
+         "label": "Yes",
+         "probability": 0.375,
+         "movement": -0.28500000000000003
+        }
+       ],
+       "remaining_outcome_count": 0,
+       "qa_signals": [],
+       "public_source_disagreement": false,
+       "reasons": [
+        "recent_movement"
+       ]
+      },
+      "image_url": "https://images.pexels.com/photos/11421080/pexels-photo-11421080.jpeg?auto=compress&cs=tinysrgb&h=650&w=940",
+      "image_width": 940,
+      "image_height": 626,
+      "hook_description": null,
+      "temporal_badge": null,
+      "confidence_tier": "moderate",
+      "confidence_score": 0.6471,
+      "confidence_signals": {
+       "has_closing_line": false
+      },
+      "market_tags": [
+       "category:game_prop",
+       "market_status:open",
+       "source:polymarket",
+       "tier:2"
+      ]
+     }
+    }
+   ],
+   "debug_bundles": {
+    "grouped_by": "story_key",
+    "story_key": "story:russia_ukraine",
+    "title_source": "authored",
+    "question_source": "authored",
+    "member_ids": [
+     20569379,
+     20565978,
+     112896,
+     61664813
+    ],
+    "member_names": [
+     "Russia x Ukraine ceasefire agreement?",
+     "Will Russia enter Sloviansk by December 31, 2026?",
+     "Putin out as President of Russia?",
+     "Will Russia enter Mykolaivka by October 31, 2026?"
+    ]
+   }
+  }
+ }
+}

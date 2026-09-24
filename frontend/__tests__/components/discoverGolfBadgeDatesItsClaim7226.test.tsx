@@ -136,8 +136,8 @@ function visible(html: string): string {
 describe("#7226 — the Discover golf badge dates its 24h claim", () => {
   it("draws the badge when the server says the move is dated", () => {
     const html = draw(true);
-    expect(visible(html)).toMatch(/17\s*(pts|points)/);
-    expect(html).toContain("Up 17 points in the last 24h");
+    expect(visible(html)).toMatch(/16\.6\s*(pts|points)/);
+    expect(html).toContain("Up 16.6 points in the last 24h");
   });
 
   it("draws NO badge when the move is the per-write fallback", () => {
@@ -146,13 +146,13 @@ describe("#7226 — the Discover golf badge dates its 24h claim", () => {
     expect(html).not.toContain("in the last 24h");
     // And the number itself is gone from the eye's version, so this cannot be
     // satisfied by hiding the label and keeping the arrow.
-    expect(visible(html)).not.toMatch(/17\s*(pts|points)/);
+    expect(visible(html)).not.toMatch(/16\.6\s*(pts|points)/);
   });
 
   it("draws NO badge when the payload predates the flag (absent, not false)", () => {
     const html = draw(undefined);
     expect(html).not.toContain("in the last 24h");
-    expect(visible(html)).not.toMatch(/17\s*(pts|points)/);
+    expect(visible(html)).not.toMatch(/16\.6\s*(pts|points)/);
   });
 
   it.each([
@@ -190,7 +190,7 @@ describe("#7226 — the Discover golf badge dates its 24h claim", () => {
     expect(dated).not.toBe(undated); // else the gate is inert and arm 1 is a lie
     // Remove exactly the badge's visible text from the dated render; what is
     // left must be byte-identical to the refusal.
-    expect(dated.replace(/\s*17\s*pts\s*/, " ").replace(/\s+/g, " ")).toBe(undated);
+    expect(dated.replace(/\s*16\.6\s*pts\s*/, " ").replace(/\s+/g, " ")).toBe(undated);
   });
 
   it("CONTROL: dated does not promote a sub-threshold move into a badge", () => {
