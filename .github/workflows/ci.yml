@@ -3677,7 +3677,7 @@ jobs:
           python - "$RC" <<'PY'
           import sys, xml.etree.ElementTree as ET
 
-          EXPECTED = 25  # artifact's 24 + the new normalized mode=sports arm
+          EXPECTED = 27  # artifact's 24 + the normalized mode=sports arm + #7586's test_7c/7d
           rc = int(sys.argv[1])
           try:
               root = ET.parse("/tmp/mvacc-junit.xml").getroot()

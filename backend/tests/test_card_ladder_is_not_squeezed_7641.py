@@ -21,8 +21,11 @@ The first build of this fix refused the divisor whenever
 it: an independent-binary field is ALSO non-exclusive, and dividing that one is
 the entire reason `_feed_display_scale` exists (gotcha #58). #4079's
 `test_7_display_normalized_card_serves_no_feed_number_while_raw_detail_serves_the_dated_move`
-pins a 1.40-sum independent field that must keep dividing, and the wide gate made
-its precondition unreachable.
+pinned a 1.40-sum independent field that must keep dividing, and the wide gate made
+its precondition unreachable. (#7586 later ruled the other way for a FLAGGED
+non-exclusive field — the page never divided it — and that test is now `test_7`'s
+non-exclusive / `test_7c`'s exclusive pair. The nestedness reasoning here stands:
+it still decides for `True` and unknown exclusivity.)
 
 So `test_the_4079_independent_field_still_divides` below is not decoration — it is
 the control that failed, reproduced here at unit scale where it runs without a
