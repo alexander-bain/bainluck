@@ -165,7 +165,10 @@ async def _run_both_arms(maker, monkeypatch, *, reverse_arm=None):
     frames = {"kalshi": [], "polymarket": []}
     arms = {}
     for source in ("kalshi", "polymarket"):
-        arm = lbr.LiveBlendRefresher(source)
+        # Waits unbounded, as before the #837 tail fix: these two cases are
+        # about lock ORDER and the savepoint, and a 500ms timeout (under the 1s
+        # deadlock_timeout) would stop the control from ever deadlocking.
+        arm = lbr.LiveBlendRefresher(source, stamp_lock_timeout_ms=None)
         calls = {"n": 0}
         other = "polymarket" if source == "kalshi" else "kalshi"
 
@@ -244,3 +247,108 @@ async def test_a_deadlock_costs_one_event_not_the_batch(maker, monkeypatch, capl
     assert stats[survivor]["stamped"] == 2
     stamped_keys = sum(len(stored[eid]) for eid in event_ids)
     assert stamped_keys == 3, stored
+
+
+#: How long the foreign transaction holds the row. Production held 10.6s; this
+#: only has to be long enough that "waited it out" and "gave up at 500ms" cannot
+#: be confused with scheduling noise.
+FOREIGN_HOLD_S = 3.0
+
+
+async def _one_arm_behind_a_foreign_lock(maker, monkeypatch, *, lock_timeout_ms):
+    """The #837 tail specimen, against a real row lock.
+
+    Another connection — standing in for the worker-realtime transaction that
+    held a live game's `events` row for 10.6s on 2026-09-24 23:16:09Z — takes
+    `FOR UPDATE` on the LOW event and sits on it. One arm then refreshes BOTH
+    events. Returns (elapsed_s, stats, frames, arm, event_ids, release).
+    """
+    import time
+
+    from sqlalchemy import text
+
+    from app.tasks import live_blend_refresh as lbr
+    from app.utils import live_blend
+
+    event_ids = await _seed(maker)
+    low, high = event_ids
+
+    monkeypatch.setattr(
+        live_blend, "compute_source_home_probability",
+        lambda group, home, away: SimpleNamespace(home_probability=0.565, eligibility=None),
+    )
+
+    @contextlib.asynccontextmanager
+    async def _session(**_kwargs):
+        async with maker() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _session)
+
+    holder = maker()
+    await holder.execute(text("SELECT id FROM events WHERE id = :id FOR UPDATE"), {"id": low})
+    release = asyncio.get_running_loop().create_task(asyncio.sleep(FOREIGN_HOLD_S))
+
+    async def _release_later():
+        await release
+        await holder.commit()
+        await holder.close()
+
+    releaser = asyncio.create_task(_release_later())
+
+    arm = lbr.LiveBlendRefresher("polymarket", stamp_lock_timeout_ms=lock_timeout_ms)
+    frames = []
+
+    async def _oriented(session, event_id, home_prob):
+        return home_prob
+
+    async def _publish(batch):
+        frames.extend(batch)
+
+    arm._oriented = _oriented
+    arm._publish = _publish
+    arm._last_snapshot_at = {eid: float("inf") for eid in event_ids}
+
+    started = time.monotonic()
+    await asyncio.wait_for(arm.refresh(event_ids), 30)
+    elapsed = time.monotonic() - started
+    return elapsed, arm.stats, frames, arm, event_ids, releaser
+
+
+async def test_a_foreign_row_lock_no_longer_freezes_the_other_games(maker, monkeypatch):
+    elapsed, stats, frames, arm, (low, high), releaser = await _one_arm_behind_a_foreign_lock(
+        maker, monkeypatch, lock_timeout_ms=lbr_default()
+    )
+
+    # THE SHIP: the unlocked game is stamped and pushed without waiting out
+    # the foreign transaction.
+    assert elapsed < FOREIGN_HOLD_S / 2, f"the batch waited {elapsed:.2f}s behind a lock"
+    assert [f["event_id"] for f in frames] == [high]
+    assert stats["stamped"] == 1 and stats["errors"] == 0, stats
+    assert stats["lock_skipped"] == 1, stats
+    assert arm._lock_retry == {low}
+
+    # And the locked game is not stranded: once the holder commits, the next
+    # flush stamps it even though that flush's batch does not name it.
+    await releaser
+    await arm.refresh([])
+    assert [f["event_id"] for f in frames] == [high, low]
+    assert arm.stats["stamped"] == 2 and arm.stats["errors"] == 0, arm.stats
+
+
+async def test_control_unbounded_waits_do_freeze_the_batch(maker, monkeypatch):
+    """Without this the case above could pass on a rig whose lock binds nothing."""
+    elapsed, stats, frames, _arm, (low, high), releaser = await _one_arm_behind_a_foreign_lock(
+        maker, monkeypatch, lock_timeout_ms=None
+    )
+    await releaser
+    assert elapsed >= FOREIGN_HOLD_S * 0.9, f"returned after {elapsed:.2f}s: the lock did not bind"
+    assert sorted(f["event_id"] for f in frames) == [low, high]
+    assert stats["lock_skipped"] == 0
+
+
+def lbr_default() -> int:
+    from app.tasks.live_blend_refresh import DEFAULT_STAMP_LOCK_TIMEOUT_MS
+
+    return DEFAULT_STAMP_LOCK_TIMEOUT_MS

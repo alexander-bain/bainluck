@@ -98,6 +98,19 @@ DEFAULT_SNAPSHOT_INTERVAL_S = 25.0
 #: per minute per source per live event.
 DEFAULT_SNAPSHOT_MAX_GAP_S = 60.0
 
+#: #837 tail — the longest one event's stamp may QUEUE behind another
+#: transaction's lock on its `events` row before it gives up and retries on the
+#: next flush. Production 2026-09-24 23:16:09–23:16:20Z: the Polymarket arm's
+#: stamp of one game waited 10.6s on a row a worker-realtime transaction held,
+#: and because a batch is one transaction inside a serial flush loop, every
+#: OTHER game's price froze with it — Brewers @ Phillies moved on the venue at
+#: 23:16:12.452 and reached the page at 23:16:24.2. In that 32-minute capture the
+#: arm waited >1s 34 times (17 of them ≥5s, 240s in all). Under the server's 1s
+#: `deadlock_timeout` on purpose: a stamp that has stopped waiting cannot be the
+#: party a deadlock is detected on, and cannot be the convoy the sibling arm
+#: queues behind.
+DEFAULT_STAMP_LOCK_TIMEOUT_MS = 500
+
 
 def atomic_stamp_expression(
     source: str, value: float, stamped_at, eligibility=None,
@@ -206,6 +219,7 @@ class LiveBlendRefresher:
         unchanged_restamp_interval_s: float = UNCHANGED_RESTAMP_INTERVAL_S,
         snapshot_interval_s: float = DEFAULT_SNAPSHOT_INTERVAL_S,
         snapshot_max_gap_s: float = DEFAULT_SNAPSHOT_MAX_GAP_S,
+        stamp_lock_timeout_ms: Optional[int] = DEFAULT_STAMP_LOCK_TIMEOUT_MS,
     ) -> None:
         self.source = source
         self.min_refresh_interval_s = min_refresh_interval_s
@@ -213,6 +227,14 @@ class LiveBlendRefresher:
         self.unchanged_restamp_interval_s = unchanged_restamp_interval_s
         self.snapshot_interval_s = snapshot_interval_s
         self.snapshot_max_gap_s = snapshot_max_gap_s
+        #: None or 0 waits as long as Postgres lets it (the pre-#837-tail
+        #: behaviour, kept reachable for the deadlock-containment rig).
+        self.stamp_lock_timeout_ms = stamp_lock_timeout_ms
+        #: Events whose stamp gave up on a lock. Carried into the NEXT refresh
+        #: whatever that flush's batch holds: the price that was not stamped is
+        #: already in `futures_outcomes`, so waiting for the event to tick again
+        #: would strand it on a quiet market.
+        self._lock_retry: set[int] = set()
         self._last_refresh_at: dict[int, float] = {}
         self._last_write_at: dict[int, float] = {}
         self._last_written_value: dict[int, float] = {}
@@ -232,6 +254,9 @@ class LiveBlendRefresher:
             # like a quiet market (gotcha #53).
             "published": 0,
             "publish_errors": 0,
+            # #837 tail — stamps that stopped waiting on another transaction's
+            # row lock and were re-queued. Not an error: the retry is the path.
+            "lock_skipped": 0,
         }
         #: Lazily-built async Redis client, reused for the life of this
         #: refresher. Built on first publish rather than in __init__ so a
@@ -272,9 +297,11 @@ class LiveBlendRefresher:
     async def refresh(self, event_ids: Iterable[int]) -> dict[str, int]:
         """Recompute and stamp the blend for these events. Never raises."""
         now = time.monotonic()
-        due = [eid for eid in set(event_ids) if self._due(eid, now)]
+        wanted = set(event_ids) | self._lock_retry
+        self._lock_retry.clear()
+        due = [eid for eid in wanted if self._due(eid, now)]
         self.stats["considered"] += len(due)
-        skipped = len(set(event_ids)) - len(due)
+        skipped = len(wanted) - len(due)
         if skipped > 0:
             self.stats["throttled"] += skipped
         if not due:
@@ -305,6 +332,9 @@ class LiveBlendRefresher:
             MarketOutcomes, compute_source_home_probability,
         )
         from app.utils.live_push import build_frame
+        from app.utils.repair_lock_budget import (
+            SET_LOCK_TIMEOUT_SQL, is_lock_timeout, lock_timeout_value,
+        )
 
         # live/034 S1 — frames are COLLECTED here and published after the
         # session context exits cleanly, never inside the loop. Publishing
@@ -379,6 +409,16 @@ class LiveBlendRefresher:
             # headlines silently held back until the next price. Ascending id in
             # BOTH arms removes the cycle between them; the savepoint confines any
             # other failure (a third writer, a bad row) to the one event it hit.
+            #
+            # #837 tail — and no event waits on a lock long enough to hold the
+            # rest back (see `DEFAULT_STAMP_LOCK_TIMEOUT_MS`). Transaction-local,
+            # set here rather than at session open so the joins above keep their
+            # ordinary waits; a timed-out stamp rolls back only its savepoint.
+            if self.stamp_lock_timeout_ms:
+                await session.execute(
+                    SET_LOCK_TIMEOUT_SQL,
+                    {"ms": lock_timeout_value(self.stamp_lock_timeout_ms)},
+                )
             for event_id in sorted(grouped):
                 event, group = grouped[event_id]
                 try:
@@ -506,7 +546,21 @@ class LiveBlendRefresher:
                             status=event.status,
                         )
                     )
-                except Exception:
+                except Exception as exc:
+                    if is_lock_timeout(exc):
+                        # Another transaction holds this row. Its price is
+                        # already stored; stamp it on the next flush, due at
+                        # once, instead of freezing every other event's stamp
+                        # behind a lock this arm does not control.
+                        self.stats["lock_skipped"] += 1
+                        self._lock_retry.add(event_id)
+                        self._last_refresh_at.pop(event_id, None)
+                        logger.info(
+                            "live_blend_refresh[%s]: event %s row locked >%sms, "
+                            "re-queued for the next flush",
+                            self.source, event_id, self.stamp_lock_timeout_ms,
+                        )
+                        continue
                     self.stats["errors"] += 1
                     logger.exception(
                         "live_blend_refresh[%s]: event %s failed",

@@ -759,3 +759,188 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
             < src.index("_maybe_snapshot")
             < src.index('self.stats["stamped"]')
         )
+
+
+class _LockTimeout(Exception):
+    """What asyncpg raises when `lock_timeout` fires: SQLSTATE 55P03."""
+
+    sqlstate = "55P03"
+
+
+class _LockedRowSession(_RecordingSession):
+    """A session whose stamp UPDATE finds the row held by another transaction.
+
+    Records every statement in order, so a test can see the `lock_timeout` was
+    set BEFORE the first UPDATE and not after it (where it would bound nothing).
+    """
+
+    def __init__(self, market_rows, outcomes, returned, *, locked=True):
+        super().__init__(market_rows, outcomes, returned)
+        self.locked = locked
+        self.statements = []
+
+    async def execute(self, statement, *args, **kwargs):
+        from sqlalchemy.sql.dml import Update
+
+        self.statements.append((statement, args))
+        if isinstance(statement, Update) and self.locked:
+            self.updates.append(statement)
+            raise _LockTimeout("canceling statement due to lock timeout")
+        return await super().execute(statement, *args, **kwargs)
+
+
+def _one_event_refresher(monkeypatch, session, **kwargs):
+    """A real refresher over one live event whose only market reads 0.9."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield session
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+    monkeypatch.setattr(
+        "app.utils.live_blend.compute_source_home_probability",
+        lambda group, home, away: SimpleNamespace(
+            home_probability=0.9, away_probability=None, draw_probability=None,
+            eligibility=None,
+        ),
+    )
+
+    async def _no_inversion(session, event_id, home_prob, source):
+        return home_prob
+
+    monkeypatch.setattr(
+        "app.tasks.prediction_market_matching._check_and_fix_inversion",
+        _no_inversion,
+    )
+
+    async def _no_snapshot(session, **kw):
+        return object(), False
+
+    monkeypatch.setattr(
+        "app.tasks.snapshots._create_or_update_win_prob_snapshot", _no_snapshot
+    )
+    published = []
+
+    async def _capture(frames):
+        published.extend(frames)
+
+    r = LiveBlendRefresher("polymarket", **kwargs)
+    monkeypatch.setattr(r, "_publish", _capture)
+    return r, published
+
+
+def _event_and_market():
+    from types import SimpleNamespace
+
+    event = SimpleNamespace(
+        id=1, home_team_name="Phillies", away_team_name="Brewers",
+        completed_at=None, status="live", espn_win_prob_home=None,
+        opening_home_probability=None,
+    )
+    market = SimpleNamespace(id=10, event_id=1, name="Brewers vs Phillies")
+    return event, market
+
+
+class TestAStampNeverQueuesOnAForeignRowLock:
+    """#837 tail. Production 2026-09-24 23:16:09–23:16:20Z: the Polymarket arm's
+    stamp of ONE game waited 10.6s on a row lock a worker-realtime transaction
+    held, and every other game's price froze behind it (one transaction, serial
+    flush loop). The real-lock proof is
+    `tests/integration/test_live_blend_stamp_deadlock_pg_837.py`; these pin the
+    contract a fake can see."""
+
+    @pytest.mark.asyncio
+    async def test_a_lock_timeout_is_requeued_not_counted_as_an_error(
+        self, monkeypatch
+    ):
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, published = _one_event_refresher(monkeypatch, session)
+
+        stats = await r.refresh([1])
+
+        assert stats["lock_skipped"] == 1
+        assert stats["errors"] == 0, "a contended row is not a failure"
+        assert stats["stamped"] == 0
+        assert published == [], "nothing the database did not keep is pushed"
+        assert 1 not in r._last_written_value, (
+            "a stamp that never landed must not read as written, or the retry "
+            "would be skipped as unchanged"
+        )
+        assert r._lock_retry == {1}
+
+    @pytest.mark.asyncio
+    async def test_the_retry_rides_the_next_flush_even_if_the_event_is_quiet(
+        self, monkeypatch
+    ):
+        """The unstamped price is already in `futures_outcomes`. Waiting for the
+        event to tick again would strand it on exactly the quiet markets."""
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, published = _one_event_refresher(monkeypatch, session)
+        await r.refresh([1])
+
+        session.locked = False  # the other transaction committed
+        session._selects = 0  # a fresh flush opens a fresh session
+        # The next flush's batch names only OTHER events — and inside the 5s
+        # throttle, which the retry must not have to wait out.
+        stats = await r.refresh([])
+
+        assert stats["stamped"] == 1, stats
+        assert [f["event_id"] for f in published] == [1]
+        assert r._lock_retry == set()
+
+    @pytest.mark.asyncio
+    async def test_the_timeout_is_set_before_the_first_stamp(self, monkeypatch):
+        from sqlalchemy.sql.dml import Update
+
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+        r, _ = _one_event_refresher(monkeypatch, session)
+        await r.refresh([1])
+
+        kinds = [
+            "set" if stmt is SET_LOCK_TIMEOUT_SQL
+            else "update" if isinstance(stmt, Update) else "other"
+            for stmt, _ in session.statements
+        ]
+        assert "set" in kinds and kinds.index("set") < kinds.index("update"), kinds
+        (params,) = [a[0] for s, a in session.statements if s is SET_LOCK_TIMEOUT_SQL]
+        assert params == {"ms": "500ms"}
+
+    @pytest.mark.asyncio
+    async def test_disabled_sets_nothing_and_a_real_error_still_counts(
+        self, monkeypatch
+    ):
+        """`stamp_lock_timeout_ms=None` is the pre-tail behaviour the deadlock
+        rig still exercises. And the lock branch is narrow: any other failure is
+        still an error with a traceback (gotcha #36's shape one module over)."""
+        from app.utils.repair_lock_budget import SET_LOCK_TIMEOUT_SQL
+
+        class _Boom(Exception):
+            sqlstate = "40P01"  # deadlock_detected: not a lock timeout
+
+        event, market = _event_and_market()
+        session = _LockedRowSession([(market, event)], [], {"polymarket": {}})
+
+        async def _raise_boom(statement, *a, **k):
+            from sqlalchemy.sql.dml import Update
+
+            session.statements.append((statement, a))
+            if isinstance(statement, Update):
+                raise _Boom("deadlock detected")
+            return await _RecordingSession.execute(session, statement, *a, **k)
+
+        session.execute = _raise_boom
+        r, _ = _one_event_refresher(
+            monkeypatch, session, stamp_lock_timeout_ms=None
+        )
+        stats = await r.refresh([1])
+
+        assert not [s for s, _ in session.statements if s is SET_LOCK_TIMEOUT_SQL]
+        assert stats["errors"] == 1 and stats["lock_skipped"] == 0
+        assert r._lock_retry == set()
