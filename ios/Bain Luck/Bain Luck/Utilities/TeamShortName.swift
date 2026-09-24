@@ -296,6 +296,24 @@ enum TeamShortName {
         return individualSportPrefixes.contains(sport)
     }
 
+    /// #5634 — trailing words that name the club's SPORT, not the club: "Dubai
+    /// Basketball" printed as "Basketball" / `BAS` on a live EuroLeague page, and
+    /// "Paris Basketball" folds onto the same word. Not sport-gated like
+    /// `keepsWholeClubName`, because the word is the tell whatever the league.
+    ///
+    /// The browser's `SPORT_WORD_SUFFIXES` (ux, 236ae1f621), measured 2026-09-24
+    /// over every `teams.name` ending in a sport word: five names, and these
+    /// three words are all of them. Kept OUT of `designators` on purpose: that
+    /// set also drives `isDesignator`, which skips LEADING words on the badge and
+    /// strips `handPickedKey` — and it is compared token for token with the
+    /// browser's `CLUB_TYPE_SUFFIXES` and the server's copy. This set is read
+    /// only by `isNonDistinctiveToken`, the browser's trailing predicate.
+    private static let sportWordSuffixes: Set<String> = [
+        "basketball", // 2  Dubai Basketball, Paris Basketball
+        "basket",     // 1  Valencia Basket
+        "hockey",     // 2  Modo Hockey, TUTO Hockey
+    ]
+
     /// #5634 — does this sport key name a football (soccer) competition, where a
     /// club's last word is so often its CITY that the last-word rule cannot be
     /// used?
@@ -765,6 +783,7 @@ enum TeamShortName {
         if bare.count <= 2 { return true }
         let lower = bare.lowercased()
         if designators.contains(lower) { return true }
+        if sportWordSuffixes.contains(lower) { return true }              // Basketball
         if lower.allSatisfy(\.isNumber) { return true }                   // 1846
         if lower.first == "u", lower.count == 3,
            lower.dropFirst().allSatisfy(\.isNumber) { return true }       // U20
