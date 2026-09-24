@@ -25,6 +25,12 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable {
     /// because it is additive: an older cached payload has no key at all.
     let moments: [GameMomentPoint]?
     let aggregateLine: [AggregateLinePoint]?
+    /// `false` when `commence_time` is the venue's expected RESOLUTION hour and
+    /// not a start (#7878 / #8215 — Kalshi publishes no kick-off, so a tennis row
+    /// clocked from it holds the far end of the match). The chart may not cut
+    /// "Since Start" there, nor open the page's axis there. Optional: an older
+    /// payload has no key, and absent keeps the scheduled start as before.
+    let commenceTimeIsKickoff: Bool?
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?

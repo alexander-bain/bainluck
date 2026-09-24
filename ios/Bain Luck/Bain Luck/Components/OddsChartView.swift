@@ -337,10 +337,24 @@ struct OddsChartView: View {
         status == "live" || EventState.isFinished(status)
     }
 
+    /// The instant "Since Start" cuts at — `nil` when the payload says the
+    /// stored start is not one (#7878 D, `sinceStartCut`).
+    private var kickoffDate: Date? {
+        Self.sinceStartCut(commenceTime: gameStartDate,
+                           commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff)
+    }
+
     /// Show the All / Since Start picker only when the game has started
     /// and we know when it started.
     private var showPicker: Bool {
-        isGameStarted && gameStartDate != nil
+        Self.offersSinceStart(isGameStarted: isGameStarted, kickoff: kickoffDate)
+    }
+
+    /// The range actually drawn. `.task` defaults a started game to Since Start
+    /// before the payload that can veto it has arrived, so a hidden picker
+    /// must not leave that choice cutting the line or wording the empty state.
+    private var drawnRange: OddsTimeRange {
+        showPicker ? vm.selectedRange : .all
     }
 
     /// Short team name: prefer ESPN abbreviation (e.g. "BOS"), fall back to the
@@ -516,7 +530,7 @@ struct OddsChartView: View {
         .padding()
         .task {
             // Default to "Since Start" for started games with a known commence time
-            if isGameStarted && gameStartDate != nil {
+            if Self.offersSinceStart(isGameStarted: isGameStarted, kickoff: kickoffDate) {
                 vm.selectedRange = .sinceStart
             }
             await vm.load()
@@ -605,7 +619,7 @@ struct OddsChartView: View {
                 // snapshot in the window rendered the whole frame around no line.
                 if !Self.hasDrawableLine(in: dataPoints) {
                     Text(Self.emptyChartMessage(
-                        range: vm.selectedRange,
+                        range: drawnRange,
                         hasAnyPointInRange: !dataPoints.isEmpty,
                         allIsDrawable: Self.hasDrawableLine(in: enrichedPoints),
                         status: status
@@ -722,7 +736,7 @@ struct OddsChartView: View {
                                 }
                             }
                             Text(Self.emptyChartMessage(
-                                range: vm.selectedRange,
+                                range: drawnRange,
                                 hasAnyPointInRange: !dataPoints.isEmpty,
                                 allIsDrawable: Self.hasDrawableLine(in: enrichedPoints),
                                 status: status
@@ -958,12 +972,44 @@ struct OddsChartView: View {
             filtered = filtered.filter { $0.date <= endDate }
         }
 
-        guard vm.selectedRange == .sinceStart,
-              let startDate = gameStartDate,
-              isGameStarted else {
-            return filtered
-        }
-        filtered = filtered.filter { $0.date >= startDate }
+        guard isGameStarted else { return filtered }
+        return Self.sinceStartWindow(filtered, range: drawnRange, kickoff: kickoffDate)
+    }
+
+    /// #7878 D / #8215 — where "Since Start" may cut, or `nil` for nowhere.
+    ///
+    /// `commence_time_is_kickoff: false` means the stored start is Kalshi's
+    /// expected EXPIRATION (Kalshi publishes no kick-off field), which for a
+    /// tennis match is the far end of the contest. Cutting there does not trim
+    /// the pre-match half, it removes the match: `/events/15317314` played in
+    /// the 07:00Z hour against a stored 09:10Z, and the cut kept four points
+    /// after the winner was decided. The web has honoured the flag since #8215
+    /// (`OddsChart.tsx` `rangeStartTime`); this is the same rule.
+    ///
+    /// Only an explicit `false` vetoes. Absent (an older payload) keeps the
+    /// scheduled start, exactly as before.
+    static func sinceStartCut(commenceTime: Date?, commenceTimeIsKickoff: Bool?) -> Date? {
+        guard commenceTimeIsKickoff != false else { return nil }
+        return commenceTime
+    }
+
+    /// The All / Since Start choice exists only for a started game with a start
+    /// we can cut at. With no cut, "Since Start" and "All" would be the same
+    /// picture under two names.
+    static func offersSinceStart(isGameStarted: Bool, kickoff: Date?) -> Bool {
+        isGameStarted && kickoff != nil
+    }
+
+    /// The Since Start window over already-clipped points.
+    ///
+    /// "Smart start": if there's a gap >30 min between the kick-off and the
+    /// first point after it, start from that first point instead — prevents
+    /// empty chart space from schedule delays.
+    static func sinceStartWindow(_ points: [ChartDataPoint],
+                                 range: OddsTimeRange,
+                                 kickoff: Date?) -> [ChartDataPoint] {
+        guard range == .sinceStart, let startDate = kickoff else { return points }
+        let filtered = points.filter { $0.date >= startDate }
 
         guard let firstPoint = filtered.first else {
             return filtered

@@ -45,6 +45,16 @@ struct EventDetailView: View {
         guard let event = vm.event,
               let commenceTime = event.commenceTime,
               let scheduledStart = commenceTime.asDate else { return nil }
+        // #7878 D — a stored start the payload says is NOT a start (Kalshi's
+        // expected resolution hour, `commence_time_is_kickoff: false`) cannot
+        // open the axis either. It is the far end of the match: an axis from
+        // there puts the whole contest off the left edge however the chart
+        // filters its points. `nil` is the existing fallback — each chart
+        // takes its own domain from what it drew.
+        guard OddsChartView.sinceStartCut(
+            commenceTime: scheduledStart,
+            commenceTimeIsKickoff: vm.history?.commenceTimeIsKickoff
+        ) != nil else { return nil }
 
         // Use actual game start (first ESPN data point) instead of scheduled
         // time — a game that starts early/late should anchor to when it really
