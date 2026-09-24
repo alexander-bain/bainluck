@@ -14065,6 +14065,11 @@ _TOUR_AFFINITY_KEYS: dict[str, str] = {
 }
 
 
+#: #8334 — least share of the win probability a tournament's held golfers must carry
+#: before the card may name the top one as the leader.
+TOURNAMENT_LEADER_MIN_FIELD_MASS = 0.5
+
+
 async def _score_golf_tournaments(
     db: AsyncSession,
     now: datetime,
@@ -14160,6 +14165,21 @@ async def _score_golf_tournaments(
             )
         if not is_winner_market:
             continue
+
+        # #8334 — a card that says "X leads" needs the field X leads. Polymarket
+        # ingested four golfers of the NW Arkansas Championship's winner market
+        # (3.2 + 2.5 + 1.9 + 1.9 = 9.3% of the field), so the card served "Ina
+        # Yoon leads at 3.2%" beside the same tournament's 144-golfer Kalshi card
+        # saying Miyu Yamashita, 14%. The golfers we hold must carry at least half
+        # the win probability before the top one may be called the leader; every
+        # full field measured (DataGolf, Kalshi, a two-team cup) carries 0.93-1.03.
+        # `_all_golfers` is the whole field (`golfers` is its top slice, so its mass
+        # is not the field's); a base without it cannot be asked, and keeps its card.
+        field = t.get("_all_golfers")
+        if field is not None:
+            field_mass = sum((g.get("probability") or 0) for g in field)
+            if field_mass < TOURNAMENT_LEADER_MIN_FIELD_MASS:
+                continue
 
         # Score the tournament
         score = _score_tournament(t, now)
