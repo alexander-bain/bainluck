@@ -214,6 +214,44 @@ class TestTheLegCopyParentLeaves:
         }
 
 
+class TestWithTheKalshiMoneylineOnThePage:
+    """The production page also carried Kalshi's moneyline (61827719). With the
+    parent gone, #6799's fold leaves ONE match-winner card; with it, the parent's
+    "White Sox / NRFI" pair stood beside Kalshi's card."""
+
+    @pytest.mark.asyncio
+    async def test_one_winner_card_and_no_nrfi(self):
+        event = _make_event()
+        parent, parent_legs = _parent()
+        child_markets, child_legs = _children()
+        kalshi = _make_market(
+            id=61827719, name="Chicago White Sox vs Kansas City",
+            external_id="KXMLBGAME-26SEP241310CWSKC", group_id=None,
+        )
+        kalshi.source = "kalshi"
+        kalshi_legs = [
+            _make_outcome(id=21, market_id=61827719, name="Chicago White Sox",
+                          probability=0.535, external_id="KXMLBGAME-26SEP241310CWSKC-CWS"),
+            _make_outcome(id=22, market_id=61827719, name="Kansas City",
+                          probability=0.465, external_id="KXMLBGAME-26SEP241310CWSKC-KC"),
+        ]
+        payload = await get_game_markets(
+            event.id,
+            _db_for(event, [parent] + child_markets + [kalshi],
+                    parent_legs + child_legs + kalshi_legs),
+        )
+        rows = _rows(payload)
+        assert not [r for r in rows if r.get("outcome_name") == "NRFI"], rows
+        winner_cards = {
+            (r.get("source"), r.get("market_name"))
+            for r in rows
+            if r.get("outcome_name") in ("Chicago White Sox", "Kansas City",
+                                         "Kansas City Royals")
+        }
+        assert len(winner_cards) == 1, f"more than one match-winner card: {winner_cards}"
+        assert any("first inning" in (r.get("market_name") or "").lower() for r in rows)
+
+
 class TestTheChildrenStillArrive:
     @pytest.mark.asyncio
     async def test_both_children_keep_their_own_prices(self):
