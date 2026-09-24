@@ -20,6 +20,7 @@ import {
   SERIES_COLORS_GREEN,
   ELIMINATED_SERIES_COLOR as ELIMINATED_COLOR,
   COMBINED_SERIES_COLOR as COMBINED_COLOR,
+  assignSeriesColors,
 } from "@/lib/seriesColors";
 
 // Series palettes live in the shared registry (L2-157, census class E). This
@@ -189,13 +190,24 @@ export function FuturesChart({
     [historyData, selectedOutcomes],
   );
 
+  // #8095: the default palette gives a party line its party's colour rather than
+  // whatever its sort position dealt it. The gold/green leader themes are a
+  // deliberate emphasis on the frontrunner and keep their index order.
+  const indexColors = useMemo(
+    () =>
+      palette === DEFAULT_COLORS
+        ? assignSeriesColors(displayedOutcomes.map((o) => o.name), palette)
+        : null,
+    [displayedOutcomes, palette],
+  );
+
   // Resolve a line color: explicit per-outcome override > eliminated grey >
   // index palette. Centralized so lines, hover dots and the legend never drift.
   const colorFor = (outcome: FuturesOutcomeHistory, idx: number): string => {
     const override = outcomeColors?.get(outcome.outcome_id);
     if (override) return override;
     if (outcome.eliminated) return ELIMINATED_COLOR;
-    return palette[idx % palette.length];
+    return indexColors?.[idx] ?? palette[idx % palette.length];
   };
 
   // Hover tooltip state (non-mini only) — must be before any early returns
