@@ -366,7 +366,8 @@ export default function TournamentPage() {
    * because Doubles is three draws behind one pill.
    */
   const drawIsDecided = useMemo(
-    () => shownBoardsAreDecided(data?.boards, drawsShown),
+    // #8005: plus the server's per-draw list, because Doubles has no board.
+    () => shownBoardsAreDecided(data?.boards, drawsShown, data?.slate?.decided_draws),
     [data, drawsShown],
   );
 

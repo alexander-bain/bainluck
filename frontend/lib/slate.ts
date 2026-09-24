@@ -305,6 +305,14 @@ export interface SlateData {
    * conclusion from this number.
    */
   order_of_play_listed?: number;
+  /**
+   * #8005 — the draws whose final the scoreboard has graded, PER DRAW. The
+   * per-draw fact `order_of_play_listed` cannot be: the Doubles pill has no
+   * board, so `board.decided` never reached it and it apologised for a missing
+   * live match ten days after all three finals. Optional: a payload written
+   * before the field existed reads as "nothing known decided".
+   */
+  decided_draws?: string[];
   dropped: Record<string, number>;
   price_state: PriceState;
   newest_observed_at: string | null;

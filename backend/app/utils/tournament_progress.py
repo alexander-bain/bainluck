@@ -324,6 +324,51 @@ def progress_from_sides(sides: Iterable[dict[str, Any]]) -> dict[str, DrawProgre
     return out
 
 
+def decided_draws(results: Optional[dict[str, Any]]) -> list[str]:
+    """The draws whose final the scoreboard has graded, sorted (#8005).
+
+    PER-DRAW, which is the whole point. The hub's empty-state copy had one
+    tournament-wide input (``order_of_play_listed``, 625 at the US Open) to
+    explain a per-draw list, and #5924 closed the gap only for a draw that has
+    a board: ``board.decided`` comes from :class:`DrawProgress`, which needs the
+    REGISTER to know the players, and the register carries no doubles player
+    and no doubles board. So the Doubles pill, ten days after all three finals,
+    still said "a match that is on right now would be missing".
+
+    Read from the raw scoreboard, not from the register or from
+    ``build_results``: a final is decided when the scoreboard files a match
+    under the final round with a decided completion and a named winner — the
+    same two conditions :func:`build_progress` uses for any decided match, and
+    nothing about whether we can put names to the sides. "Final" needs no draw
+    size to read, so a draw the register has never heard of still answers.
+
+    An empty scoreboard (cold cache, or the #5728 degraded read) answers ``[]``
+    — no draw is claimed decided on a read we did not make.
+    """
+    from app.services.espn_tennis import espn_round_key
+
+    out: list[str] = []
+    for draw, found_by_pair in ((results or {}).get("draws") or {}).items():
+        if not draw or not isinstance(found_by_pair, dict):
+            continue
+        for found in found_by_pair.values():
+            if not isinstance(found, dict):
+                continue
+            raw_round = str(found.get("espn_round") or "").strip()
+            # The register's own key or ESPN's display name, as `_round_key`
+            # accepts — but without its draw-size gate, which only "Round N"
+            # needs.
+            if ROUNDS[-1] not in (raw_round, espn_round_key(raw_round, draw_size=0)):
+                continue
+            if (
+                str(found.get("completion") or "").strip().lower() in DECIDED_COMPLETIONS
+                and found.get("winner_normalized")
+            ):
+                out.append(str(draw))
+                break
+    return sorted(out)
+
+
 def _round_key(espn_round: Any, *, draw_size: Optional[int]) -> Optional[str]:
     """A match's round in the REGISTER's vocabulary, or ``None``.
 
@@ -356,5 +401,6 @@ __all__ = [
     "VERDICT_REACHED",
     "DrawProgress",
     "build_progress",
+    "decided_draws",
     "progress_from_sides",
 ]

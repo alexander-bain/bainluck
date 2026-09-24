@@ -175,7 +175,9 @@ describe("the hub page asks the right question", () => {
 
   it("computes it from the pill's draws and feeds it to the empty state", () => {
     const code = executable();
-    expect(code).toMatch(/shownBoardsAreDecided\(data\?\.boards,\s*drawsShown\)/);
+    // #8005 added a third argument (the server's per-draw list); the first two
+    // are still the pill's boards and draws.
+    expect(code).toMatch(/shownBoardsAreDecided\(data\?\.boards,\s*drawsShown\b/);
     expect(code).toMatch(/drawIsDecided,/);
     // The wrong input, explicitly: `board` is the first matching board.
     expect(code).not.toMatch(/drawIsDecided:\s*Boolean\(board\?\.decided\)/);
