@@ -134,7 +134,7 @@ describe("#6496 — the play sentence reaches the reader whole", () => {
     // squeeze to 159px; a fix that only swaps the class leaves the sentence
     // here and still clips, so this is what makes that fix fail.
     const html = markup(point());
-    const row = balancedBlockFrom(html, '<div class="flex items-start gap-3"');
+    const row = balancedBlockFrom(html, '<div class="flex items-start gap-3');
 
     expect(row).toContain("min-w-0"); // the column still exists, unchanged
     expect(row).not.toContain(FULL_PLAY);
