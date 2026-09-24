@@ -811,3 +811,138 @@ class TestTheReaderCanActuallySeeIt:
             "for 'championship'. The fixture seeds 'championship' exactly as "
             "production does, so this asserts the pass relabelled it."
         )
+
+
+# ---------------------------------------------------------------------------
+# #837 / #5273 — the sunk-recovery HEAD arm, executed
+# ---------------------------------------------------------------------------
+#
+# `tests/test_polymarket_sunk_head_arm_837.py` drives the pass with a selector
+# that ANSWERS. This executes `_SUNK_POLY_HEAD_SQL` itself: the subquery over
+# `_SUNK_POLY_WHERE`, the join, the shared `_LINKED_POLY_EVENT_WINDOW` and the
+# kick-off order. Three rows must come back IN ORDER and seven must not, each
+# excluded by a different clause.
+
+async def _seed_head(session):
+    from app.models.models import Event, FuturesMarket, FuturesOutcome, Sport
+
+    sport = Sport(key="baseball_mlb", name="MLB", group="Baseball")
+    session.add(sport)
+    await session.flush()
+    now = datetime.now(UTC)
+
+    def _event(hours, status="scheduled"):
+        e = Event(
+            sport_id=sport.id,
+            home_team_name="Baltimore Orioles",
+            away_team_name="Toronto Blue Jays",
+            commence_time=now + timedelta(hours=hours),
+            status=status,
+        )
+        session.add(e)
+        return e
+
+    live, soon, later = _event(-1, "live"), _event(3), _event(48)
+    far, done = _event(24 * 20), _event(-24, "completed")
+    await session.flush()
+
+    def _market(external_id, event, *, stale=True, status="open"):
+        m = FuturesMarket(
+            source="polymarket",
+            external_id=external_id,
+            name="Toronto Blue Jays vs. Baltimore Orioles",
+            category="championship",
+            market_tier=5,
+            status=status,
+            event_id=event.id if event is not None else None,
+            # Gamma's `endDate`, a week after first pitch — the reason the
+            # imminent arm reached the specimen late. The head arm ignores it.
+            resolution_date=now + timedelta(days=7),
+            volume_updated_at=now - (timedelta(days=6) if stale else timedelta(minutes=5)),
+            llm_sport_category="baseball",
+            sport_id=sport.id,
+        )
+        session.add(m)
+        return m
+
+    rows = {
+        # picked — minted in REVERSE kick-off order, so the ids ascend the
+        # wrong way and only `ORDER BY e.commence_time` returns them right
+        "later": _market("1038122", later),
+        "soon_holding_a_leg": _market("1038121", soon),
+        "live_game": _market("1038120", live),
+        # skipped
+        "polled_recently": _market("1038123", soon, stale=False),
+        "unlinked": _market("1038124", None),
+        "condition_id_keyed": _market("0x8eee18ee", soon),
+        "beyond_the_horizon": _market("1038125", far),
+        "event_completed": _market("1038126", done),
+        "refused": _market("1038127", soon),
+        "resolved": _market("1038128", soon, status="resolved"),
+    }
+    await session.flush()
+    # The specimen parent HOLDS its raw leg; #3613's anti-join would drop it.
+    session.add(
+        FuturesOutcome(
+            market_id=rows["soon_holding_a_leg"].id,
+            external_id="0x8eee18ee",
+            name="Toronto Blue Jays",
+            current_probability=0.41,
+            rank=1,
+        )
+    )
+    await session.commit()
+    return {k: m.id for k, m in rows.items()}
+
+
+async def _select_head(session, refused=("1038127",)):
+    from app.tasks.polymarket import (
+        LINKED_POLY_BOOK_HORIZON_DAYS,
+        LINKED_POLY_BOOK_LOOKBACK_HOURS,
+        SUNK_POLY_STALE_HOURS,
+        _SUNK_POLY_HEAD_MAX,
+        _SUNK_POLY_HEAD_SQL,
+    )
+
+    return (
+        await session.execute(
+            _SUNK_POLY_HEAD_SQL,
+            {
+                "stale_hours": SUNK_POLY_STALE_HOURS,
+                "horizon_days": LINKED_POLY_BOOK_HORIZON_DAYS,
+                "lookback_hours": LINKED_POLY_BOOK_LOOKBACK_HOURS,
+                "refused": list(refused),
+                "max_rows": _SUNK_POLY_HEAD_MAX,
+            },
+        )
+    ).fetchall()
+
+
+class TestTheSunkHeadArmAgainstRealPostgres:
+    async def test_it_picks_the_linked_games_soonest_first_and_nothing_else(self, pg_session):
+        ids = await _seed_head(pg_session)
+        rows = await _select_head(pg_session)
+        assert [r.id for r in rows] == [
+            ids["live_game"], ids["soon_holding_a_leg"], ids["later"],
+        ], (
+            "three rows in kick-off order, seven excluded by seven different "
+            "clauses; any other answer means one clause is not doing its job"
+        )
+
+    async def test_the_row_carries_what_the_pass_reads_off_it(self, pg_session):
+        await _seed_head(pg_session)
+        row = (await _select_head(pg_session))[0]
+        assert str(row.external_id) == "1038120"
+
+    async def test_the_limit_is_the_head_ceiling_and_keeps_the_soonest(self, pg_session):
+        from app.tasks.polymarket import _SUNK_POLY_HEAD_SQL
+
+        ids = await _seed_head(pg_session)
+        rows = (
+            await pg_session.execute(
+                _SUNK_POLY_HEAD_SQL,
+                {"stale_hours": 6, "horizon_days": 14, "lookback_hours": 6,
+                 "refused": ["1038127"], "max_rows": 1},
+            )
+        ).fetchall()
+        assert [r.id for r in rows] == [ids["live_game"]]

@@ -3562,6 +3562,19 @@ _LINKED_POLY_MAX_MARKETS = 600
 #: Wall-clock budget, mirroring `_refresh_linked_game_books`.
 _LINKED_POLY_DEADLINE_S = 240.0
 
+#: "This event is on now or soon": live, or scheduled inside the horizon (with
+#: the lookback for a row that has kicked off and not yet flipped). One string,
+#: shared with #837's head arm of the sunk-recovery pass, so the two passes can
+#: never disagree about which games are imminent. Needs `e` bound to `events`.
+_LINKED_POLY_EVENT_WINDOW = """(
+             e.status = 'live'
+          OR (
+                e.status = 'scheduled'
+                AND e.commence_time > NOW() - make_interval(hours => :lookback_hours)
+                AND e.commence_time <= NOW() + make_interval(days => :horizon_days)
+             )
+           )"""
+
 _LINKED_POLY_BOOKS_SQL = text(
     """
     SELECT fm.id,
@@ -3584,14 +3597,9 @@ _LINKED_POLY_BOOKS_SQL = text(
        -- rows are parents), so excluding it costs nothing and keeps every id in
        -- the batch answerable.
        AND fm.external_id NOT LIKE '0x%'
-       AND (
-             e.status = 'live'
-          OR (
-                e.status = 'scheduled'
-                AND e.commence_time > NOW() - make_interval(hours => :lookback_hours)
-                AND e.commence_time <= NOW() + make_interval(days => :horizon_days)
-             )
-           )
+       AND """
+    + _LINKED_POLY_EVENT_WINDOW
+    + """
        AND NOT EXISTS (
              SELECT 1 FROM futures_outcomes fo WHERE fo.market_id = fm.id
            )
@@ -4030,7 +4038,13 @@ SUNK_POLY_STALE_HOURS = 6
 #: #3613's measured figure, reused rather than re-chosen.
 SUNK_POLY_IMMINENT_DAYS = LINKED_POLY_BOOK_HORIZON_DAYS
 
-#: Per-pass ceilings. 600 events = 30 Gamma calls, the same ceiling as #3613.
+#: Per-pass ceilings. 600 events = 30 Gamma calls, the same ceiling as #3613,
+#: plus the #837 head arm's 100 (5 calls) on top rather than carved out of the
+#: imminent arm, which still owns every sunk row with no event link — the
+#: fight cards #6758 was written for. 100 is the head's measured reach: on
+#: 2026-09-23 23:40Z the window held 2,942 linked sunk parents, 99 of them
+#: starting inside two days, so one pass covers the next two days of games.
+_SUNK_POLY_HEAD_MAX = 100
 _SUNK_POLY_IMMINENT_MAX = 300
 _SUNK_POLY_ROTATE_MAX = 300
 _SUNK_POLY_DEADLINE_S = 240.0
@@ -4063,6 +4077,37 @@ _SUNK_POLY_IMMINENT_SQL = text(
     + """
        AND fm.resolution_date <= NOW() + make_interval(days => :horizon_days)
      ORDER BY fm.resolution_date, fm.id
+     LIMIT :max_rows
+    """
+)
+
+#: #837/#5273: the HEAD arm — sunk parents whose linked game is live or about to
+#: start, soonest kick-off first, read before either arm below.
+#:
+#: The imminent arm orders by `resolution_date`, which for a Polymarket game is
+#: Gamma's `endDate` — a week after first pitch for MLB. Measured 2026-09-23
+#: 23:30Z: Blue Jays–Orioles (parent 61294015, Gamma 1038120, event 15317724)
+#: resolved 09-30 and sat behind 3,515 of 6,324 stale imminent rows, at 300 a
+#: pass. Its moneyline child had never been minted (the book was empty on the
+#: listing day, and the empty-book refusal is correct), so the game played with
+#: no winner price, and the pass reached it a week after the final.
+#:
+#: The window is #3613's own predicate (`_LINKED_POLY_EVENT_WINDOW`) WITHOUT its
+#: zero-outcomes clause: this parent already holds its own raw legs, and what is
+#: missing is its children, which only the poll's writer mints. Everything else
+#: is `_SUNK_POLY_WHERE` unchanged — stale, open, floored, refusals honoured — so
+#: a row the poll still stamps hourly is never re-read, and one this arm writes
+#: leaves the arm for six hours like any other.
+_SUNK_POLY_HEAD_SQL = text(
+    "SELECT s.id, s.external_id FROM (SELECT fm.id, fm.external_id, fm.event_id"
+    + _SUNK_POLY_WHERE
+    + """
+    ) s
+      JOIN events e ON e.id = s.event_id
+     WHERE """
+    + _LINKED_POLY_EVENT_WINDOW
+    + """
+     ORDER BY e.commence_time, s.id
      LIMIT :max_rows
     """
 )
@@ -4228,6 +4273,8 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     budget = _SUNK_POLY_DEADLINE_S if deadline_s is None else deadline_s
 
     stats: dict = {
+        "head_selected": 0,
+        "head_pool_at_limit": False,
         "imminent_selected": 0,
         "rotate_selected": 0,
         "imminent_pool_at_limit": False,
@@ -4285,6 +4332,13 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
         "horizon_days": SUNK_POLY_IMMINENT_DAYS,
         "refused": refused,
     }
+    # #837: the head arm reads the linked-game window, which is #3613's.
+    head_params = {
+        **base,
+        "horizon_days": LINKED_POLY_BOOK_HORIZON_DAYS,
+        "lookback_hours": LINKED_POLY_BOOK_LOOKBACK_HOURS,
+        "max_rows": _SUNK_POLY_HEAD_MAX,
+    }
     async with get_task_session() as session:
         imminent = (
             await session.execute(
@@ -4309,24 +4363,35 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
                     {**base, "max_rows": _SUNK_POLY_ROTATE_MAX, "cursor": 0},
                 )
             ).fetchall()
+        # #837: executed last so the two arms above keep their order, but its
+        # ids go FIRST in the work list below — that ordering is the fix.
+        head = (await session.execute(_SUNK_POLY_HEAD_SQL, head_params)).fetchall()
         # Plain scalars before any commit (gotcha #6).
+        head_ids = [str(r.external_id) for r in head]
         imminent_ids = [str(r.external_id) for r in imminent]
         rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
 
+    stats["head_selected"] = len(head_ids)
+    stats["head_pool_at_limit"] = len(head_ids) >= _SUNK_POLY_HEAD_MAX
     stats["imminent_selected"] = len(imminent_ids)
     stats["rotate_selected"] = len(rotate_pairs)
     stats["imminent_pool_at_limit"] = len(imminent_ids) >= _SUNK_POLY_IMMINENT_MAX
     stats["cursor_wrapped"] = wrapped
 
-    if not imminent_ids and not rotate_pairs:
+    if not head_ids and not imminent_ids and not rotate_pairs:
         # Gotcha #53: say which question returned nothing.
         stats["terminal"] = "no_sunk_open_events"
         return stats
 
-    rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs}
+    # A head row can ALSO be a rotate row (no resolution date, or one past the
+    # horizon). It is read in the head's chunk, so it must not advance the
+    # rotate cursor from there: `max()` below would jump the cursor over every
+    # rotate row between it and the last one actually read.
+    head_set = set(head_ids)
+    rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs if ext not in head_set}
     seen: set[str] = set()
     work: list[str] = []
-    for ext in imminent_ids + [ext for _mid, ext in rotate_pairs]:
+    for ext in head_ids + imminent_ids + [ext for _mid, ext in rotate_pairs]:
         if ext not in seen:  # one Gamma id, one write — never twice in a pass
             seen.add(ext)
             work.append(ext)
