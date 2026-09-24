@@ -3095,6 +3095,32 @@ def consistent_same_name_sibling(matched_espn, name_candidates):
     return None
 
 
+def espn_aliases_to_store(team_name, existing, matched_espn, *, match_was_exact, repointed_from):
+    """The ``alternate_names`` the logo backfill writes, or ``None`` to leave them.
+
+    Aliases are identity, held to the bar the ``espn_id`` write beside them is
+    held to: an exact name, the stored id, or a repoint. A token-overlap score
+    of 0.51 names SOME club, and unioning that club's names into our row makes
+    it answer to them in search and — on the next pass, when the borrowed name
+    exact-matches — in this very lookup (#8353: Akron Zips carried "Michigan
+    Wolverines" and "Eastern Michigan Eagles"; twelve women's-basketball rows
+    carried "West Virginia Mountaineers"). The crest may still come from a fuzzy
+    hit on a row that has none (#4750's rule is about overwriting); a name never.
+    """
+    if matched_espn is None or not (match_was_exact or repointed_from):
+        return None
+    alt_names = set(existing or [])
+    for n in (
+        matched_espn.display_name,
+        matched_espn.short_name,
+        matched_espn.nickname,
+        matched_espn.name,
+    ):
+        if n and n != team_name:
+            alt_names.add(n)
+    return list(alt_names) if alt_names else None
+
+
 async def _backfill_team_logos():
     """Async implementation of backfill_team_logos."""
     from app.services.espn_api import ESPNAPIService, SPORT_LEAGUE_MAP
@@ -3278,13 +3304,17 @@ async def _backfill_team_logos():
                                 if not color.startswith("#"):
                                     color = f"#{color}"
                                 team.secondary_color = color
-                            # Store alternate names for future matching
-                            alt_names = set(team.alternate_names or [])
-                            for n in [matched_espn.display_name, matched_espn.short_name, matched_espn.nickname, matched_espn.name]:
-                                if n and n != team.name:
-                                    alt_names.add(n)
-                            if alt_names:
-                                team.alternate_names = list(alt_names)
+                            # Store alternate names for future matching —
+                            # never from a fuzzy hit (#8353).
+                            alt_names = espn_aliases_to_store(
+                                team.name,
+                                team.alternate_names,
+                                matched_espn,
+                                match_was_exact=match_was_exact,
+                                repointed_from=repointed_from,
+                            )
+                            if alt_names is not None:
+                                team.alternate_names = alt_names
                             stats["teams_updated"] += 1
             finally:
                 await espn.close()
