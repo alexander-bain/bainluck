@@ -505,6 +505,15 @@ def _normalize_futures_dedup_key(market) -> str:
     both recovered by `_fold_dedup_punctuation`. Market-gold recall over the
     same set: **46/51 before → 47/51 after**, zero losses.
     """
+    return f"{_futures_dedup_question_key(market)}:{market.market_tier or 0}"
+
+
+def _futures_dedup_question_key(market) -> str:
+    """The name half of `_normalize_futures_dedup_key` — the key WITHOUT its tier.
+
+    Split out rather than duplicated so the two cannot drift: the tiered key
+    above is exactly this plus `:<tier>`, byte-for-byte what it always was.
+    """
     name = (market.name or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
@@ -517,8 +526,63 @@ def _normalize_futures_dedup_key(market) -> str:
     parts = re.split(r"\s+(?:vs\.?|at|@)\s+", name_lower, maxsplit=1)
     if len(parts) == 2:
         parts = sorted(_fold_dedup_punctuation(p) for p in parts)
-        return f"matchup:{'|'.join(parts)}:{market.market_tier or 0}"
-    return f"name:{_fold_dedup_punctuation(name_lower)}:{market.market_tier or 0}"
+        return f"matchup:{'|'.join(parts)}"
+    return f"name:{_fold_dedup_punctuation(name_lower)}"
+
+
+def _is_cross_source_repeat(market, kept_sources_by_question: dict) -> bool:
+    """True if the SAME question was already kept on this page from ANOTHER venue.
+
+    #8378 — Alex's reader, `?q=bills`: the ANSWERS card printed
+    `Which bills will become law in 2026?  Housing for the 21st…  100%` twice,
+    one row Kalshi (109423) and one Polymarket (1212562). Same name, same
+    answer — but the two venues' rows carry `market_tier` 2 and 5, and the
+    tiered dedup key keeps them apart. One question, two rows: the standing
+    ruling ("the blend is the product — one number per question") broken on
+    the search page by a classifier disagreement nobody reads.
+
+    WHY NOT DROP THE TIER FROM THE SHARED KEY. `league_futures` relies on it:
+    its dedup replaces a row across SECTIONS, and its own note says the tier in
+    this key is what stops a tier-5 manager market deleting a tier-3 award. So
+    the shared key is untouched and this rule lives on the search page only.
+
+    WHY CROSS-SOURCE ONLY. Every open market was read on production
+    2026-09-24 (folded-name pairs whose tiers disagree): four pairs. Three are
+    one question on two venues — this one, `FedEx Open de France Winner`
+    (kalshi/datagolf) and `MLB World Series Winner` (odds_api/polymarket). The
+    fourth is Kalshi twice — `Urban Outfitters Total Stores in Q1`, two fiscal
+    years (KXURBN-26MAYSTOR / KXURBN-27MAYSTORES) that really are different
+    markets under one title. The tier separates those by accident; a
+    same-source pair is left to the tiered key exactly as before, so this rule
+    can only ever remove a second venue's copy of a question already shown.
+
+    The caller records the kept row's source under its question key; the first
+    row kept is the reranked leader, so which venue survives is the ranking's
+    choice, not this function's.
+    """
+    seen = kept_sources_by_question.get(_futures_dedup_question_key(market))
+    return bool(seen) and getattr(market, "source", None) not in seen
+
+
+def _admit_search_future(
+    market, seen_keys: set, kept_sources_by_question: dict
+) -> bool:
+    """The search page's per-row dedup decision, and its bookkeeping.
+
+    False = drop the row: its tiered key is already on the page (the rule since
+    #993/#1769), or it is another venue's copy of a question already kept
+    (#8378). True = keep it, and record both keys so later rows are judged
+    against it. Both route loops — the window and its refill — call this, so
+    the refill cannot re-admit a copy the window dropped.
+    """
+    dkey = _normalize_futures_dedup_key(market)
+    if dkey in seen_keys or _is_cross_source_repeat(market, kept_sources_by_question):
+        return False
+    seen_keys.add(dkey)
+    kept_sources_by_question.setdefault(
+        _futures_dedup_question_key(market), set()
+    ).add(getattr(market, "source", None))
+    return True
 
 
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
@@ -7999,12 +8063,14 @@ async def search_events(
         futures_markets_raw, expanded, _resolved_sport_category
     )
     seen_search_keys: set[str] = set()
+    # #8378: question key -> venues kept, so a second venue's copy of a question
+    # already on the page is dropped even when the two classified to different
+    # tiers. See `_is_cross_source_repeat`.
+    kept_sources_by_question: dict[str, set] = {}
     deduped_futures = []
     for m in reranked_futures:
-        dkey = _normalize_futures_dedup_key(m)
-        if dkey in seen_search_keys:
+        if not _admit_search_future(m, seen_search_keys, kept_sources_by_question):
             continue
-        seen_search_keys.add(dkey)
         deduped_futures.append(m)
 
     # LAT-P038/#1769 (defect 1b): dedup runs AFTER the LIMIT, so a collapsing
@@ -8110,10 +8176,10 @@ async def search_events(
         for m in _rerank_search_futures(
             refill_rows, expanded, _resolved_sport_category
         ):
-            dkey = _normalize_futures_dedup_key(m)
-            if dkey in seen_search_keys:
+            if not _admit_search_future(
+                m, seen_search_keys, kept_sources_by_question
+            ):
                 continue
-            seen_search_keys.add(dkey)
             deduped_futures.append(m)
             if len(deduped_futures) >= _SEARCH_FUTURES_PAGE:
                 break
