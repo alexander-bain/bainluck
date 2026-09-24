@@ -73,7 +73,7 @@ const PLACEHOLDER_PRONE_SOURCE = "polymarket";
  */
 export type WinProbabilitySourceEntry =
   | number
-  | { value?: number | null }
+  | { value?: number | null; evidence_status?: string | null }
   | null
   | undefined;
 
@@ -143,16 +143,39 @@ export function hasProbabilitySourceReading(
 }
 
 /**
+ * The eligibility grade the server stamps beside a reading (CU-4, #5311).
+ * `probability_eligibility.VERIFIED` on the backend; the one value that is a
+ * positive assertion about the market the number came from.
+ */
+const VERIFIED_EVIDENCE = "verified";
+
+/**
  * True when the ONLY evidence behind this event is an untraded Polymarket midpoint.
  *
  * Deliberately narrow. Two or more sources always pass, even if they average to
  * exactly 0.500 — agreement between independent sources IS evidence.
+ *
+ * #8464 — and a reading the server stamps `evidence_status: "verified"` passes
+ * too. This gate is a value test standing in for a write-side fix that did not
+ * exist yet; it does now. Every Polymarket write path refuses a wide-book or
+ * empty-book midpoint (#1578, #6676 — `is_fabricated_midpoint` /
+ * `is_empty_book_midpoint`, including the raw `outcome_prices` branch), and the
+ * verified stamp is minted only by the current blend writer reading those
+ * guarded prices. So a verified 0.500 is a coin-flip that trades: production
+ * `/events/15316415` (Cubs @ Red Sox, 2026-09-25) served exactly that with a
+ * 0.49/0.51 book behind it, and the hero read "No price yet" over a chart drawing
+ * the same leg at 49%. A bare number (the `/api/feed` shape) or an unverified
+ * stamp is still judged by value — that is where a pre-guard phantom can sit.
  */
 export function isUntradedPlaceholder(sources: WinProbabilitySources): boolean {
   const values = readSourceValues(sources);
   if (values.length !== 1) return false;
   const [name, value] = values[0];
-  return name === PLACEHOLDER_PRONE_SOURCE && value === UNTRADED_MIDPOINT;
+  if (name !== PLACEHOLDER_PRONE_SOURCE || value !== UNTRADED_MIDPOINT) return false;
+  const entry = sources?.[name];
+  const verified =
+    !!entry && typeof entry === "object" && entry.evidence_status === VERIFIED_EVIDENCE;
+  return !verified;
 }
 
 /** Statuses this gate applies to. */
