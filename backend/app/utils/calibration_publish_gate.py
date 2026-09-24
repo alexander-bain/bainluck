@@ -116,6 +116,57 @@ DECLARATION_FIELD = "population_version_declaration"
 #: and the answer to that is to measure it, not to widen the claim.
 DECLARATION_MAX_TOLERANCE_PCT = 5.0
 
+#: Predicate moves that were RULED but shipped without a version bump, declared
+#: here by their exact digest pair so Rule 2 can judge the growth across them.
+#:
+#: #8458. The #6275 identity quarantine (`22a99a734d`, Alex ruling, heavy v27 at
+#: 2026-09-15 11:48Z, 32 minutes after the last publish) narrowed the population
+#: by excluding date-disputed markets, and moved
+#: ``population_predicate_fingerprint`` from ``e67d771b…`` (reproduced at heavy
+#: v26 `55c14eef`, the sha the served 09-15 artifact was built on) to
+#: ``27b49126…`` with no ``CALIBRATION_POPULATION_VERSION`` bump. From then on
+#: every candidate was refused on ``population_drift``: the gate was right that
+#: the predicate moved, and it had no way to be told the move was the ruled one.
+#: The 140-unit rebuild completed on 2026-09-24 and was refused every beat.
+#:
+#: Why a declaration HERE and not a q272 bump: the version is hashed by value
+#: into ``_main_input_fingerprint``, so a bump discards the completed bank (~62
+#: hourly beats), and its declaration would have to fold nine days of season
+#: growth into a "methodology move", which the q268 lesson forbids. This module
+#: is hashed by neither fingerprint, so a declaration re-keys nothing.
+#:
+#: What a succession admits, and only that: Rule 2's GROWTH branch treats the
+#: pair as the same predicate AFTER adding the declared narrowing back. The
+#: narrowing is never a constant; it is read off the candidate's own artifact
+#: (``narrowing`` names the census key), measured in the same generation over the same rows the
+#: exclusion acts on, and must be present, positive, self-consistent and no
+#: larger than ``max_narrowing_pct`` of the pre-narrowing population. The
+#: reconstructed growth must then clear :data:`POPULATION_GROWTH_CEILING` like
+#: any same-predicate build. SHRINK stays strict; any other pair still refuses.
+#:
+#: One-shot by construction: once the candidate publishes, the served artifact
+#: states ``27b49126…`` and later builds compare as the same predicate. The key
+#: is the exact pair, so the next unannounced predicate edit refuses as before
+#: (and ``test_population_predicate_is_pinned_8458`` fails at merge first).
+#:
+#: ``max_narrowing_pct`` is DERIVED. The only direct measurement of this
+#: quarantine's size is the first build that carried it (2026-09-16 12:29Z,
+#: CAL-P1318): the total moved -4.72% against this same 747,028 baseline one day
+#: on. That is a LOWER bound on the narrowing (a day of growth offsets it), and
+#: at the ~2.7%/day measured across 09-15 -> 09-24 (747,028 -> 928,855 net) the
+#: point estimate is ~7.4%. The cap is twice that point estimate, and about a third of
+#: Kalshi's 43.8% share of the published population. The quarantine is
+#: Kalshi-only, so losing that whole cohort is the gross failure this cap exists
+#: to refuse.
+DECLARED_PREDICATE_SUCCESSIONS: dict[tuple[str, str], dict] = {
+    ("e67d771bbd7a92dfd8d1a0f4bd79b4c2", "27b49126ac461fce9d5f078b471bb17f"): {
+        "cause": "#6275 identity quarantine (Alex ruling; 22a99a734d, heavy v27)",
+        "issue": 8458,
+        "narrowing": "identity_quarantine",
+        "max_narrowing_pct": 15.0,
+    },
+}
+
 #: How many per-category rows the ledger record carries. The diff is written into
 #: ``calibration:main:phase_ledger`` on EVERY build, so it is bounded; it is
 #: sorted by absolute movement, so the bound keeps what mattered; and the tail it
@@ -509,6 +560,7 @@ def census(payload: Any) -> dict:
             "cohorts": {},
             "version_declaration": None,
             "excluded_cells": {},
+            "identity_quarantine": None,
         }
 
     buckets = payload.get("buckets") if isinstance(payload.get("buckets"), list) else []
@@ -577,6 +629,40 @@ def census(payload: Any) -> dict:
         # bad declaration becomes a named refusal instead of an exception inside
         # the publisher.
         "version_declaration": payload.get(DECLARATION_FIELD),
+        # #8458: the identity quarantine's own size, in both places the artifact
+        # states it. Raw, like the declaration: judged only where a declared
+        # predicate succession needs it (`_judge_succession`).
+        "identity_quarantine": _identity_quarantine_census(payload),
+    }
+
+
+def _identity_quarantine_census(payload: dict) -> dict:
+    """The two statements of the quarantine's size, unvalidated.
+
+    ``identity_quarantine_filter.excluded`` is the machine figure; the
+    reader-facing ``quarantine`` list carries the same count as the page's
+    "Held out, under review" row. Both come from one ``identity_disputed_excluded``
+    in the build, so they must agree, and a disagreement means the artifact is
+    not what this gate thinks it is.
+    """
+    section = payload.get("identity_quarantine_filter")
+    excluded = section.get("excluded") if isinstance(section, dict) else None
+    listed = payload.get("quarantine")
+    listed_outcomes: Optional[int] = None
+    if isinstance(listed, list):
+        total = 0
+        for row in listed:
+            n = row.get("outcomes") if isinstance(row, dict) else None
+            if not isinstance(n, int) or isinstance(n, bool):
+                total = None
+                break
+            total += n
+        listed_outcomes = total
+    return {
+        "excluded": excluded,
+        "listed_outcomes": listed_outcomes,
+        "section_present": isinstance(section, dict),
+        "list_present": isinstance(listed, list),
     }
 
 
@@ -724,6 +810,9 @@ class PublishVerdict:
     category_diff: list[dict] = field(default_factory=list)
     #: The bump's parsed declaration, when it carried a readable one.
     declaration: Optional[dict] = None
+    #: What Rule 2 read off a declared predicate succession (#8458), whether it
+    #: admitted or refused. ``None`` when no declared pair was in play.
+    predicate_succession: Optional[dict] = None
 
     @property
     def codes(self) -> list[str]:
@@ -786,6 +875,73 @@ def _same_predicate(cand: dict, prev: dict) -> bool:
     a = cand.get("population_predicate")
     b = prev.get("population_predicate")
     return isinstance(a, str) and bool(a) and a == b
+
+
+def _declared_succession(cand: dict, prev: dict) -> Optional[dict]:
+    """The declared succession from ``prev``'s predicate to ``cand``'s, if any.
+
+    Exact pair only, both sides stated. An unstated predicate never matches, for
+    the same reason it never equals (:func:`_same_predicate`).
+    """
+    a = prev.get("population_predicate")
+    b = cand.get("population_predicate")
+    if not (isinstance(a, str) and a and isinstance(b, str) and b):
+        return None
+    return DECLARED_PREDICATE_SUCCESSIONS.get((a, b))
+
+
+def _judge_succession(
+    entry: dict, cand: dict, prev_pop: float, cand_pop: float
+) -> tuple[Optional[dict], Optional[str]]:
+    """Measure a declared succession's narrowing off the candidate.
+
+    Returns ``(record, None)`` when the narrowing is readable and inside the
+    entry's cap, else ``(record, reason)``. The record is returned either way,
+    because a refusal on a succession has to say what it read.
+    """
+    stated = cand.get(entry["narrowing"]) or {}
+    excluded = stated.get("excluded")
+    listed = stated.get("listed_outcomes")
+    record: dict = {
+        "published_predicate": None,
+        "candidate_predicate": None,
+        "cause": entry["cause"],
+        "issue": entry["issue"],
+        "narrowing": excluded if isinstance(excluded, int) else None,
+        "narrowing_listed": listed,
+        "max_narrowing_pct": entry["max_narrowing_pct"],
+    }
+    if not isinstance(excluded, int) or isinstance(excluded, bool):
+        return record, (
+            f"the candidate does not state the declared narrowing "
+            f"({entry['narrowing']}.excluded is {excluded!r}), so the move it "
+            "declares cannot be measured"
+        )
+    if excluded <= 0:
+        return record, (
+            f"the candidate states a narrowing of {excluded:,}: the ruled cause "
+            "the succession declares is absent from this artifact, so the "
+            "predicate moved for some other reason"
+        )
+    if listed != excluded:
+        return record, (
+            f"the candidate states the narrowing twice and they disagree "
+            f"(filter {excluded:,}, reader-facing list {listed!r})"
+        )
+    pre_narrowing = cand_pop + excluded
+    narrowing_pct = excluded / pre_narrowing * 100
+    record["narrowing_pct"] = round(narrowing_pct, 2)
+    record["pre_narrowing_population"] = int(pre_narrowing)
+    record["pre_narrowing_drift_pct"] = round(
+        (pre_narrowing - prev_pop) / prev_pop * 100, 2
+    )
+    if narrowing_pct > entry["max_narrowing_pct"]:
+        return record, (
+            f"the declared narrowing removed {narrowing_pct:.2f}% "
+            f"({excluded:,} of {int(pre_narrowing):,}), past its "
+            f"{entry['max_narrowing_pct']:.1f}% cap"
+        )
+    return record, None
 
 
 #: Keys under which an artifact's filter sections disclose WHICH (source,
@@ -1288,7 +1444,80 @@ def evaluate_publish(
             same_predicate=same_predicate,
         )
     elif drift > POPULATION_TOLERANCE:
-        if not same_predicate:
+        succession = None if same_predicate else _declared_succession(cand, prev)
+        if succession is not None:
+            # #8458: a RULED predicate move, declared by its exact digest pair.
+            # The narrowing is added back and the growth judged as if the
+            # predicate had not moved; shrink never reaches this branch.
+            record, why_not = _judge_succession(succession, cand, prev_pop, cand_pop)
+            record["published_predicate"] = prev["population_predicate"]
+            record["candidate_predicate"] = cand["population_predicate"]
+            record["admitted"] = False
+            verdict.predicate_succession = record
+            if why_not is not None:
+                reject(
+                    "population_drift",
+                    f"population moved {drift * 100:+.1f}% "
+                    f"({prev_pop:,} -> {int(cand_pop):,}) across a DECLARED "
+                    f"predicate succession ({_predicate_label(prev)} -> "
+                    f"{_predicate_label(cand)}, {succession['cause']}), but "
+                    f"{why_not} — the succession admits only the move it "
+                    "declares, measured on this artifact",
+                    previous=prev_pop,
+                    candidate=cand_pop,
+                    drift_pct=round(drift * 100, 2),
+                    same_predicate=False,
+                    published_predicate=prev["population_predicate"],
+                    candidate_predicate=cand["population_predicate"],
+                    predicate_succession=record,
+                )
+            else:
+                pre_drift = (cand_pop + record["narrowing"] - prev_pop) / prev_pop
+                if pre_drift > POPULATION_GROWTH_CEILING:
+                    reject(
+                        "population_growth_unexplained",
+                        f"population grew {pre_drift * 100:+.1f}% "
+                        f"({prev_pop:,} -> {record['pre_narrowing_population']:,} "
+                        f"with the declared narrowing of {record['narrowing']:,} "
+                        f"added back) across a declared predicate succession, past "
+                        f"the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling — the "
+                        "same rule counting this many more rows is duplication or "
+                        "a bad merge, not a backfill",
+                        previous=prev_pop,
+                        candidate=cand_pop,
+                        drift_pct=round(pre_drift * 100, 2),
+                        same_predicate=False,
+                        predicate_succession=record,
+                    )
+                else:
+                    record["admitted"] = True
+                    observe(
+                        "population_predicate_succession_declared",
+                        f"the population predicate moved {_predicate_label(prev)} "
+                        f"-> {_predicate_label(cand)}, a DECLARED succession "
+                        f"({succession['cause']}, #{succession['issue']}): the "
+                        f"candidate states the narrowing as {record['narrowing']:,} "
+                        f"outcomes ({record['narrowing_pct']:.2f}% of "
+                        f"{record['pre_narrowing_population']:,}, cap "
+                        f"{succession['max_narrowing_pct']:.1f}%)",
+                        **record,
+                    )
+                    observe(
+                        "population_growth_acknowledged",
+                        f"population grew {drift * 100:+.1f}% "
+                        f"({prev_pop:,} -> {int(cand_pop):,}); with the declared "
+                        f"narrowing added back it grew {pre_drift * 100:+.1f}% "
+                        f"({prev_pop:,} -> {record['pre_narrowing_population']:,}) "
+                        f"under the {POPULATION_GROWTH_CEILING * 100:.0f}% ceiling "
+                        "— ADMITTED as growth across a declared predicate "
+                        "succession, not as an unchanged predicate",
+                        previous=prev_pop,
+                        candidate=cand_pop,
+                        drift_pct=round(drift * 100, 2),
+                        pre_narrowing_drift_pct=round(pre_drift * 100, 2),
+                        predicate_succession=True,
+                    )
+        elif not same_predicate:
             reject(
                 "population_drift",
                 f"population moved {drift * 100:+.1f}% "
@@ -1500,6 +1729,7 @@ def gate_ledger_record(verdict: PublishVerdict) -> dict:
         "candidate_version": verdict.candidate.get("population_version"),
         "published_version": verdict.published.get("population_version"),
         "declaration": verdict.declaration,
+        "predicate_succession": verdict.predicate_succession,
         "category_diff": kept,
         "category_diff_omitted": len(dropped),
         # The size of what was left out, so a reader can tell a trimmed tail of
@@ -1581,7 +1811,11 @@ def rejection_issue_body(verdict: PublishVerdict, *, fingerprint_marker: str) ->
         "in `backend/app/tasks/precompute_calibration.py` — and add the outgoing "
         "version to `COMPATIBLE_PREVIOUS_POPULATION_VERSIONS` only if the previous "
         "artifact is still comparable, because that list is what keeps the page lit "
-        "while the first build under the new version runs.",
+        "while the first build under the new version runs. If the change was a "
+        "ruled NARROWING that already shipped unbumped and a finished bank would be "
+        "lost to a bump, declare the exact digest pair in "
+        "`DECLARED_PREDICATE_SUCCESSIONS` (`backend/app/utils/"
+        "calibration_publish_gate.py`) instead (#8458).",
         "3. If it is not intended, find what changed the population — this gate reports "
         "the symptom, never repairs data or re-grades an outcome.",
         "",
