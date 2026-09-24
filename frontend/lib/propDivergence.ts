@@ -293,6 +293,25 @@ export const PROP_STRUCTURAL_CERTAINTY = 0.44;
  */
 export const PROP_TRAVEL_FLOOR = 0.005;
 
+/**
+ * ── TWO LEGS OF ONE QUESTION THAT DISAGREE ABOUT WHERE IT OPENED (#8313) ──────
+ *
+ * Every leg's `pregame_mark` is already on the over axis (the route inverts an
+ * Under leg), so the Over and Under legs of one question should carry the same
+ * mark, give or take the spread. When they do not, the rail's single row is
+ * whichever leg arrived first in the payload, and the headline is a coin flip on
+ * ingest order. `/events/15317535`: Riley Greene's 1+ HR Under leg was stored
+ * with the Over's opening price, so it read as an over-side 93.5% against the
+ * Over leg's 6.5%, and the rail led with "marked 94% — and it missed".
+ *
+ * 0.2 is the size of a story here: it is `PROP_SURPRISE_TRAVEL` and
+ * `PROP_OFF_SCRIPT_RESOLUTION`, so a disagreement below it cannot by itself move
+ * a row across an escalation or a fold. It also sits in an empty gap. Measured
+ * on production 2026-09-24 over the 28 MLB finals of the prior three days:
+ * every Over/Under pair disagreed by 0.12 or less, except the specimen at 0.87.
+ */
+export const PROP_LEG_DISAGREEMENT = 0.2;
+
 /** V1: five, not "about five". */
 export const RAIL_MAX_ROWS = 5;
 
@@ -448,6 +467,12 @@ export type PropDropReason =
    * see the classification site for the measurement. #4953.
    */
   | "no_line"
+  /**
+   * 7 — the legs of one question disagree about its opening mark by at least
+   * `PROP_LEG_DISAGREEMENT` (#8313). NOT benign: it is stored data contradicting
+   * itself, and neither leg can be trusted over the other.
+   */
+  | "conflicting_legs"
   /** Unreadable for a reason we cannot name. Renders AS unknown. NOT benign. */
   | "unknown";
 
@@ -477,6 +502,7 @@ export const PROP_DROP_REASON_LABEL: Record<PropDropReason, string> = {
   wrong_game: "linked to another game",
   ungraded: "settled but never graded",
   no_line: "no over/under line",
+  conflicting_legs: "with conflicting prices",
   unknown: "couldn't be read at all",
 };
 
@@ -1395,6 +1421,26 @@ function buildCandidates(input: DivergenceInput): BuiltCandidates {
       surprise: null,
       grade: null,
     });
+  }
+
+  // #8313 — WITHHOLD A QUESTION WHOSE LEGS CONTRADICT EACH OTHER ON THE MARK.
+  //
+  // The row above was built from the first leg alone. Once every leg is in,
+  // check that they agree on the one number every state reads (`pregameMark`);
+  // if they do not, the row is whichever leg the payload happened to list
+  // first, so it is withheld — the same answer `readOverSideResolution` gives
+  // when the legs' verdicts disagree. Runs before the structural pass so a
+  // withheld row cannot anchor a sibling rung.
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const questionLegs = legs.get(candidates[i].key) ?? [];
+    const marks = questionLegs.map(
+      (leg) => (leg as PlayerPropRow & { pregame_mark: number }).pregame_mark,
+    );
+    const spread = Math.max(...marks) - Math.min(...marks);
+    if (travelAtOrAbove(spread, PROP_LEG_DISAGREEMENT)) {
+      noteDrop("conflicting_legs", (questionLegs[0]?.market_name || "").trim());
+      candidates.splice(i, 1);
+    }
   }
 
   // PREGAME: TWO SIGNALS, NOT ONE — AND THE FIRST DRAFT OF THIS GOT IT WRONG.
