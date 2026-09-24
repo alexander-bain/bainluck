@@ -2339,6 +2339,10 @@ def apply_discover_display_chain(
     # the caller's ordering, and nothing else.
     items = list(items)
 
+    # #4818 — before anything ranks, caps or bundles: a golf winner market that
+    # a tournament card in this pool already blends is the same question twice.
+    items = _drop_futures_blended_into_tournaments(items)
+
     # === RANK ===
     # Sort by score descending, then by recency as tiebreaker
     items.sort(key=_rank_key, reverse=True)
@@ -14341,10 +14345,74 @@ async def _score_golf_tournaments(
                     if t.get("commence_time")
                     else 0
                 ),
+                # #4818 — read by `_drop_futures_blended_into_tournaments`.
+                "_blended_market_ids": _tournament_blended_market_ids(t),
             }
         )
 
     return feed_items
+
+
+def _tournament_blended_market_ids(t: dict) -> frozenset[int]:
+    """The markets whose prices this tournament card's golfers are made of (#4818).
+
+    ``market_ids`` is EVERY market the golf route grouped under the tournament —
+    Top 5/10/20, Make Cut, round leader, playoff and hole-in-one props as well as
+    the winner fields. Only the winner fields feed ``golfers``; the rest are other
+    questions and keep their own cards.
+
+    A market counts only when its name says it is a winner field ("winner" /
+    "outright", the words ``_score_golf_tournaments`` already reads) AND the golf
+    route's own ``_NON_WINNER_MARKET_RE`` — the rule that keeps a market out of the
+    blend — does not refuse it. Both halves are needed: the Open de France's
+    "Albatross?" passes the regex (the route drops it as a yes/no market, which a
+    name cannot show), and "Third Round Leader" has no "winner" in it but "Nationality
+    of Winner" does. A winner field this misses keeps its card, which is the feed as
+    it was; a non-winner question is never hidden.
+
+    ``market_ids`` and ``market_names`` are built from the same list in the same
+    order (``_build_tournament_entry``). A base where they do not pair cannot be
+    asked, and answers empty.
+    """
+    ids = t.get("market_ids") or []
+    names = t.get("market_names") or []
+    if not ids or len(ids) != len(names):
+        return frozenset()
+
+    from app.routes.golf import _NON_WINNER_MARKET_RE
+
+    blended: set[int] = set()
+    for market_id, name in zip(ids, names):
+        lowered = (name or "").lower()
+        if not isinstance(market_id, int):
+            continue
+        if "winner" not in lowered and "outright" not in lowered:
+            continue
+        if _NON_WINNER_MARKET_RE.search(name):
+            continue
+        blended.add(market_id)
+    return frozenset(blended)
+
+
+def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
+    """A golf winner market yields its slot to the tournament card that blends it (#4818).
+
+    The tournament card is the blend of every source's winner field; a futures card
+    for one of those fields is the same question at one source's number. Dealing
+    both put Fitzpatrick at 19% (slot 8) and 17% (slot 18) in one feed response on
+    2026-09-24 — market 61814765 on its own and inside FedEx Open de France. The
+    blend is the product, one number per question, so the constituent goes.
+
+    Only a tournament card that is IN this list removes anything: a dismissed or
+    field-mass-refused tournament (#8334) is absent, so its markets keep their cards.
+    """
+    blended: set[int] = set()
+    for item in items:
+        if item.get("type") == "tournament":
+            blended.update(item.get("_blended_market_ids") or ())
+    if not blended:
+        return items
+    return [item for item in items if _futures_market_id(item) not in blended]
 
 
 def _tournament_is_live(t: dict, now: datetime) -> bool:
