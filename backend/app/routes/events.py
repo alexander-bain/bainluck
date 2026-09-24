@@ -1071,6 +1071,11 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
     # "Coaches Out", never "fired" — so "fired" also matches "head coach", making
     # "next coach fired" find the "…Next Head Coach" markets.
     "fired": "head coach",
+    # #8427: Alex's phone, `superbowl` and `nfl superbowl winner` → No Results
+    # while `super bowl` finds "NFL Super Bowl Winner" (86832). Every venue writes
+    # it as two words; the joined spelling is how people type it. One-way: the
+    # spaced form already matches itself.
+    "superbowl": "super bowl",
     # Queue #250 Item 3a: awards-family plural↔singular stemming. Markets and
     # outcomes name a ceremony either way ("How many Emmys…" vs "…Best Drama Series
     # Emmy"), but a substring ILIKE on the plural ("%emmys%") CANNOT match a
