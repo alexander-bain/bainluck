@@ -4112,6 +4112,50 @@ _SUNK_POLY_HEAD_SQL = text(
     """
 )
 
+#: #8373: the venue's own fixture instant, or NULL. Guarded rather than cast
+#: bare so one malformed stamp cannot fail the whole pass (all 22,134 open
+#: stamps matched this shape on 2026-09-24; `[:]` keeps text() from reading a
+#: bind parameter, gotcha #45).
+_SUNK_POLY_VENUE_START = """(CASE WHEN fm.market_metadata->>'venue_game_start'
+              ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}[:][0-9]{2}[:][0-9]{2}([.][0-9]+)?([+-][0-9]{2}[:][0-9]{2}|Z)?$'
+         THEN (fm.market_metadata->>'venue_game_start')::timestamptz END)"""
+
+#: #8373: the UNLINKED game arm — sunk parents with no `events` link whose own
+#: `venue_game_start` sits inside the linked window, soonest first, read right
+#: after the head arm.
+#:
+#: The head arm joins `events`, so it cannot see a game parent the matcher has
+#: not linked, and a MOVED game is exactly that. Polymarket 1058697 (slug
+#: `mlb-chc-bos-2026-09-27`) was moved to Cubs–Red Sox doubleheader game 1 on
+#: 09-25 17:05Z; our parent still held the pre-move `venue_game_start`
+#: 09-27T19:05Z, so the matcher could not link it, and with no link it fell to
+#: the imminent arm, ordered by `resolution_date` (10-04) behind thousands. Its
+#: last write was its listing day (09-21 20:15Z), so the game-1 page read
+#: "No price yet" while the venue priced it. Only a re-read rewrites the stamp;
+#: this arm is what makes the re-read arrive before first pitch.
+#:
+#: Ordered by the STORED start, which is stale for a moved game but is still
+#: the only fixture date we hold. Measured 2026-09-24 13:55Z: 1,275 rows in the
+#: window, the specimen's stale 09-27 behind 663 of them. A row read leaves the
+#: arm for `SUNK_POLY_STALE_HOURS`, so 200 a pass (10 Gamma calls, hourly) reads
+#: the soonest ~1,200 once per staleness window — the specimen on the fourth
+#: pass. Everything else is `_SUNK_POLY_WHERE` unchanged.
+_SUNK_POLY_UNLINKED_GAME_SQL = text(
+    "SELECT s.id, s.external_id FROM (SELECT fm.id, fm.external_id, "
+    + _SUNK_POLY_VENUE_START
+    + " AS venue_start"
+    + _SUNK_POLY_WHERE
+    + """
+       AND fm.event_id IS NULL
+    ) s
+     WHERE s.venue_start > NOW() - make_interval(hours => :lookback_hours)
+       AND s.venue_start <= NOW() + make_interval(days => :horizon_days)
+     ORDER BY s.venue_start, s.id
+     LIMIT :max_rows
+    """
+)
+_SUNK_POLY_UNLINKED_GAME_MAX = 200
+
 #: Everything else — politics, entertainment, economics, season-long futures —
 #: by id behind a cursor, so a far-dated row is reached in a bounded number of
 #: passes however large the imminent arm is. Same shape as the status sync.
@@ -4274,6 +4318,7 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
 
     stats: dict = {
         "head_selected": 0,
+        "unlinked_game_selected": 0,  # #8373
         "head_pool_at_limit": False,
         "imminent_selected": 0,
         "rotate_selected": 0,
@@ -4366,19 +4411,31 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
         # #837: executed last so the two arms above keep their order, but its
         # ids go FIRST in the work list below — that ordering is the fix.
         head = (await session.execute(_SUNK_POLY_HEAD_SQL, head_params)).fetchall()
+        # #8373: same window, keyed on the parent's own stored start.
+        unlinked_game = (
+            await session.execute(
+                _SUNK_POLY_UNLINKED_GAME_SQL,
+                {**head_params, "max_rows": _SUNK_POLY_UNLINKED_GAME_MAX},
+            )
+        ).fetchall()
         # Plain scalars before any commit (gotcha #6).
         head_ids = [str(r.external_id) for r in head]
+        unlinked_game_ids = [str(r.external_id) for r in unlinked_game]
         imminent_ids = [str(r.external_id) for r in imminent]
         rotate_pairs = [(int(r.id), str(r.external_id)) for r in rotate]
 
     stats["head_selected"] = len(head_ids)
+    stats["unlinked_game_selected"] = len(unlinked_game_ids)
+    stats["unlinked_game_pool_at_limit"] = (
+        len(unlinked_game_ids) >= _SUNK_POLY_UNLINKED_GAME_MAX
+    )
     stats["head_pool_at_limit"] = len(head_ids) >= _SUNK_POLY_HEAD_MAX
     stats["imminent_selected"] = len(imminent_ids)
     stats["rotate_selected"] = len(rotate_pairs)
     stats["imminent_pool_at_limit"] = len(imminent_ids) >= _SUNK_POLY_IMMINENT_MAX
     stats["cursor_wrapped"] = wrapped
 
-    if not head_ids and not imminent_ids and not rotate_pairs:
+    if not head_ids and not unlinked_game_ids and not imminent_ids and not rotate_pairs:
         # Gotcha #53: say which question returned nothing.
         stats["terminal"] = "no_sunk_open_events"
         return stats
@@ -4387,11 +4444,14 @@ async def _recover_sunk_polymarket_events(deadline_s: float | None = None) -> di
     # horizon). It is read in the head's chunk, so it must not advance the
     # rotate cursor from there: `max()` below would jump the cursor over every
     # rotate row between it and the last one actually read.
-    head_set = set(head_ids)
+    # #8373: the same holds for an unlinked-game row.
+    head_set = set(head_ids) | set(unlinked_game_ids)
     rotate_id_by_ext = {ext: mid for mid, ext in rotate_pairs if ext not in head_set}
     seen: set[str] = set()
     work: list[str] = []
-    for ext in head_ids + imminent_ids + [ext for _mid, ext in rotate_pairs]:
+    for ext in (
+        head_ids + unlinked_game_ids + imminent_ids + [ext for _mid, ext in rotate_pairs]
+    ):
         if ext not in seen:  # one Gamma id, one write — never twice in a pass
             seen.add(ext)
             work.append(ext)
