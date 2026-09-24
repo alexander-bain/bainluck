@@ -1954,6 +1954,9 @@ export function defaultChartTimeRange(
   historyData: EventHistoryResponse | null | undefined,
   commenceTime: string | undefined,
 ): "all" | "live" {
+  // #8370 — a served `false` says `commence_time` is the venue's expected
+  // resolution hour, not a start (#8215). There is no "since start" to open on.
+  if (historyData?.commence_time_is_kickoff === false) return "all";
   return maxPostStartSeriesPoints(historyData, commenceTime) >=
     MIN_POINTS_TO_DRAW_A_LINE
     ? "live"
