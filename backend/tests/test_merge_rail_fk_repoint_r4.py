@@ -310,10 +310,11 @@ class TestTheMovesAreReported:
         }
         # +1 for the futures_markets pre-read (LINKLOSS-02): the markets whose
         # link this merge is about to move, read before the UPDATE erases where
-        # they came from.
+        # they came from. +2 for the `duplicate-of` tag move (#8308): clear it on
+        # the survivor, retarget it on every other row.
         assert len(session.statements) == 1 + len(event_fk_tables()) + len(
             EVENT_SCOPED_UNIQUE_KEYS
-        )
+        ) + 2
 
     @pytest.mark.parametrize(
         "func_path",

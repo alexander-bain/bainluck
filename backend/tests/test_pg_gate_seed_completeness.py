@@ -197,6 +197,10 @@ COVERED = (
     # the month — at which point all five "is/is not a candidate" arms pass
     # against nothing at all.
     "test_twin_fold_candidate_sql_7021_pg.py",
+    # #8308. Seeds `events` by raw INSERT into a narrow table in a private schema
+    # (search_path pinned per pooled connection, since the repair under test
+    # commits). Carries every NOT NULL column so the rows are real-shaped.
+    "test_dangling_duplicate_tag_8308_pg.py",
     # #6390. Enrolled with the gate itself, and this check earned its keep
     # immediately: the seed's first run died on
     # `NotNullViolation: null value in column "reading_count"` — `OddsSnapshot`

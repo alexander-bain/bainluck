@@ -711,6 +711,20 @@ jobs:
             exit 1
           fi
 
+      - name: "#8308 a merge moves the duplicate-of tag, and the repair round-trips (real Postgres)"
+        # The merge rail now clears `duplicate-of:<loser>` on the survivor and
+        # retargets it elsewhere; both are JSONB `-` / `||` / `@>` arithmetic that
+        # only a server runs (`duplicate-of:2` vs `duplicate-of:20` is the case a
+        # substring would get wrong). Same skip detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_dangling_duplicate_tag_8308_pg.py \
+            -v -rs 2>&1 | tee /tmp/duptag8308.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/duptag8308.txt; then
+            echo "::error::#8308 duplicate-tag gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#2772 illegal settled tennis score recall (real Postgres)"
         # The arm withdraws a SCORE from a settled row, and its judgement — can
         # a completed tennis match have ended on this set count — is a rule
