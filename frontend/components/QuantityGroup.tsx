@@ -281,9 +281,9 @@ export default function QuantityGroup({
                   ? "px-2 -mx-2 rounded-lg bg-accent-brand/[0.06]"
                   : "",
                 rungVerdict === "won"
-                  ? "px-2 -mx-2 rounded-lg bg-emerald-50 border border-emerald-200"
+                  ? "px-2 -mx-2 rounded-lg bg-accent-brand/[0.06] border border-accent-brand/30"
                   : rungVerdict === "lost"
-                    ? "px-2 -mx-2 rounded-lg bg-slate-50/50"
+                    ? "px-2 -mx-2 rounded-lg bg-surface-elevated/50"
                     : "",
                 interactive ? "transition-colors hover:bg-surface-elevated/60 rounded-lg" : "",
               ].join(" ")}
@@ -342,7 +342,8 @@ export default function QuantityGroup({
               >
                 {rung.label}
               </span>
-              {/* #2437 — the verdict, in `OutcomeRow`'s own words and classes.
+              {/* #2437 — the verdict, in `OutcomeRow`'s own words (token colors —
+                  this file is under the L2-117 raw-palette guard).
                   Reserved on every row (see `verdictSlotStyle`) so the bar's x
                   never depends on whether this rung stated a grade. */}
               {verdictSlotStyle && (
@@ -352,12 +353,12 @@ export default function QuantityGroup({
                   className="shrink-0 whitespace-nowrap text-left text-xs font-medium"
                 >
                   {rungVerdict === "won" && (
-                    <span data-testid="rung-verdict" className="text-emerald-600">
+                    <span data-testid="rung-verdict" className="text-accent-brand">
                       Won
                     </span>
                   )}
                   {rungVerdict === "lost" && (
-                    <span data-testid="rung-verdict" className="text-red-400">
+                    <span data-testid="rung-verdict" className="text-accent-danger/80">
                       Lost
                     </span>
                   )}
@@ -394,13 +395,13 @@ export default function QuantityGroup({
                 />
               </span>
               {/* #2437 — a graded rung prints a RESULT, never a quote:
-                  `100%`/`0%` + `Settled`, in `OutcomeRow`'s colors. An ungraded
+                  `100%`/`0%` + `Settled`, in the design-token equivalents of `OutcomeRow`'s colors. An ungraded
                   rung keeps today's number, verdict or no verdict around it. */}
               <span
                 className={[
                   "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
                   rungVerdict === "won"
-                    ? "text-emerald-600"
+                    ? "text-accent-brand"
                     : rungVerdict === "lost"
                       ? "text-text-muted font-semibold"
                       : rung.highlighted
@@ -412,7 +413,7 @@ export default function QuantityGroup({
                 {rungVerdict != null && (
                   <span
                     className={`block text-[10px] font-medium ${
-                      rungVerdict === "won" ? "text-emerald-500" : "text-text-muted"
+                      rungVerdict === "won" ? "text-accent-brand/80" : "text-text-muted"
                     }`}
                   >
                     Settled
