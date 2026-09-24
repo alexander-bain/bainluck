@@ -864,6 +864,11 @@ margin for a slower ingest, chosen to sit in the empty band between 9.45 and the
 #: score, which is worse than showing the game twice. So a live twin stays
 #: double and belongs to the event graph (#2693), exactly as the sibling pass in
 #: `search_fixture_dedup` decided for the same population on the same day.
+#:
+#: AMENDED #5821 for the season-variant pass ONLY: the row whose score is current
+#: turned out to be readable after all — it is the ESPN-anchored parent — so that
+#: pass folds a live pair under :func:`_live_variant_pair_is_licensed`. This set
+#: is unchanged and still governs every pair outside that licence.
 _VARIANT_COLLAPSIBLE_STATUSES: frozenset = frozenset(
     {"scheduled", "completed", "closed"}
 )
@@ -876,6 +881,69 @@ def _variant_group_is_collapsible(members: list) -> bool:
         in _VARIANT_COLLAPSIBLE_STATUSES
         for member in members
     )
+
+
+#: #5821 — the statuses the SEASON-VARIANT pass may see in a pair it folds under
+#: :func:`_live_variant_pair_is_licensed`. `live` joins the set there and nowhere
+#: else: the two #8100 passes still read :data:`_VARIANT_COLLAPSIBLE_STATUSES`,
+#: because their asymmetry (anchored vs id-less) says nothing about which row
+#: carries the faster score. An unknown status stays refused everywhere.
+_VARIANT_LIVE_LICENSED_STATUSES: frozenset = _VARIANT_COLLAPSIBLE_STATUSES | {"live"}
+
+
+def _variant_group_status_is_known(members: list) -> bool:
+    """True when every row's status is one the season-variant pass can reason about."""
+    return all(
+        str(getattr(member, "status", "") or "").strip().lower()
+        in _VARIANT_LIVE_LICENSED_STATUSES
+        for member in members
+    )
+
+
+def _group_espn_anchoring(members: list) -> Optional[bool]:
+    """``True`` when every row carries an `espn_id`, ``False`` when none does.
+
+    ``None`` for a group that is half anchored — a shape this pass has never
+    measured, left to the event graph rather than licensed on a guess.
+    """
+    seen = {bool(getattr(member, "espn_id", None)) for member in members}
+    if len(seen) != 1:
+        return None
+    return seen.pop()
+
+
+def _live_variant_pair_is_licensed(
+    parent_espn: Optional[bool], variant_espn: Optional[bool]
+) -> bool:
+    """May a season-variant pair with a LIVE row in it fold? #5821.
+
+    The live refusal above exists because a fold elects ONE score, and electing
+    the stale copy shows a wrong score as the only score. That hazard is real
+    only when nothing on the rows says which copy is current. On this population
+    something does, and it is the same thing the election already reads:
+
+    * the PARENT row is the ESPN-anchored one (13 of 13 pairs measured
+      2026-09-21), fed by the ESPN scoreboard and StatPal's licensed livescores;
+    * the VARIANT row is Odds-API-born and carries no live-score id at all, so its
+      score arrives only on the Odds API scores poll;
+    * the one measured pair whose two rows disagreed mid-game is Rangers at
+      Devils, 2026-09-21 23:00Z (`search_fixture_dedup`'s note): the parent read
+      1-2 while the variant read 0-1 at the same instant. The parent was AHEAD.
+
+    :func:`twin_identity_rank` puts `espn_id` at rung 2, so when both rows carry
+    a score this licence and the election agree: the parent survives, its score
+    is the one shown, and the variant's betting price is unioned onto it. When
+    only the variant has a score yet, rung 1 keeps that score — the parent had
+    none to lose. So the licence is exactly "the parent is ESPN-anchored and the
+    variant is not"; a variant that also carries an `espn_id` (or a parent that
+    carries none) is two rows nothing here can rank for freshness, and the pair
+    stays two cards.
+
+    Production 2026-09-24 01:15Z, `wild` on search: Stars–Wild `15313798`
+    (`icehockey_nhl`, ESPN + StatPal, 50%) beside `15318094`
+    (`icehockey_nhl_preseason`, Odds API, 59%), two live cards for one game.
+    """
+    return parent_espn is True and variant_espn is False
 
 
 def _group_has_season_variant(members: list) -> Optional[bool]:
@@ -1004,13 +1072,19 @@ def _season_variant_clusters(
     """
     collapsible = {}
     variant = {}
+    espn = {}
     for key in bucket_keys:
         members = groups[key]
+        # #5821: a group with a live row is still a CANDIDATE; whether the pair
+        # may fold is decided in `same_fixture` by the live licence.
         collapsible[key] = _variant_group_is_collapsible(members)
         variant[key] = _group_has_season_variant(members)
+        espn[key] = _group_espn_anchoring(members)
 
     eligible = [
-        key for key in bucket_keys if collapsible[key] and variant[key] is not None
+        key
+        for key in bucket_keys
+        if _variant_group_status_is_known(groups[key]) and variant[key] is not None
     ]
     if len(eligible) < 2:
         return []
@@ -1036,7 +1110,14 @@ def _season_variant_clusters(
             return False
         # Elements 1 and 2 are the squashed away/home names the strict key
         # already built, orientation kept. Equality, not a subset rule.
-        return left[1] == right[1] and left[2] == right[2]
+        if left[1] != right[1] or left[2] != right[2]:
+            return False
+        if collapsible[left] and collapsible[right]:
+            return True
+        # #5821: a live row is in the pair. Fold only when the election is
+        # certain to keep the faster score — see the licence's docstring.
+        parent_side, variant_side = (right, left) if variant[left] else (left, right)
+        return _live_variant_pair_is_licensed(espn[parent_side], espn[variant_side])
 
     ordered = sorted(eligible, key=lambda k: k[3])
     parent = {key: key for key in ordered}
