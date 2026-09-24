@@ -9,6 +9,7 @@ import { SkeletonGrid } from "@/components/SkeletonCard";
 import ErrorMessage from "@/components/ErrorMessage";
 import { gridCellsToProgression } from "@/lib/gridCellState";
 import { conferenceSectionHeadings } from "@/lib/playoffConferenceSections";
+import { formatMovementPointsLikeSentence } from "@/lib/probabilityDisplay";
 import {
   usePageTracking,
   useScrollDepth,
@@ -118,7 +119,6 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
       </h2>
       <div className="flex flex-wrap gap-2">
         {realMovers.map((m) => {
-          const pct = Math.abs((m.change_24h ?? 0) * 100);
           const isUp = m.direction === "up";
           return (
             <div
@@ -141,7 +141,7 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
               <span className="font-medium">{m.name || m.short_name}</span>
               <span className="font-mono text-xs">
                 {isUp ? "+" : "-"}
-                {pct >= 1 ? Math.round(pct) : pct.toFixed(1)}%
+                {formatMovementPointsLikeSentence(m.change_24h)}%
               </span>
             </div>
           );
