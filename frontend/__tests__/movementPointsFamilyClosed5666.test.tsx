@@ -284,12 +284,19 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
    * line this pattern never sees — which is how `FuturesCard`'s `↑ 9.7` hid
    * from a text scan for a whole family's worth of repairs. They are excluded
    * here and pinned individually below, and the exclusion is asserted to be
-   * exactly two files, so a third bound site cannot appear silently.
+   * exactly these files, so a new bound site cannot appear silently.
+   *
+   * #8365 — the family has TWO spellings. #8339 added
+   * `formatMovementPointsLikeSentence` (same magnitude, trailing ".0" dropped)
+   * and a pattern ending `formatMovementPoints\(` does not match it, so the
+   * moment #8365 moved `FuturesCard` onto it the card left this scan without a
+   * failure — the bound list simply shrank. Both spellings are one family here.
    */
-  const RENDERS_FORMATTER = /formatMovementPoints\(/;
-  const BINDS_FORMATTER = /(?:const|let|var)\s+\w+\s*=\s*formatMovementPoints\(/;
+  const FORMATTER = String.raw`formatMovementPoints(?:LikeSentence)?\(`;
+  const RENDERS_FORMATTER = new RegExp(FORMATTER);
+  const BINDS_FORMATTER = new RegExp(String.raw`(?:const|let|var)\s+\w+\s*=\s*` + FORMATTER);
   /** The call's `)`, an optional closing `}`, then the unit. */
-  const UNIT_AFTER_CALL = /formatMovementPoints\([^)]*\)[^)]*\)?\s*\}?\s*(?:pts|points?)\b/;
+  const UNIT_AFTER_CALL = new RegExp(FORMATTER + String.raw`[^)]*\)[^)]*\)?\s*\}?\s*(?:pts|points?)\b`);
 
   test("no surface renders the points formatter without a unit", () => {
     const offenders: string[] = [];
@@ -305,9 +312,10 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
         });
     }
     expect(offenders).toEqual([]);
-    // The blind spot stays exactly as wide as the two sites pinned below.
+    // The blind spot stays exactly as wide as the three sites pinned below.
     expect(bound.map((b) => b.split(":")[0]).sort()).toEqual([
       "components/discover/FuturesCard.tsx",
+      "components/discover/shared.tsx",
       "components/golf/MoversStrip.tsx",
     ]);
   });
@@ -332,6 +340,10 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
       UNIT_AFTER_CALL.test('`${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)}`'),
     ).toBe(false);
     expect(UNIT_AFTER_CALL.test("{formatMovementPoints(x)}%")).toBe(false);
+    // #8365 — the second spelling is judged by the same instrument, both ways.
+    expect(UNIT_AFTER_CALL.test("{formatMovementPointsLikeSentence(x)}%")).toBe(false);
+    expect(UNIT_AFTER_CALL.test("{formatMovementPointsLikeSentence(x)} pts")).toBe(true);
+    expect(BINDS_FORMATTER.test("const pts = formatMovementPointsLikeSentence(m) as string;")).toBe(true);
     // ...and accepts the repaired shapes, including the two that carry trailing
     // prose and the aria-label that spells the unit out in full.
     expect(UNIT_AFTER_CALL.test("{formatMovementPoints(entry.movement)} pts")).toBe(true);
@@ -340,7 +352,7 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     expect(UNIT_AFTER_CALL.test("`${formatMovementPoints(rung.movement)} points`")).toBe(true);
   });
 
-  test("the two BOUND sites render their identifier with the unit", () => {
+  test("the three BOUND sites render their identifier with the unit", () => {
     // What earns the exclusion above. Asserted on the rendered string each file
     // builds, not on the binding — the binding was never the defect.
     const strip = fs.readFileSync(path.join(ROOT, "components/golf/MoversStrip.tsx"), "utf8");
@@ -348,8 +360,12 @@ describe("#5666 part 2 — the family is closed: no seventh surface can spell it
     expect(strip).toContain("{delta} pts");
 
     const card = fs.readFileSync(path.join(ROOT, "components/discover/FuturesCard.tsx"), "utf8");
-    expect(card).toContain("const movementDisplay = formatMovementPoints(movementVal);");
+    expect(card).toContain("const movementDisplay = formatMovementPointsLikeSentence(movementVal);");
     expect(card).toContain('${movementDisplay} pts`');
+
+    const badge = fs.readFileSync(path.join(ROOT, "components/discover/shared.tsx"), "utf8");
+    expect(badge).toContain("const pts = formatMovementPointsLikeSentence(m) as string;");
+    expect(badge).toContain("{pts} pts");
   });
 
   test("MoversStrip's `delta` really is the points formatter, so its ' pts' is not a coincidence", () => {

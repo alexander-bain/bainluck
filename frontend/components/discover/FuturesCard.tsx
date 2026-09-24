@@ -11,7 +11,7 @@ import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } f
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, captionIsAboutAnotherLeg, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
 import { buildHeroSrcSet, HERO_IMAGE_SIZES } from "@/lib/discover/heroSrcSet";
-import { formatProbabilityPercent, formatMovementPoints, movementPoints } from "@/lib/probabilityDisplay";
+import { formatProbabilityPercent, formatMovementPointsLikeSentence, movementPoints } from "@/lib/probabilityDisplay";
 import { renderedLeaderPercent } from "@/lib/renderedPercent";
 import type { FeedItem, FeedFuturesData } from "@/lib/types";
 import { CATEGORY_GRADIENTS, getCat } from "./constants";
@@ -707,7 +707,9 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // here would have moved nine more cards in the same commit that fixed the
   // scale, and made this fix impossible to measure.
   const movementPts = movementPoints(movementVal);
-  const movementDisplay = formatMovementPoints(movementVal);
+  // #8365 — the sentence under this chip is `feed_reasons._points` ("Down 27
+  // points today"), so the chip prints the same form: "↓ 27 pts", not "27.0".
+  const movementDisplay = formatMovementPointsLikeSentence(movementVal);
   // #5659 — ` pts` on the VISIBLE string. `movementTitle` below has always said
   // "points"; the eye got "↑ 9.7" beside a 38px percentage, which is the same
   // aria-says-one-thing/eye-says-another split #4066 fixed one card over. Both
