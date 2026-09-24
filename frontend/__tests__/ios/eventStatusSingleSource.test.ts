@@ -189,14 +189,22 @@ d("iOS reads one event-status vocabulary", () => {
       expect(code).not.toMatch(/Projected final/);
       // ...and the abbreviation the hero still draws is still drawn. Without
       // this the two assertions above are satisfied by deleting the row.
-      expect(code).toMatch(/Text\("Proj\. \\\(/);
+      // #8320 gave it one spelling (`projectionText`) for its two homes, the
+      // hero before the off and Game Info while live — so assert the spelling
+      // AND that both homes draw it.
+      expect(code).toMatch(/return "Proj\. \\\(/);
+      expect(code).toMatch(/let projection = projectionText\(event, hasScore: hasScore\) \{\n\s*Text\(projection\)/);
+      expect(code).toMatch(/projectionText\(\n\s*event,[\s\S]{0,200}\)\.map \{ \("chart\.line\.uptrend\.xyaxis", \$0\) \}/);
     });
 
     it("both broadcast chips are gated, the hero's and Game Info's", () => {
       // Two separate renders of the same channel list, one scroll apart. Fixing
       // only the hero leaves the promise on the page.
+      // #8320: the hero's chip is also gated on `carriesContext` (a live hero
+      // hands the broadcast to Game Info) — an extra clause in front of the
+      // same gate, which is still required.
       expect(detail()).toMatch(
-        /if let broadcast = event\.espn\?\.broadcast,\n\s*EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\) \{/
+        /if carriesContext,\n\s*let broadcast = event\.espn\?\.broadcast,\n\s*EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\) \{/
       );
       expect(detail()).toMatch(/let showsBroadcast = event\.espn\?\.broadcast != nil\n\s*&& EventDetailView\.showsBroadcast\(\n\s*status: event\.status, commenceTime: event\.commenceTime\?\.asDate\)/);
       expect(detail()).toMatch(/if let broadcast = event\.espn\?\.broadcast, showsBroadcast \{/);

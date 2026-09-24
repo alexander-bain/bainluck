@@ -39,6 +39,12 @@ struct EventDetailView: View {
     /// each (`PageAxisPlotWidthPreferenceKey`) and handed back to both, so one
     /// page draws one clock. Only this view can see both charts.
     @State private var pageAxisPlotWidth: CGFloat = 0
+    /// #8320 — the hero's bottom edge and the bar's bottom edge, both in
+    /// `scrollSpace`, so the bar can take the score over only once the hero
+    /// has gone under it (`navTitleShowsScore`).
+    @State private var heroBottom: CGFloat?
+    @State private var scrollViewportTop: CGFloat = 0
+    static let scrollSpace = "eventDetailScroll"
     private var sharedChartDomain: ClosedRange<Date>? {
         guard let event = vm.event,
               let commenceTime = event.commenceTime,
@@ -177,8 +183,14 @@ struct EventDetailView: View {
     /// it is what a pushed view's back button and VoiceOver read — so it stays
     /// the WIDEST rung, which is the whole sentence.
     private var dynamicTitle: String {
-        guard let event = vm.event else { return "Game Details" }
         if let rungs = titleRungs { return (rungs.withState ?? rungs.labelled).text }
+        return scorelessTitle
+    }
+
+    /// The matchup alone: the title before a score exists, and (#8320) the
+    /// bar's title while the hero is on screen stating the score itself.
+    private var scorelessTitle: String {
+        guard let event = vm.event else { return "Game Details" }
         return EventNavTitle.scoreless(
             away: event.awayTeam, home: event.homeTeam,
             awayServed: event.awayTeamData?.abbreviation,
@@ -199,7 +211,10 @@ struct EventDetailView: View {
     /// never a digit off a score — which is the defect this exists to end.
     @ViewBuilder
     private var navTitleView: some View {
-        if let rungs = titleRungs {
+        // #8320 — while the hero is on screen it states the score, so the bar
+        // names the matchup instead of repeating it.
+        if let rungs = titleRungs,
+           Self.navTitleShowsScore(heroBottom: heroBottom, viewportTop: scrollViewportTop) {
             ViewThatFits(in: .horizontal) {
                 if let full = rungs.withState {
                     Text(full.text).font(.headline).lineLimit(1)
@@ -210,7 +225,10 @@ struct EventDetailView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dynamicTitle)
         } else {
-            Text(dynamicTitle).font(.headline).lineLimit(1)
+            // VoiceOver still hears the whole sentence, score included: it is
+            // not reading the hero's numbers off the screen alongside.
+            Text(scorelessTitle).font(.headline).lineLimit(1)
+                .accessibilityLabel(dynamicTitle)
         }
     }
 
@@ -296,22 +314,11 @@ struct EventDetailView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     heroSection(event)
-                    if let history = vm.history, (isLive || isFinished) {
-                        GameSegmentsView(
-                            history: history,
-                            sportKey: event.sport,
-                            homeTeam: event.homeTeam,
-                            awayTeam: event.awayTeam,
-                            homeTeamColor: teamColors(event).home,
-                            awayTeamColor: teamColors(event).away,
-                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
-                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
-                            // #1831: the scoreboard's own totals, so the card can
-                            // never disagree with the hero above it.
-                            finalHomeScore: event.homeScore,
-                            finalAwayScore: event.awayScore
-                        )
-                    }
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: HeroBottomPreferenceKey.self,
+                                value: proxy.frame(in: .named(Self.scrollSpace)).maxY)
+                        })
                     VStack(spacing: 0) {
                         OddsChartView(eventId: event.id, teamColors: teamColors(event),
                                      commenceTime: event.commenceTime, status: event.status,
@@ -373,6 +380,26 @@ struct EventDetailView: View {
                     }
                     .background(Color.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // #8320 — the score by inning sat between the hero and the
+                    // chart, pushing the chart off the first screen. It is detail
+                    // for the score the hero already states, so it follows the
+                    // chart instead of standing in front of it.
+                    if let history = vm.history, (isLive || isFinished) {
+                        GameSegmentsView(
+                            history: history,
+                            sportKey: event.sport,
+                            homeTeam: event.homeTeam,
+                            awayTeam: event.awayTeam,
+                            homeTeamColor: teamColors(event).home,
+                            awayTeamColor: teamColors(event).away,
+                            homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                            awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                            // #1831: the scoreboard's own totals, so the card can
+                            // never disagree with the hero above it.
+                            finalHomeScore: event.homeScore,
+                            finalAwayScore: event.awayScore
+                        )
+                    }
                     // "Why the Line Moved" removed — content was low quality
                     // (obvious statements, minor injuries). See #745 for revamp plan.
                     // Score Differential Chart
@@ -538,6 +565,15 @@ struct EventDetailView: View {
                     pageAxisPlotWidth = width
                 }
             }
+            .coordinateSpace(name: Self.scrollSpace)
+            // Where content stops being covered by the bar, in the same space.
+            .background(GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ScrollViewportTopPreferenceKey.self,
+                    value: proxy.safeAreaInsets.top)
+            })
+            .onPreferenceChange(HeroBottomPreferenceKey.self) { heroBottom = $0 }
+            .onPreferenceChange(ScrollViewportTopPreferenceKey.self) { scrollViewportTop = $0 }
         }
     }
 
@@ -740,10 +776,86 @@ struct EventDetailView: View {
         return !underway || hasScore
     }
 
+    /// #8320 — whether the hero carries the game's CONTEXT as well as its story.
+    ///
+    /// Alex, rage shake #150 on White Sox–Royals (15317520): "This whole area at
+    /// the top of the screen is overcrowded and clowny looking." The live hero
+    /// held eight things around one number: broadcast, start time, both records,
+    /// "Royals 48% → 53% since open", a sparkline, "Proj. 6-7" and
+    /// "Opened 52% – 48%". The full chart one card below already draws the path
+    /// the sparkline and both opening lines summarised.
+    ///
+    /// On a live game the hero keeps the story (state chip, crests, score, the
+    /// blended pair) and the context moves to the Game Info card, which already
+    /// held the broadcast and the start time. Nothing is withdrawn — every fact
+    /// is still on the page. Before the off the context IS the story (where to
+    /// watch, when, how the line has moved), and after the final the hero is a
+    /// verdict with the opening line as its caption, so both keep today's hero.
+    static func heroCarriesGameContext(status: String?) -> Bool {
+        status != "live"
+    }
+
+    /// #8320 — whether the bar's title may carry the score.
+    ///
+    /// The bar said "CHW 4 - KC 4" directly above a hero saying 4 and 4. The bar
+    /// takes the score over only once the hero has scrolled up under it; until
+    /// then it names the matchup. Measured in the scroll view's own space:
+    /// `heroBottom` is the hero's bottom edge and `viewportTop` is where content
+    /// stops being covered by the bar. `nil` (not laid out yet) keeps the score,
+    /// so a measurement that never arrives costs a duplicate and never a score.
+    static func navTitleShowsScore(heroBottom: CGFloat?, viewportTop: CGFloat) -> Bool {
+        guard let heroBottom else { return true }
+        return heroBottom <= viewportTop
+    }
+
+    /// The projected final as the page prints it, or nil where #5697's gate
+    /// withholds it. One spelling for the two places that can print it: the
+    /// hero before the off, Game Info while live (#8320).
+    private func projectionText(_ event: EventDetail, hasScore: Bool) -> String? {
+        guard let phs = event.currentOdds?.projectedHomeScore,
+              let pas = event.currentOdds?.projectedAwayScore,
+              EventDetailView.showsProjection(
+                status: event.status, commenceTime: event.commenceTime?.asDate,
+                hasScore: hasScore) else { return nil }
+        let vocab = SportVocab.forSport(event.sport)
+        let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
+        return "Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))"
+    }
+
+    /// The opening line, named, for Game Info on a live game (#8320). The hero's
+    /// copy was anchored between the two crests, so it could print a bare
+    /// "52% – 48%"; off the hero each number needs its team. #2085's pair rule
+    /// and #5271's draw withholding carry over unchanged.
+    private func openedText(_ event: EventDetail) -> String? {
+        guard let opened = DrawPricedWinner.printablePair(
+            away: event.openingOdds?.awayProbability,
+            home: event.openingOdds?.homeProbability,
+            sport: event.sport) else { return nil }
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        guard let awayOpen = opened.away else {
+            return "Opened \(named.home) \(formatProbability(opened.home))"
+        }
+        let openDuel = renderedDuelPercents(away: awayOpen, home: opened.home)
+        return "Opened \(named.away) \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(named.home) \(formatProbability(opened.home, renderedPercent: openDuel[1]))"
+    }
+
+    /// Both records, named, for Game Info on a live game (#8320).
+    private func recordsText(_ event: EventDetail) -> String? {
+        let named = TeamShortName.shortPair(
+            away: event.awayTeam, home: event.homeTeam, sportKey: event.sport)
+        let parts = [
+            event.awayTeamData?.record.map { "\(named.away) \($0)" },
+            event.homeTeamData?.record.map { "\(named.home) \($0)" },
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private func heroSection(_ event: EventDetail) -> some View {
         let colors = teamColors(event)
         let hasScore = EventDetailView.showsScore(
             status: event.status, away: event.awayScore, home: event.homeScore)
+        let carriesContext = EventDetailView.heroCarriesGameContext(status: event.status)
 
         // #3978 (Alex, D93 = A) — ONE decision, applied to both rows of the hero.
         //
@@ -805,7 +917,9 @@ struct EventDetailView: View {
                 // A `Spacer` pushes to both ends of a ROW; in a column it is a
                 // blank line that shoves the date away from the badge.
                 if !stacked { Spacer() }
-                if let broadcast = event.espn?.broadcast,
+                // #8320 — on a live game both of these move to Game Info.
+                if carriesContext,
+                   let broadcast = event.espn?.broadcast,
                    EventDetailView.showsBroadcast(
                     status: event.status, commenceTime: event.commenceTime?.asDate) {
                     HStack(spacing: 3) {
@@ -817,7 +931,8 @@ struct EventDetailView: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                if let commenceTime = event.commenceTime, let date = commenceTime.asDate {
+                if carriesContext,
+                   let commenceTime = event.commenceTime, let date = commenceTime.asDate {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -856,7 +971,7 @@ struct EventDetailView: View {
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: true, event: event))
                     }
-                    if let record = event.awayTeamData?.record {
+                    if carriesContext, let record = event.awayTeamData?.record {
                         Text(record)
                             .font(.system(size: 9))
                             .foregroundStyle(.quaternary)
@@ -1101,7 +1216,11 @@ struct EventDetailView: View {
                         // ("Sabalenka 91% → 95% since open"), which is the same
                         // invariant with nothing left to round twice. Why the
                         // levels and not `pp`: `SinceOpenCaption`.
-                        if let caption = SinceOpenCaption.caption(
+                        //
+                        // #8320 — before the off only. On a live game the chart
+                        // directly below draws the whole move, and Game Info
+                        // carries the opening line it started from.
+                        if carriesContext, let caption = SinceOpenCaption.caption(
                             away: odds.awayProbability,
                             home: odds.homeProbability,
                             servedAwayPercent: odds.awayRenderedPercent,
@@ -1134,21 +1253,9 @@ struct EventDetailView: View {
                                     .map { abs(home - $0) > 0.001 } ?? false
                             )?.rawValue)
                         }
-                        // #3313 — the MATCH primitive at GLYPH size. The bars
-                        // beside it grade CONFIDENCE (how many sources, did it
-                        // move at all); this grades RECENCY of movement, which
-                        // nothing on the hero answered: "+2% since open" is the
-                        // whole match, and the full chart is a scroll away.
-                        //
-                        // Gated on a delivering stream, matching the web's
-                        // `streamConnected`. On the poll the hero already carries
-                        // a countdown ring, and a ten-minute window refreshed
-                        // every thirty seconds is three vertices — under
-                        // `minimumPoints`, so it would draw nothing anyway.
-                        if isLive, vm.streamDelivering, let history = vm.history {
-                            LiveSparklineChart(
-                                points: OddsChartView.chartPoints(from: history))
-                        }
+                        // #8320 — #3313's live sparkline was drawn here, and it
+                        // is gone: it was a thumbnail of the full chart one card
+                        // below, which since #8320 starts on the first screen.
                     } else {
                         Text("vs")
                             .font(.title2)
@@ -1176,13 +1283,11 @@ struct EventDetailView: View {
                     // could still be called with, and three tests pinning a
                     // string the app could no longer draw — a guard that passes
                     // while proving nothing. Deleted rather than left standing.
-                    if let phs = event.currentOdds?.projectedHomeScore, let pas = event.currentOdds?.projectedAwayScore,
-                       EventDetailView.showsProjection(
-                        status: event.status, commenceTime: event.commenceTime?.asDate,
-                        hasScore: hasScore) {
-                        let vocab = SportVocab.forSport(event.sport)
-                        let pair = "\(Int(pas.rounded()))-\(Int(phs.rounded()))"
-                        Text("Proj. \(vocab.scoreboardCountsTheUnit ? pair : vocab.withUnit(pair))")
+                    //
+                    // #8320 — on a live game it moves to Game Info with the rest
+                    // of the context; `projectionText` is the one spelling.
+                    if carriesContext, let projection = projectionText(event, hasScore: hasScore) {
+                        Text(projection)
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                     }
@@ -1203,34 +1308,9 @@ struct EventDetailView: View {
                     // chip cannot say. Here it carries nothing further — the meta
                     // row already holds the date and the broadcast — so this slot
                     // is simply gone rather than refilled.
-                    // Opening odds below probability for live games
-                    if isLive,
-                       let opened = DrawPricedWinner.printablePair(
-                        away: event.openingOdds?.awayProbability,
-                        home: event.openingOdds?.homeProbability,
-                        sport: event.sport) {
-                        // #2085 — the live game's opening line, same pair rule
-                        // as the settled branch above, and #5271's withholding
-                        // with it.
-                        HStack(spacing: 4) {
-                            if let awayOpen = opened.away {
-                                let openDuel = renderedDuelPercents(
-                                    away: awayOpen, home: opened.home
-                                )
-                                Text("Opened \(formatProbability(awayOpen, renderedPercent: openDuel[0])) \u{2013} \(formatProbability(opened.home, renderedPercent: openDuel[1]))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                let named = TeamShortName.shortPair(
-                                    away: event.awayTeam, home: event.homeTeam,
-                                    sportKey: event.sport
-                                )
-                                Text("Opened \(named.home) \(formatProbability(opened.home))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    //
+                    // #8320 — the live game's opening line was printed here too;
+                    // it is in Game Info now (`openedText`), named.
                 }
                 // THE LINE THAT CAUSED #3978, and it is only wrong in one of the
                 // two arrangements. In a row, refusing to compress is right: this
@@ -1264,7 +1344,7 @@ struct EventDetailView: View {
                             .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
                             .foregroundStyle(winnerColor(isAway: false, event: event))
                     }
-                    if let record = event.homeTeamData?.record {
+                    if carriesContext, let record = event.homeTeamData?.record {
                         Text(record)
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
@@ -1355,7 +1435,19 @@ struct EventDetailView: View {
         let showsBroadcast = event.espn?.broadcast != nil
             && EventDetailView.showsBroadcast(
                 status: event.status, commenceTime: event.commenceTime?.asDate)
-        let hasData = showsBroadcast || event.commenceTime != nil
+        // #8320 — what the live hero handed over. Empty on every other state,
+        // whose hero still carries it.
+        let handedOver: [(icon: String, text: String)] =
+            EventDetailView.heroCarriesGameContext(status: event.status) ? [] : [
+                recordsText(event).map { ("list.number", $0) },
+                openedText(event).map { ("flag", $0) },
+                projectionText(
+                    event,
+                    hasScore: EventDetailView.showsScore(
+                        status: event.status, away: event.awayScore, home: event.homeScore)
+                ).map { ("chart.line.uptrend.xyaxis", $0) },
+            ].compactMap { $0 }
+        let hasData = showsBroadcast || event.commenceTime != nil || !handedOver.isEmpty
         if hasData {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
@@ -1416,6 +1508,22 @@ struct EventDetailView: View {
                         .background(Color.secondary.opacity(0.08))
                         .clipShape(Capsule())
                     }
+                }
+                // One per line: each carries two team names, so two side by
+                // side would clip on a phone before any text size change.
+                ForEach(handedOver, id: \.text) { item in
+                    HStack(spacing: 5) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 10))
+                        Text(item.text)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(Capsule())
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2139,6 +2247,22 @@ struct EventDetailView: View {
     static func refreshIndicator(status: String?, streamDelivering: Bool) -> RefreshIndicator {
         guard showsRefreshStatus(status: status) else { return .hidden }
         return streamDelivering ? .streaming : .polling
+    }
+}
+
+/// #8320 — the hero's bottom edge in `EventDetailView.scrollSpace`.
+private struct HeroBottomPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        value = nextValue() ?? value
+    }
+}
+
+/// #8320 — how much of the scroll view the bar covers, in the same space.
+private struct ScrollViewportTopPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

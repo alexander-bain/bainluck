@@ -123,10 +123,12 @@ d("the iOS event detail hero prints a decided pair", () => {
     expect(view).toMatch(
       /Text\(named\.home\)[\s\S]{0,400}Text\(formatProbability\(home\)\)/,
     );
-    // Both "Opened {Home} 47%" captions, settled and live.
+    // Both "Opened {Home} 47%" captions, settled and live. #8320 moved the
+    // live one off the hero into Game Info, where `openedText` RETURNS the
+    // string rather than drawing a `Text` — same sentence, same rounding.
     const openedSolo =
       view.match(
-        /Text\("Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"\)/g,
+        /(?:Text\(|return )"Opened \\\(named\.home\) \\\(formatProbability\(opened\.home\)\)"/g,
       ) ?? [];
     expect(openedSolo).toHaveLength(2);
 
@@ -166,7 +168,10 @@ d("the iOS event detail hero prints a decided pair", () => {
 
     // …and each of the two is guarded by its own withholding check, so a
     // caption that lost its guard and printed the complement again fails here.
-    const guards = view.match(/if let awayOpen = opened\.away \{/g) ?? [];
+    // #8320: the live caption is a function now (`openedText`), so its check
+    // is the early-return spelling of the same binding.
+    const guards =
+      view.match(/(?:if let awayOpen = opened\.away \{|guard let awayOpen = opened\.away else \{)/g) ?? [];
     expect(guards).toHaveLength(2);
   });
 
