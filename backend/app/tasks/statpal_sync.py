@@ -237,6 +237,13 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
     # game that has not been played yet.
     live_pair_refused = 0
     premature_live_skipped = 0
+    # #8278. Two more reasons a live row is refused for a schedule fixture, each
+    # its own counter because each names its own mechanism: the live row's
+    # schedule-space id names ANOTHER fixture, or a same-clubs fixture sits nearer
+    # the live row's start. Both are doubleheaders in practice. Always present;
+    # 0 is a reading.
+    live_anchor_refused = 0
+    live_nearer_sibling_refused = 0
     # #6056. Live score writes this HOURLY path refused because the fixture was
     # positioned earlier in the game than the row already was. Its own counter,
     # not shared with the 30-second livescore writer's `reverting_live_skipped`:
@@ -412,10 +419,15 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
                 # Also fetch live scores to get current game state
                 live = await service.get_live_scores(statpal_sport)
-                live_by_teams = {}
+                # #8278: a LIST per team pair. A doubleheader's two games share
+                # the key, and a plain dict kept whichever StatPal listed last.
+                live_by_teams: dict[str, list] = {}
                 for f in live:
                     key = _fixture_match_key(f.home_team, f.away_team)
-                    live_by_teams[key] = f
+                    live_by_teams.setdefault(key, []).append(f)
+                # Every schedule fixture's start per team pair, so a live row is
+                # given to the fixture NEAREST it, not to any within 12h (#8278).
+                schedule_starts_by_teams = _schedule_starts_by_teams(fixtures)
 
                 sport_updated = 0
                 sport_created = 0
@@ -446,21 +458,21 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
 
                     # Find matching event in our DB by team names + time proximity
                     match_key = _fixture_match_key(fixture.home_team, fixture.away_team)
-                    live_data = live_by_teams.get(match_key)
-                    # #1945: `live_by_teams` is keyed on the team pair ALONE. In a
-                    # 3-4 game MLB series every fixture in this -1d/+7d window
-                    # shares that key with tonight's live game, so an unchecked
-                    # `live_data` writes tonight's score onto a row dated two days
-                    # out. The team pair is a matchup; only matchup + instant is a
-                    # game. UNKNOWN (a live row with no start time) is NOT trusted
-                    # here — the premature guard at the write site below is the
-                    # unconditional backstop, so refusing costs a score update we
-                    # could not justify, never one we could.
-                    if live_data is not None and pair_verdict(
-                        fixture.start_time, getattr(live_data, "start_time", None),
-                    ) is not Pairing.SAME:
+                    # #1945 / #8278: the team pair is a matchup; only matchup +
+                    # instant is a game. The helper says which live row, if any,
+                    # is THIS fixture's game, and why it refused the others.
+                    live_data, live_refusal = _live_row_for_schedule_fixture(
+                        fixture,
+                        live_by_teams.get(match_key, ()),
+                        statpal_sport,
+                        schedule_starts_by_teams.get(match_key, ()),
+                    )
+                    if live_refusal == LIVE_REFUSED_ANCHOR:
+                        live_anchor_refused += 1
+                    elif live_refusal == LIVE_REFUSED_NEARER_SIBLING:
+                        live_nearer_sibling_refused += 1
+                    elif live_refusal == LIVE_REFUSED_PAIR:
                         live_pair_refused += 1
-                        live_data = None
 
                     # ── Unified event matching via Event Registry ──
                     # Only create events for future games
@@ -1136,6 +1148,9 @@ async def _sync_statpal_schedules(sport_key: Optional[str] = None) -> dict:
         },
         # #1945/#1947 — same rule: always present, 0 is a reading.
         "live_pair_refused": live_pair_refused,
+        # #8278 — same rule.
+        "live_anchor_refused": live_anchor_refused,
+        "live_nearer_sibling_refused": live_nearer_sibling_refused,
         "premature_live_skipped": premature_live_skipped,
         "premature_live_created_as_scheduled": premature_live_created_as_scheduled,
         # #6056 — same rule: always present, 0 is a reading. Counted apart from
@@ -2073,6 +2088,112 @@ def _live_anchor_id(fixture, statpal_sport: str) -> Optional[str]:
     if field is None:
         return str(getattr(fixture, "fixture_id", "") or "").strip() or None
     return str(getattr(fixture, field, "") or "").strip() or None
+
+
+#: Why `_live_row_for_schedule_fixture` refused a live row (#8278). Each maps to
+#: its own counter in the schedule pass's result.
+LIVE_REFUSED_ANCHOR = "anchor"
+LIVE_REFUSED_NEARER_SIBLING = "nearer_sibling"
+LIVE_REFUSED_PAIR = "pair"
+
+
+def _schedule_starts_by_teams(fixtures) -> dict[str, list[datetime]]:
+    """Every schedule fixture's start, per team-pair key, one per fixture id (#8278).
+
+    Deduplicated by `fixture_id` so a fixture StatPal lists twice does not become
+    its own "sibling" and refuse itself. A fixture with no id is counted as its
+    own entry, since there is nothing to say it repeats another.
+    """
+    seen: dict[str, dict[object, datetime]] = {}
+    for f in fixtures:
+        if not (f.home_team and f.away_team and f.start_time):
+            continue
+        fid = str(getattr(f, "fixture_id", "") or "").strip() or id(f)
+        key = _fixture_match_key(f.home_team, f.away_team)
+        seen.setdefault(key, {})[fid] = f.start_time
+    return {key: list(starts.values()) for key, starts in seen.items()}
+
+
+def _live_row_for_schedule_fixture(
+    fixture,
+    live_rows: Sequence,
+    statpal_sport: str,
+    sibling_starts: Sequence[datetime],
+) -> tuple[Optional[object], Optional[str]]:
+    """Which live-board row, if any, is THIS schedule fixture's game (#1945, #8278).
+
+    Returns ``(row, None)`` when one live row is this game, ``(None, reason)``
+    when rows share the team pair and every one was refused (``reason`` is the
+    most specific refusal, for the counters), and ``(None, None)`` when no live
+    row shares the pair at all.
+
+    #1945: the live board is keyed on the team pair ALONE, and in a 3-4 game MLB
+    series every fixture in the -1d/+7d window shares that key with tonight's
+    live game. `pair_verdict` (the shared 12h constant) separates series games.
+
+    #8278: it cannot separate a DOUBLEHEADER. Games 1 and 2 are ~6h apart, inside
+    12h, so this hourly pass wrote game 2's live score onto game 1's
+    already-final row, with no score snapshot. Production: Yankees–Rays
+    2026-09-22 game 1 (14788069) stored 1–6, MLB 823543 says Yankees 2–0;
+    Blue Jays–Orioles 2026-09-23 game 1 (15316846) stored 4–0 while game 2 sat
+    at 4–0, MLB 824785 final 4–2. The 12h constant is right for every other
+    site and is not moved (ruling 082), so this site gets two tighter tests:
+
+    1. ANCHOR. For a sport in `STATPAL_LIVE_ANCHOR_FIELD` (MLB), a live row that
+       carries its schedule-space id is identified BY it: equal to the
+       fixture's id is this game; different is another game, refused whatever
+       the clock says. A row without one (3 of 16 MLB live rows) is no evidence
+       and falls through to 2. Undeclared sports skip this test: their live id
+       space has not been measured against the schedule's.
+    2. NEAREST. An id-less live row belongs to at most one schedule fixture,
+       the one nearest its start. A fixture with a same-clubs sibling nearer the
+       live row is refused, and so is a tie: two fixtures equally near cannot
+       both be the game, and choosing is guessing.
+
+    UNKNOWN (a live row with no start time) is still not trusted: the premature
+    guard at the write site is the unconditional backstop, so refusing costs a
+    score update we could not justify, never one we could.
+    """
+    if not live_rows:
+        return None, None
+    declared = statpal_sport in STATPAL_LIVE_ANCHOR_FIELD
+    fixture_id = str(getattr(fixture, "fixture_id", "") or "").strip() or None
+    their_start = fixture.start_time
+
+    if declared and fixture_id:
+        for row in live_rows:
+            if _live_anchor_id(row, statpal_sport) == fixture_id:
+                return row, None
+
+    refusals: set[str] = set()
+    accepted = []
+    for row in live_rows:
+        if declared and _live_anchor_id(row, statpal_sport):
+            # It carries an id and the loop above found it is not this one.
+            refusals.add(LIVE_REFUSED_ANCHOR)
+            continue
+        live_start = getattr(row, "start_time", None)
+        if pair_verdict(their_start, live_start) is not Pairing.SAME:
+            refusals.add(LIVE_REFUSED_PAIR)
+            continue
+        mine = abs(their_start - live_start)
+        others = list(sibling_starts)
+        if their_start in others:
+            others.remove(their_start)  # this fixture itself, once
+        if any(abs(s - live_start) <= mine for s in others):
+            refusals.add(LIVE_REFUSED_NEARER_SIBLING)
+            continue
+        accepted.append(row)
+
+    if len(accepted) == 1:
+        return accepted[0], None
+    if accepted:
+        # Two id-less live rows both nearest this fixture: not a game we can name.
+        refusals.add(LIVE_REFUSED_PAIR)
+    for reason in (LIVE_REFUSED_ANCHOR, LIVE_REFUSED_NEARER_SIBLING, LIVE_REFUSED_PAIR):
+        if reason in refusals:
+            return None, reason
+    return None, None
 
 
 def _set_statpal_id(event, fixture_id: str):
