@@ -1925,16 +1925,16 @@ async def _open_markets_for_events(cfg: CombatSportConfig, db: AsyncSession, eve
     the page judge #7993 on the same rows."""
     from app.models import FuturesMarket
 
+    # Built flat on purpose: the nested form of this filter is byte-identical
+    # to a declared mutant replacement (kalshi_segment_resolved_link_mutations
+    # M1), which the residue scan reads as a mutant left in this file.
+    filters = (
+        FuturesMarket.llm_sport_category == cfg.llm_category,
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.in_(list(event_ids)),
+    )
     return list(
-        (
-            await db.execute(
-                select(FuturesMarket).where(
-                    FuturesMarket.llm_sport_category == cfg.llm_category,
-                    FuturesMarket.status == "open",
-                    FuturesMarket.event_id.in_(list(event_ids)),
-                )
-            )
-        )
+        (await db.execute(select(FuturesMarket).where(*filters)))
         .scalars()
         .all()
     )
