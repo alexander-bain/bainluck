@@ -41,7 +41,11 @@ from app.tasks.config import STATPAL_SPORT_MAPPING
 from app.utils.sport_keys import STATPAL_LIVE_ANCHOR_FIELD
 from app.utils.team_binding_invariant import accept_team_binding
 from app.utils.game_pairing import Pairing, live_write_is_premature, pair_verdict
-from app.utils.game_state import live_write_would_revert
+from app.utils.game_state import (
+    is_countdown_clock,
+    live_write_would_revert,
+    period_places_within,
+)
 from app.utils.live_state_write import write_live_state_if_unmoved
 
 logger = logging.getLogger(__name__)
@@ -148,6 +152,19 @@ def row_for_statpal_id(
     return (own[0] if own else None), False, foreign
 
 
+def statpal_countdown_clock(clock: Optional[str]) -> Optional[str]:
+    """StatPal's ``timer`` if it is a countdown clock, else ``None`` (#8322).
+
+    The hockey board serves the elapsed MINUTE (``'13'``, counting up) where
+    ESPN writes the time remaining (``'7:00'``). Composed into ``period`` as if
+    it were ESPN's clock it made the reader's badge run backwards between the
+    two writers — see `is_countdown_clock` for the paired measurement. So a
+    value that is not ``M:SS`` is never composed into ``period`` nor written to
+    ``game_clock``: both columns mean "time remaining" to every reader.
+    """
+    return clock if is_countdown_clock(clock) else None
+
+
 def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
     """The ``(period, game_clock)`` pair a StatPal fixture is claiming.
 
@@ -161,7 +178,7 @@ def statpal_live_position(fixture) -> tuple[Optional[str], Optional[str]]:
     from several construction paths, the same reason the livescores writer reads
     ``raw_status`` defensively.
     """
-    clock = getattr(fixture, "game_clock", None)
+    clock = statpal_countdown_clock(getattr(fixture, "game_clock", None))
     raw_status = getattr(fixture, "raw_status", None)
     if raw_status and raw_status not in ("live", "Live"):
         return (f"{clock} - {raw_status}" if clock else raw_status), clock
@@ -1619,7 +1636,15 @@ async def _sync_statpal_livescores() -> dict:
                     # `getattr`: this writer consumes duck-typed fixtures from
                     # several construction paths, and the line below already
                     # reads `raw_status` defensively for the same reason.
-                    fixture_clock = getattr(fixture, "game_clock", None)
+                    _served_clock = getattr(fixture, "game_clock", None)
+                    fixture_clock = statpal_countdown_clock(_served_clock)
+                    # #8322: the venue served a value, and it is not a clock we
+                    # can store — the hockey board's elapsed minute. Held apart
+                    # from an EMPTY timer on purpose: empty is the venue saying
+                    # the clock stopped (CERT-2569, below) and clears the
+                    # column; this is the venue saying nothing about time
+                    # remaining, so it may neither write the column nor clear it.
+                    _minute_not_clock = bool(_served_clock) and fixture_clock is None
 
                     # ── #6056: is this fixture BEHIND the row it is about to
                     # overwrite? ────────────────────────────────────────────
@@ -1709,7 +1734,15 @@ async def _sync_statpal_livescores() -> dict:
                             if fixture_clock
                             else fixture.raw_status
                         )
-                        if event.period != new_period:
+                        # #8322: holding only the period's NAME, this fixture
+                        # must not overwrite a stored value that already places
+                        # the game inside that period (ESPN's `'18:42 - 3rd
+                        # Period'`): the reader would lose the clock and get it
+                        # back on ESPN's next pass, every minute of the game.
+                        _label_adds_nothing = _minute_not_clock and period_places_within(
+                            _observed_period, fixture.raw_status
+                        )
+                        if event.period != new_period and not _label_adds_nothing:
                             _live_values["period"] = new_period
 
                         # CLEAR THE CLOCK WHEN THE VENUE CLEARS IT (CERT-2569),
@@ -1745,7 +1778,14 @@ async def _sync_statpal_livescores() -> dict:
                         # `getattr` for the same reason as `fixture_clock`
                         # above: duck-typed fixtures reach this writer, and they
                         # make no claim about the clock.
-                        if getattr(fixture, "clock_field_served", False):
+                        if _minute_not_clock:
+                            # #8322: never written, and cleared only when the
+                            # period itself moved on — a clock left over from the
+                            # previous period beside the new label reads as
+                            # CURRENT (#5017's frozen-clock note above).
+                            if "period" in _live_values and event.game_clock is not None:
+                                _live_values["game_clock"] = None
+                        elif getattr(fixture, "clock_field_served", False):
                             if event.game_clock != fixture_clock:
                                 _live_values["game_clock"] = fixture_clock
 
