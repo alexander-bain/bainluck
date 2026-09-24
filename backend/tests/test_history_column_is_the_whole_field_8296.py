@@ -173,7 +173,7 @@ class TestTheCarryIsActuallyWired:
     """The helper is inert unless `/history` calls it (#7747's lesson)."""
 
     @staticmethod
-    def _outcome(oid, prob, *, last_updated, graded_lost=False):
+    def _outcome(oid, prob, *, last_updated, graded_lost=False, source=None):
         return SimpleNamespace(
             id=oid,
             name=f"Leg {oid}",
@@ -182,7 +182,7 @@ class TestTheCarryIsActuallyWired:
             current_probability=prob,
             current_yes_bid=prob,
             current_yes_ask=prob,
-            resolution_source="api_settlement" if graded_lost else None,
+            resolution_source="api_settlement" if graded_lost else source,
             is_winner=False if graded_lost else None,
             last_updated=last_updated,
             external_id=f"0xkbo{oid}",
@@ -219,7 +219,8 @@ class TestTheCarryIsActuallyWired:
             if entry["history"]
         }
 
-    async def _payload(self, *, graded_kiwoom=True, venue=(), monkeypatch=None):
+    async def _payload(self, *, graded_kiwoom=True, venue=(), monkeypatch=None, resolved=None):
+        resolved = resolved or {}
         now = datetime.now(timezone.utc)
         shift = now - timedelta(minutes=5) - T_FINAL
 
@@ -263,6 +264,7 @@ class TestTheCarryIsActuallyWired:
                 oid, 0.0 if oid == KIWOOM and graded_kiwoom else v,
                 last_updated=stamp + shift,
                 graded_lost=(oid == KIWOOM and graded_kiwoom),
+                source=resolved.get(oid),
             )
             for oid, (stamp, v) in _LAST_ROW.items()
         ]
@@ -324,6 +326,16 @@ class TestTheCarryIsActuallyWired:
         samsung = by_id[SAMSUNG]
         assert samsung[-1].get("provenance") == "venue_history", samsung
         assert all(pt["timestamp"] != by_id[LG][-1]["timestamp"] for pt in samsung)
+
+    @pytest.mark.asyncio
+    async def test_a_resolved_ungraded_line_gains_no_endpoint(self):
+        """`did_not_play` resolves a leg without grading it, so the carry still
+        counts it — but how it ENDS is the settled rules' call, not a squeezed
+        carry (#6757's rig: a void leg drawn at 0.333 beside a detail 0.49)."""
+        payload = await self._payload(resolved={KIA: "did_not_play"})
+        by_id = {e["outcome_id"]: e["history"] for e in payload["outcomes"]}
+        assert len(by_id[KIA]) == 1
+        assert by_id[SAMSUNG][-1]["probability"] == pytest.approx(_HERO[SAMSUNG], abs=6e-4)
 
     @pytest.mark.asyncio
     async def test_a_graded_line_gains_no_endpoint(self):

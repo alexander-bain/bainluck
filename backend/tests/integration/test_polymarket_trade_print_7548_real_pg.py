@@ -613,10 +613,14 @@ def test_R1_history_withholds_the_named_tick_and_nothing_else(monkeypatch):
     assert max(served[LARSON_OUTCOME_ID].values()) < 0.30
     # Exact observation times preserved: Larson keeps his other 32 stamps, untouched.
     assert set(served[LARSON_OUTCOME_ID]) == set(saved[LARSON_OUTCOME_ID]) - {BAD_STAMP}
-    # No other outcome lost a point, at that stamp or anywhere.
+    # No other outcome lost a point, at that stamp or anywhere. The one point a
+    # line may GAIN is #8296's carried endpoint: an unmoved leg closed at the
+    # column's last instant (this rig seeds every leg ungraded, so it fires here).
+    last_instant = max(t for points in saved.values() for t in points)
     for oid, points in saved.items():
         if oid != LARSON_OUTCOME_ID:
-            assert set(served[oid]) == set(points), oid
+            assert set(points) <= set(served[oid]), oid
+            assert set(served[oid]) - set(points) <= {last_instant}, oid
     # No smoothing, no rescale: every surviving value at the named stamp is the
     # stored one. (The stamp's column still sums past 1.6, so #23 leaves it raw.)
     for oid, points in served.items():

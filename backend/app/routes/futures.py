@@ -7390,6 +7390,9 @@ async def get_futures_history(
     # #8296 — every instant each leg wrote a row, refused or not: the endpoint
     # arm below may not stand a carried price in for a row #5898 refused.
     observed_at: dict[int, set] = defaultdict(set)
+    resolved_ids = {
+        o.id for o in charted_outcomes if getattr(o, "resolution_source", None)
+    }
     for row in field_rows:
         if row.probability is not None:
             raw_by_time[row.captured_at][row.bookmaker][row.outcome_id] = float(
@@ -7503,8 +7506,11 @@ async def get_futures_history(
         # ended at 0.160 under a hero of 0.126). One carried point closes it.
         # Not on a line serving venue points: those admit only where the printed
         # scale is the raw one, so the carried value restates the last capture and
-        # would sit stale beside the venue's fresher sample.
-        if not venue_by_outcome.get(oid):
+        # would sit stale beside the venue's fresher sample. And not on a RESOLVED
+        # leg of any source (`did_not_play`, `all_losers`, ...): how such a leg
+        # ends is the settled rules' call, and a squeezed carry printed a void
+        # leg at 0.333 beside a detail row reading 0.49 (#6757's control).
+        if not venue_by_outcome.get(oid) and oid not in resolved_ids:
             _closing = carried_endpoint(
                 oid, devigged, own=time_groups.keys(),
                 observed=observed_at.get(oid, ()),
