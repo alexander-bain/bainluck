@@ -57,6 +57,12 @@ describe("searchFamilyDisplay", () => {
     expect(cleanName("Who will be confirmed as Fed Chair?")).toBe("Who will be confirmed as Fed Chair");
   });
 
+  // #8407 — the two Fed & Rates rows production printed cut mid-sentence (2026-09-24).
+  test("cleanName keeps a year the question needs", () => {
+    expect(cleanName("How many Fed rate cuts in 2026?")).toBe("How many Fed rate cuts in 2026");
+    expect(cleanName("What will Fed Rate hit before 2027?")).toBe("What will Fed Rate hit before 2027");
+  });
+
   test("familyShownIds collects headline + member ids (for flat-list dedup)", () => {
     const fam = {
       family_key: "entity:lebron james",
