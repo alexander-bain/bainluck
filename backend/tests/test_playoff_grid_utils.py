@@ -514,8 +514,14 @@ class TestEnforceMonotonicity:
         fixes = enforce_monotonicity([team], self._chained_columns())
         assert fixes == 0
 
-    def test_missing_intermediate_column_skipped(self):
-        """If Division is missing, Conference is compared to Make Playoffs."""
+    def test_missing_intermediate_column_is_walked_past(self):
+        """#8241: if Division is missing, Conference is bounded by Make Playoffs.
+
+        This test used to pin the opposite (0.60 left standing) on the reasoning
+        that only PRESENT columns can be inconsistent. That stopped being true
+        when withholding (#8220/#8243) began removing cells: the absent column is
+        now often a withheld quote, and the row it leaves reads backwards.
+        """
         team = {
             "name": "No Division",
             "cells": {
@@ -524,14 +530,95 @@ class TestEnforceMonotonicity:
                 "championship": {"merged_probability": 0.10, "sources": []},
             },
         }
-        # Conference should still be capped because it's compared to division (missing)
-        # and then make_playoffs (the guard is: both prev_cell and curr_cell must exist)
         fixes = enforce_monotonicity([team], self._chained_columns())
-        # Division missing -> no fix for division->conference pair, but
-        # make_playoffs->division is skipped too. So no fix unless conference
-        # is compared to make_playoffs (it isn't — the check is sequential pairs only)
-        # This is OK because the issue is with PRESENT columns being inconsistent.
-        assert team["cells"]["conference"]["merged_probability"] == 0.60  # unchanged (no prev cell for pair)
+        assert fixes == 1
+        assert team["cells"]["conference"]["merged_probability"] == 0.50
+        assert team["cells"]["conference"]["capped_by"] == "make_playoffs"
+
+    def test_withheld_final_four_no_longer_lets_title_game_read_backwards(self):
+        """#8241 specimen, production 2026-09-24: BYU Cougars on the NCAAB grid.
+
+        Final Four is withheld (ask-only, never traded); Title Game has one old
+        trade so it is kept at 0.19. Before this fix the row served E8 11%,
+        F4 blank, TG 19% ▲10 — a better chance of the final than of the round
+        before it, with an arrow for a move nobody made.
+        """
+        cols = [
+            SimpleNamespace(key=k, order=i, sequential=True)
+            for i, k in enumerate(
+                ["round_of_32", "sweet_16", "elite_eight", "final_four", "title_game"]
+            )
+        ]
+        team = {
+            "name": "BYU Cougars",
+            "cells": {
+                "round_of_32": {"merged_probability": 0.255, "sources": [], "trend_24h": None},
+                "sweet_16": {"merged_probability": 0.15, "sources": [], "trend_24h": None},
+                "elite_eight": {"merged_probability": 0.11, "sources": [], "trend_24h": None},
+                "title_game": {
+                    "merged_probability": 0.19,
+                    "sources": [{"source": "kalshi", "probability": 0.19}],
+                    "trend_24h": 0.1,
+                },
+            },
+        }
+        assert enforce_monotonicity([team], cols) == 1
+        tg = team["cells"]["title_game"]
+        assert tg["merged_probability"] == 0.11
+        assert tg["capped_by"] == "elite_eight"
+        # the market's own quote is untouched (#8251) ...
+        assert tg["sources"] == [{"source": "kalshi", "probability": 0.19}]
+        # ... and the ▲10 measured on that quote is gone: the cell prints Elite
+        # 8's number, and Elite 8 has no arrow
+        assert tg["trend_24h"] is None
+        assert "final_four" not in team["cells"]
+        # idempotent: a second pass (the route runs one after normalization)
+        assert enforce_monotonicity([team], cols) == 0
+        assert tg["merged_probability"] == 0.11 and tg["trend_24h"] is None
+
+    def test_a_settled_bound_stops_the_walk(self):
+        """A PRESENT cell with no number is a settled state, not a gap.
+
+        The walk only passes ABSENT cells. A settled division must not be
+        stepped over to bound conference by Make Playoffs's price — that is
+        `propagate_elimination`'s job, and it reads the state, not a number.
+        """
+        team = {
+            "name": "Settled Division",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.40, "sources": []},
+                "division": {"merged_probability": None, "state": "won", "sources": []},
+                "conference": {"merged_probability": 0.60, "sources": []},
+            },
+        }
+        assert enforce_monotonicity([team], self._chained_columns()) == 0
+        assert team["cells"]["conference"]["merged_probability"] == 0.60
+        assert "capped_by" not in team["cells"]["conference"]
+
+    def test_capped_cell_prints_its_bounds_arrow(self):
+        """#8241: a capped cell prints its bound's number, so its bound's arrow.
+
+        Production 2026-09-24: Louisville's title game printed "14% ▲13.5"
+        where 14% is Final Four's number and ▲13.5 was the 0.25 quote's move.
+        The subtraction rule (own trend minus what the cap took) is refuted by
+        the other capped cells: 11 of them carried trend 0.0 — capped yesterday
+        too — and it would have printed a ▼ on each. A chain inherits in order,
+        and an uncapped cell's arrow is untouched.
+        """
+        team = {
+            "name": "Trend Test",
+            "cells": {
+                "make_playoffs": {"merged_probability": 0.30, "sources": [], "trend_24h": 0.05},
+                "division": {"merged_probability": 0.45, "sources": [], "trend_24h": 0.20},
+                "conference": {"merged_probability": 0.40, "sources": [], "trend_24h": 0.0},
+                "championship": {"merged_probability": 0.10, "sources": [], "trend_24h": 0.03},
+            },
+        }
+        assert enforce_monotonicity([team], self._chained_columns()) == 2
+        assert team["cells"]["make_playoffs"]["trend_24h"] == 0.05
+        assert team["cells"]["division"]["trend_24h"] == 0.05
+        assert team["cells"]["conference"]["trend_24h"] == 0.05
+        assert team["cells"]["championship"]["trend_24h"] == 0.03
 
     def test_capped_cell_keeps_each_markets_quote_and_names_its_bound(self):
         """#8251: the merged number is capped; the sources are NOT.
