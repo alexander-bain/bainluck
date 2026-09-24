@@ -181,3 +181,48 @@ class TestScoresAreUntouched:
         feed = [future("a", score=90), game("g", status="live", score=35)]
         out = lead_with_tonights_games(feed, NOW)
         assert out[0]["score"] == 35
+
+
+class TestAMinorLeagueGameNeverLeads:
+    """#8398. The media bar is not enough: a live EuroLeague game carrying one
+    crest (Real Madrid resolved to the football club's logo) led Discover at
+    score 35 over MLB games starting in 30 minutes. The league class decides."""
+
+    def test_the_reported_page(self):
+        feed = [
+            future("fitzpatrick", score=100),
+            game("madrid-dubai", status="live", score=35, sport="basketball_euroleague"),
+            game("cards-pirates", status="scheduled", starts_in_hours=0.5, score=78,
+                 sport="baseball_mlb"),
+            game("mlb-2", status="scheduled", starts_in_hours=1, score=80,
+                 sport="baseball_mlb"),
+        ]
+        out = ids(lead_with_tonights_games(feed, NOW))
+        assert out[:2] == ["cards-pirates", "mlb-2"]
+        # Still on the page, in the mix at its own place — never dropped.
+        assert out.index("madrid-dubai") > out.index("fitzpatrick")
+        assert sorted(out) == sorted(ids(feed))
+
+    @pytest.mark.parametrize("sport", [
+        "basketball_euroleague", "americanfootball_cfl", "icehockey_ahl",
+        "soccer_england_league1",
+    ])
+    def test_every_pro_minor_league_is_refused_live_or_soon(self, sport):
+        live = game("minor-live", status="live", sport=sport)
+        soon = game("minor-soon", status="scheduled", starts_in_hours=1, sport=sport)
+        assert select_tonights_games([future("a"), live, soon], NOW) == []
+
+    @pytest.mark.parametrize("sport", [
+        "baseball_mlb", "americanfootball_ncaaf", "soccer_epl", "tennis_atp_us_open",
+    ])
+    def test_every_other_league_class_still_leads(self, sport):
+        # Both directions (#1091): the refusal is pro_minor only. MLB is
+        # pro_major, NCAAF college, and the others whatever their class is, but
+        # none of them is pro_minor, so all of them still lead.
+        feed = [future("a"), game("g", status="live", sport=sport)]
+        assert ids(lead_with_tonights_games(feed, NOW))[0] == "g"
+
+    def test_a_row_with_no_sport_key_is_not_refused(self):
+        # An absent sport is class "other" — unknown is not minor.
+        feed = [future("a"), game("g", status="live")]
+        assert ids(lead_with_tonights_games(feed, NOW))[0] == "g"
