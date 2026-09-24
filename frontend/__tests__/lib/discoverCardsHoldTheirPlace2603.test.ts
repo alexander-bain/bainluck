@@ -17,7 +17,8 @@ export {};
 
 import * as fs from "fs";
 import * as path from "path";
-import { applyLocalPersonalization, recordEditionScores } from "@/lib/discover/editionOrder";
+import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from "@/lib/discover/editionOrder";
+import { reconcilePage1 } from "@/lib/discover/feedPaging";
 import type { DiscoverProfile, ProfileBucket } from "@/lib/discoverInteractions";
 
 type Card = { id: string; score: number; category: string };
@@ -125,9 +126,80 @@ describe("#2603 — the Discover page ranks by the edition snapshot, not live in
     expect(listener).not.toContain("setOrderingProfile(");
   });
 
-  it("a manual refresh opens a new edition", () => {
-    const refresh = src.slice(src.indexOf("const handleRefreshFeed"), src.indexOf("mutateFeed();\n  }, [mutateFeed]);", src.indexOf("const handleRefreshFeed")));
-    expect(refresh).toContain("editionScoresRef.current = new Map()");
-    expect(refresh).toContain("setOrderingProfile(readDiscoverInteractionProfile())");
+  it("the refresh handler opens its edition from runManualRefresh, never through reconcilePage1", () => {
+    const start = src.indexOf("const handleRefreshFeed");
+    const refresh = src.slice(start, src.indexOf("}, [mutateFeed, user]);", start));
+    expect(refresh).toContain("runManualRefresh(");
+    expect(refresh).toContain("editionScoresRef.current = outcome.scores");
+    expect(refresh).toContain("setPage1Items(outcome.page1)");
+    expect(refresh).not.toContain("reconcilePage1");
+    // Nothing is torn down before the outcome is known: the keep branch returns
+    // ahead of every reset.
+    const keep = refresh.indexOf('if (outcome.kind === "keep")');
+    for (const reset of ["setAllItems([])", "setPage1Items(", "clearFeedRestore()", "setVisibleCount(PAGE_SIZE)"]) {
+      expect(refresh.indexOf(reset)).toBeGreaterThan(keep);
+    }
   });
 });
+
+describe("#2603 / CERT-3393 — a manual refresh opens a new edition; a failed one keeps the old", () => {
+  type Item = { id: string; score: number };
+  const getId = (i: Item) => i.id;
+  const accept = () => ({ acceptItems: true, hasMore: true, showUnavailable: false });
+
+  // The reader's edition after two background ticks: A, B, C held in place,
+  // D appended, C later dropped by the server but still held.
+  const oldPage1: Item[] = reconcilePage1(
+    reconcilePage1([], [{ id: "A", score: 90 }, { id: "B", score: 80 }, { id: "C", score: 70 }], getId),
+    [{ id: "A", score: 60 }, { id: "B", score: 95 }, { id: "D", score: 50 }],
+    getId,
+  );
+  const oldScores = new Map<string, number>();
+  recordEditionScores(oldScores, oldPage1, getId);
+
+  // The server's re-ranked page one at refresh time.
+  const reranked: Item[] = [{ id: "B", score: 99 }, { id: "E", score: 85 }, { id: "A", score: 40 }];
+
+  it("control: the background path keeps the old ids in the old order and only appends", () => {
+    expect(ids2(oldPage1)).toEqual(["A", "B", "C", "D"]);
+    expect(ids2(reconcilePage1(oldPage1, reranked, getId))).toEqual(["A", "B", "C", "D", "E"]);
+  });
+
+  it("an accepted refresh replaces page one with the re-ranked response and reseeds scores from it alone", async () => {
+    const outcome = await runManualRefresh({ fetchPage: async () => ({ items: reranked }), decide: accept, getId });
+    expect(outcome.kind).toBe("new-edition");
+    if (outcome.kind !== "new-edition") return;
+    expect(ids2(outcome.page1)).toEqual(["B", "E", "A"]);
+    expect(outcome.scores.get("A")).toBe(40); // not the old edition's 90
+    expect(outcome.scores.has("C")).toBe(false);
+    expect(outcome.scores.has("D")).toBe(false);
+    expect(outcome.hasMore).toBe(true);
+  });
+
+  it("a thrown fetch keeps the old edition and raises the retry notice", async () => {
+    const outcome = await runManualRefresh<{ items?: Item[] }, Item>({
+      fetchPage: async () => { throw new Error("Failed to fetch"); },
+      decide: accept,
+      getId,
+    });
+    expect(outcome).toEqual({ kind: "keep", showUnavailable: true });
+  });
+
+  it("an unavailable payload keeps the old edition", async () => {
+    const outcome = await runManualRefresh({
+      fetchPage: async () => ({ items: [] as Item[] }),
+      decide: () => ({ acceptItems: false, hasMore: true, showUnavailable: true }),
+      getId,
+    });
+    expect(outcome).toEqual({ kind: "keep", showUnavailable: true });
+  });
+
+  it("an accepted but empty page does not blank the reader's edition", async () => {
+    const outcome = await runManualRefresh({ fetchPage: async () => ({ items: [] as Item[] }), decide: accept, getId });
+    expect(outcome).toEqual({ kind: "keep", showUnavailable: false });
+  });
+});
+
+function ids2(items: { id: string }[]) {
+  return items.map((i) => i.id);
+}

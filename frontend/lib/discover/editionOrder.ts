@@ -78,3 +78,39 @@ export function applyLocalPersonalization<G>(
 
   return result;
 }
+
+/**
+ * CERT-3393 repair `2603-MANUAL-REFRESH-OPENS-NEW-EDITION`.
+ *
+ * A manual refresh is the reader asking for a new edition, so it must not go
+ * through the background path: `reconcilePage1` holds the old ids in the old
+ * order and only appends, and the score map would immediately re-record the
+ * old cards. An ACCEPTED, non-empty refresh therefore replaces page one
+ * wholesale and reseeds the scores from the new cards alone. Anything else — a
+ * thrown fetch, an unavailable or degraded payload, an empty page — keeps the
+ * edition the reader already has.
+ */
+export type ManualRefreshOutcome<P, T> =
+  | { kind: "new-edition"; payload: P; page1: T[]; scores: Map<string, number>; hasMore: boolean }
+  | { kind: "keep"; showUnavailable: boolean };
+
+export async function runManualRefresh<P extends { items?: T[] | null }, T extends { score?: number | null }>(deps: {
+  fetchPage: () => Promise<P>;
+  decide: (payload: P) => { acceptItems: boolean; hasMore: boolean; showUnavailable: boolean };
+  getId: (item: T) => string;
+}): Promise<ManualRefreshOutcome<P, T>> {
+  let payload: P;
+  try {
+    payload = await deps.fetchPage();
+  } catch {
+    return { kind: "keep", showUnavailable: true };
+  }
+  const decision = deps.decide(payload);
+  const page1 = payload.items ?? [];
+  if (!decision.acceptItems || page1.length === 0) {
+    return { kind: "keep", showUnavailable: decision.showUnavailable };
+  }
+  const scores = new Map<string, number>();
+  recordEditionScores(scores, page1, deps.getId);
+  return { kind: "new-edition", payload, page1, scores, hasMore: decision.hasMore };
+}

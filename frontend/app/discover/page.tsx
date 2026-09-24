@@ -49,7 +49,7 @@ import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
-import { applyLocalPersonalization, recordEditionScores } from "@/lib/discover/editionOrder";
+import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from "@/lib/discover/editionOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
 import {
@@ -896,14 +896,45 @@ export default function DiscoverPage() {
   const feedFailureReason: FeedFailureReason =
     (feedError as { status?: number } | undefined)?.status === 429 ? "rate_limited" : "error";
 
-  // Graceful end-of-feed refresh: reset paging state, scroll to top, revalidate
-  // page 1. This is the web reload affordance (web has no pull-to-refresh).
-  const handleRefreshFeed = useCallback(() => {
+  // Graceful end-of-feed refresh: scroll to top, fetch page 1, and open a new
+  // edition with it. This is the web reload affordance (web has no
+  // pull-to-refresh).
+  //
+  // #2603 / CERT-3393 — a manual refresh is NOT a background tick. It fetches
+  // page one itself, and only an accepted, non-empty page replaces the edition:
+  // page one wholesale (never `reconcilePage1`, which holds the old order), the
+  // edition scores reseeded from the new cards, the ordering profile re-read.
+  // A failed or unusable refresh keeps every card the reader already has and
+  // raises the retry notice. See `runManualRefresh`.
+  const handleRefreshFeed = useCallback(async () => {
     trackEvent("feed_refresh", { trigger: "manual", new_items_count: 0 });
-    setAllItems([]);
-    // #2603 — a manual refresh opens a new edition: re-read the order inputs.
-    editionScoresRef.current = new Map();
+    setFeedUnavailable(false);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    const outcome = await runManualRefresh({
+      fetchPage: () => {
+        const { limit, offset } = initialFeedRequest();
+        return fetchFeed(
+          { limit, offset, event_pct: FEED_EVENT_PCT },
+          { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user }
+        );
+      },
+      decide: (payload) => decideFeedPage({
+        payload,
+        previousHasMore: hasMoreRef.current,
+        hasRenderedItems: renderedCountRef.current > 0,
+      }),
+      getId: getItemId,
+    });
+    if (outcome.kind === "keep") {
+      setFeedUnavailable(outcome.showUnavailable);
+      return;
+    }
+    editionScoresRef.current = outcome.scores;
     setOrderingProfile(readDiscoverInteractionProfile());
+    setPage1Items(outcome.page1);
+    setAllItems([]);
     setVisibleCount(PAGE_SIZE);
     // 🔴 #7417 — THE SEED MOVES WITH THE WINDOW OR THE AUTO-PAGER STALLS. After
     // a Back the seed is the restored window (say 60). Resetting `visibleCount`
@@ -913,17 +944,15 @@ export default function DiscoverPage() {
     // reader scrolls a 20-card feed. Reachable by anyone who presses Back and
     // then taps refresh.
     setInitialVisibleCount(PAGE_SIZE);
-    setHasMore(true);
-    setFeedUnavailable(false);
+    setHasMore(outcome.hasMore);
     // A manual refresh is the reader asking for a fresh feed, exactly as a
     // reload is. Keeping the old edition would let the NEXT Back restore the
     // feed they just chose to discard.
     clearFeedRestore();
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-    mutateFeed();
-  }, [mutateFeed]);
+    // Hand SWR the same page so the next background tick folds into THIS
+    // edition (the data effect's reconcile of identical ids is a no-op).
+    mutateFeed(outcome.payload, { revalidate: false });
+  }, [mutateFeed, user]);
 
   // Infinite scroll observer. Re-armed whenever the sentinel unmounts and
   // remounts (L2-238: an unavailable page swaps the spinner for a retry, so the
