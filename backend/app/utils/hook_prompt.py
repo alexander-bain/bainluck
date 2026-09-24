@@ -78,6 +78,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Sequence
+from zoneinfo import ZoneInfo
 
 __all__ = [
     "HookEvidence",
@@ -170,8 +171,8 @@ HOOK_STYLE_CRITERIA: tuple[str, ...] = (
 #: lifted as a fact about the world even if it is copied wholesale.
 HOOK_EXAMPLE_PAIRS: tuple[tuple[str, str], ...] = (
     (
-        "- [Sep 13, 2026 · our fixture schedule] Northgate vs Riverside is scheduled for "
-        "Sep 13, 2026.",
+        "- [Sep 13, 2026, 7:30 PM ET · our fixture schedule] Northgate vs Riverside is scheduled "
+        "for Sep 13, 2026, 7:30 PM ET.",
         "Northgate and Riverside meet on September 13.",
     ),
     (
@@ -215,6 +216,23 @@ def _as_of(value: Optional[datetime]) -> Optional[str]:
     return value.strftime("%b %d, %Y") if value else None
 
 
+#: The calendar a kickoff's DAY is read in (#5531). A US evening game starts after midnight UTC —
+#: Thursday's 8:15 PM ET kickoff is `00:15Z` Friday — so `_as_of` on the raw instant told the model
+#: the game was on Friday, and the model is told to anchor its sentence on that date. The stored
+#: sentence cannot localise per reader, so the evidence names the ESPN scoreboard's zone
+#: (`event_completion.ESPN_BOARD_TIMEZONE`, the same day `market_identity` keys games on) and says
+#: so, which keeps the time true as written for a reader in any zone.
+KICKOFF_ZONE = ZoneInfo("America/New_York")
+
+
+def _kickoff_as_of(value: Optional[datetime]) -> Optional[str]:
+    if not value:
+        return None
+    local = _aware(value).astimezone(KICKOFF_ZONE)
+    clock = local.strftime("%I:%M %p").lstrip("0")
+    return f"{local:%b} {local.day}, {local.year}, {clock} ET"
+
+
 def _aware(value: datetime) -> datetime:
     """Naive datetimes arrive from some writers; compare them as UTC rather than raising."""
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -251,7 +269,7 @@ def build_hook_evidence(
         now = datetime.now(timezone.utc)
 
     upcoming = event_commence_time is not None and _aware(event_commence_time) > _aware(now)
-    kickoff = _as_of(event_commence_time) if upcoming else None
+    kickoff = _kickoff_as_of(event_commence_time) if upcoming else None
     if kickoff and event_home_team and event_away_team:
         evidence.append(
             HookEvidence(

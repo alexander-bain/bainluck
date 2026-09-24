@@ -873,6 +873,24 @@ jobs:
             exit 1
           fi
 
+      - name: "#5531 the hook queue reaches what its gate allows (real Postgres)"
+        # `enrich_market_hooks` wrote 0 hooks for twelve days: the evidence gate
+        # refuses markets with no upcoming fixture, and those rows filled the
+        # ORDER BY ... LIMIT window every run. The window is a property of the
+        # query over a population, which the unit fake cannot see (it answers
+        # the candidate SELECT with whatever market it was handed).
+        #
+        # Same skip detection as every gate in this job; this job names each PG
+        # file explicitly, so a `*_pg.py` nobody adds here runs nowhere.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_hook_queue_reaches_what_its_gate_allows_5531_pg.py \
+            -v -rs 2>&1 | tee /tmp/hookqueue5531.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/hookqueue5531.txt; then
+            echo "::error::#5531 hook queue window SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#7807 the durable venue-history tier (real Postgres)"
         # #7807. The bank #7351 recovers lives only in Redis, and #7563 measured
         # `allkeys-lru` deleting it inside four hours on 3 of 3 markets — so the
