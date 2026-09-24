@@ -631,6 +631,76 @@ def _admit_search_future(
     return True
 
 
+#: A row none of whose printable prices was written inside this window is
+#: FROZEN for `_live_twin_first`. Two weeks: a live season market is re-polled
+#: every hour or two; the specimen below had gone 69 days without a write.
+_SEARCH_TWIN_FROZEN_AFTER = timedelta(days=14)
+
+
+def _newest_price_stamp(market) -> Optional[datetime]:
+    """When the newest printable price on this market was written, or None.
+
+    `outcome_prints_a_price` is the same predicate `_served_prices_as_of` dates
+    a card by, so a dash-only leg cannot make a frozen row look live. Anything
+    that is not a real `datetime` (test doubles) reads as "cannot say".
+    """
+    stamps = []
+    for o in getattr(market, "outcomes", None) or []:
+        stamp = getattr(o, "last_updated", None)
+        if isinstance(stamp, datetime) and _outcome_prints_a_price(o):
+            stamps.append(
+                stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+            )
+    return max(stamps) if stamps else None
+
+
+def _live_twin_first(markets: list, now: Optional[datetime] = None) -> list:
+    """Within each search question, a row still being priced leads a frozen one.
+
+    #8417 — `?q=premier league` and `?q=arsenal` (390px, 2026-09-24) led with
+    `English Premier League Winner?` at Arsenal >99%: Kalshi KXPREMIERLEAGUE-26,
+    LAST season's market, settled in May, no price written since 2026-07-17,
+    still stored `open` with a 2028 resolution date (#2644 owns that field).
+    This season's `English Premier League Champion` (KXPREMIERLEAGUE-27, Arsenal
+    47.5%, priced this morning) is the same question to the search page's key,
+    and it lost both doors to it on LIFETIME volume — 17.3M for a finished season
+    against 3.4M for one a month old:
+
+    * the window: `_rerank_search_futures` sorts name matches by volume, and
+      dedup keeps the first row per key, so the live row was dropped as a copy;
+    * the headline lane: one slot, contenders ordered by volume, same outcome.
+
+    Neither market is withdrawn here and no stored field is touched. Only the
+    ORDER inside one question changes: the positions a question's rows occupy
+    stay the same, and its rows fill them live first, frozen last, each group
+    otherwise in the order it arrived. A group with no live row or no frozen row
+    is returned untouched, so a question whose venues are all current (or all
+    stale, or undatable) ranks exactly as before, and dedup still decides which
+    rows survive.
+    """
+    if len(markets) < 2:
+        return markets
+    cutoff = (now or datetime.now(timezone.utc)) - _SEARCH_TWIN_FROZEN_AFTER
+    states = []
+    for m in markets:
+        stamp = _newest_price_stamp(m)
+        states.append(None if stamp is None else stamp >= cutoff)
+    if True not in states or False not in states:
+        return markets
+    slots: dict[str, list[int]] = {}
+    for i, m in enumerate(markets):
+        slots.setdefault(_search_question_identity(m)[0], []).append(i)
+    out = list(markets)
+    for idxs in slots.values():
+        group = [states[i] for i in idxs]
+        if True not in group or False not in group:
+            continue
+        ordered = sorted(idxs, key=lambda i: states[i] is False)
+        for slot, i in zip(idxs, ordered):
+            out[slot] = markets[i]
+    return out
+
+
 # Common sport abbreviation mapping — short queries like "NBA", "NFL"
 # should match the sport key rather than accidentally matching substrings
 # in team names (e.g., "NBA" matching "Gebenbach" or "Pekanbaru").
@@ -1949,7 +2019,11 @@ def _rerank_search_futures(
     # And finally the wrong SPORT (#7259), below even the wrong league — the one
     # signal here that the query text cannot supply. `astros` must not lead with
     # an LNBP basketball fixture. No-op when the caller resolved no single sport.
-    return _demote_wrong_sport(ordered, resolved_sport_category)
+    ordered = _demote_wrong_sport(ordered, resolved_sport_category)
+    # Last, and inside one question only (#8417): a frozen row — last season's
+    # settled market still stored open — yields its place to the same question's
+    # live row, so the volume sort above cannot hand dedup the dead one.
+    return _live_twin_first(ordered)
 
 
 def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
@@ -8513,7 +8587,9 @@ async def search_events(
         ]
         futures_markets, _headline_promoted = promote_headline_contenders(
             futures_markets,
-            _headline_rows,
+            # #8417: one slot, contenders by volume — a frozen twin must not
+            # take it from the same question's live row.
+            _live_twin_first(_headline_rows),
             dedup_key=_normalize_futures_dedup_key,
         )
         if _headline_promoted:
@@ -10587,7 +10663,7 @@ async def typeahead_search(
             await _ta_savepoint.commit()
         ta_futures_ranked, _ta_headline_promoted = promote_headline_contenders(
             ta_futures_ranked,
-            _ta_headline_rows,
+            _live_twin_first(_ta_headline_rows),  # #8417, as on /search
             dedup_key=_normalize_futures_dedup_key,
         )
         # Read off the FRONT of the returned list, which is that function's
