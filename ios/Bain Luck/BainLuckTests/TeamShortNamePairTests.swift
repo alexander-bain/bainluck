@@ -44,9 +44,13 @@ final class TeamShortNamePairTests: XCTestCase {
         let duel = TeamShortName.shortPair(away: "Chicago White Sox", home: "Boston Red Sox")
         XCTAssertEqual(duel.away, "White Sox")
         XCTAssertEqual(duel.home, "Red Sox")
+        // #5634 — each side now SHORTENS to its own nickname, so the pair no
+        // longer collides and growth is never reached: the badges are each
+        // club's own three-distinctive-word initials, which is what the browser
+        // draws (`WHI`/`RED` were the grown arm's, before the list).
         let badges = TeamShortName.abbreviationPair(away: "Chicago White Sox", home: "Boston Red Sox")
-        XCTAssertEqual(badges.away, "WHI")
-        XCTAssertEqual(badges.home, "RED")
+        XCTAssertEqual(badges.away, "CWS")
+        XCTAssertEqual(badges.home, "BRS")
     }
 
     // MARK: Every colliding pair in production, and what it must print
@@ -103,7 +107,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Capybara Esports", "Way Gaming Esports", "Esports", ("Capybara Esports", "Gaming Esports"), ("CAP", "GAM")),
         ("Cercle Brugge", "Club Brugge", "Brugge", ("Cercle Brugge", "Club Brugge"), ("CER", "BRU")),
         ("Chartres Metropole Handball", "Montpellier Handball", "Handball", ("Metropole Handball", "Montpellier Handball"), ("MET", "MON")),
-        ("Chicago White Sox", "Boston Red Sox", "Sox", ("White Sox", "Red Sox"), ("WHI", "RED")),
+        ("Chicago White Sox", "Boston Red Sox", "Sox", ("White Sox", "Red Sox"), ("CWS", "BRS")), // #5634: no longer collides
         ("Clemson Tigers", "LSU Tigers", "Tigers", ("Clemson Tigers", "LSU Tigers"), ("CLE", "LSU")),
         ("Deep Cross Gaming", "Ground Zero Gaming", "Gaming", ("Cross Gaming", "Zero Gaming"), ("CRO", "ZER")),
         ("Diamant Esports", "Fire Flux Esports", "Esports", ("Diamant Esports", "Flux Esports"), ("DIA", "FLU")),
@@ -317,6 +321,16 @@ final class TeamShortNamePairTests: XCTestCase {
     /// before this change) and is not introduced by it. Measured over all 13,618
     /// distinct production names 2026-09-12: badges disagreeing with the browser
     /// fall 344 -> 184, with 160 repaired and **0 newly divergent**.
+    ///
+    /// **#5634 moved ONE label here and one colliding row's badges**, the fifth
+    /// time the single-name rule moved underneath this table: two-word nicknames
+    /// keep both words (`twoWordNicknames`, the browser's `TWO_WORD_NICKNAMES`).
+    ///
+    ///     Tohoku Rakuten Golden Eagles   "Eagles" / TRG  ->  "Golden Eagles" / TRG
+    ///     Chicago White Sox v Boston Red Sox   WHI/RED  ->  CWS/BRS (labels unchanged)
+    ///
+    /// The Sox pair stops colliding, so growth is never reached and each side
+    /// keeps its own initials badge. Both values read off the BROWSER.
     private static let clean: [(String, String, (String, String), (String, String))] = [
         ("Atletico Paranaense", "Corinthians", ("Paranaense", "Corinthians"), ("PAR", "COR")),
         ("FK Novi Pazar", "FK Mladost Lucani", ("Pazar", "Lucani"), ("PAZ", "LUC")),
@@ -335,7 +349,7 @@ final class TeamShortNamePairTests: XCTestCase {
         ("Colombo / Gaines Jr", "Brunetti / Cox", ("Colombo / Gaines Jr", "Brunetti / Cox"), ("COL", "BRU")),
         ("Bristol City", "Swindon", ("Bristol City", "Swindon"), ("BRI", "SWI")),
         ("Yomiuri Giants", "Chunichi Dragons", ("Giants", "Dragons"), ("GIA", "DRA")),
-        ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Eagles", "Hawks"), ("TRG", "FSH")),
+        ("Tohoku Rakuten Golden Eagles", "Fukuoka SoftBank Hawks", ("Golden Eagles", "Hawks"), ("TRG", "FSH")),
         ("Wang", "Tang", ("Wang", "Tang"), ("WAN", "TAN")),
         ("Krajicek / Mektic", "Arribage / Guinard", ("Krajicek / Mektic", "Arribage / Guinard"), ("KRA", "ARR")),
         ("Charleston", "Colorado Springs Sw.", ("Charleston", "Colorado Springs Sw."), ("CHA", "COL")),

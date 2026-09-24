@@ -131,6 +131,92 @@ enum TeamShortName {
         "paris saint germain": "PSG",
     ]
 
+    /// Nicknames that are TWO words, where the last word alone is not the name.
+    ///
+    /// #5634. The last-word rule turned "Boston Red Sox" into **"Sox"** — which
+    /// is also the White Sox — "Alabama Crimson Tide" into "Tide", "Notre Dame
+    /// Fighting Irish" into "Irish", and Duke, Arizona State and the New Jersey
+    /// Devils all into "Devils". The browser's hero printed "Sox · WON" on a
+    /// finished Red Sox game (`/events/15317515`, 2026-09-24), and this file
+    /// had the same defect from the same line.
+    ///
+    /// A list, not a rule, for the same reason as `handPickedLabels`: "Red Sox"
+    /// is one name and "Bay Rays" is the tail of a place plus a name, and
+    /// nothing on the string alone tells them apart. Unlike that table this one
+    /// picks no label — it only keeps the word the rule was dropping, so an
+    /// entry can never make a label less true than the full name.
+    ///
+    /// Every entry is a live name, measured by ux/1479 on production 2026-09-24
+    /// over 60 days of MLB, NHL, NBA, WNBA, NFL and NCAAF `events` (372 names).
+    /// Keys are the `nicknameKey` form (letters and digits only, lower case), so
+    /// "Ragin' Cajuns" and "Ragin Cajuns" reach the same entry.
+    ///
+    /// This is the browser's `TWO_WORD_NICKNAMES` (`frontend/lib/teamShortName.ts`)
+    /// and the two sets are compared out of source by
+    /// `frontend/__tests__/teamDesignatorParityAcrossClients.test.ts`, exactly
+    /// as `designators` and `nameParticles` are.
+    static let twoWordNicknames: Set<String> = [
+        // MLB
+        "red sox",
+        "white sox",
+        "blue jays",
+        // NHL
+        "maple leafs",
+        "red wings",
+        "blue jackets",
+        "golden knights",
+        // NBA
+        "trail blazers",
+        // NCAAF
+        "black bears",
+        "black knights",
+        "blue devils",
+        "blue hens",
+        "blue raiders",
+        "crimson tide",
+        "delta devils",
+        "demon deacons",
+        "fighting camels",
+        "fighting hawks",
+        "fighting illini",
+        "fighting irish",
+        "golden bears",
+        "golden eagles",
+        "golden flashes",
+        "golden gophers",
+        "golden hurricane",
+        "golden lions",
+        "green wave",
+        "horned frogs",
+        "mean green",
+        "nittany lions",
+        "ragin cajuns",
+        "rainbow warriors",
+        "red raiders",
+        "red wolves",
+        "runnin bulldogs",
+        "scarlet knights",
+        "sun devils",
+        "tar heels",
+        "thundering herd",
+        "wolf pack",
+        "yellow jackets",
+    ]
+
+    /// One token as `twoWordNicknames` keys it — the browser's `nicknameKey`.
+    private static func nicknameKey<S: StringProtocol>(_ token: S) -> String {
+        String(token.filter { $0.isLetter || $0.isNumber }).lowercased()
+    }
+
+    /// The last two words, as written, when together they are one nickname —
+    /// else nil. A name that IS the nickname ("Red Sox") returns itself.
+    static func twoWordNickname(_ words: [Substring]) -> String? {
+        guard words.count >= 2 else { return nil }
+        let pair = words.suffix(2)
+        let key = pair.map { nicknameKey($0) }.joined(separator: " ")
+        return twoWordNicknames.contains(key) ? pair.joined(separator: " ") : nil
+    }
+
     /// Three-glyph strings that may never appear on a crest, whatever produces
     /// them.
     ///
@@ -382,6 +468,12 @@ enum TeamShortName {
         // remain are Paris Saint-Germain, where #4627's hand-picked entry puts
         // the app deliberately ahead of the browser.
         if isNonDistinctiveToken(last) { return parts.joined(separator: " ") }
+        // #5634 — "Red Sox", not "Sox". Clubs only: a person's name never
+        // reaches it. Below the designator refusal and above the particle walk,
+        // the browser's order.
+        if !namesAPerson(sportKey: sportKey), let nickname = twoWordNickname(parts) {
+            return nickname
+        }
         // #7163 — a person's surname carries its particles with it. This sits
         // BELOW the designator refusal, which is the browser's order: a club
         // whose tail is a designator is shown whole before the particle walk can
