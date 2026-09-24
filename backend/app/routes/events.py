@@ -18739,6 +18739,13 @@ def _grade_closed_windows(closed_items, event, ticker_by_market_id) -> list[dict
     return [row for _, row in graded]
 
 
+#: #8443 — "top 4th", "bottom 4th", "bot 4th", "middle 4th", "mid 4th", "end 4th".
+_BASEBALL_HALF_INNING = re.compile(r"\b(top|bot|bottom|mid|middle|end)\s+(\d+)(?:st|nd|rd|th)\b")
+_BASEBALL_HALF_OFFSET = {"top": 0, "bot": 3, "bottom": 3, "mid": 3, "middle": 3, "end": 6}
+#: "OT", "2OT", "overtime", "shootout" as words — never a substring of "bottom".
+_OVERTIME_WORD = re.compile(r"\b(\d*ot|overtime|shootout)\b")
+
+
 def _estimate_game_pace(
     home_score: Optional[int],
     away_score: Optional[int],
@@ -18817,7 +18824,24 @@ def _estimate_game_pace(
             elapsed_minutes = (num - 1) * half_minutes + (half_minutes - clock_remaining)
             break
 
-    if "ot" in period_str or "overtime" in period_str:
+    # #8443 — baseball half-innings. MLB's period reads "Top 4th" / "Bottom 4th"
+    # / "Middle 4th" / "End 4th", which no map above knows, so a top half served
+    # no pace at all. A half-inning is 3 minutes of the 54-minute model: a half
+    # counts from its START (a top half is not yet under way), so "Top 1st"
+    # elapses nothing and serves no projection. Extra innings cap at the whole
+    # game, as overtime does.
+    if sport_prefix == "baseball":
+        inning_match = _BASEBALL_HALF_INNING.search(period_str)
+        if inning_match:
+            half, inning = inning_match.group(1), int(inning_match.group(2))
+            elapsed_minutes = min(
+                (inning - 1) * 6 + _BASEBALL_HALF_OFFSET[half], total_minutes
+            )
+
+    # #8443 — overtime as a WORD. The substring test read "bOTtom 4th" as
+    # overtime, so every live MLB game in a bottom half served fraction 1.0 and
+    # a projected total equal to the runs already scored.
+    if _OVERTIME_WORD.search(period_str):
         elapsed_minutes = float(total_minutes)
 
     if elapsed_minutes is None or elapsed_minutes <= 0:
