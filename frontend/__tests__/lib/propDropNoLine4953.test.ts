@@ -127,6 +127,7 @@ describe("#4953 — the vocabulary", () => {
     "wrong_game",
     "ungraded",
     "no_line",
+    "conflicting_legs",
     "unknown",
   ];
 
