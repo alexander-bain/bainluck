@@ -97,7 +97,7 @@ final class CalibrationDisplayNameTests: XCTestCase {
         let expected = [
             "kalshi": "Kalshi",
             "polymarket": "Polymarket",
-            "odds_api": "Odds API",
+            "odds_api": "Moneylines (Odds API)",  // #8485: web + `source_labels`
             "odds_api_spreads": "Spreads (Odds API)",
             "odds_api_totals": "Totals (Odds API)",
             "odds_api_bookmaker": "Per-sportsbook (Odds API)",

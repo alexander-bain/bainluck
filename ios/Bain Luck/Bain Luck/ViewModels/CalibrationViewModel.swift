@@ -290,9 +290,9 @@ final class CalibrationViewModel: ObservableObject {
         guard na > 0 else {
             // No not-applicable rows: the cohort really is "where real trading
             // moved the price", so the plain claim is measured and may stand.
-            return "Every outcome whose price real trading moved. \(excluded)"
+            return "Every outcome whose price moved in real trading. \(excluded)"
         }
-        return "\(Self.fmt(movedN)) outcomes whose price real trading moved, plus \(Self.fmt(na)) "
+        return "\(Self.fmt(movedN)) outcomes whose price moved in real trading, plus \(Self.fmt(na)) "
             + "sportsbook lines where that test doesn't apply. \(excluded)"
     }
 
@@ -326,6 +326,27 @@ final class CalibrationViewModel: ObservableObject {
         return CalibrationMath.totalN(buckets) { thin || $0.priceMoved != false }
     }
     var fullN: Int { CalibrationMath.totalN(buckets) }
+
+    /// #8485 — the published bootstrap interval, only when the figure beside it
+    /// was measured over the interval's own population. Web's
+    /// `mceIntervalForCohort` (#7374): `mce_ci_*` is bootstrapped ONCE over every
+    /// bucket with no `price_moved` filter, so on the traded view it is the
+    /// interval of outcomes the screen has just excluded. Keyed on the
+    /// POPULATION, not the toggle: a payload with no untraded outcomes has one
+    /// population in both states. `nil` prints nothing, and says nothing.
+    static func intervalForCohort(
+        lower: Double?, upper: Double?, cohortN: Int, fullN: Int
+    ) -> (lower: Double, upper: Double)? {
+        guard let lower, let upper, lower.isFinite, upper.isFinite,
+              lower >= 0, lower <= upper, fullN > 0, cohortN == fullN
+        else { return nil }
+        return (lower, upper)
+    }
+
+    var cohortInterval: (lower: Double, upper: Double)? {
+        Self.intervalForCohort(
+            lower: data?.mceCiLower, upper: data?.mceCiUpper, cohortN: cohortN, fullN: fullN)
+    }
     /// The default cohort's size, independent of the toggle. Historical name;
     /// the predicate is `price_moved != false`, not a liquidity measure (L2-237).
     var wellTradedN: Int { CalibrationMath.totalN(buckets) { $0.priceMoved != false } }
@@ -394,16 +415,31 @@ final class CalibrationViewModel: ObservableObject {
     /// than into first place. `datagolf` publishes 36 outcomes, all
     /// `price_moved: false`, so the default cohort empties it and every metric
     /// it reported was an empty reduction's `0`. See `CalibrationRowOrdering`.
+    ///
+    /// #8485 — one row per PROVIDER, the way web's Source Comparison has drawn
+    /// it since queue 316 (`frontend/lib/calibrationProviders.ts`). This used to
+    /// map over raw source keys, so the four Odds API keys were four rows, and
+    /// "Spreads (Odds API)" — 15.1K outcomes, 0.3pp ECE over a 14.9pp per-bucket
+    /// error — ranked FIRST, above Kalshi, on the same payload where the website
+    /// printed one Sportsbooks row at 1.1pp. The provider row pools its members'
+    /// buckets and runs the same metric every other row runs, so it is a
+    /// measurement of the provider's outcomes, never an average of four summaries.
     var sourceRows: [CalSourceRow] {
         let bks = buckets
         let thin = includeThin
-        let rows = sources.map { src -> CalSourceRow in
-            let f: (CalibrationBucket) -> Bool = { $0.source == src && (thin || $0.priceMoved != false) }
+        let rows = Self.providerGroups(sources).map { group -> CalSourceRow in
+            let members = Set(group.members)
+            let f: (CalibrationBucket) -> Bool = { members.contains($0.source) && (thin || $0.priceMoved != false) }
             let agg = CalibrationMath.aggregate(bks, filter: f)
             let band = agg.filter { abs($0.error) <= 5 }.count
             let n = CalibrationMath.totalN(bks, filter: f)
+            let name = Self.providerDisplayName(group.provider)
             return CalSourceRow(
-                source: src, name: Self.sourceDisplayName(src), n: n,
+                source: group.provider, name: name,
+                memberNames: group.members.count > 1
+                    ? group.members.map { Self.withoutGroupQualifier(Self.sourceDisplayName($0), groupName: name) }
+                    : [],
+                n: n,
                 ece: CalibrationRowOrdering.metric(CalibrationMath.ece(agg), outcomes: n),
                 mce: CalibrationRowOrdering.metric(CalibrationMath.mce(agg), outcomes: n),
                 brier: CalibrationRowOrdering.metric(CalibrationMath.brier(bks, filter: f), outcomes: n),
@@ -411,6 +447,46 @@ final class CalibrationViewModel: ObservableObject {
             )
         }
         return CalibrationRowOrdering.orderedByECE(rows)
+    }
+
+    // MARK: - Providers (#8485, web's `providerOf` / `groupSourcesByProvider`)
+
+    /// The provider a source key belongs to. Total: an unknown key is its own
+    /// provider, so Kalshi and Polymarket are one-member providers, not
+    /// exemptions — the same rule applied to every key.
+    static func providerOf(_ source: String) -> String {
+        if source == "odds_api" || source.hasPrefix("odds_api_") { return "odds_api_family" }
+        return source
+    }
+
+    /// Source keys grouped by provider, providers and members both in the order
+    /// the keys arrive (`sources` is largest-first).
+    static func providerGroups(_ sources: [String]) -> [(provider: String, members: [String])] {
+        var order: [String] = []
+        var members: [String: [String]] = [:]
+        for src in sources {
+            let provider = providerOf(src)
+            if members[provider] == nil { order.append(provider) }
+            members[provider, default: []].append(src)
+        }
+        return order.map { ($0, members[$0] ?? []) }
+    }
+
+    /// A provider's row name. One-member providers are named as their source.
+    static func providerDisplayName(_ provider: String) -> String {
+        provider == "odds_api_family" ? "Sportsbooks (Odds API)" : sourceDisplayName(provider)
+    }
+
+    /// "Spreads (Odds API)" under "Sportsbooks (Odds API)" reads "Spreads" —
+    /// web's `withoutGroupQualifier`. Untouched when the group has no
+    /// parenthesised qualifier, the member does not carry it, or stripping would
+    /// leave nothing.
+    static func withoutGroupQualifier(_ memberName: String, groupName: String) -> String {
+        guard let open = groupName.lastIndex(of: "("), groupName.hasSuffix(")") else { return memberName }
+        let suffix = " " + groupName[open...]
+        guard memberName.hasSuffix(suffix) else { return memberName }
+        let stripped = memberName.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)
+        return stripped.isEmpty ? memberName : stripped
     }
 
     /// #3650: the same guard as `sourceRows`, and it is load-bearing rather than
@@ -967,7 +1043,10 @@ final class CalibrationViewModel: ObservableObject {
     private static let sourceDisplayNames: [String: String] = [
         "kalshi": "Kalshi",
         "polymarket": "Polymarket",
-        "odds_api": "Odds API",
+        // #8485: "Moneylines", as web and `source_labels` name it — now drawn
+        // as a member under "Sportsbooks (Odds API)", where a bare "Odds API"
+        // beside "Spreads" and "Totals" named the supplier, not the shape.
+        "odds_api": "Moneylines (Odds API)",
         "odds_api_spreads": "Spreads (Odds API)",
         "odds_api_totals": "Totals (Odds API)",
         "odds_api_bookmaker": "Per-sportsbook (Odds API)",
@@ -985,8 +1064,11 @@ final class CalibrationViewModel: ObservableObject {
 /// means to print when there is nothing to print.
 struct CalSourceRow: Identifiable, CalibrationMetricRow {
     let id = UUID()
+    /// The provider key (#8485): a source key, or `odds_api_family`.
     let source: String
     let name: String
+    /// The pooled members' names, qualifier stripped; empty for a one-member provider.
+    let memberNames: [String]
     let n: Int
     /// `nil` when `n == 0`. See `CalibrationRowOrdering`.
     let ece: Double?
