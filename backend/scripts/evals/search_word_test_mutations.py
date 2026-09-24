@@ -347,8 +347,11 @@ MUTANTS: list[tuple[str, Path, str, str, str, str]] = [
     (
         "fold-removed",
         EVENTS,
-        """    return f"name:{_fold_dedup_punctuation(name_lower)}:{market.market_tier or 0}\"""",
-        """    return f"name:{name_lower}:{market.market_tier or 0}\"""",
+        # #8378 re-targeted the needle, not the mutant: the name half of the key
+        # moved into `_futures_dedup_question_key`, and the tier is appended by
+        # `_normalize_futures_dedup_key`, which the oracle still calls.
+        """    return f"name:{_fold_dedup_punctuation(name_lower)}\"""",
+        """    return f"name:{name_lower}\"""",
         DEDUP_ORACLE,
         "Drops the fold: 'NBA: 2027 Champion' and 'NBA Championship Winner' stop "
         "merging, so the one merge the canonical arm really was performing is lost.",
