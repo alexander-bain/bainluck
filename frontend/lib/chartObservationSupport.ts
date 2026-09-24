@@ -62,7 +62,39 @@
  * this module honours it before any heuristic (see `observedUntil`). Absent
  * the field the consumer falls back to the policy above — it never invents
  * freshness from an unchanged value.
+ *
+ * SUPERSEDED FOR CLASSIFYING SERVERS (Codex card-B decision, 2026-09-24). The
+ * `valid_until` idea above was refuted: a changed value closes the old row at
+ * the NEW reading's time, so a row read at 10:00 and 10:01 and then silent
+ * until 12:00 reads `valid_until=12:00` — a 119-minute hole that looks
+ * covered. The producer shipped instead (#8438, `backend/app/utils/
+ * winprob_evidence.py`): `evidence_contract = {v: "7878.v1", resolution_s}`
+ * once per response, and an `evidence` key on every point that is NOT a plain
+ * reading. When a payload carries that contract the chart runs
+ * `classifyUnderContract` below and the cadence heuristic is not consulted:
+ *
+ *   - only a plain reading (no `evidence` key) or `observed` proves anything;
+ *     `observed.covered_through` is the only thing that extends a reading's
+ *     coverage past its own timestamp — `valid_until` never does;
+ *   - `candle`, `price_history`, `terminal_row` and `final` points are still
+ *     DRAWN where they fall (a venue aggregate and the result are real values)
+ *     but extend no coverage; an unknown or malformed kind is treated the same
+ *     way (fails closed);
+ *   - `live_edge` stays a delivery time: it anchors the trailing interval and
+ *     is never a reading;
+ *   - an interval wider than `resolution_s` (G, 300s) is UNKNOWN — exactly G is
+ *     covered. G is a display resolution, not a freshness SLA, and the chart
+ *     says "no readings", never "the feed was down".
+ *
+ * Pre-match stays unjudged in contract mode too, for the reason in point 1
+ * above (the pre-match writer stores no row while a quote sits still, so a
+ * G-sized rule there would dash every healthy pre-match line); what changes is
+ * that an interval straddling the start is judged from the start instead of
+ * being left joined — the stretch after kick-off is in-game however it began.
  */
+
+/** The only contract version this client knows how to read. */
+export const EVIDENCE_CONTRACT_V = "7878.v1";
 
 /** One reading of one series, as the chart sees it. */
 export interface SupportObservation {
@@ -81,6 +113,14 @@ export interface SupportObservation {
    * observation and never seeds the cadence.
    */
   synthetic?: boolean;
+  /**
+   * Contract mode only: a point that is drawn at its time but proves nothing
+   * about observation — a venue candle or price-history backfill, a finished
+   * game's rewritten terminal row, the synthesised result, or any evidence
+   * kind this client does not know. It can END an interval (the line has to
+   * reach it somehow) but never extends coverage past its own instant.
+   */
+  notEvidence?: boolean;
 }
 
 export interface UnsupportedInterval {
@@ -119,6 +159,55 @@ export interface SupportOptions {
   domainEndMs: number | null;
   floorS?: number;
   cadenceMultiple?: number;
+  /**
+   * The served contract's `resolution_s` (see `evidenceResolutionS`). When set
+   * the series is judged by `classifyUnderContract` and the floor/cadence
+   * heuristic is not consulted at all.
+   */
+  evidenceResolutionS?: number | null;
+}
+
+/**
+ * `resolution_s` from a served `evidence_contract`, or null when the payload
+ * carries no contract this client can read — in which case the caller keeps
+ * the cadence heuristic, exactly as it did before the producer shipped.
+ */
+export function evidenceResolutionS(contract: unknown): number | null {
+  if (!contract || typeof contract !== "object") return null;
+  const { v, resolution_s } = contract as { v?: unknown; resolution_s?: unknown };
+  if (v !== EVIDENCE_CONTRACT_V) return null;
+  if (typeof resolution_s !== "number" || !Number.isFinite(resolution_s) || resolution_s <= 0) return null;
+  return resolution_s;
+}
+
+/** The subset of a served `win_prob_history` point the contract reads. */
+export interface ContractPoint {
+  timestamp: string;
+  live_edge?: boolean;
+  evidence?: unknown;
+}
+
+/**
+ * One served point as the contract classifies it. `valid_until` is never read.
+ * Returns null for an unparseable timestamp (the point cannot testify either way).
+ */
+export function contractObservation(p: ContractPoint): SupportObservation | null {
+  const atMs = Date.parse(p.timestamp);
+  if (!Number.isFinite(atMs)) return null;
+  const evidence = p.evidence;
+  const kind =
+    evidence && typeof evidence === "object" ? (evidence as { kind?: unknown }).kind : undefined;
+  if (p.live_edge === true || kind === "live_edge") return { atMs, synthetic: true };
+  // No key at all: a plain reading at its own timestamp.
+  if (evidence === undefined || evidence === null) return { atMs };
+  if (kind === "observed") {
+    const raw = (evidence as { covered_through?: unknown }).covered_through;
+    const through = typeof raw === "string" ? Date.parse(raw) : NaN;
+    // A malformed span proves nothing beyond the reading itself.
+    return Number.isFinite(through) && through > atMs ? { atMs, observedUntilMs: through } : { atMs };
+  }
+  // candle · price_history · terminal_row · final · anything unrecognised.
+  return { atMs, notEvidence: true };
 }
 
 /**
@@ -128,6 +217,9 @@ export function classifySeriesSupport(
   observations: SupportObservation[],
   opts: SupportOptions,
 ): SeriesSupport {
+  if (opts.evidenceResolutionS != null) {
+    return classifyUnderContract(observations, opts, opts.evidenceResolutionS);
+  }
   const floorS = opts.floorS ?? SUPPORT_FLOOR_S;
   const multiple = opts.cadenceMultiple ?? SUPPORT_CADENCE_MULTIPLE;
 
@@ -196,6 +288,62 @@ export function classifySeriesSupport(
   }
 
   return { unsupported, lastObservedMs, inGameMedianS: medianS };
+}
+
+/**
+ * Judge one series under the served evidence contract (see the header).
+ * Every consecutive pair of DRAWN points is an interval; its hole starts where
+ * the earlier point's proven coverage ends (its own instant, or
+ * `covered_through` for an `observed` reading) and is unsupported when it is
+ * wider than G. `inGameMedianS` is always null: no cadence is consulted.
+ */
+function classifyUnderContract(
+  observations: SupportObservation[],
+  opts: SupportOptions,
+  resolutionS: number,
+): SeriesSupport {
+  const drawn = observations
+    .filter((o) => !o.synthetic && Number.isFinite(o.atMs))
+    .sort((a, b) => a.atMs - b.atMs);
+  const synthetic = observations
+    .filter((o) => o.synthetic && Number.isFinite(o.atMs))
+    .sort((a, b) => a.atMs - b.atMs);
+  const proving = drawn.filter((o) => !o.notEvidence);
+  const lastObservedMs = proving.length > 0 ? proving[proving.length - 1].atMs : null;
+
+  const gameStart = opts.gameStartMs;
+  if (drawn.length === 0 || gameStart === null || !Number.isFinite(gameStart)) {
+    return { unsupported: [], lastObservedMs, inGameMedianS: null };
+  }
+
+  const unsupported: UnsupportedInterval[] = [];
+  const judge = (from: SupportObservation, toMs: number, kind: UnsupportedInterval["kind"]) => {
+    const coveredUntil = from.notEvidence ? from.atMs : Math.max(from.atMs, from.observedUntilMs ?? from.atMs);
+    // Pre-match is not judged; the part of an interval after the start is.
+    const holeStartMs = Math.max(coveredUntil, gameStart);
+    if (toMs <= holeStartMs) return;
+    if ((toMs - holeStartMs) / 1000 > resolutionS) {
+      unsupported.push({ fromMs: holeStartMs, toMs, kind });
+    }
+  };
+
+  for (let i = 1; i < drawn.length; i++) {
+    judge(drawn[i - 1], drawn[i].atMs, "interior");
+  }
+
+  const last = drawn[drawn.length - 1];
+  const liveEdge = synthetic.length > 0 ? synthetic[synthetic.length - 1].atMs : null;
+  const trailingAnchor =
+    liveEdge !== null && liveEdge > last.atMs
+      ? liveEdge
+      : opts.domainEndMs !== null && Number.isFinite(opts.domainEndMs)
+        ? opts.domainEndMs
+        : null;
+  if (trailingAnchor !== null) {
+    judge(last, trailingAnchor, "trailing");
+  }
+
+  return { unsupported, lastObservedMs, inGameMedianS: null };
 }
 
 /** Where a minute bucket stands relative to a series' unsupported intervals. */
