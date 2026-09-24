@@ -1635,6 +1635,53 @@ def card_rows_are_not_a_schedule(bouts) -> bool:
     return False
 
 
+def ticker_card_tokens_by_event(cfg: CombatSportConfig, markets) -> dict[int, set[str]]:
+    """``{event_id: {ticker card token, ...}}`` over the open markets given. #7993.
+
+    The card each events row is priced on, read off its OWN linked venue market
+    rather than off its clock. Rows whose market carries no card ticker (a venue
+    row, a prop without one) contribute nothing.
+    """
+    out: dict[int, set[str]] = {}
+    for m in markets or ():
+        event_id = getattr(m, "event_id", None)
+        token = card_token(cfg, getattr(m, "external_id", None))
+        if event_id is not None and token is not None:
+            out.setdefault(event_id, set()).add(token)
+    return out
+
+
+def card_bouts_are_priced_on_another_card(
+    bouts, ticker_tokens_by_event: dict[int, set[str]], card_tokens
+) -> bool:
+    """True when EVERY bout of an events-only card is priced on a different card.
+
+    #7993. Kalshi's close stamp is its `commence_time` (gotcha #14), and when the
+    matcher cannot join a Kalshi fight to the schedule row of the same bout it
+    mints an id-less row carrying that stamp (ruling 048 — it creates, never
+    absorbs). A card's late bouts close after midnight UTC, so those rows land on
+    the NEXT date token and form a card of their own. On 2026-09-22 /hub/mma
+    offered "Sun, Sep 27" holding three bouts of the Sep 26 Fight Night; the
+    rows' own markets (`KXUFCFIGHT-26SEP26…`) sat on the real card all along.
+
+    The evidence is the row's own market link — an id-anchored fact — never a
+    name or a date. All bouts must carry it, so a card with a single bout of its
+    own keeps its slot. Gated on the events-only branch by both callers, like
+    :func:`card_rows_are_not_a_schedule`. Deliberately NOT a re-key of those rows
+    onto their market's card: their clock is Kalshi's close stamp, and letting it
+    date the real card moves "Sat, Sep 26" to "Sun, Sep 27" on the rail (the
+    date is rendered in UTC).
+    """
+    rows = list(bouts or [])
+    if not rows:
+        return False
+    for b in rows:
+        tokens = ticker_tokens_by_event.get(getattr(b, "id", None)) or set()
+        if not tokens or tokens & set(card_tokens):
+            return False
+    return True
+
+
 def card_sport_label(
     cfg: CombatSportConfig, *, ticker_fights: int, venue_promotions=()
 ) -> str | None:
@@ -1872,6 +1919,27 @@ async def _list_event_bouts(
     return bouts
 
 
+async def _open_markets_for_events(cfg: CombatSportConfig, db: AsyncSession, event_ids):
+    """The open markets of this sport linked to ``event_ids`` — the same filter
+    `CombatEventAdapter.build_event` reads its markets with, so the lister and
+    the page judge #7993 on the same rows."""
+    from app.models import FuturesMarket
+
+    # Built flat on purpose: the nested form of this filter is byte-identical
+    # to a declared mutant replacement (kalshi_segment_resolved_link_mutations
+    # M1), which the residue scan reads as a mutant left in this file.
+    filters = (
+        FuturesMarket.llm_sport_category == cfg.llm_category,
+        FuturesMarket.status == "open",
+        FuturesMarket.event_id.in_(list(event_ids)),
+    )
+    return list(
+        (await db.execute(select(FuturesMarket).where(*filters)))
+        .scalars()
+        .all()
+    )
+
+
 def _apply_token_fold(cards: dict, event_bouts: dict, survivor: dict) -> tuple:
     """Re-key `cards` and `event_bouts` onto their surviving tokens.
 
@@ -2009,9 +2077,23 @@ async def list_card_concepts(
         {t: [f["commence"] for f in c["fights"]] for t, c in cards.items()},
         {t: [e.commence_time for e in group] for t, group in event_bouts.items()},
     )
-    cards, event_bouts = _apply_token_fold(
-        cards, event_bouts, fold_rollover_tokens(_spans)
-    )
+    _rollover = fold_rollover_tokens(_spans)
+    cards, event_bouts = _apply_token_fold(cards, event_bouts, _rollover)
+
+    # #7993: the ticker card each events-only row is priced on, resolved through
+    # the same rollover fold so it names a card that survives. Read only for
+    # tokens no venue lists — the one branch the predicate may judge.
+    _orphan_ids = [
+        b.id for t, group in event_bouts.items() if t not in cards for b in group
+    ]
+    _priced_on: dict[int, set[str]] = {}
+    if _orphan_ids:
+        _priced_on = {
+            event_id: {_rollover.get(t, t) for t in tokens}
+            for event_id, tokens in ticker_card_tokens_by_event(
+                cfg, await _open_markets_for_events(cfg, db, _orphan_ids)
+            ).items()
+        }
 
     # #4485: the venue's published card listing, read ONCE for the whole pass
     # rather than per card — it is one small Redis value and the loop below runs
@@ -2052,7 +2134,10 @@ async def list_card_concepts(
         # and all three live specimens are events-only. See
         # `card_rows_are_not_a_schedule` for the census and for why each of its
         # two clauses is unsafe alone.
-        if not (kalshi and kalshi["fights"]) and card_rows_are_not_a_schedule(bouts):
+        if not (kalshi and kalshi["fights"]) and (
+            card_rows_are_not_a_schedule(bouts)
+            or card_bouts_are_priced_on_another_card(bouts, _priced_on, {token})
+        ):
             continue
 
         # #4505: the live window opens at THIS card's first bout, never at a fixed
@@ -2439,7 +2524,16 @@ class CombatEventAdapter:
             # to defer to.
             if venue_bouts:
                 return self._build_venue_envelope(target, venue_bouts, now)
-            if bouts and not card_rows_are_not_a_schedule(bouts):
+            # #7993: and refuse a card whose every bout is priced on ANOTHER card
+            # — the lister's same predicate, on the same branch, over the same
+            # open markets.
+            if (
+                bouts
+                and not card_rows_are_not_a_schedule(bouts)
+                and not card_bouts_are_priced_on_another_card(
+                    bouts, ticker_card_tokens_by_event(cfg, markets), card_tokens
+                )
+            ):
                 return self._build_events_envelope(target, bouts, now)
             return None
 
