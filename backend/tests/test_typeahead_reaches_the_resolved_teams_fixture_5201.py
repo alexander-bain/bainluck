@@ -321,7 +321,7 @@ class TestTheArmIsActuallyWiredIn:
         would both fire for every repaired query.
         """
         source = self._source()
-        assert source.index("_ta_rows = [*_ta_next, *_ta_last, *_ta_rows]") < source.index(
+        assert source.index("_ta_rows = [*_ta_next[:1], *_ta_last, *_ta_next[1:], *_ta_rows]") < source.index(
             "_ta_lead_team = team_pool[0] if team_pool else None"
         )
 

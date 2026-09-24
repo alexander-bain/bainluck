@@ -558,6 +558,22 @@ jobs:
             exit 1
           fi
 
+      - name: Matchup last-meeting typeahead contract (real Postgres)
+        # #8428. `dallas washington` names both sides of the next fixture, so the
+        # dropdown offers the game they just played beside the rematch — the
+        # or-LAST arm is no longer short-circuited for a MATCHUP. The controls
+        # (`cowboys`, `nfl`, a newer same-city WNBA final, a 40-day-old meeting,
+        # `new york`) are properties of which rows the route returns, so they
+        # need the route and a real database. Same skip detection as above.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_matchup_last_meeting_8428_pg.py \
+            -v -rs 2>&1 | tee /tmp/matchuplast.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/matchuplast.txt; then
+            echo "::error::matchup last-meeting typeahead contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:

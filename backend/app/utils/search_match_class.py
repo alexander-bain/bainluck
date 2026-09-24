@@ -572,6 +572,37 @@ def query_names_participant(query: str, participants: Iterable[str | None]) -> b
     return all(t in owned for t in q_tokens)
 
 
+def query_names_both_sides(query: str, home: str | None, away: str | None) -> bool:
+    """Is `query` a MATCHUP — does it name each side of this game separately? (#8428)
+
+    `query_names_participant` reads the two names as a union, so `cowboys` and
+    `dallas washington` both pass it. This asks the narrower question the
+    dropdown needs before it offers the last meeting beside the next one: did
+    the reader type one side AND the other? True when every query token is
+    owned by one of the two names (the union rule, unchanged) and, in addition,
+    at least one token names the home side and not the away side, and at least
+    one names the away side and not the home side.
+
+    The "and not the other side" is the load-bearing half. Without it `new york`
+    against *New York Mets at New York Yankees* would read as a matchup — the
+    same token lands on both names — when the reader has only typed a city.
+    Order-free: `washington dallas` names the same two sides as
+    `dallas washington`, whichever of them is at home.
+    """
+    q_tokens = _name_tokens(query)
+    if not q_tokens:
+        return False
+    home_tokens = set(_name_tokens(home or ""))
+    away_tokens = set(_name_tokens(away or ""))
+    if not home_tokens or not away_tokens:
+        return False
+    if not all(t in home_tokens or t in away_tokens for t in q_tokens):
+        return False
+    return any(t in home_tokens and t not in away_tokens for t in q_tokens) and any(
+        t in away_tokens and t not in home_tokens for t in q_tokens
+    )
+
+
 def query_is_entity_name(query: str, names: Iterable[str | None]) -> bool:
     """Is `query` one of these names, rather than a word appearing inside one?
 

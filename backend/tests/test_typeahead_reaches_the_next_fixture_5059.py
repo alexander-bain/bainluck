@@ -205,7 +205,9 @@ class TestTheArmIsActuallyWiredIn:
         still passed.
         """
         source = inspect.getsource(typeahead_search)
-        assert "[*_ta_next, *_ta_last, *_ta_rows]" in source, (
+        # #8428: a matchup's previous meeting sits behind the FIRST next row,
+        # not behind the whole next pool; the next fixture still leads.
+        assert "[*_ta_next[:1], *_ta_last, *_ta_next[1:], *_ta_rows]" in source, (
             "the or-next rows must be prepended AHEAD of the or-last rows"
         )
 

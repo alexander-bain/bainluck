@@ -171,6 +171,7 @@ from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
     query_is_entity_name,
+    query_names_both_sides,
     query_names_participant,
 )
 from app.utils.blank_event_cards import not_a_blank_card
@@ -10028,12 +10029,35 @@ async def typeahead_search(
             # this branch has always paid. A team with no future fixture at all
             # (an eliminated club, a dissolved side) pays both and still gets
             # #4411's answer.
+            #
+            # #8428: EXCEPT FOR A MATCHUP. `dallas washington` names both sides
+            # of the next fixture, and a reader who types two teams is asking
+            # about the pairing — the Jan 10 rematch AND the Sep 20 game they
+            # just played. The short-circuit above used to drop the played one
+            # while the full results page (30-day `days_back`) showed both.
+            # Only a query that names EACH side separately re-opens the arm
+            # (`query_names_both_sides`), so `cowboys` still pays one query.
+            _ta_matchups = [
+                ev for ev in _ta_next
+                if query_names_both_sides(
+                    _q_identity, ev.home_team_name, ev.away_team_name
+                )
+            ]
             _ta_last = []
-            if not _ta_next:
+            if not _ta_next or _ta_matchups:
                 _ta_last = (
                     await db.execute(_last_match_query(event_name_filter, now))
                 ).scalars().all()
                 _ta_last = [ev for ev in _ta_last if _ta_names_participant(ev)]
+                if _ta_next:
+                    # The PREVIOUS MEETING of a pairing already on the page,
+                    # and only one: not either club's last game against anybody
+                    # else, and not the same two cities in another sport
+                    # (Wings v Mystics answers `dallas washington` too).
+                    _ta_last = [
+                        ev for ev in _ta_last
+                        if any(_same_pairing(ev, nx) for nx in _ta_matchups)
+                    ][:_MATCHUP_LAST_MEETING_LIMIT]
         _ta_last_match_plan = _ta_plan
         # STAMPED ONLY WHEN IT RAN. An unconditional mark writes
         # `last_match_query: 0` for an arm that was short-circuited, and "cost
@@ -10041,13 +10065,16 @@ async def typeahead_search(
         # state `_ta_last_match_plan`'s `None` is documented to preserve above.
         # A probe that cannot tell them apart reads the repaired path as an
         # or-LAST arm that got suspiciously fast.
-        if not _ta_next:
+        if not _ta_next or _ta_matchups:
             _ta_mark("last_match_query")
         # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
         # pool BEFORE anything is scored, so a Jannik match sitting behind four
         # esports fixtures would be cut on its way to the scorer and the ship
         # would fail in a way that looks like a ranking bug and is not one.
-        _ta_rows = [*_ta_next, *_ta_last, *_ta_rows]
+        # #8428: a matchup's last meeting sits directly behind the NEXT one,
+        # not behind every later fixture of the pairing — an MLB series ten
+        # days out is four rows, and the pool keeps four.
+        _ta_rows = [*_ta_next[:1], *_ta_last, *_ta_next[1:], *_ta_rows]
 
     # #5201: the arm above admits only rows the query NAMES — and a NAMESAKE
     # names it. `bruins` resolves Boston Bruins into slot 0 while the pool holds
@@ -29086,6 +29113,33 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
         )
         .limit(_LEAD_TEAM_FIXTURE_LIMIT)
     )
+
+
+#: #8428: how many previous meetings a MATCHUP query adds beside the next one.
+#: One — "the game they just played" — because every row competes for the four
+#: event slots with fixtures the query earned on its own.
+_MATCHUP_LAST_MEETING_LIMIT = 1
+
+
+def _same_pairing(a, b) -> bool:
+    """Are these two games between the same two sides, whoever is at home? (#8428)
+
+    By team id where both rows carry both ids, or by the display names folded
+    to lower case within one sport — either is enough, because 344 future
+    fixtures carry no team id at all (#5201's measurement). Order-free on
+    purpose: the rematch of *Washington at Dallas* is *Dallas at Washington*.
+    """
+    ids_a = {a.home_team_id, a.away_team_id}
+    ids_b = {b.home_team_id, b.away_team_id}
+    if None not in ids_a and len(ids_a) == 2 and ids_a == ids_b:
+        return True
+
+    def _names(ev) -> frozenset:
+        return frozenset(
+            (n or "").strip().casefold() for n in (ev.home_team_name, ev.away_team_name)
+        )
+
+    return a.sport_id == b.sport_id and _names(a) == _names(b)
 
 
 def _last_match_query(event_name_filter, now: datetime):
