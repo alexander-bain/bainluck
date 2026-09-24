@@ -127,6 +127,10 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.odds_math import refuse_incoherent_projections
 from app.utils import period_markers as pm_source
+from app.utils.winprob_evidence import (
+    SERVED_CONTRACT as WINPROB_EVIDENCE_CONTRACT,
+    attach_served_evidence,
+)
 from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
@@ -25811,6 +25815,12 @@ async def get_event_odds_history(
     # settled-chart market-id read, the period-marker fallback, the ESPN score
     # supplement, the live-edge extension — has now run against the whole dict.
     # See `_project_served_game_state` (#6546).
+    #
+    # #7878 — immediately BEFORE it: the projection removes `evidence_span` and
+    # every provenance key, so what a point can prove about observation is
+    # computed from the whole dict and served as its own small `evidence` key.
+    # See `app/utils/winprob_evidence.py` for the served shape.
+    attach_served_evidence(win_prob_history, is_finished=bool(is_finished))
     _project_served_game_state(win_prob_history)
 
     # #6925 — LAST of the last, and after the projection above for the same
@@ -25859,6 +25869,9 @@ async def get_event_odds_history(
         "score_history": score_history,
         "espn_history": espn_history,
         "win_prob_history": win_prob_history,
+        # #7878: present iff this server classifies its points; see
+        # `app/utils/winprob_evidence.py`.
+        "evidence_contract": dict(WINPROB_EVIDENCE_CONTRACT),
         "win_prob_sources": win_prob_sources_meta,
         "scoring_plays": scoring_plays,
         "moments": moments,

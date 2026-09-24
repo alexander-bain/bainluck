@@ -286,6 +286,11 @@ class TestTableConfig:
 class _FakeResult:
     rowcount = 0
 
+    def one(self):
+        # #7878: the win-prob pass returns (rows_deleted, keepers_updated) from
+        # one statement instead of two rowcounts.
+        return (0, 0)
+
 
 class _RecordingSession:
     def __init__(self):
@@ -333,6 +338,40 @@ class TestGeneratedSQLSafety:
         assert "WHERE ID IN (SELECT ID FROM TO_DELETE)" in delete_sql
         assert "TO_DELETE AS" in delete_sql
         assert "RG.ID != K.KEEPER_ID" in delete_sql
+
+
+class TestEvidenceContractScope:
+    """#7878: only win-prob retention changes; odds and futures keep the generic pass.
+
+    The behaviour of the win-prob pass is proven against real Postgres in
+    `tests/integration/test_winprob_evidence_collapse_pg_7878.py`; this pins the
+    routing, which that file cannot see.
+    """
+
+    def test_only_winprob_takes_the_evidence_pass(self):
+        flagged = {k for k, cfg in _TABLE_CONFIG.items() if cfg.get("evidence_contract")}
+        assert flagged == {"winprob"}
+
+    @pytest.mark.parametrize("table_key", ["odds", "futures"])
+    def test_other_tables_never_stamp_evidence(self, table_key):
+        session = _RecordingSession()
+        cutoff = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+        asyncio.run(_collapse_partition_sql(session, _TABLE_CONFIG[table_key], 123, cutoff))
+        assert len(session.executions) == 3
+        assert all("evidence_span" not in sql for sql, _ in session.executions)
+        assert any("MIN(id) AS keeper_id" in sql for sql, _ in session.executions)
+
+    def test_winprob_pass_is_one_collapse_statement_plus_the_bridge(self):
+        session = _RecordingSession()
+        cutoff = datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+        asyncio.run(_collapse_partition_sql(session, _TABLE_CONFIG["winprob"], 123, cutoff))
+        assert len(session.executions) == 2
+        collapse_sql, params = session.executions[0]
+        assert "evidence_span" in collapse_sql and "MIN(id)" not in collapse_sql
+        assert "valid_until" not in collapse_sql.split("AS proven_end")[0].split("aged AS")[1], (
+            "proven_end must never read valid_until"
+        )
+        assert params["g_seconds"] == 300.0 and params["contract"] == "7878.v1"
 
 
 class TestSQLCorrectness:
