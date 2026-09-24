@@ -392,8 +392,9 @@ export default function EventPage({ params }: EventPageProps) {
   });
 
   // Everything on this page that ASSERTS motion reads this, so there is exactly
-  // one answer: the pulsing phase badge, the two `{countdown}s` tickers, the
-  // chart's own ring and the `isLive` the charts are handed. #4861 dropped the
+  // one answer: the pulsing phase badge, the header's ring and the `isLive` the
+  // charts are handed. (The two `{countdown}s` tickers it once gated are gone —
+  // #8336 left the header age badge as the page's one freshness answer.) #4861 dropped the
   // header's countdown group on a stalled feed and left those behind, which is
   // why Jeanjean v Liu still said LIVE in three places.
   const effectivelyLive = isLive && !liveClaimUnbacked;
@@ -1489,6 +1490,21 @@ export default function EventPage({ params }: EventPageProps) {
   // badge instead of choosing between them.
   const ringVisible = showRefreshCountdown && !feedStalled;
 
+  // #8336 — the page's one freshness answer, built ONCE and placed in the header
+  // and (when the chart goes fullscreen and covers the header) the modal. One
+  // element rather than two call sites, so the two can never disagree (#4469).
+  const ageBadge = showsAge ? (
+    <LiveAgeStamp
+      updatedAt={heroStamp.stamp}
+      oldestFact={heroStamp.fact}
+      connected={streamConnected}
+      // #5459 — the hero below reads "No result reported" on a pinned page.
+      // Without this the badge would pulse a green `live · 20s ago` beside it,
+      // whose stamp really is that fresh.
+      claimWithdrawn={liveClaimUnbacked}
+    />
+  ) : null;
+
   // L2-112 Item 4: the Score Differential card must hide when there is no
   // projected OR actual score data — otherwise ScoreDifferentialChart returns
   // null (or its "Score data is not available" message) inside a card shell,
@@ -1656,17 +1672,7 @@ export default function EventPage({ params }: EventPageProps) {
         {(showsAge || ringVisible) && (
           <div className="ml-auto flex items-center gap-3">
             {pushedAge && <LiveSparkline points={sparklinePoints} />}
-            {showsAge && (
-              <LiveAgeStamp
-                updatedAt={heroStamp.stamp}
-                oldestFact={heroStamp.fact}
-                connected={streamConnected}
-                // #5459 — the hero two lines below now reads "No result reported".
-                // Without this the badge would pulse a green `live · 20s ago`
-                // beside it on a pinned page, whose stamp really is that fresh.
-                claimWithdrawn={liveClaimUnbacked}
-              />
-            )}
+            {ageBadge}
 
             {/* Visual countdown timer — #3802 gates it on proximity, not just on
                 "not finished and not pushed". #4861: and not while the page's own
@@ -1865,14 +1871,12 @@ export default function EventPage({ params }: EventPageProps) {
                 {event.espn.broadcast}
               </span>
             )}
-            {effectivelyLive ? (
-              <span className="text-[10px] text-text-muted flex items-center gap-1">
-                <svg className="w-3 h-3 text-text-quaternary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span className="tabular-nums font-mono">{countdown}s</span>
-              </span>
-            ) : (
+            {/* #8336 — a live game prints NOTHING here. This slot used to carry a
+                `⟳ 20s` poll ticker, a second freshness indicator one row below
+                the header's age badge — and on a stream-fed page a promise of a
+                poll nobody was waiting on. The header badge is the page's one
+                answer to "how fresh is this" (#4469). */}
+            {effectivelyLive ? null : (
               <span className="text-[10px] text-text-muted" data-testid="event-hero-start">
                 {/* #3829 — the day is real, the hour may not be. The label and
                     the reason it is shaped this way live in
@@ -2374,19 +2378,8 @@ export default function EventPage({ params }: EventPageProps) {
         <div className="px-4 sm:px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-[13px] font-semibold text-text-primary">Win Probability</h2>
-            {effectivelyLive && (
-              <div className="flex items-center gap-1.5">
-                <div className="relative w-[18px] h-[18px]">
-                  <svg className="w-[18px] h-[18px] transform -rotate-90" viewBox="0 0 18 18">
-                    <circle cx="9" cy="9" r="7" fill="none" stroke="#E5E7EB" strokeWidth="2" />
-                    <circle cx="9" cy="9" r="7" fill="none" stroke="#10B981" strokeWidth="2"
-                      strokeDasharray="44" strokeDashoffset={44 - (countdownProgress / 100) * 44}
-                      strokeLinecap="round" className="transition-all duration-100" />
-                  </svg>
-                </div>
-                <span className="text-[10px] text-text-muted tabular-nums font-mono">{countdown}s</span>
-              </div>
-            )}
+            {/* #8336 — no ticker here either: the header's age badge is the
+                page's one freshness answer, and this was its third copy. */}
             {/* L2-112 Item 1: chart-card "Final" removed — the hero phase badge +
                 winner chip already mark the game final (killed the "Final … Final"
                 dup Alex flagged). The fullscreen modal keeps its own label. */}
@@ -3010,19 +3003,10 @@ export default function EventPage({ params }: EventPageProps) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-semibold text-text-primary">Win Probability</h2>
-              {effectivelyLive && (
-                <div className="flex items-center gap-1.5">
-                  <div className="relative w-[18px] h-[18px]">
-                    <svg className="w-[18px] h-[18px] transform -rotate-90" viewBox="0 0 18 18">
-                      <circle cx="9" cy="9" r="7" fill="none" stroke="#E5E7EB" strokeWidth="2" />
-                      <circle cx="9" cy="9" r="7" fill="none" stroke="#10B981" strokeWidth="2"
-                        strokeDasharray="44" strokeDashoffset={44 - (countdownProgress / 100) * 44}
-                        strokeLinecap="round" className="transition-all duration-100" />
-                    </svg>
-                  </div>
-                  <span className="text-[10px] text-text-muted tabular-nums font-mono">{countdown}s</span>
-                </div>
-              )}
+              {/* #8336 — the fullscreen view covers the header, so it carries the
+                  header's own age badge — the same element, not a copy — rather
+                  than a poll ticker: one freshness answer per screen. */}
+              {ageBadge}
               {isFinished && (
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-text-muted" />
