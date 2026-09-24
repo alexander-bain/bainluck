@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { usePageTracking, useScrollDepth, useEngagementTime, usePinnedFutures } from "@/hooks";
 import { trackEvent } from "@/lib/analytics";
 import {
-  getDiscoverCategoryAdjustment,
   getDiscoverItemAnalytics,
   conceptDomainToCategory,
   getDiscoverPersonalizationTrace,
@@ -50,6 +49,7 @@ import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
+import { applyLocalPersonalization, recordEditionScores } from "@/lib/discover/editionOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
 import {
@@ -179,42 +179,6 @@ function getSuppressedCategories(profile: DiscoverProfile | null): Set<string> {
     }
   }
   return suppressed;
-}
-
-function applyLocalPersonalization(
-  items: DiscoverGroupedItem[],
-  profile: DiscoverProfile | null
-): DiscoverGroupedItem[] {
-  if (!profile || items.length <= 6) return items;
-
-  const pinnedLead = items.slice(0, 3);
-  const rest = items.slice(3);
-  const result: DiscoverGroupedItem[] = [...pinnedLead];
-  const windowSize = 5;
-
-  for (let start = 0; start < rest.length; start += windowSize) {
-    const window = rest.slice(start, start + windowSize);
-    const ranked = window
-      .map((groupedItem, idx) => {
-        const analytics = getGroupedAnalytics(groupedItem);
-        const adjustment = analytics
-          ? getDiscoverCategoryAdjustment(profile, analytics.category)
-          : 0;
-        return {
-          groupedItem,
-          idx,
-          adjustedScore: (analytics?.score ?? 0) + adjustment,
-        };
-      })
-      .sort((a, b) => {
-        const scoreDiff = b.adjustedScore - a.adjustedScore;
-        return Math.abs(scoreDiff) > 0.001 ? scoreDiff : a.idx - b.idx;
-      })
-      .map((entry) => entry.groupedItem);
-    result.push(...ranked);
-  }
-
-  return result;
 }
 
 /** Interleave items so the default feed does not cluster into one sport or topic. */
@@ -630,6 +594,13 @@ export default function DiscoverPage() {
   // retry state and freezes auto-pagination until the reader retries.
   const [feedUnavailable, setFeedUnavailable] = useState(false);
   const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
+  // #2603 — the ORDER of the edition is decided once: the profile as it stood
+  // when the edition opened, and each card's score when it first arrived. The
+  // live profile still drives the category cooldown (a removal the reader
+  // asked for); it no longer re-sorts cards already on screen. Both reset on a
+  // manual refresh. See `lib/discover/editionOrder.ts`.
+  const [orderingProfile, setOrderingProfile] = useState<DiscoverProfile | null>(null);
+  const editionScoresRef = useRef<Map<string, number>>(new Map());
   const [challengeOpen, setChallengeOpen] = useState(false);
   const [challengeIndex, setChallengeIndex] = useState(0);
   const [challengeComplete, setChallengeComplete] = useState(false);
@@ -670,7 +641,9 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     setDismissed(getDismissed());
-    setInteractionProfile(readDiscoverInteractionProfile());
+    const profile = readDiscoverInteractionProfile();
+    setInteractionProfile(profile);
+    setOrderingProfile(profile);
     if (typeof window !== "undefined" && !localStorage.getItem("discover_has_swiped")) {
       setShowSwipeHint(true);
     }
@@ -928,6 +901,9 @@ export default function DiscoverPage() {
   const handleRefreshFeed = useCallback(() => {
     trackEvent("feed_refresh", { trigger: "manual", new_items_count: 0 });
     setAllItems([]);
+    // #2603 — a manual refresh opens a new edition: re-read the order inputs.
+    editionScoresRef.current = new Map();
+    setOrderingProfile(readDiscoverInteractionProfile());
     setVisibleCount(PAGE_SIZE);
     // 🔴 #7417 — THE SEED MOVES WITH THE WINDOW OR THE AUTO-PAGER STALLS. After
     // a Back the seed is the restored window (say 60). Resetting `visibleCount`
@@ -1136,6 +1112,9 @@ export default function DiscoverPage() {
     // Deduplicate by stable item ID across pages (defense in depth — a paging
     // hiccup can never render the same card twice).
     const unique = dedupeById(raw, getItemId);
+    // #2603 — first sight fixes a card's ranking score for this edition.
+    const editionScores = editionScoresRef.current;
+    recordEditionScores(editionScores, unique, getItemId);
     // L2-215 Item 1 — fail closed on empty predictive envelopes (#1486): drop any
     // card that carries neither a renderable probability nor an authoritative result
     // (empty concept/bundle/tournament/futures) BEFORE grouping, so no bare tile,
@@ -1154,8 +1133,17 @@ export default function DiscoverPage() {
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
     const grouped = groupRelatedMarkets(interleave(cooldownSafe));
-    return interleaveGrouped(applyLocalPersonalization(grouped, interactionProfile));
-  }, [page1Items, allItems, dismissed, interactionProfile]);
+    return interleaveGrouped(
+      applyLocalPersonalization(grouped, orderingProfile, (groupedItem) => {
+        const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
+        if (!item) return null;
+        return {
+          score: editionScores.get(getItemId(item)) ?? item.score ?? 0,
+          category: getDiscoverItemAnalytics(item).category,
+        };
+      }),
+    );
+  }, [page1Items, allItems, dismissed, interactionProfile, orderingProfile]);
 
   // L2-215 Item 1 — suppression telemetry. Count the empty predictive envelopes
   // dropped by the fail-closed filter, by card type + machine reason, with NO
