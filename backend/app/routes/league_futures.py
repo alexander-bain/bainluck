@@ -75,6 +75,7 @@ from app.utils.rail_competition_share import equal_share_by_competition
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     TOUR_LEAGUES_INCLUDING_TOURNAMENTS,
+    league_identity,
     tour_scope_sport_keys,
 )
 
@@ -1304,6 +1305,183 @@ def finals_behind_the_results_cap_query(
         .options(selectinload(Event.sport))
         .limit(FINALS_PER_INSTANT_CEILING * (UNREPORTED_LIMIT + 1))
     )
+
+
+# ── #7345: a Final a day away refutes a football card's "No result reported" ──
+#
+# The leagues whose same pairing never plays twice inside a few days, keyed by
+# `league_identity` so `americanfootball_nfl_preseason` counts as the NFL (#2866).
+# A football team plays once a week, and a rematch (a conference title game, a
+# playoff) is weeks after the first meeting. MLB, the NBA, the NHL and soccer are
+# deliberately absent: a baseball series plays the same pairing on consecutive
+# days and a cup tie's second leg can be days after the first, so a clock bound
+# there would put one game's Final on another game's card.
+WEEKLY_FIXTURE_LEAGUES = frozenset({"football/nfl", "football/college-football"})
+
+# How far apart the stored kickoffs of one football fixture may be. The specimens
+# are 24h and 25h out: an Odds API listing stamped on the wrong day
+# (`15300206` Texas Tech–Houston, stored 09-20 00:00Z against ESPN's Final at
+# 09-19 00:00Z). Three days covers a day's error either side and time zones. It
+# stays well under the six days between any two meetings of one pair.
+WEEKLY_FIXTURE_FINAL_WINDOW = timedelta(hours=72)
+
+
+def weekly_fixture_final_window(sport_key: str | None) -> timedelta | None:
+    """The clock bound for #7345's refutation on this league page, or ``None``.
+
+    ``None`` means the page is not a weekly league and nothing below runs, so the
+    query is never issued and every other league's page is unchanged.
+    """
+    if league_identity(sport_key) in WEEKLY_FIXTURE_LEAGUES:
+        return WEEKLY_FIXTURE_FINAL_WINDOW
+    return None
+
+
+def _is_id_less_and_scoreless(event) -> bool:
+    """A row with nothing that says which game it is, or how it went.
+
+    These are the only rows #7345 may take off the rail. A row with its own ESPN
+    or StatPal id names a game, and if that game differs from the Final's, the
+    two are different games whatever their clocks say. A row with a score is
+    a result, and a result is never suppressed here.
+    """
+    return (
+        not getattr(event, "espn_id", None)
+        and not getattr(event, "statpal_fixture_id", None)
+        and getattr(event, "home_score", None) is None
+        and getattr(event, "away_score", None) is None
+    )
+
+
+def weekly_finals_near_unreported_query(
+    sport_key: str,
+    now: datetime,
+    subjects: Sequence,
+    window: timedelta,
+    *,
+    also_sport_keys: Sequence[str] = (),
+):
+    """ESPN-anchored Finals for the same pairing as an id-less unreported row, ±window.
+
+    #7345. `finals_behind_the_results_cap_query` (#5802) asks for Finals at the
+    unreported rows' exact kickoff instants, because the twin fold's key is
+    exact-minute. An Odds API row stamped a day off its real kickoff is never
+    at that instant, so its Final is never found and the card says
+    "No result reported · Sep 19" for a game ESPN has as 28–26.
+
+    It is a SEPARATE query, not a widened #5802 statement, for two reasons.
+    First, the widening applies to football only, and every other league keeps
+    the statement its plan was measured on. Second, a ±3-day window over a
+    whole NCAAF slate is sixty-plus Finals per Saturday, which would overrun
+    that query's per-instant ceiling. So this one is keyed on the subject's own
+    two names as well as its clock, and returns at most a row or two per
+    subject.
+
+    Names are compared EXACTLY here, as a candidate filter only. The pair is
+    re-checked in Python on the squashed `twin_fold_key` names. If two providers
+    spell a school differently, the SQL misses the pair and the card keeps
+    today's text. That is the safe direction for a query whose output removes a
+    card.
+
+    The Final must carry an ESPN id and both scores: the evidence arm #7594
+    requires. A row that cannot say which game it is cannot refute another row.
+    """
+    pair_clauses = [
+        and_(
+            Event.home_team_name == s.home_team_name,
+            Event.away_team_name == s.away_team_name,
+            Event.commence_time.between(
+                s.commence_time - window, s.commence_time + window
+            ),
+        )
+        for s in subjects
+    ]
+    return (
+        select(Event)
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            _rail_league_scope(sport_key, also_sport_keys),
+            not_a_proven_duplicate(),
+            settled_rail_condition(
+                now, lookback=timedelta(days=RESULTS_LOOKBACK_DAYS)
+            ),
+            Event.espn_id.isnot(None),
+            Event.home_score.isnot(None),
+            Event.away_score.isnot(None),
+            or_(*pair_clauses),
+        )
+        # Loaded for `twin_fold_key`'s element 0, for #5802's reason: an
+        # unloaded sport keys as `sport_id`, and the pair is then compared on a
+        # different league element from the subject's.
+        .options(selectinload(Event.sport))
+        .limit(FINALS_PER_INSTANT_CEILING * (UNREPORTED_LIMIT + 1))
+    )
+
+
+def refuted_by_a_weekly_final(
+    unreported: list, finals: Sequence, window: timedelta
+) -> list:
+    """The unreported rail without the football cards a nearby Final refutes. #7345.
+
+    A card leaves the rail only when ALL of these hold:
+
+    * it is id-less and scoreless (:func:`_is_id_less_and_scoreless`);
+    * a Final carries an ESPN id and both scores;
+    * the two share league, away side and home side under the squashed
+      `twin_fold_key` names, in the same orientation;
+    * their stored kickoffs are within ``window`` of each other.
+
+    It suppresses and never folds. The subject has no score and no id, so there
+    is nothing on it to carry to the Final's card. Its only claim is
+    "nobody told us how this went", and the Final proves that claim false.
+
+    The row itself is not touched. It stays in `events` for the matching lane
+    (#2693, notice 14), which owns making it stop existing.
+
+    Gotcha #42: this improves the page and is never a precondition for having
+    one. If it raises, the rail is served unfiltered.
+    """
+    if not unreported or not finals:
+        return unreported
+    try:
+        evidence: dict[tuple, list[datetime]] = {}
+        for f in finals:
+            if not getattr(f, "espn_id", None):
+                continue
+            if getattr(f, "home_score", None) is None or getattr(
+                f, "away_score", None
+            ) is None:
+                continue
+            key = _twin_key_or_none(f)
+            if key is None:
+                continue
+            evidence.setdefault(key[:3], []).append(key[3])
+
+        kept = []
+        refuted = []
+        for e in unreported:
+            key = _twin_key_or_none(e) if _is_id_less_and_scoreless(e) else None
+            if key is not None and any(
+                abs(key[3] - when) <= window for when in evidence.get(key[:3], ())
+            ):
+                refuted.append(e.id)
+                continue
+            kept.append(e)
+        if refuted:
+            # `sport_key` is not interpolated, for the py/log-injection reason
+            # written above `_folded_past_rails`. The ids name the league.
+            logger.info(
+                "league page weekly-final refutation: %d unreported row(s) "
+                "suppressed (%s)",
+                len(refuted),
+                refuted[:20],
+            )
+        return kept
+    except Exception:  # noqa: BLE001 — see the gotcha #42 note above
+        logger.exception(
+            "league page: weekly-final refutation failed; serving the rail unfiltered"
+        )
+        return unreported
 
 
 def _event_probability(event: Event) -> float | None:
@@ -3086,6 +3264,45 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
         _r_events, _u_events, _g_events = _folded_past_rails(
             _r_events, _u_events, _g_events, _off_page_finals
         )
+
+        # ── #7345: on a football page, a Final a day away refutes the card ──
+        #
+        # The fold above is exact-minute, and an Odds API row stamped a day off
+        # its real kickoff is never at its Final's minute. `/sport/football/ncaaf`
+        # printed "No result reported · Sep 19" over Texas Tech–Houston, a game
+        # ESPN has as 28–26. Football only (`weekly_fixture_final_window`), and
+        # only id-less, scoreless rows, so nothing is issued on any other page
+        # or on a rail without such a row.
+        _weekly_window = weekly_fixture_final_window(sport_key)
+        _weekly_subjects = (
+            [e for e in _u_events if _is_id_less_and_scoreless(e) and e.commence_time]
+            if _weekly_window is not None
+            else []
+        )
+        if _weekly_subjects:
+            try:
+                _wf = await asyncio.wait_for(
+                    db.execute(
+                        weekly_finals_near_unreported_query(
+                            sport_key,
+                            now,
+                            _weekly_subjects,
+                            _weekly_window,
+                            also_sport_keys=_also_keys,
+                        )
+                    ),
+                    timeout=10,
+                )
+                _u_events = refuted_by_a_weekly_final(
+                    _u_events, list(_wf.scalars().all()), _weekly_window
+                )
+            except Exception:
+                # Gotcha #42: this improves the page and is never a
+                # precondition for having one. Losing it restores today's rail.
+                logger.exception(
+                    "league page: weekly-final lookup failed over %d row(s)",
+                    len(_weekly_subjects),
+                )
 
         # ── #6345: the list may not advertise a row the detail route disowns ──
         #
