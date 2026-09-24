@@ -1412,15 +1412,13 @@ final class DiscoverViewModel: ObservableObject {
         return max(currentOffset, serverPageEnd, decodedPageEnd)
     }
 
-    /// Page-merge interleave (L2-202): delegates to the shared linear-traversal
-    /// core so the O(n²) `removeFirst()` drain is gone here and in the view's two
-    /// interleave paths, with byte-for-byte identical order. This call site keeps
-    /// its historical lack of a small-input guard — the core handles 0/1/2 items
-    /// the same way the old inline loop did.
+    /// Page-merge spacing: delegates to the shared pass (#8415), which keeps
+    /// the served ranking and only defers cards the spacing rules hold back.
+    /// The core handles 0/1/2 items itself.
     private static func interleave(_ items: [FeedItem]) -> [FeedItem] {
-        FeedInterleave.byCategory(
+        FeedInterleave.spaced(
             items, sportsCategories: sportsCategories,
-            breakNonSportsRuns: true, category: category(for:), family: family(for:)
+            category: category(for:), family: family(for:)
         )
     }
 

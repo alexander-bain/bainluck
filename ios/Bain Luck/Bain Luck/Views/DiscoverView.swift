@@ -1390,11 +1390,12 @@ struct DiscoverView: View {
 
     private func interleave(_ items: [FeedItem]) -> [FeedItem] {
         // Preserve this call site's small-input guard, then delegate to the shared
-        // linear-traversal core (L2-202): identical order, no O(n²) removeFirst.
+        // spacing pass (#8415): it defers cards the spacing rules hold back and
+        // never promotes one because of its category.
         guard items.count > 2 else { return items }
-        return FeedInterleave.byCategory(
+        return FeedInterleave.spaced(
             items, sportsCategories: sportsCats,
-            breakNonSportsRuns: true, category: itemCategory, family: itemFamily
+            category: itemCategory, family: itemFamily
         )
     }
 
@@ -1407,12 +1408,12 @@ struct DiscoverView: View {
     }
 
     private func interleaveGrouped(_ items: [DiscoverGroupedItem]) -> [DiscoverGroupedItem] {
-        // Same shared linear core as `interleave`, classified by the grouped
-        // item's primary category (L2-202): identical order, no O(n²) removeFirst.
+        // Same shared spacing pass as `interleave` (#8415), classified by the
+        // grouped item's primary category.
         guard items.count > 2 else { return items }
-        return FeedInterleave.byCategory(
+        return FeedInterleave.spaced(
             items, sportsCategories: sportsCats,
-            breakNonSportsRuns: true, category: groupedCategory, family: groupedFamily
+            category: groupedCategory, family: groupedFamily
         )
     }
 

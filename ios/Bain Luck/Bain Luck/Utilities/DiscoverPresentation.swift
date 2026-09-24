@@ -1,189 +1,128 @@
 import Foundation
 
-/// Category-aware interleave used by the native Discover feed (L2-202 / C42 P2).
+/// The spacing pass the native Discover feed runs over the served ranking
+/// (#8415, the phone half of web #8413).
 ///
-/// This is the single, linear-traversal core that `DiscoverViewModel.interleave`
-/// (page-merge order) and `DiscoverView.interleave` / `.interleaveGrouped`
-/// (presentation order) all delegate to. It replaces three copies of an
-/// `Array.removeFirst()`-based drain — each front removal shifts every remaining
-/// element (O(n)), making the whole drain O(n²) on the main actor over the full
-/// payload. Here both partitions are consumed through advancing cursors and the
-/// look-ahead reorder is an O(1) `swapAt`, so the drain is strictly linear in the
-/// input size.
+/// `DiscoverViewModel.interleave` (page-merge order) and `DiscoverView.interleave`
+/// / `.interleaveGrouped` (presentation order) all delegate here.
 ///
-/// The output order is byte-for-byte identical to the prior `removeFirst`
-/// algorithm: same category partition (stable by first appearance), same
-/// `maxSportsRun` cap, same 5-wide look-ahead swap that avoids repeating a
-/// category run, same terminal behavior. `DiscoverInterleaveTests` pins this
-/// against a literal copy of the old algorithm across 0/1/2/3/50/200/500 mixed
-/// fixtures. Callers keep their own early-return guards (e.g. the view's
-/// `count > 2`) so each call site's exact behavior is preserved.
+/// 🔴 WHAT THIS REPLACED. The old pass split the list into a sports queue and a
+/// non-sports queue and took a sports card whenever the run cap allowed —
+/// exactly one non-sports card after every two sports cards, whatever the
+/// ranking — and its "don't repeat the last category" swap reached four cards
+/// ahead for ANY other card. On the 2026-09-24 production payload
+/// (`/api/feed?limit=50&event_pct=0.15`, the phone's own request) that turned a
+/// served 4-sports / 6-non-sports top ten into 7/3: NASCAR (#18), an Azerbaijan
+/// Grand Prix market (#19) and ATP Hangzhou (#20) reached page one while the
+/// served #2 fell off it. The web had the same algorithm and the same defect.
+///
+/// ✅ SPACING DEFERS, IT NEVER PROMOTES. Each slot takes the highest-ranked
+/// remaining card the rules allow. A card moves forward only past cards the
+/// rules are holding back, never because of its category. The rules, in the
+/// order they give way when nothing satisfies all of them:
+///
+///   1. the sports run cap and no two same-sport cards side by side — the web's
+///      two rules, byte-for-byte (`frontend/lib/discover/spacedOrder.ts`);
+///   2. no two same-CATEGORY cards side by side for non-sports too (#1883: a run
+///      of six politics cards at `offset=30`);
+///   3. no two same-STORY cards side by side (#1885: eleven county-magistrate
+///      cards, all `politics`, so rule 2 alone could not see them).
+///
+/// Rules 2 and 3 are the phone's, kept from the old pass, and give way first.
+/// So on any page where no two adjacent non-sports cards share a category, the
+/// phone's order is the web's order. When no remaining card satisfies the
+/// sports rules (only sports left and the cap reached), the highest-ranked card
+/// that is not a same-sport repeat is taken, then simply the highest-ranked.
+///
+/// Idempotent: every rule depends only on what has already been placed, so a
+/// second pass over its own output places the same card at every slot. That
+/// matters because the view spaces twice (before grouping and after
+/// personalization) on top of the page-merge pass.
+///
+/// Linear in practice, not quadratic: every rule reads only a card's category
+/// and story family, and both are constant within one family. So "the first
+/// remaining card in rank order that the rule allows" is always the HEAD of some
+/// family queue, and each slot costs one scan of the family heads rather than a
+/// scan of the remaining cards. The category and family closures run exactly
+/// once per card (`DiscoverSpacingTests` counts them).
 enum FeedInterleave {
-    /// Interleave `items` so non-sports cards break up long sports runs, using a
-    /// caller-supplied category classifier and sports-category set. Returns the
-    /// input unchanged when there are no non-sports items to interleave with
-    /// (matching every prior call site's `nonSports.isEmpty` guard).
-    ///
-    /// Linear: partition is one pass; the drain advances two cursors and performs
-    /// at most one O(1) swap plus a bounded (≤5) look-ahead per emitted item.
-    ///
-    /// - Parameter breakNonSportsRuns: apply the same bounded look-ahead swap to
-    ///   the **non-sports** drain (#1883). Defaults to `false`, which is the exact
-    ///   pre-#1883 algorithm — that default is what keeps
-    ///   `testByteForByteEquivalenceAcrossSizes` a live proof of the L2-202
-    ///   equivalence rather than a test that had to be rewritten to stay green.
-    ///
-    ///   Why it is needed: the guard only ever broke runs in the *sports*
-    ///   partition, and the sports partition runs dry partway down every Discover
-    ///   page, so the tail of the page was an unguarded raw-order drain. Measured
-    ///   on 83 production cards (2026-08-14), page `offset=30` came back with a
-    ///   run of **six** politics cards — and today's guard made that page *worse*
-    ///   than raw server order (5 → 6).
-    ///
-    ///   It is also the mandatory safety half of the #1883 concept fix. Mapping
-    ///   `ufc → mma` moves concepts *out* of the non-sports partition, which
-    ///   starves it of the variety it was using to break up runs: measured, the
-    ///   domain map **alone** takes the worst case from 6 to **8**. Map plus this
-    ///   guard returns it to 5. A fix that admits data ships its safety half in
-    ///   the same commit.
-    /// - Parameter family: a FINER token than `category` — the category narrowed
-    ///   by the server's story key (#1885). Defaults to `category`, which makes
-    ///   the second tier below provably inert and keeps every existing call
-    ///   bit-for-bit unchanged.
-    ///
-    ///   Why a second tier rather than replacing `category`: swapping the run
-    ///   test over to `family` wholesale would make the guard fire LESS often —
-    ///   two politics cards from different stories would stop counting as a run
-    ///   at all — and lengthen exactly the category runs the guard was built for.
-    ///   So the preference is ordered. Break the category run if anything in the
-    ///   window can; otherwise settle for breaking the STORY run, which is the
-    ///   case the eleven county-magistrate cards presented: every candidate in
-    ///   the window was `politics`, so tier one had nothing to offer and the page
-    ///   shipped one story eleven times.
-    static func byCategory<T>(
+    /// One family's cards, as input indices in rank order; `head` is the next
+    /// unplaced one.
+    private struct Queue {
+        let category: String
+        let family: String
+        var members: [Int]
+        var head = 0
+    }
+
+    static func spaced<T>(
         _ items: [T],
         sportsCategories: Set<String>,
-        breakNonSportsRuns: Bool = false,
         category: (T) -> String,
         family: ((T) -> String)? = nil
     ) -> [T] {
-        // A nested func, not a stored `let`: binding a non-escaping parameter to
-        // a local closure variable is a Swift escape error.
-        func familyOf(_ item: T) -> String { family?(item) ?? category(item) }
-        var sports: [T] = []
-        var nonSports: [T] = []
-        sports.reserveCapacity(items.count)
-        nonSports.reserveCapacity(items.count)
-        for item in items {
-            if sportsCategories.contains(category(item)) {
-                sports.append(item)
+        guard items.count > 2 else { return items }
+
+        let categories = items.map(category)
+        let families = family.map { items.map($0) } ?? categories
+
+        // One queue per family, in rank order. Family keys are namespaced by
+        // their category so two categories can never share a queue even when a
+        // caller's family closure does not refine its category.
+        var queues: [Queue] = []
+        var queueIndex: [String: Int] = [:]
+        for i in items.indices {
+            let key = categories[i] + "\u{1F}" + families[i]
+            if let q = queueIndex[key] {
+                queues[q].members.append(i)
             } else {
-                nonSports.append(item)
+                queueIndex[key] = queues.count
+                queues.append(Queue(category: categories[i], family: families[i], members: [i]))
             }
         }
-        // No non-sports to interleave — preserve the input exactly (the old code
-        // returned `items` here, not the sports partition).
-        guard !nonSports.isEmpty else { return items }
+
+        let nonSportsCount = categories.filter { !sportsCategories.contains($0) }.count
+        let maxSportsRun = nonSportsCount >= 4 ? 2 : 3
 
         var result: [T] = []
         result.reserveCapacity(items.count)
-
-        // Cursors replace `removeFirst()`: advancing an index is O(1) and never
-        // shifts the backing storage, so the whole drain is O(n) instead of O(n²).
-        var sportsIdx = 0
-        var nonSportsIdx = 0
         var lastCategory = ""
         var lastFamily = ""
         var sportsSinceNonSport = 0
-        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
 
-        /// The bounded look-ahead swap, shared by both drains.
-        ///
-        /// Tier 1 is the original rule: find a card in the next 5 whose CATEGORY
-        /// differs. Tier 2 (#1885) runs only when tier 1 found nothing, and
-        /// settles for a card whose FAMILY differs.
-        ///
-        /// Tier 2 is SKIPPED OUTRIGHT when no `family` closure was supplied. Not
-        /// an optimisation bolted on afterwards — it is what makes the inertness
-        /// structural instead of incidental: with `family == nil` the two
-        /// predicates are the same expression, so tier 2 could only re-find what
-        /// tier 1 just rejected. Leaving it to run anyway cost a second window
-        /// scan per emitted item and pushed the swap-heavy fixture in
-        /// `DiscoverInterleaveTests` from ~5,000 classifications to 6,949 — the
-        /// order was still correct, and the operation-count proof caught it
-        /// anyway, which is the entire reason that test counts operations rather
-        /// than timing them.
-        func swapInADifferentCard(_ buffer: inout [T], from idx: Int) {
-            let windowEnd = min(idx + 5, buffer.count)
-            guard idx < windowEnd else { return }
-            if let swapIdx = (idx..<windowEnd)
-                .first(where: { category(buffer[$0]) != lastCategory }) {
-                buffer.swapAt(idx, swapIdx)
-                return
+        while result.count < items.count {
+            func allowedBySportsRules(_ q: Queue) -> Bool {
+                !sportsCategories.contains(q.category)
+                    || (sportsSinceNonSport < maxSportsRun && q.category != lastCategory)
             }
-            guard family != nil else { return }
-            if let swapIdx = (idx..<windowEnd)
-                .first(where: { familyOf(buffer[$0]) != lastFamily }) {
-                buffer.swapAt(idx, swapIdx)
-            }
-        }
-
-        while sportsIdx < sports.count || nonSportsIdx < nonSports.count {
-            // Break a sports run (or drain the remaining non-sports once sports
-            // are exhausted) — same predicate as the original leading `if`.
-            if nonSportsIdx < nonSports.count
-                && (sportsSinceNonSport >= maxSportsRun || sportsIdx >= sports.count) {
-                // #1883: the same bounded look-ahead swap the sports branch has
-                // always had. Opt-in, so the legacy order stays reachable and
-                // pinned. Monotone by construction: when the next non-sports card
-                // does not repeat `lastCategory` the swap never fires and the
-                // output is bit-for-bit the pre-#1883 order.
-                // #1885: the trigger widens from "same category" to "same family",
-                // because a run of one STORY is the defect a reader actually
-                // reports ("six in a row"), and eleven cards of one story all
-                // read `politics` to the old test.
-                // Short-circuit ordered so the family probe is never evaluated
-                // when no `family` closure was supplied — op parity with the
-                // pre-#1885 path, not just order parity.
-                if breakNonSportsRuns,
-                   category(nonSports[nonSportsIdx]) == lastCategory
-                    || (family != nil && familyOf(nonSports[nonSportsIdx]) == lastFamily) {
-                    swapInADifferentCard(&nonSports, from: nonSportsIdx)
+            // The ladder, strictest first. Each rung's answer is the lowest
+            // rank among the queue heads it allows.
+            let rungs: [(Queue) -> Bool] = [
+                { allowedBySportsRules($0) && $0.category != lastCategory && $0.family != lastFamily },
+                { allowedBySportsRules($0) && $0.category != lastCategory },
+                { allowedBySportsRules($0) && $0.family != lastFamily },
+                { allowedBySportsRules($0) },
+                { $0.category != lastCategory },
+            ]
+            var best = [Int?](repeating: nil, count: rungs.count + 1)
+            for q in queues.indices where queues[q].head < queues[q].members.count {
+                let rank = queues[q].members[queues[q].head]
+                for (r, allows) in rungs.enumerated() where allows(queues[q]) {
+                    if best[r].map({ queues[$0].members[queues[$0].head] > rank }) ?? true { best[r] = q }
                 }
-                let item = nonSports[nonSportsIdx]
-                nonSportsIdx += 1
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = category(item)
-                lastFamily = familyOf(item)
-                continue
-            }
-
-            if sportsIdx < sports.count {
-                // Avoid two adjacent cards of the same sports category by swapping
-                // the front with the first differing card within the next 5 — an
-                // O(1) swap on the backing array, indices unchanged otherwise.
-                if category(sports[sportsIdx]) == lastCategory {
-                    swapInADifferentCard(&sports, from: sportsIdx)
+                if best[rungs.count].map({ queues[$0].members[queues[$0].head] > rank }) ?? true {
+                    best[rungs.count] = q
                 }
-                let item = sports[sportsIdx]
-                sportsIdx += 1
-                result.append(item)
-                lastCategory = category(item)
-                lastFamily = familyOf(item)
-                sportsSinceNonSport += 1
-            } else if nonSportsIdx < nonSports.count {
-                // Unreachable in practice (the leading `if` already claims this
-                // case), kept to mirror the original control flow exactly.
-                let item = nonSports[nonSportsIdx]
-                nonSportsIdx += 1
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = category(item)
-                lastFamily = familyOf(item)
             }
-        }
+            guard let q = best.lazy.compactMap({ $0 }).first else { break }
 
+            let picked = queues[q].members[queues[q].head]
+            queues[q].head += 1
+            result.append(items[picked])
+            lastCategory = categories[picked]
+            lastFamily = families[picked]
+            sportsSinceNonSport = sportsCategories.contains(lastCategory) ? sportsSinceNonSport + 1 : 0
+        }
         return result
     }
 }

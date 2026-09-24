@@ -1,151 +1,285 @@
 import XCTest
 @testable import Bain_Luck
 
-/// L2-202 / C42 P2 — the native Discover presentation-path efficiency change:
-///   1. `FeedInterleave.byCategory` replaces three `Array.removeFirst()`-based
-///      interleave drains (O(n²) main-actor shifting) with one linear-traversal
-///      core. These tests pin it byte-for-byte against a literal copy of the old
-///      algorithm across 0/1/2/3/50/200/500 mixed fixtures, and prove the
-///      classification (traversal) op count scales linearly, not quadratically.
-///   2. `MemoizedPresentation` rebuilds the interleave+group pipeline only when a
-///      semantic signature changes. These tests prove unrelated view-state
-///      changes (scroll, impressions) reuse the cache and each named semantic
-///      change (feed / dismiss / profile / staleness bucket) rebuilds once.
-final class DiscoverInterleaveTests: XCTestCase {
+/// #8415 — the phone's first ten are the ten the feed chose, spaced.
+///
+/// The phone half of web #8413. `FeedInterleave.spaced` replaced a pass that
+/// forced one non-sports card after every two sports cards whatever the ranking;
+/// on the phone's own 2026-09-24 payload it turned a served 4/6 top ten into
+/// 7/3 and pulled NASCAR (#18), the Azerbaijan Grand Prix (#19) and ATP Hangzhou
+/// (#20) onto page one. The web's replacement is
+/// `frontend/lib/discover/spacedOrder.ts`; its guard is
+/// `frontend/__tests__/discover/spacingDefersNeverPromotes8413.test.ts`, and the
+/// second test below runs that guard's fixture through the Swift pass so the two
+/// platforms are held to the same page.
+final class DiscoverSpacingTests: XCTestCase {
 
-    private struct Stub: Equatable { let id: Int; let cat: String }
+    private struct Card: Equatable, Hashable {
+        let id: Int
+        let name: String
+        let cat: String
+        let story: String?
+        var family: String { story.map { "\(cat)|\($0)" } ?? cat }
+    }
 
-    /// A representative sports/non-sports split (mirrors the app's real
-    /// `sportsCats`, but the algorithm only cares that some categories are in the
-    /// set and some are not).
-    private let sportsCats: Set<String> = ["basketball", "football", "baseball", "hockey", "soccer"]
+    private let sportsCats = DiscoverCategory.sportsCategories
 
-    private func category(_ s: Stub) -> String { s.cat }
+    private func space(_ cards: [Card]) -> [Card] {
+        FeedInterleave.spaced(cards, sportsCategories: sportsCats,
+                              category: { $0.cat }, family: { $0.family })
+    }
 
-    /// Literal copy of the pre-L2-202 interleave (the `removeFirst`/front-mutation
-    /// version shared by `DiscoverViewModel.interleave`, `DiscoverView.interleave`,
-    /// and `.interleaveGrouped`). This is the ground truth the new linear core must
-    /// reproduce exactly. Generic so it runs over the same `Stub` fixtures.
-    private func referenceInterleave<T>(
-        _ items: [T],
-        sportsCategories: Set<String>,
-        category: (T) -> String
-    ) -> [T] {
-        var sports = items.filter { sportsCategories.contains(category($0)) }
-        var nonSports = items.filter { !sportsCategories.contains(category($0)) }
-        guard !nonSports.isEmpty else { return items }
+    private func cards(_ rows: [(String, String, String?)]) -> [Card] {
+        rows.enumerated().map { Card(id: $0.offset + 1, name: $0.element.0, cat: $0.element.1, story: $0.element.2) }
+    }
 
-        var result: [T] = []
-        var lastCategory = ""
-        var sportsSinceNonSport = 0
-        let maxSportsRun = nonSports.count >= 4 ? 2 : 3
+    // MARK: - The production payload
 
-        while !sports.isEmpty || !nonSports.isEmpty {
-            if !nonSports.isEmpty && (sportsSinceNonSport >= maxSportsRun || sports.isEmpty) {
-                let item = nonSports.removeFirst()
-                result.append(item)
-                sportsSinceNonSport = 0
-                lastCategory = category(item)
-                continue
-            }
-            if !sports.isEmpty {
-                if category(sports[0]) == lastCategory,
-                   let swapIdx = sports.prefix(5).firstIndex(where: { category($0) != lastCategory }) {
-                    sports.swapAt(0, swapIdx)
+    /// `GET /api/feed?limit=50&offset=0&event_pct=0.15` — the phone's first-page
+    /// request — at 2026-09-24 ~20:45Z, reduced to name + the category and story
+    /// key `DiscoverCategory` derives. Full payload:
+    /// `artifacts/native-327/feed-fixture-2026-09-24.json`.
+    private static let served20260924: [(String, String, String?)] = [
+        ("Miami Marlins@Chicago Cubs", "baseball", nil),
+        ("Arizona Diamondbacks@Colorado Rock", "baseball", nil),
+        ("New York Mets@Texas Rangers", "baseball", nil),
+        ("MLB World Series Winner", "baseball", nil),
+        ("2027 PPA Tour Finals: Player to Qu", "pickleball", nil),
+        ("Brazil Presidential Election", "politics", nil),
+        ("AI", "tech", nil),
+        ("Awards Season", "entertainment", nil),
+        ("US x Iran ceasefire continues thro", "geopolitics", "story:middle_east_conflict"),
+        ("Fed & Rates", "economics", nil),
+        ("St. Louis Cardinals@Pittsburgh Pir", "baseball", nil),
+        ("Chicago White Sox@Kansas City Roya", "baseball", nil),
+        ("IPOs", "economics", nil),
+        ("Will China invade Taiwan by end of", "politics", nil),
+        ("Next French Presidential Election", "politics", nil),
+        ("Will there be at least 5000 measle", "health", nil),
+        ("Where will it rain on September 24", "weather", nil),
+        ("NASCAR Cup Series: 2026 Champion", "motorsports", nil),
+        ("Azerbaijan Grand Prix: Driver Winn", "motorsports", nil),
+        ("ATP Hangzhou Winner", "tennis", nil),
+        ("NFL Super Bowl Winner", "football", nil),
+        ("WTI Crude Oil (WTI) closes above $", "economics", "story:oil"),
+        ("Will Rocket Lab USA, Inc. (RKLB) h", "economics", nil),
+        ("2028 Election", "politics", nil),
+        ("How long will Trump and Xi shake h", "geopolitics", nil),
+        ("When will Apple release the iPhone", "tech", nil),
+        ("FedEx Open de France", "golf", nil),
+        ("Which party will win the U.S. Sena", "politics", nil),
+        ("Russia–Ukraine", "politics", nil),
+        ("Dancing with the Stars Season 35 ·", "entertainment", nil),
+        ("UFC", "mma", nil),
+        ("2026-27 Stanley Cup® Finals Winner", "hockey", nil),
+        ("Will the U.S. invade Iran before 2", "politics", "story:middle_east_conflict"),
+        ("Iran leadership change?", "politics", "story:middle_east_conflict"),
+        ("Which party will win the U.S. Hous", "politics", nil),
+        ("NATO x Russia military clash?", "geopolitics", nil),
+        ("Cleveland Guardians@Boston Red Sox", "baseball", nil),
+        ("Presidents Cup", "golf", nil),
+        ("Next James Bond actor?", "entertainment", nil),
+        ("Tampa Bay Rays@New York Yankees", "baseball", nil),
+        ("Next Mayor of Nelson Mandela Bay (", "politics", nil),
+        ("Kanye West performs in Russia by O", "entertainment", nil),
+        ("US recession by end of 2026?", "economics", nil),
+        ("Prime Minister of Israel after the", "politics", "story:middle_east_conflict"),
+        ("Venezuela leader end of 2026?", "politics", nil),
+        ("Milwaukee Brewers@Philadelphia Phi", "baseball", nil),
+        ("Will Trump buy at least part of Gr", "politics", nil),
+        ("2026 Midterms: Congress Balance of", "politics", nil),
+        ("Will the US take control of any pa", "politics", nil),
+        ("Nobel Peace Prize Winner 2026", "politics", nil),
+    ]
+
+    /// The phone spaces three times: the page-merge pass in the view model, then
+    /// the view's pass before grouping and again after personalization.
+    private func asRendered(_ cards: [Card]) -> [Card] { space(space(space(cards))) }
+
+    func testFirstTenAreTheServedTenOnTheProductionPayload() {
+        let served = cards(Self.served20260924)
+        let firstTen = asRendered(served).prefix(10)
+        XCTAssertEqual(firstTen.map(\.name), [
+            "Miami Marlins@Chicago Cubs",
+            "2027 PPA Tour Finals: Player to Qu",
+            "Arizona Diamondbacks@Colorado Rock",
+            "Brazil Presidential Election",
+            "New York Mets@Texas Rangers",
+            "AI",
+            "MLB World Series Winner",
+            "Awards Season",
+            "US x Iran ceasefire continues thro",
+            "Fed & Rates",
+        ])
+        XCTAssertEqual(Set(firstTen.map(\.id)), Set(1...10), "the served ten, and only them")
+    }
+
+    func testTheCardsTheOldPassPulledOntoPageOneStayBelowIt() {
+        let names = asRendered(cards(Self.served20260924)).prefix(10).map(\.name)
+        for pulled in ["NASCAR Cup Series: 2026 Champion", "Azerbaijan Grand Prix: Driver Winn",
+                       "ATP Hangzhou Winner", "St. Louis Cardinals@Pittsburgh Pir"] {
+            XCTAssertFalse(names.contains(pulled), "\(pulled) is not in the served ten")
+        }
+    }
+
+    /// The web guard's own fixture (`SERVED_20260924`, `/api/feed?limit=20`), run
+    /// through the Swift pass twice as the web page does. Same first ten as the
+    /// web asserts — the platforms render one page.
+    func testTheWebGuardsFixtureRendersTheWebsFirstTen() {
+        let web = cards([
+            ("Cardinals@Pirates LIVE", "baseball", nil), ("White Sox@Royals starting soon", "baseball", nil),
+            ("Mets@Rangers", "baseball", nil), ("MLB World Series Winner", "baseball", nil),
+            ("China invade Taiwan", "politics", nil), ("US invade Iran", "politics", nil),
+            ("Xi out before 2027", "geopolitics", nil), ("Brazil Presidential Election", "politics", nil),
+            ("Awards Season", "entertainment", nil), ("US x Iran ceasefire", "geopolitics", nil),
+            ("Astros@Mariners final", "baseball", nil), ("Kings@Ducks final", "icehockey", nil),
+            ("Fed & Rates", "economics", nil), ("IPOs", "economics", nil),
+            ("French Presidential Election", "politics", nil), ("Where will it rain", "weather", nil),
+            ("NASCAR Cup Champion", "motorsports", nil), ("Worlds 2026", "esports", nil),
+            ("Compliance Solutions Championship", "golf", nil), ("FedEx Open de France", "golf", nil),
+        ])
+        XCTAssertEqual(space(space(web)).prefix(10).map(\.name), [
+            "Cardinals@Pirates LIVE", "China invade Taiwan", "White Sox@Royals starting soon",
+            "US invade Iran", "Mets@Rangers", "Xi out before 2027", "MLB World Series Winner",
+            "Brazil Presidential Election", "Awards Season", "US x Iran ceasefire",
+        ])
+    }
+
+    // MARK: - Spacing defers, it never promotes
+
+    private func rng(_ seed: UInt64) -> () -> Double {
+        var s = seed
+        return {
+            s = (s &* 1_664_525 &+ 1_013_904_223) % 4_294_967_296
+            return Double(s) / 4_294_967_296
+        }
+    }
+
+    private func randomList(_ seed: UInt64, cats: [String], stories: [String?]) -> [Card] {
+        let r = rng(seed)
+        let n = 3 + Int(r() * 30)
+        return (0..<n).map { i in
+            Card(id: i, name: "c\(i)", cat: cats[Int(r() * Double(cats.count))],
+                 story: stories[Int(r() * Double(stories.count))])
+        }
+    }
+
+    private let mixedCats = ["baseball", "baseball", "baseball", "icehockey", "golf",
+                             "politics", "politics", "economics", "tech"]
+    private let mixedStories: [String?] = [nil, nil, "story:a", "story:b"]
+
+    /// Stated independently of the implementation: at every slot, find the
+    /// strictest rule any remaining card satisfies; the placed card must satisfy
+    /// it, and no card ranked above the placed one may.
+    func testEveryCardPlacedAheadOfAHigherRankedOneWasHeldBackByARule() {
+        for seed in UInt64(1)...400 {
+            let input = randomList(seed, cats: mixedCats, stories: mixedStories)
+            let out = space(input)
+            XCTAssertEqual(out.count, input.count)
+            XCTAssertEqual(Set(out), Set(input))
+
+            let cap = input.filter { !sportsCats.contains($0.cat) }.count >= 4 ? 2 : 3
+            var remaining = input
+            var lastCat = "", lastFam = "", run = 0
+            for placed in out {
+                let sportsOK: (Card) -> Bool = {
+                    !self.sportsCats.contains($0.cat) || (run < cap && $0.cat != lastCat)
                 }
-                let item = sports.removeFirst()
-                result.append(item)
-                lastCategory = category(item)
+                let rules: [(Card) -> Bool] = [
+                    { sportsOK($0) && $0.cat != lastCat && $0.family != lastFam },
+                    { sportsOK($0) && $0.cat != lastCat },
+                    { sportsOK($0) && $0.family != lastFam },
+                    sportsOK,
+                    { $0.cat != lastCat },
+                    { _ in true },
+                ]
+                let rule = rules.first { r in remaining.contains(where: r) }!
+                let idx = remaining.firstIndex(of: placed)!
+                XCTAssertTrue(rule(placed), "seed \(seed): placed card breaks the strictest satisfiable rule")
+                for skipped in remaining[..<idx] {
+                    XCTAssertFalse(rule(skipped), "seed \(seed): \(skipped.name) was allowed and ranked higher")
+                }
+                remaining.remove(at: idx)
+                lastCat = placed.cat
+                lastFam = placed.family
+                run = sportsCats.contains(placed.cat) ? run + 1 : 0
+            }
+        }
+    }
+
+    /// A literal port of the web's `spaceBySport`. Where no two non-sports cards
+    /// share a category (and so no story can repeat either), the phone's extra
+    /// rules have nothing to hold back and its order must BE the web's order.
+    private func webSpaceBySport(_ items: [Card]) -> [Card] {
+        if items.count <= 2 { return items }
+        let nonSports = items.filter { !sportsCats.contains($0.cat) }.count
+        let maxSportsRun = nonSports >= 4 ? 2 : 3
+        var remaining = items, result: [Card] = []
+        var lastSport = "", sportsSinceNonSport = 0
+        while !remaining.isEmpty {
+            var pick = remaining.firstIndex {
+                !sportsCats.contains($0.cat) || (sportsSinceNonSport < maxSportsRun && $0.cat != lastSport)
+            }
+            if pick == nil { pick = remaining.firstIndex { $0.cat != lastSport } }
+            let item = remaining.remove(at: pick ?? 0)
+            result.append(item)
+            if sportsCats.contains(item.cat) {
+                lastSport = item.cat
                 sportsSinceNonSport += 1
-            } else if !nonSports.isEmpty {
-                let item = nonSports.removeFirst()
-                result.append(item)
+            } else {
+                lastSport = ""
                 sportsSinceNonSport = 0
-                lastCategory = category(item)
             }
         }
         return result
     }
 
-    /// Deterministic mixed fixture of `n` items with several sports and non-sports
-    /// categories, arranged to create category runs (so the look-ahead swap path
-    /// is exercised) without any RNG. Every id is unique so equivalence is exact.
-    private func makeFixture(_ n: Int) -> [Stub] {
-        let cats = ["basketball", "basketball", "economics", "football", "politics",
-                    "baseball", "baseball", "baseball", "tech", "soccer", "hockey", "entertainment"]
-        return (0..<n).map { Stub(id: $0, cat: cats[$0 % cats.count]) }
-    }
-
-    // MARK: - Item 1: byte-for-byte ordered identity vs the old algorithm
-
-    func testByteForByteEquivalenceAcrossSizes() {
-        for n in [0, 1, 2, 3, 4, 5, 10, 50, 200, 500] {
-            let fixture = makeFixture(n)
-            let new = FeedInterleave.byCategory(fixture, sportsCategories: sportsCats, category: category)
-            let old = referenceInterleave(fixture, sportsCategories: sportsCats, category: category)
-            XCTAssertEqual(new, old, "linear interleave must match the removeFirst algorithm byte-for-byte at n=\(n)")
+    func testMatchesTheWebWhenNoTwoNonSportsCardsShareACategory() {
+        let sports = ["baseball", "baseball", "icehockey", "golf", "football"]
+        let others = ["politics", "economics", "tech", "weather", "health", "entertainment"]
+        for seed in UInt64(1)...400 {
+            let r = rng(seed)
+            var pool = others
+            let input: [Card] = (0..<(3 + Int(r() * 20))).map { i in
+                if !pool.isEmpty && r() < 0.4 {
+                    return Card(id: i, name: "c\(i)", cat: pool.removeFirst(), story: nil)
+                }
+                return Card(id: i, name: "c\(i)", cat: sports[Int(r() * Double(sports.count))], story: nil)
+            }
+            XCTAssertEqual(space(input), webSpaceBySport(input), "seed \(seed)")
         }
     }
 
-    func testAllSportsInputReturnedUnchanged() {
-        // No non-sports to interleave with → input preserved exactly (the old
-        // `nonSports.isEmpty` guard). Even a long same-category run is untouched.
-        let fixture = (0..<300).map { Stub(id: $0, cat: "basketball") }
-        let new = FeedInterleave.byCategory(fixture, sportsCategories: sportsCats, category: category)
-        XCTAssertEqual(new, fixture)
-    }
-
-    func testEmptyAndSingleAndPairPreserveOldBehavior() {
-        XCTAssertEqual(FeedInterleave.byCategory([Stub](), sportsCategories: sportsCats, category: category), [])
-        let one = [Stub(id: 1, cat: "economics")]
-        XCTAssertEqual(FeedInterleave.byCategory(one, sportsCategories: sportsCats, category: category),
-                       referenceInterleave(one, sportsCategories: sportsCats, category: category))
-        let pair = [Stub(id: 1, cat: "basketball"), Stub(id: 2, cat: "economics")]
-        XCTAssertEqual(FeedInterleave.byCategory(pair, sportsCategories: sportsCats, category: category),
-                       referenceInterleave(pair, sportsCategories: sportsCats, category: category))
-    }
-
-    func testOutputIsAlwaysAPermutationOfInput() {
-        for n in [3, 50, 200, 500] {
-            let fixture = makeFixture(n)
-            let out = FeedInterleave.byCategory(fixture, sportsCategories: sportsCats, category: category)
-            XCTAssertEqual(out.count, fixture.count, "no card dropped or duplicated at n=\(n)")
-            XCTAssertEqual(Set(out.map(\.id)), Set(fixture.map(\.id)), "same id set at n=\(n)")
+    func testIsIdempotentSoTheSecondAndThirdPassesMoveNothing() {
+        for seed in UInt64(1)...400 {
+            let once = space(randomList(seed, cats: mixedCats, stories: mixedStories))
+            XCTAssertEqual(space(once), once, "seed \(seed)")
         }
     }
 
-    // MARK: - Item 1: operation-count proof of linear traversal (not timing)
+    // MARK: - Shape and cost
 
-    func testClassificationOperationsScaleLinearly() {
-        var opCounts: [Int: Int] = [:]
-        for n in [50, 200, 500] {
-            let fixture = makeFixture(n)
-            var ops = 0
-            _ = FeedInterleave.byCategory(fixture, sportsCategories: sportsCats) { ops += 1; return $0.cat }
-            opCounts[n] = ops
-        }
-        // Absolute linear bound: partition (n) + a bounded (≤ ~7) look-ahead per
-        // emitted item. A quadratic (rescan-per-item) algorithm would blow past this.
-        for (n, ops) in opCounts {
-            XCTAssertLessThanOrEqual(ops, 10 * n, "≤10 classifications/item at n=\(n) — linear, not quadratic")
-        }
-        // Growth ratio: 10× the input → ~10× the ops, not ~100×.
-        let ratio = Double(opCounts[500]!) / Double(opCounts[50]!)
-        XCTAssertLessThan(ratio, 15, "op count grows ~linearly with input size (got \(ratio)×)")
+    func testSmallInputsAreReturnedUnchanged() {
+        XCTAssertEqual(space([]), [])
+        let pair = cards([("a", "baseball", nil), ("b", "baseball", nil)])
+        XCTAssertEqual(space(pair), pair)
     }
 
-    /// Worst case for the look-ahead swap: one non-sports item plus a long run of
-    /// identical-category sports, forcing the `== lastCategory` window scan on
-    /// nearly every iteration. Still linear, and still a faithful permutation.
-    func testSwapHeavyInputStaysLinearAndCorrect() {
-        var fixture = [Stub(id: -1, cat: "economics")]
-        fixture += (0..<499).map { Stub(id: $0, cat: "basketball") }
-        var ops = 0
-        let out = FeedInterleave.byCategory(fixture, sportsCategories: sportsCats) { ops += 1; return $0.cat }
-        XCTAssertEqual(Set(out.map(\.id)), Set(fixture.map(\.id)))
-        XCTAssertLessThanOrEqual(ops, 10 * fixture.count, "swap-heavy input still linear")
-        XCTAssertEqual(out, referenceInterleave(fixture, sportsCategories: sportsCats, category: category),
-                       "swap-heavy order still matches the old algorithm")
+    /// Worst case for a rescan-per-slot pass: one non-sports card and 499 of one
+    /// sport. Each classifier runs exactly once per card — the slot loop reads
+    /// the precomputed tokens, never the closures.
+    func testClassifiersRunOncePerCardEvenOnTheWorstCaseInput() {
+        var input = [Card(id: -1, name: "x", cat: "economics", story: nil)]
+        input += (0..<499).map { Card(id: $0, name: "b\($0)", cat: "basketball", story: nil) }
+        var catCalls = 0, famCalls = 0
+        let out = FeedInterleave.spaced(
+            input, sportsCategories: sportsCats,
+            category: { catCalls += 1; return $0.cat },
+            family: { famCalls += 1; return $0.family })
+        XCTAssertEqual(Set(out), Set(input))
+        XCTAssertEqual(catCalls, input.count)
+        XCTAssertEqual(famCalls, input.count)
+        XCTAssertEqual(out.first?.id, -1, "the top-ranked card keeps its slot")
     }
 }
 
