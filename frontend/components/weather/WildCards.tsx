@@ -61,7 +61,7 @@ export default function WildCards() {
     return (
       <div className="bg-surface-card border border-surface-border rounded-2xl py-16 text-center">
         <p className="text-text-secondary text-sm">No live wild cards right now</p>
-        <p className="text-text-muted text-xs mt-1.5">Rare, shareable weather markets appear here.</p>
+        <p className="text-text-muted text-xs mt-1.5">This card tracks rare, shareable weather markets.</p>
       </div>
     );
   }

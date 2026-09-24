@@ -110,7 +110,7 @@ function HurricaneTrackerEmpty() {
   return (
     <div className="bg-surface-card" style={{ borderRadius: 16, padding: 22 }}>
       <p className="text-text-secondary text-sm">No live hurricane markets right now</p>
-      <p className="text-text-muted text-xs mt-1.5">Seasonal storm markets appear here.</p>
+      <p className="text-text-muted text-xs mt-1.5">This card tracks seasonal hurricane markets.</p>
     </div>
   );
 }
