@@ -127,6 +127,10 @@ from app.utils import (
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
 from app.utils.odds_math import refuse_incoherent_projections
 from app.utils import period_markers as pm_source
+from app.utils.winprob_evidence import (
+    SERVED_CONTRACT as WINPROB_EVIDENCE_CONTRACT,
+    attach_served_evidence,
+)
 from app.utils.game_window import (
     filter_state_bearing_rows as _filter_state_bearing_rows,
     game_state_window as _game_state_window,
@@ -167,6 +171,7 @@ from app.utils.search_match_class import (
     PROMINENT_SPORT_KEYS as _SEARCH_PROMINENT_SPORT_KEYS,
     Evidence as _SearchEvidence,
     query_is_entity_name,
+    query_names_both_sides,
     query_names_participant,
 )
 from app.utils.blank_event_cards import not_a_blank_card
@@ -1141,6 +1146,11 @@ _SEARCH_TERM_SYNONYMS: dict[str, str] = {
     # "Coaches Out", never "fired" — so "fired" also matches "head coach", making
     # "next coach fired" find the "…Next Head Coach" markets.
     "fired": "head coach",
+    # #8427: Alex's phone, `superbowl` and `nfl superbowl winner` → No Results
+    # while `super bowl` finds "NFL Super Bowl Winner" (86832). Every venue writes
+    # it as two words; the joined spelling is how people type it. One-way: the
+    # spaced form already matches itself.
+    "superbowl": "super bowl",
     # Queue #250 Item 3a: awards-family plural↔singular stemming. Markets and
     # outcomes name a ceremony either way ("How many Emmys…" vs "…Best Drama Series
     # Emmy"), but a substring ILIKE on the plural ("%emmys%") CANNOT match a
@@ -10019,12 +10029,35 @@ async def typeahead_search(
             # this branch has always paid. A team with no future fixture at all
             # (an eliminated club, a dissolved side) pays both and still gets
             # #4411's answer.
+            #
+            # #8428: EXCEPT FOR A MATCHUP. `dallas washington` names both sides
+            # of the next fixture, and a reader who types two teams is asking
+            # about the pairing — the Jan 10 rematch AND the Sep 20 game they
+            # just played. The short-circuit above used to drop the played one
+            # while the full results page (30-day `days_back`) showed both.
+            # Only a query that names EACH side separately re-opens the arm
+            # (`query_names_both_sides`), so `cowboys` still pays one query.
+            _ta_matchups = [
+                ev for ev in _ta_next
+                if query_names_both_sides(
+                    _q_identity, ev.home_team_name, ev.away_team_name
+                )
+            ]
             _ta_last = []
-            if not _ta_next:
+            if not _ta_next or _ta_matchups:
                 _ta_last = (
                     await db.execute(_last_match_query(event_name_filter, now))
                 ).scalars().all()
                 _ta_last = [ev for ev in _ta_last if _ta_names_participant(ev)]
+                if _ta_next:
+                    # The PREVIOUS MEETING of a pairing already on the page,
+                    # and only one: not either club's last game against anybody
+                    # else, and not the same two cities in another sport
+                    # (Wings v Mystics answers `dallas washington` too).
+                    _ta_last = [
+                        ev for ev in _ta_last
+                        if any(_same_pairing(ev, nx) for nx in _ta_matchups)
+                    ][:_MATCHUP_LAST_MEETING_LIMIT]
         _ta_last_match_plan = _ta_plan
         # STAMPED ONLY WHEN IT RAN. An unconditional mark writes
         # `last_match_query: 0` for an arm that was short-circuited, and "cost
@@ -10032,13 +10065,16 @@ async def typeahead_search(
         # state `_ta_last_match_plan`'s `None` is documented to preserve above.
         # A probe that cannot tell them apart reads the repaired path as an
         # or-LAST arm that got suspiciously fast.
-        if not _ta_next:
+        if not _ta_next or _ta_matchups:
             _ta_mark("last_match_query")
         # PREPENDED, not appended. `_ta_events[:_EVENT_POOL_SIZE]` truncates the
         # pool BEFORE anything is scored, so a Jannik match sitting behind four
         # esports fixtures would be cut on its way to the scorer and the ship
         # would fail in a way that looks like a ranking bug and is not one.
-        _ta_rows = [*_ta_next, *_ta_last, *_ta_rows]
+        # #8428: a matchup's last meeting sits directly behind the NEXT one,
+        # not behind every later fixture of the pairing — an MLB series ten
+        # days out is four rows, and the pool keeps four.
+        _ta_rows = [*_ta_next[:1], *_ta_last, *_ta_next[1:], *_ta_rows]
 
     # #5201: the arm above admits only rows the query NAMES — and a NAMESAKE
     # names it. `bruins` resolves Boston Bruins into slot 0 while the pool holds
@@ -25806,6 +25842,12 @@ async def get_event_odds_history(
     # settled-chart market-id read, the period-marker fallback, the ESPN score
     # supplement, the live-edge extension — has now run against the whole dict.
     # See `_project_served_game_state` (#6546).
+    #
+    # #7878 — immediately BEFORE it: the projection removes `evidence_span` and
+    # every provenance key, so what a point can prove about observation is
+    # computed from the whole dict and served as its own small `evidence` key.
+    # See `app/utils/winprob_evidence.py` for the served shape.
+    attach_served_evidence(win_prob_history, is_finished=bool(is_finished))
     _project_served_game_state(win_prob_history)
 
     # #6925 — LAST of the last, and after the projection above for the same
@@ -25854,6 +25896,9 @@ async def get_event_odds_history(
         "score_history": score_history,
         "espn_history": espn_history,
         "win_prob_history": win_prob_history,
+        # #7878: present iff this server classifies its points; see
+        # `app/utils/winprob_evidence.py`.
+        "evidence_contract": dict(WINPROB_EVIDENCE_CONTRACT),
         "win_prob_sources": win_prob_sources_meta,
         "scoring_plays": scoring_plays,
         "moments": moments,
@@ -29068,6 +29113,33 @@ def _lead_team_next_match_query(team_id: int, team_name: str, now: datetime):
         )
         .limit(_LEAD_TEAM_FIXTURE_LIMIT)
     )
+
+
+#: #8428: how many previous meetings a MATCHUP query adds beside the next one.
+#: One — "the game they just played" — because every row competes for the four
+#: event slots with fixtures the query earned on its own.
+_MATCHUP_LAST_MEETING_LIMIT = 1
+
+
+def _same_pairing(a, b) -> bool:
+    """Are these two games between the same two sides, whoever is at home? (#8428)
+
+    By team id where both rows carry both ids, or by the display names folded
+    to lower case within one sport — either is enough, because 344 future
+    fixtures carry no team id at all (#5201's measurement). Order-free on
+    purpose: the rematch of *Washington at Dallas* is *Dallas at Washington*.
+    """
+    ids_a = {a.home_team_id, a.away_team_id}
+    ids_b = {b.home_team_id, b.away_team_id}
+    if None not in ids_a and len(ids_a) == 2 and ids_a == ids_b:
+        return True
+
+    def _names(ev) -> frozenset:
+        return frozenset(
+            (n or "").strip().casefold() for n in (ev.home_team_name, ev.away_team_name)
+        )
+
+    return a.sport_id == b.sport_id and _names(a) == _names(b)
 
 
 def _last_match_query(event_name_filter, now: datetime):

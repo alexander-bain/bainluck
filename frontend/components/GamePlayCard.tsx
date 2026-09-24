@@ -101,6 +101,7 @@ export default function GamePlayCard({
 
   const hasScore = point.homeScore != null && point.awayScore != null;
   const hasScoringPlay = !!point.scoringPlay;
+  const showsPair = !hasScoringPlay && point.probKnown !== false;
   /* #6496 — the play sentence is rendered BELOW the badge/score row, not inside
      it. Measured on production at 390px (live frontend `2ede802a7`): the row's
      other two children are `shrink-0`, so the text column settles at exactly
@@ -154,9 +155,16 @@ export default function GamePlayCard({
   // in #2936 are made of.
   //
   // #2936 stays OPEN — this is one call site of many, not the fix for the class.
+  //
+  // #8442 — the sport goes in too. Without it the #5634 football rule never
+  // ran here, so on `/events/15305207` this card read "Hotspur 0%" under a hero
+  // and axis that both said "Tottenham Hotspur". The key was already a prop
+  // (for the clock); a readout naming the club differently from the hero above
+  // it is the same defect #2936 was, one rule later.
   const { home: homeShort, away: awayShort } = teamShortNames(
     { name: homeTeam },
     { name: awayTeam },
+    sportKey,
   );
 
   // live/055 (#2815) — THE EIGHTH INSTANCE OF THE #1620 SHAPE, and the first one
@@ -241,7 +249,7 @@ export default function GamePlayCard({
 
   return (
     <div className="mt-3 border-t border-surface-border pt-3">
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 gap-y-1 flex-wrap">
         {/* Game-state badge: period + clock (top), time of day (bottom) */}
         {(gameState || timeOfDay) && (
           <div className="shrink-0 flex flex-col items-start gap-0.5">
@@ -289,8 +297,17 @@ export default function GamePlayCard({
           </div>
         )}
 
-        {/* Play description or probability context */}
-        <div className="flex-1 min-w-0">
+        {/* Play description or probability context.
+            #8433 — the pair asks for the width it needs before it shares the
+            row. At 390px the badge and score (both `shrink-0`) left this
+            column ~80px, and "Cowboys 66% — Commanders 34%" broke as
+            `Commanders` / `34%`, a name on one line and its number on the
+            next (`/events/14781697`). `basis-48` (192px, the width a common
+            pair takes at text-xs) lets the row wrap the pair onto its own
+            full-width line when the row cannot give it that; a wide card keeps
+            it beside the score. The other two branches are short labels, so
+            they keep `flex-1` and do not move. */}
+        <div className={showsPair ? "min-w-0 grow basis-48" : "flex-1 min-w-0"}>
           {hasScoringPlay ? (
             <div>
               <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
@@ -314,9 +331,15 @@ export default function GamePlayCard({
             </p>
           ) : (
             <p className="text-xs text-text-muted" data-testid="game-play-card-probability">
-              {homeShort}{" "}
-              <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
-                {homeProb}%
+              {/* #8433 — each side is one `inline-block` unit, so the line can
+                  only break BETWEEN sides. `whitespace-nowrap` was tried and
+                  clipped (`— Commanders 3`); an inline-block still wraps
+                  inside itself if a single side is wider than the card. */}
+              <span className="inline-block" data-testid="game-play-card-side">
+                {homeShort}{" "}
+                <span className="font-semibold" style={{ color: teamTextColor(homeTeamColor) || "var(--text-secondary)" }}>
+                  {homeProb}%
+                </span>
               </span>
               {/* #6238 — the separator belongs to the slot it separates. Left
                   behind, this reads `Citizen 1% —` and a reader takes it for a
@@ -326,10 +349,13 @@ export default function GamePlayCard({
                   one number alone is still attributed. */}
               {!awayWithheld && (
                 <>
-                  {" — "}
-                  {awayShort}{" "}
-                  <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
-                    {awayProb}%
+                  {" "}
+                  <span className="inline-block" data-testid="game-play-card-side">
+                    {"— "}
+                    {awayShort}{" "}
+                    <span className="font-semibold" style={{ color: teamTextColor(awayTeamColor) || "var(--text-secondary)" }}>
+                      {awayProb}%
+                    </span>
                   </span>
                 </>
               )}

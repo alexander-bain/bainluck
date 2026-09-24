@@ -7,6 +7,7 @@ import { formatTournamentTimingLabel } from "@/lib/gameTimeLabel";
 import { toAcronymSafeKeepingCase } from "@/lib/titleCase";
 import type { FeedTournamentData } from "@/lib/types";
 import { AnimatedProbability, DismissBtn, ActionBar, MovementBadge, dismissCornerBadge } from "./shared";
+import { HERO_CHIP_ON_DARK } from "./constants";
 
 interface TournamentCardProps {
   data: FeedTournamentData;
@@ -73,7 +74,9 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
     <div className="relative rounded-2xl overflow-hidden border border-surface-border bg-surface-card shadow-lg hover:shadow-xl transition-shadow">
       <DismissBtn onDismiss={onDismiss} />
       <div className="relative h-44 flex flex-col items-center justify-center" style={{ background: "linear-gradient(135deg, #14532d, #166534)" }}>
-        <div className="absolute top-3 left-3 bg-lime-600/15 text-lime-700 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">⛳ Golf</div>
+        {/* #8436 — the on-dark skin: `bg-lime-600/15 text-lime-700` was the white-card
+            golf chip, and on this hero it read as dark lime on dark green. */}
+        <div className={`absolute top-3 left-3 ${HERO_CHIP_ON_DARK} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full`}>⛳ Golf</div>
         {/* #3777: this pill and `DismissBtn` both claimed `top-3 right-3`, and
             the button wins on `z-10`. Same 48px line as `TrendBadge`. */}
         {whatHit && (
@@ -109,7 +112,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
                     (#7179): this narrows what the card may SAY, never which
                     tournaments a reader is shown. */}
                 {leader.movement_is_dated === true && (
-                  <MovementBadge m={leader.movement_24h} />
+                  <MovementBadge m={leader.movement_24h} onDark />
                 )}
               </>
             )}

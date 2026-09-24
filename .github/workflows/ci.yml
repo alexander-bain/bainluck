@@ -558,6 +558,22 @@ jobs:
             exit 1
           fi
 
+      - name: Matchup last-meeting typeahead contract (real Postgres)
+        # #8428. `dallas washington` names both sides of the next fixture, so the
+        # dropdown offers the game they just played beside the rematch — the
+        # or-LAST arm is no longer short-circuited for a MATCHUP. The controls
+        # (`cowboys`, `nfl`, a newer same-city WNBA final, a 40-day-old meeting,
+        # `new york`) are properties of which rows the route returns, so they
+        # need the route and a real database. Same skip detection as above.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_typeahead_matchup_last_meeting_8428_pg.py \
+            -v -rs 2>&1 | tee /tmp/matchuplast.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/matchuplast.txt; then
+            echo "::error::matchup last-meeting typeahead contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: Proven-duplicate search BRIDGE contract (real Postgres)
         # #5821 / CERT-3073. The step above proves the tagged twin stops being a
         # second search result. This proves the reader still reaches the game:
@@ -3470,6 +3486,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#8427 'superbowl' typed as one word reaches the Super Bowl market (real Postgres)"
+        # Alex's TestFlight build 20: `superbowl` / `nfl superbowl winner` served
+        # HTTP 200 and nothing on both /search and /typeahead while `super bowl`
+        # found 86832. The fix is a synonym spent as SQL through the route's
+        # per-term ILIKE + FTS arms, so it is proved here, over Postgres, on both
+        # routes; the no-DB pin is `tests/test_search_superbowl_synonym_8427.py`.
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_superbowl_joined_pg_8427.py \
+            -v -rs 2>&1 | tee /tmp/superbowl8427.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/superbowl8427.txt; then
+            echo "::error::#8427 superbowl recall contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6955 club-noun rails: apply, partial CAS and the D51 undo (real Postgres)"
         # CERT-3074's named follow-up. Both club-noun rails carry ~55 guards
         # apiece and every one drives a stub session, which can prove the rail
@@ -4388,6 +4420,71 @@ jobs:
           # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
           grep -qE "[^0-9]6 passed," /tmp/delay7617.txt || {
             echo "::error::#7617 delay contract did not run all six cases"
+            exit 1
+          }
+
+      - name: "#7878 win-prob evidence collapse — provision the disposable database"
+        # Its own database for the reason the #7617 step above gives: the file
+        # drops and creates the five tables it touches.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_evidence_collapse_7878"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "EVIDENCE_COLLAPSE_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_evidence_collapse_7878"
+
+      - name: "#7878 win-prob retention keeps observation evidence (real Postgres)"
+        # The 48h collapse merged equal-home runs with no gap bound and kept
+        # MIN(id), so 10:00/10:01/12:00 became one row and a chart could no
+        # longer show the two unobserved hours honestly. The rule is one SQL
+        # statement of window functions over a JSONB tuple; only Postgres can
+        # say what it keeps. Skip detection plus a count, as for #7617.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_winprob_evidence_collapse_pg_7878.py \
+            -v -rs 2>&1 | tee /tmp/evidence7878.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/evidence7878.txt; then
+            echo "::error::#7878 evidence collapse SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]14 passed," /tmp/evidence7878.txt || {
+            echo "::error::#7878 evidence collapse did not run all fourteen cases"
+            exit 1
+          }
+
+      - name: "#7878 win-prob evidence crosses the history response (real Postgres, real route)"
+        # Codex's exact-head review of PR #8438 found the producer's evidence
+        # never reached a client: the final `game_state` projection (#6546)
+        # stripped it. This gate seeds rows, runs the real retention collapse,
+        # GETs /api/events/{id}/history through the real app and reads the
+        # served JSON for every evidence kind. Shared `bl_searchtest`, reserved
+        # ids, ORM seeding. Skip detection plus a count.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_winprob_evidence_wire_7878_pg.py \
+            -v -rs 2>&1 | tee /tmp/wire7878.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/wire7878.txt; then
+            echo "::error::#7878 wire gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/wire7878.txt || {
+            echo "::error::#7878 wire gate did not run both cases"
             exit 1
           }
 

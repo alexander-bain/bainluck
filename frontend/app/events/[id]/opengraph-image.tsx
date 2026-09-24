@@ -3,7 +3,7 @@ import type { EventDetailResponse } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
 import { getSportLabel } from "@/lib/sportCategories";
-import { teamCrestBadge } from "@/lib/teamShortName";
+import { shippableCrestBadge } from "@/lib/teamShortName";
 import { teamTextColor } from "@/lib/teamColors";
 import { unresolvedCardCopy } from "@/lib/unresolvedCardCopy";
 import type { ResolutionFailure } from "@/lib/unresolvedShareMeta";
@@ -497,7 +497,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {teamCrestBadge(awayTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(awayTeam, event.sport_key || event.sport)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, color: awayNameColor }}>{awayTeam}</div>
             {awayHero !== null && (
@@ -534,7 +534,7 @@ export default async function Image({ params }: { params: { id: string } }) {
                 fontWeight: 900,
               }}
             >
-              {teamCrestBadge(homeTeam, event.sport_key || event.sport)}
+              {shippableCrestBadge(homeTeam, event.sport_key || event.sport)}
             </div>
             <div style={{ fontSize: 44, fontWeight: 850, lineHeight: 1.05, textAlign: "right", color: homeNameColor }}>{homeTeam}</div>
             {homeHero !== null && (

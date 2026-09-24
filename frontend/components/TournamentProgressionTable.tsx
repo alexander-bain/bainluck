@@ -258,6 +258,42 @@ export function stickyStraddleCover({
   return 0;
 }
 
+/**
+ * Was this scroll event the BROWSER clamping us, not a reader moving (#8449)?
+ *
+ * The straddle cover above is painted only while the grid rests where
+ * `alignSortColumn` put it, and "the reader took over" is read off scroll
+ * events we did not claim. One unclaimed event is not a reader: when the table
+ * NARROWS under a scroller resting at its far right (a font swap, a late
+ * column), the browser pulls `scrollLeft` back to the new maximum and fires a
+ * scroll event nobody asked for. Measured on production at 390px,
+ * `/playoffs/ncaa-basketball`: aligned to 331 with `scrollWidth` 655, the table
+ * settled to 634, the browser clamped to 318 — and the grid called that the
+ * reader, dropped the cover, and left the tail of "Title Game" standing as a
+ * stray "ne" in the header, between the pinned Team cell and Champion.
+ *
+ * The discriminator is the one position a reader cannot be in: beyond the
+ * maximum. A clamp lands ON the new maximum FROM a position past it; a reader's
+ * previous position was always within bounds, so this never swallows a real
+ * drag — including one that ends at the far right.
+ *
+ * Pure for the same reason as its neighbours: jsdom reports every rect as 0.
+ */
+export function isLayoutClamp({
+  previousScrollLeft,
+  scrollLeft,
+  maxScrollLeft,
+}: {
+  previousScrollLeft: number;
+  scrollLeft: number;
+  maxScrollLeft: number;
+}): boolean {
+  return (
+    previousScrollLeft > maxScrollLeft + SUBPIXEL_PX &&
+    Math.abs(scrollLeft - maxScrollLeft) <= SUBPIXEL_PX
+  );
+}
+
 
 /**
  * Font weight / opacity class based on probability value.
@@ -558,6 +594,9 @@ export default function TournamentProgressionTable({
   const alignedStageKey = useRef<string | null>(null);
   const readerScrolled = useRef(false);
   const selfScroll = useRef(false);
+  // Where the scroller was at the last event we handled or move we made — the
+  // one input `isLayoutClamp` needs to tell a browser clamp from a reader.
+  const lastScrollLeft = useRef(0);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [headHeight, setHeadHeight] = useState(0);
@@ -645,12 +684,29 @@ export default function TournamentProgressionTable({
     // one, because the arithmetic returns null for a move it would not make.
     selfScroll.current = true;
     el.scrollLeft = next;
+    lastScrollLeft.current = el.scrollLeft;
     syncScrollAffordance();
   }, [sort.stageKey, syncScrollAffordance]);
 
   const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    const previousScrollLeft = lastScrollLeft.current;
+    if (el) lastScrollLeft.current = el.scrollLeft;
     if (selfScroll.current) selfScroll.current = false;
-    else {
+    // #8449 — the table narrowed under us and the browser pulled the scroller
+    // back to the new edge. Nobody moved it, so it is still resting where the
+    // alignment put it; the sync below re-measures the straddler at the new
+    // layout.
+    else if (
+      el &&
+      isLayoutClamp({
+        previousScrollLeft,
+        scrollLeft: el.scrollLeft,
+        maxScrollLeft: el.scrollWidth - el.clientWidth,
+      })
+    ) {
+      // not the reader
+    } else {
       readerScrolled.current = true;
       setRestingOnAlignment(false);
     }

@@ -574,9 +574,21 @@ export function teamCrestBadge(
   const full = (name ?? "").trim();
   if (!full) return "";
   // #3110 pinned the doubles tile at three letters of the first surname, and
-  // that decision is not this function's to reopen — so a pair keeps the
-  // shipped expression untouched, including its edge cases.
-  if (isDoublesPair(full)) return teamShortName(full).slice(0, 3).toUpperCase();
+  // that decision is not this function's to reopen.
+  //
+  // #4535 — but three CHARACTERS is not three letters. A pair's short name is
+  // the pair whole, so a one- or two-letter first surname sliced into the
+  // space: "An Lin / Yi Yang" painted `AN `, "Ho / Liutarevich" `HO ` — two
+  // glyphs and a hole, on 25 production names. Count letters and digits
+  // instead, across the space, which is exactly what the iPhone's
+  // `glyphs(ofLabel:)` has always done (`ANL`, `HOL`), so the two clients now
+  // agree on these pairs too. Every pair whose first three characters are
+  // already letters keeps the badge it shipped with ("Siniakova / Townsend" is
+  // `SIN`); one with punctuation there loses it ("O'Connell" is `OCO`, not
+  // `O'C`), which is the same three-real-glyph rule.
+  if (isDoublesPair(full)) {
+    return teamShortName(full).replace(/[^\p{L}\p{N}]/gu, "").slice(0, 3).toUpperCase();
+  }
   // Hyphen splits like a space so that "Paris Saint-Germain" and "Paris Saint
   // Germain" — both live on production the same afternoon — agree.
   const distinctive = full
@@ -779,6 +791,29 @@ export function shippableCrestBadge(
     .slice(0, 3)
     .toUpperCase();
   return shippable(initials) ? initials : "";
+}
+
+/**
+ * The crest badge for the Discover card tiles (#4537): `teamCrestBadge`, except
+ * that a value in `UNSHIPPABLE_BADGES` is replaced by `shippableCrestBadge`'s.
+ *
+ * `teamCrestBadge` still emits the badges its last-word rule has always
+ * produced — "Cockfosters FC" `COC`, "Avispa Fukuoka" `FUK`, "Nigeria" `NIG` —
+ * and its output is mirrored by the iPhone's `CrestBadgeInitialsTests.swift`,
+ * so it is not re-lettered here. The substitution is gated on the set ONLY,
+ * not on `shippableCrestBadge`'s whitespace test. That test used to matter for
+ * a doubles pair whose first surname is under three letters ("Ho / Liutarevich"
+ * `HO `), which would have fallen to the space-split initials and printed a
+ * dangling slash (`DM/` for "de Minaur / Peers"); since #4535 `teamCrestBadge`
+ * no longer emits a space for a pair (`HOL`, `DEM`). So every name that paints a
+ * clean badge today paints exactly the same badge.
+ */
+export function discoverCrestBadge(
+  name: string | null | undefined,
+  sportKey?: string | null,
+): string {
+  const badge = teamCrestBadge(name, sportKey);
+  return UNSHIPPABLE_BADGES.has(badge) ? shippableCrestBadge(name, sportKey) : badge;
 }
 
 /**

@@ -1,12 +1,12 @@
 "use client";
 
-import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
+import { discoverCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
 import { buildDiscoverShareUrl } from "@/lib/share";
 import type { FeedItem, FeedEventData } from "@/lib/types";
-import { CATEGORY_GRADIENTS, chipCategory, getCat } from "./constants";
+import { CATEGORY_GRADIENTS, chipCategory, getCat, HERO_CHIP_ON_DARK } from "./constants";
 import { feedContextSnippet, feedExpandedContext, pregameSlotLabel } from "./utils";
 import { DismissBtn, TrendBadge, ActionBar, ExpandableContextText, SignalBars, ForYouChip } from "./shared";
 import { forYouCue } from "@/lib/discover/forYouCue";
@@ -145,6 +145,11 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
   // segment here would leave the fix inert.
   const sportCat = chipCategory(data.sport) || "sports";
   const catStyle = getCat(sportCat);
+  // #8436 — the hero is dark only when its shelf has a gradient; a sport with
+  // none falls back to a light team-colour tint below, where the white-card
+  // chip skin is still the readable one.
+  const heroGradient = CATEGORY_GRADIENTS[sportCat];
+  const heroChipSkin = heroGradient ? HERO_CHIP_ON_DARK : `${catStyle.bg} ${catStyle.text}`;
   // #2621 (ux half) — THE CHIP NAMES A COMPETITION, NOT A KEY FRAGMENT.
   //
   // This used to print the server's `sport_label` verbatim. That field is
@@ -243,7 +248,7 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
       <DismissBtn onDismiss={onDismiss} />
       {trending && <TrendBadge />}
 
-      <div className="relative h-44 flex items-center justify-center gap-6" style={{ background: CATEGORY_GRADIENTS[sportCat] || `linear-gradient(135deg, ${awayColor}33, ${homeColor}33)` }}>
+      <div className="relative h-44 flex items-center justify-center gap-6" style={{ background: heroGradient || `linear-gradient(135deg, ${awayColor}33, ${homeColor}33)` }}>
         {/* #2621 (ux half) — THE STATUS PILLS SHARE ONE ROW, SO THEY CANNOT SHARE PIXELS.
             The chip and the LIVE badge used to be two independent absolutes — one at
             `left-3`, one centred at `left-1/2` — with nothing stopping the first growing
@@ -261,17 +266,17 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
             it rather than moving it). `truncate` is the backstop only — every label in the
             live corpus fits the 274px this leaves. */}
         <div className={`absolute top-3 left-3 ${trending ? "right-36" : "right-12"} flex items-center gap-2`}>
-          <div className={`min-w-0 truncate ${catStyle.bg} ${catStyle.text} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {sportChip}</div>
+          <div className={`min-w-0 truncate ${heroChipSkin} text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full backdrop-blur-sm`}>{catStyle.emoji} {sportChip}</div>
           {isLive && <div className="shrink-0 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />LIVE</div>}
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamCrestBadge(data.away_team, data.sport)}</div>}
+          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{teamCrestBadge(data.home_team, data.sport)}</div>}
+          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>

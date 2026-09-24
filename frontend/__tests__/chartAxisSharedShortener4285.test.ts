@@ -178,7 +178,9 @@ describe("#5671 the three sites #4285 left behind", () => {
 
   it("PlayerPropsDashboard takes the badge ladder, not the name helper", () => {
     const source = sourceOf("PlayerPropsDashboard.tsx");
-    expect(source).toContain("teamCrestBadge(");
+    // #4537 — the ladder through its slur-safe door (#7270), never bare.
+    expect(source).toContain("shippableCrestBadge(");
+    expect(source).not.toMatch(/\bteamCrestBadge\(/);
     // A three-glyph chip is not a name slot: `teamShortName` FAILS SAFE by
     // returning the full name, and slicing that to three prints a fragment
     // with a space in it ("AC Milan U20" -> "AC "). That is #4466 by name.
