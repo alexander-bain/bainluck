@@ -26,6 +26,7 @@ table-tennis payload in the resolved cohort stays table tennis (the control).
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 
 import pytest
 
@@ -164,6 +165,54 @@ def test_the_dispatcher_can_forward_both_new_params():
         params = inspect.signature(fn).parameters
         assert "status_scope" in params and "undo_identity" in params
     assert "status_scope" in inspect.signature(rail.census).parameters
+
+
+# ---------------------------------------------------------------------------
+# 1b. A resumed page binds a datetime (#2526, production 2026-09-24 00:40Z)
+#
+# The dispatcher passes `after_date` as the string `next_cursor` printed, and
+# asyncpg binds `CAST(:after_date AS timestamptz)` as a typed parameter that
+# refuses a str — every page after the first failed on production and reported
+# itself as a SELECT timeout. A recording session accepts any type, which is how
+# the string survived three weeks; the real-Postgres arm is
+# `tests/integration/test_sport_category_cursor_resume_2526_real_postgres.py`.
+# ---------------------------------------------------------------------------
+
+_BOUND = datetime(2026, 8, 31, 18, 55, 34, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("given", ["2026-08-31T18:55:34+00:00", "2026-08-31T18:55:34Z"])
+async def test_a_resumed_page_binds_a_datetime_not_the_cursor_string(fast, monkeypatch, given):
+    s = _Session(targets=[], remaining=5)
+    _venue(monkeypatch, {})
+    out = await rail.repair(s, apply=False, status_scope="not_open", after_date=given, after_id=59939104)
+
+    bound = s.target_params["after_date"]
+    assert isinstance(bound, datetime), f"after_date bound as {type(bound).__name__}"
+    assert bound == _BOUND
+    # The cursor handed back on an empty page is still the operator's own text.
+    assert out["next_cursor"] == {"after_date": given, "after_id": 59939104}
+
+
+@pytest.mark.parametrize("bad", ["yesterday", "2026-13-01T00:00:00+00:00", "59939104"])
+async def test_a_malformed_cursor_date_is_refused_by_name_and_reads_nothing(fast, monkeypatch, bad):
+    s = _Session(targets=[], remaining=5)
+    _venue(monkeypatch, {})
+    out = await rail.repair(s, apply=True, status_scope="not_open", after_date=bad, after_id=1)
+    assert out["terminal"] == "refused_cursor"
+    assert repr(bad) in out["reason"]
+    assert s.statements == [], "a malformed cursor was read as some page"
+
+
+async def test_the_emitted_cursor_round_trips_as_a_datetime(fast, monkeypatch):
+    s1 = _Session(targets=[_Row("943345", _Ts("2026-08-31T18:55:34+00:00"), 59939103)], remaining=5)
+    _venue(monkeypatch, {"943345": _TENNIS})
+    first = await rail.repair(s1, apply=False, status_scope="not_open")
+
+    s2 = _Session(targets=[], remaining=5)
+    await rail.repair(s2, apply=False, status_scope="not_open", **first["next_cursor"])
+    assert s2.target_params["after_date"] == _BOUND
+    assert s2.target_params["after_id"] == 59939103
 
 
 # ---------------------------------------------------------------------------

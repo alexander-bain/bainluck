@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from datetime import datetime, timezone
 
 import pytest
 
@@ -580,7 +581,10 @@ async def test_the_cursor_the_rail_emits_pages_the_next_call(fast, monkeypatch):
     clause = _keyset_clause(s2.target_sql)
     assert clause, "the emitted cursor produced no keyset at all"
     assert s2.target_params["after_id"] == 11
-    assert s2.target_params["after_date"] == "2026-08-30T18:00:00+00:00"
+    # #2526: bound as a DATETIME. asyncpg types `CAST(:after_date AS timestamptz)`
+    # and refuses the string this assertion used to pin, so every resumed page
+    # on production failed while this fake accepted it.
+    assert s2.target_params["after_date"] == datetime(2026, 8, 30, 18, tzinfo=timezone.utc)
     # NULLS LAST puts the whole null region after us, so it must remain
     # reachable from a non-null cursor rather than being filtered away.
     assert "IS NULL" in clause.upper(), (
