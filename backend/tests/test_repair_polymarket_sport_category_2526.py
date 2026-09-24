@@ -130,7 +130,8 @@ async def test_the_write_is_keyed_on_the_market_ids_the_page_selected(
     assert "fm.id = ANY(CAST(:ids AS integer[]))" in sql, sql
     assert params["ids"] == [59939103, 59939111]
     # The id list narrows the write; it never replaces the compare-and-set.
-    for guard in ("fm.llm_sport_category = :cat_old", "polymarket_event_id' = :eid"):
+    # #8460: the event half of the compare-and-set is the scope's own event key.
+    for guard in ("fm.llm_sport_category = :cat_old", f"{rail.EVENT_ID_SQL[scope]} = :eid"):
         assert guard in sql, guard
 
 
