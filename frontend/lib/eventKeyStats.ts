@@ -2311,6 +2311,35 @@ export function computeLastChartPoint(
     if (!datable) scoreStamp = null;
   }
 
+  // #925 — THE RESTING READOUT TAKES THE NEWEST READING OF EACH FIELD, as the
+  // comment above already claims. It took `lastEspn.period` / `lastEspn.game_clock`
+  // raw, so a score-only row — which ESPN emits between MLB half-innings —
+  // blanked the badge to "—". `/events/15318166` (Mets @ Rangers, live,
+  // 2026-09-24): rows `Bottom 4th` 19:39Z, then `period: null` ×3, then
+  // `End 4th` 19:47Z; for eight minutes the header read "Bottom 4th" and the
+  // readout under the chart read "—". The hover path never did this — it
+  // carries through `carryGameStateForward` — so the same minute read two ways
+  // depending on whether a finger was on the chart.
+  //
+  // A value found on an EARLIER row is carried, and says so the same way the
+  // hover path does: `*Approx` + the row that observed it, which the card turns
+  // into `~Bottom 4th` and "as of 12:39 PM". Period and clock are searched
+  // independently — a clock-only row must not date a period it never saw.
+  const newestEspnField = (
+    read: (row: NonNullable<typeof lastEspn>) => string | null,
+  ): { value: string | null; at: string | null; carried: boolean } => {
+    if (!espn) return { value: null, at: null, carried: false };
+    for (let i = espn.length - 1; i >= 0; i--) {
+      const value = read(espn[i]);
+      if (value != null && value !== "") {
+        return { value, at: espn[i].timestamp || null, carried: i !== espn.length - 1 };
+      }
+    }
+    return { value: null, at: null, carried: false };
+  };
+  const periodReading = newestEspnField((row) => row.period?.toString() ?? null);
+  const clockReading = newestEspnField((row) => row.game_clock ?? null);
+
   return {
     timestamp:
       lastEspn?.timestamp ||
@@ -2322,8 +2351,14 @@ export function computeLastChartPoint(
     probKnown,
     homeScore: resolvedHomeScore,
     awayScore: resolvedAwayScore,
-    period: lastEspn?.period?.toString() ?? null,
-    clock: lastEspn?.game_clock ?? null,
+    period: periodReading.value,
+    clock: clockReading.value,
+    ...(periodReading.carried
+      ? { periodApprox: true, periodObservedAt: periodReading.at }
+      : {}),
+    ...(clockReading.carried
+      ? { clockApprox: true, clockObservedAt: clockReading.at }
+      : {}),
     scoringPlay: latestPlay,
     scoreStamp,
     scoreFrom,
