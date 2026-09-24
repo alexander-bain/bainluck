@@ -73,6 +73,11 @@ function MovementIndicator({ change }: { change: number | null | undefined }) {
 
   const isPositive = change > 0;
   const absChange = Math.abs(change * 100);
+  // #8455 — a drift that prints as "0.0" is no movement to a reader, however
+  // it is signed. `/search?q=superbowl` served -5.3e-05 on every Super Bowl
+  // row and each drew a red "↓ 0.0%". Decided on the printed string, so the
+  // arrow and its number can never disagree about whether anything moved.
+  if (absChange.toFixed(1) === "0.0") return null;
   const isSignificant = absChange >= 2;
 
   return (
