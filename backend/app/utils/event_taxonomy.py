@@ -131,12 +131,14 @@ _SPORT_KEY_TO_LEAGUE: dict[str, str] = {
     "basketball_nbl": "nbl",
     "americanfootball_nfl": "nfl",
     "americanfootball_ncaaf": "ncaaf",
+    "americanfootball_ncaaf_fcs": "ncaaf",
     "americanfootball_cfl": "cfl",
     "americanfootball_xfl": "xfl",
     "americanfootball_ufl": "ufl",
     "baseball_mlb": "mlb",
     "baseball_mlb_preseason": "mlb",
     "icehockey_nhl": "nhl",
+    "icehockey_nhl_preseason": "nhl",
     "icehockey_ahl": "ahl",
     "icehockey_liiga": "liiga",
     "icehockey_sweden_hockey_league": "shl",
@@ -412,18 +414,46 @@ def _extract_sport(sport_key: str) -> Optional[str]:
     return None
 
 
-def _extract_league(sport_key: str, llm_league: Optional[str]) -> Optional[str]:
-    """Extract league tag. Prefers llm_league if it maps; falls back to sport_key lookup."""
-    # Try llm_league first (normalized to lowercase with underscores)
-    if llm_league:
-        normalized = llm_league.lower().replace(" ", "_")
-        if normalized in ALLOWED_TAGS["league"]:
-            return normalized
+def _league_sports() -> dict[str, set[Optional[str]]]:
+    """Every sport each league tag is minted for, read off ``_SPORT_KEY_TO_LEAGUE``."""
+    sports: dict[str, set[Optional[str]]] = {}
+    for key, league in _SPORT_KEY_TO_LEAGUE.items():
+        sports.setdefault(league, set()).add(_extract_sport(key))
+    return sports
 
-    # Fall back to sport_key mapping
+
+_LEAGUE_SPORTS = _league_sports()
+
+
+def _is_generic_sport_key(sport_key: str) -> bool:
+    """A key that names a sport but no competition: ``soccer_other``, ``esports``."""
+    return not sport_key or "_" not in sport_key or sport_key.endswith("_other")
+
+
+def _extract_league(sport_key: str, llm_league: Optional[str]) -> Optional[str]:
+    """Extract league tag. The sport key's own league wins; the LLM only fills gaps.
+
+    A sport key that names its competition (``icehockey_sweden_hockey_league``)
+    is the authority for it. The LLM labelled every live SHL and Liiga game
+    ``NHL``, and while it was consulted first that label won, so the SHL page's
+    "More SHL" rail listed four Stanley Cup markets (#8418). A named competition
+    we have no tag for (``baseball_milb``, ``icehockey_mestis``) gets NO league
+    tag, never the bigger league the LLM reaches for (``MLB``, ``NHL``).
+
+    The LLM label is read only for a generic key (``icehockey_other``), and only
+    when it names a league of the event's sport: ``basketball_other`` rows
+    labelled ``NFL`` get no league tag rather than a football one.
+    """
     league = _SPORT_KEY_TO_LEAGUE.get(sport_key)
     if league and league in ALLOWED_TAGS["league"]:
         return league
+
+    if llm_league and _is_generic_sport_key(sport_key):
+        normalized = llm_league.lower().replace(" ", "_")
+        if normalized in ALLOWED_TAGS["league"]:
+            sport = _extract_sport(sport_key)
+            if sport is None or sport in _LEAGUE_SPORTS.get(normalized, {sport}):
+                return normalized
     return None
 
 
