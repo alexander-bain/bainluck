@@ -514,6 +514,37 @@ describe("the live clock — ESPN's PRE-GAME sentence is not a period", () => {
       expect(trustedLiveClock("2nd Half", "2")).toEqual({ period: "2nd Half", gameClock: "2" });
     });
 
+    /**
+     * #8322 — the fifth rule. StatPal's hockey clock is bare minutes, so every
+     * live NHL row stored `period: "13 - 2nd Period"`, `game_clock: "13"`, and
+     * the badge on /sports and search read "13 - 2nd Period 13". A bare "13"
+     * fails the shape gate above; a period that LEADS with "13 - " is the
+     * composer's own format, not a coincidence.
+     */
+    test("a bare-minutes clock the period leads with is not repeated (#8322)", () => {
+      expect(trustedLiveClock("13 - 2nd Period", "13", "icehockey_nhl")).toEqual({
+        period: "13 - 2nd Period",
+        gameClock: "",
+      });
+      expect(formatLiveClockLabel("14 - 3rd Period", "14", " ", "icehockey_nhl")).toBe(
+        "14 - 3rd Period",
+      );
+      expect(formatLiveClockLabel("1 - 3rd Period", "1")).toBe("1 - 3rd Period");
+    });
+
+    test("the leading-clock rule needs the exact prefix and separator (#8322)", () => {
+      // Same digits, not the leading "<clock> - " — two facts, both stay.
+      expect(trustedLiveClock("Bottom 1st", "1")).toEqual({ period: "Bottom 1st", gameClock: "1" });
+      expect(trustedLiveClock("13 - 2nd Period", "1")).toEqual({
+        period: "13 - 2nd Period",
+        gameClock: "1",
+      });
+      expect(trustedLiveClock("2nd Period 13", "13")).toEqual({
+        period: "2nd Period 13",
+        gameClock: "13",
+      });
+    });
+
     test("a genuinely distinct clock survives beside its period", () => {
       expect(trustedLiveClock("1st Quarter", "8:42")).toEqual({
         period: "1st Quarter",
