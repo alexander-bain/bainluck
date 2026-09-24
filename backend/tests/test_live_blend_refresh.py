@@ -471,6 +471,9 @@ class _RecordingSession:
         self._returned = returned
         self._selects = 0
         self.updates = []
+        #: #837 — each event's stamp runs in a SAVEPOINT; this records how each
+        #: one ended ("release" or "rollback") so a test can see the boundary.
+        self.savepoints = []
 
     async def execute(self, statement, *args, **kwargs):
         from sqlalchemy.sql.dml import Update
@@ -484,6 +487,22 @@ class _RecordingSession:
         return _Result(rows=self._outcomes)
 
     def add(self, row):
+        pass
+
+    def begin_nested(self):
+        session = self
+
+        class _Savepoint:
+            async def __aenter__(self_inner):
+                return self_inner
+
+            async def __aexit__(self_inner, exc_type, exc, tb):
+                session.savepoints.append("rollback" if exc_type else "release")
+                return False
+
+        return _Savepoint()
+
+    async def flush(self):
         pass
 
 
@@ -722,12 +741,21 @@ class TestTheFastLaneActuallyCallsTheSnapshot:
         """Ordering matters: a chart point must not outrun the number.
 
         The snapshot shares the blend stamp's transaction deliberately, so the
-        call has to sit after `stats["stamped"]`, inside the same try — not
-        before the write and not outside it.
+        call has to sit after the UPDATE is known to have landed (the
+        `new_sources is None` exit), inside the same try — not before the write
+        and not outside it. Since #837 both sit inside the event's SAVEPOINT and
+        `stats["stamped"]` is recorded only after that savepoint releases, so the
+        anchor is the landed-UPDATE check, not the counter.
         """
         import inspect
 
         from app.tasks.live_blend_refresh import LiveBlendRefresher
 
         src = inspect.getsource(LiveBlendRefresher._refresh_batch)
-        assert src.index('self.stats["stamped"]') < src.index("_maybe_snapshot")
+        savepoint = src.index("async with session.begin_nested():")
+        assert savepoint < src.index("update(Event)")
+        assert (
+            src.index("if new_sources is None")
+            < src.index("_maybe_snapshot")
+            < src.index('self.stats["stamped"]')
+        )
