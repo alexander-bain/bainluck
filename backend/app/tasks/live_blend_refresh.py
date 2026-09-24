@@ -366,7 +366,21 @@ class LiveBlendRefresher:
                     )
                 )
 
-            for event_id, (event, group) in grouped.items():
+            # #837 — ONE LOCK ORDER, ONE SAVEPOINT PER EVENT. This batch stamps
+            # every event in a single transaction, and the sibling arm (the other
+            # venue's consumer, same class, same column) does the same
+            # concurrently. Walked in join order, two overlapping batches locked
+            # the same `events` rows in opposite orders and Postgres killed one:
+            # production 2026-09-24, 5 `deadlock detected` in 13 minutes on a
+            # nine-game slate. And the per-event `except` below could not contain
+            # it — a deadlock ABORTS the transaction, so every later UPDATE in the
+            # batch failed ("current transaction is aborted") and the commit threw
+            # away the stamps that had already succeeded: a whole batch of live
+            # headlines silently held back until the next price. Ascending id in
+            # BOTH arms removes the cycle between them; the savepoint confines any
+            # other failure (a third writer, a bad row) to the one event it hit.
+            for event_id in sorted(grouped):
+                event, group = grouped[event_id]
                 try:
                     reading = compute_source_home_probability(
                         group, event.home_team_name, event.away_team_name,
@@ -401,37 +415,58 @@ class LiveBlendRefresher:
                     # Publishing the aggregate of this arm's own private copy is
                     # the second half of live/305's flicker: the row would be
                     # right and the wire still wrong.
-                    new_sources = (
-                        await session.execute(
-                            update(Event)
-                            .where(Event.id == event_id)
-                            .values(
-                                win_probability_sources=atomic_stamp_expression(
-                                    self.source,
-                                    value,
-                                    stamped_at,
-                                    eligibility=reading.eligibility,
+                    async with session.begin_nested():
+                        new_sources = (
+                            await session.execute(
+                                update(Event)
+                                .where(Event.id == event_id)
+                                .values(
+                                    win_probability_sources=atomic_stamp_expression(
+                                        self.source,
+                                        value,
+                                        stamped_at,
+                                        eligibility=reading.eligibility,
+                                    )
                                 )
+                                .returning(Event.win_probability_sources)
                             )
-                            .returning(Event.win_probability_sources)
-                        )
-                    ).scalar_one_or_none()
-                    if new_sources is None:
-                        # The UPDATE matched nothing, so there is no stored blend
-                        # to publish an aggregate of. Reachable only if the row
-                        # went away between the join above and here; `_or_none`
-                        # rather than `scalar_one` because that is a benign race
-                        # to skip, not a traceback to log on the dyno whose job
-                        # is streaming prices.
-                        self.stats["no_reading"] += 1
-                        continue
+                        ).scalar_one_or_none()
+                        if new_sources is None:
+                            # The UPDATE matched nothing, so there is no stored blend
+                            # to publish an aggregate of. Reachable only if the row
+                            # went away between the join above and here; `_or_none`
+                            # rather than `scalar_one` because that is a benign race
+                            # to skip, not a traceback to log on the dyno whose job
+                            # is streaming prices.
+                            self.stats["no_reading"] += 1
+                            continue
+
+                        # The chart point rides a savepoint of its own inside
+                        # the stamp's: a snapshot that cannot be written must
+                        # not cost the stamp (see `_maybe_snapshot`), and the
+                        # flush puts its ORM writes INSIDE this event's
+                        # savepoint rather than autoflushing into the next
+                        # event's UPDATE, where a failure would be charged to
+                        # the wrong event.
+                        try:
+                            async with session.begin_nested():
+                                await self._maybe_snapshot(
+                                    session, event_id, value, reading, now,
+                                )
+                                await session.flush()
+                        except Exception:
+                            self.stats["errors"] += 1
+                            logger.exception(
+                                "live_blend_refresh[%s]: snapshot failed for event %s",
+                                self.source, event_id,
+                            )
+
+                    # Recorded only once the savepoint has released: a stamp
+                    # that rolled back must not read as written, or
+                    # `_should_write` would skip re-sending the same price.
                     self._last_write_at[event_id] = now
                     self._last_written_value[event_id] = value
                     self.stats["stamped"] += 1
-
-                    await self._maybe_snapshot(
-                        session, event_id, value, reading, now,
-                    )
 
                     # The AGGREGATE, computed off the sources JSONB the server
                     # RETURNED — the number the hero renders, not this one
