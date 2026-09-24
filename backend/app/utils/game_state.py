@@ -302,6 +302,45 @@ _INNING_STATE_RE = re.compile(
 )
 
 
+def is_countdown_clock(value: str | None) -> bool:
+    """Whether ``value`` is a game clock in the ``M:SS`` shape both writers store.
+
+    #8322: StatPal's hockey board serves ``timer`` as the MINUTE OF THE PERIOD
+    ELAPSED — a bare ``'13'``, counting UP — while ESPN's clock for the same
+    game is ``'7:00'`` REMAINING, counting down. Measured side by side on
+    Stars–Wild (15313798), 2026-09-24: ESPN ``19:33`` left ↔ StatPal ``1``;
+    ESPN ``18:42`` left ↔ StatPal ``2``. Written into the same columns, the
+    reader's badge read ``1 - 3rd Period`` and then ``19:03 - 3rd Period``
+    forty-six seconds apart. A value that is not ``M:SS`` is not this kind of
+    clock, whatever else it is.
+    """
+    return bool(value) and _GAME_CLOCK_RE.match(str(value)) is not None
+
+
+def period_places_within(stored_period: str | None, label: str | None) -> bool:
+    """Whether ``stored_period`` is a POSITION inside the period named ``label``.
+
+    ``'18:42 - 3rd Period'`` and ``'End of 3rd Period'`` both place the game
+    inside ``'3rd Period'``; the bare label ``'3rd Period'`` says only which
+    period it is. A writer holding nothing finer than the label (#8322's
+    StatPal hockey board) must not replace the finer stored value with it: the
+    reader would lose the clock, and on the next ESPN pass get it back — a
+    badge that blinks every minute. ``'13 - 2nd Period'`` (a bare minute
+    stored before #8322) is NOT a position — it is exactly the value the label
+    should replace — which is why this asks `live_progress_position` rather
+    than comparing strings.
+    """
+    if not stored_period or not label:
+        return False
+    stored = str(stored_period).strip()
+    wanted = str(label).strip()
+    if not wanted or stored.casefold() == wanted.casefold():
+        return False
+    if not stored.casefold().endswith(wanted.casefold()):
+        return False
+    return live_progress_position(stored, None) is not None
+
+
 def _clock_remaining_seconds(*candidates: str | None) -> float | None:
     """Seconds left in the period, from the first candidate that is a clock.
 
