@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.utils.cross_source_matching import normalize_question
 
@@ -383,21 +383,24 @@ def _to_float(value) -> float | None:
         return None
 
 
-def _resolution_passed(resolution_date) -> bool:
+def _parse_resolution(resolution_date) -> datetime | None:
     if not resolution_date:
-        return False
+        return None
     try:
         if isinstance(resolution_date, str):
             dt = datetime.fromisoformat(resolution_date.replace("Z", "+00:00"))
         elif isinstance(resolution_date, datetime):
             dt = resolution_date
         else:
-            return False
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt < datetime.now(timezone.utc)
+            return None
     except (ValueError, TypeError):
-        return False
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _resolution_passed(resolution_date) -> bool:
+    dt = _parse_resolution(resolution_date)
+    return dt is not None and dt < datetime.now(timezone.utc)
 
 
 def _settled_status(market: dict, outcome: dict | None) -> tuple[bool, str | None]:
@@ -484,6 +487,8 @@ def _make_row(
         "settled": settled,
         "result": result,
         "top_outcome": top_outcome,
+        # Internal, popped before the payload is emitted (like entity_key).
+        "_resolves_at": _parse_resolution(market.get("resolution_date")),
     }
 
 
@@ -590,6 +595,37 @@ def _merge_rows(group: list[dict]) -> dict:
         if merged.get("result") is None:
             merged["result"] = primary.get("result")
     return merged
+
+
+#: How long a settled row may sit in a family that is still being traded.
+#: A family key is the question SHAPE, not the season, so last season's graded
+#: award and this season's open one land in the same family — and
+#: :func:`_merge_rows`'s "a settled ruling wins" then printed the Chiefs' MVP
+#: card as "Patrick Mahomes OUT 100%" off Polymarket's 2024-season market
+#: (resolved 2025-02-09) instead of the open 2026 market's 8.5% (#2311 after-
+#: check, 2026-09-24).  Resolution-date GAPS cannot tell seasons apart: the
+#: same open 2026 MVP question carries 2027-03-01 on Polymarket and 2028-02-12
+#: on Kalshi (#2644).  AGE can: a question graded months ago while its family
+#: still trades is a finished earlier question, not a venue lagging on the same
+#: one — the settled-events backfill corrects a lagging Kalshi row within
+#: hours (gotcha #33), so the merge's settled preference keeps its real case.
+PRIOR_RESULT_MAX_AGE_DAYS = 90
+
+
+def _drop_earlier_results(rows: list[dict], now: datetime | None = None) -> list[dict]:
+    """Remove settled rows of an EARLIER question from a family still trading.
+
+    Only bites when the family has at least one live row: an all-settled
+    family is a results card and is left as it was.  A settled row with no
+    resolution date cannot be aged and is kept.
+    """
+    if all(r.get("settled") for r in rows):
+        return rows
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=PRIOR_RESULT_MAX_AGE_DAYS)
+    return [
+        r for r in rows
+        if not (r.get("settled") and r.get("_resolves_at") and r["_resolves_at"] < cutoff)
+    ]
 
 
 def _collapse_cross_source(rows: list[dict]) -> list[dict]:
@@ -769,7 +805,7 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         for emitted_key, scope, rows in _scoped_buckets(fk, scoped_rows)
     ]
     for emitted_key, fk, scope, rows in buckets:
-        merged = _collapse_cross_source(rows)
+        merged = _collapse_cross_source(_drop_earlier_results(rows))
         distinct = {r["entity_key"] for r in merged if r.get("entity_key")}
         if len(distinct) < 2:
             continue
@@ -784,6 +820,7 @@ def group_prop_families(markets: list[dict]) -> list[dict]:
         )
         for r in merged:
             r.pop("entity_key", None)
+            r.pop("_resolves_at", None)
 
         result.append(
             {
