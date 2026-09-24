@@ -110,7 +110,9 @@ final class ParticledSurname7163Tests: XCTestCase {
     /// The gate is `individualSportPrefixes`, read as the key's first SEGMENT —
     /// so a sport whose NAME merely contains one does not open it.
     func testTheGateReadsTheKeysFirstSegment() {
-        XCTAssertEqual(TeamShortName.short("Alex de Minaur", sportKey: "soccer_golf_cup"), "Minaur")
+        // #5634 — not a soccer key: that segment now opens the whole-club rule,
+        // which keeps "Alex de Minaur" whole for a reason of its own.
+        XCTAssertEqual(TeamShortName.short("Alex de Minaur", sportKey: "aussierules_golf_cup"), "Minaur")
         XCTAssertEqual(TeamShortName.short("Alex de Minaur", sportKey: "TENNIS_ATP"), "de Minaur")
     }
 
@@ -262,7 +264,10 @@ final class ParticledSurname7163Tests: XCTestCase {
         ]
         let keys: [String?] = [nil, "", "tennis_other", "tennis_wta", "golf",
                                "mma_mixed_martial_arts", "boxing_boxing",
-                               "soccer_england_premier_league", "basketball_nba"]
+                               // #5634 — a soccer key has its own club rule now
+                               // (`TeamShortNameSoccerWholeClub5634Tests`), so it
+                               // cannot stand in for "a club sport" here.
+                               "aussierules_afl", "basketball_nba"]
         for name in names {
             let shipped = TeamShortName.short(name)
             for key in keys {
@@ -287,7 +292,9 @@ final class ParticledSurname7163Tests: XCTestCase {
             "Deportivo de La Coruna", "Real Sociedad de Futbol", "Bayer 04 Leverkusen",
         ]
         for name in names {
-            for key in [nil, "", "soccer_spain_la_liga", "americanfootball_nfl", "icehockey_nhl"] {
+            // #5634 — the soccer arm of this control lives in
+            // `TeamShortNameSoccerWholeClub5634Tests` (Benfica, UANL, Coruna).
+            for key in [nil, "", "aussierules_afl", "americanfootball_nfl", "icehockey_nhl"] {
                 XCTAssertEqual(
                     TeamShortName.short(name, sportKey: key),
                     TeamShortName.short(name),

@@ -296,6 +296,77 @@ enum TeamShortName {
         return individualSportPrefixes.contains(sport)
     }
 
+    /// #5634 — trailing words that name the club's SPORT, not the club: "Dubai
+    /// Basketball" printed as "Basketball" / `BAS` on a live EuroLeague page, and
+    /// "Paris Basketball" folds onto the same word. Not sport-gated like
+    /// `keepsWholeClubName`, because the word is the tell whatever the league.
+    ///
+    /// The browser's `SPORT_WORD_SUFFIXES` (ux, 236ae1f621), measured 2026-09-24
+    /// over every `teams.name` ending in a sport word: five names, and these
+    /// three words are all of them. Kept OUT of `designators` on purpose: that
+    /// set also drives `isDesignator`, which skips LEADING words on the badge and
+    /// strips `handPickedKey` — and it is compared token for token with the
+    /// browser's `CLUB_TYPE_SUFFIXES` and the server's copy. This set is read
+    /// only by `isNonDistinctiveToken`, the browser's trailing predicate.
+    private static let sportWordSuffixes: Set<String> = [
+        "basketball", // 2  Dubai Basketball, Paris Basketball
+        "basket",     // 1  Valencia Basket
+        "hockey",     // 2  Modo Hockey, TUTO Hockey
+    ]
+
+    /// #5634 — does this sport key name a football (soccer) competition, where a
+    /// club's last word is so often its CITY that the last-word rule cannot be
+    /// used?
+    ///
+    /// "1. FC Union Berlin" became "Berlin" (so did Hertha, Croatia and Füchse),
+    /// "Bayern Munich" became "Munich" (so did 1860), "Real Salt Lake" became
+    /// "Lake". ux/1481 measured the browser's copy of this rule over the first
+    /// 1,000 distinct soccer names of 60 days of production `events`
+    /// (2026-09-24): it folds several clubs onto one word — "Cali" ×5,
+    /// "Juniors" ×4, "Central" ×4 — and those are not all cities, so no
+    /// place-name list can close it.
+    ///
+    /// The browser's `keepsWholeClubName` (`frontend/lib/teamShortName.ts`):
+    /// the same first-segment match as `namesAPerson`, so "esports_soccer_sim"
+    /// is not football, and nil or empty keeps the shipped rule exactly.
+    static func keepsWholeClubName(sportKey: String?) -> Bool {
+        guard let key = sportKey?.trimmingCharacters(in: .whitespaces).lowercased(),
+              !key.isEmpty else { return false }
+        let sport = key.split(separator: "_").first.map(String.init) ?? key
+        return sport == "soccer"
+    }
+
+    /// #5634 — the longest club label `wholeClubName` may return. A longer name
+    /// is the formal one ("Sport Lisboa e Benfica", "Futebol Clube do Porto",
+    /// "Tigres de la UANL") and its last word is the name people use, so it
+    /// takes the last-word rule exactly as before.
+    private static let wholeClubNameMaxWords = 3
+
+    /// #5634 — a football club's label: its own name with LEADING designators
+    /// dropped, never below two words. "1. FC Union Berlin" → "Union Berlin",
+    /// "CA Boca Juniors" → "Boca Juniors", "1. FC Köln" → "FC Köln" (the floor);
+    /// "AC Milan", "Real Salt Lake" and "2 de Mayo" (never onto a particle) are
+    /// unchanged.
+    ///
+    /// Only a token the LENGTH or digit clauses of the browser's predicate catch
+    /// is dropped ("1.", "FC", "CA", "05") — never a word from `designators`,
+    /// which as a LEADING word is part of the name: "Sporting Kansas City" is not
+    /// "Kansas City", "Atletico Madrid" is not "Madrid". The output is always a
+    /// tail of the name, so it is a string the club is called. This is the
+    /// browser's `wholeClubName`, clause for clause, so the hero on the phone
+    /// and on the site name the same club the same way.
+    private static func wholeClubName(_ words: [Substring]) -> String {
+        var start = 0
+        while words.count - start > 2 {
+            let bare = bareToken(words[start])
+            if bare.count > 2 && !bare.allSatisfy(\.isNumber) { break }
+            // "2 de Mayo" is not "de Mayo": a label never starts on a particle.
+            if words[start + 1].first?.isLowercase == true { break }
+            start += 1
+        }
+        return words[start...].joined(separator: " ")
+    }
+
     /// The particles a surname carries with it.
     ///
     /// #7163. `short` took the last word, so **"de Minaur" rendered "Minaur"**,
@@ -417,9 +488,10 @@ enum TeamShortName {
     /// Returns the input unchanged when there is nothing to shorten, so a caller
     /// never has to supply its own fallback for the empty or single-word case.
     ///
-    /// #7163 — `sportKey` is optional and opens the particle rule only; omitting
-    /// it keeps the shipped last-word behaviour exactly, which is what every
-    /// call site that does not know its sport still gets.
+    /// #7163 — `sportKey` is optional and opens the particle rule (a person's
+    /// sport) and, since #5634, the whole-club rule (a soccer key); omitting it
+    /// keeps the shipped last-word behaviour exactly, which is what every call
+    /// site that does not know its sport still gets.
     static func short(_ name: String, sportKey: String? = nil) -> String {
         // #4626 — a pair is returned WHOLE, which is #3110's decision and the
         // browser's behaviour (`teamShortName` line 401). The guard belongs
@@ -432,6 +504,16 @@ enum TeamShortName {
         // not as a repair afterwards, so what a reader sees does not depend on
         // which of the club's spellings the row happens to carry.
         if let picked = handPickedLabels[handPickedKey(name)] { return picked }
+        // #5634 — a football club is not its city: "Union Berlin", never
+        // "Berlin". Above the last-word rule, the browser's order; up to three
+        // words only, so a formal four-word name falls through unchanged.
+        if keepsWholeClubName(sportKey: sportKey) {
+            let words = name.split(whereSeparator: \.isWhitespace)
+            if !words.isEmpty {
+                let whole = wholeClubName(words)
+                if whole.split(separator: " ").count <= wholeClubNameMaxWords { return whole }
+            }
+        }
         let parts = name.split(separator: " ").filter { !$0.isEmpty }
         guard parts.count > 1 else { return name }
         guard let last = parts.last else { return name }
@@ -701,6 +783,7 @@ enum TeamShortName {
         if bare.count <= 2 { return true }
         let lower = bare.lowercased()
         if designators.contains(lower) { return true }
+        if sportWordSuffixes.contains(lower) { return true }              // Basketball
         if lower.allSatisfy(\.isNumber) { return true }                   // 1846
         if lower.first == "u", lower.count == 3,
            lower.dropFirst().allSatisfy(\.isNumber) { return true }       // U20

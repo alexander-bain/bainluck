@@ -144,4 +144,35 @@ final class EventNavTitleTests: XCTestCase {
             "Rangers vs Mariners"
         )
     }
+
+    /// #5634 — the pre-game title's floor is the crest codes, served where the
+    /// row has one and derived where it does not ("Dubai Basketball" → `DUB`).
+    func testAScorelessTitleFallsBackToTheCrestCodes() {
+        XCTAssertEqual(
+            EventNavTitle.scoreless(away: "Real Madrid", home: "Dubai Basketball",
+                                    awayServed: "RMA", sportKey: "basketball_euroleague"),
+            "RMA vs Dubai Basketball"
+        )
+        XCTAssertEqual(
+            EventNavTitle.scorelessCompact(away: "Real Madrid", home: "Dubai Basketball",
+                                           awayServed: "RMA"),
+            "RMA vs DUB"
+        )
+        XCTAssertEqual(
+            EventNavTitle.scorelessCompact(away: "Texas Rangers", home: "Seattle Mariners"),
+            "RAN vs MAR"
+        )
+    }
+
+    /// The bar offers that floor: both rungs inside one `ViewThatFits`, names first.
+    func testTheScorelessBarOffersTheCompactRung() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck/Views/EventDetailView.swift")
+        let code = try String(contentsOf: url, encoding: .utf8)
+            .filter { !$0.isWhitespace }
+        let names = try XCTUnwrap(code.range(of: "ViewThatFits(in:.horizontal){Text(scorelessTitle)"))
+        let compact = try XCTUnwrap(code.range(of: "Text(scorelessCompactTitle)"))
+        XCTAssertLessThan(names.lowerBound, compact.lowerBound)
+    }
 }
