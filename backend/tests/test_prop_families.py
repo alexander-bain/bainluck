@@ -597,6 +597,45 @@ class TestKeyStabilityOverProduction6630:
         "WBC: Most Valuable Player ": "mvp",
     }
 
+    #: #8385 / #8386 / #7162 (2026-09-24), declared beside #6630's rather than
+    #: by re-snapshotting the BEFORE: Polymarket's "AP" NFL awards join the
+    #: venue-neutral key; a shortlist ("Finalists", "nominees", "Top 5 ...") is
+    #: not the winner race; the Super Bowl MVP is not the season MVP. The
+    #: Billboard title is a song name that only looked like an award.
+    MOVED_8385 = {
+        "AP College Football Player of the Year Winner": (
+            "college football player of the year"
+        ),
+        "Pro Football: 2026-27 AP Coach of the Year Winner": "coach of the year",
+        "Pro Football: 2026-27 AP Comeback Player of the Year Winner": (
+            "comeback player of the year"
+        ),
+        "Pro Football: 2026-27 AP Defensive Player of the Year Winner": (
+            "defensive player of the year"
+        ),
+        "Pro Football: 2026-27 AP Defensive Rookie of the Year Winner": (
+            "defensive rookie of the year"
+        ),
+        "Pro Football: 2026-27 AP Offensive Player of the Year Winner": (
+            "offensive player of the year"
+        ),
+        "Pro Football: 2026-27 AP Offensive Rookie of the Year Winner": (
+            "offensive rookie of the year"
+        ),
+        "Coach of the Year Finalists": None,
+        "Defensive Player of the Year Finalists": None,
+        "Defensive Rookie of the Year Finalists": None,
+        "Offensive Player of the Year Finalists": None,
+        "Offensive Rookie of the Year Finalists": None,
+        "Grammy nominees: Album of the Year": None,
+        "Grammy nominees: Record of the Year": None,
+        "Grammy nominees: Song of the Year": None,
+        "Top 5 Pro Basketball Draft Pick Wins Rookie of the Year?": None,
+        "Will It's The Most Wonderful Time Of The Year - Andy Williams be in "
+        "the Billboard Top 10 for the week of January 3, 2026?": None,
+        "Pro Football Championship MVP?": "championship game mvp",
+    }
+
     @staticmethod
     def _fixture():
         path = (
@@ -615,14 +654,16 @@ class TestKeyStabilityOverProduction6630:
         assert sum(1 for t in keys if t.lower().startswith("pro ")) >= 500
         assert sum(1 for t in keys if "of the year" in t.lower()) >= 200
         assert set(self.MOVED) <= set(keys)
+        assert set(self.MOVED_8385) <= set(keys)
 
     def test_only_the_named_titles_changed_key(self):
         keys = self._fixture()
         moved, drifted = [], []
+        declared = {**self.MOVED, **self.MOVED_8385}
         for title, before in keys.items():
             now = family_key(title)
-            if title in self.MOVED:
-                if now != self.MOVED[title]:
+            if title in declared:
+                if now != declared[title]:
                     moved.append((title, before, now))
             elif now != before:
                 drifted.append((title, before, now))
@@ -634,7 +675,8 @@ class TestKeyStabilityOverProduction6630:
         # titles MUST disagree with it. If they did not, the corpus would be
         # an AFTER snapshot and would prove nothing.
         keys = self._fixture()
-        stale = [t for t in self.MOVED if keys[t] == self.MOVED[t]]
+        declared = {**self.MOVED, **self.MOVED_8385}
+        stale = [t for t in declared if keys[t] == declared[t]]
         assert not stale, f"fixture already carries the fixed key for {stale}"
 
 
