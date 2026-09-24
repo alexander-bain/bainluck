@@ -36,6 +36,15 @@
 // and null never appears (measured: 0 of 2,000 open quantity markets have any NULL
 // `is_winner`). A first version of this measurement asked `IS NOT NULL` and got a
 // perfect 3000/3000 — the vacuous answer that trap hands you.
+//
+// #2437 INVERTS THE GATE TEST BELOW, AND ONLY IT. The ladder has since learned
+// both halves Q481 refused it — #4568's label-derived chronological order
+// (settlement-proof) and `outcomeRowVerdict` winner state — so a settled DATE
+// market with a stated winner ladders again. The section-scoped CERT-605
+// assertions above are unchanged and hold against the ladder: they never named
+// which arm renders, only what a reader must see. What stays gated is every
+// rung set the ladder cannot order honestly (no winner, non-date rungs,
+// disjoint bins): those still take the table, pinned at the foot of this file.
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -184,14 +193,29 @@ describe("🔴 CERT-605: a settled quantity market shows its RESULT, not four pr
     expect(section).toContain("Settled");
   });
 
-  test("🔴 THE GATE IS LOAD-BEARING: a settled market draws NO ladder", () => {
-    // Deleting `if (market?.status === "resolved") return []` must fail HERE, not
-    // somewhere subtle. Both directions asserted: the ladder's own chrome is gone
-    // and the table's own chrome is present. Asserting only one of the two is how
-    // a mutant survives.
+  test("🔴 THE GATE IS LOAD-BEARING (INVERTED #2437): a settled gradeable date market draws the ladder", () => {
+    // #2437 re-arms the ladder for exactly one cohort: cumulative, a stated
+    // winner, all-date rungs. Deleting the settled builder must fail HERE, not
+    // somewhere subtle. Both directions asserted: the ladder's own chrome is
+    // present and the table's own chrome is gone. Asserting only one of the two
+    // is how a mutant survives.
     const html = render(settled());
-    expect(html).not.toContain(LADDER_ONLY);
-    expect(html).toContain(TABLE_ONLY);
+    expect(html).toContain(LADDER_ONLY);
+    expect(html).not.toContain(TABLE_ONLY);
+  });
+
+  test("the settled ladder keeps ladder order, April first — item 10's whole point", () => {
+    // The ordering signal that survives settlement is the rung LABELS (#4568):
+    // with every rung at 0% or 100% in backwards serve order, the ladder must
+    // still read as a timeline, losers-then-winners, April to 2027.
+    const html = render(settled());
+    const at = (s: string) => html.indexOf(`aria-label="${s}:`);
+    for (const rung of ["Before April", "Before July", "Before October", "Before 2027"]) {
+      expect(at(rung)).toBeGreaterThan(-1);
+    }
+    expect(at("Before April")).toBeLessThan(at("Before July"));
+    expect(at("Before July")).toBeLessThan(at("Before October"));
+    expect(at("Before October")).toBeLessThan(at("Before 2027"));
   });
 });
 
@@ -276,6 +300,77 @@ describe("the arms this repair must not disturb", () => {
     // not make that better, and it must not make it worse: the market takes the
     // same table it took before Q478 existed.
     const html = render(settled({ outcomes: RAW_OUTCOMES.map((o) => ({ ...o, is_winner: false })) }));
+    expect(html).toContain(TABLE_ONLY);
+    expect(html).not.toContain(LADDER_ONLY);
+  });
+
+  test("#2437 CONTROL: a RETRACTED rung on a settled ladder states no grade and keeps its place in time", () => {
+    // Codex 2026-09-24: a partially graded ladder is permitted, and a retracted
+    // rung reaches the builder as `verdict: null` through `outcomeRowVerdict`.
+    // It must print neither `Won` nor `Lost`, and it must not move out of its
+    // chronological slot (the verdict-first sort put October ahead of July).
+    const byName = (n: string) => RAW_OUTCOMES.find((o) => o.name === n)!;
+    const html = render(
+      settled({
+        outcomes: [
+          { ...byName("Before 2027"), is_winner: true, probability: 1 },
+          {
+            ...byName("Before October"),
+            is_winner: false,
+            probability: 0,
+            resolution_source: "ungradeable_result",
+          },
+          { ...byName("Before April"), is_winner: false, probability: 0 },
+          { ...byName("Before July"), is_winner: true, probability: 1 },
+        ],
+      }),
+    );
+    expect(html).toContain(LADDER_ONLY);
+    const at = (s: string) => html.indexOf(`aria-label="${s}:`);
+    expect(at("Before April")).toBeLessThan(at("Before July"));
+    expect(at("Before July")).toBeLessThan(at("Before October"));
+    expect(at("Before October")).toBeLessThan(at("Before 2027"));
+    const october = html.slice(at("Before October"), html.indexOf(">", at("Before October")));
+    expect(october).not.toMatch(/Won|Lost/);
+    expect(html).toMatch(/aria-label="Before July:[^"]*, Won"/);
+  });
+
+  test("#2437: a settled ladder whose grades contradict (LOST after WON) renders the table", () => {
+    const byName = (n: string) => RAW_OUTCOMES.find((o) => o.name === n)!;
+    const html = render(
+      settled({
+        outcomes: [
+          { ...byName("Before 2027"), is_winner: true, probability: 1 },
+          { ...byName("Before October"), is_winner: false, probability: 0 },
+          { ...byName("Before April"), is_winner: false, probability: 0 },
+          { ...byName("Before July"), is_winner: true, probability: 1 },
+        ],
+      }),
+    );
+    expect(html).toContain(TABLE_ONLY);
+    expect(html).not.toContain(LADDER_ONLY);
+  });
+
+  test("#2437: a settled NON-DATE quantity market renders the table, never a guessed order", () => {
+    // The labels carry no timeline, so there is no settlement-proof fine order —
+    // serve order would be a guess wearing a ladder's clothes. Winners present
+    // and all: the builder refuses, the table renders.
+    const numeric = settled({
+      outcomes: [
+        { ...RAW_OUTCOMES[0], id: 11, name: "Over 9000", probability: 1, is_winner: true },
+        { ...RAW_OUTCOMES[0], id: 12, name: "Over 7000", probability: 1, is_winner: true },
+        { ...RAW_OUTCOMES[0], id: 13, name: "Over 5000", probability: 0, is_winner: false },
+      ],
+    });
+    const html = render(numeric);
+    expect(html).toContain(TABLE_ONLY);
+    expect(html).not.toContain('aria-label="Over 5000:');
+  });
+
+  test("#2437: a settled disjoint-bin quantity market renders the table", () => {
+    // Bins are mutually exclusive; there is no ladder order to recover, settled
+    // or otherwise. `mutually_exclusive: true` refuses the ladder outright.
+    const html = render(settled({ mutually_exclusive: true }));
     expect(html).toContain(TABLE_ONLY);
     expect(html).not.toContain(LADDER_ONLY);
   });

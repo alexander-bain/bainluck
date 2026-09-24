@@ -46,6 +46,7 @@ import ProgressionTable from "@/components/ProgressionTable";
 import OutcomeRow, {
   outcomeRowPrintsMove,
   outcomeRowShowsEntityImage,
+  outcomeRowVerdict,
 } from "@/components/futures/OutcomeRow";
 import RelatedByTag from "@/components/RelatedByTag";
 import GamesThisWeek from "@/components/futures/GamesThisWeek";
@@ -71,6 +72,7 @@ import { PinButton } from "@/components/PinButton";
 import { resolveShape, SHAPE_QUANTITY } from "@/lib/marketShape";
 import {
   buildOutcomeLadderRungs,
+  buildSettledOutcomeLadderRungs,
   ladderNeedsWideLabels,
   ladderOrderFor,
   thresholdLadderTitles,
@@ -335,20 +337,43 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   //     queue exists to fix, now wearing a ladder's clothes. `opening_probability`
   //     is not a rescue: only 891 of those 1,500 (59.4%) have it on every row.
   //
-  // So the graded table renders instead, exactly as it did before Q478. This costs
-  // the ship NOTHING it ever measured: `census_quantity_ladder_q478.py` counts
+  // #2437 AMENDS the sentence below: a resolved market now ladders when it can
+  // do so honestly (cumulative + a stated winner + all-date rungs — see the memo
+  // below). Everything else still takes the graded table, exactly as it did
+  // before Q478. This costs the ship NOTHING it ever measured:
+  // `census_quantity_ladder_q478.py` counts
   // `WHERE m.market_type = 'quantity' AND m.status = 'open'`, so the whole
   // 2,882 -> 9,491 win is open markets and every one of them still ladders.
   // Laddering settled markets was unmeasured scope, not a claim.
-  // Teaching the ladder to grade AND to order itself without prices is filed as a
-  // follow-up; it needs an ordering signal that survives settlement, which is a
-  // data question, not a rendering one.
+  // (#2437 is the follow-up that sentence filed; the memo below is its answer.)
+  // #2437 — the settled half of the own-outcome ladder. Q481's gate returned []
+  // for every resolved market because a settled ladder could neither grade nor
+  // order itself. Both halves have since landed elsewhere: #4568's chronological
+  // tiebreak orders date rungs from their labels (settlement-proof), and
+  // `outcomeRowVerdict` is the one settled-state decision the table already
+  // speaks. So a resolved market ladders exactly when it CAN do so honestly —
+  // cumulative, at least one stated winner, every rung a parseable date — and
+  // `buildSettledOutcomeLadderRungs` returns null (this memo: []) for every
+  // rung set it cannot order, which keeps the graded table. A null there is a
+  // refusal, never a fallback to serve order.
   const ownLadderRungs = useMemo(() => {
     if (marketShape !== SHAPE_QUANTITY) return [];
     if (thresholdEntries.length > 0) return [];
-    if (market?.status === "resolved") return [];
     const outcomes = market?.outcomes ?? [];
     if (outcomes.length < 2) return [];
+    if (market?.status === "resolved") {
+      return (
+        buildSettledOutcomeLadderRungs(
+          outcomes.map((o) => ({
+            id: o.id,
+            name: o.name,
+            probability: o.probability,
+            verdict: outcomeRowVerdict(o, true),
+          })),
+          ladderOrderFor(market?.mutually_exclusive),
+        ) ?? []
+      );
+    }
     return buildOutcomeLadderRungs(
       outcomes.map((o) => ({ id: o.id, name: o.name, probability: o.probability })),
       ladderOrderFor(market?.mutually_exclusive),
@@ -1178,11 +1203,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
       {/* Q478 — the same ladder for a market whose OWN outcomes are the rungs.
           Rungs already carry their final position in `value`, so QuantityGroup's
           sort is a no-op over them rather than a second opinion. */}
-      {/* Q481 — the title is no longer a ternary on `isResolved`. `hasOwnLadder` is
-          false for every resolved market, so the "Final Results" arm was dead code
-          that read, to anyone scanning this file, as a settled path the ladder
-          handles. It never handled one — that is what CERT-605 blocked. A ladder
-          here always describes a live question. */}
+      {/* Q481 — the title was not a ternary on `isResolved`, because `hasOwnLadder`
+          was false for every resolved market and the "Final Results" arm was dead
+          code. #2437 re-arms it: a settled date ladder ladders again, and its
+          rungs state verdicts, so the heading says what the rows are. */}
       {/* D102 / #4568 — the SECOND renderer of this page's outcome set, and the
           one #4568's own specimens sit on. `108555` (Starlink) drew three bare
           `-` rungs at the foot of its ladder while `114175` drew five in the
@@ -1206,9 +1230,13 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
                defaults to `undefined` on a non-interactive group, which this
                one is, so no other caller of the component changes. */
             <QuantityGroup
-              title="All Outcomes"
+              title={isResolved ? "Final Results" : "All Outcomes"}
               rungs={pricedRungs}
-              hint={marketAsOf ?? undefined}
+              // #2437 — the freshness line is a claim about PRICES, and a settled
+              // ladder prints results. The ranked table suppresses it on resolved
+              // markets (`!isResolved`, below); the ladder does the same, now that
+              // it can render a resolved market at all.
+              hint={!isResolved ? marketAsOf ?? undefined : undefined}
               wideLabels={ladderNeedsWideLabels(pricedRungs)}
             />
           )}

@@ -281,6 +281,79 @@ export function buildOutcomeLadderRungs(
 }
 
 /**
+ * ── #2437: THE SETTLED HALF OF THE OWN-OUTCOME LADDER ──
+ *
+ * Q481 deliberately drew NO ladder for a resolved quantity market: rung order
+ * came from ascending price, settlement collapses price, and the tiebreak was
+ * serve order — for 109349, `2027, October, April, July`. #2437 filed the
+ * blocker as "an ordering signal that survives settlement".
+ *
+ * That blocker is HALF-GONE, and the half that is gone is this function's
+ * precondition. #4568's `chronologicalRanks` derives order from the rung LABELS,
+ * which settlement cannot touch: with every rung at 0% or 100% the price sort
+ * above already ladders a date market chronologically (proven by
+ * `settledLadderOrdersWithoutPrices2437.test.ts`). What remains is (a) refusing
+ * every rung set the labels cannot order, and (b) ordering by the GRADE rather
+ * than by the collapsed quote, so a frozen price that contradicts the outcome
+ * can never re-scramble the timeline.
+ *
+ * Returns `null` — "keep the graded table" — unless ALL of:
+ *   - the ladder is cumulative (a disjoint bin set has no ladder order at all);
+ *   - at least one rung states a `won` verdict (gotcha #53: 61.8% of resolved
+ *     quantity markets carry zero true winners and are indistinguishable from
+ *     never-graded — laddering those prints `Lost` on every rung off a default);
+ *   - every label parses as a date under the all-or-nothing rule (a non-date
+ *     cumulative ladder has no settlement-proof fine order; `opening_probability`
+ *     covers only 59.4% and a stored ordinal does not exist).
+ *
+ * The order is the label chronology ALONE, and it reads NO price and NO grade.
+ * A first version partitioned losers-then-winners and only then sorted by date;
+ * a permitted partially graded ladder (April lost, July won, October null,
+ * 2027 won) then rendered April, October, July, 2027 — the ungraded October
+ * jumped ahead of a known winner and the "timeline" ran backwards (Codex
+ * counterexample, 2026-09-24). An ungraded rung keeps its place in time.
+ *
+ * One grade shape is refused outright: a `lost` rung AFTER a `won` one. On a
+ * cumulative "before X" ladder a later deadline contains every earlier one, so
+ * that shape is a contradiction, and the table (which draws no timeline) is the
+ * only honest render for it. Rung `value` is the final position, as above.
+ *
+ * `verdict` is precomputed by the caller with `outcomeRowVerdict` — the one
+ * settled-state decision, never re-derived here — so the retraction refusal,
+ * the served-null withhold and the status rule all hold on the ladder exactly
+ * as they do on the table.
+ */
+export interface SettledLadderOutcome extends LadderOutcome {
+  verdict: "won" | "lost" | null;
+}
+
+export function buildSettledOutcomeLadderRungs(
+  outcomes: readonly SettledLadderOutcome[],
+  order: LadderOrder,
+): QuantityRung[] | null {
+  if (order !== "cumulative") return null;
+  if (!outcomes.some((o) => o.verdict === "won")) return null;
+  const chrono = chronologicalRanks([...outcomes]);
+  if (!chrono) return null;
+
+  const rows = [...outcomes];
+  rows.sort((a, b) => (chrono.get(a) ?? 0) - (chrono.get(b) ?? 0));
+  let seenWon = false;
+  for (const o of rows) {
+    if (o.verdict === "won") seenWon = true;
+    else if (o.verdict === "lost" && seenWon) return null;
+  }
+
+  return rows.map((o, i) => ({
+    key: o.id,
+    label: o.name,
+    probability: o.verdict === "won" ? 1 : o.verdict === "lost" ? 0 : o.probability,
+    value: i,
+    verdict: o.verdict,
+  }));
+}
+
+/**
  * ── #7398: THE HEADING OVER A CROSS-MARKET THRESHOLD LADDER ──
  *
  * `threshold_groups` is a dict keyed by a SCOPE KEY, and the detail page printed
