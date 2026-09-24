@@ -335,13 +335,27 @@ export function rowFreshness(
  * on a page — a payload with no board for this pill knows nothing about whether
  * the draw is over, and the hedged empty states downstream are the right answer
  * to that, not "the final has been played".
+ *
+ * #8005 — A PILL WITH NO BOARD. The doubles have no board at all (boards are
+ * built from championship futures and no venue lists a doubles title market),
+ * so on boards alone the Doubles pill could never be decided and fell through
+ * to "a match that is on right now would be missing" ten days after all three
+ * finals. `decidedDraws` is the server's per-draw answer (`slate.decided_draws`,
+ * graded from the same scoreboard), and a draw counts as decided when its OWN
+ * board says so OR the server lists it. Still never inferred from rendered results.
  */
 export function shownBoardsAreDecided(
   boards: TournamentBoardData[] | null | undefined,
   drawsShown: readonly string[],
+  decidedDraws?: readonly string[] | null,
 ): boolean {
-  const shown = (boards ?? []).filter((board) => drawsShown.includes(board.draw));
-  return shown.length > 0 && shown.every((board) => Boolean(board.decided));
+  // PER DRAW, which also closes #5924's own over-claim: "every board shown is
+  // decided" let one graded doubles board speak for a boardless draw beside it.
+  const decided = new Set(decidedDraws ?? []);
+  for (const board of boards ?? []) {
+    if (board.decided) decided.add(board.draw);
+  }
+  return drawsShown.length > 0 && drawsShown.every((draw) => decided.has(draw));
 }
 
 export interface BoardNotice {

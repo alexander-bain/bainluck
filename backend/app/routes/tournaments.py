@@ -75,7 +75,7 @@ from app.utils.tournament_slate import (
     first_round_size,
     slate_competition_ids,
 )
-from app.utils.tournament_progress import build_progress
+from app.utils.tournament_progress import build_progress, decided_draws
 
 logger = logging.getLogger(__name__)
 
@@ -1863,6 +1863,16 @@ async def _build_sections(
         # other section of the page — results, grids, boards — still renders.
         if first["slate"]["scoreboard"] == SCOREBOARD_DEGRADED:
             first["slate"] = _withheld_slate(first["slate"])
+        # ═══ #8005: WHICH DRAWS ARE OVER, PER DRAW ═══
+        #
+        # `order_of_play_listed` is tournament-wide and the list it explains is
+        # per-draw, so the client needs a per-draw fact to tell "this draw is
+        # finished" from "we dropped today's card". #5924 read it off
+        # `board.decided`, and the doubles have no board — so the Doubles pill
+        # apologised for a missing live match ten days after all three finals.
+        # Read from the same scoreboard, on the slate beside the count it
+        # qualifies. A degraded read has no draws and so claims nothing.
+        first["slate"]["decided_draws"] = decided_draws(espn)
         # THE FIXTURE SWAP (UX-P134). Empty until the draw ceremony latches
         # `draw_released`; populated by the same `ingest_tournament_draw.py` run,
         # so Thursday is a data change and not a deploy.
