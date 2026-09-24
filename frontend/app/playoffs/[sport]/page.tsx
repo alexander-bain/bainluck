@@ -141,7 +141,7 @@ function MoversSection({ movers }: { movers: ChampionshipGridResponse["movers"] 
               <span className="font-medium">{m.name || m.short_name}</span>
               <span className="font-mono text-xs">
                 {isUp ? "+" : "-"}
-                {formatMovementPointsLikeSentence(m.change_24h)}%
+                {formatMovementPointsLikeSentence(m.change_24h)} pts
               </span>
             </div>
           );

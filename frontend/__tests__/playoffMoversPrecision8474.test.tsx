@@ -8,7 +8,10 @@
  * read "+2% … +1% … +1.0%" — the smallest move carried the most precision.
  *
  * The fix routes both through `formatMovementPointsLikeSentence` (one decimal,
- * trailing ".0" dropped), so the precision is decided by the printed string.
+ * trailing ".0" dropped), so the precision is decided by the printed string —
+ * and, being that formatter, they now say POINTS the way the rest of its family
+ * does (#5666 class scan): "+1.7 pts", "▲1.7 pts 24h". The old "%" read a
+ * 1.7-point move as a 1.7% relative change.
  *
  * Specimen: `GET /api/playoffs/ncaa-football` movers, read 2026-09-24.
  */
@@ -60,14 +63,14 @@ const { AnalyticsProvider } = require("@/components/Analytics");
 
 /** The served movers, as 0–1 fractions, and what each chip must print. */
 const SPECIMEN: { name: string; change: number; chip: string }[] = [
-  { name: "Mississippi State Bulldogs", change: 0.0174, chip: "+1.7%" },
-  { name: "Indiana Hoosiers", change: 0.0151, chip: "+1.5%" },
-  { name: "Texas Longhorns", change: 0.0114, chip: "+1.1%" },
-  { name: "Ole Miss", change: -0.01, chip: "-1%" },
-  { name: "Miami Hurricanes", change: 0.0096, chip: "+1%" },
-  { name: "Notre Dame Fighting Irish", change: 0.0066, chip: "+0.7%" },
-  { name: "Georgia Bulldogs", change: 0.0059, chip: "+0.6%" },
-  { name: "Texas Tech Red Raiders", change: -0.0053, chip: "-0.5%" },
+  { name: "Mississippi State Bulldogs", change: 0.0174, chip: "+1.7 pts" },
+  { name: "Indiana Hoosiers", change: 0.0151, chip: "+1.5 pts" },
+  { name: "Texas Longhorns", change: 0.0114, chip: "+1.1 pts" },
+  { name: "Ole Miss", change: -0.01, chip: "-1 pts" },
+  { name: "Miami Hurricanes", change: 0.0096, chip: "+1 pts" },
+  { name: "Notre Dame Fighting Irish", change: 0.0066, chip: "+0.7 pts" },
+  { name: "Georgia Bulldogs", change: 0.0059, chip: "+0.6 pts" },
+  { name: "Texas Tech Red Raiders", change: -0.0053, chip: "-0.5 pts" },
 ];
 
 function renderPage(): string {
@@ -148,15 +151,17 @@ function renderGrid(): string {
   return renderToStaticMarkup(<TournamentProgressionTable data={data} />);
 }
 
-/** `{team: "▲1.7"}` — the grid cell's glyph + magnitude, `24h` suffix dropped. */
-function cellsByTeam(markup: string): Record<string, string> {
+/** `{team: {cell: "▲1.7", suffix: "pts 24h", title: "+1.7 pts in 24h"}}`. */
+function cellsByTeam(
+  markup: string,
+): Record<string, { cell: string; suffix: string; title: string }> {
   const rows = markup.split("<tr").slice(1);
-  const out: Record<string, string> = {};
+  const out: Record<string, { cell: string; suffix: string; title: string }> = {};
   for (const { name } of SPECIMEN) {
     const row = rows.find((r) => r.includes(name));
     if (!row) continue;
-    const m = /title="[^"]* in 24h">([▲▼])(?:<!-- -->)?([^<]*)</.exec(row);
-    if (m) out[name] = `${m[1]}${m[2]}`;
+    const m = /title="([^"]* in 24h)">([▲▼])(?:<!-- -->)?([^<]*)<span[^>]*>([^<]*)<\/span>/.exec(row);
+    if (m) out[name] = { cell: `${m[2]}${m[3]}`, suffix: m[4], title: m[1] };
   }
   return out;
 }
@@ -172,15 +177,26 @@ describe("Biggest Movers chip precision (#8474)", () => {
     // The photographed shape: "+1%" (1.4 pt) beside "+1.0%" (0.96 pt).
     const chips = Object.values(chipsByTeam(renderPage()));
     expect(chips).toHaveLength(SPECIMEN.length);
-    expect(chips.some((c) => /\.0%$/.test(c))).toBe(false);
+    expect(chips.some((c) => /\.0\b/.test(c))).toBe(false);
+    expect(chips.some((c) => c.includes("%"))).toBe(false);
   });
 });
 
 describe("grid 24h cell precision (#8474)", () => {
-  it("prints the same magnitude the chip does", () => {
+  it("prints the same magnitude the chip does, and says points", () => {
     expect(cellsByTeam(renderGrid())).toEqual(
       Object.fromEntries(
-        SPECIMEN.map((s) => [s.name, `${s.change > 0 ? "▲" : "▼"}${s.chip.slice(1, -1)}`]),
+        SPECIMEN.map((s) => {
+          const mag = s.chip.slice(1).replace(/ pts$/, "");
+          return [
+            s.name,
+            {
+              cell: `${s.change > 0 ? "▲" : "▼"}${mag}`,
+              suffix: "pts 24h",
+              title: `${s.chip} in 24h`,
+            },
+          ];
+        }),
       ),
     );
   });
