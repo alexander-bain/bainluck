@@ -144,9 +144,26 @@ export function chartTooltipPair(
   awayTeam: string,
   awayWithheld: boolean,
 ): string {
-  const home = `${homeTeam}: ${homePercent.toFixed(1)}%`;
-  if (awayWithheld) return home;
-  return `${home} | ${awayTeam}: ${(100 - homePercent).toFixed(1)}%`;
+  const cells = chartTooltipCells(homePercent, awayWithheld);
+  const home = `${homeTeam}: ${cells.home}`;
+  if (cells.away === null) return home;
+  return `${home} | ${awayTeam}: ${cells.away}`;
+}
+
+/**
+ * #925 — the same two numbers as `chartTooltipPair`, without the team names, for
+ * the phone-width tooltip that prints them as table cells under one team-name
+ * header. Kept here and read by `chartTooltipPair` so the table and the line
+ * form can never round or withhold differently.
+ */
+export function chartTooltipCells(
+  homePercent: number,
+  awayWithheld: boolean,
+): { home: string; away: string | null } {
+  return {
+    home: `${homePercent.toFixed(1)}%`,
+    away: awayWithheld ? null : `${(100 - homePercent).toFixed(1)}%`,
+  };
 }
 
 /**

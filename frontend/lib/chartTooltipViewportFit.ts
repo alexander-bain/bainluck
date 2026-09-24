@@ -66,6 +66,27 @@
 
 
 
+/**
+ * #925 — below this width the tooltip prints its probabilities as a table (one
+ * row per source, one column per team) instead of a wrapped `Team: 62.4% |
+ * Other: 37.6%` line per source.
+ *
+ * The shift above keeps the card on the SCREEN, but not off the page: recharts
+ * pins a card taller than the plot to the plot's top, so its tail hangs below
+ * the chart — over the readout the event page prints there (score, period,
+ * clock, time, "as of"). Measured on production at 390px, /events/14781697 held
+ * at 2:50 PM: every source line wrapped to two rows ("Dallas Cowboys: 65.0% |
+ * Washington / Commanders: 35.0%"), the card ran from the plot's top to
+ * ~y=575, and the readout under the chart read "~0:12 - 2n…" with its score,
+ * numbers and age line behind the card. No position fixes that — the card was
+ * taller than the space; the rows had to get shorter.
+ *
+ * 495px is where the #1833 width cap (`min(24rem, 100vw - 7rem)`) starts to
+ * bind, i.e. exactly the widths at which the line form wraps. Above it the card
+ * is byte-identical to before.
+ */
+export const CHART_TOOLTIP_COMPACT_MEDIA_QUERY = "(max-width: 495px)";
+
 /** Gap left between the tooltip card and the edge of the readable area, in px. */
 export const CHART_TOOLTIP_VIEWPORT_MARGIN_PX = 8;
 
