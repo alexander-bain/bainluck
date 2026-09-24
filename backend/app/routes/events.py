@@ -2046,6 +2046,52 @@ def _query_name_match(market, expanded: list[tuple[str, str | None]]) -> bool:
     return all((t in n) or (e and e in n) for t, e in low)
 
 
+def _typeahead_stem_only_futures(
+    market,
+    expanded: list[tuple[str, str | None]],
+    lead_team_name: str | None,
+) -> bool:
+    """#8447: the row reached the dropdown by the STEMMER alone, and the query is a team.
+
+    Postgres's english stemmer folds `angels` and `Angeles` to `angel`, and
+    `nationals` and `Nation` to `nation`. So the full-text half of
+    `_futures_name_arms` admits `Los Angeles Mayor winner?` for `angels` and
+    `Navajo Nation presidential election winner?` for `nationals`. Neither name
+    contains the word typed and no outcome names the team; the row shares a stem
+    with the query and nothing more. Production 2026-09-24: three of the four
+    `angels` futures rows were LA city races.
+
+    True only when ALL of these hold:
+      1. the query resolved a team whose name contains every typed term
+         (`lead_team_name`). This is the "the query names a team" gate, and it is
+         what leaves `champions` -> "Champion" recall (the reason the FTS half
+         exists, see `_build_futures_name_filter`) untouched: no team is named
+         that;
+      2. the market NAME does not contain the terms (`_query_name_match`, with
+         the same term-or-expansion rule, so a nickname rewrite still counts);
+      3. no owned OUTCOME name contains them either, so `MLB World Series
+         Champion` stays for `angels` through its "Los Angeles Angels" leg.
+
+    Substring hits are never touched, so an interior-substring control row such as
+    #4723's Korpatsch (`pats`) passes on clause 2.
+    """
+    if not lead_team_name:
+        return False
+    low = [(t.lower(), (e or "").lower()) for t, e in expanded]
+    if not low:
+        return False
+    team = lead_team_name.lower()
+    if not all(t in team for t, _ in low):
+        return False
+    if _query_name_match(market, expanded):
+        return False
+    for name in _search_owned_outcome_names(market):
+        n = name.lower()
+        if all((t in n) or (e and e in n) for t, e in low):
+            return False
+    return True
+
+
 def _futures_board_is_not_a_partition(market: "FuturesMarket") -> bool:
     """The served legs do not divide one question, so their max answers nothing.
 
@@ -10545,6 +10591,15 @@ async def typeahead_search(
         futures_result.scalars().unique().all() if futures_result is not None else [],
         ta_expanded,
     )
+    # #8447: a team query drops the rows only the stemmer admitted (`angels` ->
+    # "Los Angeles Mayor"). This runs after the rerank, before the dropdown cut,
+    # and only when the lead team's name carries every typed term; the helper
+    # explains why `champions` and the substring rows are unaffected.
+    if _ta_lead_team is not None:
+        ta_futures_ranked = [
+            m for m in ta_futures_ranked
+            if not _typeahead_stem_only_futures(m, ta_expanded, _ta_lead_team["text"])
+        ]
 
     # UX-P259/#2579, the dropdown seam. #2579 was REPORTED against the header
     # dropdown ("typed Alcaraz into the header search on /") and confirmed on
