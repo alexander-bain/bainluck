@@ -205,9 +205,10 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
   it("CONTROL — the SAME bare-date label, with a caption about its own odds, is untouched", () => {
     // `October 31` is the very string the defect row drops, printed here as the
     // label. A door that keyed on the date rather than on the relationship
-    // would take this row's caption with it.
+    // would take this row's caption with it. (#8339: the chip read "6 pts" beside
+    // "down 6.5 points" until it took the sentence's one-decimal form.)
     expect(rowText(renderRow(member(bundle("middle_east"), JORDAN)), JORDAN)).toBe(
-      "Will Iran target Jordan?October 31 · Odds down 6.5 points6 pts67%",
+      "Will Iran target Jordan?October 31 · Odds down 6.5 points6.5 pts67%",
     );
   });
 
@@ -232,7 +233,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     expect(outcomes.length).toBeGreaterThan(1);
     jordan.context_summary = `${outcomes[1].name} up 20 points today`;
 
-    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 316 pts67%");
+    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 316.5 pts67%");
   });
 
   it("an ordinary English `No` in a caption is not read as a second leg", () => {
@@ -244,7 +245,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     outcomes[1].name = "No";
     jordan.context_summary = "No clear favorite yet";
 
-    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 31 · No clear favorite yet6 pts67%");
+    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 31 · No clear favorite yet6.5 pts67%");
   });
 
   describe("the production census", () => {

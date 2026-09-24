@@ -161,7 +161,9 @@ describe("#4066 D1(a) — the Discover golf card states a move in points", () =>
   it("reads the figure from the payload rather than baking it in", () => {
     // A different move must move the number. Guards against a literal.
     const seen = visible(draw(0.235));
-    expect(seen).toMatch(/2[34]\s*(pts|points)/);
+    // #8339 — the chip prints the sentence's one-decimal form, so 0.235 is
+    // exactly "23.5", no longer "23 or 24" depending on whole-point rounding.
+    expect(seen).toMatch(/23\.5\s*(pts|points)/);
     expect(seen).not.toMatch(/\b10\s*(pts|points)/);
   });
 
