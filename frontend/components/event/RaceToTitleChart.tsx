@@ -62,6 +62,15 @@ const TOPS: { label: string; n: number }[] = [
   { label: "Top 10", n: 10 },
   { label: "Full field", n: 0 },
 ];
+/** #8372: the rank tabs that change what is drawn for a field of `size`. A Top-N
+ *  tab exists only when it leaves someone out (N < size); "Full field" exists only
+ *  beside at least one of them. A field of five or fewer offers no picker at all —
+ *  on the Presidents Cup's two teams, Top 5 / Top 10 / Full field were three names
+ *  for one chart, and rank tabs mean nothing in team match play. */
+export function raceRankTabs(size: number): { label: string; n: number }[] {
+  const tops = TOPS.filter((t) => t.n > 0 && t.n < size);
+  return tops.length > 0 ? [...tops, TOPS[TOPS.length - 1]] : [];
+}
 /** A legend stays legible up to ~12 lines; beyond that it's clutter. */
 const MAX_LEGEND_LINES = 12;
 
@@ -82,6 +91,7 @@ export default function RaceToTitleChart({
 }: RaceToTitleChartProps) {
   const [hours, setHours] = useState(168);
   const [topN, setTopN] = useState(5);
+  const rankTabs = raceRankTabs(competitors.length);
 
   // L2-135: golf round markers (R1..R4) give the axis a real sense of time.
   const timeMarkers = useMemo(
@@ -119,21 +129,23 @@ export default function RaceToTitleChart({
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-title-3 font-semibold text-text-primary">Race to the title</h2>
         <div className="flex items-center gap-3">
-          <div className="flex rounded-full bg-surface-elevated p-0.5">
-            {TOPS.map((t) => (
-              <button
-                key={t.n}
-                onClick={() => setTopN(t.n)}
-                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                  topN === t.n
-                    ? "bg-surface-card text-text-primary shadow-card font-semibold"
-                    : "text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          {rankTabs.length > 0 && (
+            <div className="flex rounded-full bg-surface-elevated p-0.5">
+              {rankTabs.map((t) => (
+                <button
+                  key={t.n}
+                  onClick={() => setTopN(t.n)}
+                  className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                    topN === t.n
+                      ? "bg-surface-card text-text-primary shadow-card font-semibold"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex rounded-full bg-surface-elevated p-0.5">
             {RANGES.map((r) => (
               <button

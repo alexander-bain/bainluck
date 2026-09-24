@@ -19,6 +19,7 @@ import {
   renderedFinishColumns,
   headlinerMatchup,
   settledChampion,
+  raceChartHasHistory,
 } from "@/lib/eventConceptDisplay";
 import {
   CONCEPT_LOADING_CEILING_MS,
@@ -306,6 +307,11 @@ export default function EventConceptPage() {
   const isSettled = event.status === "settled";
   const isLive = event.status === "live";
   const hasWinnerField = primary.kind === "winner_field" && competitors.length > 0;
+  // #8372: the live/upcoming race chart mounts only when it can draw a line. The
+  // Presidents Cup opened on an empty "Race to the title" card whose only content
+  // was "history isn't available"; the leaderboard below already carries the
+  // numbers, so the page leads with it instead. Its nav pill follows the section.
+  const showRace = hasWinnerField && !isSettled && raceChartHasHistory(competitors);
   // L2-130: soccer tournaments (World Cup) are winner-field concepts whose CHILDREN
   // are team duels from the events plane. They open with a container hero (the live
   // /next match), NOT the RaceToTitleChart (the winner-field competitors carry no
@@ -351,7 +357,7 @@ export default function EventConceptPage() {
   // Section nav — only the sections that will actually render.
   const nav: { id: string; label: string }[] = [];
   if (soccerHero) nav.push({ id: "headliner", label: "Now" });
-  else if (hasWinnerField && evolutionId && !isSettled)
+  else if (showRace && evolutionId)
     nav.push({ id: "race", label: "Race" });
   // L2-175 Item 3c: only surface the head-to-head pill when the section will
   // actually render (TwoSidedTimeline needs ≥2 competitors), and label it to MATCH
@@ -441,14 +447,14 @@ export default function EventConceptPage() {
               championName={settledChampion(competitors)?.name ?? null}
             />
           ) : null
-        ) : (
+        ) : showRace ? (
           <RaceToTitleChart
             competitors={competitors}
             domain={event.domain}
             startDate={event.start_date}
             endDate={event.end_date}
           />
-        )
+        ) : null
       ) : null}
 
       {hasWinnerField && (

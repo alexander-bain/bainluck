@@ -90,6 +90,14 @@ const SETTLED_ENVELOPE: EventConceptResponse = {
   movers: [],
 } as unknown as EventConceptResponse;
 
+function liveHistory(a: number, b: number) {
+  const now = Date.now();
+  return [
+    { timestamp: new Date(now - 2 * 3600 * 1000).toISOString(), probability: a },
+    { timestamp: new Date(now - 1 * 3600 * 1000).toISOString(), probability: b },
+  ];
+}
+
 const LIVE_ENVELOPE: EventConceptResponse = {
   event: {
     key: "event:cycling:tour-de-france-2026",
@@ -104,9 +112,11 @@ const LIVE_ENVELOPE: EventConceptResponse = {
     kind: "winner_field",
     label: "Winner",
     competitors: [
-      { name: "Tadej Pogačar", probability: 0.62, outcome_id: 1 },
-      { name: "Jonas Vingegaard", probability: 0.28, outcome_id: 2 },
-      { name: "Remco Evenepoel", probability: 0.1, outcome_id: 3 },
+      // #8372: a live race chart mounts only when the envelope carries a line
+      // to draw, so the fixture carries per-competitor history (L2-71's shape).
+      { name: "Tadej Pogačar", probability: 0.62, outcome_id: 1, history: liveHistory(0.58, 0.62) },
+      { name: "Jonas Vingegaard", probability: 0.28, outcome_id: 2, history: liveHistory(0.31, 0.28) },
+      { name: "Remco Evenepoel", probability: 0.1, outcome_id: 3, history: liveHistory(0.11, 0.1) },
     ],
     evolution_market_id: 501,
   },
@@ -295,6 +305,26 @@ describe("Sunday rehearsal · concept page (EventConceptPage settled)", () => {
     expect(html).not.toContain("Final result");
     // A live winner-field shows probabilities.
     expect(html).toContain("%");
+  });
+
+  // #8372: the Presidents Cup opened on a race card that could only say "history
+  // isn't available". With nothing to draw, the page leads with the leaderboard
+  // and drops the "Race" pill; the arm above is the same page with history.
+  test("a live winner field with no history renders no race card and no Race pill", () => {
+    mockEnvelope = {
+      ...LIVE_ENVELOPE,
+      primary: {
+        ...LIVE_ENVELOPE.primary,
+        competitors: LIVE_ENVELOPE.primary.competitors.map(({ history: _h, ...c }) => c),
+      },
+    } as EventConceptResponse;
+    const html = renderToStaticMarkup(<EventConceptPage />);
+    expect(html).not.toContain("Race to the title");
+    expect(html).not.toContain("history isn&#x27;t available");
+    expect(html).not.toContain('href="#race"');
+    // The numbers are still on the page, in the leaderboard.
+    expect(html).toContain('id="leaderboard"');
+    expect(html).toContain("62%");
   });
 });
 

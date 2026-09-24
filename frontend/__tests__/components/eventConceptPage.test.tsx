@@ -41,6 +41,11 @@ const ENVELOPE = {
       {
         name: "Scottie Scheffler",
         probability: 0.22,
+        outcome_id: 1,
+        history: [
+          { timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), probability: 0.2 },
+          { timestamp: new Date(Date.now() - 1 * 3600 * 1000).toISOString(), probability: 0.22 },
+        ],
         movement_24h: 0.03,
         top_5_prob: 58,
         top_10_prob: 74,
@@ -49,6 +54,11 @@ const ENVELOPE = {
       {
         name: "Rory McIlroy",
         probability: 0.15,
+        outcome_id: 2,
+        history: [
+          { timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), probability: 0.16 },
+          { timestamp: new Date(Date.now() - 1 * 3600 * 1000).toISOString(), probability: 0.15 },
+        ],
         movement_24h: -0.01,
         top_5_prob: 45,
         top_10_prob: 63,
@@ -208,8 +218,10 @@ describe("EventConceptPage SSR render (L2-60/L2-64 guard)", () => {
     expect(html).toContain("markets tracked"); // markets-tracked count
     // today's movers strip
     expect(html).toContain("movers");
-    // race-to-the-title chart section
+    // race-to-the-title chart section — drawing, not its empty state (#8372: the
+    // envelope history above is what the chart reads; the page mounts it only then)
     expect(html).toContain("Race to the title");
+    expect(html).not.toContain("history isn&#x27;t available");
     // winner-field leaderboard competitors (the render path that crashed)
     expect(html).toContain("Scottie Scheffler");
     expect(html).toContain("Rory McIlroy");

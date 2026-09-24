@@ -27,9 +27,15 @@ function mkCompetitors(): EventConceptCompetitor[] {
 
 describe("RaceToTitleChart picker (L2-138)", () => {
   test("offers Top 5 / Top 10 / Full field", () => {
-    const html = renderToStaticMarkup(
-      <RaceToTitleChart competitors={mkCompetitors()} />,
-    );
+    // #8372: the tabs appear only where they change the drawing, so the field
+    // here is a real one — twelve contenders, more than the widest Top-N tab.
+    const base = mkCompetitors();
+    const field = Array.from({ length: 12 }, (_, i) => ({
+      ...base[i % base.length],
+      name: `Golfer ${i}`,
+      outcome_id: 100 + i,
+    }));
+    const html = renderToStaticMarkup(<RaceToTitleChart competitors={field} />);
     expect(html).toContain("Race to the title");
     expect(html).toContain("Top 5");
     expect(html).toContain("Top 10");
