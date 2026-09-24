@@ -38,7 +38,7 @@ enum DiscoverFeedReconcile {
         /// protect, or when the server says the ordering genuinely changed.
         case repaint
         /// Update in place, append what is new, remove what is gone — and never
-        /// re-derive `FeedInterleave.byCategory` over the painted cards.
+        /// re-derive `FeedInterleave.spaced` over the painted cards.
         case reconcile
     }
 

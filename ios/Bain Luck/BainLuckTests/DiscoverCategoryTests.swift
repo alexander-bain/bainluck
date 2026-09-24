@@ -10,9 +10,10 @@ import XCTest
 ///      delegate, so agreement is STRUCTURAL — there is no second rule to assert
 ///      against. That is deliberately stronger than the "test the copies agree"
 ///      this issue originally asked for: an agreement test still permits two rules.
-///   2. The non-sports drain breaks runs (`breakNonSportsRuns`). This is the
-///      mandatory safety half of the concept fix — measured on 83 production
-///      cards, the domain map ALONE takes the worst-case run from 6 to 8.
+///   2. The spacing pass breaks non-sports runs too. This is the mandatory
+///      safety half of the concept fix — measured on 83 production cards, the
+///      domain map ALONE takes the worst-case run from 6 to 8. Since #8415 it
+///      does so by DEFERRING a same-category card, never by promoting one.
 final class DiscoverCategoryTests: XCTestCase {
 
     // MARK: - Fixtures
@@ -228,45 +229,29 @@ final class DiscoverCategoryTests: XCTestCase {
         return out
     }
 
-    func testNonSportsRunIsBrokenWhenEnabled() {
-        let f = drainingFixture()
-        let off = FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                            breakNonSportsRuns: false, category: cat)
-        let on = FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                           breakNonSportsRuns: true, category: cat)
-        XCTAssertGreaterThan(maxRun(off), maxRun(on),
-                             "the non-sports guard must shorten the tail run it was added for")
+    private func spaced(_ f: [Stub]) -> [Stub] {
+        FeedInterleave.spaced(f, sportsCategories: sportsCats, category: cat)
     }
 
-    func testDefaultIsBitForBitTheLegacyOrder() {
-        // Monotone: the opt-in default cannot change any existing call's order.
-        for n in [0, 1, 2, 3, 5, 50, 200] {
-            let f = (0..<n).map { Stub(id: $0, cat: ["basketball", "politics", "baseball", "tech"][$0 % 4]) }
-            XCTAssertEqual(
-                FeedInterleave.byCategory(f, sportsCategories: sportsCats, category: cat),
-                FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                          breakNonSportsRuns: false, category: cat),
-                "explicit false must equal the defaulted call at n=\(n)")
-        }
+    func testNonSportsRunIsBrokenOnTheDrainingShape() {
+        let f = drainingFixture()
+        XCTAssertEqual(maxRun(f), 12, "the served shape: twelve politics cards in a row")
+        XCTAssertLessThan(maxRun(spaced(f)), maxRun(f),
+                          "the non-sports guard must shorten the tail run it was added for")
     }
 
     func testGuardIsInertWhenThereIsNothingToBreak() {
-        // No two adjacent non-sports cards share a category → bit-for-bit identical.
+        // An order that already satisfies every rule is left exactly as served.
         let f = [Stub(id: 1, cat: "politics"), Stub(id: 2, cat: "basketball"),
                  Stub(id: 3, cat: "tech"), Stub(id: 4, cat: "baseball"),
                  Stub(id: 5, cat: "economics")]
-        XCTAssertEqual(
-            FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                      breakNonSportsRuns: true, category: cat),
-            FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                      breakNonSportsRuns: false, category: cat))
+        XCTAssertEqual(spaced(f), f)
     }
 
     // gotcha #43 — a cap's guard tests must assert BOTH directions.
     func testSportsPartitionIsNotStarvedByTheNonSportsGuard() {
         let f = drainingFixture()
-        let on = FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                           breakNonSportsRuns: true, category: cat)
+        let on = spaced(f)
         XCTAssertEqual(on.filter { sportsCats.contains($0.cat) }.count, 4,
                        "every sports card must still be present")
         XCTAssertEqual(Set(on.map(\.id)), Set(f.map(\.id)), "no card dropped or duplicated")
@@ -279,8 +264,7 @@ final class DiscoverCategoryTests: XCTestCase {
                 Stub(id: $0, cat: ["politics", "politics", "basketball", "politics",
                                    "tech", "baseball"][$0 % 6])
             }
-            let out = FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                                breakNonSportsRuns: true, category: cat)
+            let out = spaced(f)
             XCTAssertEqual(out.count, n, "count preserved at n=\(n)")
             XCTAssertEqual(Set(out.map(\.id)), Set(f.map(\.id)), "id set preserved at n=\(n)")
         }
@@ -290,18 +274,15 @@ final class DiscoverCategoryTests: XCTestCase {
         // Degenerate: nothing to interleave with. The guard must terminate and
         // return every card — it cannot invent variety that is not there.
         let f = (0..<30).map { Stub(id: $0, cat: "politics") }
-        let out = FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                            breakNonSportsRuns: true, category: cat)
+        let out = spaced(f)
         XCTAssertEqual(out.count, 30)
         XCTAssertEqual(maxRun(out), 30, "no reordering can separate 30 identical categories")
     }
 
-    func testAllSportsInputStillReturnedUnchangedWithGuardOn() {
-        // The `nonSports.isEmpty` early return is pinned behavior
-        // (`testAllSportsInputReturnedUnchanged`); the new flag must not alter it.
+    func testASingleSportListIsReturnedAsServed() {
+        // Nothing can separate forty basketball cards, so nothing moves.
         let f = (0..<40).map { Stub(id: $0, cat: "basketball") }
-        XCTAssertEqual(FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                                 breakNonSportsRuns: true, category: cat), f)
+        XCTAssertEqual(spaced(f), f)
     }
 
     // MARK: - 4. #1885 — the story-family run, on the same replay
@@ -362,13 +343,12 @@ final class DiscoverCategoryTests: XCTestCase {
 
         // Category-only — what shipped before #1885. `family` defaults to
         // `category`, so this is exactly today's algorithm.
-        let before = FeedInterleave.byCategory(
-            f, sportsCategories: sportsCats, breakNonSportsRuns: true, category: fcat)
+        let before = FeedInterleave.spaced(
+            f, sportsCategories: sportsCats, category: fcat)
 
         // Family-aware.
-        let after = FeedInterleave.byCategory(
-            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
-            category: fcat, family: ffam)
+        let after = FeedInterleave.spaced(
+            f, sportsCategories: sportsCats, category: fcat, family: ffam)
 
         XCTAssertLessThan(
             maxFamilyRun(after), maxFamilyRun(before),
@@ -385,11 +365,10 @@ final class DiscoverCategoryTests: XCTestCase {
     /// category monotony would be trading one flood for another.
     func testCategoryRunIsNotMadeWorseByTheFamilyTier() {
         let f = oneStoryTailFixture()
-        let before = FeedInterleave.byCategory(
-            f, sportsCategories: sportsCats, breakNonSportsRuns: true, category: fcat)
-        let after = FeedInterleave.byCategory(
-            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
-            category: fcat, family: ffam)
+        let before = FeedInterleave.spaced(
+            f, sportsCategories: sportsCats, category: fcat)
+        let after = FeedInterleave.spaced(
+            f, sportsCategories: sportsCats, category: fcat, family: ffam)
         XCTAssertLessThanOrEqual(maxCategoryRun(after), maxCategoryRun(before))
     }
 
@@ -404,11 +383,9 @@ final class DiscoverCategoryTests: XCTestCase {
                         story: nil)
             }
             XCTAssertEqual(
-                FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                          breakNonSportsRuns: true, category: fcat),
-                FeedInterleave.byCategory(f, sportsCategories: sportsCats,
-                                          breakNonSportsRuns: true,
-                                          category: fcat, family: ffam),
+                FeedInterleave.spaced(f, sportsCategories: sportsCats, category: fcat),
+                FeedInterleave.spaced(f, sportsCategories: sportsCats,
+                                      category: fcat, family: ffam),
                 "supplying a family that equals the category must change nothing at n=\(n)")
         }
     }
@@ -421,9 +398,8 @@ final class DiscoverCategoryTests: XCTestCase {
                         cat: ["politics", "politics", "basketball", "politics", "tech"][$0 % 5],
                         story: $0 % 3 == 0 ? "story:foreign_local_elections" : nil)
             }
-            let out = FeedInterleave.byCategory(
-                f, sportsCategories: sportsCats, breakNonSportsRuns: true,
-                category: fcat, family: ffam)
+            let out = FeedInterleave.spaced(
+                f, sportsCategories: sportsCats, category: fcat, family: ffam)
             XCTAssertEqual(out.count, n, "count preserved at n=\(n)")
             XCTAssertEqual(Set(out.map(\.id)), Set(f.map(\.id)), "id set preserved at n=\(n)")
         }
@@ -438,9 +414,8 @@ final class DiscoverCategoryTests: XCTestCase {
         let f = (0..<20).map {
             FamStub(id: $0, cat: "politics", story: "story:foreign_local_elections")
         }
-        let out = FeedInterleave.byCategory(
-            f, sportsCategories: sportsCats, breakNonSportsRuns: true,
-            category: fcat, family: ffam)
+        let out = FeedInterleave.spaced(
+            f, sportsCategories: sportsCats, category: fcat, family: ffam)
         XCTAssertEqual(out.count, 20)
         XCTAssertEqual(maxFamilyRun(out), 20, "no reordering can separate 20 identical families")
     }
