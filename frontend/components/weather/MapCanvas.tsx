@@ -47,7 +47,6 @@ function resolveCollisions(cities: CityData[], minDist: number): ResolvedCity[] 
 }
 
 export default function MapCanvas({ cities, selected, hover, onHover, onSelect }: MapCanvasProps) {
-  const crossSourceCount = useMemo(() => cities.filter(c => c.srcs.length > 1).length, [cities]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isNarrow, setIsNarrow] = useState(false);
 
@@ -284,8 +283,10 @@ export default function MapCanvas({ cities, selected, hover, onHover, onSelect }
         {/* Reachable at 1 the moment the card's search box narrows to a single
             city, and #7423 put a count in the header that agrees with this one,
             so "1 cities shown" now sits under a headline reading "1 city". */}
+        {/* #8342: no "N cross-source" count on the right. It was a coverage
+            number (notice 34), structurally "0" while every city's `srcs` is
+            ["polymarket"], and meant nothing to a reader. */}
         <span>{pluralize(cities.length, "city", "cities")} shown &middot; tap a pin for distribution</span>
-        <span>{crossSourceCount} cross-source</span>
       </div>
     </div>
   );
