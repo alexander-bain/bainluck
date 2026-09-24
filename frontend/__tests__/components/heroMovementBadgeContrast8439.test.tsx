@@ -108,10 +108,16 @@ function heroOf(markup: string): { background: string; inner: string } {
   return { background: m[1], inner: m[2] };
 }
 
+/** Text runs between tags (#8436's helper) — no tag-deleting `.replace`, which CodeQL flags. */
+function visibleText(markup: string): string {
+  const lead = /^[^<>]*/.exec(markup)?.[0] ?? "";
+  return lead + (markup.match(/>[^<>]*/g) ?? []).map((r) => r.slice(1)).join("");
+}
+
 /** The badge: the span whose title is its own "Up/Down N points…" label. */
 function badgeOf(markup: string): { classes: string; title: string; body: string } | null {
   const m = /<span title="((?:Up|Down) [^"]+)" aria-label="[^"]*" class="([^"]*)">([\s\S]*?)<\/span>/.exec(markup);
-  return m ? { title: m[1], classes: m[2], body: m[3].replace(/<[^>]*>/g, "") } : null;
+  return m ? { title: m[1], classes: m[2], body: visibleText(m[3]) } : null;
 }
 
 // ── TournamentCard (via DiscoverCard, the path Discover renders) ────────────
