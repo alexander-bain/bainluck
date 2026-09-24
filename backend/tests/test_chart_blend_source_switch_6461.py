@@ -413,13 +413,19 @@ class TestLifecycleIsBounded:
         probs = _series(line)
         assert len(probs) == 30, "an all-slow event lost most of its line"
 
-        # Bucket 0 is the only step, and it is not an artifact: espn and mlb
-        # have not made their first observation yet, so the line genuinely
-        # begins on betting alone and then has three contributors. Every bucket
-        # after that is flat, which is the claim — five hours of staggered
-        # half-hourly polling with nothing moving draws a straight line.
-        assert probs[0] == pytest.approx(0.65)
-        assert all(p == pytest.approx(0.25) for p in probs[1:])
+        # The opening step is not an artifact: the line genuinely begins on
+        # betting alone (bucket 0), then betting + espn (bucket 1, where
+        # betting's weight still carries the median), and only has three
+        # contributors once mlb makes its first observation at 120s. Every
+        # bucket after that is flat, which is the claim — five hours of
+        # staggered half-hourly polling with nothing moving draws a straight
+        # line.
+        #
+        # #8349: this used to pin the step at bucket 0 alone, because the
+        # inclusive bucket edge pulled mlb's reading stamped exactly 120s into
+        # bucket 60. Buckets are half-open now, so mlb joins in its own minute.
+        assert probs[:2] == [pytest.approx(0.65), pytest.approx(0.65)]
+        assert all(p == pytest.approx(0.25) for p in probs[2:])
 
 
 class TestTheOldProtectionsStillHold:
@@ -429,11 +435,11 @@ class TestTheOldProtectionsStillHold:
         """One source and no peers: the reference is that source's own reading,
         relative age is zero everywhere, and the line IS the series.
 
-        Points are placed off the bucket boundary deliberately. The carry-forward
-        window is `<= bucket_ts + bucket_seconds`, so a point sitting exactly on
-        a boundary is claimed by the bucket BEFORE it as well — pre-existing,
-        untouched by #6461, and a trap for anyone writing a fixture on round
-        minutes who then reads the off-by-one as this change's doing.
+        Points are placed off the bucket boundary. Until #8349 the carry-forward
+        window was `<= bucket_ts + bucket_seconds`, so a point sitting exactly on
+        a boundary was also claimed by the bucket BEFORE it. Buckets are
+        half-open now (`test_chart_bucket_edge_is_half_open_8349.py` holds
+        that), so the offsets are no longer load-bearing here.
         """
         sources = {"betting": [_tp(10, 0.50), _tp(70, 0.55), _tp(130, 0.60)]}
         assert _series(compute_aggregated_probability(sources, bucket_seconds=60)) == [

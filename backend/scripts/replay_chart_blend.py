@@ -164,7 +164,9 @@ def _contributors_after(
             latest_epoch = None
             for point in pts:
                 epoch = point.timestamp.timestamp()
-                if epoch <= limit:
+                # Half-open, as the shipped scan is since #8349 — this labels
+                # blend_after's points, so it must see the same candidates.
+                if epoch < limit:
                     latest_epoch = epoch
                 else:
                     break

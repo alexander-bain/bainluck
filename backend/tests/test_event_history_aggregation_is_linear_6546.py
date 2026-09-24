@@ -97,6 +97,19 @@ from app.utils.aggregation import _UNCAPPED_SOURCES
 # against, the two disagree and this test says so — the clamp is retained here
 # precisely BECAUSE it is dead in the shipped path.
 #
+# ── #8349 AMENDMENT: ONE TOKEN OF THE SCAN IS A SHARED RULE, NOT THE BEFORE ──
+#
+# The scan's upper edge was `<= bucket_ts + bucket_seconds`, which made each
+# bucket closed at the top: a point stamped exactly on the next bucket's start
+# was claimed early. That was a defect in BOTH implementations (it dates to the
+# original aggregation commit, and #6546 carried it across unchanged). It was
+# never part of what this oracle guards, which is restart-per-bucket vs cursor.
+# So the comparison token below is `<` in the oracle AND in `aggregation.py`,
+# and nothing else in the scan changed. The restart loop, the `else: break`,
+# bucket enumeration, timezone derivation and duplicate/unsorted handling are
+# still verbatim. The half-open rule itself is proved in
+# `test_chart_bucket_edge_is_half_open_8349.py`, not here.
+#
 # #6461's own behaviour is proved next door, in
 # `test_chart_blend_source_switch_6461.py`; it is not this file's job and never
 # was.
@@ -147,7 +160,7 @@ def _oracle_aggregated_probability(
         for source_key, points in source_sorted.items():
             latest: Optional[TimestampedProb] = None
             for point in points:
-                if point.timestamp.timestamp() <= bucket_ts + bucket_seconds:
+                if point.timestamp.timestamp() < bucket_ts + bucket_seconds:  # #8349
                     latest = point
                 else:
                     break
