@@ -24,7 +24,8 @@ ways this pass can go wrong and reach Alex, in both directions:
 * it does not fire, and the Flames page still draws the game twice;
 * it fires on a LIVE pair and elects the stale copy, so the reader is shown a
   wrong score as the only score (MEASURED: the one pair of 13 whose two rows
-  disagreed about the score was live);
+  disagreed about the score was live) — since #5821 a live pair folds only
+  when the ESPN-anchored parent is the survivor, see that suite;
 * it fires on two rows that are genuinely two games (a chain, a swapped
   orientation, a different opponent, a second fixture past the bound);
 * it fires on the SYMMETRIC pair this module deliberately refuses to guess
@@ -242,25 +243,33 @@ def test_a_pre_match_line_the_survivor_already_has_is_never_overwritten():
     assert 15312340 not in result.merged_opening, "nothing was supplied"
 
 
-def test_a_live_pair_is_left_as_two_cards():
+def test_a_live_pair_nothing_can_rank_for_freshness_is_left_as_two_cards():
     """MEASURED, not cautious. Of 13 production pairs on 2026-09-21, six were
     live and the ONLY pair whose rows disagreed about the score was one of them.
-    While the game is live we cannot read which copy is current, so folding
-    risks showing a stale score as the only score."""
+
+    AMENDED #5821: when the parent is ESPN-anchored and the variant is not, the
+    fresher score IS readable and the pair folds (that suite:
+    `test_a_live_preseason_game_draws_one_card_5821.py`). What stays refused is
+    the pair nothing can rank — here the variant carries an `espn_id` too, so
+    the election would pick by something other than which score is current."""
     parent, variant = _flames_pair()
     parent.status = "live"
     variant.status = "live"
+    variant.espn_id = "401879310"
 
     result = fold_twin_events([parent, variant])
 
-    assert len(result.events) == 2, "a live twin stays double — see #2693"
+    assert len(result.events) == 2, "a live twin with no freshness signal stays double — see #2693"
 
 
-def test_one_live_row_is_enough_to_refuse_the_pair():
+def test_one_live_row_is_enough_to_refuse_an_unlicensed_pair():
     """The production pair `15316894`/`15312791` was live on one side and
-    completed on the other in the same read. The refusal is per GROUP, so the
-    disagreement does not need to be mutual to be dangerous."""
+    completed on the other in the same read. Outside the #5821 licence the
+    refusal is per GROUP, so the disagreement does not need to be mutual to be
+    dangerous — here the parent carries no `espn_id`, so nothing says its score
+    is the current one."""
     parent, variant = _flames_pair()
+    parent.espn_id = None
     parent.status = "completed"
     variant.status = "live"
 
