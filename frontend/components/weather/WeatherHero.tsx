@@ -47,6 +47,11 @@ export default function WeatherHero() {
   const [idx, setIdx] = useState(0);
   const { data: liveItems, error } = useSWR("weather-featured", fetchWeatherFeatured, { refreshInterval: 300000 });
   const items = (liveItems as FeaturedMarket[])?.length ? (liveItems as FeaturedMarket[]) : null;
+  // Only an array with no rows means loaded-and-empty, and must show an honest
+  // card rather than a skeleton that pulses forever — the collapse UX-P170
+  // fixed in RainForecast (#2243). `undefined` is still loading; a non-array
+  // body is not a proved absence and keeps the skeleton.
+  const empty = Array.isArray(liveItems) && liveItems.length === 0;
   const loading = !items && !error;
 
   const advance = useCallback(() => {
@@ -130,10 +135,15 @@ export default function WeatherHero() {
           )}
         </div>
 
-        {/* Right — featured card, error, or skeleton */}
+        {/* Right — featured card, error, honest-empty, or skeleton */}
         {error && !items ? (
           <div className="flex items-center justify-center bg-surface-card rounded-[18px] border border-surface-border" style={{ minHeight: 260 }}>
             <p className="text-text-secondary text-sm">Failed to load featured markets</p>
+          </div>
+        ) : empty ? (
+          <div className="flex flex-col items-center justify-center bg-surface-card rounded-[18px] border border-surface-border text-center" style={{ minHeight: 260, padding: 28 }}>
+            <p className="text-text-secondary text-sm">No live featured markets right now</p>
+            <p className="text-text-muted text-xs mt-1.5">This card rotates the weather markets worth a look.</p>
           </div>
         ) : loading || !current || !src ? (
           <HeroCardSkeleton />
