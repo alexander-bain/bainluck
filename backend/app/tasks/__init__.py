@@ -1368,6 +1368,25 @@ def recover_sunk_polymarket_events(self):
 
 
 @celery_app.task(
+    name="app.tasks.suspend_venue_ended_events",
+    soft_time_limit=120,
+    time_limit=150,
+)
+def suspend_venue_ended_events():
+    """#3017: take an anchor-less match off the live board when Polymarket says it ended.
+
+    A row with no ESPN id and no StatPal fixture id has no play-reporting
+    witness, so it read LIVE until the staleness arm's 3.0h soccer bound — and a
+    CANCELLED friendly read "LIVE 71%" for all of it. Polymarket's own event
+    record says ``ended`` (FT/VFT, or CAN) well before any leg closes. One Gamma
+    call per 100 ids. Mechanism: `app/utils/venue_event_ended.py`.
+    """
+    from app.tasks.venue_event_ended import _suspend_venue_ended_events
+
+    return _tracked_run("suspend_venue_ended_events", _suspend_venue_ended_events())
+
+
+@celery_app.task(
     name="app.tasks.refresh_dated_fixture_starts",
     soft_time_limit=240,
     time_limit=300,
@@ -6335,6 +6354,18 @@ celery_app.conf.beat_schedule = {
     "recover-sunk-polymarket-events-hourly": {
         "task": "app.tasks.recover_sunk_polymarket_events",
         "schedule": crontab(minute=26),
+        "options": {"queue": "heavy"},
+    },
+    # #3017. Every 5 minutes: the whole point is the gap between the venue
+    # saying "ended" and our page still saying LIVE, so an hourly slot would
+    # spend most of the window this closes. Cheap — one indexed read and, only
+    # when an anchor-less Polymarket row is live, one Gamma call per 100 ids
+    # (~10 ids on a busy morning). `heavy` for the sibling's reason: a bounded,
+    # batched venue re-read of rows we already hold, which `background`'s one
+    # effective slot cannot absorb at this cadence.
+    "suspend-venue-ended-events": {
+        "task": "app.tasks.suspend_venue_ended_events",
+        "schedule": crontab(minute="*/5"),
         "options": {"queue": "heavy"},
     },
     # UX-P139. Every 10 minutes, and it is cheap because the register bounds
