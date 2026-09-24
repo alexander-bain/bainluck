@@ -10,6 +10,7 @@ import { isPersonFieldDomain, isLikelyPersonName } from "@/lib/eventConceptDispl
 import { legendName } from "@/lib/contenderChart";
 import { probabilityCellText, probabilityChipText } from "@/lib/probabilityCellText";
 import { risingIsGood } from "@/lib/gridColumnPolarity";
+import { formatMovementPointsLikeSentence } from "@/lib/probabilityDisplay";
 import TeamNameLink from "./TeamNameLink";
 
 interface TournamentProgressionTableProps {
@@ -381,7 +382,6 @@ function ChangeIndicator({
   columnKey?: string;
 }) {
   if (!change || Math.abs(change) < 0.001) return null;
-  const pct = change * 100;
   const isPositive = change > 0;
   const isGoodNews = isPositive === risingIsGood(columnKey);
   return (
@@ -389,11 +389,10 @@ function ChangeIndicator({
       className={`text-[10px] leading-none ${
         isGoodNews ? "text-emerald-400" : "text-red-400"
       }`}
-      title={`${isPositive ? "+" : ""}${pct.toFixed(1)}% in 24h`}
+      title={`${isPositive ? "+" : "-"}${formatMovementPointsLikeSentence(change)} pts in 24h`}
     >
       {isPositive ? "▲" : "▼"}
-      {Math.abs(pct) >= 1 ? Math.round(Math.abs(pct)) : Math.abs(pct).toFixed(1)}
-      <span className="text-[8px] opacity-60 ml-px">24h</span>
+      {formatMovementPointsLikeSentence(change)}<span className="text-[8px] opacity-60 ml-0.5">pts 24h</span>
     </span>
   );
 }
