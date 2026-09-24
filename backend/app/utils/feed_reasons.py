@@ -294,7 +294,7 @@ def deadline_level_label(
 
 def leader_deadline_clause(
     leader_name: str | None,
-    pct: int | None,
+    pct: int | str | None,
     *,
     deadline_preposition: str | None,
 ) -> str:
@@ -717,7 +717,7 @@ def _is_printable_move(value: Optional[float]) -> bool:
     return value is not None and _point_change(value) != 0
 
 
-def _underdog_sentence(winner: str, pct: int) -> str:
+def _underdog_sentence(winner: str, pct: int | str) -> str:
     """"{winner} won as a {pct}% underdog", with the article the number takes.
 
     The article follows how the percent is SAID, not how it is spelled: "a 44%"
@@ -729,12 +729,13 @@ def _underdog_sentence(winner: str, pct: int) -> str:
     that sentence a second caller, and its specimen — Valencia at a printed 18 —
     is exactly a case the old literal got wrong.
     """
-    article = "an" if str(int(pct)).startswith(("8", "11", "18")) else "a"
+    # `lstrip`: a `<1` underdog reads "a less than one percent" (#5842).
+    article = "an" if str(pct).lstrip("<>").startswith(("8", "11", "18")) else "a"
     return f"{winner} won as {article} {pct}% underdog"
 
 
-def _display_pct(probability: float, printed: Optional[int] = None) -> int:
-    """The whole percent a SENTENCE states about `probability`. (#4146)
+def _display_pct(probability: float, printed: Optional[int] = None) -> str:
+    """The percent a SENTENCE states about `probability`, as printed. (#4146)
 
     ``printed`` is the percent the card's own row shows, when the caller has it.
     That is the number the sentence has to state, because it is the number the
@@ -749,13 +750,27 @@ def _display_pct(probability: float, printed: Optional[int] = None) -> int:
     card, web and native all print 71. Eleven of forty-five cards on production
     Discover stated a percent their own card did not print, every one of them on
     a .5 boundary, because this module derived its own.
+
+    ** THE BOUNDARY MARKER IS PART OF THE NUMBER (#5842). ** Both clients print
+    a value that rounds to 100 but is not 1 as `>99%`, and one that rounds to 0
+    but is not 0 as `<1%` (`probabilityParts` on web, `FormattingUtilities` on
+    native). An integer cannot say that, so the sentence was the one surface
+    that could print "rose from 74% to 100%" under a hero reading `>99%`. The
+    rule runs on the PROBABILITY, as the clients' does: a printed 100 over 0.996
+    is `>99`. Hence a string — every caller interpolates it before a literal `%`.
     """
     if printed is not None:
-        return int(printed)
-    # `or 0` would be wrong here: 0% is a real percent and None is "no price",
-    # and the two must not collapse (the contract's first row says so).
-    value = rendered_percent(probability)
-    return 0 if value is None else value
+        value = int(printed)
+    else:
+        # `or 0` would be wrong here: 0% is a real percent and None is "no
+        # price", and the two must not collapse (the contract's first row says so).
+        rendered = rendered_percent(probability)
+        value = 0 if rendered is None else rendered
+    if value >= 100 and probability is not None and probability < 1:
+        return ">99"
+    if value <= 0 and probability is not None and probability > 0:
+        return "<1"
+    return str(value)
 
 
 def _normalized_copy_tokens(text: str | None) -> list[str]:
@@ -2185,7 +2200,7 @@ def movement_subject_is_printable(
 
 
 def leader_standing_clause(
-    leader_name: str, pct: int, *, verb: str, lead_is_visible: bool
+    leader_name: str, pct: int | str, *, verb: str, lead_is_visible: bool
 ) -> str:
     """`MOUZ leads at 22%` — or `MOUZ at 22%` when the board cannot show a lead.
 
@@ -2222,7 +2237,7 @@ def leader_standing_clause(
 # prefix a word (`Above 20 million short tons (87%)`, `Above -0.4% (91%)`) and
 # read correctly. Those are left byte-identical: this is a copy fix for the
 # collapsed case, not a rewording of every card.
-def leader_percent_parenthetical(leader_name: str, pct: int) -> str:
+def leader_percent_parenthetical(leader_name: str, pct: int | str) -> str:
     """`(37%)` — or `(42% chance)` when the answer is itself a bare quantity."""
     label = (leader_name or "").strip()
     if label and any(ch.isdigit() for ch in label) and not any(
