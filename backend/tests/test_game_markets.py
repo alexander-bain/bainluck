@@ -1109,3 +1109,46 @@ class TestPolymarketLinePlacement:
     ])
     def test_neighbouring_shapes_are_unmoved(self, name, expected):
         assert _classify_game_market(name) == expected
+
+
+class TestBaseballPace8443:
+    """#8443: "bOTtom 4th" was read as overtime (fraction 1.0, projection = runs
+    scored) and no top half was parsed at all. Specimen `/events/15318166`, Mets
+    @ Rangers, Bottom 4th, 2-1: the Runs map said "Projected 3"."""
+
+    def test_the_specimen_bottom_4th_projects_more_runs(self):
+        pace = _estimate_game_pace(2, 1, "Bottom 4th", "0:00", "baseball_mlb")
+        assert pace is not None
+        assert pace["fraction_elapsed"] == pytest.approx(21 / 54, abs=0.001)
+        assert pace["projected_total"] > 3
+
+    def test_a_top_half_now_serves_a_pace(self):
+        pace = _estimate_game_pace(2, 1, "Top 4th", None, "baseball_mlb")
+        assert pace is not None and pace["fraction_elapsed"] == pytest.approx(18 / 54, abs=0.001)
+
+    def test_middle_and_end_states(self):
+        assert _estimate_game_pace(2, 1, "Middle 4th", None, "baseball_mlb")["fraction_elapsed"] == pytest.approx(21 / 54, abs=0.001)
+        assert _estimate_game_pace(2, 1, "End 4th", None, "baseball_mlb")["fraction_elapsed"] == pytest.approx(24 / 54, abs=0.001)
+
+    def test_top_first_serves_no_projection(self):
+        assert _estimate_game_pace(0, 0, "Top 1st", None, "baseball_mlb") is None
+
+    def test_extra_innings_cap_at_the_whole_game(self):
+        pace = _estimate_game_pace(4, 4, "End 11th", None, "baseball_mlb")
+        assert pace["fraction_elapsed"] == 1.0 and pace["projected_total"] == 8
+
+    def test_a_final_still_serves_no_pace(self):
+        assert _estimate_game_pace(5, 3, "Final", "0:00", "baseball_mlb") is None
+        assert _estimate_game_pace(5, 3, "Final/10", "0:00", "baseball_mlb") is None
+
+
+class TestOvertimeIsAWord8443:
+    def test_overtime_spellings_still_read_as_the_whole_game(self):
+        for period, sport in (("OT", "icehockey_nhl"), ("2OT", "basketball_nba"),
+                              ("Overtime", "americanfootball_nfl"), ("Shootout", "icehockey_nhl")):
+            pace = _estimate_game_pace(3, 2, period, None, sport)
+            assert pace is not None and pace["fraction_elapsed"] == 1.0, period
+
+    def test_the_4th_quarter_control_is_unchanged(self):
+        pace = _estimate_game_pace(20, 17, "4th Quarter", "7:30", "americanfootball_nfl")
+        assert pace["fraction_elapsed"] == pytest.approx(52.5 / 60, abs=0.001)
