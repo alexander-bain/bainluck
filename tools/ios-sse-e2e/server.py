@@ -34,6 +34,18 @@ class H(http.server.BaseHTTPRequestHandler):
         w("retry: 3000\n\n")
         w(enc({"event_id": 1}, "open"))
         time.sleep(0.3)
+        if MODE == "drop":
+            # #920: a release restarting the dyno. The first connection ends
+            # with NO `reconnect` and NO `closed` frame — the socket just goes.
+            p = 0.55 if n == 1 else 0.46
+            w(enc({"event_id": 1, "p": p, "source": "polymarket",
+                   "source_value": p, "updated_at": "2026-09-24T08:20:07Z",
+                   "status": "live"}, "probability"))
+            time.sleep(0.3)
+            if n > 1:
+                w(enc({"reason": "not_live"}, "closed"))
+                time.sleep(0.2)
+            return
         if n == 1:
             w(enc({"event_id": 1, "p": 0.62, "source": "blend",
                    "source_value": 0.62, "updated_at": "2026-09-03T09:00:00Z",
@@ -56,6 +68,8 @@ class H(http.server.BaseHTTPRequestHandler):
         time.sleep(0.2)
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8791
+#: `drop` scripts #920's release cut instead of the rollover.
+MODE = sys.argv[2] if len(sys.argv) > 2 else "rollover"
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H)
 print("READY", flush=True)
 srv.serve_forever()

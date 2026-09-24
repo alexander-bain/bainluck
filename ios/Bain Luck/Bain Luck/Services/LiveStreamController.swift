@@ -29,6 +29,17 @@ import Foundation
 ///    regardless of the thing it is supposed to be evidence FOR is a response
 ///    shape, not a signal.
 ///
+/// 3. (#8079 on web; #920 here) A NETWORK THAT WENT AWAY IS NOT A SERVER THAT
+///    SAID NO. A release restarts the web dyno and cuts every open stream with
+///    no `reconnect` frame. On web the browser's `EventSource` retries by itself
+///    and push comes back; the native transport used to report that cut as
+///    closed-for-good, `stop()` is terminal, and the page polled for the rest of
+///    the match (native/319 caught it on production: release v5007, 3 min+ of
+///    polling with no return to push). The transport now retries a dropped
+///    connection the way `EventSource` does, and `tick()` reads `isConnecting`
+///    so a silent-but-retrying transport is given `retryGiveUp` before it is
+///    retired — the same split web's `readyState` check makes.
+///
 /// THE RULE THE WHOLE FILE SERVES: a push path that dies must degrade to
 /// polling, never to a frozen number. Every failure mode — refused, errored,
 /// closed, aged out, or silently dead — ends with `delivering == false`, and
@@ -67,6 +78,16 @@ protocol LiveStreamHandle: AnyObject {
     /// True once the transport has given up for good. The `error` handler is
     /// allowed to fire on a blip that the transport will itself retry.
     var isClosed: Bool { get }
+    /// True while the transport is (re)establishing a connection on its own —
+    /// web's `readyState === CONNECTING`. `tick()` reads it to tell a network
+    /// that went away (still retrying: wait) from a socket nothing is retrying.
+    var isConnecting: Bool { get }
+}
+
+extension LiveStreamHandle {
+    /// A transport that never retries is never connecting. That is the old,
+    /// safe direction: silence retires it and the caller polls.
+    var isConnecting: Bool { false }
 }
 
 // MARK: - Constants
@@ -77,6 +98,14 @@ protocol LiveStreamHandle: AnyObject {
 enum LiveStreamTiming {
     /// Transport silence: three missed 20s heartbeats. The stream is dead.
     static let silenceTimeout: TimeInterval = 60
+
+    /// How long a silent transport that is STILL RETRYING is given before the
+    /// controller retires it for good. Web's `RETRY_GIVEUP_MS`: long enough to
+    /// outlast a release or a tunnel, short enough that a page left open
+    /// against an unreachable server is not retrying all evening. Polling
+    /// covers the whole window either way — this only decides whether push
+    /// can come BACK.
+    static let retryGiveUp: TimeInterval = 300
 
     /// Delivery silence. Longer than the transport budget ON PURPOSE: a quiet
     /// market publishes nothing, and the right answer to "push has nothing to
@@ -156,11 +185,24 @@ final class LiveStreamController {
             connect()
             return
         }
-        guard handle != nil else { return }
+        guard let current = handle else { return }
 
-        // 1. TRANSPORT dead — no frames, no heartbeats, and no error callback
-        //    either. Nothing will ever tell us; give up so the caller polls.
+        // 1. TRANSPORT silent — no frames and no heartbeats for longer than we
+        //    are willing to trust. Polling resumes either way; what the
+        //    transport is DOING about the silence decides whether this is
+        //    terminal.
         if at - lastMessageAt > LiveStreamTiming.silenceTimeout {
+            setDelivering(false)
+            // Still connecting: the transport is retrying by itself (a release
+            // cut the socket, or the network went away) and may well succeed.
+            // Retiring it here is what cost a reader push for the whole match.
+            // Bounded, so an unreachable server is not retried forever.
+            if current.isConnecting {
+                if at - lastMessageAt > LiveStreamTiming.retryGiveUp { stop() }
+                return
+            }
+            // Refused, or an open-but-silent socket nothing is retrying.
+            // Neither will change on its own, so retire the stream as before.
             stop()
             return
         }
@@ -295,9 +337,10 @@ final class LiveStreamController {
 
         next.on("error") { [weak self, weak next] _ in
             guard let self, let next, !self.stopped, self.handle === next else { return }
-            // The transport retries by itself while it is still trying; only
-            // give up once it has actually closed, so a single blip does not
-            // bounce us to polling.
+            // The transport retries a dropped connection by itself (#920);
+            // only give up once it has actually closed (a refusal), so a
+            // release or a blip costs polling until it is back, not push for
+            // the rest of the match.
             if next.isClosed {
                 self.stop()
             } else {

@@ -22,6 +22,8 @@
 #   parser-harness.swift     the same cases as SSEFrameParserTests
 #   e2e.swift + server.py    the whole stack over a REAL SOCKET, against a server
 #                            emitting exactly what event_stream.py writes
+#   e2e-drop.swift           #920: the same stack through a release cut (no
+#                            `reconnect` frame) — push must come back
 #
 # PRODUCTION IS NOT USABLE for the end-to-end from the sandbox: the egress proxy
 # buffers streaming response bodies, so no SSE body ever arrives (verified with
@@ -52,6 +54,16 @@ trap 'kill $server 2>/dev/null' EXIT
 sleep 1.5
 xcrun swiftc -O -o "$OUT/e2e" "$SRC/LiveStreamController.swift" "$SRC/LiveEventStreamTransport.swift" e2e.swift || exit 2
 "$OUT/e2e" "$PORT" || fail=1
+
+echo
+echo "== a release cut over a real socket (#920) =="
+PORT2="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+python3 server.py "$PORT2" drop > "$OUT/server-drop.log" 2>&1 &
+server2=$!
+trap 'kill $server $server2 2>/dev/null' EXIT
+sleep 1.5
+xcrun swiftc -O -o "$OUT/e2e-drop" "$SRC/LiveStreamController.swift" "$SRC/LiveEventStreamTransport.swift" e2e-drop.swift || exit 2
+"$OUT/e2e-drop" "$PORT2" || fail=1
 
 echo
 [ $fail -eq 0 ] && echo "ALL GREEN" || echo "FAILURES ABOVE"

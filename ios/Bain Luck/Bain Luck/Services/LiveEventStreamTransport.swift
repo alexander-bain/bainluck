@@ -9,20 +9,22 @@ private let logger = Logger(subsystem: "com.bainluck", category: "liveStream")
 /// reader over `URLSession.bytes(for:)`, accumulating `event:` and `data:` lines
 /// and dispatching a complete frame on the blank line that ends it.
 ///
-/// WHAT IT DELIBERATELY DOES NOT DO — retry, back off, decide when to give up,
-/// or interpret `reconnect`. All of that is `LiveStreamController`'s, and the
+/// WHAT IT DELIBERATELY DOES NOT DO — decide when to give up, back off, or
+/// interpret `reconnect`. All of that is `LiveStreamController`'s, and the
 /// separation is the point: the lifecycle is the part that had two P1 defects on
 /// web (CERT-717) and the part a test must be able to drive without a socket.
-/// This class is transport only.
 ///
-/// THE ONE JUDGEMENT IT DOES MAKE is what "closed for good" means, because the
-/// controller asks it (`isClosed`) before deciding whether an error is a blip.
-/// A `URLSession` byte stream does not retry by itself, so once its task has
-/// ended this connection is over — unlike a browser `EventSource`, which
-/// reconnects underneath you. The controller's blip branch is therefore
-/// unreachable from this transport today, and that is stated rather than
-/// pruned: the branch belongs to the shared lifecycle, and a future transport
-/// that does retry would need it.
+/// WHAT IT DOES DO, BECAUSE `EventSource` DOES (#920): a connection that DROPS —
+/// the byte stream ends, or the network errors, with no `closed`/`reconnect`
+/// frame — is retried after `retryDelay`, and `isConnecting` reads true until
+/// the next 200. The controller's lifecycle is a port of web's, and web's
+/// assumes a transport that reconnects underneath it: the browser does exactly
+/// this, which is why a release that restarts the web dyno costs a web reader a
+/// few seconds of push. This transport used to call that same cut closed-for-
+/// good, the controller's `stop()` is terminal, and a phone page polled for the
+/// rest of the match (native/319, release v5007). The controller still owns the
+/// ending: it retires a transport that stays silent past `retryGiveUp`, and its
+/// `close()` cancels a retry mid-wait.
 ///
 /// HTTP STATUS IS A REFUSAL, NOT A RETRY. 409 (event not live), 503 (at
 /// capacity) and 404 are the server saying no. The transport reports the error
@@ -89,14 +91,29 @@ final class LiveEventStreamTransport: LiveStreamHandle {
     private var task: Task<Void, Never>?
     private var handlers: [String: [@MainActor (String) -> Void]] = [:]
     private var closed = false
+    private var connecting = true
+    private let retryDelay: TimeInterval
+
+    /// The wait before re-opening a dropped connection. The server's own
+    /// `retry:` field (`SSE_RETRY_MS`, 5000), which is what a browser waits.
+    nonisolated static let defaultRetryDelay: TimeInterval = 5
 
     var isClosed: Bool { closed }
+    /// `EventSource.readyState == CONNECTING`: before the first 200, and again
+    /// from a drop until the retry's 200.
+    var isConnecting: Bool { !closed && connecting }
 
-    init(eventId: Int, baseURL: String = "https://api.bainluck.com", session: URLSession? = nil) throws {
+    init(
+        eventId: Int,
+        baseURL: String = "https://api.bainluck.com",
+        session: URLSession? = nil,
+        retryDelay: TimeInterval = LiveEventStreamTransport.defaultRetryDelay
+    ) throws {
         guard let url = URL(string: "\(baseURL)/api/events/\(eventId)/stream") else {
             throw URLError(.badURL)
         }
         self.url = url
+        self.retryDelay = retryDelay
         if let session {
             self.session = session
         } else {
@@ -124,12 +141,19 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         task = nil
     }
 
-    /// Open the connection and pump frames until it ends or is cancelled.
+    /// Open the connection and pump frames until it is refused, closed, or
+    /// cancelled — re-opening after `retryDelay` each time it merely drops.
     func connect() {
         guard task == nil, !closed else { return }
+        let delay = retryDelay
         task = Task { [weak self] in
-            guard let self else { return }
-            await self.pump()
+            // `self` is held only for the length of one connection, never across
+            // the wait: an owner that walked away without `close()` leaves a
+            // loop that ends at its next turn instead of retrying forever.
+            while !Task.isCancelled {
+                guard let outcome = await self?.pump(), outcome == .dropped else { return }
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
         }
     }
 
@@ -139,7 +163,18 @@ final class LiveEventStreamTransport: LiveStreamHandle {
         for handler in handlers[event] ?? [] { handler(data) }
     }
 
-    private func pump() async {
+    /// How one connection ended.
+    private enum Outcome {
+        /// The server answered with a non-200: final, the transport is closed.
+        case refused
+        /// The stream ended or the network failed, unasked: retry.
+        case dropped
+        /// Closed or cancelled from this side.
+        case ended
+    }
+
+    private func pump() async -> Outcome {
+        connecting = true
         var request = URLRequest(url: url)
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         // A cached SSE response is not a thing, and a proxy that buffers one
@@ -155,8 +190,9 @@ final class LiveEventStreamTransport: LiveStreamHandle {
                 logger.info("live stream refused: \(http.statusCode) for \(self.url.path)")
                 closed = true
                 emit("error", "")
-                return
+                return .refused
             }
+            connecting = false
 
             // BYTES, NOT `bytes.lines`. MEASURED, not preferred:
             // `URLSession.AsyncBytes.lines` DROPS EMPTY LINES. The blank line is
@@ -174,7 +210,7 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             var parser = SSEFrameParser()
             var line: [UInt8] = []
             for try await byte in bytes {
-                if Task.isCancelled || closed { return }
+                if Task.isCancelled || closed { return .ended }
                 guard byte == 0x0A else {           // not "\n"
                     line.append(byte)
                     continue
@@ -188,16 +224,20 @@ final class LiveEventStreamTransport: LiveStreamHandle {
             }
 
             // The byte stream ended without the server saying `closed` or
-            // `reconnect`. That is a dead transport, not a rollover.
-            if !closed {
-                closed = true
-                emit("error", "")
-            }
-        } catch {
-            if Task.isCancelled || closed { return }
-            logger.info("live stream ended: \(error.localizedDescription)")
-            closed = true
+            // `reconnect` — a release restarting the dyno, or a router cut.
+            // That is a dropped connection, not a refusal: retry, as a browser
+            // would. `connecting` is set BEFORE the error is reported, so the
+            // controller reads it as a blip (polling) and not a death.
+            if Task.isCancelled || closed { return .ended }
+            connecting = true
             emit("error", "")
+            return .dropped
+        } catch {
+            if Task.isCancelled || closed { return .ended }
+            logger.info("live stream dropped, retrying: \(error.localizedDescription)")
+            connecting = true
+            emit("error", "")
+            return .dropped
         }
     }
 }
