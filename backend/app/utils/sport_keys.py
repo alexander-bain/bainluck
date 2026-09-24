@@ -1890,6 +1890,8 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     # …) at ingest — closing the window where off-map series sat 'other' until
     # the daily LLM pass. The specific entries above are retained as docs; the
     # `startswith` matcher returns golf either way. Does NOT match LPGA (kxlpga).
+    # One exception since measured: KXPGAAWARDS is the Producers Guild (#7042),
+    # carved out in KALSHI_TICKER_PREFIXES_NOT_A_SPORT below, not here.
     "kxpga": "golf",
     "kxlpgatour": "golf",
     "kxlivgolf": "golf",
@@ -2011,6 +2013,33 @@ KALSHI_FUTURES_TICKER_TO_SPORT_KEY: dict[str, str] = {
     "kxdarts": "darts",
     "kxsquash": "squash",
 }
+
+
+# =============================================================================
+# 8c. KALSHI_TICKER_PREFIXES_NOT_A_SPORT — series that share a sport's STEM (#7042)
+# =============================================================================
+#
+# The two maps above answer by `startswith`, so a bare stem claims every series
+# the venue will ever file under it. `kxpga` (#949) is right for ~50 golf series
+# — measured 2026-09-24, most of them reach golf ONLY through the bare stem
+# (KXPGA3BALL, KXPGAROUNDSCORE, KXPGATIGER, …), so deleting the stem is not the
+# fix — and wrong for exactly one: KXPGAAWARDS is the Producers Guild of
+# America's film and television awards (Kalshi category `Entertainment`, no
+# tags). Seven open rows led /hub/golf with "PGA Award for Best Theatrical
+# Motion Picture?".
+#
+# A prefix here makes `get_sport_key_from_ticker` answer None, which is the
+# honest "the ticker map does not know": the cascade falls through to the
+# series tag and the venue's topic (#5637/#7012), and `_resolve_series_tag_result`
+# asks the venue instead of short-circuiting on a map hit. It names SERIES, so
+# it must be at least as long as the sport prefix it overrules — a shorter
+# entry would be a stem deletion wearing a different name
+# (`test_sport_keys` pins that every entry here is shadowing a real sport prefix).
+KALSHI_TICKER_PREFIXES_NOT_A_SPORT: frozenset[str] = frozenset(
+    {
+        "kxpgaawards",
+    }
+)
 
 
 #=============================================================================
@@ -2659,10 +2688,15 @@ def get_sport_key_from_ticker(external_id: str) -> Optional[str]:
     Cross-map precedence is UNCHANGED — the game map still wins over the futures
     map regardless of length, because that ordering is load-bearing elsewhere and
     `is_kalshi_game_level_ticker` is the predicate that compares the two lengths.
+
+    A series in `KALSHI_TICKER_PREFIXES_NOT_A_SPORT` answers None whatever
+    stem it shares (#7042: KXPGAAWARDS is the Producers Guild, not golf).
     """
     if not external_id:
         return None
     ext_lower = external_id.lower()
+    if any(ext_lower.startswith(p) for p in KALSHI_TICKER_PREFIXES_NOT_A_SPORT):
+        return None
     # Game-level tickers first, then futures; longest prefix wins within each.
     for mapping in (KALSHI_TICKER_TO_SPORT_KEY, KALSHI_FUTURES_TICKER_TO_SPORT_KEY):
         best_prefix: Optional[str] = None

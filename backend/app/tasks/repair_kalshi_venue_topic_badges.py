@@ -534,11 +534,10 @@ async def repair(
 
             if llm == r.llm_sport_category:
                 # THE GATE DECLINING — the venue's own reply, through the
-                # shipped cascade, agrees with what is stored. This is where the
-                # seven `KXPGAAWARDS` rows land (#7042: a bare `kxpga` prefix
-                # answers golf at step 1, above everything this rule touches)
-                # and where `KXMLBCBA` / `KXPERFORMSUPERBOWL` land (protected at
-                # step 1b by their own venue tag).
+                # shipped cascade, agrees with what is stored. This is where
+                # `KXMLBCBA` / `KXPERFORMSUPERBOWL` land (protected at step 1b
+                # by their own venue tag). The seven `KXPGAAWARDS` rows landed
+                # here too until #7042 carved them out of the ticker map.
                 counts["venue_agrees"] += 1
                 refused.append({**record, "reason": "venue_agrees"})
                 continue
