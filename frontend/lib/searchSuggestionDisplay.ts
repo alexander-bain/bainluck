@@ -28,12 +28,25 @@ export const TEAM_SEASON_ANSWER_LIMIT = 2;
  */
 export const MOVEMENT_MIN_ABS = 0.02;
 
+/** Words after which a year finishes the question rather than labelling a season:
+ *  "How many Fed rate cuts in 2026?" read "How many Fed rate cuts in" (#8407). */
+const YEAR_COMPLETES_AFTER =
+  /\b(?:in|before|by|after|until|till|of|for|through|since|from|to|during)$/i;
+
+/** Drop a trailing season label ("Oscars Best Picture 2027", "Premier League
+ *  Winner 2026-27") — but keep a year the sentence needs ("…cuts in 2026"). The
+ *  optional trailing `?` stays where it was; callers decide about it. */
+export function stripSeasonYear(name: string): string {
+  const m = name.match(/^(.*?)\s*\d{4}(?:-\d{2,4})?(\s*\??)$/);
+  if (!m || YEAR_COMPLETES_AFTER.test(m[1])) return name;
+  return m[1] + m[2].trim();
+}
+
 /** Strip a league playoff prefix and a trailing season year from a market name. */
 export function formatFuturesName(name: string): string {
-  return name
-    .replace(/^(?:NBA|NHL|MLB|NFL|MLS|WNBA|PGA)\s+Playoffs?:\s*/i, "")
-    .replace(/\s*\d{4}(-\d{2,4})?\s*$/, "")
-    .trim();
+  const unprefixed = name.replace(/^(?:NBA|NHL|MLB|NFL|MLS|WNBA|PGA)\s+Playoffs?:\s*/i, "");
+  // Only a year at the very end (no `?`) is a label here, as before.
+  return (/\?\s*$/.test(unprefixed) ? unprefixed : stripSeasonYear(unprefixed)).trim();
 }
 
 /**

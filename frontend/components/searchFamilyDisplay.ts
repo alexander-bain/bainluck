@@ -4,6 +4,7 @@
 
 import type { FuturesFamily, FuturesMarket, FuturesOutcome } from "@/lib/types";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { stripSeasonYear } from "@/lib/searchSuggestionDisplay";
 
 /** The leader outcome to display (leader-pick already applied server-side): the
  *  first top_outcome with a probability. */
@@ -46,9 +47,10 @@ export function resolutionLabel(date: string | null | undefined): string | null 
   return new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Strip a trailing year / question mark for a cleaner row title. */
+/** Strip a trailing season year / question mark for a cleaner row title. A year
+ *  the question needs ("…cuts in 2026?") stays (#8407). */
 export function cleanName(name: string): string {
-  return name.replace(/\s*\d{4}(-\d{2,4})?\s*\??$/, "").replace(/\?$/, "").trim() || name;
+  return stripSeasonYear(name).replace(/\?$/, "").trim() || name;
 }
 
 /** Roughly how many characters of a row title survive at 390px once the answer

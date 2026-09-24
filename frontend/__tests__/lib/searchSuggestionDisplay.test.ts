@@ -24,6 +24,7 @@ import {
   countAnswersShown,
   formatEventTime,
   formatFuturesName,
+  stripSeasonYear,
   futuresAnswer,
   isMovementWorthShowing,
   suggestionDisplayText,
@@ -56,6 +57,36 @@ describe("formatFuturesName", () => {
 
   test("leaves an ordinary name untouched", () => {
     expect(formatFuturesName("MLB: Next Red Sox Manager")).toBe("MLB: Next Red Sox Manager");
+  });
+});
+
+// #8407 — production 2026-09-24: `/search?q=fed` printed "How many Fed rate cuts in".
+describe("stripSeasonYear — a year the question needs is not a season label", () => {
+  test.each([
+    ["How many Fed rate cuts in 2026?", "How many Fed rate cuts in 2026?"],
+    ["What will Fed Rate hit before 2027?", "What will Fed Rate hit before 2027?"],
+    ["Jerome Powell out of Fed Board by 2027", "Jerome Powell out of Fed Board by 2027"],
+    ["Fed rate at the end of 2026", "Fed rate at the end of 2026"],
+    ["Recession in 2026-27?", "Recession in 2026-27?"],
+  ])("keeps %j", (name, want) => {
+    expect(stripSeasonYear(name)).toBe(want);
+  });
+
+  test.each([
+    ["Oscars Best Picture 2027", "Oscars Best Picture"],
+    ["Premier League Winner 2026-27", "Premier League Winner"],
+    ["Democratic Presidential Nominee 2028?", "Democratic Presidential Nominee?"],
+    ["World Series Winner 2026", "World Series Winner"],
+    // "Bahrain" / "Toronto" END in a connector's letters; the connector must be a whole word.
+    ["Grand Prix of Bahrain 2026", "Grand Prix of Bahrain"],
+    ["Mayor of Toronto 2026", "Mayor of Toronto"],
+  ])("strips the label from %j", (name, want) => {
+    expect(stripSeasonYear(name)).toBe(want);
+  });
+
+  test("the typeahead keeps a year after a connector", () => {
+    expect(formatFuturesName("Fed rate cut before 2027")).toBe("Fed rate cut before 2027");
+    expect(formatFuturesName("NBA Playoffs: Champion in 2027")).toBe("Champion in 2027");
   });
 });
 
