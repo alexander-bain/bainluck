@@ -523,3 +523,278 @@ async def test_a_leg_with_no_snapshot_at_all_keeps_its_number(pg_engine):
         "a leg the trade read never saw was withheld — absence was treated as "
         f"evidence of no trade, which gotcha #53 forbids (cells={served})"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# #8257 — THE FOOTBALL SEMIFINAL, where the cap used to hide the untaken offer.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# `/playoffs/ncaa-football` at 390px printed the same number under Make Playoff
+# and Semifinal on 17 of 40 rows. The Semifinal books were ask-only and never
+# traded, and nothing withheld them because `semifinal` was outside
+# `_ADVANCEMENT_COLUMNS`. The monotonicity cap then pulled each one down to its
+# Make Playoff number, so the row looked coherent while it printed a quote no
+# market made for that round.
+#
+# 🔴 THE CAP IS WHY THIS NEEDS ITS OWN FIXTURE. On the basketball bracket a
+# withheld leg is simply absent. Here the cap runs after the cell loop, so the
+# claim is about ORDER: an untaken offer must be withheld BEFORE the cap sees
+# it. A withheld leg leaves no cell. A capped cell carries `capped_by` (#8251).
+# A mutant that drops `semifinal` from the frame turns Missouri's absent cell
+# back into a capped one, and only an assertion that reads BOTH can tell.
+#
+# Books are production's, read 2026-09-23 (market `KXNCAAFSF-27`, "College
+# Football Playoff Semifinals Qualifiers").
+
+NCAAF_SPORT_ID = 965323
+NCAAF_MAKE = 965323001
+NCAAF_SEMI = 965323002
+NCAAF_CHAMP = 965323003
+_NCAAF_MARKETS = (NCAAF_MAKE, NCAAF_SEMI, NCAAF_CHAMP)
+
+#: ``(team, make_playoffs (p, bid, ask), semifinal (p, bid, ask, last_price))``.
+#: ``last_price`` ``None`` means NO SNAPSHOT ROW (gotcha #53), as above.
+_NCAAF_ROWS = (
+    # 🔴 THE SPECIMEN. Semifinal bid 0 / ask 0.18, never traded. Production
+    # printed 13% twice: Make Playoff 0.1275, and Semifinal capped to 0.1275
+    # with the payload crediting Kalshi with it.
+    ("Missouri Tigers", (0.1275, 0.12, 0.135), (0.18, 0.00, 0.18, 0.0)),
+    # 🔴 THE PAIR. The same book shape, and it HAS traded, so the trade read
+    # spares it (#8243). Its quote 0.16 is above Make Playoff 0.075, so the cap
+    # still applies, and #8251 says so: `capped_by` + the source keeps 0.16.
+    ("Auburn Tigers", (0.075, 0.07, 0.08), (0.16, 0.00, 0.16, 0.16)),
+    # CONTROL: a real two-sided Semifinal book, below its bound. Unchanged.
+    ("Georgia Bulldogs", (0.80, 0.79, 0.81), (0.465, 0.46, 0.47, 0.465)),
+    # CONTROL (gotcha #53): the specimen's book and NO snapshot row. "We never
+    # looked" fails OPEN, so it keeps a (capped) cell.
+    ("Houston Cougars", (0.0825, 0.08, 0.085), (0.20, 0.00, 0.20, None)),
+)
+
+
+@pytest.fixture
+async def ncaaf_engine():
+    """Same contract as ``pg_engine``: create_all, own id block, never drop_all."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    import app.models.models  # noqa: F401 — registers every table on Base
+    from app.services.database import Base
+
+    engine = create_async_engine(DB_URL)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await _clear_ncaaf(conn)
+        await _seed_ncaaf(conn)
+
+    yield engine
+
+    async with engine.begin() as conn:
+        await _clear_ncaaf(conn)
+    await engine.dispose()
+
+
+async def _clear_ncaaf(conn) -> None:
+    # Snapshots first: `futures_odds_snapshots.outcome_id` is a foreign key (see
+    # `_clear`).
+    await conn.execute(
+        text(
+            "DELETE FROM futures_odds_snapshots WHERE outcome_id IN ("
+            "SELECT id FROM futures_outcomes WHERE market_id = ANY(:ids))"
+        ),
+        {"ids": list(_NCAAF_MARKETS)},
+    )
+    await conn.execute(
+        text("DELETE FROM futures_outcomes WHERE market_id = ANY(:ids)"),
+        {"ids": list(_NCAAF_MARKETS)},
+    )
+    await conn.execute(
+        text("DELETE FROM futures_markets WHERE id = ANY(:ids)"),
+        {"ids": list(_NCAAF_MARKETS)},
+    )
+    await conn.execute(
+        text("DELETE FROM sports WHERE id = :id"), {"id": NCAAF_SPORT_ID}
+    )
+
+
+async def _seed_ncaaf(conn) -> None:
+    """Production's three market rows, every NOT NULL column spelled out.
+
+    🔴 NO ``external_id`` PREFIX PATH HERE. ncaa-football configures no Kalshi
+    series prefix, so these reach the grid through Path B.2:
+    ``llm_sport_category = 'football'`` and a name matching its patterns. A seed
+    with the wrong category is invisible, and every "the cell is gone" assertion
+    would pass on an empty page. `test_ncaaf_every_row_reached_the_payload` holds
+    that shut.
+    """
+    await conn.execute(
+        text("INSERT INTO sports (id, key, name, active) VALUES (:id, :k, :n, true)"),
+        {"id": NCAAF_SPORT_ID, "k": f"test_8257_{NCAAF_SPORT_ID}", "n": "Test 8257"},
+    )
+    for market_id, external_id, name, tier, exclusive in (
+        (NCAAF_MAKE, "KXNCAAFPLAYOFF-26", "College Football Playoff Qualifiers", 4, False),
+        (NCAAF_SEMI, "KXNCAAFSF-27", "College Football Playoff Semifinals Qualifiers", 5, False),
+        (NCAAF_CHAMP, "KXNCAAF-27", "College Football National Championship Winner", 1, True),
+    ):
+        await conn.execute(
+            text(
+                "INSERT INTO futures_markets (id, source, external_id, name, "
+                "category, mutually_exclusive, status, market_tier, "
+                "llm_sport_category) VALUES "
+                "(:id, 'kalshi', :ext, :name, 'championship', :me, "
+                "'open', :tier, 'football')"
+            ),
+            {"id": market_id, "ext": external_id, "name": name, "tier": tier,
+             "me": exclusive},
+        )
+
+    async def _leg(market_id, name, p, bid, ask, last_price) -> None:
+        outcome_id = (
+            await conn.execute(
+                text(
+                    "INSERT INTO futures_outcomes (market_id, external_id, name, "
+                    "current_probability, current_yes_bid, current_yes_ask, "
+                    "resolution_source, is_winner, last_updated) VALUES "
+                    "(:mid, :ext, :name, :p, :bid, :ask, NULL, false, NOW()) "
+                    "RETURNING id"
+                ),
+                {
+                    "mid": market_id,
+                    "ext": f"{market_id}-{name.replace(' ', '')[:12].upper()}",
+                    "name": name, "p": p, "bid": bid, "ask": ask,
+                },
+            )
+        ).scalar_one()
+        if last_price is not None:
+            await conn.execute(
+                text(
+                    "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, "
+                    "probability, yes_bid, yes_ask, last_price, captured_at, "
+                    "reading_count) "
+                    "VALUES (:oid, 'kalshi', :p, :bid, :ask, :last, NOW(), 1)"
+                ),
+                {"oid": outcome_id, "p": p, "bid": bid, "ask": ask, "last": last_price},
+            )
+
+    for name, (mp, mbid, mask), (sp, sbid, sask, slast) in _NCAAF_ROWS:
+        # Make Playoff and Champion books are two-sided, so the untaken-offer
+        # rule has nothing to say about them whatever the column gate does.
+        await _leg(NCAAF_MAKE, name, mp, mbid, mask, mp)
+        await _leg(NCAAF_SEMI, name, sp, sbid, sask, slast)
+        await _leg(NCAAF_CHAMP, name, 0.05, 0.04, 0.06, 0.05)
+
+
+async def _ncaaf_rows(engine) -> dict[str, dict]:
+    """Drive the real route; return ``{team: {column: cell}}`` from ``cells``."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.routes.playoffs import get_playoff_grid
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        grid = await get_playoff_grid(
+            league_slug="ncaa-football", hours=None, top=50, debug=False, db=session
+        )
+    teams = list(grid.get("teams") or [])
+    for group in (grid.get("grouped_teams") or {}).values():
+        teams.extend(group)
+    out: dict[str, dict] = {}
+    for team in teams:
+        cells = {
+            k: v for k, v in (team.get("cells") or {}).items() if isinstance(v, dict)
+        }
+        # The `stages` list is the grid's second payload shape. Read it too, so
+        # "no semifinal cell" can't mean "I looked under the wrong key".
+        for stage in team.get("stages") or []:
+            if stage.get("probability") is not None:
+                cells.setdefault(stage.get("key"), {"merged_probability": stage["probability"]})
+        out[team.get("name") or ""] = cells
+    return out
+
+
+def _row(rows: dict[str, dict], wanted: str) -> dict | None:
+    w = wanted.lower().replace(".", "").replace(" ", "")
+    for k, v in rows.items():
+        if w in k.lower().replace(".", "").replace(" ", ""):
+            return v
+    return None
+
+
+@needs_postgres
+async def test_ncaaf_every_row_reached_the_payload(ncaaf_engine):
+    """🔴 ANTI-VACUITY: every seeded team is on the page with its Champion cell."""
+    rows = await _ncaaf_rows(ncaaf_engine)
+    missing = [
+        n for n, *_ in _NCAAF_ROWS
+        if not (_row(rows, n) or {}).get("championship")
+    ]
+    assert missing == [], f"never reached the football grid: {missing} ({rows})"
+
+
+@needs_postgres
+async def test_ncaaf_the_untaken_semifinal_offer_leaves_no_cell_not_a_capped_one(ncaaf_engine):
+    """The ship, as the reader's sentence: Missouri stops printing 13% twice.
+
+    Asserted on the cell's ABSENCE. A capped cell is the pre-#8257 page, and it
+    would pass any assertion that only checked the number moved.
+    """
+    rows = await _ncaaf_rows(ncaaf_engine)
+    mizzou = _row(rows, "Missouri Tigers")
+    assert mizzou is not None and mizzou.get("make_playoffs"), (
+        f"Missouri lost its row or its Make Playoff cell: {mizzou}. Withholding "
+        "never deletes a row."
+    )
+    assert "semifinal" not in mizzou, (
+        f"Missouri still serves a Semifinal cell: {mizzou.get('semifinal')}. Its "
+        "only quote is an untaken 18c offer that never traded. With `semifinal` "
+        "outside the frame the cap prints Make Playoff's 0.1275 here, the same "
+        "number twice, which is what #8257 photographed."
+    )
+
+
+@needs_postgres
+async def test_ncaaf_a_traded_leg_survives_and_says_it_was_capped(ncaaf_engine):
+    """#8243 + #8251 on this bracket, asserted as a PAIR with the specimen.
+
+    Auburn's book is Missouri's shape. The only difference is a trade, so it
+    stays. Its 0.16 sits above Make Playoff 0.075, so the cap holds the number
+    at 0.075, the cell says `capped_by`, and the source keeps the market's own
+    0.16.
+    """
+    rows = await _ncaaf_rows(ncaaf_engine)
+    auburn = _row(rows, "Auburn Tigers") or {}
+    semi = auburn.get("semifinal")
+    assert semi is not None, (
+        f"a Semifinal leg that TRADED at 0.16 was withheld ({auburn}). The grid "
+        "failed closed on this column."
+    )
+    assert semi.get("capped_by") == "make_playoffs", semi
+    assert semi["merged_probability"] == pytest.approx(
+        auburn["make_playoffs"]["merged_probability"]
+    ), semi
+    assert [s.get("probability") for s in semi.get("sources") or []] == [
+        pytest.approx(0.16)
+    ], semi
+    assert "semifinal" not in (_row(rows, "Missouri Tigers") or {}), (
+        "the never-traded specimen came back beside its traded twin"
+    )
+
+
+@needs_postgres
+async def test_ncaaf_a_real_semifinal_book_is_unchanged(ncaaf_engine):
+    """CONTROL: a two-sided book below its bound keeps its number, uncapped."""
+    rows = await _ncaaf_rows(ncaaf_engine)
+    semi = (_row(rows, "Georgia Bulldogs") or {}).get("semifinal")
+    assert semi is not None, rows
+    assert semi["merged_probability"] == pytest.approx(0.465), semi
+    assert not semi.get("capped_by"), semi
+
+
+@needs_postgres
+async def test_ncaaf_a_leg_with_no_snapshot_fails_open(ncaaf_engine):
+    """CONTROL (gotcha #53): the specimen's book, no trade read at all."""
+    rows = await _ncaaf_rows(ncaaf_engine)
+    semi = (_row(rows, "Houston Cougars") or {}).get("semifinal")
+    assert semi is not None, (
+        "a leg the trade read never saw was withheld; absence was read as "
+        f"evidence of no trade ({rows.get('Houston Cougars')})"
+    )
+    assert semi.get("capped_by") == "make_playoffs", semi
