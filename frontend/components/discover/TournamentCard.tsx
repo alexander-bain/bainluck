@@ -112,7 +112,7 @@ export function TournamentCard({ data, liked, setLiked, onDismiss, onDetailClick
                     (#7179): this narrows what the card may SAY, never which
                     tournaments a reader is shown. */}
                 {leader.movement_is_dated === true && (
-                  <MovementBadge m={leader.movement_24h} />
+                  <MovementBadge m={leader.movement_24h} onDark />
                 )}
               </>
             )}
