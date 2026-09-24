@@ -209,6 +209,9 @@ class TestBeatScheduleCompleteness:
         # #6758: open Polymarket parents that have sunk out of the newest-2,000
         # discovery window, re-read by id and written by the poll's own writer.
         "recover-sunk-polymarket-events-hourly",
+        # #3017: Polymarket's event record says an anchor-less match ended
+        # (or was cancelled) — off the live board within one pass, not 3h.
+        "suspend-venue-ended-events",
         "enrich-events-hourly",
         "sync-espn-live",
         "sync-tennis-from-espn",
