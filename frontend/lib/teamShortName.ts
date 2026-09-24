@@ -782,6 +782,28 @@ export function shippableCrestBadge(
 }
 
 /**
+ * The crest badge for the Discover card tiles (#4537): `teamCrestBadge`, except
+ * that a value in `UNSHIPPABLE_BADGES` is replaced by `shippableCrestBadge`'s.
+ *
+ * `teamCrestBadge` still emits the badges its last-word rule has always
+ * produced — "Cockfosters FC" `COC`, "Avispa Fukuoka" `FUK`, "Nigeria" `NIG` —
+ * and its output is mirrored by the iPhone's `CrestBadgeInitialsTests.swift`,
+ * so it is not re-lettered here. The substitution is gated on the set ONLY,
+ * not on `shippableCrestBadge`'s whitespace test: a doubles pair whose first
+ * surname is under three letters ("Ho / Liutarevich" `HO `) would otherwise
+ * fall to the space-split initials and print a dangling slash (`H/L`,
+ * "de Minaur / Peers" `DM/`), which is #4535's decision, not this one's. So
+ * every name that paints a clean badge today paints exactly the same badge.
+ */
+export function discoverCrestBadge(
+  name: string | null | undefined,
+  sportKey?: string | null,
+): string {
+  const badge = teamCrestBadge(name, sportKey);
+  return UNSHIPPABLE_BADGES.has(badge) ? shippableCrestBadge(name, sportKey) : badge;
+}
+
+/**
  * Onomastic particles: the little words that are part of a PERSON's surname
  * rather than a word in front of it. "Alex de Minaur" shortened to "Minaur"
  * named nobody (#7163) — the event hero printed it against Kasnikowski while
