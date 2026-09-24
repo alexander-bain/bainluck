@@ -606,13 +606,129 @@ struct EvolutionChartView: View {
     /// matching, and two stacked charts drew two clocks (#3238). This chart was the
     /// third one, still on `.automatic(desiredCount: 5)`.
     static func axisPlan(
-        for dates: [Date], plotWidth: CGFloat = 0, calendar: Calendar = .current
+        for dates: [Date], plotWidth: CGFloat = 0, calendar: Calendar = .current,
+        labelScale: CGFloat = 1
     ) -> OddsChartView.XAxisPlan {
         guard let lo = dates.min(), let hi = dates.max() else {
             let now = Date()
-            return OddsChartView.xAxisPlan(for: now...now, plotWidth: plotWidth, calendar: calendar)
+            return OddsChartView.xAxisPlan(
+                for: now...now, plotWidth: plotWidth, calendar: calendar,
+                labelScale: labelScale)
         }
-        return OddsChartView.xAxisPlan(for: lo...hi, plotWidth: plotWidth, calendar: calendar)
+        return OddsChartView.xAxisPlan(
+            for: lo...hi, plotWidth: plotWidth, calendar: calendar, labelScale: labelScale)
+    }
+
+    /// The size the date axis is drawn at, in points.
+    ///
+    /// 🔴 #4445 — THE DATES WERE PINNED AT 9pt WHILE EVERYTHING AROUND THEM GREW.
+    /// Alex's TestFlight 1.0.1 (20), iPhone 18 Pro Max at the largest accessibility
+    /// size, NFL Super Bowl Winner (86832): large y-axis percentages and controls
+    /// beside minuscule dates. The 9pt pin was how the Sept 21 fit stopped the
+    /// labels overprinting — and a date nobody can read is not a fixed axis.
+    ///
+    /// ✅ The dates now scale with the reader's text size the way the y-axis's
+    /// `caption2` does, from the same 9pt at the default size, and the planner is
+    /// told the size (`labelScale`) so it chooses fewer, wider-spaced ticks.
+    ///
+    /// **The ceiling is what keeps two dates on the axis.** Uncapped, `caption2`
+    /// takes a 9pt date past 30pt at `.accessibility5`; one German "28. Sept." is
+    /// then ~130pt, a two-label axis needs ~270pt of plot, and a 375pt phone whose
+    /// y-axis has grown too has less than that — so the planner would coarsen until
+    /// a season chart named a single date, or none. 16pt is where `caption2`'s own
+    /// curve reaches at `.accessibility1`: nearly twice the default, larger than the
+    /// y-axis reads at the default size, and still two-plus dates at 375pt.
+    static let axisLabelBasePointSize: CGFloat = 9
+    static let axisLabelMaxPointSize: CGFloat = 16
+
+    /// What the date axis draws: a stride at the reader's size, or — when no stride
+    /// at that size puts two ticks inside the window — the window's first and last
+    /// instant, at the reader's size.
+    ///
+    /// 🔴 Planning at the reader's size alone EMPTIED the axis. Simulator, iPhone 18
+    /// Pro Max at `.accessibility5`, Super Bowl Winner on `7d`: at 16pt the only
+    /// stride whose labels cleared each other across the 297pt plot was 7 days — one
+    /// stride over a 7-day window, which the charting framework aligns to its own
+    /// origin, so NO tick landed inside the domain. Stepping the size down until a
+    /// finer stride fitted was tried next and photographed on a 375pt phone (232pt of
+    /// plot): the 7d dates stepped back to 9.5pt — build 20's minuscule dates again.
+    ///
+    /// ✅ Two whole strides inside the domain always put two ticks inside it,
+    /// whatever the alignment, so that is the bar for a stride. Below the bar the
+    /// axis names where the window starts and where it ends — two labels, anchored
+    /// inward (#3237), at the size the reader chose; only if even those two cannot
+    /// clear each other does the size step down. At 9pt (every default-size reader)
+    /// the result is exactly the plan it always was.
+    struct AxisLayout: Equatable {
+        let plan: OddsChartView.XAxisPlan
+        let pointSize: CGFloat
+        /// Set only for the endpoints fallback: the two instants to label.
+        let endpoints: [Date]?
+    }
+
+    static func axisLayout(
+        for dates: [Date], plotWidth: CGFloat, maxPointSize: CGFloat,
+        calendar: Calendar = .current
+    ) -> AxisLayout {
+        let size = max(maxPointSize, axisLabelBasePointSize)
+        let plan = axisPlan(
+            for: dates, plotWidth: plotWidth, calendar: calendar,
+            labelScale: size / axisLabelBasePointSize)
+        guard size > axisLabelBasePointSize,
+              let lo = dates.min(), let hi = dates.max(), hi > lo else {
+            return AxisLayout(plan: plan, pointSize: size, endpoints: nil)
+        }
+        let span = hi.timeIntervalSince(lo)
+        if span / nominalSeconds(of: plan) >= 2 {
+            return AxisLayout(plan: plan, pointSize: size, endpoints: nil)
+        }
+        let style = endpointStyle(from: lo, to: hi, calendar: calendar)
+        let endsPlan = OddsChartView.XAxisPlan(
+            component: plan.component, count: plan.count, labelStyle: style)
+        var endsSize = size
+        while endsSize > axisLabelBasePointSize, plotWidth > 0,
+              plotWidth < OddsChartView.xAxisRequiredSpacing(
+                labelWidth: OddsChartView.xAxisLabelWidth(for: style)
+                    * endsSize / axisLabelBasePointSize,
+                labelCount: 2) {
+            endsSize = max(endsSize - 0.5, axisLabelBasePointSize)
+        }
+        return AxisLayout(plan: endsPlan, pointSize: endsSize, endpoints: [lo, hi])
+    }
+
+    /// The label two endpoints need to be told apart — the same no-duplicate rule
+    /// as the stride ladder, with the whole window as the stride.
+    static func endpointStyle(
+        from lo: Date, to hi: Date, calendar: Calendar
+    ) -> OddsChartView.XAxisPlan.LabelStyle {
+        let span = hi.timeIntervalSince(lo)
+        if span >= 180 * 86400 { return .monthAndYear }
+        if span >= 86400 { return .calendarDay }
+        if !calendar.isDate(lo, inSameDayAs: hi) { return .dayAndTime }
+        return .timeOfDay
+    }
+
+    /// A stride's nominal length — the same estimate `OddsChartView`'s ladder uses.
+    static func nominalSeconds(of plan: OddsChartView.XAxisPlan) -> TimeInterval {
+        switch plan.component {
+        case .minute: return TimeInterval(plan.count) * 60
+        case .hour: return TimeInterval(plan.count) * 3600
+        default: return TimeInterval(plan.count) * 86400
+        }
+    }
+
+    static func axisLabelPointSize(at size: DynamicTypeSize) -> CGFloat {
+        #if os(iOS)
+        let traits = UITraitCollection(
+            preferredContentSizeCategory:
+                CalibrationSourceTableGeometry.CellFont.contentSizeCategory(size))
+        let scaled = UIFontMetrics(forTextStyle: .caption2)
+            .scaledValue(for: axisLabelBasePointSize, compatibleWith: traits)
+        return min(max(scaled, axisLabelBasePointSize), axisLabelMaxPointSize)
+        #else
+        // A Mac window has no accessibility text-size ladder to follow.
+        return axisLabelBasePointSize
+        #endif
     }
 
     /// A series this sparse is drawn with its observations ON it.
@@ -967,18 +1083,33 @@ struct EvolutionChartView: View {
             }
         }
         .chartXAxis {
-            // #7077 — planned from the domain that is DRAWN, at the 9pt the
-            // planner's label widths were measured in. See `axisPlan`.
-            let plan = Self.axisPlan(for: entries.map(\.date), plotWidth: plotWidth)
-            AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
-                    .foregroundStyle(.secondary.opacity(0.3))
-                AxisValueLabel(
-                    format: plan.format,
-                    anchor: OddsChartView.xAxisLabelAnchor(
-                        index: value.index, count: value.count)
-                )
-                .font(.system(size: 9))
+            // #7077 — planned from the domain that is DRAWN. #4445 — at the size
+            // the dates are DRAWN, too: the planner charges the grown labels, so
+            // large text thins the ticks rather than overprinting them.
+            let axis = Self.axisLayout(
+                for: entries.map(\.date), plotWidth: plotWidth,
+                maxPointSize: Self.axisLabelPointSize(at: dynamicTypeSize))
+            let plan = axis.plan
+            if let endpoints = axis.endpoints {
+                AxisMarks(values: endpoints) { value in
+                    AxisValueLabel(
+                        format: plan.format,
+                        anchor: OddsChartView.xAxisLabelAnchor(
+                            index: value.index, count: value.count)
+                    )
+                    .font(.system(size: axis.pointSize))
+                }
+            } else {
+                AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
+                        .foregroundStyle(.secondary.opacity(0.3))
+                    AxisValueLabel(
+                        format: plan.format,
+                        anchor: OddsChartView.xAxisLabelAnchor(
+                            index: value.index, count: value.count)
+                    )
+                    .font(.system(size: axis.pointSize))
+                }
             }
         }
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
@@ -1168,17 +1299,47 @@ struct EvolutionChartView: View {
 struct EvolutionLeaderboardHeader: View {
     let columns: EvolutionLeaderboardGeometry.Columns
 
+    /// #8429 — at accessibility sizes the rows are two lines (name, then numbers),
+    /// so the header no longer has columns to sit over; what it must not do is split
+    /// its own word. Measured at `.accessibility5` on a 375pt phone the fixed `#`
+    /// and `Prob` cells left "Participant" too little room and it printed
+    /// **Partici- / pant**. So there it is whole words, one line if they fit, else
+    /// `Prob` on the line beneath.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack {
-            Text("#")
-                .frame(width: 24, alignment: .leading)
-            Text("Participant")
-            Spacer()
-            Text("Prob")
-                .frame(width: columns.prob, alignment: .trailing)
-            if let change = columns.change {
-                Text("24h")
-                    .frame(width: change, alignment: .trailing)
+        Group {
+            if EvolutionLeaderboardRow.stacksParticipant(at: dynamicTypeSize) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        Text("#").fixedSize()
+                        Text("Participant").fixedSize()
+                        Spacer(minLength: 6)
+                        Text("Prob").fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("#").fixedSize()
+                            Text("Participant").fixedSize()
+                        }
+                        Text("Prob")
+                            .fixedSize()
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+            } else {
+                HStack {
+                    Text("#")
+                        .frame(width: 24, alignment: .leading)
+                    Text("Participant")
+                    Spacer()
+                    Text("Prob")
+                        .frame(width: columns.prob, alignment: .trailing)
+                    if let change = columns.change {
+                        Text("24h")
+                            .frame(width: change, alignment: .trailing)
+                    }
+                }
             }
         }
         .font(.caption2)
@@ -1232,63 +1393,102 @@ struct EvolutionLeaderboardRow: View {
         return changePct > 0 ? .green : .red
     }
 
-    var body: some View {
-        HStack(spacing: 6) {
-            // Position + color dot
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 6, height: 6)
-                    .opacity(isSelected ? 1 : 0.3)
-                Text("\(position)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: 24, alignment: .leading)
+    /// 🔴 #8429 — AT THE LARGEST TEXT THE BOARD NAMED NOBODY. Alex's TestFlight
+    /// 1.0.1 (20), iPhone 18 Pro Max, NFL Super Bowl Winner (86832): **Los… 11% ·
+    /// Buf… 10% · Sea… 7% · Balti… 7% · San… 7%**. The name was `lineLimit(1)` in
+    /// one row beside its record AND the probability column, which took their widths
+    /// first; the name got what was left — a city fragment, which for two Los Angeles
+    /// clubs is not even a city's worth of identity.
+    ///
+    /// ✅ At accessibility sizes the row becomes two lines: the name, wrapping by
+    /// word, beside only the rank and logo; then the record and the probability
+    /// beneath it. Letting the name wrap IN PLACE was not enough — measured at
+    /// `.accessibility5` on a 375pt phone, the column left beside the probability is
+    /// 165pt and "Philadelphia" alone is 269pt, so it would have split mid-word.
+    /// Beside only the rank and logo it has 289pt. Nothing is shrunk: the text is the
+    /// size the reader chose, the row is taller. Below accessibility sizes the row
+    /// is exactly what it was — one line, where #4373's measured fit lives.
+    static func stacksParticipant(at size: DynamicTypeSize) -> Bool {
+        size.isAccessibilitySize
+    }
 
-            // Logo + Name
-            if let logo = outcome.logoSmall {
-                TeamLogoView(
-                    url: logo,
-                    teamName: outcome.name,
-                    color: color,
-                    size: 18
-                )
-            }
-            Text(outcome.name)
-                .font(.subheadline)
-                .fontWeight(isSelected ? .semibold : .regular)
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .lineLimit(1)
-                .opacity(isHighlighted ? 1 : 0.4)
+    static let stackedParticipantIdentifier = "evolution.leaderboard.participant.stacked"
 
-            if let record = outcome.record {
-                Text(record)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+    /// #8429 — which arrangement the participant gets; see `stacksParticipant`.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-            Spacer()
+    /// `grows`: the 24pt cell is sized for `caption2` at default size; at
+    /// accessibility sizes "•2" overran it into the logo, so there it is a minimum.
+    @ViewBuilder
+    private func positionCell(grows: Bool) -> some View {
+        let cell = HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+                .opacity(isSelected ? 1 : 0.3)
+            Text("\(position)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        if grows {
+            cell.fixedSize().frame(minWidth: 24, alignment: .leading)
+        } else {
+            cell.frame(width: 24, alignment: .leading)
+        }
+    }
 
-            Text(EvolutionLeaderboardGeometry.probLabel(
-                probPct, renderedPercent: renderedPercent))
-                .font(.subheadline)
-                .fontWeight(.semibold)
+    @ViewBuilder
+    private var logo: some View {
+        if let logo = outcome.logoSmall {
+            TeamLogoView(
+                url: logo,
+                teamName: outcome.name,
+                color: color,
+                size: 18
+            )
+        }
+    }
+
+    private var nameText: some View {
+        Text(outcome.name)
+            .font(.subheadline)
+            .fontWeight(isSelected ? .semibold : .regular)
+            .foregroundStyle(isSelected ? .primary : .secondary)
+    }
+
+    @ViewBuilder
+    private var recordText: some View {
+        if let record = outcome.record {
+            Text(record)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private var numbers: some View {
+        Text(EvolutionLeaderboardGeometry.probLabel(
+            probPct, renderedPercent: renderedPercent))
+            .font(.subheadline)
+            .fontWeight(.semibold)
+            .monospacedDigit()
+            .lineLimit(1)
+            .foregroundStyle(.primary)
+            .frame(width: columns.prob, alignment: .trailing)
+
+        if let change = columns.change {
+            Text(EvolutionLeaderboardGeometry.changeLabel(changePct))
+                .font(.caption)
+                .fontWeight(.medium)
                 .monospacedDigit()
                 .lineLimit(1)
-                .foregroundStyle(.primary)
-                .frame(width: columns.prob, alignment: .trailing)
-
-            if let change = columns.change {
-                Text(EvolutionLeaderboardGeometry.changeLabel(changePct))
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .foregroundStyle(changeTint)
-                    .frame(width: change, alignment: .trailing)
-            }
+                .foregroundStyle(changeTint)
+                .frame(width: change, alignment: .trailing)
         }
+    }
+
+    var body: some View {
+        rowContent
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(isSelected ? Color.accentColor.opacity(0.05) : Color.clear)
@@ -1300,6 +1500,40 @@ struct EvolutionLeaderboardRow: View {
             "\(position). \(outcome.name), "
             + "\(EvolutionLeaderboardGeometry.spokenProb(probPct, renderedPercent: renderedPercent)), "
             + EvolutionLeaderboardGeometry.spokenChange(changePct))
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        if Self.stacksParticipant(at: dynamicTypeSize) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    positionCell(grows: true)
+                    logo
+                    nameText
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .opacity(isHighlighted ? 1 : 0.4)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    recordText
+                    Spacer(minLength: 0)
+                    numbers
+                }
+            }
+            .accessibilityIdentifier(Self.stackedParticipantIdentifier)
+        } else {
+            HStack(spacing: 6) {
+                positionCell(grows: false)
+                logo
+                nameText
+                    .lineLimit(1)
+                    .opacity(isHighlighted ? 1 : 0.4)
+                recordText
+                Spacer()
+                numbers
+            }
+        }
     }
 }
 

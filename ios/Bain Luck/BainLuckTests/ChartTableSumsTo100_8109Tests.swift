@@ -342,7 +342,9 @@ final class ChartTableSumsTo100_8109Tests: XCTestCase {
         // alone would leave that substring present and a `contains` scan green on
         // the literal defect. Counting is what makes each site prove itself.
         let required: [(String, Int, String)] = [
-            ("EvolutionLeaderboardGeometry.probLabel(\n                probPct, renderedPercent: renderedPercent))",
+            // #8429 moved the drawn number into the row's `numbers` builder, shared
+            // by its one-line and two-line arrangements — still ONE call site.
+            ("EvolutionLeaderboardGeometry.probLabel(\n            probPct, renderedPercent: renderedPercent))",
              1, "the DRAWN number went back to rounding alone — this is the defect"),
             ("EvolutionLeaderboardGeometry.spokenProb(probPct, renderedPercent: renderedPercent)",
              1, "the SPOKEN number went back to rounding alone; no screenshot catches that"),
