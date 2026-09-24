@@ -1357,8 +1357,9 @@ async def link_polymarket_sub_markets() -> int:
     1. The predicate reads only committed table state, never the batch.
     2. ``seen_ids`` dedups events across the whole poll, so a given sub-market is
        upserted at most ONCE per poll — no later batch can re-null an ``event_id``
-       an earlier sweep wrote. (The upsert does write ``event_id``, including
-       NULL, which is why this needed checking rather than assuming.)
+       an earlier sweep wrote. (The upsert used to write ``event_id`` including
+       NULL, which is why this needed checking rather than assuming; since
+       #8430 it writes only a parent's non-NULL link.)
     3. So the final sweep observes every write the poll made, and the union of
        what the intermediate sweeps could have written is a subset of it.
 
@@ -2898,7 +2899,6 @@ async def _process_event_batch(
                                     FuturesMarket.settled_at, func.now()
                                 )
                             ),
-                            "event_id": parent_event_id,
                             "updated_at": func.now(),
                             "volume_24h": sub_volume_24h,
                             "volume_updated_at": func.now(),
@@ -2909,6 +2909,21 @@ async def _process_event_batch(
                         # and a leg with no date of its own keeps what it has.
                         if sub_open and getattr(market, "end_date", None) is not None:
                             sub_set["resolution_date"] = market.end_date
+                        # #8430: the parent's link, never the parent's ABSENCE of
+                        # one. A game container is rejected by the matcher as a
+                        # `parent_row`, so for most groups `parent_event_id` is
+                        # NULL for life — and writing that NULL on conflict wiped
+                        # the link the matcher had made on each child, every
+                        # poll. The matcher then re-linked them five minutes
+                        # later, and where its best candidate was refused it
+                        # minted a fresh row per child per hour: Boyer v Gorzny
+                        # became 14 rows, 11 of them empty and reading LIVE.
+                        # Measured 2026-09-24: 3,321 children (534 groups) sat
+                        # linked under an unlinked parent. A child that is wrong
+                        # for its own event is Phase 1.5's to unlink — it walks
+                        # every linked open market, children included.
+                        if parent_event_id is not None:
+                            sub_set["event_id"] = parent_event_id
                         # Q493: repair the sport on RE-INGEST, not only at birth.
                         # The parent's `update_set` has always carried this and
                         # the sub-market's never did, so a group whose sport was

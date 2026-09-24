@@ -4608,6 +4608,30 @@ jobs:
             exit 1
           }
 
+      - name: "#8430 a Polymarket child reuses the row its sibling holds (real Postgres)"
+        # #8430. Each child of one Polymarket game event used to mint its own
+        # row whenever the matcher's best candidate was refused — Boyer v
+        # Gorzny reached 14 rows, 11 empty and reading LIVE. The create path
+        # now asks `_polymarket_group_sibling_event_id` first, which is a
+        # predicate over `futures_markets` (group, child scope, one distinct
+        # event, not itself) plus #4965's fixture guard against `events`. A
+        # session double answers whatever it is handed, so this is the gate.
+        #
+        # 7 = found + another group + split group + parent-only group + itself
+        # + the fixture guard refusing + its control (same row, venue agrees).
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_polymarket_group_sibling_8430_pg.py \
+            -v -rs 2>&1 | tee /tmp/groupsibling8430.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/groupsibling8430.txt; then
+            echo "::error::#8430 group-sibling gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]7 passed[,[:space:]]" /tmp/groupsibling8430.txt || {
+            echo "::error::#8430 group-sibling gate did not run all seven cases"
+            exit 1
+          }
+
   frontend-build:
     runs-on: ubuntu-latest
     defaults:
