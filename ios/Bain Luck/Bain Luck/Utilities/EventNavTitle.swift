@@ -134,4 +134,25 @@ enum EventNavTitle {
         )
         return "\(labels.away) vs \(labels.home)"
     }
+
+    /// The pre-game title's floor: the two crest codes (`RMA vs DUB`).
+    ///
+    /// #5634 — `scoreless` was one `Text` with no fallback, so the bar
+    /// tail-truncated it whenever the labels were long, and #5634 made labels
+    /// longer on purpose: the live EuroLeague page read **"RMA vs Dubai Bas…"**
+    /// once "Dubai Basketball" stopped being printed as "Basketball" (simulator,
+    /// `15292394`, 2026-09-24). The scored title has had this rung since #4900;
+    /// this is the same rung for the title with no score, from the SAME pair the
+    /// crest badges draw, so the bar never invents a code the page does not show.
+    static func scorelessCompact(
+        away: String,
+        home: String,
+        awayServed: String? = nil,
+        homeServed: String? = nil
+    ) -> String {
+        let codes = TeamShortName.abbreviationPair(
+            away: away, home: home, awayServed: awayServed, homeServed: homeServed
+        )
+        return "\(codes.away) vs \(codes.home)"
+    }
 }

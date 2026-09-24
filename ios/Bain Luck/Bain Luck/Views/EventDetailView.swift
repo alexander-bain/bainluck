@@ -199,6 +199,16 @@ struct EventDetailView: View {
         )
     }
 
+    /// #5634 — `scorelessTitle`'s floor, in the crest badges' codes.
+    private var scorelessCompactTitle: String {
+        guard let event = vm.event else { return "Game Details" }
+        return EventNavTitle.scorelessCompact(
+            away: event.awayTeam, home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation
+        )
+    }
+
     #if os(iOS)
     /// #4900 — the inline title, laid out rather than truncated.
     ///
@@ -227,8 +237,14 @@ struct EventDetailView: View {
         } else {
             // VoiceOver still hears the whole sentence, score included: it is
             // not reading the hero's numbers off the screen alongside.
-            Text(scorelessTitle).font(.headline).lineLimit(1)
-                .accessibilityLabel(dynamicTitle)
+            // #5634 — the names first, the crest codes when the names do not
+            // fit, never a name cut in half ("RMA vs Dubai Bas…").
+            ViewThatFits(in: .horizontal) {
+                Text(scorelessTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(dynamicTitle)
         }
     }
 
