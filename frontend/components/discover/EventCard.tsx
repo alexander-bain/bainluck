@@ -1,6 +1,6 @@
 "use client";
 
-import { teamCrestBadge, teamShortNames } from "@/lib/teamShortName";
+import { discoverCrestBadge, teamShortNames } from "@/lib/teamShortName";
 import { useState } from "react";
 import Link from "next/link";
 import { formatProbability } from "@/lib/api";
@@ -271,12 +271,12 @@ export function EventCard({ item, data, liked, setLiked, onDismiss, trending, on
         </div>
 
         <div className="flex flex-col items-center gap-2">
-          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{teamCrestBadge(data.away_team, data.sport)}</div>}
+          {data.away_team_data?.logo_small ? <img src={data.away_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: awayColor }}>{discoverCrestBadge(data.away_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.away_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.away_score}</span>}
         </div>
         <span className="text-white/70 text-sm font-semibold">{timeLabel}</span>
         <div className="flex flex-col items-center gap-2">
-          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{teamCrestBadge(data.home_team, data.sport)}</div>}
+          {data.home_team_data?.logo_small ? <img src={data.home_team_data.logo_small} alt="" aria-hidden="true" className="w-16 h-16 object-contain drop-shadow-lg" /> : <div className="w-16 h-16 rounded-xl grid place-items-center text-white font-black text-lg" style={{ background: homeColor }}>{discoverCrestBadge(data.home_team, data.sport)}</div>}
           {(isLive || isDone || isSuspended) && data.home_score != null && <span className="text-2xl font-black tabular-nums text-white drop-shadow">{data.home_score}</span>}
         </div>
       </div>

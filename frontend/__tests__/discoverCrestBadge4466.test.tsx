@@ -293,12 +293,14 @@ describe("#4466 every discover crest call site", () => {
   );
 
   it.each(CREST_CALL_SITES)(
-    "$file calls teamCrestBadge for each of its crest tiles",
+    "$file calls discoverCrestBadge for each of its crest tiles",
     ({ file, crests }) => {
       // Stated positively as well as negatively. A ban-shaped guard cannot see
       // an OMISSION — deleting the badge, or replacing it with a bare `?`,
       // satisfies the rule above while leaving the reader worse off.
-      const calls = readCode(file).match(/teamCrestBadge\s*\(/g) ?? [];
+      // #4537: `discoverCrestBadge` is `teamCrestBadge` with the unshippable
+      // set closed, so a bare `teamCrestBadge(` here would reopen it.
+      const calls = readCode(file).match(/discoverCrestBadge\s*\(/g) ?? [];
       expect(calls.length).toBeGreaterThanOrEqual(crests);
     },
   );
