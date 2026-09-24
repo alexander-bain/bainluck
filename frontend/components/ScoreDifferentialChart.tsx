@@ -26,6 +26,8 @@ import { actualScoreSeriesDrawn } from "@/lib/scoreDifferentialHeading";
 import { scoreDifferentialYTicks } from "@/lib/scoreDifferentialTicks";
 import { sportVocab, playedCountAbsence, playedUnits, withUnit } from "@/lib/marketMapUtils";
 import { teamShortNames } from "@/lib/teamShortName";
+import { useAxisPoleFit } from "@/hooks/useAxisPoleFit";
+import { axisPoleStyle, axisLabelStyle } from "@/lib/axisPoleFit";
 import { teamTextColor } from "@/lib/teamColors";
 import type { PlayedLinescore } from "@/lib/marketMapUtils";
 import type {
@@ -372,6 +374,8 @@ export default function ScoreDifferentialChart({
     { name: awayTeam, abbreviation: awayTeamAbbrev },
     sportKey,
   );
+  // #8392 — the axis gutter gives each name the room the other does not need.
+  const { gutterRef: axisGutterRef, caps: axisPoleCaps } = useAxisPoleFit(homeShort, awayShort);
 
   const unitMismatchNote = (() => {
     if (scoreboardCountsTheUnit) return null;
@@ -1034,20 +1038,42 @@ export default function ScoreDifferentialChart({
       {/* Chart with vertical team labels */}
       <div className={`flex ${fillContainer ? "flex-1 min-h-0" : "h-48"}`}>
         {/* Vertical team labels on left side — matches OddsChart layout */}
-        <div className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
-          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+        <div ref={axisGutterRef} className="flex flex-col items-center justify-between py-3 shrink-0" style={{ width: 28 }}>
+          <div
+            className="flex items-center gap-1"
+            style={axisPoleStyle(axisPoleCaps.home)}
+            data-testid="score-diff-axis-pole"
+            data-pole="home"
+            data-capped={axisPoleCaps.home !== null ? "true" : undefined}
+            title={axisPoleCaps.home !== null ? homeShort : undefined}
+          >
             {homeTeamLogo && (
-              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={homeTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: teamTextColor(homeTeamColor) || "#16a34a" }}>
+            <span
+              data-axis-label
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={{ color: teamTextColor(homeTeamColor) || "#16a34a", ...axisLabelStyle(axisPoleCaps.home) }}
+            >
               {homeShort}
             </span>
           </div>
-          <div className="flex items-center gap-1" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+          <div
+            className="flex items-center gap-1"
+            style={axisPoleStyle(axisPoleCaps.away)}
+            data-testid="score-diff-axis-pole"
+            data-pole="away"
+            data-capped={axisPoleCaps.away !== null ? "true" : undefined}
+            title={axisPoleCaps.away !== null ? awayShort : undefined}
+          >
             {awayTeamLogo && (
-              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain" style={{ transform: "rotate(90deg)" }} />
+              <img src={awayTeamLogo} alt="" width={12} height={12} className="object-contain shrink-0" style={{ transform: "rotate(90deg)" }} />
             )}
-            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: teamTextColor(awayTeamColor) || "#2563eb" }}>
+            <span
+              data-axis-label
+              className="text-[11px] font-bold uppercase tracking-wider"
+              style={{ color: teamTextColor(awayTeamColor) || "#2563eb", ...axisLabelStyle(axisPoleCaps.away) }}
+            >
               {awayShort}
             </span>
           </div>
