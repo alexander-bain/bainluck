@@ -41,6 +41,21 @@ export const CATEGORY_GRADIENTS: Record<string, string> = {
   health: "linear-gradient(135deg, #134e4a, #0d9488)",
 };
 
+/**
+ * The chip skin for a card's DARK hero — the `CATEGORY_GRADIENTS` block at the
+ * top of a game or golf card.
+ *
+ * #8436. `CATEGORY_COLORS` below is the WHITE-card skin (`bg-<hue>-500/15
+ * text-<hue>-600`). Painted on the dark gradient of the same hue it vanishes by
+ * construction — the "⚾ MLB" chip on every live MLB card and the "⛳ GOLF" chip
+ * on the golf card, photographed at 390px on 2026-09-24. #4181 measured the
+ * same defect on `GuessCard`'s banner (1.12:1–2.14:1 against 4.5) and ruled the
+ * answer: the fill goes DARKER, not lighter (`bg-white/20` fails the light
+ * stops). This is that skin, named once so the two hero chips cannot drift.
+ * `heroChipContrast8436.test.tsx` scores it at every stop of every gradient.
+ */
+export const HERO_CHIP_ON_DARK = "bg-black/40 text-white";
+
 const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
   basketball: { bg: "bg-orange-500/15", text: "text-orange-600" },
   football: { bg: "bg-green-700/15", text: "text-green-700" },
