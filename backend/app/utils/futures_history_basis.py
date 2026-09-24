@@ -78,7 +78,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Mapping
+from typing import Collection, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,58 @@ def carry_forward_quotes(
         if column_by_book:
             completed[captured_at] = column_by_book
     return completed
+
+
+def carried_endpoint(
+    oid: int,
+    devigged: Mapping[datetime, Mapping[int, float]],
+    *,
+    own: Collection[datetime],
+    observed: Collection[datetime],
+    drawn_last: float | None,
+) -> tuple[datetime, float] | None:
+    """The point at which a line that did not move is closed by its carried value (#8296).
+
+    :func:`carry_forward_quotes` completes the COLUMN, but ``/history`` draws each
+    line only at that line's own rows. A leg that did not move at the column's
+    last instant therefore never reached it: on KBO 59698965 LG and KT ended on
+    the hero while Samsung, NC and Kia ended at 0.160 / 0.1115 / 0.105 under a
+    hero of 0.126 / 0.088 / 0.083 (CERT-3362's second opinion).
+
+    ONE point, at the last instant whose column carries this leg — the hero's
+    own column — not a point at every instant. Every drawn point is right at its
+    own instant; the stretch between is interpolation, as it already is for a
+    moved leg between polls. A point per instant would multiply the payload by
+    polls × books for nothing a reader can see.
+
+    ``own`` is the instants the line already draws from (support-filtered);
+    ``observed`` is every instant the leg wrote a row, refused or not;
+    ``drawn_last`` is the value the line currently ends at. None when:
+
+    * the line draws nothing (a point from nothing is not a line);
+    * the line already ends at the carried value (a raw-printed board): the point
+      would only stretch a flat line, and move every count read off the payload;
+    * the leg wrote a row at that instant (it is drawn there already, or #5898
+      refused that row and nothing may stand in for it);
+    * the standing price being carried came from a refused row (carrying it would
+      draw the refused price at a later stamp);
+    * the leg is absent from every column (a graded leg is never carried).
+    """
+    if drawn_last is None:
+        return None
+    column_instants = [t for t, point in devigged.items() if oid in point]
+    if not column_instants:
+        return None
+    last = max(column_instants)
+    if last in observed:
+        return None
+    standing = max((t for t in observed if t <= last), default=None)
+    if standing is None or standing not in own:
+        return None
+    value = devigged[last][oid]
+    if abs(value - drawn_last) <= 1e-9:
+        return None
+    return last, value
 
 
 def devigged_consensus_by_time(

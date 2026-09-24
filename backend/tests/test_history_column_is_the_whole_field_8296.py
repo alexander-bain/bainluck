@@ -24,6 +24,7 @@ import pytest
 
 from app.routes import futures as futures_route
 from app.utils.futures_history_basis import (
+    carried_endpoint,
     carry_forward_quotes,
     devigged_consensus_by_time,
 )
@@ -125,6 +126,49 @@ class TestTheServedScale:
         assert point[LG] != pytest.approx(_HERO[LG], abs=6e-4)
 
 
+class TestTheCarriedEndpoint:
+    """`carried_endpoint`'s refusals — each one is a point that must NOT be drawn."""
+
+    T0 = datetime(2026, 9, 21, tzinfo=timezone.utc)
+    T1 = T0 + timedelta(hours=1)
+    T2 = T0 + timedelta(hours=2)
+
+    def _close(self, devigged, *, own, observed, drawn_last=0.5, oid=1):
+        return carried_endpoint(
+            oid, devigged, own=own, observed=observed, drawn_last=drawn_last
+        )
+
+    def test_an_unmoved_leg_is_closed_at_the_last_column(self):
+        devigged = {self.T0: {1: 0.5, 2: 0.5}, self.T2: {1: 0.4, 2: 0.6}}
+        assert self._close(devigged, own={self.T0}, observed={self.T0}) == (self.T2, 0.4)
+
+    def test_a_leg_drawn_at_the_last_column_needs_none(self):
+        devigged = {self.T0: {1: 0.5}, self.T2: {1: 0.4}}
+        assert self._close(devigged, own={self.T0, self.T2}, observed={self.T0, self.T2}) is None
+
+    def test_a_refused_row_at_the_last_column_is_not_stood_in_for(self):
+        devigged = {self.T0: {1: 0.5}, self.T2: {1: 0.4}}
+        assert self._close(devigged, own={self.T0}, observed={self.T0, self.T2}) is None
+
+    def test_a_refused_standing_price_is_not_carried_forward(self):
+        """Its last row (T1) was refused by #5898; carrying it would draw that price at T2."""
+        devigged = {self.T0: {1: 0.5}, self.T1: {1: 0.9}, self.T2: {1: 0.8}}
+        assert self._close(devigged, own={self.T0}, observed={self.T0, self.T1}) is None
+
+    def test_a_leg_in_no_column_is_not_closed(self):
+        assert self._close({self.T2: {1: 1.0}}, own={self.T0}, observed={self.T0}, oid=3) is None
+
+    def test_a_line_that_draws_nothing_gains_nothing(self):
+        """Every own instant refused at normalization: no point to extend from."""
+        devigged = {self.T0: {2: 1.0}, self.T2: {1: 0.4, 2: 0.6}}
+        assert self._close(devigged, own={self.T0}, observed={self.T0}, drawn_last=None) is None
+
+    def test_a_line_already_at_the_carried_value_is_not_stretched(self):
+        """A raw-printed board: the carried value IS the last drawn one."""
+        devigged = {self.T0: {1: 0.5}, self.T2: {1: 0.5, 2: 0.3}}
+        assert self._close(devigged, own={self.T0}, observed={self.T0}, drawn_last=0.5) is None
+
+
 class TestTheCarryIsActuallyWired:
     """The helper is inert unless `/history` calls it (#7747's lesson)."""
 
@@ -168,8 +212,37 @@ class TestTheCarryIsActuallyWired:
         )
 
     async def _history(self, *, graded_kiwoom=True):
+        payload = await self._payload(graded_kiwoom=graded_kiwoom)
+        return {
+            entry["outcome_id"]: entry["history"][-1]["probability"]
+            for entry in payload["outcomes"]
+            if entry["history"]
+        }
+
+    async def _payload(self, *, graded_kiwoom=True, venue=(), monkeypatch=None):
         now = datetime.now(timezone.utc)
         shift = now - timedelta(minutes=5) - T_FINAL
+
+        if venue:
+            holder = futures_route._GenericVenueHistory()
+            holder.applicable = True
+            holder.state = "ok"
+            holder.payload = {"built_at": None, "status": "ok", "scale": "raw"}
+            for oid, stamp, value in venue:
+                holder.rows.setdefault(oid, []).append(SimpleNamespace(
+                    outcome_id=oid, bookmaker="polymarket_venue", probability=value,
+                    captured_at=stamp + shift,
+                ))
+
+            async def _load(*a, **k):
+                return holder
+
+            async def _noop(*a, **k):
+                return None
+
+            monkeypatch.setattr(futures_route, "_load_generic_venue_history", _load)
+            monkeypatch.setattr(futures_route, "_consider_generic_history_fill", _noop)
+            monkeypatch.setattr(futures_route, "_venue_scale_refusal", lambda *a, **k: None)
 
         def row(oid, stamp, value):
             return SimpleNamespace(
@@ -193,7 +266,7 @@ class TestTheCarryIsActuallyWired:
             )
             for oid, (stamp, v) in _LAST_ROW.items()
         ]
-        payload = await futures_route.get_futures_history(
+        return await futures_route.get_futures_history(
             59698965,
             outcome_id=None,
             hours=168,
@@ -203,11 +276,6 @@ class TestTheCarryIsActuallyWired:
                 _Result(value=self._market(outcomes)), _Result(rows=()), _Result(rows=rows)
             ),
         )
-        return {
-            entry["outcome_id"]: entry["history"][-1]["probability"]
-            for entry in payload["outcomes"]
-            if entry["history"]
-        }
 
     @pytest.mark.asyncio
     async def test_the_served_chart_ends_where_the_hero_is(self):
@@ -217,6 +285,58 @@ class TestTheCarryIsActuallyWired:
             "the handler squeezed the moved legs alone (#8296)"
         )
         assert served[KT] == pytest.approx(_HERO[KT], abs=6e-4)
+
+    @pytest.mark.asyncio
+    async def test_every_named_line_ends_where_the_hero_is(self):
+        """CERT-3362's second opinion: LG and KT moved at the final instant, so
+        asserting only them cannot see the defect. Samsung, NC and Kia did NOT
+        move — before the endpoint arm they ended at 0.160 / 0.1115 / 0.105
+        under a hero of 0.126 / 0.088 / 0.083."""
+        served = await self._history()
+        off = {
+            oid: (served.get(oid), hero)
+            for oid, hero in _HERO.items()
+            if served.get(oid) != pytest.approx(hero, abs=6e-4)
+        }
+        assert not off, f"lines ending off the hero (served, hero): {off}"
+
+    @pytest.mark.asyncio
+    async def test_an_unmoved_line_gains_one_point_not_a_point_per_instant(self):
+        """The endpoint is ONE carried point at the column's last instant, stamped
+        there; the line's own observations are untouched."""
+        payload = await self._payload()
+        by_id = {e["outcome_id"]: e["history"] for e in payload["outcomes"]}
+        samsung = by_id[SAMSUNG]
+        assert len(samsung) == 2
+        assert samsung[0]["probability"] != samsung[1]["probability"]
+        assert samsung[-1]["timestamp"] == by_id[LG][-1]["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_a_line_serving_venue_points_gains_no_carried_endpoint(self, monkeypatch):
+        """Venue points are admitted only where the printed scale is raw, so a
+        carried value there restates Samsung's 9/21 capture — and would be drawn
+        AFTER the venue's fresher 9/23 sample, a stale tail on a fresh line."""
+        venue_at = T_FINAL - timedelta(hours=3)
+        payload = await self._payload(
+            venue=[(SAMSUNG, venue_at, 0.13)], monkeypatch=monkeypatch
+        )
+        by_id = {e["outcome_id"]: e["history"] for e in payload["outcomes"]}
+        samsung = by_id[SAMSUNG]
+        assert samsung[-1].get("provenance") == "venue_history", samsung
+        assert all(pt["timestamp"] != by_id[LG][-1]["timestamp"] for pt in samsung)
+
+    @pytest.mark.asyncio
+    async def test_a_graded_line_gains_no_endpoint(self):
+        """Kiwoom (graded LOST) may end at the loser freeze's 0.0 at that instant,
+        never at its last price carried there."""
+        payload = await self._payload()
+        by_id = {e["outcome_id"]: e["history"] for e in payload["outcomes"]}
+        at_final = [
+            pt["probability"]
+            for pt in by_id[KIWOOM]
+            if pt["timestamp"] == by_id[LG][-1]["timestamp"]
+        ]
+        assert at_final == [0.0]
 
     @pytest.mark.asyncio
     async def test_the_graded_set_reaches_the_carry(self):

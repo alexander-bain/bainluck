@@ -21,6 +21,7 @@ from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
 from app.utils.futures_history_basis import (
+    carried_endpoint,
     carry_forward_quotes,
     devigged_consensus_by_time,
 )
@@ -7386,11 +7387,15 @@ async def get_futures_history(
     raw_by_time: dict[datetime, dict[str, dict[int, float]]] = defaultdict(
         lambda: defaultdict(dict)
     )
+    # #8296 — every instant each leg wrote a row, refused or not: the endpoint
+    # arm below may not stand a carried price in for a row #5898 refused.
+    observed_at: dict[int, set] = defaultdict(set)
     for row in field_rows:
         if row.probability is not None:
             raw_by_time[row.captured_at][row.bookmaker][row.outcome_id] = float(
                 row.probability
             )
+            observed_at[row.outcome_id].add(row.captured_at)
 
     # #7935: read the grades ONCE for the whole board rather than per line — 74
     # outcomes on this market, and the mutex-contradiction check inside it is a
@@ -7492,6 +7497,26 @@ async def get_futures_history(
                 "american_odds": None,
                 "bookmaker": "consensus",
             })
+        # #8296 — THE LINE REACHES THE HERO'S COLUMN TOO. The carry above completed
+        # the column, but this loop draws a line only at its own rows, so a leg
+        # that did not move at the last instant stopped short of it (KBO: Samsung
+        # ended at 0.160 under a hero of 0.126). One carried point closes it.
+        # Not on a line serving venue points: those admit only where the printed
+        # scale is the raw one, so the carried value restates the last capture and
+        # would sit stale beside the venue's fresher sample.
+        if not venue_by_outcome.get(oid):
+            _closing = carried_endpoint(
+                oid, devigged, own=time_groups.keys(),
+                observed=observed_at.get(oid, ()),
+                drawn_last=history[-1]["probability"] if history else None,
+            )
+            if _closing is not None:
+                history.append({
+                    "timestamp": _closing[0].isoformat(),
+                    "probability": _closing[1],
+                    "american_odds": None,
+                    "bookmaker": "consensus",
+                })
         # #7351: the venue's own observations at the instants no capture claims.
         # Real timestamp, raw value, and a provenance a reader can tell from a
         # capture — an older venue sample never passes as a fresh poll.
