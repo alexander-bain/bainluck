@@ -268,8 +268,8 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
     }
 
     /// ⭐ THE TICK. The chip derives its text from `commenceTime` on each render
-    /// and nothing else on a pregame page re-renders it — the refresh ring is
-    /// live-only (`showsRefreshCountdown`). Delete this wrapper and the chip
+    /// and nothing else on a pregame page re-renders it — the refresh status is
+    /// live-only (`showsRefreshStatus`). Delete this wrapper and the chip
     /// freezes at the minute the page opened, silently, on the one state whose
     /// entire content is a clock.
     func testTheChipStillTicks() throws {
@@ -286,7 +286,7 @@ final class HeroSaysTheCountdownOnce6544Tests: XCTestCase {
             """
         )
         XCTAssertFalse(
-            EventDetailView.showsRefreshCountdown(status: "scheduled"),
+            EventDetailView.showsRefreshStatus(status: "scheduled"),
             """
             a pregame page has no refresh ring, so nothing else on it re-renders \
             on a clock. If this ever becomes true the TimelineView is still \
