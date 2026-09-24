@@ -44,6 +44,9 @@ EVENTS = (
 )
 
 
+SECOND_MARKET = 72526012
+
+
 def _asyncpg_url(url: str) -> str:
     if url.startswith("postgresql+asyncpg://"):
         return url
@@ -79,6 +82,20 @@ async def session():
                     market_metadata={"polymarket_event_id": event_id},
                 )
             )
+        # lane1b/550: a SECOND market on the middle event, above its anchor, so
+        # the apply test proves the write reaches every id the page selected.
+        s.add(
+            FuturesMarket(
+                id=SECOND_MARKET,
+                source="polymarket",
+                external_id=f"0x2526{SECOND_MARKET}",
+                name="Table tennis match 943345 (set 1)",
+                status="resolved",
+                llm_sport_category="table_tennis",
+                commence_time=EVENTS[1][2],
+                market_metadata={"polymarket_event_id": "943345"},
+            )
+        )
         await s.commit()
     try:
         async with maker() as s:
@@ -133,3 +150,47 @@ async def test_a_z_suffixed_cursor_date_resumes_on_asyncpg(session, monkeypatch)
     )
     assert out["counts"]["events_examined"] == 1, str(out.get("reason"))[:300]
     assert seen == ["943345"]
+
+
+async def test_an_apply_on_a_resumed_page_writes_every_selected_market_on_asyncpg(
+    session, monkeypatch
+):
+    """lane1b/550: production 2026-09-24 02:29Z. The resolved-cohort write, keyed
+    on the event id alone, was a 4.7s sequential scan against a 1.0s budget, so
+    every `not_open` apply paused on its first event. It is now keyed on the
+    page's own `market_ids` — an `integer[]` bind, which only the real driver can
+    accept or refuse. The page is the production specimen's: resumed below the
+    newest event, so it selects 943345 and nothing else."""
+    from sqlalchemy import text
+
+    from app.tasks import repair_polymarket_sport_category as rail
+    from tests.test_repair_polymarket_sport_category_q496 import _TENNIS, _venue
+
+    monkeypatch.setattr(rail, "VENUE_PAUSE", 0)
+    seen = _venue(monkeypatch, {"943345": _TENNIS})
+
+    out = await rail.repair(
+        session,
+        apply=True,
+        status_scope="not_open",
+        limit=1,
+        after_date=EVENTS[0][2].isoformat(),
+        after_id=EVENTS[0][1],
+    )
+
+    assert seen == ["943345"]
+    assert out["terminal"] == "changed", (
+        f"terminal={out.get('terminal')!r}: {str(out.get('reason'))[:300]}"
+    )
+    assert out["counts"]["markets_written"] == 2
+    assert [r["event_id"] for r in out["receipts"]] == ["943345"]
+    rows = dict(
+        (
+            await session.execute(
+                text("SELECT id, llm_sport_category FROM futures_markets ORDER BY id")
+            )
+        ).all()
+    )
+    assert rows[EVENTS[1][1]] == "tennis" and rows[SECOND_MARKET] == "tennis", rows
+    # The other two events were never on this page and must be exactly as seeded.
+    assert rows[EVENTS[0][1]] == "table_tennis" and rows[EVENTS[2][1]] == "table_tennis", rows

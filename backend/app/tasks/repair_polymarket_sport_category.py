@@ -1349,13 +1349,15 @@ async def repair(
                 timeout_literal=str(int(TARGET_SELECT_BUDGET_SECONDS * 1000)),
                 server_budget_s=TARGET_SELECT_BUDGET_SECONDS,
                 sql=f"""
-                SELECT ev.event_id, ev.commence_time, ev.anchor_id, ev.markets
+                SELECT ev.event_id, ev.commence_time, ev.anchor_id, ev.markets,
+                       ev.market_ids
                 FROM (
                   SELECT
                     fm.market_metadata->>'polymarket_event_id' AS event_id,
                     max(fm.commence_time)                      AS commence_time,
                     min(fm.id)                                 AS anchor_id,
-                    count(*)                                   AS markets
+                    count(*)                                   AS markets,
+                    array_agg(fm.id ORDER BY fm.id)            AS market_ids
                   FROM futures_markets fm
                   WHERE fm.source = 'polymarket'
                     AND {status_sql}
@@ -1605,6 +1607,16 @@ async def repair(
                 # already pin (`llm_sport_category` was `:cat_old` by
                 # construction). `status_sql` is the scope the page selected on,
                 # so the write can never reach past the population it read.
+                #
+                # #2526 (lane1b/550, production 2026-09-24 02:29Z): the write is
+                # keyed on the market ids THIS PAGE SELECTED, so it plans on the
+                # primary key. Keyed on the event id alone it had no index outside
+                # the open scope (`ix_fm_open_category` is partial on
+                # `status = 'open'`): the resolved-cohort UPDATE was a 4.7s
+                # sequential scan against a 1.0s budget, so every `not_open`
+                # apply paused on its first event and no row was ever written.
+                # The other predicates stay as the compare-and-set; a row that
+                # joined the event after the SELECT is left for a later drain.
                 r = await _bounded_statement(
                     session,
                     timeout_literal=str(int(WRITE_BUDGET_SECONDS * 1000)),
@@ -1619,6 +1631,7 @@ async def repair(
                             updated_at = NOW()
                         FROM futures_markets prev
                         WHERE prev.id = fm.id
+                          AND fm.id = ANY(CAST(:ids AS integer[]))
                           AND fm.source = 'polymarket'
                           AND {status_sql}
                           AND fm.llm_sport_category = :cat_old
@@ -1630,6 +1643,7 @@ async def repair(
                         "cat_new": category,
                         "cat_old": SUSPECT_CATEGORY,
                         "eid": str(t.event_id),
+                        "ids": [int(i) for i in t.market_ids],
                     },
                 )
                 # Read BEFORE the commit: the result is bound to the transaction.

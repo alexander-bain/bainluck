@@ -60,11 +60,17 @@ from app.tasks import repair_polymarket_sport_category as rail
 class _Row:
     """One aggregated EVENT row, shaped like the target query's output."""
 
-    def __init__(self, event_id, commence_time, anchor_id, markets=3):
+    def __init__(self, event_id, commence_time, anchor_id, markets=3, market_ids=None):
         self.event_id = event_id
         self.commence_time = commence_time
         self.anchor_id = anchor_id
         self.markets = markets
+        #: #2526 (lane1b/550): the page SELECT also returns the event's market
+        #: ids (`array_agg(fm.id ORDER BY fm.id)`, so it starts at the anchor).
+        self.market_ids = (
+            list(market_ids) if market_ids is not None
+            else list(range(anchor_id, anchor_id + markets))
+        )
 
 
 class _Ts:
