@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
+import { Fragment, useState, useMemo, useEffect, useLayoutEffect, useRef } from "react";
 import {
   ComposedChart,
   Line,
@@ -27,8 +27,9 @@ import {
   chartAxisPercents,
   computeWinProbYAxis,
 } from "@/lib/eventKeyStats";
-import { chartTooltipPair } from "@/lib/drawPricedWinner";
+import { chartTooltipCells, chartTooltipPair } from "@/lib/drawPricedWinner";
 import {
+  CHART_TOOLTIP_COMPACT_MEDIA_QUERY,
   chartTooltipViewportShift,
   VIEWPORT_BOTTOM_OBSTRUCTION_ATTR,
 } from "@/lib/chartTooltipViewportFit";
@@ -624,6 +625,25 @@ export default function OddsChart({
   // Ruling 1/4): the blend is labeled and dominant; the faint source lines stay
   // unlabeled until the reader expands the legend (or isolates one via hover).
   const [legendExpanded, setLegendExpanded] = useState(false);
+
+  // #925 — phone width prints the tooltip's probabilities as a table, so the card
+  // fits inside the plot instead of hanging over the readout under the chart
+  // (see `CHART_TOOLTIP_COMPACT_MEDIA_QUERY`). Read in the initializer as well as
+  // the effect: the tooltip only renders on a hover, never in the first paint, so
+  // there is no server markup for this to disagree with.
+  const [compactTooltip, setCompactTooltip] = useState<boolean>(
+    () =>
+      typeof window !== "undefined" &&
+      !!window.matchMedia?.(CHART_TOOLTIP_COMPACT_MEDIA_QUERY).matches,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia(CHART_TOOLTIP_COMPACT_MEDIA_QUERY);
+    const sync = () => setCompactTooltip(mq.matches);
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
   useEffect(() => {
     if (!hasUserOverridden && !externalTimeRange && defaultTimeRange === "live") {
       setInternalTimeRange("live");
@@ -2219,6 +2239,58 @@ export default function OddsChart({
             );
           })()}
 
+          {/* #925 — at phone width the same numbers as a table: one row per
+              source, one column per team, so each source costs one line instead
+              of the two or three its wrapped `Team: 62.4% | Other: 37.6%` sentence
+              took, and the card fits inside the plot rather than covering the
+              readout under the chart. Same order, colours and rounding
+              (`chartTooltipCells` is the rule `chartTooltipPair` reads), and a
+              withheld away side drops its whole column, header included. */}
+          {compactTooltip && ((showBlendLine && bainLuckEntry) || sourceEntries.length > 0) ? (
+            <div
+              className={`grid ${awayWithheld ? "grid-cols-[1fr_auto]" : "grid-cols-[1fr_auto_auto]"} gap-x-3 gap-y-0.5 text-xs tabular-nums`}
+              data-testid="chart-tooltip-table"
+            >
+              <span aria-hidden="true" />
+              <span className="text-[10px] text-text-muted text-right truncate max-w-[6rem]">{homeShort}</span>
+              {!awayWithheld && (
+                <span className="text-[10px] text-text-muted text-right truncate max-w-[6rem]">{awayShort}</span>
+              )}
+              {showBlendLine && bainLuckEntry && (() => {
+                const cells = chartTooltipCells(bainLuckEntry.value, awayWithheld);
+                return (
+                  <Fragment key="blend">
+                    <span className="font-semibold min-w-0" style={{ color: BAIN_LUCK_CONFIG.color }}>
+                      {BAIN_LUCK_CONFIG.displayName}
+                    </span>
+                    <span className="font-semibold text-right" style={{ color: BAIN_LUCK_CONFIG.color }}>{cells.home}</span>
+                    {cells.away !== null && (
+                      <span className="font-semibold text-right" style={{ color: BAIN_LUCK_CONFIG.color }}>{cells.away}</span>
+                    )}
+                    {sourceEntries.length > 0 && (
+                      <span className="col-span-full border-t border-surface-border my-0.5" aria-hidden="true" />
+                    )}
+                  </Fragment>
+                );
+              })()}
+              {sourceEntries.map((source) => {
+                const cells = chartTooltipCells(source.value, awayWithheld);
+                const lead = !isMultiSource && source.key === "betting";
+                const style = isMultiSource || source.key !== "betting" ? { color: source.color } : undefined;
+                const valueClass = `text-right ${lead ? "font-semibold text-text-primary" : "font-medium"}`;
+                return (
+                  <Fragment key={source.key}>
+                    <span className="text-text-muted min-w-0">{source.displayName}</span>
+                    <span className={valueClass} style={style}>{cells.home}</span>
+                    {cells.away !== null && (
+                      <span className={valueClass} style={style}>{cells.away}</span>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </div>
+          ) : (
+          <>
           {/* Multi-source mode: Bain Luck aggregated first, then individual sources */}
           {showBlendLine && bainLuckEntry && (
             <div className="mb-2 pb-2 border-b border-surface-border">
@@ -2268,6 +2340,9 @@ export default function OddsChart({
                 </div>
               ))}
             </div>
+          )}
+
+          </>
           )}
 
           {/* #7878 — missing observations, named as such. Never a price:
