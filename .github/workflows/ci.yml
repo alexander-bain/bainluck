@@ -3006,6 +3006,51 @@ jobs:
             exit 1
           fi
 
+      - name: "#837 blend stamp deadlock — provision the disposable database"
+        # Its own database for the reason the #7617 step above gives: the file
+        # drops and creates the tables it touches.
+        run: |
+          set -o pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import asyncio, asyncpg
+
+          DB = "bl_blend_deadlock_837"
+
+          async def go():
+              c = await asyncpg.connect(
+                  user="postgres", password="postgres", database="postgres",
+                  host="localhost", port=5432)
+              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
+              await c.execute(f'CREATE DATABASE {DB}')
+              await c.close()
+
+          asyncio.run(go())
+          print(
+              "BLEND_DEADLOCK_DATABASE_URL="
+              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
+          )
+          PY
+          echo "provisioned bl_blend_deadlock_837"
+
+      - name: "#837 two venues' live stamps do not deadlock each other (real Postgres)"
+        # The Kalshi and Polymarket arms each stamp a batch of live events in one
+        # transaction; walked in join order they locked `events` rows in opposite
+        # orders and Postgres killed one (5 deadlocks in 13 min, 2026-09-24), and
+        # the abort discarded the whole batch. Only real row locks can show it.
+        # Skip detection plus a count, as for #7617.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_live_blend_stamp_deadlock_pg_837.py \
+            -v -rs 2>&1 | tee /tmp/deadlock837.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/deadlock837.txt; then
+            echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+          grep -qE "[^0-9]2 passed," /tmp/deadlock837.txt || {
+            echo "::error::#837 stamp deadlock gate did not run both cases"
+            exit 1
+          }
+
       - name: "#1927 a negative rank term never excludes, at the route (real Postgres)"
         # The wide half of #1927. Discover judges a live game "exceptional" by
         # reading its personalised `score`, so a stored Nah (×0.4) or eight real
@@ -4343,51 +4388,6 @@ jobs:
           # `[^0-9]` so a future `16 passed` cannot satisfy a gate asking for 6.
           grep -qE "[^0-9]6 passed," /tmp/delay7617.txt || {
             echo "::error::#7617 delay contract did not run all six cases"
-            exit 1
-          }
-
-      - name: "#837 blend stamp deadlock — provision the disposable database"
-        # Its own database for the reason the #7617 step above gives: the file
-        # drops and creates the tables it touches.
-        run: |
-          set -o pipefail
-          python - <<'PY' >> "$GITHUB_ENV"
-          import asyncio, asyncpg
-
-          DB = "bl_blend_deadlock_837"
-
-          async def go():
-              c = await asyncpg.connect(
-                  user="postgres", password="postgres", database="postgres",
-                  host="localhost", port=5432)
-              await c.execute(f'DROP DATABASE IF EXISTS {DB}')
-              await c.execute(f'CREATE DATABASE {DB}')
-              await c.close()
-
-          asyncio.run(go())
-          print(
-              "BLEND_DEADLOCK_DATABASE_URL="
-              f"postgresql+asyncpg://postgres:postgres@localhost:5432/{DB}"
-          )
-          PY
-          echo "provisioned bl_blend_deadlock_837"
-
-      - name: "#837 two venues' live stamps do not deadlock each other (real Postgres)"
-        # The Kalshi and Polymarket arms each stamp a batch of live events in one
-        # transaction; walked in join order they locked `events` rows in opposite
-        # orders and Postgres killed one (5 deadlocks in 13 min, 2026-09-24), and
-        # the abort discarded the whole batch. Only real row locks can show it.
-        # Skip detection plus a count, as for #7617.
-        run: |
-          set -o pipefail
-          python -m pytest tests/integration/test_live_blend_stamp_deadlock_pg_837.py \
-            -v -rs 2>&1 | tee /tmp/deadlock837.txt
-          if grep -qiE "[0-9]+ skipped" /tmp/deadlock837.txt; then
-            echo "::error::#837 stamp deadlock gate SKIPPED — the gate did not run"
-            exit 1
-          fi
-          grep -qE "[^0-9]2 passed," /tmp/deadlock837.txt || {
-            echo "::error::#837 stamp deadlock gate did not run both cases"
             exit 1
           }
 
