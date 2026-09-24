@@ -242,6 +242,10 @@ final class OddsChartViewModel: ObservableObject {
         guard EventHistoryFreshness.shouldAdopt(fresh, over: history) else { return false }
         history = fresh
         loading = false
+        // A failed first fetch left its message here, and the view reads
+        // `error` before `history` — so without this the adopted payload drew
+        // under "couldn't load" for as long as the page stayed open.
+        error = nil
         return true
     }
 
