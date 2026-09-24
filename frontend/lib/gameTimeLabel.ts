@@ -698,6 +698,14 @@ const CLOCK_TOKEN_RE = /^\d{1,2}[:.]\d{1,2}$/;
  *    `UNSCORED_IN_POINTS`, whose `gameHasAClock` is `true`. So every existing
  *    caller keeps today's behaviour exactly, and this can never blank a clock
  *    on a sport nobody declared.
+ *
+ * 5. A CLOCK THE PERIOD LEADS WITH IS SPELLED OUT, WHATEVER ITS SHAPE (#8322).
+ *    Every live NHL badge read `13 - 2nd Period 13`: StatPal's hockey clock is
+ *    bare minutes, the stored period is `${clock} - ${status}`, and a bare `13`
+ *    fails rule 2's shape gate. The shape gate guards a coincidental SUBSTRING;
+ *    an exact leading `"<clock> - "` is not a coincidence, it is the composer's
+ *    own format. So "Bottom 1st" / "1" still keeps its clock — "Bottom 1st"
+ *    does not start with "1 - ".
  */
 export function trustedLiveClock(
   period: string | null | undefined,
@@ -720,12 +728,14 @@ export function trustedLiveClock(
     trimmedClock !== "" &&
     CLOCK_TOKEN_RE.test(trimmedClock) &&
     trimmedPeriod.includes(trimmedClock);
+  const ledByClock =
+    trimmedClock !== "" && trimmedPeriod.startsWith(`${trimmedClock} - `);
   const repeatsPeriod =
     trimmedClock !== "" &&
     trimmedClock.toLowerCase() === trimmedPeriod.toLowerCase();
   return {
     period: trimmedPeriod,
-    gameClock: alreadySpelledOut || repeatsPeriod ? "" : trimmedClock,
+    gameClock: alreadySpelledOut || ledByClock || repeatsPeriod ? "" : trimmedClock,
   };
 }
 
