@@ -15490,6 +15490,62 @@ def _decomposed_container_parent_candidates(markets: list) -> set[int]:
     }
 
 
+def _leg_copy_parent_members(markets: list, outcomes_by_market: dict) -> dict[int, set[int]]:
+    """Parents whose every leg is a copy of a served sibling's lead leg (#5273).
+
+    The second way a Polymarket group parent turns out to be redundant, and the
+    one #4189's shape test cannot see. `_parent_outcome_data` gives a non-negRisk
+    game parent one leg per sub-market — that sub-market's ``outcome_prices[0]``,
+    keyed on its ``condition_id`` — and the decomposition writes each sub-market
+    as its own row whose ``external_id`` IS that ``condition_id``. So the parent's
+    legs are, by id, the lead legs of its own children.
+
+    Production, 2026-09-24 04:40Z, `GET /api/events/15318167/game-markets`
+    (White Sox v Royals): parent 61385201 is typed ``duel`` and stores
+    ``Chicago White Sox=0.540 [0x185a60d0…] | NRFI=0.495 [0x27c202a3…]``; its
+    children 62155955 (``0x185a60d0…``, the moneyline) and 62155956
+    (``0x27c202a3…``, "Will there be a run scored in the first inning?") are not
+    yet shaped (``market_type`` NULL — the shape backfill lags ingest). Both share
+    the parent's ``market_name`` and the page merged the three into one card:
+    "Chicago White Sox 54% / NRFI 50% / Kansas City Royals 46%". The "NRFI" leg
+    is not even the right side — it carries the first-inning market's YES price.
+
+    The test is by ID, not shape or name: a parent qualifies only when EVERY one
+    of its legs names another market in the served set on the same ``group_id``.
+    A single-market parent (legs ``{cond}`` and ``{cond}_side1``, no sibling) and
+    a negRisk field whose members were never written as rows both fail it and
+    are untouched. Returns ``{parent_id: sibling_ids}``; like
+    `_decomposed_container_parent_candidates` it names candidates only — the
+    verdict is still taken against the final payload.
+    """
+    by_group_external: dict = {}
+    for m in markets:
+        if m.group_id and isinstance(m.external_id, str) and m.external_id:
+            by_group_external[(m.group_id, m.external_id)] = m.id
+
+    copies: dict[int, set[int]] = {}
+    for m in markets:
+        if not m.group_id:
+            continue
+        legs = outcomes_by_market.get(m.id) or []
+        if not legs:
+            continue
+        siblings: set[int] = set()
+        for leg in legs:
+            leg_external = getattr(leg, "external_id", None)
+            sibling = (
+                by_group_external.get((m.group_id, leg_external))
+                if isinstance(leg_external, str)
+                else None
+            )
+            if sibling is None or sibling == m.id:
+                break
+            siblings.add(sibling)
+        else:
+            copies[m.id] = siblings
+    return copies
+
+
 def _row_market_ids(row: dict) -> set:
     """Which market(s) a rendered `/game-markets` row came from.
 
@@ -19242,7 +19298,15 @@ async def _build_game_markets(
     # discard the others, and a parent row that wins and is then removed takes
     # the member's row with it. Both are given an explicit preference for the
     # non-candidate row where they choose (steps 7 and 9b).
-    _parent_candidates = _decomposed_container_parent_candidates(markets)
+    #
+    # #5273: plus the parents whose legs are, by id, their own children's lead
+    # legs — the shape test above misses them whenever the parent is not typed
+    # `field` or the children are not yet shaped. Same candidate rules, same
+    # payload verdict; only the members are named per parent rather than by shape.
+    _leg_copy_members = _leg_copy_parent_members(markets, outcomes_by_market)
+    _parent_candidates = _decomposed_container_parent_candidates(markets) | set(
+        _leg_copy_members
+    )
 
     # 🔴 #6169: WHICH MARKETS ACTUALLY SETTLED TO A WINNER. A voided market is
     # graded on EVERY leg and won by none, so "this leg lost" proves nothing
@@ -20738,7 +20802,11 @@ async def _build_game_markets(
             _m.id
             for _m in markets
             if _m.id in _parent_candidates
-            and member_ids_by_group.get(_m.group_id, set()) & surviving_ids
+            and (
+                member_ids_by_group.get(_m.group_id, set())
+                | _leg_copy_members.get(_m.id, set())
+            )
+            & surviving_ids
         }
 
         if redundant_parents:
