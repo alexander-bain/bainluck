@@ -74,7 +74,16 @@ export function AnimatedProbability({ value, className, resolved }: { value: num
  */
 const BADGE_MIN_MOVEMENT_POINTS = 2;
 
-export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?: number | null }) {
+/**
+ * #8439 — the badge's skin for a DARK hero. The default skin (`bg-<hue>-500/15
+ * text-<hue>-600`) is tuned for the white card body; on the golf card's dark
+ * green hero the green one rendered "▲ 9.8 pts" green on green. Same scrim as
+ * `HERO_CHIP_ON_DARK` (#8436/#4181: the fill goes darker, not lighter), with
+ * the -300 ink so up and down keep their colour.
+ */
+const MOVEMENT_BADGE_ON_DARK = { up: "bg-black/40 text-green-300", down: "bg-black/40 text-red-300" };
+
+export function MovementBadge({ m, prob, onDark = false }: { m: number | null | undefined; prob?: number | null; onDark?: boolean }) {
   // UX-P048 (#1695): the fraction -> points conversion lives in exactly one
   // place. This badge was already correct; it delegates so that it and the hero
   // cannot drift apart again, which is how the hero came to print a 64-point
@@ -125,7 +134,7 @@ export function MovementBadge({ m, prob }: { m: number | null | undefined; prob?
     <span
       title={label}
       aria-label={label}
-      className={`inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[10px] font-bold px-1.5 py-0.5 rounded-full ${up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[10px] font-bold px-1.5 py-0.5 rounded-full ${onDark ? MOVEMENT_BADGE_ON_DARK[up ? "up" : "down"] : up ? "bg-green-500/15 text-green-600" : "bg-red-500/15 text-red-600"}`}
     >
       <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">{up ? <path d="M4 1L7 5H1z" /> : <path d="M4 7L1 3h6z" />}</svg>
       {pts} pts
