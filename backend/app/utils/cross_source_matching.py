@@ -446,9 +446,11 @@ def could_be_same_question(
     leading-year strip in ``discover_bundles._comparison_title`` is the live
     case): a smaller token set can only shrink the overlap the real predicate
     sees, so a pair that clears the real bound after stripping also clears this
-    one before it. It would NOT hold for a rewrite that ADDS or SUBSTITUTES
-    tokens; nothing does that today, and this is the sentence that would have
-    to change first.
+    one before it. It would NOT hold in general for a rewrite that ADDS or
+    SUBSTITUTES tokens. The one live substitution (the ceremony-plural fold in
+    ``_comparison_title``, #8387) can add at most ONE shared token, and the floor
+    here is one below the near arm's 3, so the promise still holds for it; a
+    rewrite that could add two is the case that would break it.
     """
     if (
         len(left_tokens) < _SAME_QUESTION_MIN_SHARED_TOKENS
