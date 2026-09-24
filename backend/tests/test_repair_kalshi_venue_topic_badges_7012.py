@@ -27,9 +27,11 @@ WHAT THESE GUARDS ARE AIMED AT
 4. 🔴 **The rows this ship does NOT fix are pinned, not smoothed.** Three live
    rows sit in the population and stay as they are:
 
-     * ``110748`` and its six ``KXPGAAWARDS`` siblings — the ticker map holds a
-       bare ``kxpga`` prefix, so ``startswith`` answers **golf** at step 1,
-       above everything this rule touches. That is **#7042**, not this ship.
+     * ``110748`` and its six ``KXPGAAWARDS`` siblings — the ticker map held a
+       bare ``kxpga`` prefix, so ``startswith`` answered **golf** at step 1,
+       above everything this rule touches. That was **#7042**, not this ship;
+       since #7042 carved the series out of the ticker map the cascade answers
+       ``entertainment`` and the row is a SUBJECT (a seventh), pinned below.
      * ``109401`` (MrBeast) — the cascade answers **football**, another SPORT.
        Moving a row between two sports has not been measured, so the rail counts
        it and declines.
@@ -389,8 +391,8 @@ PROD_ROWS = {
     "KXELECTRICM3-28": _Row(
         108495, "Will BMW release a Fully Electric M3 before 2028?",
         "open", "KXELECTRICM3-28", "other", "motorsports"),
-    # --- controls, one per refusal reason ---------------------------------
-    # #7042: a bare `kxpga` prefix answers golf at STEP 1, above this rule.
+    # #7042: a bare `kxpga` prefix USED to answer golf at STEP 1, above this
+    # rule; the series is carved out of the ticker map now, so it is a subject.
     "KXPGAAWARDS-26-PIC": _Row(
         110748, "PGA Award for Best Theatrical Motion Picture?",
         "open", "KXPGAAWARDS-26-PIC", "entertainment", "golf"),
@@ -499,19 +501,23 @@ def test_the_super_bowl_row_is_protected_by_reading_past_the_first_tag():
     )
 
 
-def test_the_pga_family_is_out_of_reach_and_the_suite_says_so(monkeypatch):
-    """#7042's boundary, pinned rather than papered over.
+def test_the_pga_family_is_in_reach_once_7042_carves_it_out(monkeypatch):
+    """#7042's boundary, moved by #7042 and pinned in its new place.
 
-    A bare `kxpga` prefix in the futures ticker map answers golf at STEP 1,
-    above everything #7012 touches. The rail therefore reports `venue_agrees`
-    for a row that is still wrong, and that is the honest outcome — not a
-    number this ship may claim.
+    Until #7042 a bare `kxpga` prefix answered golf at STEP 1 and this rail
+    reported `venue_agrees` for a row that was still wrong. KXPGAAWARDS is now
+    in `KALSHI_TICKER_PREFIXES_NOT_A_SPORT`, so step 1 declines, #7012's topic
+    demotion answers `entertainment`, and the rail plans the move — with no
+    edit to the rail itself.
     """
-    assert _verdict("KXPGAAWARDS-26-PIC") == "golf"
+    assert _verdict("KXPGAAWARDS-26-PIC") == "entertainment"
     session = _StubSession([PROD_ROWS["KXPGAAWARDS-26-PIC"]])
     out = _run(session, monkeypatch)
-    assert out["counts"]["changed"] == 0
-    assert out["counts"]["venue_agrees"] == 1
+    assert out["counts"]["changed"] == 1
+    assert out["counts"]["venue_agrees"] == 0
+    assert [(p["id"], p["before"], p["after"]) for p in out["planned"]] == [
+        (110748, "golf", "entertainment"),
+    ]
     assert session.updates == []
 
 
@@ -650,7 +656,7 @@ _SUBJECTS = [
 ]
 
 
-def test_the_six_subjects_plan_and_every_control_is_refused_by_name(monkeypatch):
+def test_the_seven_subjects_plan_and_every_control_is_refused_by_name(monkeypatch):
     """🔴 The ship and its disclosed refusals, in one run.
 
     All four refusal reasons appear, each raised by a REAL production row, so
@@ -661,9 +667,10 @@ def test_the_six_subjects_plan_and_every_control_is_refused_by_name(monkeypatch)
 
     assert out["terminal"] == "dry_run"
     assert out["counts"]["candidates_examined"] == 10
-    assert out["counts"]["changed"] == 6
+    assert out["counts"]["changed"] == 7
     assert {p["id"] for p in out["planned"]} == {
         109341, 109423, 59164729, 60481237, 58015857, 108495,
+        110748,  # #7042: the Producers Guild, in reach since the carve-out
     }
     assert {(p["before"], p["after"]) for p in out["planned"]} == {
         ("hockey", "economics"),
@@ -671,9 +678,10 @@ def test_the_six_subjects_plan_and_every_control_is_refused_by_name(monkeypatch)
         ("motorsports", "economics"),
         ("basketball", "entertainment"),
         ("golf", "tech"),
+        ("golf", "entertainment"),
     }
     # The controls, each by its own named reason.
-    assert out["counts"]["venue_agrees"] == 2                   # PGA (#7042), Ford
+    assert out["counts"]["venue_agrees"] == 1                   # Ford
     assert out["counts"]["refused_not_a_demotion_target"] == 1  # MrBeast, sport->sport
     assert out["counts"]["refused_other"] == 1                  # Ninja, no rule fires
     assert session.updates == []

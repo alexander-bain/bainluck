@@ -468,9 +468,24 @@ async def fix_sport_categories(
     """Bulk-fix llm_sport_category for Kalshi markets based on ticker prefix."""
     _check_admin_secret(secret, request=request)
 
-    from app.utils.sport_keys import KALSHI_TICKER_TO_SPORT_KEY, KALSHI_FUTURES_TICKER_TO_SPORT_KEY, SPORT_PREFIX_TO_LLM_CATEGORY
+    from app.utils.sport_keys import (
+        KALSHI_FUTURES_TICKER_TO_SPORT_KEY,
+        KALSHI_TICKER_PREFIXES_NOT_A_SPORT,
+        KALSHI_TICKER_TO_SPORT_KEY,
+        SPORT_PREFIX_TO_LLM_CATEGORY,
+    )
 
     all_tickers = {**KALSHI_TICKER_TO_SPORT_KEY, **KALSHI_FUTURES_TICKER_TO_SPORT_KEY}
+    # #7042: a `LIKE 'kxpga%'` sweep would re-stamp the Producers Guild awards
+    # golf — the series `get_sport_key_from_ticker` refuses must be refused here.
+    not_a_sport_sql = "".join(
+        f" AND LOWER(external_id) NOT LIKE :not_sport_{i}"
+        for i in range(len(KALSHI_TICKER_PREFIXES_NOT_A_SPORT))
+    )
+    not_a_sport_params = {
+        f"not_sport_{i}": f"{p}%"
+        for i, p in enumerate(sorted(KALSHI_TICKER_PREFIXES_NOT_A_SPORT))
+    }
 
     fixed_by_sport: dict[str, int] = {}
     total_fixed = 0
@@ -488,8 +503,9 @@ async def fix_sport_categories(
                 "WHERE source = 'kalshi' "
                 "AND LOWER(external_id) LIKE :pattern "
                 "AND (llm_sport_category IS NULL OR llm_sport_category != :category)"
+                + not_a_sport_sql
             ),
-            {"category": correct_category, "pattern": f"{prefix}%"},
+            {"category": correct_category, "pattern": f"{prefix}%", **not_a_sport_params},
         )
         if result.rowcount > 0:
             fixed_by_sport[correct_category] = fixed_by_sport.get(correct_category, 0) + result.rowcount
