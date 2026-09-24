@@ -443,6 +443,12 @@ COVERED = (
     # (CASCADE / SET NULL), to drive the Cardinals fold's apply, re-run and undo.
     # Explicit ids in a `7021xxxx` band; the schema is dropped whole on teardown.
     "test_repair_7021_fold_apply_restore_pg.py",
+    # #6974. Seeds `sports`, `teams`, `events`, `futures_outcomes`, `entities`
+    # and `team_identity_mapping` by raw INSERT, in a private schema with the
+    # real FK actions and production's two partial unique indexes, to drive the
+    # MLS duplicate-club repair's strip, fold, re-run and undo. Explicit ids in a
+    # `6974xxxx` band; the schema is dropped whole on teardown.
+    "test_repair_6974_fold_mls_apply_restore_pg.py",
 )
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"

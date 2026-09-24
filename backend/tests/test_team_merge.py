@@ -94,6 +94,36 @@ class TestPlanCluster:
         assert plan["status"] == "planned"
         assert plan["canonical"].id == 20
 
+    def test_reserve_side_is_never_folded_into_its_first_team(self):
+        # #6974, production's own plan on 2026-09-24: espn_id 191 clustered the
+        # first team, its city stub AND the reserve club, and every member is a
+        # token-prefix of "San Jose Earthquakes II" — so the reserve club was
+        # planned as a fold into the Earthquakes.
+        canon = _member(25, "San Jose Earthquakes", recent=4, total=31, mappings=3)
+        stub = _member(6695, "San Jose", recent=0, total=2, mappings=0)
+        reserve = _member(15120, "San Jose Earthquakes II", recent=0, total=1, mappings=0)
+        plan = tm._plan_cluster([canon, stub, reserve])
+        assert plan["status"] == "skip_reserve_side"
+        assert plan["folds"] == []
+
+    def test_the_same_cluster_without_its_reserve_side_still_folds(self):
+        # The other direction: the guard keys on the reserve member, not on the
+        # espn_id or the club, so the city stub alone still plans.
+        canon = _member(25, "San Jose Earthquakes", recent=4, total=31, mappings=3)
+        stub = _member(6695, "San Jose", recent=0, total=2, mappings=0)
+        plan = tm._plan_cluster([canon, stub])
+        assert plan["status"] == "planned"
+        assert [m.id for m in plan["folds"]] == [6695]
+
+    def test_reserve_side_tokens(self):
+        assert tm._is_reserve_side("Portland Timbers 2")
+        assert tm._is_reserve_side("New York Red Bulls II")
+        assert tm._is_reserve_side("Barcelona B")
+        assert not tm._is_reserve_side("Portland Timbers")
+        assert not tm._is_reserve_side("B")
+        # A trailing number that is part of the name, not a side, is not a token here.
+        assert not tm._is_reserve_side("Schalke 04")
+
     def test_stub_with_too_many_events_is_not_folded(self):
         # A "prefix" member with a full schedule is a real team, not a stub.
         canon = _member(1, "Chicago Bulls", recent=4, total=40, mappings=3)

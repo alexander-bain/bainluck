@@ -3441,6 +3441,21 @@ jobs:
             exit 1
           fi
 
+      - name: "#6974 MLS duplicate clubs — strip, fold, re-run and undo against real Postgres"
+        # Folds 21 duplicate club rows through team_merge._apply_merge and then
+        # DELETEs them; the delete's own FK actions (CASCADE / SET NULL) would
+        # silently destroy or orphan any reference the repoint missed, and the
+        # after-state is read back through the serve path's own name lookup.
+        # Only a real server runs those. Same skip detection as every gate here.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_repair_6974_fold_mls_apply_restore_pg.py \
+            -v -rs 2>&1 | tee /tmp/fold6974.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/fold6974.txt; then
+            echo "::error::#6974 fold apply/restore gate SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#4079 numeric movement acceptance — provision the disposable database"
         # The acceptance suite DROPS AND RECREATES THE WHOLE SCHEMA, so it refuses
         # to touch any database that does not carry a sentinel row holding a nonce
