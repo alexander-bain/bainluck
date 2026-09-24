@@ -1963,7 +1963,7 @@ export default function EventPage({ params }: EventPageProps) {
               <TeamNameLink
                 name={event.home_team}
                 sportKey={event.sport}
-                className="text-xs font-semibold text-text-primary hover:underline"
+                className="text-xs font-semibold text-text-primary text-center hover:underline"
               >
                 {heroShortNames.home}
               </TeamNameLink>
@@ -2309,7 +2309,7 @@ export default function EventPage({ params }: EventPageProps) {
               <TeamNameLink
                 name={event.away_team}
                 sportKey={event.sport}
-                className="text-xs font-semibold text-text-primary hover:underline"
+                className="text-xs font-semibold text-text-primary text-center hover:underline"
               >
                 {heroShortNames.away}
               </TeamNameLink>
