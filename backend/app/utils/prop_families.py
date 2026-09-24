@@ -64,6 +64,11 @@ _NOISE_PREFIX_TOKENS = {
     "nba", "nfl", "mlb", "nhl", "wnba", "mls", "epl", "ncaa", "ncaaf",
     "ncaab", "pga", "lpga", "atp", "wta", "uefa", "fifa", "f1",
     "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030",
+    # The voting body.  Polymarket writes all six NFL awards "Pro Football:
+    # 2026-27 AP Offensive Player of the Year Winner"; Kalshi writes the same
+    # award without it — so every NFL award printed as two cards, one headed
+    # "Ap Offensive Player Of The Year" (#7162, #8385).
+    "ap",
 }
 
 # The same thing as ``_NOISE_PREFIX_TOKENS``, but for venues that write the
@@ -106,6 +111,14 @@ _STANDALONE_AWARDS: list[tuple[str, str]] = [
     ("ballon d or", "ballon dor"),
     ("heisman", "heisman"),
     ("finals mvp", "finals mvp"),
+    # A single-game MVP is not the season award.  Kalshi's "Pro Football
+    # Championship MVP?" (the Super Bowl) keyed to "mvp" by the bare keyword
+    # and joined the Chiefs' season-MVP card as a row named "Will Kenneth
+    # Walker III win the Pro ..." (#8386).  Listed before "mvp" so it wins.
+    ("super bowl mvp", "championship game mvp"),
+    ("championship game mvp", "championship game mvp"),
+    ("championship mvp", "championship game mvp"),
+    ("world series mvp", "championship game mvp"),
     # The award spelled out.  Without it "MLS: 2026 Most Valuable Player",
     # "PLL: 2026 Jim Brown Most Valuable Player" and "WBC: Most Valuable
     # Player" are not family-shaped AT ALL (#6630) — they key to None and
@@ -147,6 +160,15 @@ _NEXT_TEAM_RE = re.compile(r"^(?P<entity>.+?)\s+(?:next|new)\s+team\b")
 _OF_THE_YEAR_RE = re.compile(r"\b(?P<role>[a-z][a-z ]*?)\s+of the year\b")
 _WILL_WIN_RE = re.compile(r"^will\s+(?P<entity>.+?)\s+(?:win|wins|to win)\b")
 _TO_WIN_RE = re.compile(r"^(?P<entity>.+?)\s+to\s+win\b")
+# Being shortlisted is a different question from winning.  Kalshi's
+# "Offensive Player of the Year Finalists" keyed to the OPOY family and, as the
+# higher price, headlined the Chiefs card "Patrick Mahomes 29%" beside the
+# winner market's 1% (#8385).  Same shape: "MVP Finalists", "Heisman Trophy
+# Finalists", "Will X finish in the top 3 of the 2026 Ballon d'Or?".
+_SHORTLIST_RE = re.compile(
+    r"\b(?:finalists?|nominees?|nominated|nominations?|runners?[- ]up"
+    r"|top\s+(?:\d+|three|five|ten))\b"
+)
 _TO_VERB_RE = re.compile(
     r"^(?P<entity>.+?)\s+to\s+(?P<rest>(?:" + "|".join(_QUANTITY_VERBS) + r")\b.*)$"
 )
@@ -175,6 +197,7 @@ _LABEL_OVERRIDES = {
     "next team": "Next Team",
     "mvp": "MVP",
     "finals mvp": "Finals MVP",
+    "championship game mvp": "Championship Game MVP",
     "cy young": "Cy Young",
     "heisman": "Heisman",
     "ballon dor": "Ballon d'Or",
@@ -336,6 +359,8 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     # 2. Award: "... of the year"
     m = _OF_THE_YEAR_RE.search(low)
     if m:
+        if _SHORTLIST_RE.search(low):
+            return None, None
         role_raw = m.group("role")
         # Drop any leading entity/verb clause ("Nikola Jokic to win rookie" ->
         # "rookie") so the family key is the award role, not the candidate.
@@ -349,6 +374,8 @@ def _parse(market_name: str | None) -> tuple[str | None, str | None]:
     # 3. Standalone awards (MVP, Cy Young, Heisman, ...)
     for kw, canon in _STANDALONE_AWARDS:
         if re.search(r"\b" + re.escape(kw) + r"\b", low):
+            if _SHORTLIST_RE.search(low):
+                return None, None
             return canon, _award_entity(low, cleaned)
 
     # 4. Threshold / total: "<entity> to <verb> N <unit>"
@@ -772,7 +799,12 @@ def extract_entity(market_name: str, outcome_name: str | None = None) -> str:
     if entity:
         return entity
     if outcome_name and not _is_generic_outcome(outcome_name):
-        return re.sub(r"\s+", " ", outcome_name).strip()
+        outcome = re.sub(r"\s+", " ", outcome_name).strip().rstrip("?").strip()
+        # Kalshi can phrase each candidate as the whole question ("Will
+        # Kenneth Walker III win the Pro Football Championship Game MVP?") —
+        # the row is the candidate, not the sentence (#8386).
+        named = _award_entity(outcome.lower(), outcome)
+        return named or re.sub(r"\s+", " ", outcome_name).strip()
     return re.sub(r"\s+", " ", (market_name or "")).strip()
 
 
