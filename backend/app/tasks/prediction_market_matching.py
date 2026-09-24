@@ -22,8 +22,10 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.tasks.base import get_task_session
 from app.utils.event_completion import (
     POLYMARKET_VENUE_COMMENCE_SOURCE,
+    RETIRED_STATUSES,
     TICKER_DERIVED_COMMENCE_SOURCE,
     commence_time_is_a_reported_start,
+    is_retired_event_status,
 )
 from app.utils.sport_keys import is_kalshi_shadowed_futures_ticker
 from app.utils.kalshi_occurrence_start import kalshi_game_scale_commence
@@ -4054,13 +4056,24 @@ def _resolved_cross_sport_candidate_query(limit: int = _RESOLVED_CROSS_SPORT_SCA
 
 
 def _phase15_priority_order():
-    """Finished events first, then events we auto-created, then the rest."""
+    """Retired events first, then finished ones, then auto-created, then the rest.
+
+    #7904: a link to a RETIRED row (``merged``/``voided``) leads, ahead of the
+    finished events, because no page can render it at all — every beat it waits
+    is a real game showing one source fewer than the venue priced. The class is
+    small (145 open markets on production 2026-09-24, 116 of them on games not
+    yet played) against the finished class, which outnumbers the whole scan cap
+    ~6x — so behind it these rows would reach the fresh slice never, and the
+    rotation only once every ~5 hours. Leading costs the finished class at most
+    those 145 slots of a 1,000-row queue.
+    """
     from app.models.models import Event
 
     return case(
-        (Event.status.in_(["completed", "closed"]), 0),
-        (Event.external_id.is_(None), 1),
-        else_=2,
+        (Event.status.in_(sorted(RETIRED_STATUSES)), 0),
+        (Event.status.in_(["completed", "closed"]), 1),
+        (Event.external_id.is_(None), 2),
+        else_=3,
     )
 
 
@@ -5003,13 +5016,28 @@ async def _phase15_revalidate(
                         event_sport_key, linked_event.id,
                     )
 
-            if teams_match and not is_finished and not is_auto_created and not sport_mismatch:
+            # #7904: a link to a RETIRED row is never "right", however well its
+            # names agree. `merged`/`voided` is off every page, so the market is
+            # priced for nobody while the real game shows one venue fewer. The
+            # measured specimen: #5532's arm voided Polymarket's NHL preseason
+            # shadows (`icehockey_other`, minted on Gamma's listing clock) while
+            # they looked past their start, the venue clock then moved them onto
+            # tonight's real games — and Phase 1.5 walked past every one, because
+            # the teams matched, the row was not finished, and its NULL
+            # `external_id` is not the `pm_` shape `is_auto_created` reads.
+            is_retired = is_retired_event_status(linked_event.status)
+
+            if (
+                teams_match and not is_finished and not is_auto_created
+                and not sport_mismatch and not is_retired
+            ):
                 continue
 
             reason = (
                 "auto_created" if is_auto_created
                 else "cross_sport" if sport_mismatch
                 else "mislinked" if not teams_match
+                else "retired_event" if is_retired
                 else "completed"
             )
             ticker_game_date = (
@@ -5017,10 +5045,30 @@ async def _phase15_revalidate(
                 if market.source == "kalshi" else None
             )
 
-            better_match = await _find_matching_event(
-                session, matchup, market, now,
-                game_date_override=ticker_game_date,
-            )
+            if reason == "retired_event":
+                # The destination is the VENUE-CONFIRMED finder only, never the
+                # scorer. The scorer answers "the best-looking scheduled row",
+                # which on this population can be another `_other` shadow or one
+                # game of a split-squad pair (#7942: NHL preseason plays the
+                # same two clubs in both cities at the same minute). The #5544
+                # finder moves a market only onto the ONE real covered-league
+                # fixture its own venue instant names, and refuses on zero or
+                # two. No answer leaves the link where it is: nothing below
+                # unlinks a retired link whose teams match.
+                better_match = await _venue_confirmed_covered_fixture(
+                    session, matchup, market, linked_event,
+                )
+                if better_match:
+                    stats["funnel"].setdefault("phase15_retired_venue_relinked", 0)
+                    stats["funnel"]["phase15_retired_venue_relinked"] += 1
+                else:
+                    stats["funnel"].setdefault("phase15_retired_left_alone", 0)
+                    stats["funnel"]["phase15_retired_left_alone"] += 1
+            else:
+                better_match = await _find_matching_event(
+                    session, matchup, market, now,
+                    game_date_override=ticker_game_date,
+                )
 
             # A RESOLVED row's own game is always in the past, and
             # `_find_matching_event` will only consider an event that is
