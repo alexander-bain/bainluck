@@ -177,6 +177,7 @@ from app.utils.feed_market_quality import (
     FIRST_PAGE_WHY_NOW_WINDOW,
     has_no_real_price,
     is_locked_near_certain,
+    range_ladder_missing_middle,
 )
 from app.utils.feed_reasons import (
     compose_live_claim,
@@ -12733,6 +12734,17 @@ async def _score_futures(
             # are far above the floor and stay eligible.
             if market.outcomes and has_no_real_price(
                 [o["probability"] for o in outcomes_data]
+            ):
+                continue
+
+            # #8363: a range ladder held with its middle missing cannot say what
+            # is likely — "<26m 57% / 32m+ 43%" reads the Polymarket-listed
+            # 26-29m and 29-32m as 0%, and the one-winner divisor inflates the
+            # two held legs to fill their mass. Read off every STORED leg against
+            # the venue's own count, before any drop thins the field.
+            if market.outcomes and range_ladder_missing_middle(
+                (o.name for o in market.outcomes),
+                (market.market_metadata or {}).get("market_count"),
             ):
                 continue
 
