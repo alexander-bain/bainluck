@@ -20,7 +20,11 @@ from app.services import get_db, OddsAPIService
 from app.utils import movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.feed_market_quality import is_empty_book_midpoint
-from app.utils.futures_history_basis import devigged_consensus_by_time
+from app.utils.futures_history_basis import (
+    carried_endpoint,
+    carry_forward_quotes,
+    devigged_consensus_by_time,
+)
 from app.utils.futures_market_snapshot import dated_movement_points
 from app.utils.generic_market_history import captures_are_coarse, captures_cover_cell
 from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
@@ -7383,14 +7387,33 @@ async def get_futures_history(
     raw_by_time: dict[datetime, dict[str, dict[int, float]]] = defaultdict(
         lambda: defaultdict(dict)
     )
+    # #8296 — every instant each leg wrote a row, refused or not: the endpoint
+    # arm below may not stand a carried price in for a row #5898 refused.
+    observed_at: dict[int, set] = defaultdict(set)
+    resolved_ids = {
+        o.id for o in charted_outcomes if getattr(o, "resolution_source", None)
+    }
     for row in field_rows:
         if row.probability is not None:
             raw_by_time[row.captured_at][row.bookmaker][row.outcome_id] = float(
                 row.probability
             )
+            observed_at[row.outcome_id].add(row.captured_at)
 
+    # #7935: read the grades ONCE for the whole board rather than per line — 74
+    # outcomes on this market, and the mutex-contradiction check inside it is a
+    # property of the MARKET, so asking per outcome would answer it 74 times.
+    # Read HERE, above the squeeze, because #8296's carry needs the graded set.
+    _settled_grades = _settled_graded_values(market)
+
+    # #8296 — THE COLUMN IS THE FIELD, NOT THE LEGS THAT MOVED. Snapshots are
+    # de-duplicated at write time, so an instant's rows are the legs whose price
+    # changed; squeezing that partial column divided the chart by a different
+    # number from the hero above it (KBO 59698965: 7 of 10 legs, sum 0.89, printed
+    # raw under a hero squeezed by 1.268). Graded legs are not carried — see the
+    # helper for why neither their last price nor their grade may be.
     devigged = devigged_consensus_by_time(
-        raw_by_time,
+        carry_forward_quotes(raw_by_time, do_not_carry=set(_settled_grades)),
         mutually_exclusive=getattr(market, "mutually_exclusive", True),
         field_complete=_field_complete,
     )
@@ -7442,10 +7465,6 @@ async def get_futures_history(
             venue_by_outcome = defaultdict(list)
     venue_rows_served: list = []
 
-    # #7935: read the grades ONCE for the whole board rather than per line — 74
-    # outcomes on this market, and the mutex-contradiction check inside it is a
-    # property of the MARKET, so asking per outcome would answer it 74 times.
-    _settled_grades = _settled_graded_values(market)
 
     # Build aggregated history: one data point per timestamp per outcome
     outcome_history = {}
@@ -7481,6 +7500,29 @@ async def get_futures_history(
                 "american_odds": None,
                 "bookmaker": "consensus",
             })
+        # #8296 — THE LINE REACHES THE HERO'S COLUMN TOO. The carry above completed
+        # the column, but this loop draws a line only at its own rows, so a leg
+        # that did not move at the last instant stopped short of it (KBO: Samsung
+        # ended at 0.160 under a hero of 0.126). One carried point closes it.
+        # Not on a line serving venue points: those admit only where the printed
+        # scale is the raw one, so the carried value restates the last capture and
+        # would sit stale beside the venue's fresher sample. And not on a RESOLVED
+        # leg of any source (`did_not_play`, `all_losers`, ...): how such a leg
+        # ends is the settled rules' call, and a squeezed carry printed a void
+        # leg at 0.333 beside a detail row reading 0.49 (#6757's control).
+        if not venue_by_outcome.get(oid) and oid not in resolved_ids:
+            _closing = carried_endpoint(
+                oid, devigged, own=time_groups.keys(),
+                observed=observed_at.get(oid, ()),
+                drawn_last=history[-1]["probability"] if history else None,
+            )
+            if _closing is not None:
+                history.append({
+                    "timestamp": _closing[0].isoformat(),
+                    "probability": _closing[1],
+                    "american_odds": None,
+                    "bookmaker": "consensus",
+                })
         # #7351: the venue's own observations at the instants no capture claims.
         # Real timestamp, raw value, and a provenance a reader can tell from a
         # capture — an older venue sample never passes as a fresh poll.
