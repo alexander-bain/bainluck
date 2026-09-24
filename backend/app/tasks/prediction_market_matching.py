@@ -1661,7 +1661,10 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
          schedule has not carried the game yet — the forward path will link it
          when it does, which is the minting half's whole argument. More than one
          means a doubleheader or a twin pair, and a pass that cannot tell them
-         apart must not pick; #1946 owns that, not this.
+         apart must not pick; #1946 owns that, not this. ONE exception (#8396):
+         exactly two, the venue's own ``teams[].ordering`` home/away marker
+         fitting exactly one of them — a split-squad pair, told apart by the
+         venue — see :func:`_split_pair_by_venue_home`.
 
     Returns a ``better_match``-shaped dict, or None to leave the link alone.
     """
@@ -1719,6 +1722,13 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
             or _fuzzy_team_match(matchup.team_b, row.away_team_name)
         )
     ]
+    if len(confirmed) == 2:
+        # #8396: a split-squad pair is two real games, and the venue says
+        # which one it prices by its own home marker. `None` = still refuse.
+        split = await _split_pair_by_venue_home(market, confirmed)
+        if split is not None:
+            confirmed = [split]
+
     if len(confirmed) != 1:
         if confirmed:
             logger.info(
@@ -1738,6 +1748,109 @@ async def _venue_confirmed_covered_fixture(session, matchup, market, linked_even
         market.external_id, fixture.isoformat(), league, row.id, linked_event.id,
     )
     return {"event_id": row.id, "sport_id": row.sport_id}
+
+
+#: Bound on the one Gamma read the split-squad arm makes. The arm runs inside
+#: the matcher's pass, so a slow venue must cost a refusal, not the beat.
+_VENUE_HOME_FETCH_TIMEOUT_S = 10.0
+
+
+def _venue_home_away(event_payload):
+    """(home club, away club) from a Gamma event's ``teams[].ordering``, or None.
+
+    #8396. Gamma marks each club of a game event ``ordering: "home"`` or
+    ``"away"`` — for event 936779 ("Split Squad: Senators (A) vs. Canadiens
+    (H)") Canadiens=home, Senators=away. That marker is the venue's own
+    statement of WHICH game of a split-squad pair it prices; the title's word
+    order is not (Polymarket writes "Senators vs. Canadiens" with the home club
+    second), so the title is never read here.
+
+    None unless there is exactly one ``home`` and exactly one ``away`` entry,
+    each with a name — anything else is no marker, and the caller refuses.
+    """
+    if not isinstance(event_payload, dict):
+        return None
+    teams = event_payload.get("teams")
+    if not isinstance(teams, list):
+        return None
+    sides: dict[str, list[str]] = {"home": [], "away": []}
+    for team in teams:
+        if not isinstance(team, dict):
+            continue
+        side = team.get("ordering")
+        name = team.get("name") or team.get("alias")
+        if side in sides and isinstance(name, str) and name.strip():
+            sides[side].append(name.strip())
+    if len(sides["home"]) != 1 or len(sides["away"]) != 1:
+        return None
+    return sides["home"][0], sides["away"][0]
+
+
+async def _fetch_venue_home_away(polymarket_event_id: str):
+    """The venue's home/away marker for one Gamma event, or None on ANY failure.
+
+    Fails closed: this answer MOVES a link, so a timeout, a 404, a rate limit or
+    a malformed payload is "no marker", never a guess.
+    """
+    import asyncio
+
+    from app.services.polymarket_api import PolymarketAPIService
+
+    service = PolymarketAPIService()
+    try:
+        payload = await asyncio.wait_for(
+            service.get_event_by_id(polymarket_event_id),
+            timeout=_VENUE_HOME_FETCH_TIMEOUT_S,
+        )
+    except Exception as exc:
+        logger.info(
+            "Split-squad home marker unavailable for polymarket event %s: %s",
+            polymarket_event_id, exc,
+        )
+        return None
+    finally:
+        await service.close()
+    return _venue_home_away(payload)
+
+
+async def _split_pair_by_venue_home(market, pair):
+    """The ONE row of a same-clubs pair whose home AND away match the venue's
+    marker, or None. #8396.
+
+    NHL preseason plays split-squad doubleheaders: Ottawa at Montreal AND
+    Montreal at Ottawa at 23:00Z on 2026-09-26, both real (NHL 2026010065 /
+    2026010064). Polymarket lists one of them, and says which by
+    ``teams[].ordering``. Only a marker that fits exactly one row picks it;
+    absent, fitting both (two rows for one game) or fitting neither — refuse.
+    """
+    meta = getattr(market, "market_metadata", None)
+    pm_event_id = meta.get("polymarket_event_id") if isinstance(meta, dict) else None
+    if not pm_event_id:
+        return None
+
+    marker = await _fetch_venue_home_away(str(pm_event_id))
+    if marker is None:
+        return None
+    home, away = marker
+
+    fits = [
+        row for row in pair
+        if _fuzzy_team_match(home, row.home_team_name)
+        and _fuzzy_team_match(away, row.away_team_name)
+    ]
+    if len(fits) != 1:
+        logger.info(
+            "Split-squad relink declined for polymarket %s: venue home=%s "
+            "away=%s fits %d of events %s",
+            market.external_id, home, away, len(fits), [row.id for row in pair],
+        )
+        return None
+    logger.info(
+        "Split-squad relink (#8396): polymarket %s — venue home marker %s "
+        "picks event %d of %s",
+        market.external_id, home, fits[0].id, [row.id for row in pair],
+    )
+    return fits[0]
 
 
 async def _check_duplicate_kalshi_linkage_reason(
@@ -5053,7 +5166,8 @@ async def _phase15_revalidate(
                 # same two clubs in both cities at the same minute). The #5544
                 # finder moves a market only onto the ONE real covered-league
                 # fixture its own venue instant names, and refuses on zero or
-                # two. No answer leaves the link where it is: nothing below
+                # two — unless the venue's home/away marker picks one of the
+                # two (#8396). No answer leaves the link where it is: nothing below
                 # unlinks a retired link whose teams match.
                 better_match = await _venue_confirmed_covered_fixture(
                     session, matchup, market, linked_event,
