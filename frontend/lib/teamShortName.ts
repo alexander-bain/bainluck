@@ -379,6 +379,57 @@ export function namesAPerson(sportKey: string | null | undefined): boolean {
 }
 
 /**
+ * #5634 — does this sport key name a football (soccer) competition, where a
+ * club's last word is so often its CITY that the last-word rule cannot be used?
+ *
+ * "1. FC Union Berlin" became "Berlin" (so did Hertha, Croatia and Füchse),
+ * "Bayern Munich" became "Munich" (so did 1860), "Real Salt Lake" became
+ * "Lake". Measured 2026-09-24 over the first 1,000 distinct soccer names of 60
+ * days of production `events`: the rule folds several clubs onto one word —
+ * "Cali" ×5, "Juniors" ×4, "Central" ×4, "Boys" ×4, "Mineiro" ×3 — and those
+ * are not all cities, so no place-name list can close it. English clubs where
+ * the last word IS the name ("Wednesday", "Villa") lose only compactness.
+ *
+ * Same first-segment match and same fail-closed type test as `namesAPerson`:
+ * a caller that does not pass the sport keeps exactly the shipped rule.
+ */
+export function keepsWholeClubName(sportKey: string | null | undefined): boolean {
+  if (typeof sportKey !== "string") return false;
+  const key = sportKey.trim().toLowerCase();
+  if (!key) return false;
+  return key.split("_")[0] === "soccer";
+}
+
+/**
+ * #5634 — a football club's label: its own name with LEADING designators
+ * dropped, never below two words. "1. FC Union Berlin" → "Union Berlin",
+ * "CA Boca Juniors" → "Boca Juniors", "1. FC Köln" → "FC Köln" (the floor),
+ * "AC Milan", "Real Salt Lake" and "2 de Mayo" (never onto a particle) unchanged.
+ *
+ * Only a token the LENGTH or digit clauses of `isNonDistinctiveTrailingWord`
+ * catch is dropped ("1.", "FC", "CA", "AD", "05") — never a word from
+ * `CLUB_TYPE_SUFFIXES`, which as a leading word is part of the name:
+ * "Sporting Kansas City" is not "Kansas City", "Atletico Madrid" is not
+ * "Madrid". The output is always a tail of the name, so it is a string the club
+ * is called. The caller keeps it only when it is at most
+ * `WHOLE_CLUB_NAME_MAX_WORDS` long.
+ */
+const WHOLE_CLUB_NAME_MAX_WORDS = 3;
+
+function wholeClubName(full: string): string {
+  const words = full.split(/\s+/);
+  let start = 0;
+  while (words.length - start > 2) {
+    const bare = alphanumeric(words[start]);
+    if (bare.length > 2 && !/^\d+$/.test(bare)) break;
+    // "2 de Mayo" is not "de Mayo": a label never starts on a particle.
+    if (/^\p{Ll}/u.test(words[start + 1])) break;
+    start += 1;
+  }
+  return words.slice(start).join(" ");
+}
+
+/**
  * The letters a crest square falls back to when no logo or flag exists.
  *
  * #2882's neighbour, found on the same LOOK. The card built this inline as
@@ -826,6 +877,14 @@ export function teamShortName(
   // on which of the club's three live spellings the row happens to carry.
   const picked = HAND_PICKED_LABELS.get(handPickedKey(full));
   if (picked) return picked;
+  // #5634 — a football club is not its city: "Union Berlin", never "Berlin".
+  // Up to THREE words only: a longer name is the formal one ("Sport Lisboa e
+  // Benfica", "Futebol Clube do Porto", "Tigres de la UANL") and its last word
+  // is the name people use, so it takes the rule below exactly as before.
+  if (keepsWholeClubName(sportKey)) {
+    const whole = wholeClubName(full);
+    if (whole.split(/\s+/).length <= WHOLE_CLUB_NAME_MAX_WORDS) return whole;
+  }
   const words = full.split(/\s+/);
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
@@ -906,8 +965,14 @@ export function teamShortNames(
     full.split(/\s+/).length >= 2 &&
     !isDoublesPair(full) &&
     twoWordNickname(full.split(/\s+/)) === null;
-  const homeGaveUp = gaveUp(homeFull, homeShort);
-  const awayGaveUp = gaveUp(awayFull, awayShort);
+  // #5634 — a football club's whole name is CHOSEN, not given up on, so the
+  // rescue below is asked exactly as it was before that rule: from what the
+  // last-word rule would have printed. Seattle Sounders FC v Real Salt Lake
+  // keeps "SEA / RSL"; only the city-last labels move.
+  const lastWordRule = (full: string, short: string) =>
+    keepsWholeClubName(sportKey) ? teamShortName(full) : short;
+  const homeGaveUp = gaveUp(homeFull, lastWordRule(homeFull, homeShort));
+  const awayGaveUp = gaveUp(awayFull, lastWordRule(awayFull, awayShort));
   const collide =
     !!homeShort &&
     !!awayShort &&

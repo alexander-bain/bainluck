@@ -143,6 +143,7 @@ export async function generateMetadata({
     awayScore: scoresAreTrusted ? event.away_score ?? null : null,
     tournamentResult,
     linescore: event.linescore,
+    sportKey: event.sport_key || event.sport,
   });
 
   const { title, description } = buildEventShareCopy(event, outcome);

@@ -1351,6 +1351,7 @@ export default function EventPage({ params }: EventPageProps) {
     tournamentResult: eventTournament?.result ?? null,
     // live/073: what the sets above were won BY, when the event carries a line.
     linescore: event.linescore,
+    sportKey: event.sport,
   });
 
   // #3330: the games under the sets, while it is still being played — the live
@@ -2445,6 +2446,7 @@ export default function EventPage({ params }: EventPageProps) {
               history={historyData?.history ?? []}
               homeTeam={event.home_team}
               awayTeam={event.away_team}
+              sportKey={event.sport}
               commenceTime={event.commence_time}
               /* #8215 — served provenance, never re-derived: `false` means this hour is the
                  venue's expected resolution time, not a kick-off, so it is not a "Since Start"
@@ -3042,6 +3044,7 @@ export default function EventPage({ params }: EventPageProps) {
               history={historyData?.history ?? []}
               homeTeam={event.home_team}
               awayTeam={event.away_team}
+              sportKey={event.sport}
               commenceTime={event.commence_time}
               /* #8215 — served provenance, never re-derived: `false` means this hour is the
                  venue's expected resolution time, not a kick-off, so it is not a "Since Start"
