@@ -3425,6 +3425,22 @@ jobs:
             exit 1
           fi
 
+      - name: "#8427 'superbowl' typed as one word reaches the Super Bowl market (real Postgres)"
+        # Alex's TestFlight build 20: `superbowl` / `nfl superbowl winner` served
+        # HTTP 200 and nothing on both /search and /typeahead while `super bowl`
+        # found 86832. The fix is a synonym spent as SQL through the route's
+        # per-term ILIKE + FTS arms, so it is proved here, over Postgres, on both
+        # routes; the no-DB pin is `tests/test_search_superbowl_synonym_8427.py`.
+        # Same skip detection as every gate in this job.
+        run: |
+          set -o pipefail
+          python -m pytest tests/integration/test_search_superbowl_joined_pg_8427.py \
+            -v -rs 2>&1 | tee /tmp/superbowl8427.txt
+          if grep -qiE "[0-9]+ skipped" /tmp/superbowl8427.txt; then
+            echo "::error::#8427 superbowl recall contract SKIPPED — the gate did not run"
+            exit 1
+          fi
+
       - name: "#6955 club-noun rails: apply, partial CAS and the D51 undo (real Postgres)"
         # CERT-3074's named follow-up. Both club-noun rails carry ~55 guards
         # apiece and every one drives a stub session, which can prove the rail
