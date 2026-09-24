@@ -569,8 +569,14 @@ export default function OddsChart({
   const isClosed = eventStatus === "closed" || eventStatus === "completed";
   const { track } = useAnalyticsContext();
 
+  // #8370 — `false` means `commenceTime` is the venue's expected resolution hour
+  // (#8215), not a start. So no "Start" marker is drawn at it and no "Since
+  // Start" is offered or defaulted to — the phone has declined both since #8323.
+  // True and absent keep today's behaviour.
+  const startIsKickoff = commenceTimeIsKickoff !== false;
+
   const hasPostStartData = useMemo(() => {
-    if (!commenceTime) return false;
+    if (!commenceTime || !startIsKickoff) return false;
     const cutoffTime = parseISO(commenceTime);
     // Check sportsbook history
     if (history?.some((point) => parseISO(point.timestamp) >= cutoffTime)) return true;
@@ -583,7 +589,7 @@ export default function OddsChart({
     // Check ESPN history
     if (espnHistory?.some((p) => parseISO(p.timestamp) >= cutoffTime)) return true;
     return false;
-  }, [history, winProbHistory, espnHistory, commenceTime]);
+  }, [history, winProbHistory, espnHistory, commenceTime, startIsKickoff]);
 
   const defaultTimeRange: TimeRange =
     (isClosed || isLive) && hasPostStartData ? "live" : "all";
@@ -1532,7 +1538,7 @@ export default function OddsChart({
 
   // Compute "Game Start" reference line time (formatted to match chart categories)
   const gameStartTime = useMemo(() => {
-    if (!commenceTime || chartData.length === 0 || !drawnExtent) return null;
+    if (!commenceTime || !startIsKickoff || chartData.length === 0 || !drawnExtent) return null;
     const startMs = parseISO(commenceTime).getTime();
     // Bound against the DRAWN LINE, not `chartData`'s extent (CERT-1984, and
     // #3419 for this marker). The old test used chartData[0], which is the
@@ -1552,7 +1558,7 @@ export default function OddsChart({
     const d = parseISO(commenceTime);
     d.setSeconds(0, 0);
     return format(d, labelFormat);
-  }, [commenceTime, chartData, labelFormat, drawnExtent]);
+  }, [commenceTime, startIsKickoff, chartData, labelFormat, drawnExtent]);
 
   // Filter period boundaries to match chart time range, deduplicate close markers,
   // and alternate label positions to prevent overlapping text.
@@ -2364,6 +2370,9 @@ export default function OddsChart({
          defect, and only this says where the line actually stops. Empty when
          nothing is drawn. */
       data-drawn-extent={drawnExtent ? `${drawnExtent.startMs},${drawnExtent.endMs}` : ""}
+      /* #8370: the "Start" ReferenceLine's category, or "" when none is drawn —
+         a server render cannot see a ReferenceLine (same channel as above). */
+      data-start-marker={gameStartTime && filteredPeriodBoundaries.length === 0 ? gameStartTime : ""}
       /* #7161: the first and last CATEGORY, in epoch ms, and how many there are.
          Deliberately not `data-drawn-extent`: a categorical XAxis places a tick
          by matching its string against the category list, so a category outside
@@ -2378,7 +2387,7 @@ export default function OddsChart({
     >
       {/* Time range selector */}
       <div className="flex flex-wrap items-center gap-1 shrink-0">
-        {TIME_RANGE_OPTIONS.map((option) => {
+        {TIME_RANGE_OPTIONS.filter((option) => startIsKickoff || option.value !== "live").map((option) => {
           const isDisabled = option.value === "live" && !hasPostStartData;
           return (
           <button
