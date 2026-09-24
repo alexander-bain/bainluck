@@ -50,6 +50,7 @@ import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
 import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from "@/lib/discover/editionOrder";
+import { spaceBySport } from "@/lib/discover/spacedOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
 import {
@@ -181,112 +182,9 @@ function getSuppressedCategories(profile: DiscoverProfile | null): Set<string> {
   return suppressed;
 }
 
-/** Interleave items so the default feed does not cluster into one sport or topic. */
-function interleave(items: FeedItem[]): FeedItem[] {
-  if (items.length <= 2) return items;
-
-  // Separate sports from non-sports
-  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "cycling"]);
-  const sports = items.filter(i => SPORTS.has(getItemCategory(i)));
-  const nonSports = items.filter(i => !SPORTS.has(getItemCategory(i)));
-
-  const result: FeedItem[] = [];
-  let si = 0, ni = 0;
-  let lastCat = "";
-  let sportsSinceNonSport = 0;
-  const maxSportsRun = nonSports.length >= 4 ? 2 : 3;
-
-  while (si < sports.length || ni < nonSports.length) {
-    if (ni < nonSports.length && (sportsSinceNonSport >= maxSportsRun || si >= sports.length)) {
-      result.push(nonSports[ni++]);
-      sportsSinceNonSport = 0;
-      lastCat = getItemCategory(result[result.length - 1]);
-      continue;
-    }
-
-    if (si < sports.length) {
-      // Skip if same category as last (find next different one)
-      const cat = getItemCategory(sports[si]);
-      if (cat === lastCat && si + 1 < sports.length) {
-        // Look ahead for a different category
-        let swapIdx = -1;
-        for (let j = si + 1; j < Math.min(si + 5, sports.length); j++) {
-          if (getItemCategory(sports[j]) !== lastCat) {
-            swapIdx = j;
-            break;
-          }
-        }
-        if (swapIdx !== -1) {
-          [sports[si], sports[swapIdx]] = [sports[swapIdx], sports[si]];
-        }
-      }
-      result.push(sports[si++]);
-      lastCat = getItemCategory(result[result.length - 1]);
-      sportsSinceNonSport++;
-    } else if (ni < nonSports.length) {
-      result.push(nonSports[ni++]);
-      sportsSinceNonSport = 0;
-      lastCat = getItemCategory(result[result.length - 1]);
-    } else {
-      break;
-    }
-  }
-
-  return result;
-}
-
 function getGroupedCategory(groupedItem: DiscoverGroupedItem): string {
   const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
   return item ? getItemCategory(item) : "other";
-}
-
-function interleaveGrouped(items: DiscoverGroupedItem[]): DiscoverGroupedItem[] {
-  if (items.length <= 2) return items;
-
-  const SPORTS = new Set(["basketball", "football", "baseball", "hockey", "soccer", "golf", "mma", "boxing", "tennis", "cricket", "motorsports", "americanfootball", "icehockey", "cycling"]);
-  const sports = items.filter(i => SPORTS.has(getGroupedCategory(i)));
-  const nonSports = items.filter(i => !SPORTS.has(getGroupedCategory(i)));
-  const result: DiscoverGroupedItem[] = [];
-  let si = 0, ni = 0;
-  let lastCat = "";
-  let sportsSinceNonSport = 0;
-  const maxSportsRun = nonSports.length >= 4 ? 2 : 3;
-
-  while (si < sports.length || ni < nonSports.length) {
-    if (ni < nonSports.length && (sportsSinceNonSport >= maxSportsRun || si >= sports.length)) {
-      result.push(nonSports[ni++]);
-      sportsSinceNonSport = 0;
-      lastCat = getGroupedCategory(result[result.length - 1]);
-      continue;
-    }
-
-    if (si < sports.length) {
-      const cat = getGroupedCategory(sports[si]);
-      if (cat === lastCat && si + 1 < sports.length) {
-        let swapIdx = -1;
-        for (let j = si + 1; j < Math.min(si + 5, sports.length); j++) {
-          if (getGroupedCategory(sports[j]) !== lastCat) {
-            swapIdx = j;
-            break;
-          }
-        }
-        if (swapIdx !== -1) {
-          [sports[si], sports[swapIdx]] = [sports[swapIdx], sports[si]];
-        }
-      }
-      result.push(sports[si++]);
-      lastCat = getGroupedCategory(result[result.length - 1]);
-      sportsSinceNonSport++;
-    } else if (ni < nonSports.length) {
-      result.push(nonSports[ni++]);
-      sportsSinceNonSport = 0;
-      lastCat = getGroupedCategory(result[result.length - 1]);
-    } else {
-      break;
-    }
-  }
-
-  return result;
 }
 
 /**
@@ -1161,8 +1059,8 @@ export default function DiscoverPage() {
       ? filtered.filter((item) => !suppressedCategories.has(getItemCategory(item).toLowerCase()))
       : filtered;
     const cooldownSafe = cooldownFiltered.length > 0 ? cooldownFiltered : filtered;
-    const grouped = groupRelatedMarkets(interleave(cooldownSafe));
-    return interleaveGrouped(
+    const grouped = groupRelatedMarkets(spaceBySport(cooldownSafe, getItemCategory));
+    return spaceBySport(
       applyLocalPersonalization(grouped, orderingProfile, (groupedItem) => {
         const item = groupedItem.type === "single" ? groupedItem.item : groupedItem.items?.[0];
         if (!item) return null;
@@ -1171,6 +1069,7 @@ export default function DiscoverPage() {
           category: getDiscoverItemAnalytics(item).category,
         };
       }),
+      getGroupedCategory,
     );
   }, [page1Items, allItems, dismissed, interactionProfile, orderingProfile]);
 
