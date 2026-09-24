@@ -74,7 +74,12 @@ describe("the event share card delegates, rather than keeping its own rules", ()
   });
 
   it("draws crests through the measured badge helper", () => {
-    expect(src).toContain("teamCrestBadge");
+    // #4537 — the slur-safe form (#7270's, the event hero's), which is
+    // `teamCrestBadge` for every name except the ones it badges with a blocked
+    // word. The bare call is the regression; the behavioural half is in
+    // `crestSitesNeverPaintASlur4537.test.tsx`.
+    expect(src).toContain("shippableCrestBadge(");
+    expect(src).not.toMatch(/\bteamCrestBadge\(/);
   });
 
   it("keeps no local initials rule of its own", () => {
