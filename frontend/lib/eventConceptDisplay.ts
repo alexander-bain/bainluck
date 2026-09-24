@@ -706,6 +706,18 @@ export function competitorsToOutcomeHistory(
   return out;
 }
 
+/** #8372: can the race chart draw anything at all, in any range? True when at
+ *  least one competitor carries two priced points — the same bar the chart's own
+ *  empty state uses, over the whole series (the "All" range). The page asks this
+ *  before mounting the chart: a first card that can only say "history isn't
+ *  available" is the explained emptiness notice 34 keeps off a reader's screen.
+ *  The Presidents Cup's two-team Winner field carried no history at all. */
+export function raceChartHasHistory(competitors: EventConceptCompetitor[]): boolean {
+  return competitorsToOutcomeHistory(competitors).some(
+    (o) => o.history.filter((p) => p.probability != null).length >= 2,
+  );
+}
+
 /** L2-78: calendar days until an event starts, from `now` (ms). Honest countdown
  *  for the pre-tournament header — the *calendar-day* difference (UTC), so July 9
  *  → July 15 reads "6 days" the way a person counts it (not 5-and-a-fraction).
