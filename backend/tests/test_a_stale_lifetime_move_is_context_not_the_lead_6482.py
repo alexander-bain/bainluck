@@ -42,14 +42,16 @@ from app.utils.feed_reasons import (
 
 NOW = datetime(2026, 9, 16, 5, 0, tzinfo=timezone.utc)
 
-# The two specimens, with the values the page actually served.
+# The two specimens, with the values the page actually served. The instants are
+# midday UTC so the day they name is the same in every US zone (#8350 reads a
+# baseline's day in America/Los_Angeles).
 STANLEY_CUP = "Canadian Team to Win the Stanley Cup® Before the 2030-31 Season"
-FEB_3 = datetime(2026, 2, 3, tzinfo=timezone.utc)
+FEB_3 = datetime(2026, 2, 3, 12, tzinfo=timezone.utc)
 TAIWAN = "Will China invade Taiwan by end of 2026?"
-FEB_19 = datetime(2026, 2, 19, tzinfo=timezone.utc)
+FEB_19 = datetime(2026, 2, 19, 12, tzinfo=timezone.utc)
 # The one card on the same page whose baseline was inside the horizon.
 OBAMACARE = "Will Trump issue Obamacare rebates before Election Day?"
-SEP_10 = datetime(2026, 9, 10, tzinfo=timezone.utc)
+SEP_10 = datetime(2026, 9, 10, 12, tzinfo=timezone.utc)
 
 
 def _copy(market_name, probability, change, opened_at, now=NOW):

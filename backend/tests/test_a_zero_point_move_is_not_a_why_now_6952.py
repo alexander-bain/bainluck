@@ -120,7 +120,7 @@ class TestARealMoveStillPrints:
             highlight_reasons=["major_surprise"],
             affirmative_probability=0.04,
             top_surprise_change=-0.077,
-            top_surprise_opened_at=datetime(2026, 2, 19, tzinfo=timezone.utc),
+            top_surprise_opened_at=datetime(2026, 2, 19, 12, tzinfo=timezone.utc),
             now=NOW,
         )
         blob = " ".join(

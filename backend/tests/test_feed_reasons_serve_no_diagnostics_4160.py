@@ -360,7 +360,7 @@ def test_the_surprise_card_composes_to_nothing_rather_than_to_the_undated_claim(
         highlight.reasons,
         top_surprise_name="Yes",
         top_surprise_change=-0.285,
-        top_surprise_opened_at=datetime(2026, 3, 4, tzinfo=timezone.utc),
+        top_surprise_opened_at=datetime(2026, 3, 4, 12, tzinfo=timezone.utc),
         now=datetime(2026, 9, 9, 21, 0, tzinfo=timezone.utc),
     )
     assert "since Mar 4" in dated
