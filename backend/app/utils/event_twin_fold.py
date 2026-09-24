@@ -1798,6 +1798,75 @@ def _objectively_different_games(left: list, right: list) -> bool:
     return len(scores(left) | scores(right)) > 1
 
 
+def _catchall_claim_names_league_row(
+    member: Any,
+    identity: tuple,
+    catchall: list,
+    league: list,
+    league_identity: tuple,
+    identities: dict,
+) -> bool:
+    """Is this id-less catch-all row the league row, one club spelled longer? #5576.
+
+    THE SHIP. `/api/events/search?q=eagles`, 2026-09-24 05:3xZ (latency/1074, at
+    390px): tomorrow's NPB game drew as two rows — `15314060` *Tohoku Rakuten
+    Golden Eagles at Nippon Ham Fighters*, keyed `baseball_other`, id-less, the
+    Polymarket price; and `15317887` *… at Hokkaido Nippon-Ham Fighters*, keyed
+    `baseball_npb`, the Odds API row. Same minute. The Carp game the same night
+    was ONE row, because both its rows are keyed `baseball_npb` and
+    :func:`_merge_anchored_claim_name_variants` folds them; the Fighters claim
+    lands in the catch-all because `teams` does not spell the club the way
+    Polymarket does, so #5576's placer leaves it there, and the only pass that
+    compares a catch-all with a league by NAME was soccer-only.
+
+    THE LICENCE IS #8100's, UNCHANGED, and the catch-all makes it no weaker. The
+    exact-identity arm above already folds a catch-all row onto a same-sport
+    league row at the same minute; this adds only what #8100 added within a
+    league, on the same terms:
+
+    * both groups foldable (:func:`_variant_group_is_collapsible` — no LIVE row;
+      while a game is live, which row carries the current score outranks every
+      name question);
+    * THE PROVENANCE ASYMMETRY — the catch-all side carries no provider id, the
+      league side does (:func:`_group_is_id_anchored`). A catch-all row with an
+      id is somebody's scheduled fixture and is not ours to fold on a spelling;
+    * EXACTLY ONE CLUB squash-identical, which is what keeps `Georgia v Florida`
+      away from `West Georgia v North Florida` — one team cannot play two
+      fixtures in one minute, so exact agreement on one club is the fact the
+      names cannot fake;
+    * the other club :func:`_one_club_named_twice` — `nippon ham fighters` ⊆
+      `hokkaido nippon ham fighters`.
+
+    The caller then applies :func:`_objectively_different_games` and both
+    ambiguity refusals exactly as it does for soccer, so a catch-all naming two
+    league rows, or a league row named by two catch-alls, still stays two cards.
+
+    ``member``/``identity`` are the catch-all row the caller is iterating and its
+    strict-key identity; the league row is found by ``league_identity`` so the
+    names compared are that row's own, not a cluster representative's.
+    """
+    if not (
+        _variant_group_is_collapsible(catchall)
+        and _variant_group_is_collapsible(league)
+    ):
+        return False
+    if _group_is_id_anchored(catchall) or not _group_is_id_anchored(league):
+        return False
+    same_away = identity[0] == league_identity[0]
+    same_home = identity[1] == league_identity[1]
+    if same_away == same_home:
+        return False
+    league_row = next(
+        (row for row in league if identities.get(id(row)) == league_identity), None
+    )
+    if league_row is None:
+        return False
+    disputed = "home_team_name" if same_away else "away_team_name"
+    return _one_club_named_twice(
+        getattr(member, disputed, None), getattr(league_row, disputed, None)
+    )
+
+
 def _catchall_name_variant_merges(
     clusters: list[list],
     identities: dict,
@@ -1821,10 +1890,12 @@ def _catchall_name_variant_merges(
     Three refusals, each of which leaves both rows standing (two cards, today's
     behaviour) rather than guessing:
 
-    * **not soccer.** The predicate measured itself on soccer boards and is used
-      on soccer rows and nowhere else, exactly as the strict pass says. The 65
-      cross-sport catch-all pairs rung two found are refused by the prefix test
-      before this is ever reached.
+    * **not soccer — then #8100's licence, not the soccer predicate.** The
+      soccer predicate measured itself on soccer boards and is used on soccer
+      rows and nowhere else, exactly as the strict pass says. Every other sport
+      goes through :func:`_catchall_claim_names_league_row` instead (#5576). The
+      65 cross-sport catch-all pairs rung two found are refused by the prefix
+      test before either is ever reached.
     * **more than one candidate.** A catch-all cluster matching two league
       clusters is the `Madrid` ⊆ `Real Madrid` / `Atlético Madrid` shape, and it
       is refused WHOLE — never resolved by picking one. A league cluster claimed
@@ -1833,7 +1904,9 @@ def _catchall_name_variant_merges(
     """
     league_by_minute: dict = {}
     for identity, entries in league_at.items():
-        league_by_minute.setdefault(identity[2], []).extend(entries)
+        league_by_minute.setdefault(identity[2], []).extend(
+            (target, target_key, identity) for target, target_key in entries
+        )
     if not league_by_minute:
         return []
 
@@ -1852,14 +1925,30 @@ def _catchall_name_variant_merges(
                 continue  # the identity pass has already had its say
             sport_key = sport_keys.get(getattr(member, "sport_id", None))
             prefix = _catchall_sport_prefix(sport_key) if sport_key else None
-            if prefix != "soccer":
+            if not prefix:
+                # `None` is a real league; `""` is a bare `_other` key naming no
+                # sport, and `startswith("")` would admit every league there is.
                 continue
-            for target, target_key in league_by_minute.get(identity[2], ()):
+            for target, target_key, target_identity in league_by_minute.get(
+                identity[2], ()
+            ):
                 if target == index or not target_key.startswith(prefix):
                     continue
-                if not _pair_matches_after_transliteration(names(index), names(target)):
+                if prefix != "soccer":
+                    if not _catchall_claim_names_league_row(
+                        member,
+                        identity,
+                        clusters[index],
+                        clusters[target],
+                        target_identity,
+                        identities,
+                    ):
+                        continue
+                elif not _pair_matches_after_transliteration(
+                    names(index), names(target)
+                ):
                     continue
-                if _names_a_different_squad(names(index), names(target)):
+                elif _names_a_different_squad(names(index), names(target)):
                     logger.info(
                         "twin fold: refused a catch-all naming another squad of "
                         "the same club (%s x %s)",
