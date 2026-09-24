@@ -59,6 +59,18 @@ def _tokens(name: str | None) -> list[str]:
     return n.split(" ") if n else []
 
 
+#: Trailing tokens that name a club's second side (MLS NEXT Pro's "Timbers 2",
+#: "Earthquakes II"; European "B" sides; age grades). Compared after `_normalize`.
+_RESERVE_SIDE_TOKENS = frozenset({"2", "ii", "b", "u19", "u21", "u23", "reserves", "academy"})
+
+
+def _is_reserve_side(name: str | None) -> bool:
+    """True if the name's LAST token marks a second side. A one-token name never
+    is — "B" alone is not a reserve of anything."""
+    toks = _tokens(name)
+    return len(toks) > 1 and toks[-1] in _RESERVE_SIDE_TOKENS
+
+
 def _is_token_prefix(short: str, long: str) -> bool:
     """True if ``short``'s tokens are a (proper or equal) leading run of ``long``'s.
     "boston" ⊂ "boston bruins" ✓; "kent state" ⊄ "ohio state buckeyes" ✗."""
@@ -190,7 +202,7 @@ def _plan_cluster(members: list) -> dict:
     """Classify a cluster: pick canonical + list foldable stubs, or reject.
 
     Returns {status, canonical, folds, reason}. status ∈
-    {planned, skip_incoherent, skip_no_stub, skip_no_current}."""
+    {planned, skip_incoherent, skip_reserve_side, skip_no_stub, skip_no_current}."""
     # Canonical = most current events, then most total, then most mappings, then
     # longest name (the r258 "carries current events" rule).
     canonical = max(
@@ -206,6 +218,18 @@ def _plan_cluster(members: list) -> dict:
         if not _is_token_prefix(m.name, root_name):
             return {"status": "skip_incoherent", "canonical": canonical, "folds": [],
                     "reason": f"'{m.name}' is not a token-prefix of '{root_name}'"}
+
+    # A club's SECOND side is another club (#6974). "San Jose Earthquakes II" is
+    # coherent by the rule above — every member is a token-prefix of it — so this
+    # planner put it in the San Jose Earthquakes cluster and would have folded
+    # the reserve club INTO the first team, re-pointing its fixtures there. The
+    # two only share an espn_id because a borrowed ESPN match wrote the first
+    # team's id onto the reserve row. Nothing here can say which rows are the
+    # first team's, so the whole cluster is left for review.
+    reserve = [m for m in members if _is_reserve_side(m.name)]
+    if reserve and len(reserve) < len(members):
+        return {"status": "skip_reserve_side", "canonical": canonical, "folds": [],
+                "reason": f"'{reserve[0].name}' is a reserve side, not a stub of its first team"}
 
     folds = []
     for m in members:
