@@ -96,7 +96,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "drop every roster pattern — 41 probes become 1 and the player props go "
         "with them. The endpoint gets 13 seconds faster and stops being correct.",
         """    _roster_pats: list[str] = [
-        f"%{_escape_like(player)}%" for player in _roster_player_names(team)
+        f"%{_escape_like(player)}%" for player in _roster_names
     ]""",
         """    _roster_pats: list[str] = [
         f"%{_escape_like(player)}%" for player in []
