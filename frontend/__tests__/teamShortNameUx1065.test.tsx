@@ -138,6 +138,7 @@ import {
   teamShortName,
   teamShortNames,
   isNonDistinctiveTrailingWord,
+  twoWordNickname,
 } from "@/lib/teamShortName";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -253,10 +254,28 @@ describe("UX-1065: the measured population", () => {
     expect(new Set(NAMES).size).toBe(4701);
   });
 
-  it("481 of 4,701 distinct names (10.2%) stop being shortened", () => {
+  it("542 of 4,701 distinct names (11.5%) no longer print their bare last word", () => {
     const changed = NAMES.filter((n) => teamShortName(n) !== n.split(" ").pop());
-    expect(changed).toHaveLength(481);
-    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(10.2);
+    expect(changed).toHaveLength(542);
+    expect(Math.round((changed.length / NAMES.length) * 1000) / 10).toBe(11.5);
+  });
+
+  /**
+   * #5634 — the 61 this corpus gained, pinned by WHAT they became rather than
+   * re-baselined: each one is a two-word nickname keeping its first word
+   * ("Boston Red Sox" -> "Red Sox", not "Sox"). Nothing else moved.
+   */
+  it("the 61 #5634 added each keep a two-word nickname whole", () => {
+    const gained = NAMES.filter((n) => {
+      const out = teamShortName(n);
+      return out !== n && out !== n.split(" ").pop() && !HAND_PICKED_LABELS.has(handPickedKey(n));
+    });
+    for (const n of gained) {
+      expect(teamShortName(n)).toBe(twoWordNickname(n.split(" ")));
+    }
+    expect(gained).toContain("Boston Red Sox");
+    expect(gained).toContain("Alabama Crimson Tide");
+    expect(gained).toHaveLength(542 - 481);
   });
 
   /**
@@ -310,7 +329,8 @@ describe("UX-1065: the measured population", () => {
 
   it("the other 89.8% keep split-pop output byte for byte", () => {
     const same = NAMES.filter((n) => teamShortName(n) === n.split(" ").pop());
-    expect(same).toHaveLength(4220);
+    // 4,220 until #5634 kept 61 two-word nicknames whole (named above).
+    expect(same).toHaveLength(4159);
   });
 
   /**
@@ -328,13 +348,19 @@ describe("UX-1065: the measured population", () => {
    * invented labels would satisfy the first one by adding itself to the table,
    * so the names allowed to take the third arm are named, not counted.
    */
-  it("FAILS SAFE: every output is the last word, the full name, or this club's hand-picked label", () => {
+  // #5634 adds a fourth arm, pinned to the list the same way: the last TWO
+  // words, only where `twoWordNickname` says they are one nickname. It is still
+  // a string the team is called, which is the invariant this protects.
+  it("FAILS SAFE: every output is the last word, the full name, this club's hand-picked label, or its two-word nickname", () => {
     const handPicked: string[] = [];
     for (const n of NAMES) {
       const out = teamShortName(n);
       const picked = HAND_PICKED_LABELS.get(handPickedKey(n));
-      if (out !== n && out !== n.split(" ").pop()) handPicked.push(n);
-      expect(out === n || out === n.split(" ").pop() || out === picked).toBe(true);
+      const nickname = twoWordNickname(n.split(" "));
+      if (out !== n && out !== n.split(" ").pop() && out !== nickname) handPicked.push(n);
+      expect(
+        out === n || out === n.split(" ").pop() || out === picked || out === nickname,
+      ).toBe(true);
     }
     expect(handPicked).toEqual(["Paris Saint Germain", "Paris Saint-Germain"]);
   });
@@ -357,8 +383,10 @@ describe("UX-1065: the measured population", () => {
       tally.set(out, (tally.get(out) ?? 0) + 1);
     }
     const big = [...tally.entries()].filter(([, c]) => c >= 9).map(([w]) => w).sort();
+    // #5634: "Hawks" and "Knights" fell below 9 when Fighting Hawks and
+    // Black / Scarlet / Golden Knights stopped sharing the bare word.
     expect(big).toEqual([
-      "Bears", "Bulldogs", "Eagles", "Garcia", "Hawks", "Knights", "Lions",
+      "Bears", "Bulldogs", "Eagles", "Garcia", "Lions",
       "Panthers", "Rodriguez", "Silva", "Spartans", "Tigers", "Wildcats",
     ]);
   });

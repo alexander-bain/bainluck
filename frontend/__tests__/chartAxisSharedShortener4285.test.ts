@@ -193,7 +193,7 @@ describe("#5671 the three sites #4285 left behind", () => {
       { name: "Boston Red Sox" },
       { name: "Kansas City Royals" },
     );
-    expect(home).toBe("Sox");
+    expect(home).toBe("Red Sox"); // "Sox" until #5634 kept the nickname whole
     expect(away).toBe("Royals");
 
     // The collision the column headers could not see. Both sides fall back to
