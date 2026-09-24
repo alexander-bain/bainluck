@@ -44,6 +44,14 @@ export interface QuantityRung {
    * nothing (`isRenderedMove`), so a 0.003-point drift never becomes a badge.
    */
   movement?: number | null;
+  /**
+   * #2437 — the grade this rung states, precomputed by the caller with
+   * `outcomeRowVerdict` (the one settled-state decision). A rung that states a
+   * verdict renders the site-wide settled dialect — `Won`/`Lost`, `100%`/`0%`,
+   * `Settled` — matching `OutcomeRow`, never a second vocabulary. `null` or
+   * absent renders exactly as today.
+   */
+  verdict?: "won" | "lost" | null;
 }
 
 /** A single bar in the "where it lands" distribution heat-strip. */
@@ -193,8 +201,13 @@ export default function QuantityGroup({
   // that the gate admits.
   const movementBadgeText = (movement: number | null | undefined): string =>
     `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)} pts`;
+  // #2437 — a rung that STATES a verdict never advertises a live move (#6488's
+  // rule: a settled market never reads like an ongoing question). The slot is
+  // measured over ungraded rungs only, and the badge below is gated the same way.
+  const rungPrintsMove = (r: QuantityRung): boolean =>
+    r.verdict == null && isRenderedMove(r.movement);
   const movementSlotChars = ordered.reduce(
-    (m, r) => (isRenderedMove(r.movement) ? Math.max(m, movementBadgeText(r.movement).length) : m),
+    (m, r) => (rungPrintsMove(r) ? Math.max(m, movementBadgeText(r.movement).length) : m),
     0,
   );
   // The arrow is the one glyph in the badge that may fall back out of the mono
@@ -204,6 +217,15 @@ export default function QuantityGroup({
     movementSlotChars > 0
       ? { width: `calc(${movementSlotChars}ch + 0.5rem)` }
       : undefined;
+
+  // #2437 — the verdict slot, reserved on EVERY row of a ladder that states any
+  // verdict, for the same reason as the movement slot above (#1574 acceptance
+  // c): one bar x per ladder. "Won"/"Lost" is a closed vocabulary, so the slot
+  // is sized to the longer word and never measured per ladder.
+  const ladderStatesVerdict = ordered.some((r) => r.verdict != null);
+  const verdictSlotStyle = ladderStatesVerdict
+    ? { width: `calc(4ch + 0.5rem)` }
+    : undefined;
 
   const inner = (
     <>
@@ -242,6 +264,11 @@ export default function QuantityGroup({
               ? Math.max(2, Math.round(rung.probability! * 100))
               : 0;
           const RowTag = interactive ? "button" : "div";
+          // #2437 — the settled dialect, matching `OutcomeRow` word for word:
+          // `Won`/`Lost`, `100%`/`0%`, `Settled`, and the row tint. The
+          // aria-label keeps its `{label}: {pct}` prefix — hooks address rungs
+          // by it — with the verdict appended.
+          const rungVerdict = rung.verdict ?? null;
           return (
             <RowTag
               key={rung.key}
@@ -253,9 +280,14 @@ export default function QuantityGroup({
                 rung.highlighted
                   ? "px-2 -mx-2 rounded-lg bg-accent-brand/[0.06]"
                   : "",
+                rungVerdict === "won"
+                  ? "px-2 -mx-2 rounded-lg bg-emerald-50 border border-emerald-200"
+                  : rungVerdict === "lost"
+                    ? "px-2 -mx-2 rounded-lg bg-slate-50/50"
+                    : "",
                 interactive ? "transition-colors hover:bg-surface-elevated/60 rounded-lg" : "",
               ].join(" ")}
-              aria-label={`${rung.label}: ${pct(rung.probability)}`}
+              aria-label={`${rung.label}: ${pct(rung.probability)}${rungVerdict === "won" ? ", Won" : rungVerdict === "lost" ? ", Lost" : ""}`}
             >
               <span
                 title={wideLabels || roomyNumericTrack ? rung.label : undefined}
@@ -310,18 +342,40 @@ export default function QuantityGroup({
               >
                 {rung.label}
               </span>
+              {/* #2437 — the verdict, in `OutcomeRow`'s own words and classes.
+                  Reserved on every row (see `verdictSlotStyle`) so the bar's x
+                  never depends on whether this rung stated a grade. */}
+              {verdictSlotStyle && (
+                <span
+                  style={verdictSlotStyle}
+                  aria-hidden={rungVerdict == null ? true : undefined}
+                  className="shrink-0 whitespace-nowrap text-left text-xs font-medium"
+                >
+                  {rungVerdict === "won" && (
+                    <span data-testid="rung-verdict" className="text-emerald-600">
+                      Won
+                    </span>
+                  )}
+                  {rungVerdict === "lost" && (
+                    <span data-testid="rung-verdict" className="text-red-400">
+                      Lost
+                    </span>
+                  )}
+                </span>
+              )}
               {/* UX-1052 item 4 — "the mover marked". The BADGE still prints
                   only when the movement actually PRINTS as a move, so a
                   rounding residue cannot become an arrow (UX-P275); the SLOT
                   holding it is reserved on every row so the bar beside it is
-                  measured against the same track (#4644). */}
+                  measured against the same track (#4644). #2437: never on a
+                  rung that states a verdict. */}
               {movementSlotStyle && (
                 <span
                   style={movementSlotStyle}
-                  aria-hidden={isRenderedMove(rung.movement) ? undefined : true}
+                  aria-hidden={rungPrintsMove(rung) ? undefined : true}
                   className="shrink-0 whitespace-nowrap text-right font-mono text-[11px] font-bold tabular-nums"
                 >
-                  {isRenderedMove(rung.movement) && (
+                  {rungPrintsMove(rung) && (
                     <span
                       className={
                         (rung.movement ?? 0) > 0 ? "text-accent-brand" : "text-text-secondary"
@@ -339,13 +393,31 @@ export default function QuantityGroup({
                   style={{ width: `${width}%` }}
                 />
               </span>
+              {/* #2437 — a graded rung prints a RESULT, never a quote:
+                  `100%`/`0%` + `Settled`, in `OutcomeRow`'s colors. An ungraded
+                  rung keeps today's number, verdict or no verdict around it. */}
               <span
                 className={[
                   "w-10 shrink-0 text-right font-mono text-[13px] font-bold tabular-nums",
-                  rung.highlighted ? "text-accent-brand" : "text-text-primary",
+                  rungVerdict === "won"
+                    ? "text-emerald-600"
+                    : rungVerdict === "lost"
+                      ? "text-text-muted font-semibold"
+                      : rung.highlighted
+                        ? "text-accent-brand"
+                        : "text-text-primary",
                 ].join(" ")}
               >
                 {pct(rung.probability)}
+                {rungVerdict != null && (
+                  <span
+                    className={`block text-[10px] font-medium ${
+                      rungVerdict === "won" ? "text-emerald-500" : "text-text-muted"
+                    }`}
+                  >
+                    Settled
+                  </span>
+                )}
               </span>
               {interactive && (
                 <span className="shrink-0 text-text-muted text-[15px] leading-none">›</span>
