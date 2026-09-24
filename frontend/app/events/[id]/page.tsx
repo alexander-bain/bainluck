@@ -144,6 +144,7 @@ import {
   defaultChartTimeRange,
 } from "@/lib/eventKeyStats";
 import { renderedPercent } from "@/lib/renderedPercent";
+import { settledPregameMark } from "@/lib/settledPregameMark";
 
 interface EventPageProps {
   params: { id: string };
@@ -1394,16 +1395,25 @@ export default function EventPage({ params }: EventPageProps) {
 
   // L2-131 Item 1: the settled hero gains the pregame mark — the winner's
   // pre-game win probability ("were 35% pregame"). This is what makes an upset
-  // read surprising at a glance. Data = the opening blend (opening_odds).
+  // read surprising at a glance.
+  //
+  // #8315 — Data = `prematch_odds`, the rung of Alex's ladder (Kalshi →
+  // Polymarket → sportsbooks) the game's card already prints, with
+  // `opening_odds` (the sportsbook median this read until now) only as the
+  // labelled fallback. The card said "won as a 39% underdog" and this hero said
+  // "40% pregame" for the same game. See `lib/settledPregameMark.ts`.
   //
   // Keyed on the resolved SIDE rather than on the score comparison, so it
   // follows the ladder: an outcome whose winner could not be matched to either
   // competitor reports no side, and this stays silent rather than crediting the
   // home player's opening number to whoever actually won.
-  const settledWinnerPregameProb =
-    settledOutcome?.winnerSide && openingHomeProb !== null && openingAwayProb !== null
-      ? (settledOutcome.winnerSide === "home" ? openingHomeProb : openingAwayProb)
-      : null;
+  const settledPregame = settledPregameMark({
+    winnerSide: settledOutcome?.winnerSide,
+    prematchOdds: event.prematch_odds,
+    openingHomeProb,
+    openingAwayProb,
+    sport: event.sport,
+  });
 
   // Calculate countdown progress percentage
   const countdownProgress = ((refreshInterval / 1000 - countdown) / (refreshInterval / 1000)) * 100;
@@ -2003,7 +2013,10 @@ export default function EventPage({ params }: EventPageProps) {
                   // rather than spelled twice: two copies of "does this hero have
                   // a score pair" is two things to keep in step.
                   hasNumericScore={heroScorePairPresent}
-                  winnerPregameProb={settledWinnerPregameProb}
+                  winnerPregameProb={settledPregame?.probability ?? null}
+                  winnerPregamePercent={settledPregame?.percent ?? null}
+                  winnerPregameSource={settledPregame?.source ?? null}
+                  winnerPregameLabel={settledPregame?.label ?? null}
                 />
               ) : (
               // #2085: the two sides are ONE decision — see

@@ -36,6 +36,16 @@ export interface SettledOutcomeHeroProps {
   hasNumericScore: boolean;
   /** The winner's pre-match probability, 0-1, or `null` when the side is unknown. */
   winnerPregameProb: number | null;
+  /**
+   * #8315 — the whole percent the game's CARD prints for the winner (the
+   * server's pair rounding, UX-P114). When absent the probability is rounded
+   * here, as before.
+   */
+  winnerPregamePercent?: number | null;
+  /** The ladder rung the number came from, for measurement only. */
+  winnerPregameSource?: string | null;
+  /** "sportsbooks" when the rung is not a prediction market — the card's label. */
+  winnerPregameLabel?: string | null;
 }
 
 /** Below this, winning is a surprise worth marking (L2-131 Item 1). */
@@ -45,6 +55,9 @@ export default function SettledOutcomeHero({
   outcome,
   hasNumericScore,
   winnerPregameProb,
+  winnerPregamePercent = null,
+  winnerPregameSource = null,
+  winnerPregameLabel = null,
 }: SettledOutcomeHeroProps) {
   const wasUnderdog =
     winnerPregameProb !== null && winnerPregameProb < UPSET_THRESHOLD;
@@ -117,9 +130,24 @@ export default function SettledOutcomeHero({
               className={`text-[11px] ${
                 wasUnderdog ? "text-amber-600 font-semibold" : "text-text-muted"
               }`}
+              data-testid="event-hero-pregame"
+              data-prematch-source={winnerPregameSource ?? ""}
             >
               {wasUnderdog ? "Upset · " : ""}
-              {renderedPercent(winnerPregameProb)}% pregame
+              {winnerPregamePercent ?? renderedPercent(winnerPregameProb)}% pregame
+            </span>
+          )}
+          {winnerPregameProb !== null && winnerPregameLabel && (
+            /* #8315 — the card's label for a sportsbook median ("labelled when
+               not a prediction market", Alex), so the two surfaces name the
+               same rung the same way. Its OWN line, not appended: this column
+               sits between the two team blocks, and at 390px a " · sportsbooks"
+               suffix widened it enough to wrap both teams' records. */
+            <span
+              className="text-[10px] text-text-muted -mt-1"
+              data-testid="event-hero-pregame-label"
+            >
+              {winnerPregameLabel}
             </span>
           )}
         </>

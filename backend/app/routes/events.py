@@ -65,7 +65,14 @@ from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.futures_market_snapshot import (
     outcome_prints_a_price as _outcome_prints_a_price,
 )
-from app.utils.prematch_reading import opening_consensus_has_frozen
+from app.utils.prematch_reading import (
+    PREMATCH_PRIOR_SQL,
+    SETTLED_STATUSES,
+    opening_consensus_has_frozen,
+    prematch_prior_binds,
+    prematch_row_to_reading,
+    resolve_prematch_reading,
+)
 from app.utils.period_window_grade import grade_period_window
 from app.utils.final_score_margin import margin_verdict_from_final_score
 from app.utils.resolution_authority import authority_tier
@@ -13965,6 +13972,81 @@ async def resolve_served_event(
     return ServedEvent(requested_id=requested_id, event_id=event_id, event=event)
 
 
+async def _settled_prematch_odds(
+    db: AsyncSession, event: Event, sport_key: Optional[str]
+) -> Optional[dict]:
+    """The settled page's pre-game reading, the one its Discover card prints (#8315).
+
+    The card has followed Alex's ladder — Kalshi → Polymarket → sportsbooks —
+    since ux/1036, served by `routes/feed.py` as `prematch_odds`. This route
+    served only `opening_odds`, the sportsbook median, so the settled hero read
+    that instead and a reader tapping from the card to its page watched the
+    number change. Measured 2026-09-24 00:00Z on `/events/15317535`: card "won as
+    a 39% underdog" (kalshi), hero "Upset · 40% pregame" (books). One number per
+    question, and the gap is larger — and can flip "Upset" — wherever the venue
+    and the books disagree more.
+
+    NO SECOND LADDER. The same statement (`PREMATCH_PRIOR_SQL`, bound by
+    `prematch_prior_binds` so a non-settled or kickoff-less event never reads),
+    the same row shape (`prematch_row_to_reading`), the same resolver, the same
+    books inputs — including the feed's truthiness test on the opening columns —
+    and the same sport. The served shape is the card's, rounded once as a pair.
+
+    A failed read costs the page nothing but this key: it runs in a SAVEPOINT so
+    an error cannot poison the transaction the rest of the route is still using,
+    and the ladder then answers from the books rung alone, as the card would with
+    no venue snapshots.
+    """
+    by_source: dict[str, tuple] = {}
+    binds = prematch_prior_binds([event])
+    if binds is not None:
+        try:
+            nested = await db.begin_nested()
+            try:
+                rows = (await db.execute(text(PREMATCH_PRIOR_SQL), binds)).all()
+                for row in rows:
+                    by_source[row.source] = prematch_row_to_reading(row)
+            except Exception:
+                with suppress(Exception):
+                    await nested.rollback()
+                raise
+            await nested.commit()
+        except Exception as exc:  # noqa: BLE001 — one optional key, never the page
+            by_source = {}
+            logger.warning(
+                "event %s: pre-match venue read failed (%s) — books rung only",
+                event.id,
+                type(exc).__name__,
+            )
+
+    reading = resolve_prematch_reading(
+        by_source=by_source,
+        books_home=(
+            float(event.opening_home_probability)
+            if event.opening_home_probability
+            else None
+        ),
+        books_away=(
+            float(event.opening_away_probability)
+            if event.opening_away_probability
+            else None
+        ),
+        sport=sport_key or "",
+    )
+    if reading is None:
+        return None
+    away_pct, home_pct = rendered_duel_percents(
+        reading["away_probability"], reading["home_probability"]
+    )
+    return {
+        "home_probability": reading["home_probability"],
+        "away_probability": reading["away_probability"],
+        "home_rendered_percent": home_pct,
+        "away_rendered_percent": away_pct,
+        "source": reading["source"],
+    }
+
+
 @router.get("/{event_id}")
 async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
     """Get event details with aggregated odds from all bookmakers."""
@@ -14516,6 +14598,14 @@ async def get_event(event_id: int, db: AsyncSession = Depends(get_db)):
             "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
+
+    # #8315 — the settled hero's pre-game number follows the card's ladder. See
+    # `_settled_prematch_odds`. Settled only: that is the only state whose hero
+    # prints it, and `prematch_prior_binds` would skip the venue read otherwise.
+    if event.status in SETTLED_STATUSES:
+        _prematch_odds = await _settled_prematch_odds(db, event, event_sport_key)
+        if _prematch_odds is not None:
+            response["prematch_odds"] = _prematch_odds
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) at the
     # top level so native/web clients bind to ONE number per question instead of
