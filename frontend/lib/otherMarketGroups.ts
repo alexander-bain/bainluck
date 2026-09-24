@@ -482,6 +482,27 @@ export function canonicalMatchupTitle(
 }
 
 /**
+ * #8344 — the question alone, when a venue name is `<question>?: <A vs B>`.
+ *
+ * Polymarket titles a game's side questions "Will there be a run scored in the
+ * first inning?: Chicago White Sox vs. Kansas City Royals". On the game's own
+ * page the matchup after the colon restates the hero, and "?:" reads as a typo,
+ * so the card is headed by the question. Anything else — no "?" before the
+ * colon, or a tail that is not exactly two `vs` sides — returns null and keeps
+ * the venue's string.
+ */
+export function askedQuestionTitle(marketName: string | null | undefined): string | null {
+  const name = (marketName ?? "").trim();
+  const colon = name.lastIndexOf("?: ");
+  if (colon <= 0) return null;
+  const question = name.slice(0, colon + 1).trim();
+  const tail = name.slice(colon + 3).trim();
+  const sides = tail.split(/\s+vs\.?\s+/i);
+  if (sides.length !== 2 || !sides[0].trim() || !sides[1].trim()) return null;
+  return question;
+}
+
+/**
  * Is this market asking the GAME'S OWN question — the one the hero answers?
  *
  * ═══ #6595 — A LIVE GAME PAGE DECLARED A WINNER ═══
@@ -673,6 +694,19 @@ export function findWinProbMarkets(markets: OtherMarketRow[] | undefined | null)
     // while its five siblings render, which is the worst of both: not a
     // consistent rule a reader could learn, just a gap.
     if (isScoringRaceMarket(name)) continue;
+    // #8344 — a market whose name ASKS a question is never the hero's. On
+    // `/events/15318167` "Will there be a run scored in the first inning?:
+    // Chicago White Sox vs. Kansas City Royals" serves `Yes 0.505 / No 0.495`,
+    // the pair clause below took it for the moneyline, and the page's only
+    // non-moneyline market rendered nowhere.
+    //
+    // MEASURED over every event-linked market name carrying a "?" (production,
+    // 30 days, 2026-09-24): first-inning run 31, fight method / round / distance
+    // 12 each, extra innings 10, `<A vs B>: Safety?`, `Total Corners Odd or
+    // Even?` (two legs summing to 1 — eaten by the row-count clause too),
+    // `Who wins the toss?`, `Jynxzi vs Speed: who wins in Chess?`. Not one is
+    // the game's own winner. The moneyline is named as a matchup, never asked.
+    if (name.includes("?")) continue;
 
     if (probs.length === 2 && Math.abs(probs[0] + probs[1] - 1.0) < 0.1) {
       winProb.add(name);
@@ -1399,6 +1433,7 @@ export function buildMarketSection(
       ? parsed.statistic
       : scopedWinnerCard ??
         canonicalMatchupTitle(row.market_name, options.homeTeam, options.awayTeam) ??
+        askedQuestionTitle(row.market_name) ??
         (row.market_name || "Unknown");
     // Inside a "Home Runs" card the statistic is redundant; the threshold is
     // not, because a statistic carries several (0.5 and 1.5 both occur live).
