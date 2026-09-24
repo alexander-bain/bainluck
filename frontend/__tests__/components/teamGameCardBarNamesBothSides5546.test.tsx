@@ -132,14 +132,25 @@ describe("#5546 — the win-prob bar names both sides the same way", () => {
     expect(text).toMatch(/Sox\s+Royals\s+36%/);
   });
 
-  test("COLLISION BACKSTOP — Red Sox against White Sox falls BOTH back to full names", () => {
+  test("COLLISION BACKSTOP — Clemson against LSU falls BOTH back to full names", () => {
     // The reason for the pair helper. Shortening each side alone would draw
-    // "Sox" against "Sox 36%" and the bar would compare a team with itself.
+    // "Tigers" against "Tigers 36%" and the bar would compare a team with itself.
+    // (The specimen was Red Sox v White Sox until #5634 kept two-word
+    // nicknames whole — that pair no longer collides; see the test below.)
+    const text = render(
+      { away_team: "LSU Tigers", opponent: "LSU Tigers" },
+      "Clemson Tigers"
+    );
+    expect(text).toMatch(/Clemson Tigers\s+LSU Tigers\s+36%/);
+    expect(text).not.toMatch(/Tigers\s+Tigers\s+36%/);
+  });
+
+  test("#5634 — Red Sox against White Sox names both nicknames whole", () => {
     const text = render(
       { away_team: "Chicago White Sox", opponent: "Chicago White Sox" },
       "Boston Red Sox"
     );
-    expect(text).toMatch(/Boston Red Sox\s+Chicago White Sox\s+36%/);
+    expect(text).toMatch(/Red Sox\s+White Sox\s+36%/);
     expect(text).not.toMatch(/Sox\s+Sox\s+36%/);
   });
 

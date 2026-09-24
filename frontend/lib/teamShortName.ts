@@ -147,6 +147,91 @@ export const HAND_PICKED_LABELS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * #5634 — nicknames that are TWO words, where the last word alone is not the
+ * name. The last-word rule turned "Boston Red Sox" into "Sox" (which is also the
+ * White Sox), "Alabama Crimson Tide" into "Tide", "Notre Dame Fighting Irish"
+ * into "Irish", and Duke, Arizona State and the New Jersey Devils all into
+ * "Devils". The hero printed "Sox · WON" on a finished Red Sox game
+ * (`/events/15317515`, 2026-09-24).
+ *
+ * A list, not a rule, for the same reason as `HAND_PICKED_LABELS`: "Red Sox" is
+ * one name and "Bay Rays" is the tail of a place plus a name, and nothing on the
+ * string alone tells them apart. Unlike that table this one does not pick a label — it
+ * only keeps the word the rule was dropping, so an entry can never make a label
+ * less true than the full name.
+ *
+ * Every entry is a live name: all 41 were measured on production 2026-09-24
+ * over 60 days of MLB, NHL, NBA, WNBA, NFL and NCAAF `events` (372 names), by
+ * running this module's own `teamShortName` over them. Keys are the
+ * `nicknameKey` form (letters and digits only, lower case), so "Ragin' Cajuns"
+ * and "Ragin Cajuns" reach the same entry.
+ */
+export const TWO_WORD_NICKNAMES: ReadonlySet<string> = new Set([
+  // MLB
+  "red sox",
+  "white sox",
+  "blue jays",
+  // NHL
+  "maple leafs",
+  "red wings",
+  "blue jackets",
+  "golden knights",
+  // NBA
+  "trail blazers",
+  // NCAAF
+  "black bears",
+  "black knights",
+  "blue devils",
+  "blue hens",
+  "blue raiders",
+  "crimson tide",
+  "delta devils",
+  "demon deacons",
+  "fighting camels",
+  "fighting hawks",
+  "fighting illini",
+  "fighting irish",
+  "golden bears",
+  "golden eagles",
+  "golden flashes",
+  "golden gophers",
+  "golden hurricane",
+  "golden lions",
+  "green wave",
+  "horned frogs",
+  "mean green",
+  "nittany lions",
+  "ragin cajuns",
+  "rainbow warriors",
+  "red raiders",
+  "red wolves",
+  "runnin bulldogs",
+  "scarlet knights",
+  "sun devils",
+  "tar heels",
+  "thundering herd",
+  "wolf pack",
+  "yellow jackets",
+]);
+
+/** One token as `TWO_WORD_NICKNAMES` keys it: letters and digits, lower case. */
+function nicknameKey(token: string): string {
+  return token.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+}
+
+/**
+ * The last two words, as written, when together they are one nickname — else
+ * null. Needs at least two words; a name that IS the nickname ("Red Sox")
+ * returns itself.
+ */
+export function twoWordNickname(words: readonly string[]): string | null {
+  if (words.length < 2) return null;
+  const pair = words.slice(-2);
+  const key = pair.map(nicknameKey).join(" ");
+  return TWO_WORD_NICKNAMES.has(key) ? pair.join(" ") : null;
+}
+
+/**
  * The lookup key for `HAND_PICKED_LABELS`: one club, one key, however the row
  * spells it.
  *
@@ -744,6 +829,11 @@ export function teamShortName(
   const words = full.split(/\s+/);
   if (words.length < 2) return full;
   if (isNonDistinctiveTrailingWord(words[words.length - 1])) return full;
+  // #5634 — "Red Sox", not "Sox". Clubs only: a person's name never reaches it.
+  if (!namesAPerson(sportKey)) {
+    const nickname = twoWordNickname(words);
+    if (nickname) return nickname;
+  }
   // #7163 — a person's surname carries its particles with it. Gated on the
   // sport, so a club can never reach this: see `NAME_PARTICLES` for the club
   // names the ungated form would have broken.
@@ -809,8 +899,13 @@ export function teamShortNames(
   // underneath it. Unreachable on today's data (pairs have no `teams` row, so
   // no abbreviation exists to rescue with: 0 of 252 measured), and here so it
   // stays unreachable the day one does.
+  //
+  // #5634: a name that IS a two-word nickname ("Red Sox") is compact too.
   const gaveUp = (full: string, short: string) =>
-    short === full && full.split(/\s+/).length >= 2 && !isDoublesPair(full);
+    short === full &&
+    full.split(/\s+/).length >= 2 &&
+    !isDoublesPair(full) &&
+    twoWordNickname(full.split(/\s+/)) === null;
   const homeGaveUp = gaveUp(homeFull, homeShort);
   const awayGaveUp = gaveUp(awayFull, awayShort);
   const collide =
