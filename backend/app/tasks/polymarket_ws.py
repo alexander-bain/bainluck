@@ -12,6 +12,7 @@ Events:
 import asyncio
 import logging
 import os
+from typing import Optional
 from datetime import datetime, timezone
 
 from app.tasks.kalshi_ws import (
@@ -23,6 +24,38 @@ from app.tasks.polymarket import _poly_book_is_untradeable
 from app.utils.market_settlement import settled_values
 
 logger = logging.getLogger(__name__)
+
+
+#: A leg whose external id ends in one of these is the book of Gamma's
+#: ``outcomes[1]``, the second CLOB token. ``_side1`` is a named two-sided
+#: game's complement (``polymarket.py``, the ``_side1`` writer); ``_no`` is a
+#: Yes/No binary's.
+_SECOND_TOKEN_SUFFIXES = ("_side1", "_no")
+_FIRST_TOKEN_SUFFIXES = ("_yes",)
+
+
+def _token_index(ext: str) -> Optional[int]:
+    ext = ext or ""
+    if ext.endswith(_SECOND_TOKEN_SUFFIXES):
+        return 1
+    # A bare condition id (``0x...``, no suffix at all) is the first token.
+    if ext.endswith(_FIRST_TOKEN_SUFFIXES) or (ext and "_" not in ext):
+        return 0
+    return None
+
+
+def legs_in_token_order(pairs: list) -> list:
+    """Order one market's ``(outcome_id, external_id)`` legs as its CLOB tokens are.
+
+    #8403. Only a market whose legs are exactly one first-token leg and one
+    second-token leg, each named by its own suffix, is reordered. Any other
+    shape keeps the id order the caller passed, which is what it did before, so
+    a shape nobody measured cannot be moved by this.
+    """
+    indexed = [(_token_index(ext), oid, ext) for oid, ext in pairs]
+    if len(indexed) == 2 and {i for i, _, _ in indexed} == {0, 1}:
+        return [(oid, ext) for _, oid, ext in sorted(indexed, key=lambda t: t[0])]
+    return list(pairs)
 
 
 async def _apply_ws_resolution(session, market_id, outcomes, winning_outcome):
@@ -625,8 +658,19 @@ async def _run_polymarket_ws_consumer():
     # market whose outcome count disagrees with its token count maps only the
     # pairs it can prove and leaves the rest unmapped, so a shape we did not
     # anticipate drops ticks instead of writing them to the wrong leg.
+    #
+    # #8403: "ordering by id reproduces the token order" is an ASSUMPTION about
+    # insertion order, and on a named two-sided game it fails. The legs are
+    # `{condition}` (Gamma `outcomes[0]`, token 0) and `{condition}_side1`
+    # (`outcomes[1]`, token 1), and on 21 of 67 live-or-upcoming markets
+    # measured 2026-09-24 the `_side1` leg held the LOWER id — so token 0 was
+    # zipped onto the second team's row and each team's price streamed onto
+    # the other's. The leg's own suffix says which token it is; ordering by it
+    # is `legs_in_token_order`.
     for mid, mtokens in tokens_by_market.items():
-        for token, (oid, _ext) in zip(mtokens, outcomes_by_market.get(mid, [])):
+        for token, (oid, _ext) in zip(
+            mtokens, legs_in_token_order(outcomes_by_market.get(mid, []))
+        ):
             asset_to_outcome[token] = oid
 
     unmapped_assets = [a for a in asset_ids if a not in asset_to_outcome]
