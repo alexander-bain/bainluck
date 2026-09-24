@@ -8,6 +8,7 @@ repeating scores, odds, or team names visible on the card.
 
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Mapping, NamedTuple, Optional, Sequence
 
 from app.utils.draw_priced_winner import away_is_the_complement, sport_prices_a_draw
@@ -1001,6 +1002,14 @@ def _baseline_is_older_than_news(
     return (reference - when).days > _LIFETIME_MOVE_NEWS_HORIZON_DAYS
 
 
+#: The calendar a baseline's DAY is read in (#8350). The server does not know
+#: the reader's zone (see the #4805 note at the top of this module), so it
+#: picks the westernmost US zone: every reader from Pacific eastward is on the
+#: same date or a later one, which keeps "since <date>" from naming a day that
+#: has not started for them.
+BASELINE_DATE_ZONE = ZoneInfo("America/Los_Angeles")
+
+
 def format_baseline_date(
     when: Optional[datetime],
     now: Optional[datetime] = None,
@@ -1011,6 +1020,13 @@ def format_baseline_date(
     year is what stops a reader reading an eleven-month-old baseline as this
     week's. Naive datetimes are read as UTC, which is how every writer in
     `tasks/` stores them.
+
+    The day is read in :data:`BASELINE_DATE_ZONE`, not UTC (#8350). "Down 18
+    points since Sep 24" was served at 10pm PDT on Sep 23: a baseline taken
+    after 00:00Z carries tomorrow's UTC date for every US reader. "Since D" is
+    true only when the baseline falls on or after D, so the day must be read
+    in a zone no reader is west of — then it can be early (a weaker, still true
+    claim) but never in the future.
     """
     if when is None:
         return None
@@ -1019,6 +1035,8 @@ def format_baseline_date(
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
+    when = when.astimezone(BASELINE_DATE_ZONE)
+    reference = reference.astimezone(BASELINE_DATE_ZONE)
     label = f"{_MONTH_ABBR[when.month - 1]} {when.day}"
     if when.year != reference.year:
         return f"{label}, {when.year}"
